@@ -5,8 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "novafabric"
 version = "0.105.0"
+# readme is dynamic: scripts/pypi_readme_hook.py rewrites relative links to absolute tag URLs for PyPI.
+dynamic = ["readme"]
 description = "Self-hosted replay and evidence infrastructure for AI agents and agentic systems"
-readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Mohsen Seyedkazemi Ardebili"},
@@ -524,6 +525,9 @@ agentbench-v1 = "novafabric.evals.suites.agent_bench:AgentBenchAdapter"
 novafabric = "novafabric.cli.main:app"
 nova = "novafabric.cli.main:app"
 novacap = "novafabric.daemon.client:main"
+
+[tool.hatch.metadata.hooks.custom]
+path = "scripts/pypi_readme_hook.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/novafabric"]

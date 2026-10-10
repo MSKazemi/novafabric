@@ -43,6 +43,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   `tool_calls_by_surface`. Capsules written by the ADK capture plugin (`make_plugin()`) are
   still refused by mocked replay (pseudo-command; ADR-0306 open question 7).
 
+### Fixed
+
+- **The PyPI project page no longer shows ~87 broken README links and a broken demo image.**
+  A hatchling metadata hook (`scripts/pypi_readme_hook.py`, `dynamic = ["readme"]`) rewrites relative
+  links, images and HTML `src`/`href` in the long description to absolute
+  `github.com/.../blob/v{version}/` and `raw.githubusercontent.com/.../v{version}/` URLs at
+  build time, in both the wheel `METADATA` and the sdist `PKG-INFO`. `README.md` on GitHub is
+  unchanged. See `docs/developer-guide.md`.
+
 ### Changed
 
 - **MCP tool calls are matched after secret redaction (ADR-0306 D12.3, experimental).** An

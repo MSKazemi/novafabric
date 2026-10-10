@@ -35,6 +35,7 @@ If you are *using* the `nova` CLI rather than modifying it, start with
 
 - [Local installation](#local-installation)
 - [Quality gates](#quality-gates) — tests, ruff, mypy
+- [The PyPI README (build-time link rewrite)](#the-pypi-readme-build-time-link-rewrite)
 - **Common extension patterns**
   - [Adding a new asset type](#adding-a-new-asset-type)
   - [Adding a new CLI command](#adding-a-new-cli-command)
@@ -283,6 +284,35 @@ mypy is configured with `strict = true` in `pyproject.toml`. All type errors mus
 be resolved before merging.
 
 ---
+
+## The PyPI README (build-time link rewrite)
+
+`README.md` is written for GitHub, where `docs/foo.md` and `docs/assets/demo.svg` resolve
+against the repository. pypi.org renders the same text with no repository root, so those
+links and the demo image would break. `pyproject.toml` therefore declares
+`dynamic = ["readme"]` and a hatchling metadata hook, `scripts/pypi_readme_hook.py`,
+builds the long description: it rewrites every relative Markdown link and image,
+reference definition, and HTML `src`/`href` to an absolute URL pinned to the release tag
+`v{version}` (works today).
+
+- Pages: `https://github.com/MSKazemi/novafabric/blob/v{version}/<path>` (a trailing `/`
+  gives `tree/`).
+- Images and media (`.png .jpg .gif .svg .webp .mp4` ...):
+  `https://raw.githubusercontent.com/MSKazemi/novafabric/v{version}/<path>`.
+- Unchanged: absolute URLs, `mailto:`, `//host/...`, same-page `#anchor` links, and
+  anything inside fenced code blocks. Fragments on rewritten links are kept.
+
+`README.md` itself is never modified, so GitHub renders it as before. The rewritten text
+lands in the wheel's `METADATA` and the sdist's `PKG-INFO` (the sdist also carries
+`scripts/pypi_readme_hook.py` and the original README, so a wheel built from the sdist gets the same
+text). The links point at a tag, so they resolve once `v{version}` is pushed; a local
+`uv build` before tagging produces links that 404 until then. The hook is stdlib-only and
+offline (no new dependency; `hatch-fancy-pypi-readme` is MIT but cannot classify
+page vs image or skip code fences). Guard:
+`tests/packaging_metadata/test_pypi_readme_links_are_absolute.py` runs the rewrite on the
+real README and fails if any relative link remains. To inspect by hand:
+`uv build --out-dir "$(mktemp -d)"` and read `METADATA` / `PKG-INFO` (never build into the
+repo's `dist/`).
 
 ## Adding a new asset type
 

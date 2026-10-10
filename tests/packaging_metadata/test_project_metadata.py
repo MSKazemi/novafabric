@@ -58,9 +58,12 @@ def _project_table() -> dict[str, Any]:
 
 
 def test_readme_field_points_at_a_real_file() -> None:
+    # readme is dynamic: scripts/pypi_readme_hook.py reads README.md and rewrites relative
+    # links to absolute tag URLs for PyPI (see test_pypi_readme_links_are_absolute).
     project = _project_table()
-    assert project.get("readme") == "README.md"
-    assert (_REPO_ROOT / project["readme"]).is_file()
+    assert "readme" in project.get("dynamic", [])
+    assert (_REPO_ROOT / "README.md").is_file()
+    assert (_REPO_ROOT / "scripts" / "pypi_readme_hook.py").is_file()
 
 
 def test_authors_field_is_present_and_well_formed() -> None:
