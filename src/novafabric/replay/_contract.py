@@ -334,8 +334,8 @@ def is_servable_tool_record(record: dict[str, Any]) -> bool:
 
 
 def _stored_arguments_digest(record: dict[str, Any]) -> str | None:
-    """The payloads-off python record's stored digest, else ``None``."""
-    if tool_surface(record) != TOOL_SURFACE_PYTHON:
+    """The payloads-off python or ADK record's stored digest, else ``None``."""
+    if tool_surface(record) not in (TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK):
         return None
     ext = record.get("extensions")
     digest = ext.get(_tool_codec.ARGUMENTS_DIGEST_EXT) if isinstance(ext, dict) else None

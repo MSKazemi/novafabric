@@ -93,6 +93,15 @@ def _starts_a_container(tree: ast.AST) -> bool:
     return False
 
 
+def _defines_tests(tree: ast.AST) -> bool:
+    """True if the module has a ``test*`` function or ``Test*`` class pytest would collect."""
+    return any(
+        (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test"))
+        or (isinstance(n, ast.ClassDef) and n.name.startswith("Test"))
+        for n in ast.walk(tree)
+    )
+
+
 def _is_reachable_by_the_marker(source: str, fixtures: frozenset[str]) -> bool:
     """True if the module is either explicitly marked or fixture-marked.
 
@@ -116,6 +125,8 @@ def test_every_daemon_dependent_module_is_in_the_container_tier() -> None:
             continue
         if not _starts_a_container(tree):
             continue
+        if not _defines_tests(tree):
+            continue  # a helper module (e.g. tests/_docker_image.py) runs in no tier itself
         if not _is_reachable_by_the_marker(source, fixtures):
             escapees.append(str(path.relative_to(_ROOT)))
 
@@ -158,3 +169,10 @@ def test_every_declared_container_fixture_exists() -> None:
         f"CONTAINER_FIXTURES names fixtures that do not exist: {missing}. "
         "Every test that was relying on one is now silently unmarked."
     )
+
+
+def test_a_helper_module_without_tests_is_not_an_escapee() -> None:
+    helper = ast.parse("import subprocess\n\ndef pull(i):\n    subprocess.run(['docker', 'pull', i])\n")
+    module = ast.parse("import subprocess\n\ndef test_x():\n    subprocess.run(['docker', 'ps'])\n")
+    assert _starts_a_container(helper) and not _defines_tests(helper)
+    assert _starts_a_container(module) and _defines_tests(module)  # still checked
