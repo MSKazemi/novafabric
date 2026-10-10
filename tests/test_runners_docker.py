@@ -522,6 +522,9 @@ class TestDockerRunnerLiveSmoke:
     works on this OS, etc.)."""
 
     def test_alpine_echo_succeeds(self, tmp_path: Path) -> None:
+        from _docker_image import skip_if_image_rate_limited
+
+        skip_if_image_rate_limited("alpine:3.20")  # registry rate limit => image unavailable
         result = DockerRunner().run(_spec(
             tmp_path, ["echo", "hello"],
             runner_options={"image": "alpine:3.20"},

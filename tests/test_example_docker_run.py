@@ -88,6 +88,9 @@ def _require_docker_daemon() -> None:
     """
     if not _docker_available():
         pytest.skip("docker daemon not reachable")
+    from _docker_image import skip_if_image_rate_limited
+
+    skip_if_image_rate_limited(IMAGE)  # a registry rate limit is "no image", not a failed run
 
 
 def requires_docker(func: _F) -> _F:
