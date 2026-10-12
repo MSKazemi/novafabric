@@ -1091,8 +1091,8 @@ explicitly with `NOVAFABRIC_AUDIT_LOG_PATH` (deployments put it on the data volu
 | `NOVAFABRIC_SERVER_TOKEN` | — | Pin the local auth token instead of letting the server generate one (see §5d) |
 | `NOVAFABRIC_WEBHOOKS_QUEUE_MAX` | `1000` | Accepted as an alias of `NOVAFABRIC_SERVER_WEBHOOKS_QUEUE_MAX` |
 | `NOVA_NATS_DUPLICATE_WINDOW_S` | `120` | Lineage consumer de-duplication window |
-| `NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE` | — | TruthfulQA eval suite image reference |
-| `NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST` | — | Pins that image to an exact digest |
+| `NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE` | — | TruthfulQA eval suite image reference. Required, no default (no eval image is published; ADR-0308) |
+| `NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST` | — | Pins that image to an exact digest. Required, no default (ADR-0308) |
 
 ---
 

@@ -50,9 +50,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   with an image and `sha256:` digest you supply: no eval image is published, the default
   digest is empty, and `DockerRunner` rejects an empty digest (`invalid OCI digest ''`).
   `docs/cli-reference.md` said "Unset = default published digest" and three adapters
-  described a `ContainerEvalRunner` fallback that does not exist. No behaviour changed;
-  `tests/evals/test_container_suites_need_a_user_supplied_digest.py` now pins it. Whether
-  to publish the images, drop the placeholder defaults or add a real host mode is open.
+  described a `ContainerEvalRunner` fallback that does not exist. The behaviour change
+  that follows is under *Changed* (ADR-0308).
 
 - **The PyPI project page no longer shows ~87 broken README links and a broken demo image.**
   A hatchling metadata hook (`scripts/pypi_readme_hook.py`, `dynamic = ["readme"]`) rewrites relative
@@ -62,6 +61,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   unchanged. See `docs/developer-guide.md`.
 
 ### Changed
+
+- **The container eval suites no longer carry a placeholder image, and fail with an
+  actionable error (ADR-0308, closes novafabric-private#22).** GAIA, AgentBench, MMLU,
+  SWE-bench and TruthfulQA defaulted to `ghcr.io/novafabric/<suite>-eval:v1`, which is not
+  published (403), with an empty digest. `NOVAFABRIC_<SUITE>_OCI_IMAGE` and
+  `NOVAFABRIC_<SUITE>_OCI_DIGEST` are now both required: `oci_image()` returns `""` when
+  unset, and `run()` raises `ContainerEvalError` naming the unset variable(s) before Docker
+  is touched, instead of `invalid OCI digest ''`. Anyone who set both variables is
+  unaffected; the exception type is unchanged.
 
 - **MCP tool calls are matched after secret redaction (ADR-0306 D12.3, experimental).** An
   MCP argument the capsule scanner masked as `[REDACTED:<rule>]` now matches the replayed

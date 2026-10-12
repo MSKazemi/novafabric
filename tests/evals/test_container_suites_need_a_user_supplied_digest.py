@@ -1,14 +1,16 @@
-"""The container eval suites do not run on defaults (docs honesty).
+"""The container eval suites need a user-supplied image and digest (ADR-0308).
 
-No default eval image is published, and the adapters' default digest is empty.
-``DockerRunner`` rejects an empty digest, so every container suite fails until the
-operator supplies their own image and digest. ``docs/cli-reference.md`` states this;
-this test pins the behaviour so the docs and the code cannot drift apart again
-(they once claimed "default published digest" and a "host-env" fallback).
+NovaFabric publishes no eval image, so the adapters carry no default image and no
+default digest. ``run()`` refuses to start until both ``NOVAFABRIC_<SUITE>_OCI_IMAGE``
+and ``..._OCI_DIGEST`` are set, and the error names the unset variable(s) before Docker
+is touched. ``docs/cli-reference.md`` says the same; this test keeps docs and code from
+drifting apart again (they once claimed "default published digest" and a "host-env"
+fallback, and the placeholder ``ghcr.io/novafabric/<suite>-eval:v1`` 403s).
 """
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -28,13 +30,54 @@ _SUITES = [
 ]
 
 
+_DIGEST = "sha256:" + "d" * 64
+_IMAGE = "registry.example.com/eval:test"
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for _, var in _SUITES:
+        monkeypatch.delenv(f"NOVAFABRIC_{var}_OCI_IMAGE", raising=False)
+        monkeypatch.delenv(f"NOVAFABRIC_{var}_OCI_DIGEST", raising=False)
+
+
 @pytest.mark.parametrize(("adapter_cls", "var"), _SUITES)
-def test_default_digest_is_empty_and_the_run_is_refused(adapter_cls, var, monkeypatch, tmp_path: Path):
-    monkeypatch.delenv(f"NOVAFABRIC_{var}_OCI_DIGEST", raising=False)
+def test_no_default_image_or_digest(adapter_cls, var):
     adapter = adapter_cls()
+    assert adapter.oci_image() == ""
     assert adapter.oci_digest() == ""
-    with pytest.raises(ContainerEvalError, match="invalid OCI digest"):
-        adapter.run(tmp_path, {})
+
+
+@pytest.mark.parametrize(("adapter_cls", "var"), _SUITES)
+def test_run_is_refused_naming_both_variables_before_docker(adapter_cls, var, tmp_path: Path):
+    module = adapter_cls.__module__
+    with patch(f"{module}.DockerRunner") as docker:
+        with pytest.raises(ContainerEvalError) as exc:
+            adapter_cls().run(tmp_path, {})
+    docker.assert_not_called()
+    assert f"NOVAFABRIC_{var}_OCI_IMAGE" in str(exc.value)
+    assert f"NOVAFABRIC_{var}_OCI_DIGEST" in str(exc.value)
+
+
+@pytest.mark.parametrize(("adapter_cls", "var"), _SUITES)
+@pytest.mark.parametrize(("set_var", "missing_var"), [("IMAGE", "DIGEST"), ("DIGEST", "IMAGE")])
+def test_run_names_only_the_variable_that_is_missing(
+    adapter_cls, var, set_var, missing_var, monkeypatch, tmp_path: Path
+):
+    value = _IMAGE if set_var == "IMAGE" else _DIGEST
+    monkeypatch.setenv(f"NOVAFABRIC_{var}_OCI_{set_var}", value)
+    with patch(f"{adapter_cls.__module__}.DockerRunner"):
+        with pytest.raises(ContainerEvalError) as exc:
+            adapter_cls().run(tmp_path, {})
+    message = str(exc.value)
+    assert f"NOVAFABRIC_{var}_OCI_{missing_var} must be set" in message
+    assert f"NOVAFABRIC_{var}_OCI_{set_var} and" not in message
+
+
+def test_no_adapter_ships_a_placeholder_registry_reference():
+    suites = Path(__file__).resolve().parents[2] / "src" / "novafabric" / "evals" / "suites"
+    offenders = [p.name for p in suites.glob("*.py") if "ghcr.io/novafabric" in p.read_text()]
+    assert offenders == []
 
 
 def test_cli_reference_does_not_claim_a_default_published_digest():

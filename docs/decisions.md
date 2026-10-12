@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**289 decisions recorded** — **273** accepted · **13** proposed · **3** superseded.
+**290 decisions recorded** — **274** accepted · **13** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -322,3 +322,4 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0305` | Wire records under an SDK call are transport, not model calls | accepted | 2026-10-09 |
 | `ADR-0306` | Mocked replay substitutes non-MCP tool results on owned boundaries only, and enforces replay.yaml tool_overrides inside the replayed process | accepted | 2026-10-09 |
 | `ADR-0307` | Capsules record the runner, the image digest the runtime resolved, and the Slurm job context | accepted | 2026-10-09 |
+| `ADR-0308` | Container eval suites require a user-supplied image and digest; no placeholder default | accepted | 2026-10-12 |

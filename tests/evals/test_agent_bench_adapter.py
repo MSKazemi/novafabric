@@ -36,6 +36,13 @@ _VALID_EVAL_RESULT_JSON = json.dumps(
 )
 
 
+@pytest.fixture(autouse=True)
+def _configured_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suite needs a user-supplied image and digest to run (ADR-0308)."""
+    monkeypatch.setenv("NOVAFABRIC_AGENTBENCH_OCI_IMAGE", "registry.example.com/agent-bench-eval:test")
+    monkeypatch.setenv("NOVAFABRIC_AGENTBENCH_OCI_DIGEST", "sha256:" + "c" * 64)
+
+
 @pytest.fixture
 def adapter() -> AgentBenchAdapter:
     return AgentBenchAdapter()
@@ -68,7 +75,7 @@ def test_agent_bench_adapter_oci_image_default(
     adapter: AgentBenchAdapter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("NOVAFABRIC_AGENTBENCH_OCI_IMAGE", raising=False)
-    assert adapter.oci_image() == "ghcr.io/novafabric/agentbench-eval:v1"
+    assert adapter.oci_image() == ""
 
 
 def test_agent_bench_adapter_oci_image_env_override(
@@ -108,7 +115,7 @@ def test_agent_bench_run_delegates_to_docker_runner(
 
     MockDockerRunner.assert_called_once_with()
     call_kwargs = mock_instance.run_eval_container.call_args
-    assert call_kwargs.kwargs["image_ref"] == "ghcr.io/novafabric/agentbench-eval:v1"
+    assert call_kwargs.kwargs["image_ref"] == "registry.example.com/agent-bench-eval:test"
     assert call_kwargs.kwargs["digest"] == adapter.oci_digest()
     assert call_kwargs.kwargs["capsule_path"] == tmp_path
     assert call_kwargs.kwargs["command"] == adapter.container_argv(str(tmp_path))

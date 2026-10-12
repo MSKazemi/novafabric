@@ -12,16 +12,11 @@ from pathlib import Path
 
 from novafabric.evals.exceptions import EvalSuiteError
 from novafabric.evals.result import EvalResult
+from novafabric.evals.suites._container import require_pinned_image
 from novafabric.runners._docker import DockerRunner
 
 _SUITE_ID = "gaia-v1"
 _SUITE_VERSION = "0.1.0"
-_DEFAULT_OCI_IMAGE = "ghcr.io/novafabric/gaia-eval:v1"
-# Default is empty, and the suite does not run without a digest: DockerRunner
-# rejects an empty one (``invalid OCI digest ''``). No default image is published,
-# so set NOVAFABRIC_GAIA_OCI_IMAGE and NOVAFABRIC_GAIA_OCI_DIGEST ("sha256:<64-hex>")
-# to an image you built or host.
-_DEFAULT_OCI_DIGEST = ""
 
 
 class GaiaAdapter:
@@ -32,10 +27,9 @@ class GaiaAdapter:
     expected to write an :class:`~novafabric.evals.result.EvalResult`
     JSON object to stdout upon completion.
 
-    Set ``NOVAFABRIC_GAIA_OCI_DIGEST`` and ``NOVAFABRIC_GAIA_OCI_IMAGE``
-    env vars to point at an image you built or host.  The built-in image
-    reference is a placeholder that is not published, and ``NOVAFABRIC_GAIA_OCI_DIGEST``
-    is required: unset, ``DockerRunner`` raises ``ContainerEvalError``.
+    No eval image is published (ADR-0308): set ``NOVAFABRIC_GAIA_OCI_IMAGE`` and
+    ``NOVAFABRIC_GAIA_OCI_DIGEST`` to an image you built or host. ``run()`` raises
+    ``ContainerEvalError`` naming the unset variable(s) before Docker is touched.
     """
 
     def suite_id(self) -> str:
@@ -50,17 +44,17 @@ class GaiaAdapter:
         """Return the pinned OCI image digest for the GAIA eval container.
 
         Reads ``NOVAFABRIC_GAIA_OCI_DIGEST`` from the environment.
-        Returns ``""`` when the variable is unset; ``run()`` then fails in
-        :class:`~novafabric.runners._docker.DockerRunner` (an empty digest is invalid).
+        Returns ``""`` when unset; ``run()`` then refuses to start (ADR-0308).
         """
-        return os.environ.get("NOVAFABRIC_GAIA_OCI_DIGEST", _DEFAULT_OCI_DIGEST)
+        return os.environ.get("NOVAFABRIC_GAIA_OCI_DIGEST", "")
 
     def oci_image(self) -> str:
         """Return the OCI image reference for the GAIA eval container.
 
         Reads ``NOVAFABRIC_GAIA_OCI_IMAGE`` from the environment.
+        Returns ``""`` when unset; there is no built-in image (ADR-0308).
         """
-        return os.environ.get("NOVAFABRIC_GAIA_OCI_IMAGE", _DEFAULT_OCI_IMAGE)
+        return os.environ.get("NOVAFABRIC_GAIA_OCI_IMAGE", "")
 
     def container_argv(self, capsule_mount: str) -> list[str]:
         """Return the argv to execute inside the GAIA eval container.
@@ -92,6 +86,13 @@ class GaiaAdapter:
             If the container exits with a nonzero return code or if the
             stdout cannot be parsed as a valid :class:`EvalResult`.
         """
+        require_pinned_image(
+            suite_id=_SUITE_ID,
+            image_var="NOVAFABRIC_GAIA_OCI_IMAGE",
+            digest_var="NOVAFABRIC_GAIA_OCI_DIGEST",
+            image=self.oci_image(),
+            digest=self.oci_digest(),
+        )
         runner = DockerRunner()
         returncode, stdout, stderr = runner.run_eval_container(
             image_ref=self.oci_image(),

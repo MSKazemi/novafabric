@@ -36,6 +36,13 @@ _VALID_EVAL_RESULT_JSON = json.dumps(
 )
 
 
+@pytest.fixture(autouse=True)
+def _configured_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suite needs a user-supplied image and digest to run (ADR-0308)."""
+    monkeypatch.setenv("NOVAFABRIC_GAIA_OCI_IMAGE", "registry.example.com/gaia-eval:test")
+    monkeypatch.setenv("NOVAFABRIC_GAIA_OCI_DIGEST", "sha256:" + "c" * 64)
+
+
 @pytest.fixture
 def adapter() -> GaiaAdapter:
     return GaiaAdapter()
@@ -68,7 +75,7 @@ def test_gaia_adapter_oci_image_default(
     adapter: GaiaAdapter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("NOVAFABRIC_GAIA_OCI_IMAGE", raising=False)
-    assert adapter.oci_image() == "ghcr.io/novafabric/gaia-eval:v1"
+    assert adapter.oci_image() == ""
 
 
 def test_gaia_adapter_oci_image_env_override(
@@ -110,7 +117,7 @@ def test_gaia_run_delegates_to_docker_runner(tmp_path: Path, adapter: GaiaAdapte
 
     MockDockerRunner.assert_called_once_with()
     call_kwargs = mock_instance.run_eval_container.call_args
-    assert call_kwargs.kwargs["image_ref"] == "ghcr.io/novafabric/gaia-eval:v1"
+    assert call_kwargs.kwargs["image_ref"] == "registry.example.com/gaia-eval:test"
     assert call_kwargs.kwargs["digest"] == adapter.oci_digest()
     assert call_kwargs.kwargs["capsule_path"] == tmp_path
     assert call_kwargs.kwargs["command"] == adapter.container_argv(str(tmp_path))

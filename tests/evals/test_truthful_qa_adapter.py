@@ -36,6 +36,13 @@ _VALID_EVAL_RESULT_JSON = json.dumps(
 )
 
 
+@pytest.fixture(autouse=True)
+def _configured_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suite needs a user-supplied image and digest to run (ADR-0308)."""
+    monkeypatch.setenv("NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE", "registry.example.com/truthful-qa-eval:test")
+    monkeypatch.setenv("NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST", "sha256:" + "c" * 64)
+
+
 @pytest.fixture
 def adapter() -> TruthfulQaAdapter:
     return TruthfulQaAdapter()
@@ -67,7 +74,7 @@ def test_truthful_qa_adapter_oci_image_default(
     monkeypatch: pytest.MonkeyPatch, adapter: TruthfulQaAdapter
 ) -> None:
     monkeypatch.delenv("NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE", raising=False)
-    assert adapter.oci_image() == "ghcr.io/novafabric/truthful-qa-eval:v1"
+    assert adapter.oci_image() == ""
 
 
 def test_truthful_qa_adapter_oci_image_env_override(

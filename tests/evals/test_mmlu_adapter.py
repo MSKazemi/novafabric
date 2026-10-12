@@ -36,6 +36,13 @@ _VALID_EVAL_RESULT_JSON = json.dumps(
 )
 
 
+@pytest.fixture(autouse=True)
+def _configured_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suite needs a user-supplied image and digest to run (ADR-0308)."""
+    monkeypatch.setenv("NOVAFABRIC_MMLU_OCI_IMAGE", "registry.example.com/mmlu-eval:test")
+    monkeypatch.setenv("NOVAFABRIC_MMLU_OCI_DIGEST", "sha256:" + "c" * 64)
+
+
 @pytest.fixture
 def adapter() -> MmluAdapter:
     return MmluAdapter()
@@ -67,7 +74,7 @@ def test_mmlu_adapter_oci_image_default(
     monkeypatch: pytest.MonkeyPatch, adapter: MmluAdapter
 ) -> None:
     monkeypatch.delenv("NOVAFABRIC_MMLU_OCI_IMAGE", raising=False)
-    assert adapter.oci_image() == "ghcr.io/novafabric/mmlu-eval:v1"
+    assert adapter.oci_image() == ""
 
 
 def test_mmlu_adapter_oci_image_env_override(

@@ -15,12 +15,11 @@ from pathlib import Path
 
 from novafabric.evals.exceptions import EvalSuiteError
 from novafabric.evals.result import EvalResult
+from novafabric.evals.suites._container import require_pinned_image
 from novafabric.runners._docker import DockerRunner
 
 _SUITE_ID = "truthful-qa-v1"
 _SUITE_VERSION = "0.1.0"
-_DEFAULT_OCI_IMAGE = "ghcr.io/novafabric/truthful-qa-eval:v1"
-_DEFAULT_OCI_DIGEST = ""
 
 
 class TruthfulQaAdapter:
@@ -30,6 +29,10 @@ class TruthfulQaAdapter:
     :class:`~novafabric.runners._docker.DockerRunner`.  The container is
     expected to write an :class:`~novafabric.evals.result.EvalResult`
     JSON object to stdout upon completion.
+
+    No eval image is published (ADR-0308): set ``NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE`` and
+    ``NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST`` to an image you built or host. ``run()`` raises
+    ``ContainerEvalError`` naming the unset variable(s) before Docker is touched.
     """
 
     def suite_id(self) -> str:
@@ -44,17 +47,17 @@ class TruthfulQaAdapter:
         """Return the pinned OCI image digest for the TruthfulQA eval container.
 
         Reads ``NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST`` from the environment.
-        Returns ``""`` (the unpinned default) when the variable is not set.
+        Returns ``""`` when unset; ``run()`` then refuses to start (ADR-0308).
         """
-        return os.environ.get("NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST", _DEFAULT_OCI_DIGEST)
+        return os.environ.get("NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST", "")
 
     def oci_image(self) -> str:
         """Return the OCI image reference for the TruthfulQA eval container.
 
         Reads ``NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE`` from the environment.
-        Returns :data:`_DEFAULT_OCI_IMAGE` when the variable is not set.
+        Returns ``""`` when unset; there is no built-in image (ADR-0308).
         """
-        return os.environ.get("NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE", _DEFAULT_OCI_IMAGE)
+        return os.environ.get("NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE", "")
 
     def container_argv(self, capsule_mount: str) -> list[str]:
         """Return the argv to execute inside the TruthfulQA eval container.
@@ -87,6 +90,13 @@ class TruthfulQaAdapter:
             If the container exits with a nonzero return code or if the
             stdout cannot be parsed as a valid :class:`EvalResult`.
         """
+        require_pinned_image(
+            suite_id=_SUITE_ID,
+            image_var="NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE",
+            digest_var="NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST",
+            image=self.oci_image(),
+            digest=self.oci_digest(),
+        )
         runner = DockerRunner()
         returncode, stdout, stderr = runner.run_eval_container(
             image_ref=self.oci_image(),
