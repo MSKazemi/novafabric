@@ -18,9 +18,10 @@ from novafabric.runners._docker import DockerRunner
 _SUITE_ID = "swe-bench-verified-v1"
 _SUITE_VERSION = "0.1.0"
 _DEFAULT_OCI_IMAGE = "ghcr.io/novafabric/swe-bench-eval:v1"
-# Default is empty — the ContainerEvalRunner falls back to host-env mode when
-# the digest is unset.  Set NOVAFABRIC_SWE_BENCH_OCI_DIGEST to a real
-# published digest (e.g. "sha256:<64-hex>") to enable OCI-pinned execution.
+# Default is empty, and the suite does not run without a digest: DockerRunner
+# rejects an empty one (``invalid OCI digest ''``). No default image is published,
+# so set NOVAFABRIC_SWE_BENCH_OCI_IMAGE and NOVAFABRIC_SWE_BENCH_OCI_DIGEST ("sha256:<64-hex>")
+# to an image you built or host.
 _DEFAULT_OCI_DIGEST = ""
 
 
@@ -33,9 +34,9 @@ class SweBenchAdapter:
     JSON object to stdout upon completion.
 
     Set ``NOVAFABRIC_SWE_BENCH_OCI_DIGEST`` and ``NOVAFABRIC_SWE_BENCH_OCI_IMAGE``
-    env vars to enable OCI-pinned container execution.  When
-    ``NOVAFABRIC_SWE_BENCH_OCI_DIGEST`` is unset (the default), the runner
-    falls back to host-env mode.
+    env vars to point at an image you built or host.  The built-in image
+    reference is a placeholder that is not published, and ``NOVAFABRIC_SWE_BENCH_OCI_DIGEST``
+    is required: unset, ``DockerRunner`` raises ``ContainerEvalError``.
     """
 
     def suite_id(self) -> str:
@@ -50,9 +51,8 @@ class SweBenchAdapter:
         """Return the pinned OCI image digest for the SWE-bench eval container.
 
         Reads ``NOVAFABRIC_SWE_BENCH_OCI_DIGEST`` from the environment.
-        Returns ``""`` when the variable is unset, which signals the
-        :class:`~novafabric.runners._docker.DockerRunner` to use
-        host-env mode (no digest pinning).
+        Returns ``""`` when the variable is unset; ``run()`` then fails in
+        :class:`~novafabric.runners._docker.DockerRunner` (an empty digest is invalid).
         """
         return os.environ.get("NOVAFABRIC_SWE_BENCH_OCI_DIGEST", _DEFAULT_OCI_DIGEST)
 

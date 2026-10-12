@@ -7805,14 +7805,14 @@ failed).
 | `NOVAFABRIC_REPLAY_DIVERGENCE_POLICY` | `fail` | `fail` (raise and fail the replay on divergence) or `warn` (`--permissive`; intervention mode). Set automatically by `nova replay`. |
 | `NOVAFABRIC_EVIDENCE_DIR` | `$NOVAFABRIC_HOME/evidence` | Override directory for compliance evidence bundles (cap-001/002/004/005). Used by `nova assure` and serve endpoints. |
 | `NOVAFABRIC_TOOL_PERMISSION_DB_PATH` | — | SQLite path for the tool-permission policy DB. Defaults to in-memory when unset (permissions are not persisted across restarts). |
-| `NOVAFABRIC_GAIA_OCI_DIGEST` | — | OCI image digest pin for the GAIA eval container. Unset = default published digest. Override to use a private mirror or a specific version. |
-| `NOVAFABRIC_GAIA_OCI_IMAGE` | — | OCI image reference for the GAIA eval container. Override to use a private registry. |
-| `NOVAFABRIC_AGENTBENCH_OCI_DIGEST` | — | OCI image digest pin for the AgentBench eval container. |
-| `NOVAFABRIC_AGENTBENCH_OCI_IMAGE` | — | OCI image reference for the AgentBench eval container. |
-| `NOVAFABRIC_MMLU_OCI_DIGEST` | — | OCI image digest pin for the MMLU eval container. |
-| `NOVAFABRIC_MMLU_OCI_IMAGE` | — | OCI image reference for the MMLU eval container. |
-| `NOVAFABRIC_SWE_BENCH_OCI_DIGEST` | — | OCI image digest pin for the SWE-bench eval container. |
-| `NOVAFABRIC_SWE_BENCH_OCI_IMAGE` | — | OCI image reference for the SWE-bench eval container. |
+| `NOVAFABRIC_GAIA_OCI_DIGEST` | — | `sha256:` digest of the GAIA eval container. **Required to run the suite:** no GAIA eval image is published, so you supply your own image (`NOVAFABRIC_GAIA_OCI_IMAGE`) and its digest. Unset, the run fails with `invalid OCI digest ''`. |
+| `NOVAFABRIC_GAIA_OCI_IMAGE` | — | OCI image reference for the GAIA eval container. The built-in default is a placeholder that is **not published**; set this to an image you built or host. |
+| `NOVAFABRIC_AGENTBENCH_OCI_DIGEST` | — | `sha256:` digest of the AgentBench eval container. Required to run the suite (no image is published); unset, the run fails with `invalid OCI digest ''`. |
+| `NOVAFABRIC_AGENTBENCH_OCI_IMAGE` | — | OCI image reference for the AgentBench eval container. The built-in default is a placeholder that is **not published**; set this to an image you built or host. |
+| `NOVAFABRIC_MMLU_OCI_DIGEST` | — | `sha256:` digest of the MMLU eval container. Required to run the suite (no image is published); unset, the run fails with `invalid OCI digest ''`. |
+| `NOVAFABRIC_MMLU_OCI_IMAGE` | — | OCI image reference for the MMLU eval container. The built-in default is a placeholder that is **not published**; set this to an image you built or host. |
+| `NOVAFABRIC_SWE_BENCH_OCI_DIGEST` | — | `sha256:` digest of the SWE-bench eval container. Required to run the suite (no image is published); unset, the run fails with `invalid OCI digest ''`. |
+| `NOVAFABRIC_SWE_BENCH_OCI_IMAGE` | — | OCI image reference for the SWE-bench eval container. The built-in default is a placeholder that is **not published**; set this to an image you built or host. |
 
 ---
 

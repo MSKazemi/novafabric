@@ -45,6 +45,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **The container eval suites' docs and comments no longer claim a published default image
+  or a "host-env" fallback.** GAIA, AgentBench, MMLU, SWE-bench and TruthfulQA run only
+  with an image and `sha256:` digest you supply: no eval image is published, the default
+  digest is empty, and `DockerRunner` rejects an empty digest (`invalid OCI digest ''`).
+  `docs/cli-reference.md` said "Unset = default published digest" and three adapters
+  described a `ContainerEvalRunner` fallback that does not exist. No behaviour changed;
+  `tests/evals/test_container_suites_need_a_user_supplied_digest.py` now pins it. Whether
+  to publish the images, drop the placeholder defaults or add a real host mode is open.
+
 - **The PyPI project page no longer shows ~87 broken README links and a broken demo image.**
   A hatchling metadata hook (`scripts/pypi_readme_hook.py`, `dynamic = ["readme"]`) rewrites relative
   links, images and HTML `src`/`href` in the long description to absolute
