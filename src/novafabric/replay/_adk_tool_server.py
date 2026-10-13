@@ -47,17 +47,28 @@ from novafabric.replay._policy import decide_intercepted
 _NONE_RESPONSE: dict[str, Any] = {"result": None}
 
 
-def _function_call_id(record: dict[str, Any]) -> str | None:
+def _function_call_id(record: dict[str, Any], ext_key: str = FUNCTION_CALL_ID_EXT) -> str | None:
     ext = record.get("extensions")
-    value = ext.get(FUNCTION_CALL_ID_EXT) if isinstance(ext, dict) else None
+    value = ext.get(ext_key) if isinstance(ext, dict) else None
     return value if isinstance(value, str) and value else None
 
 
 class AdkToolServer:
-    """The ADK-surface replay server: one matcher, ADK records only."""
+    """The ADK-surface replay server: one matcher, ADK records only.
+
+    Subclassed by the OpenAI Agents server (``_oai_tool_server``), which
+    overrides the class attributes and :meth:`_answer`.
+    """
 
     #: Read by ``AdkToolHook.install``: a capture sink never displaces it.
     serves_replay = True
+    #: The intercepted surface this server answers for.
+    SURFACE = TOOL_SURFACE_ADK
+    #: Extension holding the recorded function-call id.
+    CALL_ID_EXT = FUNCTION_CALL_ID_EXT
+    #: How the tool is named in refusals.
+    SUBJECT = "the ADK tool"
+    FAILURE_SERVED_REASON = "the record is a failure, and ADK tool failures are not served"
 
     def __init__(
         self,
@@ -68,7 +79,7 @@ class AdkToolServer:
         permitted: frozenset[str],
         overrides: dict[str, bool] | None = None,
     ) -> None:
-        counts = Counter(_function_call_id(r) for r in records)
+        counts = Counter(_function_call_id(r, self.CALL_ID_EXT) for r in records)
         #: unique recorded function_call_id -> (tool name, argument digest).
         self._by_call_id: dict[str, tuple[Any, str]] = {}
         #: id(matcher view) -> the record as stored in the capsule.
@@ -76,7 +87,7 @@ class AdkToolServer:
         views: list[dict[str, Any]] = []
         for record in records:
             view = dict(record)
-            call_id = _function_call_id(record)
+            call_id = _function_call_id(record, self.CALL_ID_EXT)
             if call_id is not None and counts[call_id] == 1:
                 # The matcher's id tier compares ``tool_call_id``; an ambiguous
                 # (repeated) function_call_id is left out of it.
@@ -103,7 +114,7 @@ class AdkToolServer:
             # re-execute; a matching record is consumed, never served.
             consumed = call.not_canonical is None and self._match(call).record is not None
             self._events.emit(
-                "tool_live", tool_name=call.tool_name, surface=TOOL_SURFACE_ADK,
+                "tool_live", tool_name=call.tool_name, surface=self.SURFACE,
                 mutation_class=call.mutation_class, override="allow", consumed=consumed,
             )
             return None
@@ -121,7 +132,7 @@ class AdkToolServer:
         record = self._originals.get(id(match.record), match.record)
         reason = not_servable_reason(record)
         if reason is None and record.get("status", "success") != "success":
-            reason = "the record is a failure, and ADK tool failures are not served"
+            reason = self.FAILURE_SERVED_REASON
         if reason is not None:
             return self._diverge(
                 call, ReplayToolRecordNotServableError, call.digest,
@@ -132,9 +143,13 @@ class AdkToolServer:
             tool_name=call.tool_name,
             record_id=record.get("tool_call_id"),
             how=match.how,
-            surface=TOOL_SURFACE_ADK,
+            surface=self.SURFACE,
         )
         _ok, value = _tool_codec.decode_result(record)
+        return self._answer(value)
+
+    def _answer(self, value: Any) -> Any:
+        """What the seam hands back for a served *value* (non-``None`` = served)."""
         return _NONE_RESPONSE.copy() if value is None else value
 
     def after(self, tool_context: Any, result: Any) -> None:
@@ -175,29 +190,29 @@ class AdkToolServer:
         ) == "live"
         outcome = _divergence_outcome(
             live=live, policy=self._policy, override=override,
-            gating=call.mutation_class, permitted=permitted, subject="the ADK tool",
+            gating=call.mutation_class, permitted=permitted, subject=self.SUBJECT,
         )
         label = _override_label(override)
         if label is not None:
             extra["override"] = label
         error = error_cls(
-            f"{TOOL_SURFACE_ADK}({call.tool_name!r}) {what}: {reason}; {outcome}",
+            f"{self.SURFACE}({call.tool_name!r}) {what}: {reason}; {outcome}",
             tool_name=call.tool_name,
             arguments_hash=digest,
             reason=reason,
-            surface=TOOL_SURFACE_ADK,
+            surface=self.SURFACE,
             mutation_class=call.mutation_class,
             **extra,
         )
         _report_divergence(self._events, self._policy, error)  # raises under ``fail``
         if live:
             self._events.emit(
-                "tool_live", tool_name=call.tool_name, surface=TOOL_SURFACE_ADK,
+                "tool_live", tool_name=call.tool_name, surface=self.SURFACE,
                 mutation_class=call.mutation_class,
             )
             return None
         self._events.emit(
-            "tool_refused", tool_name=call.tool_name, surface=TOOL_SURFACE_ADK,
+            "tool_refused", tool_name=call.tool_name, surface=self.SURFACE,
             mutation_class=call.mutation_class,
             **({"override": label} if label is not None else {}),
         )

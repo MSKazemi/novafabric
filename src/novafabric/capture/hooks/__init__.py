@@ -257,6 +257,9 @@ _BUILT_IN_HOOKS: tuple[tuple[str, str, str], ...] = (
     # ADR-0306 slice 3: the capture sink of the NovaFabric ADK tool plugin.
     # Installed when google-adk is importable; it imports nothing from ADK.
     ("google.adk", "novafabric.adapters._adk_tool_seam", "AdkToolHook"),
+    # ADR-0306 slice 3: the capture sink of `wrap_tools` (OpenAI Agents SDK).
+    # Installed when `agents` is importable; it imports nothing from it.
+    ("agents", "novafabric.adapters._oai_tool_seam", "OaiToolHook"),
     ("requests",   "novafabric.capture.hooks._requests",   "RequestsHook"),
     ("httpx",      "novafabric.capture.hooks._httpx",      "HttpxHook"),
     ("aiohttp",    "novafabric.capture.hooks._aiohttp",    "AiohttpHook"),

@@ -409,6 +409,11 @@ Inside the re-spawned process:
   (`novafabric.adapters.google_adk.make_tool_plugin()`, first in the `Runner`'s
   plugins), through ADK's documented `before_tool_callback` short-circuit — for
   workloads captured with `nova capture python …` only.
+- **Experimental, unreleased (ADR-0306 slice 3, not in v0.105.0):** it also
+  serves **OpenAI Agents SDK** function tools passed through
+  `novafabric.adapters.openai_agents.wrap_tools()`, by replacing the tool's
+  `on_invoke_tool` — an **undocumented SDK seam**, checked against
+  `openai-agents` 0.17.x — again for `nova capture python …` workloads only.
 - **Every other tool runs live**: HTTP requests, shell commands, file writes,
   other framework-native tools, undeclared functions and other providers' SDKs are not
   intercepted. The
@@ -420,7 +425,7 @@ Inside the re-spawned process:
   — report-only, never a failure.
 
 The replay **fails closed**: an extra model call, a call on an unsupported
-surface, an unmatched MCP, `record.tool` or ADK tool call, or a recorded response that is never requested
+surface, an unmatched MCP, `record.tool`, ADK or Agents SDK tool call, or a recorded response that is never requested
 marks the replay `failure` with a `divergence_reason`, even if the workload
 caught the exception. `--permissive` (Python: `ReplayFlags(permissive=True)`)
 keeps the older behaviour — an empty reply on an exhausted queue, unsupported
@@ -439,7 +444,7 @@ The safety ladder classifies the capsule's recorded tool calls by side-effect
 level. It drives the `--dry-run` report, and `--allow-mutating` triggers a
 policy-engine gate (an audited allow/deny) before a mutating replay starts. In
 `mocked` mode the run-time rule is fixed by ADR-0300: an intercepted call (MCP
-`call_tool`, a `record.tool` function, or an ADK tool through the tool plugin) is served from the capsule or refused,
+`call_tool`, a `record.tool` function, an ADK tool through the tool plugin, or an Agents SDK tool through `wrap_tools`) is served from the capsule or refused,
 and every other tool runs live (the `--dry-run` report marks those `[LIVE]`). The
 rungs gate the intercepted surfaces in two places only (ADR-0306, experimental):
 under `--permissive` an unmatched call runs live only if a rung permits its class,

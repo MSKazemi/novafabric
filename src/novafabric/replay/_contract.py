@@ -64,13 +64,23 @@ TOOL_SURFACE_PYTHON = "novafabric.capture.record.tool"
 #: Google ADK tools, through the NovaFabric ADK tool plugin's documented
 #: ``before_tool_callback`` short-circuit (ADR-0306 slice 3, experimental).
 TOOL_SURFACE_ADK = "google.adk.tools.BaseTool"
-TOOL_SURFACES: tuple[str, ...] = (TOOL_SURFACE_MCP, TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK)
+#: OpenAI Agents SDK function tools, through ``wrap_tools``' replacement of the
+#: tool's ``on_invoke_tool`` (ADR-0306 slice 3, experimental; an undocumented seam).
+TOOL_SURFACE_OPENAI_AGENTS = "agents.FunctionTool"
+TOOL_SURFACES: tuple[str, ...] = (
+    TOOL_SURFACE_MCP, TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS,
+)
+#: Surfaces recorded with the ``record.tool`` codec (JSON results, digests).
+CODEC_TOOL_SURFACES: tuple[str, ...] = (
+    TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS,
+)
 
 #: ``transport: "python"`` surface marker -> intercepted surface. Both use the
 #: ``record.tool`` codec (JSON results, redact-then-hash argument digests).
 _PYTHON_TRANSPORT_SURFACES: dict[str, str] = {
     _tool_codec.TOOL_SURFACE_PYTHON_FUNCTION: TOOL_SURFACE_PYTHON,
     _tool_codec.TOOL_SURFACE_ADK_TOOL: TOOL_SURFACE_ADK,
+    _tool_codec.TOOL_SURFACE_OPENAI_AGENTS_TOOL: TOOL_SURFACE_OPENAI_AGENTS,
 }
 
 DivergencePolicy = Literal["fail", "warn"]
@@ -230,6 +240,9 @@ def tool_surface(record: dict[str, Any]) -> str | None:
     * ``TOOL_SURFACE_ADK``: a Google ADK tool call recorded by the ADK tool
       plugin -- ``transport: "python"`` and the ``"google.adk.tool"`` marker
       (ADR-0306 slice 3).
+    * ``TOOL_SURFACE_OPENAI_AGENTS``: an OpenAI Agents SDK function-tool call
+      recorded through ``wrap_tools`` -- ``transport: "python"`` and the
+      ``"openai.agents.tool"`` marker (ADR-0306 slice 3).
 
     A record is matchable only on the surface it was recorded on.
     """
@@ -257,10 +270,10 @@ def is_interceptable_tool_call(record: dict[str, Any]) -> bool:
 def not_servable_reason(record: dict[str, Any]) -> str | None:
     """Why an intercepted record cannot be served, or ``None`` if it can.
 
-    MCP records are always servable (ADR-0300). A python-surface or ADK record
-    is servable only when capture marked its codec ``json-v1`` (ADR-0306 D3).
+    MCP records are always servable (ADR-0300). A python-surface, ADK or OpenAI Agents
+    record is servable only when capture marked its codec ``json-v1`` (ADR-0306 D3).
     """
-    if tool_surface(record) not in (TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK):
+    if tool_surface(record) not in CODEC_TOOL_SURFACES:
         return None
     ext = record.get("extensions")
     ext = ext if isinstance(ext, dict) else {}
@@ -335,7 +348,7 @@ def is_servable_tool_record(record: dict[str, Any]) -> bool:
 
 def _stored_arguments_digest(record: dict[str, Any]) -> str | None:
     """The payloads-off python or ADK record's stored digest, else ``None``."""
-    if tool_surface(record) not in (TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK):
+    if tool_surface(record) not in CODEC_TOOL_SURFACES:
         return None
     ext = record.get("extensions")
     digest = ext.get(_tool_codec.ARGUMENTS_DIGEST_EXT) if isinstance(ext, dict) else None
@@ -344,7 +357,7 @@ def _stored_arguments_digest(record: dict[str, Any]) -> str | None:
 
 def _record_arguments(record: dict[str, Any]) -> Any:
     arguments = record.get("arguments")
-    if tool_surface(record) in (TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK):
+    if tool_surface(record) in CODEC_TOOL_SURFACES:
         return arguments or {}
     return arguments
 

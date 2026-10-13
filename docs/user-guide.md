@@ -443,6 +443,19 @@ capsules from `make_google_adk_plugin()` replayable — those keep a pseudo-comm
 (ADR-0306 open question 7). Details: [`cli-reference.md`](cli-reference.md) §Google
 ADK adapter and [`architecture/replay-modes.md`](architecture/replay-modes.md).
 
+**OpenAI Agents SDK tools in a mocked replay (experimental, unreleased — not in v0.105.0).**
+For an Agents SDK workload captured with `nova capture -- python agent.py`, pass the
+agent's tools through `novafabric.adapters.openai_agents.wrap_tools([...], {"tool": "read-only"})`.
+Under capture each function-tool call is recorded (payloads at
+`NOVA_CAPTURE_LEVEL=forensic`); under `nova replay` the recorded result is returned and the
+tool body never runs. Unmatched or unservable calls are refused (fail closed), and the
+mutation class that gates `--permissive` and `replay.yaml` `allow: true` is declared in
+`wrap_tools`. **Limits:** the Agents SDK has no documented way to skip a tool, so this
+replaces `FunctionTool.on_invoke_tool` — an undocumented seam, checked against
+`openai-agents` 0.17.x only; tools you do not pass through `wrap_tools` still run live; and
+capsules from `register()` stay non-replayable (pseudo-command). Details:
+[`cli-reference.md`](cli-reference.md) §Agents SDK tool seam.
+
 **`local` (default).** Runs the workload as a local subprocess. Equivalent to
 the pre-v0.6 behavior. No additional setup required.
 
@@ -765,7 +778,7 @@ The safety-ladder flags classify the capsule's recorded tool calls for the
 `--dry-run` report, and `--allow-mutating` adds an audited policy gate before the
 replay starts. Inside the replayed process they gate only the intercepted tool
 surfaces (MCP, `record.tool` and, experimental, Google ADK tools through the tool
-plugin) — an unmatched call under `--permissive`, and a `replay.yaml`
+plugin and OpenAI Agents tools through `wrap_tools`) — an unmatched call under `--permissive`, and a `replay.yaml`
 `allow: true` override — and never stop a tool replay does not intercept:
 
 ```bash

@@ -276,10 +276,13 @@ class _Pending:
 
     __slots__ = (
         "call", "tool_call_id", "started", "t0", "actions", "boundary",
-        "scope_token", "pending_token",
+        "scope_token", "pending_token", "var",
     )
 
-    def __init__(self, call: AdkToolCall) -> None:
+    def __init__(
+        self, call: AdkToolCall, var: ContextVar[_Pending | None] | None = None
+    ) -> None:
+        self.var = _pending if var is None else var
         self.call = call
         self.tool_call_id = new_ulid()
         self.started = _now()
@@ -292,9 +295,9 @@ class _Pending:
         _tool_scope.leave(self.scope_token)
         if self.pending_token is not None:
             try:
-                _pending.reset(self.pending_token)
+                self.var.reset(self.pending_token)
             except ValueError:  # reset from another context
-                _pending.set(None)
+                self.var.set(None)
         return self.boundary.nested
 
 
@@ -311,7 +314,28 @@ class AdkToolHook:
     Installing it imports nothing from ADK. It never displaces a replay server:
     an in-process capture started *inside* a mocked replay (an adapter plugin)
     must not turn served tools back into live ones.
+
+    Subclassed by the OpenAI Agents seam (``_oai_tool_seam``), which overrides
+    the class attributes and the two handler accessors.
     """
+
+    #: ``io.novafabric.tool_surface`` marker of the records this hook writes.
+    SURFACE_MARKER = codec.TOOL_SURFACE_ADK_TOOL
+    #: ``tool_provider`` scheme of those records.
+    PROVIDER_SCHEME = "google-adk"
+    #: Extension holding the model's function-call id.
+    CALL_ID_EXT = FUNCTION_CALL_ID_EXT
+    #: Extension holding ``module.qualname`` of the tool class.
+    CLASS_EXT = TOOL_CLASS_EXT
+    #: How the framework's tool is named in a record's not-servable reasons.
+    SUBJECT = "ADK tool"
+    FAILURE_REASON = ERROR_NOT_SERVED_REASON
+    LONG_RUNNING = LONG_RUNNING_REASON
+
+    # The handler registry and in-flight variable of this hook's seam.
+    _get_handler = staticmethod(lambda: _get_handler())
+    _set_handler = staticmethod(lambda handler: _set_handler(handler))
+    _pending_var = staticmethod(lambda: _pending)
 
     def __init__(self, writer: CapsuleWriter, parent_span_id: str) -> None:
         self._writer = writer
@@ -320,18 +344,19 @@ class AdkToolHook:
         self._installed = False
 
     def install(self) -> None:
-        current = _get_handler()
+        current = self._get_handler()
         if getattr(current, "serves_replay", False):
-            _log.debug("google_adk: a replay server is registered; capture sink not installed")
+            _log.debug("%s: a replay server is registered; capture sink not installed",
+                       self.SUBJECT)
             return
-        self._previous = _set_handler(self)
+        self._previous = self._set_handler(self)
         self._installed = True
 
     def uninstall(self) -> None:
         if not self._installed:
             return
-        if _get_handler() is self:
-            _set_handler(self._previous)
+        if self._get_handler() is self:
+            self._set_handler(self._previous)
         self._previous = None
         self._installed = False
 
@@ -339,8 +364,9 @@ class AdkToolHook:
 
     def before(self, call: AdkToolCall) -> None:
         try:
-            pending = _Pending(call)
-            pending.pending_token = _pending.set(pending)
+            var = self._pending_var()
+            pending = _Pending(call, var)
+            pending.pending_token = var.set(pending)
         except Exception:  # noqa: BLE001 -- capture must never block the workload
             _log.debug("google_adk: could not start a tool record", exc_info=True)
         return None
@@ -355,7 +381,7 @@ class AdkToolHook:
         self, tool_context: Any, *, value: Any = None, error: BaseException | None = None
     ) -> None:
         try:
-            pending = _pending.get()
+            pending = self._pending_var().get()
             # A call this plugin never saw start (another plugin answered it
             # first) has no entry, and one already finished has none either.
             if pending is None or pending.call.tool_context is not tool_context:
@@ -376,12 +402,12 @@ class AdkToolHook:
         call = pending.call
         payloads = _payloads_enabled()
         ext: dict[str, Any] = {
-            codec.TOOL_SURFACE_EXT: codec.TOOL_SURFACE_ADK_TOOL,
+            codec.TOOL_SURFACE_EXT: self.SURFACE_MARKER,
             codec.QUALNAME_EXT: call.qualname,
-            TOOL_CLASS_EXT: call.tool_class,
+            self.CLASS_EXT: call.tool_class,
         }
         if call.function_call_id:
-            ext[FUNCTION_CALL_ID_EXT] = call.function_call_id
+            ext[self.CALL_ID_EXT] = call.function_call_id
         if nested:
             ext[codec.NESTED_RECORDS_EXT] = nested
 
@@ -397,12 +423,12 @@ class AdkToolHook:
             reasons.append(PAYLOADS_OFF_REASON)
         if nested:
             reasons.append(
-                f"{nested} model/tool record(s) were written inside this ADK tool call; "
+                f"{nested} model/tool record(s) were written inside this {self.SUBJECT} call; "
                 "serving it would leave them unrequested (nested-call coverage is not "
                 "implemented)"
             )
         if call.long_running:
-            reasons.append(LONG_RUNNING_REASON)
+            reasons.append(self.LONG_RUNNING)
         changed = _changed_actions(call.tool_context, pending.actions)
         if changed:
             reasons.append(
@@ -419,7 +445,7 @@ class AdkToolHook:
             "duration_ms": max(0, int((time.monotonic() - pending.t0) * 1000)),
             "tool_name": call.tool_name,
             "tool_version": "unknown",
-            "tool_provider": f"google-adk://{call.tool_class}",
+            "tool_provider": f"{self.PROVIDER_SCHEME}://{call.tool_class}",
             "transport": "python",
             "mutates": call.mutation_class not in ("none", "read-only"),
             "mutation_class": call.mutation_class,
@@ -439,7 +465,7 @@ class AdkToolHook:
             }
             if type(error).__module__ == "builtins":
                 ext[codec.EXCEPTION_BUILTIN_EXT] = True
-            reasons.append(ERROR_NOT_SERVED_REASON)
+            reasons.append(self.FAILURE_REASON)
         else:
             encoded = codec.encode_result(value, keep_value=payloads)
             if encoded.reason:

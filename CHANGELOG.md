@@ -42,6 +42,23 @@ longer forwards the submitting shell's environment (ADR-0270).
   `google.adk.tools.BaseTool` in `replay_contract.interception_surfaces` and
   `tool_calls_by_surface`. Capsules written by the ADK capture plugin (`make_plugin()`) are
   still refused by mocked replay (pseudo-command; ADR-0306 open question 7).
+- **OpenAI Agents SDK function-tool calls are captured and served by mocked replay
+  (experimental, ADR-0306 slice 3).** `novafabric.adapters.openai_agents.wrap_tools([...],
+  {"tool": "read-only"})` returns a copy of each `FunctionTool` whose `on_invoke_tool`
+  consults NovaFabric first: under `nova capture python …` each call is one
+  `tool-calls.jsonl` record (`transport: "python"`, `io.novafabric.tool_surface:
+  "openai.agents.tool"`, the model's `io.novafabric.openai_agents_call_id`; no schema
+  change, `record.tool` codec), and in a mocked `nova replay` the recorded result is
+  returned and the tool body never runs. Matching, fail-closed refusals
+  (`tool_call_unmatched` / `tool_result_not_servable`), `--permissive` gated by the class
+  declared in `wrap_tools` (default `unknown`) and `replay.yaml` `tool_overrides` are the
+  same as for the ADK surface (the capture hook and replay server are shared code). New
+  intercepted surface `agents.FunctionTool` in `replay_contract.interception_surfaces` and
+  `tool_calls_by_surface`. **Caveat:** the Agents SDK documents no way to skip a tool, so
+  this replaces `on_invoke_tool` — an undocumented seam, checked against `openai-agents`
+  0.17.x for `Runner.run`/`run_streamed`, parallel calls, `Agent.clone` and `Agent.as_tool`;
+  an SDK release can break it. Tools not passed through `wrap_tools`, and capsules written
+  by `register()` (pseudo-command, open question 7), are unchanged: not replayable.
 
 ### Fixed
 

@@ -11,6 +11,7 @@ call time if the package is missing.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -193,3 +194,48 @@ def register(data_dir: Path | None = None) -> NovaCapsuleTracingProcessor:
     processor = NovaCapsuleTracingProcessor(resolved)
     add_trace_processor(processor)
     return processor
+
+
+def wrap_tools(
+    tools: Iterable[Any],
+    mutation_classes: Mapping[str, str] | None = None,
+    default_mutation_class: str = "unknown",
+) -> list[Any]:
+    """Route OpenAI Agents SDK function tools through NovaFabric's tool seam.
+
+    **Experimental** (ADR-0306 slice 3). Returns *tools* with every
+    ``FunctionTool`` replaced by a copy whose ``on_invoke_tool`` consults the
+    NovaFabric handler first. Under ``nova capture python …`` each call becomes
+    one ``tool-calls.jsonl`` record; under a mocked ``nova replay`` of that
+    capsule the recorded result is returned and the tool body never runs (an
+    unmatched or unservable call is refused, fail closed). Outside capture and
+    replay the copies behave exactly like the originals.
+
+    The seam replaces ``FunctionTool.on_invoke_tool``, which the SDK does not
+    document as an extension point; it was verified against ``openai-agents``
+    0.17.x for ``Runner.run`` and ``run_streamed``, parallel calls,
+    ``Agent.clone`` and ``Agent.as_tool``, and a different SDK release may
+    break it. Hosted tools and MCP servers pass through unchanged.
+
+    Only capsules with a re-runnable command (``nova capture python …``) can be
+    replayed: capsules written by :func:`register` carry a pseudo-command and
+    are refused by ``nova replay`` (ADR-0306 open question 7).
+
+    Args:
+        tools: The agent's tools.
+        mutation_classes: ADR-0012 mutation class per tool name. It gates
+            ``--permissive`` and ``replay.yaml`` ``allow: true`` at replay, and
+            is declared here, in the workload's code -- never read from a capsule.
+        default_mutation_class: Class of every tool not named above.
+
+    Raises:
+        ValueError: If a mutation class is not an ADR-0012 class.
+
+    Usage::
+
+        from novafabric.adapters.openai_agents import wrap_tools
+        agent = Agent(name="a", tools=wrap_tools([lookup_order], {"lookup_order": "read-only"}))
+    """
+    from novafabric.adapters._oai_tool_seam import wrap_tools as _wrap_tools
+
+    return _wrap_tools(tools, mutation_classes, default_mutation_class)

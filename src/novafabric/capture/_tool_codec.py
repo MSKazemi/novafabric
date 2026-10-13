@@ -25,6 +25,9 @@ TOOL_SURFACE_PYTHON_FUNCTION = "python.function"
 #: Surface marker of a Google ADK tool call recorded through the NovaFabric ADK
 #: tool plugin (ADR-0306 slice 3, ``adapters/_adk_tool_seam``).
 TOOL_SURFACE_ADK_TOOL = "google.adk.tool"
+#: Surface marker of an OpenAI Agents SDK function-tool call recorded through
+#: ``wrap_tools`` (ADR-0306 slice 3, ``adapters/_oai_tool_seam``).
+TOOL_SURFACE_OPENAI_AGENTS_TOOL = "openai.agents.tool"
 QUALNAME_EXT = "io.novafabric.tool_qualname"
 RESULT_CODEC_EXT = "io.novafabric.result_codec"
 NOT_SERVABLE_REASON_EXT = "io.novafabric.not_servable_reason"

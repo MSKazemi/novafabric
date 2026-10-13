@@ -53,6 +53,7 @@ _OVERRIDES = "tests/replay/test_tool_overrides_enforced_e2e.py"
 _SLICE4 = "tests/replay/test_slice4_matching_and_echo_contract.py"
 _ECHO = "tests/replay/test_echo_and_nested_coverage_e2e.py"
 _ADK = "tests/replay/test_adk_tool_replay_e2e.py"
+_OAI = "tests/replay/test_openai_agents_tool_replay_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -413,6 +414,43 @@ ROWS: tuple[SurfaceRow, ...] = (
         servers=("google.adk.tools.BaseTool",),
     ),
     SurfaceRow(
+        surface=(
+            "OpenAI Agents SDK function tool, through the NovaFabric tool seam "
+            "(`novafabric.adapters.openai_agents.wrap_tools`, ADR-0306 slice 3)"
+        ),
+        capture=(
+            "one `transport: python` record per function-tool call (`openai.agents.tool` "
+            "marker, the model's `call_id`); arguments and result kept only at the "
+            "`forensic`/`air_gapped` capture level, digests otherwise"
+        ),
+        replay="served",
+        replay_note=(
+            "by replacing `FunctionTool.on_invoke_tool` on a copy of each tool -- an "
+            "**undocumented SDK seam**, checked against `openai-agents` 0.17.x only -- so "
+            "the recorded result is returned before the tool body runs; one-to-one by the "
+            "model's `call_id` (same name and arguments) or by name and canonical "
+            "arguments; JSON-native results up to 1 MiB; a call that raised, or made "
+            "nested model/tool calls (including `Agent.as_tool`), is not served; an "
+            "unmatched or unservable call is refused (`--permissive` runs it live only if "
+            "a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
+            "`tool_overrides` enforced; only tools passed through `wrap_tools` are "
+            "covered, and `nova capture python …` capsules only (adapter capsules are "
+            "refused by replay)"
+        ),
+        streaming="served (`Runner.run_streamed` reaches the same seam)",
+        asynchronous="served (the SDK awaits every tool on its event loop)",
+        status="experimental",
+        evidence=(
+            f"{_OAI}::test_agents_tool_calls_are_served_and_their_bodies_never_run",
+            f"{_OAI}::test_an_unmatched_agents_call_fails_closed_before_the_tool_runs",
+            f"{_OAI}::test_the_call_id_pairs_identical_calls_by_id",
+            f"{_OAI}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
+            f"{_OAI}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
+            f"{_OAI}::test_a_nested_record_makes_the_agents_call_unservable",
+        ),
+        servers=("agents.FunctionTool",),
+    ),
+    SurfaceRow(
         surface="MCP session set-up (server start, `initialize`, `list_tools`)",
         capture="not recorded as tool calls",
         replay="not intercepted",
@@ -451,7 +489,8 @@ ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
         surface=(
             "HTTP, shell, filesystem, framework-native tools "
-            "(other than Google ADK tools through the tool plugin)"
+            "(other than Google ADK tools through the tool plugin and OpenAI Agents "
+            "function tools through `wrap_tools`)"
         ),
         capture="network/file events, not tool records",
         replay="not intercepted",

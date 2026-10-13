@@ -1161,8 +1161,8 @@ Options:
 - `--allow-mutating` — rung for `idempotent-write` and `non-idempotent-write` tools; also triggers the audited `replay_mutating` policy gate before the replay starts
 - `--allow-external-side-effects` — rung for `external-side-effect` tools
 - `--allow-unknown-mutation` — rung for tools with `unknown` mutation class. **Every MCP call counts as `unknown`**, whatever class the capsule recorded, so this is the rung MCP calls need
-- The four rungs drive the `--dry-run` report. In a `mocked` replay they gate the intercepted tool surfaces (MCP `call_tool`, `record.tool`, and Google ADK tools through the tool plugin) in two places only — ADR-0306, experimental: under `--permissive` an unmatched call runs live only if its class is permitted (`none` always is; a `record.tool` call uses its declared class, an ADK tool the class `make_tool_plugin` declares), and a `replay.yaml` `allow: true` override re-executes a tool only if its class is permitted. They never stop a tool replay does not intercept.
-- `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces run **live**, an unmatched MCP, `record.tool` or ADK tool call runs live only if a ladder flag permits its mutation class — `--allow-unknown-mutation` for MCP, the declared class for `record.tool` and ADK tools — and never when `replay.yaml` says `allow: false` (otherwise it is refused and counted in `replay_contract.tool_calls_refused`), and unconsumed recordings are only reported. *Changed in v0.105.0 (ADR-0306 Q3):* `--permissive` alone used to run every unmatched MCP call live. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
+- The four rungs drive the `--dry-run` report. In a `mocked` replay they gate the intercepted tool surfaces (MCP `call_tool`, `record.tool`, Google ADK tools through the tool plugin, and OpenAI Agents function tools through `wrap_tools`) in two places only — ADR-0306, experimental: under `--permissive` an unmatched call runs live only if its class is permitted (`none` always is; a `record.tool` call uses its declared class, an ADK tool the class `make_tool_plugin` declares, an Agents SDK tool the class `wrap_tools` declares), and a `replay.yaml` `allow: true` override re-executes a tool only if its class is permitted. They never stop a tool replay does not intercept.
+- `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces run **live**, an unmatched MCP, `record.tool`, ADK or Agents SDK tool call runs live only if a ladder flag permits its mutation class — `--allow-unknown-mutation` for MCP, the declared class for `record.tool`, ADK and Agents SDK tools — and never when `replay.yaml` says `allow: false` (otherwise it is refused and counted in `replay_contract.tool_calls_refused`), and unconsumed recordings are only reported. *Changed in v0.105.0 (ADR-0306 Q3):* `--permissive` alone used to run every unmatched MCP call live. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
 - `--output-dir, -o PATH` — base directory for replay output (default: `.novafabric/replays/`)
 - `--environment ENV` — experimental (ADR-0126): only replay a capsule that recorded `ENV` as its `deployment_environment` (exact match, case-sensitive). Otherwise exit 2 before anything runs; a capsule with no recorded environment is refused. Usable as a CI gate, e.g. `nova replay --environment staging --dry-run <run-id>`. The `replay_mutating` policy input also carries the recorded value as `input.resource.deployment_environment` (`null` when absent).
 - `--intervention-file PATH` — InterventionSpec YAML for `--mode intervention` (experimental, ADR-0086): one target selector (`event_index` or `span_id`) + exactly one substitution (`replace_model_response` / `replace_tool_result` / `mutate_payload`) + optional named check-functions (`fatal: true` aborts). The output capsule is diffable against the baseline with `nova diff`. Only a `model-calls` substitution reaches the re-executed workload; a `tool-calls` one changes the output capsule and the checks only (tools run live), which the result records as `intervention.substitution_delivered_to_workload: false` and the CLI reports as a warning.
@@ -1221,7 +1221,7 @@ Output is written to `.novafabric/replays/<replay-ulid>/replay_result.yaml`.
 ```
 ✓ Replay written: .novafabric/replays/01HXBM1Y3K2NGH9V0RD9P0ZDC4  (replay_id=01HXBM1Y3K2NGH9V0RD9P0ZDC4  mode=mocked)
   model calls: 2 of 2 served from the capsule, 0 unmatched
-  tool calls (MCP call_tool, record.tool, ADK): 2 of 2 served, 0 live, 0 unmatched; 0 recorded on surfaces replay does not intercept
+  tool calls (MCP call_tool, record.tool, ADK, Agents SDK): 2 of 2 served, 0 live, 0 unmatched; 0 recorded on surfaces replay does not intercept
   network: 0 live connections from the replayed process — observed, not blocked
 ```
 
@@ -9556,6 +9556,60 @@ Each trace produces one capsule in the adapter default directory (`$NOVAFABRIC_H
 `sdk-decorator` and `command` is a `@openai-agents:<workflow>` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
 
 Top-level alias: `from novafabric.adapters import register_openai_agents`
+
+#### Agents SDK tool seam — record and serve function-tool calls (experimental, unreleased)
+
+**Status: experimental** (ADR-0306 slice 3; on `main`, not in v0.105.0). `register()`
+above records traces but its capsules cannot be replayed. A separate helper,
+`wrap_tools`, makes function-tool calls replayable offline. It does nothing on its own:
+run the script under `nova capture python …`, then replay the capsule with `nova replay`
+(mocked).
+
+```python
+from agents import Agent, function_tool
+from novafabric.adapters.openai_agents import wrap_tools
+
+@function_tool
+def lookup_order(order_id: str) -> dict: ...
+
+agent = Agent(
+    name="support",
+    tools=wrap_tools([lookup_order], {"lookup_order": "read-only"}),
+)
+```
+
+```bash
+nova capture -- python agent.py      # NOVA_CAPTURE_LEVEL=forensic to keep payloads
+nova replay <run-id>                 # tool bodies do not run; results come from the capsule
+```
+
+- **No documented SDK hook.** Unlike ADK, the Agents SDK offers no way to skip a tool.
+  `wrap_tools` returns a *copy* of each `FunctionTool` whose `on_invoke_tool` consults
+  NovaFabric first — an **undocumented seam**, verified against `openai-agents` 0.17.x
+  for `Runner.run`, `Runner.run_streamed`, parallel tool calls, `Agent.clone` and
+  `Agent.as_tool`; `needs_approval` still interrupts a run before it. A different SDK
+  release may break it, and only tools passed through `wrap_tools` are covered. Hosted
+  tools and MCP servers pass through unchanged.
+- **Under `nova capture`** each call writes one `tool-calls.jsonl` record
+  (`transport: python`, `io.novafabric.tool_surface: openai.agents.tool`, the model's
+  `io.novafabric.openai_agents_call_id`). Arguments and the result are kept only at the
+  `forensic`/`air_gapped` capture level; otherwise only after-redaction digests are kept
+  and replay refuses the call with a re-capture hint. The SDK turns a tool exception into a
+  model-visible error string, and that string is what is recorded.
+- **Under a mocked `nova replay`** the recorded result is returned and the tool body never
+  runs. An unmatched call, or one whose record is not servable (made nested model/tool
+  calls, including through `Agent.as_tool`; non-JSON result), is refused before the tool
+  runs and the replay fails (`tool_call_unmatched` / `tool_result_not_servable`) even if
+  the workload catches the error, which the SDK re-raises as `UserError`. `--permissive`
+  runs an unmatched call live only when an `--allow-*` flag permits the class declared in
+  `wrap_tools` (default `unknown`), and `replay.yaml` `tool_overrides` hold as on the other
+  tool surfaces.
+- **Outside capture and replay** a wrapped tool behaves like the original.
+- A function declared with `novafabric.capture.record.tool` is already a boundary of its
+  own, so the seam steps aside for it.
+- **Only `nova capture python …` capsules can be replayed**, as for ADK (ADR-0306 open
+  question 7). The other framework seams (LangChain/LangGraph, Pydantic AI, LlamaIndex,
+  CrewAI) are **planned**.
 
 ### Google ADK adapter (E-6)
 
