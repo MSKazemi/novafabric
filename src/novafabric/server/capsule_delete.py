@@ -12,8 +12,9 @@ run this pipeline per item, so their semantics cannot drift (serve's
    override (parity with serve and ``retention/sweep.py`` D4). Honest limit:
    holds are registry-global today, so one active hold blocks all deletion;
 4. WORM refusal — an unexpired ``LocalWormAdapter`` lock for the item
-   refuses with ``worm_hold`` (best-effort: unreadable WORM DBs are skipped
-   with a warning, matching ``HoldContext``'s "where known" contract);
+   refuses with ``worm_hold``; if a configured local WORM DB is unreadable,
+   deletion refuses with ``worm_state_unavailable`` rather than assuming no lock;
+   the local adapter is dev/test-only, not compliance-grade WORM storage;
 5. sealed-capsule refusal — a NovaSeal-sealed capsule (``.seal/`` present)
    refuses with ``sealed_capsule`` unless ``NOVAFABRIC_ALLOW_SEALED_DELETE=1``
    (the same default as ``metadata_store.run_delete``);
@@ -203,8 +204,9 @@ def worm_locked_until(capsule_dir: Path, run_id: str) -> datetime | None:
     """Unexpired WORM lock expiry for *run_id*, or None.
 
     Scans ``<capsule_dir>/../registries/*/worm.db`` (the retention CLI's
-    layout). Best-effort: a registry whose WORM DB cannot be read is skipped
-    with a warning — the check covers locks the machinery *knows*.
+    layout). A missing WORM DB means no local lock is configured. If a DB
+    exists but cannot be read, raise ``DeleteBlockedError`` so a destructive
+    operation cannot mistake unknown retention state for an unlocked run.
     """
     registries_base = capsule_dir.parent / "registries"
     if not registries_base.exists():
@@ -223,8 +225,17 @@ def worm_locked_until(capsule_dir: Path, run_id: str) -> datetime | None:
                 # WormEntry.locked_until is tz-aware by model contract.
                 if entry.locked_until > now:
                     return entry.locked_until
-        except Exception:  # noqa: BLE001 — best-effort scan, never blocks
-            logger.warning("WORM DB %s unreadable during delete check", worm_db)
+        except Exception as exc:  # noqa: BLE001 — retention reads must fail closed
+            logger.error(
+                "WORM DB %s unreadable during delete check; refusing deletion",
+                worm_db,
+                exc_info=True,
+            )
+            raise DeleteBlockedError(
+                f"Deletion blocked: WORM state for registry '{reg_dir.name}' could not be read.",
+                code="worm_state_unavailable",
+                details={"registry": reg_dir.name},
+            ) from exc
     return None
 
 
