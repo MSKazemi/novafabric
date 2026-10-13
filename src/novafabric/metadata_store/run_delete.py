@@ -13,7 +13,8 @@ module is the policy that every caller outside tests must go through:
   no override. Holds are registry-global today, so one active hold blocks every
   run — recorded honestly, not hidden. An unreadable hold line is a hold (fail
   closed).
-* **WORM** — an unexpired lock the retention machinery knows refuses that run.
+* **WORM** — an unexpired lock refuses that run; an existing but unreadable
+  local WORM database refuses the request rather than pretending no lock exists.
 * **Sealed-capsule immutability** — this code never writes to or removes anything
   inside a capsule directory. A run whose capsule is NovaSeal-sealed (``.seal/``
   present) is additionally refused by default: dropping its index row while the
@@ -39,7 +40,11 @@ from uuid import UUID
 
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.metadata_store.interface import MetadataStore
-from novafabric.server.capsule_delete import active_hold_ids, worm_locked_until
+from novafabric.server.capsule_delete import (
+    DeleteBlockedError,
+    active_hold_ids,
+    worm_locked_until,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +60,7 @@ class RunRefusal:
     """Why one run (or, for a hold, every run) cannot be deleted."""
 
     run_id: str
-    code: str  # legal_hold_active | worm_hold | sealed_capsule
+    code: str  # legal_hold_active | worm_hold | worm_state_unavailable | sealed_capsule
     details: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -126,7 +131,11 @@ def check_runs_deletable(
                 RunRefusal(name, "legal_hold_active", {"hold_ids": holds[:3], "count": len(holds)})
             )
             continue  # a hold is decisive; no need to also report the lesser reasons
-        locked = worm_locked_until(capsule_dir, name)
+        try:
+            locked = worm_locked_until(capsule_dir, name)
+        except DeleteBlockedError as exc:
+            refusals.append(RunRefusal(name, exc.code, dict(exc.details)))
+            continue
         if locked is not None:
             refusals.append(RunRefusal(name, "worm_hold", {"locked_until": locked.isoformat()}))
             continue
