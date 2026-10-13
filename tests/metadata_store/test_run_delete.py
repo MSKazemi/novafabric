@@ -316,6 +316,32 @@ def test_worm_lock_refuses_only_when_a_run_is_locked_and_blocks_whole_request(
     assert store.lookup_run(free, TENANT) is not None  # the free sibling was NOT deleted
 
 
+
+def test_corrupt_worm_db_blocks_index_deletion_and_writes_refusal_audit(
+    store: SQLiteMetadataStore, capsule_dir: Path, audit: AuditLog
+) -> None:
+    ids = _seed(store, n=2)
+    reg = capsule_dir.parent / "registries" / "main"
+    reg.mkdir(parents=True)
+    (reg / "worm.db").write_bytes(b"not a sqlite database")
+
+    with pytest.raises(RunDeleteRefusedError) as ei:
+        delete_runs(
+            store, TENANT, ids, capsule_dir=capsule_dir, actor="a", audit_log=audit
+        )
+    assert [(r.run_id, r.code) for r in ei.value.refusals] == [
+        (str(rid), "worm_state_unavailable") for rid in ids
+    ]
+    assert _rows(store, "runs") == 2
+    assert _rows(store, "signatures") == 2
+    events = _audit_events(audit)
+    assert [e["event_type"] for e in events] == [
+        AuditEventType.RUN_INDEX_DELETE_REFUSED.value
+    ]
+    assert len(events[0]["details"]["refusals"]) == 2
+
+
+
 def test_sealed_capsule_refused_by_default(
     store: SQLiteMetadataStore, capsule_dir: Path, audit: AuditLog
 ) -> None:
