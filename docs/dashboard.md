@@ -431,8 +431,8 @@ A short list, for completeness — the dashboard is not strictly a subset:
   | Scope | Covers | ADR-0027 layer |
   |---|---|---|
   | `read` | every read-only endpoint — runs, lineage, evidence, compliance reads, reports, exports, `/metrics` | Layer A |
-  | `operate` | bounded, reversible mutations — register, promote, score, hold, incident, ingest | Layer B |
-  | `admin` | irreversible or privilege-affecting — capsule/run deletion, PII erase, seal bypass, signing, key ratchet, role and token management, replay that spawns user code | Layer C |
+  | `operate` | bounded, reversible mutations — register, promote, score, placing a hold, incident, ingest | Layer B |
+  | `admin` | irreversible or privilege-affecting — capsule/run deletion, releasing a legal hold, PII erase, seal bypass, signing, key ratchet, role and token management, replay that spawns user code | Layer C |
   | `audit` | everything `read` covers **plus** the audit trail and recorded policy decisions — and **never** `operate` or `admin`, at any level | orthogonal |
 
   `admin` ⊇ `operate` ⊇ `read`, and `admin` also reaches `audit` (the same super-role rule `nova server`'s RBAC already applies). `audit` sits **outside** the chain on purpose: the persona must see more evidence than an ordinary reader — including who did what — while being structurally incapable of changing anything.

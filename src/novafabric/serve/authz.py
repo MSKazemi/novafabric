@@ -189,7 +189,7 @@ def satisfies(held: Scope, required: Scope) -> bool:
 # Every HTTP route this app can mount, keyed by ``(method, path_template)`` —
 # the template exactly as FastAPI reports it on ``request.scope["route"].path``,
 # router prefixes included. 225 entries at the time of writing: 151 ``read``,
-# 30 ``admin``, 32 ``operate``, 7 ``public``, 5 ``audit``.
+# 31 ``admin``, 31 ``operate``, 7 ``public``, 5 ``audit``.
 #
 # How a route earned its classification, so the next person can apply the same
 # rule instead of guessing:
@@ -310,7 +310,8 @@ ROUTE_SCOPES: Final[dict[tuple[str, str], Scope]] = {
     ("GET", "/api/health"): Scope.public,
     ("GET", "/api/holds"): Scope.read,
     ("POST", "/api/holds"): Scope.operate,
-    ("POST", "/api/holds/{hold_id}/release"): Scope.operate,
+    # Release is admin (ADR-0031 §3): once a delete follows it, it is not reversible.
+    ("POST", "/api/holds/{hold_id}/release"): Scope.admin,
     ("GET", "/api/incidents"): Scope.read,
     ("POST", "/api/incidents"): Scope.operate,
     ("GET", "/api/incidents/{incident_id}"): Scope.read,

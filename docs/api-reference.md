@@ -12,8 +12,8 @@ enforced by a single declarative table (`src/novafabric/serve/authz.py`):
 | Scope | Reaches | ADR-0027 layer |
 |---|---|---|
 | `read` | every read-only endpoint, **including the `POST` routes that only compute and return** — `/api/query`, `/api/policy/check`, `/api/mcp/scan`, `/api/kg/blast-radius`, and the whole `/api/compliance/export/*` family | Layer A |
-| `operate` | bounded, reversible mutations — register, promote, score, hold, incident, ingest | Layer B |
-| `admin` | irreversible or privilege-affecting — capsule/run deletion, PII erase, seal bypass, signing, key ratchet, role and token management, replay that spawns user code | Layer C |
+| `operate` | bounded, reversible mutations — register, promote, score, placing a hold, incident, ingest | Layer B |
+| `admin` | irreversible or privilege-affecting — capsule/run deletion, releasing a legal hold, PII erase, seal bypass, signing, key ratchet, role and token management, replay that spawns user code | Layer C |
 | `audit` | everything `read` reaches **plus** `GET /api/audit`, `GET /api/reports/dashboard-audit`, `GET /api/reports/policy-audit`, `GET /api/policy/recent-decisions`, `GET /v1/kg/audit` — and **never** `operate` or `admin` | orthogonal |
 
 `admin` ⊇ `operate` ⊇ `read`, and `admin` also reaches `audit`. Insufficient scope returns
