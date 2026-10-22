@@ -138,6 +138,13 @@ async def list_assets(
     response_model=None,
     operation_id="createAsset",
     summary="Register an asset from a YAML spec",
+    description=(
+        "Registers a new asset version. It always enters as `development`; a spec that "
+        "declares any other `status` is refused with 422 "
+        "`registration_status_not_allowed` (move it with the promote route, which runs "
+        "the promotion gates). A version that was ever in production cannot be "
+        "registered again (409)."
+    ),
     responses={
         201: {"model": AssetDetail, "description": "The registered asset."},
         **error_responses(400, 401, 403, 409),
@@ -152,7 +159,11 @@ async def create_asset(
     if not spec_yaml:
         raise BadRequestError("spec_yaml is required")
 
-    from novafabric.registry.service import DuplicateAssetError, register_asset
+    from novafabric.registry.service import (
+        DuplicateAssetError,
+        RegistrationStatusError,
+        register_asset,
+    )
     from novafabric.spec.validator import SpecValidationError, validate_spec
 
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
@@ -166,7 +177,11 @@ async def create_asset(
             raise ValidationError(f"spec validation failed: {exc}")
 
         try:
-            result = register_asset(spec, tmp_path, db_path=db_path)
+            result = register_asset(
+                spec, tmp_path, db_path=db_path, actor=f"server:{_auth.subject}"
+            )
+        except RegistrationStatusError as exc:
+            raise ValidationError(str(exc), code="registration_status_not_allowed")
         except DuplicateAssetError as exc:
             raise ConflictError(str(exc))
     finally:

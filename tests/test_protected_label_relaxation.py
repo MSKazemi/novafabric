@@ -191,6 +191,54 @@ def test_the_maker_cannot_approve_their_own_relaxation(env: Env) -> None:
     assert env.protection()["protected"] is True
 
 
+def test_a_stored_maker_approval_is_never_counted(env: Env) -> None:
+    """The quorum count itself enforces SoD, not only the up-front self-approval check.
+
+    ``approve_protection_change`` refuses a maker who tries to approve, so the only way
+    a maker's own approval reaches the store is around that check (an older code path,
+    a direct write, a restored database). It verifies against the trust list (alice is
+    bound as approver too), so only the separation-of-duties test in
+    ``_verified_change_approvers`` keeps it out of the quorum.
+    """
+    import sqlite3
+
+    env.bind(
+        [("alice", ["proposer", "approver"]), ("bob", ["approver"]), ("carol", ["approver"])]
+    )
+    change = pl.propose_protection_change(
+        "triage", "production", protected=False, identity="alice", db_path=env.db
+    )
+    key, fp = kr.ensure_keypair("alice", create=False)
+    approved_at = "2026-10-22T00:00:00+00:00"
+    sig = kr.sign_payload(
+        key,
+        pl.protection_approval_payload(
+            change["change_id"], "approve", "alice", approved_at, change["proposer_signature"]
+        ),
+    )
+    conn = sqlite3.connect(env.db)
+    conn.execute(
+        "INSERT INTO asset_label_protection_change_approvals (approval_id, change_id, "
+        "approver, approver_key_fp, approver_sig, decision, note, approved_at) "
+        "VALUES ('maker-self', ?, 'alice', ?, ?, 'approve', NULL, ?)",
+        (change["change_id"], fp, sig, approved_at),
+    )
+    conn.commit()
+    conn.close()
+
+    record, detail = pl.approve_protection_change(
+        "triage", "production", change["change_id"], identity="bob", db_path=env.db
+    )
+    assert detail == "pending (1/2 distinct approvals)"
+    assert record["state"] == "pending"
+    assert env.protection()["protected"] is True
+    record, detail = pl.approve_protection_change(
+        "triage", "production", change["change_id"], identity="carol", db_path=env.db
+    )
+    assert detail == "applied"
+    assert env.protection()["protected"] is False
+
+
 def test_an_unlisted_checker_does_not_count(env: Env) -> None:
     change = pl.propose_protection_change(
         "triage", "production", protected=False, identity="alice", db_path=env.db

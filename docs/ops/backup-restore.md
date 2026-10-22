@@ -214,6 +214,18 @@ Governed by [ADR-0181](../decisions.md)
   cannot be resurrected from an older backup) → the §1.5 verification chain
   (doctor storage check + `seal log verify` when a Merkle log exists). The
   restore reports ok **only when verification passes**; exit 1 otherwise.
+
+  The replay destroys a key only on evidence it can check (works today). A
+  decision log whose audit hash chain does not verify contributes no record, and
+  the step fails. The chain is unkeyed: it catches an edited or appended line,
+  not a writer who rewrites the whole chain. A record's erasure receipt must be a
+  regular file named `<item_id>.receipt.json` for that record; a symbolic link
+  or another item's receipt makes the record unresolvable, and the step fails.
+  **Legal holds win.** If any hold is active, in the deployment's hold store or
+  in the restored home's `registries/`, no resurrected key is destroyed and the
+  step fails, naming the holds. Destruction cannot be undone, and only a person
+  can decide what the hold requires. Release the hold, or establish that it does
+  not cover those subjects, then restore again.
 - `nova restore <set.tar.gz> --dsn <target> [--force] [--home PATH]` —
   **pg-dump profile (experimental, ADR-0217)**: the automated §1.2 restore,
   auto-detected from the manifest — verified set, pre-flight + safety dump,

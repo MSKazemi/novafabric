@@ -25,7 +25,12 @@ from novafabric.registry.signers import (
     load_signer_trust_list,
     proposal_payload,
 )
-from novafabric.registry.store import get_connection, init_schema, record_status_change
+from novafabric.registry.store import (
+    get_connection,
+    init_schema,
+    record_status_change,
+    spec_digest,
+)
 from novafabric.spec.models import AssetStatus, AssetType, BaseAssetSpec
 
 _VALID_TRANSITIONS: dict[AssetStatus, set[AssetStatus]] = {
@@ -59,8 +64,26 @@ _AGENT_GATE_STATUSES = {AssetStatus.staging, AssetStatus.production}
 PROTECTED_STAGES: frozenset[AssetStatus] = frozenset({AssetStatus.production})
 
 
+#: The one lifecycle status a new registration may declare. Every other status is
+#: reached through ``nova promote`` / maker-checker / rollback, which run the gates
+#: and write ``asset_status_history`` (ADR-0312).
+REGISTRATION_STATUS: AssetStatus = AssetStatus.development
+
+
 class DuplicateAssetError(Exception):
     pass
+
+
+class VersionReuseError(DuplicateAssetError):
+    """The name@version was in production before; its number can never be reused.
+
+    A subclass of :class:`DuplicateAssetError` so every surface that already refuses a
+    duplicate (exit 1, HTTP 409) refuses this the same way.
+    """
+
+
+class RegistrationStatusError(Exception):
+    """A spec asks to be registered directly into a gated lifecycle status."""
 
 
 class AssetNotFoundError(Exception):
@@ -105,11 +128,69 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return d
 
 
+def _require_registration_status(spec: BaseAssetSpec) -> None:
+    """Refuse a spec that declares any status other than :data:`REGISTRATION_STATUS`.
+
+    Registration is not a promotion: it runs no ``promote`` / ``promote_direct``
+    policy decision, no eval gate and no maker-checker. A spec declaring
+    ``status: production`` used to be inserted as-is, so ``nova register`` and both
+    HTTP registration routes put an unreviewed asset straight into production with
+    no history row and no promotion audit entry. Refusing (rather than silently
+    registering it as ``development``) keeps the author's intent visible.
+    """
+    if spec.status is REGISTRATION_STATUS:
+        return
+    raise RegistrationStatusError(
+        f"Cannot register '{spec.name}@{spec.version}' with status "
+        f"'{spec.status.value}': a new asset always enters the registry as "
+        f"'{REGISTRATION_STATUS.value}'. Remove the `status:` field (or set it to "
+        f"{REGISTRATION_STATUS.value}), register, then move it with `nova promote` "
+        "(maker-checker or a gated direct promotion), which runs the promotion gates "
+        "and records the change (ADR-0312)."
+    )
+
+
+def _require_unused_production_version(
+    conn: sqlite3.Connection, name: str, version: str
+) -> None:
+    """Refuse to register a name@version that the status history shows in production.
+
+    A production version number is a reference other systems pin; registering new
+    content under it after an ``unregister`` would silently change what that pin
+    means, and used to let the new content borrow the old row's rollback evidence.
+    """
+    seen = conn.execute(
+        "SELECT 1 FROM asset_status_history "
+        "WHERE asset_name = ? AND version = ? AND to_status = ? LIMIT 1",
+        (name, version, AssetStatus.production.value),
+    ).fetchone()
+    if seen:
+        raise VersionReuseError(
+            f"Asset '{name}@{version}' was in production before (registry status "
+            "history); a version that has been in production can never be registered "
+            "again. Register the new content as a new version."
+        )
+
+
 def register_asset(
     spec: BaseAssetSpec,
     spec_path: Path,
     db_path: Path | None = None,
+    *,
+    actor: str = "",
 ) -> dict[str, Any]:
+    """Register *spec* as a new asset version, always in ``development``.
+
+    Writes the assets row and a ``register`` row in ``asset_status_history`` bound to
+    the new asset id and spec digest, in one transaction. *actor* is recorded as the
+    history row's ``changed_by``.
+
+    Raises:
+        RegistrationStatusError: the spec declares a status other than development.
+        VersionReuseError: name@version was in production before.
+        DuplicateAssetError: name@version is already registered.
+    """
+    _require_registration_status(spec)
     conn = get_connection(db_path)
     init_schema(conn)
     try:
@@ -121,10 +202,12 @@ def register_asset(
             raise DuplicateAssetError(
                 f"Asset '{spec.name}@{spec.version}' is already registered."
             )
+        _require_unused_production_version(conn, spec.name, spec.version)
 
         asset_id = str(uuid.uuid4())
         git_sha = get_head_sha()
         spec_json = spec.model_dump_json()
+        created_at = _now()
 
         conn.execute(
             """
@@ -138,11 +221,23 @@ def register_asset(
                 spec.name,
                 spec.asset_type.value,
                 spec.version,
-                spec.status.value,
+                REGISTRATION_STATUS.value,
                 spec_json,
                 git_sha,
-                _now(),
+                created_at,
             ),
+        )
+        record_status_change(
+            conn,
+            asset_name=spec.name,
+            version=spec.version,
+            from_status=None,
+            to_status=REGISTRATION_STATUS.value,
+            changed_at=created_at,
+            changed_by=actor,
+            via="register",
+            asset_id=asset_id,
+            spec_sha256=spec_digest(spec_json),
         )
         conn.commit()
         row = conn.execute(
@@ -575,6 +670,8 @@ def promote_asset(
             changed_at=promoted_at,
             changed_by=actor,
             via="promote",
+            asset_id=row["id"],
+            spec_sha256=spec_digest(row["spec_json"]),
         )
         conn.commit()
         updated = conn.execute(
@@ -935,11 +1032,14 @@ def approve_asset(
 def production_history_versions(
     name: str, db_path: Path | None = None
 ) -> list[str]:
-    """Versions of *name* the registry recorded entering ``production``, newest first.
+    """Registered versions of *name* with production history of their own, newest first.
 
     Read from the append-only ``asset_status_history`` table (each version once).
-    This is the evidence :func:`rollback_asset` needs to restore a version without
-    the ADR-0312 ``promote_direct`` gate.
+    Only a history row bound to the version's *current* registration counts (see
+    :func:`_history_binds`), so a version number that was unregistered and
+    registered again with new content is not listed. This is the evidence
+    :func:`rollback_asset` needs to restore a version without the ADR-0312
+    ``promote_direct`` gate.
     """
     conn = get_connection(db_path)
     init_schema(conn)
@@ -949,16 +1049,54 @@ def production_history_versions(
         conn.close()
 
 
+def _parse_utc(ts: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _history_binds(history: sqlite3.Row, asset: sqlite3.Row) -> bool:
+    """Whether a status-history row is evidence about this exact registration.
+
+    A bound row must name the asset row's id **and** the SHA-256 of its current
+    ``spec_json``: name@version alone is reusable (unregister, register again), and
+    keying evidence by it let new content borrow the old version's production
+    history. A legacy row (written before the binding columns, ``asset_id`` NULL)
+    counts only if it was written no earlier than this registration: name@version is
+    unique in ``assets``, so such a row cannot be about an earlier, since-deleted row.
+    An unparseable timestamp is not evidence.
+    """
+    if history["asset_id"] is not None:
+        return bool(
+            history["asset_id"] == asset["id"]
+            and history["spec_sha256"] == spec_digest(asset["spec_json"])
+        )
+    changed = _parse_utc(str(history["changed_at"]))
+    created = _parse_utc(str(asset["created_at"]))
+    return changed is not None and created is not None and changed >= created
+
+
 def _production_history(conn: sqlite3.Connection, name: str) -> list[str]:
-    rows = conn.execute(
-        """
-        SELECT version, MAX(id) AS last_id FROM asset_status_history
-        WHERE asset_name = ? AND to_status = ?
-        GROUP BY version ORDER BY last_id DESC
-        """,
+    assets = {
+        str(a["version"]): a
+        for a in conn.execute(
+            "SELECT id, version, spec_json, created_at FROM assets WHERE name = ?", (name,)
+        )
+    }
+    versions: list[str] = []
+    for h in conn.execute(
+        "SELECT version, asset_id, spec_sha256, changed_at FROM asset_status_history "
+        "WHERE asset_name = ? AND to_status = ? ORDER BY id DESC",
         (name, AssetStatus.production.value),
-    ).fetchall()
-    return [str(r["version"]) for r in rows]
+    ):
+        version = str(h["version"])
+        asset = assets.get(version)
+        if version in versions or asset is None or not _history_binds(h, asset):
+            continue
+        versions.append(version)
+    return versions
 
 
 def rollback_asset(
@@ -1142,6 +1280,8 @@ def rollback_asset(
                 changed_at=rolled_back_at,
                 changed_by=actor,
                 via="rollback",
+                asset_id=prod_row["id"],
+                spec_sha256=spec_digest(prod_row["spec_json"]),
             )
             record_status_change(
                 conn,
@@ -1152,6 +1292,8 @@ def rollback_asset(
                 changed_at=rolled_back_at,
                 changed_by=actor,
                 via=f"rollback:{gate}",
+                asset_id=target_row["id"],
+                spec_sha256=spec_digest(target_row["spec_json"]),
             )
             conn.commit()
         except Exception:

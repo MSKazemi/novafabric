@@ -269,6 +269,49 @@ def test_unverifiable_stored_approval_does_not_count(env: Env) -> None:
     assert env.target() == "2"
 
 
+def test_a_stored_maker_approval_of_a_move_is_never_counted(env: Env) -> None:
+    """SoD holds in the quorum count, not only in the up-front self-approval check.
+
+    The maker's own approval is in the store (an older code path, a direct write, a
+    restored database) and verifies: alice is bound as approver too. Only the
+    separation-of-duties test in ``_verified_approvers`` keeps it out of the quorum.
+    """
+    protect_label("triage", "production", required_approvals=2, db_path=env.db)
+    env.bind([
+        ("alice", "alice", ["proposer", "approver"]),
+        ("bob", "bob", ["approver"]),
+        ("carol", "carol", ["approver"]),
+    ])
+    move = _propose(env)
+    key, fp = kr.ensure_keypair("alice", create=False)
+    approved_at = "2026-10-22T00:00:00+00:00"
+    from novafabric.registry.protected_labels import approval_payload
+
+    sig = kr.sign_payload(
+        key, approval_payload(move["move_id"], "approve", "alice", approved_at)
+    )
+    conn = sqlite3.connect(env.db)
+    conn.execute(
+        "INSERT INTO asset_label_move_approvals (approval_id, move_id, approver, "
+        "approver_key_fp, approver_sig, decision, note, approved_at) "
+        "VALUES ('maker-self', ?, 'alice', ?, ?, 'approve', NULL, ?)",
+        (move["move_id"], fp, sig, approved_at),
+    )
+    conn.commit()
+    conn.close()
+
+    record, detail = approve_move(
+        "triage", "production", move["move_id"], identity="bob", db_path=env.db
+    )
+    assert detail == "pending (1/2 distinct approvals)"
+    assert env.target() == "1"
+    record, detail = approve_move(
+        "triage", "production", move["move_id"], identity="carol", db_path=env.db
+    )
+    assert detail == "applied"
+    assert env.target() == "2"
+
+
 def test_trusted_checker_can_reject_an_unverifiable_legacy_move(env: Env) -> None:
     """A move proposed before the fix (untrusted maker key) must not block the label forever."""
     env.bind([("eve", "eve", ["proposer"]), ("bob", "bob", ["approver"])])

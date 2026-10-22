@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import threading
 from pathlib import Path
@@ -167,8 +168,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_eval_results_run_at ON eval_results(run_at DESC);
         """
     )
-    _ensure_additive_columns(conn)
     _ensure_status_history(conn)
+    _ensure_additive_columns(conn)
     # Scale-S1: runs_cache — indexed capsule summaries (replaces O(N) disk scan)
     from novafabric.registry.runs_cache import ensure_runs_cache  # noqa: PLC0415
     ensure_runs_cache(conn)
@@ -181,6 +182,11 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # ADR-0312: signature scheme a proposal was verified under. NULL = stored before
     # signatures were verified (reported as "unverified").
     ("promotion_proposals", "signoff_scheme", "TEXT"),
+    # Rollback evidence is bound to the registration it was written for, not to a
+    # reusable name@version: the asset row id and the SHA-256 of its spec_json.
+    # NULL = written before the binding existed (see rollback's legacy rule).
+    ("asset_status_history", "asset_id", "TEXT"),
+    ("asset_status_history", "spec_sha256", "TEXT"),
 )
 
 
@@ -196,7 +202,9 @@ CREATE TABLE IF NOT EXISTS asset_status_history (
     to_status    TEXT NOT NULL,
     changed_at   TEXT NOT NULL,
     changed_by   TEXT NOT NULL,
-    via          TEXT NOT NULL
+    via          TEXT NOT NULL,
+    asset_id     TEXT,
+    spec_sha256  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_asset_status_history_name
     ON asset_status_history(asset_name, to_status, changed_at DESC);
@@ -224,16 +232,29 @@ def _ensure_status_history(conn: sqlite3.Connection) -> None:
     ).fetchone()
     conn.executescript(_STATUS_HISTORY_SQL)
     if not existed:
-        conn.execute(
-            """
-            INSERT INTO asset_status_history
-                (asset_name, version, from_status, to_status, changed_at, changed_by, via)
-            SELECT name, version, NULL, 'production',
-                   COALESCE(promoted_at, created_at), COALESCE(promoted_by, ''), 'backfill'
-            FROM assets WHERE status = 'production'
-            """
-        )
+        # Positional access: init_schema may be handed a connection without Row factory.
+        for asset_id, name, version, spec_json, at, by in conn.execute(
+            "SELECT id, name, version, spec_json, COALESCE(promoted_at, created_at), "
+            "COALESCE(promoted_by, '') FROM assets WHERE status = 'production'"
+        ).fetchall():
+            record_status_change(
+                conn,
+                asset_name=name,
+                version=version,
+                from_status=None,
+                to_status="production",
+                changed_at=at,
+                changed_by=by,
+                via="backfill",
+                asset_id=asset_id,
+                spec_sha256=spec_digest(spec_json),
+            )
     conn.commit()
+
+
+def spec_digest(spec_json: str) -> str:
+    """SHA-256 (hex) of an asset row's stored ``spec_json`` — the content a history row binds."""
+    return hashlib.sha256(spec_json.encode("utf-8")).hexdigest()
 
 
 def record_status_change(
@@ -246,15 +267,27 @@ def record_status_change(
     changed_at: str,
     changed_by: str,
     via: str,
+    asset_id: str,
+    spec_sha256: str,
 ) -> None:
-    """Append one lifecycle transition. The caller commits (same transaction)."""
+    """Append one lifecycle transition. The caller commits (same transaction).
+
+    *asset_id* and *spec_sha256* bind the row to one registration: the assets row id
+    and :func:`spec_digest` of its ``spec_json``. They are required so that no new
+    writer can produce an unbound row, which a re-registration of the same
+    name@version could otherwise borrow as "previously in production".
+    """
     conn.execute(
         """
         INSERT INTO asset_status_history
-            (asset_name, version, from_status, to_status, changed_at, changed_by, via)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (asset_name, version, from_status, to_status, changed_at, changed_by, via,
+             asset_id, spec_sha256)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (asset_name, version, from_status, to_status, changed_at, changed_by, via),
+        (
+            asset_name, version, from_status, to_status, changed_at, changed_by, via,
+            asset_id, spec_sha256,
+        ),
     )
 
 

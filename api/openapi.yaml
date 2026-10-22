@@ -1338,6 +1338,10 @@ paths:
       tags:
       - assets
     post:
+      description: Registers a new asset version. It always enters as `development`;
+        a spec that declares any other `status` is refused with 422 `registration_status_not_allowed`
+        (move it with the promote route, which runs the promotion gates). A version
+        that was ever in production cannot be registered again (409).
       operationId: createAsset
       requestBody:
         content:

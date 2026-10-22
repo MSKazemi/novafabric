@@ -2907,7 +2907,11 @@ def create_app(
             )
         import tempfile
 
-        from novafabric.registry.service import DuplicateAssetError, register_asset
+        from novafabric.registry.service import (
+            DuplicateAssetError,
+            RegistrationStatusError,
+            register_asset,
+        )
         from novafabric.spec.validator import SpecValidationError, validate_spec
 
         # Write the YAML to a tmp file so the existing validator (which expects a Path) can read it.
@@ -2930,8 +2934,12 @@ def create_app(
                 raise HTTPException(status_code=422, detail=f"spec validation failed: {e}")
 
             try:
-                result = register_asset(spec, tmp_path, db_path=db_path)
-            except DuplicateAssetError as e:
+                result = register_asset(
+                    spec, tmp_path, db_path=db_path, actor=f"serve:{actor_fp}"
+                )
+            except (DuplicateAssetError, RegistrationStatusError) as e:
+                # A declared non-development status is refused, never downgraded
+                # (ADR-0312): registration runs no promotion gate.
                 audit.append(
                     action="register_asset",
                     args={
@@ -2943,7 +2951,8 @@ def create_app(
                     result="error",
                     error=str(e),
                 )
-                raise HTTPException(status_code=409, detail=str(e))
+                code = 422 if isinstance(e, RegistrationStatusError) else 409
+                raise HTTPException(status_code=code, detail=str(e))
         finally:
             try:
                 tmp_path.unlink()
@@ -2959,11 +2968,16 @@ def create_app(
         )
         return {"ok": True, "asset": _strip_spec(result)}
 
-    @app.post("/api/assets/register-from-yaml", dependencies=[Depends(verify_token)])
+    @app.post("/api/assets/register-from-yaml")
     async def register_asset_from_yaml_endpoint(
         body: dict[str, Any],
+        actor_fp: str = Depends(verify_token),
     ) -> dict[str, Any]:
-        """Register an asset from a YAML spec string (used by suggest-register panel)."""
+        """Register an asset from a YAML spec string (used by suggest-register panel).
+
+        Same rules as ``POST /api/assets``: the asset enters as ``development``; a spec
+        declaring any other status is refused (``ok: false``).
+        """
         spec_yaml = body.get("spec_yaml", "")
         if not spec_yaml.strip():
             raise HTTPException(status_code=422, detail="spec_yaml required")
@@ -2978,7 +2992,9 @@ def create_app(
                 tmp = Path(f.name)
             try:
                 spec = validate_spec(tmp)
-                register_asset(spec, spec_path=tmp, db_path=db_path)
+                register_asset(
+                    spec, spec_path=tmp, db_path=db_path, actor=f"serve:{actor_fp}"
+                )
                 return {"ok": True, "name": spec.name}
             finally:
                 tmp.unlink(missing_ok=True)
@@ -7750,7 +7766,19 @@ def create_app(
         if not subject_id:
             raise HTTPException(status_code=422, detail="subject_id is required")
         capsule_ids: list[str] = body.get("capsule_ids", []) or []
-        retention_months: int = int(body.get("retention_months", 6) or 6)
+        from novafabric.pii.erasure_queue import (  # noqa: PLC0415
+            DEFAULT_RETENTION_MONTHS,
+            parse_retention_months,
+        )
+
+        try:
+            # Typed and bounded: a negative or coerced value used to put the
+            # Art.17(3)(b) window in the past, so erasure was never deferred.
+            retention_months = parse_retention_months(
+                body.get("retention_months"), default=DEFAULT_RETENTION_MONTHS
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             from novafabric.pii.dek.store import (  # noqa: PLC0415
                 ErasureReceipt,

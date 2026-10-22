@@ -5379,6 +5379,20 @@ Environment:
 
 Register an asset from a YAML spec file. Exits 0 on success, 1 on validation or duplicate error.
 
+**A new asset always enters the registry as `development` (works today).** A spec that
+declares any other `status:` (`validated`, `pending_approval`, `staging`, `production`,
+`archived`) is refused with exit 1 and nothing is written: registration runs no promotion
+gate, so it may not place an asset in a gated status. Register, then move the asset with
+`nova promote` (maker-checker, or `nova promote direct` with its ADR-0312 gate). The same
+rule applies to `POST /api/assets` and `POST /api/assets/register-from-yaml` on
+`nova serve` (422 / `ok: false`) and to `POST /v0/assets` on `nova server` (422
+`registration_status_not_allowed`).
+
+**A version that was ever in production can never be registered again** (exit 1, like a
+duplicate), even after `nova unregister`: other systems pin that version, and new content
+under the same number would silently change what the pin means. Register the new content
+as a new version. Every registration writes a `register` row to the status history.
+
 ### nova suggest-register [\<capsule-ref\>] [OPTIONS]
 
 Analyze captured run capsules and suggest assets to register. Inverts the onboarding workflow —
@@ -6763,6 +6777,13 @@ explicitly allows it, exactly like `nova promote direct`, and it must also pass 
 versions with production history; it never falls back to "some other version". A registry
 created before the history table records its current production versions when first opened
 by this release; versions archived before that have no history and take the gated path.
+
+History is evidence only for the registration it was written for. Each history row
+records the asset's row id and the SHA-256 of its stored spec, and counts only if both
+match the version as it is registered now. A row re-created under the same name@version
+(by a restore, a migration or a direct database write), even with identical content, has
+no production history of its own and takes the gated path. History rows written before
+these columns existed count only if they are no older than the current registration.
 
 Options:
 - `--to <version>` — target an explicit rollback version instead of auto-discovery.

@@ -144,21 +144,24 @@ def _populate_home(home: Path, audit_log: Path, receipt_dir: Path) -> dict[str, 
     (home / "dashboard-audit.jsonl").write_text('{"mutation": "none"}\n')
 
     # 10. Audit log with an APPLIED crypto-shred for subject-2.
-    receipt = receipt_dir / "receipt-s2.json"
-    receipt.write_text(json.dumps({"subject_id": "subject-2"}))
-    audit_log.parent.mkdir(parents=True, exist_ok=True)
-    audit_log.write_text(
-        json.dumps(
-            {
-                "event_type": "retention.action",
-                "details": {
-                    "action": "crypto-shred",
-                    "outcome": "applied",
-                    "erasure_receipt_ref": str(receipt),
-                },
-            }
-        )
-        + "\n"
+    # Written the way the retention executor writes it: a hash-chained audit
+    # entry, and a receipt that names the shredded item (restore checks both).
+    from novafabric.audit import AuditEventType, AuditLog
+
+    receipt = receipt_dir / "run-s2.receipt.json"
+    receipt.write_text(
+        json.dumps({"subject_id": "subject-2", "capsule_ids_affected": ["run-s2"]})
+    )
+    AuditLog(audit_log).append(
+        event_type=AuditEventType.RETENTION_ACTION,
+        actor="retention-sweep",
+        resource_id="run-s2",
+        details={
+            "action": "crypto-shred",
+            "outcome": "applied",
+            "item_id": "run-s2",
+            "erasure_receipt_ref": str(receipt),
+        },
     )
     return facts
 
