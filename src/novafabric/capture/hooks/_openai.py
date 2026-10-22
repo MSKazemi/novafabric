@@ -29,6 +29,7 @@ from novafabric.capture.hooks._sdk_streams import (
     RESPONSE_STATUS_EXT,
     STREAM_ERROR_EVENT_EXT,
     AsyncRecordingStream,
+    CaptureBinding,
     OpenAIChatStreamAccumulator,
     OpenAIResponsesStreamAccumulator,
     RecordingStream,
@@ -158,6 +159,9 @@ class OpenAIHook:
         #: The sync ``chat.completions.create`` original (kept for callers).
         self._original: Any = None
         self._patched: list[tuple[Any, str, Any]] = []
+        #: Set by :meth:`uninstall`: the capture this hook served has ended, so a
+        #: stream it opened outside any capture scope records nothing after it.
+        self._torn_down = False
 
     def install(self) -> None:
         for module_name, class_name, attr, surface, is_async in _TARGETS:
@@ -201,7 +205,12 @@ class OpenAIHook:
 
         return patched
 
+    def is_live(self) -> bool:
+        """False once :meth:`uninstall` has run (see ``CaptureBinding``)."""
+        return not self._torn_down
+
     def uninstall(self) -> None:
+        self._torn_down = True
         while self._patched:
             owner, attr, original = self._patched.pop()
             try:
@@ -237,6 +246,7 @@ class OpenAIHook:
                 return RecordingStream(
                     response, acc,
                     self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id, acc),
+                    CaptureBinding.capture(self.is_live),
                 )
             return response  # the recording wrapper failed: hand back the raw stream
         with fail_open(_HOOK, MODEL_CALLS_STREAM):
@@ -264,6 +274,7 @@ class OpenAIHook:
                 return AsyncRecordingStream(
                     response, acc,
                     self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id, acc),
+                    CaptureBinding.capture(self.is_live),
                 )
             return response
         with fail_open(_HOOK, MODEL_CALLS_STREAM):

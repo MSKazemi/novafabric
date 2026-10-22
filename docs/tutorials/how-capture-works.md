@@ -166,6 +166,18 @@ back into the next call — the common
 `messages.append(completion.choices[0].message)` pattern — are recorded the way
 the SDK sends them on the wire (`model_dump(mode="json", exclude_unset=True)`).
 
+**A streamed call belongs to the capture that made it (works today).** A
+`stream=True` call is recorded when its stream ends — fully read, `close()`d, its
+`with` block exited, or garbage-collected. That can happen later, in another
+task, or after a second capture has started. The record is bound to the capture
+that was active when the stream was *opened* and is written only into that
+capsule. If that capture has already finished, the record is dropped rather than
+filed into the capture that happens to be running: it is logged once as a
+`WARNING` (`nova_event=capture.stream_record_dropped`, never the prompt) and
+counted against the capture that lost it. When a wire-level hook saw the request,
+its transport record still counts the call once in its own capsule (ADR-0305). Read or close a stream
+before its capture ends if you want its answer recorded.
+
 ---
 
 ## The URL registry — what gets captured

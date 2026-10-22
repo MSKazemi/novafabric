@@ -627,6 +627,32 @@ query. Give the `evidence` field the specific thing that makes the claim true.
 An `unsafe` store must carry a `reason` an operator can act on: it is what `nova serve` prints
 when it refuses to start in multi-tenant mode, and a refusal with no *why* is noise.
 
+### Touching the Postgres tenant context (FR-07 / FR-13)
+
+The Postgres metadata store isolates tenants with row-level security keyed on the
+`app.current_tenant_id` setting, written **only** as `SET LOCAL` inside
+`begin_tenant_context()`'s transaction. A session-scoped write survives the transaction and
+leaks one tenant's context to the next user of a pooled connection. Two guards hold the line
+(**works today**):
+
+- **Static, default-deny** (`tests/metadata_store/test_grep_constraints.py`). Every executable
+  occurrence of a tenant-GUC or RLS primitive — `app.current_tenant_id`, `set_config`,
+  `current_setting`, `FORCE`/`ENABLE ROW LEVEL SECURITY`, a libpq `options=-c …`, `PGOPTIONS` —
+  is a finding unless it is one of the reviewed call sites in `KNOWN_GOOD_SITES`. Matching is
+  case-insensitive and whitespace-tolerant, and sees through concatenation, f-strings and
+  `.format`; comments and docstrings are ignored. Any such primitive outside `metadata_store/`
+  fails FR-13. **Adding a call site — even a correct one — fails until you add it to
+  `KNOWN_GOOD_SITES` with a one-line reason;** that is the review step, not a false positive.
+- **Behavioural** (`tests/metadata_store/test_tenant_guc_behaviour.py`). It drives the real store
+  against a recording connection and checks every statement it *executes*, parameters bound and
+  `psycopg.sql` composition rendered: the only accepted tenant-GUC writes are `SET LOCAL … = '<uuid>'`
+  and `set_config(…, true)`, inside the transaction, with no session options on the connection.
+  A container test pins the checker against a real Postgres.
+
+A static scan cannot be complete — a name assembled at run time from pieces it never sees whole
+can evade it. That is what the behavioural guard is for: route every tenant-GUC write through
+`begin_tenant_context()` so the guard exercises it.
+
 ## Adding a capsule facet
 
 A **facet** is an additive block under `capsule["facets"]` recording one kind of

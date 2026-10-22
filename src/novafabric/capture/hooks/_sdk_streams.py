@@ -17,6 +17,18 @@ The wrappers are transparent proxies: iteration yields the SDK's own chunk
 objects unchanged, and every other attribute is delegated. Folding never raises
 into the workload.
 
+**Attribution.** A stream ends *later* than the call that opened it -- in
+another task, in a garbage-collection pass, or after the capture that made the
+call has finished and another has started. The record therefore binds to the
+capture that was active when the stream was **created** (:class:`CaptureBinding`)
+and is written in a copy of that creation context, so the writer, the recorder
+and the ``record.tool`` boundary all resolve to the capture that made the call,
+never to whichever capture happens to be running when the stream ends. If that
+capture has already ended, the record is dropped and counted
+(:func:`late_stream_records_dropped`, the capture's own drop count, and a
+structured ``capture.stream_record_dropped`` log event): it is never written
+into another capsule and never appended to a finished one.
+
 Accumulators (pure, provider-specific):
 
 * :class:`OpenAIChatStreamAccumulator` -- ``chat.completions.create(stream=True)``
@@ -26,12 +38,18 @@ Accumulators (pure, provider-specific):
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
+import threading
 import time
 import types
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
+
+from novafabric.capture.event_recorder import current_scope_snapshot
+from novafabric.capture.hooks._fail_open import MODEL_CALLS_STREAM
 
 _log = logging.getLogger(__name__)
 
@@ -363,15 +381,112 @@ def stream_error_event_detail(event: Any) -> dict[str, Any] | None:
 #: or None).
 OnStreamDone = Callable[[Any, int, "int | None", bool, "BaseException | None"], None]
 
+#: Answers whether the hook that opened a stream is still installed. Consulted
+#: only when no capture scope was bound at creation (see :class:`CaptureBinding`).
+HookLiveness = Callable[[], bool]
+
+#: Records dropped because the capture that opened their stream had already
+#: ended when the stream did. Process-wide, monotonically increasing.
+_late_drops = 0
+_late_drops_lock = threading.Lock()
+_late_drop_warned = False
+
+
+def late_stream_records_dropped() -> int:
+    """How many streamed records this process dropped because their capture ended.
+
+    Each is a stream that ended -- by iteration, ``close()``, context exit or
+    garbage collection -- after the capture that opened it had finished. Such a
+    record has no capsule it may honestly be written to: the capture that made
+    the call is closed, and every other capsule belongs to a capture that did
+    not make it.
+    """
+    with _late_drops_lock:
+        return _late_drops
+
+
+def _note_late_drop(binding: CaptureBinding) -> None:
+    """Count, log and attribute one dropped late record. Never raises."""
+    global _late_drops, _late_drop_warned
+    try:
+        with _late_drops_lock:
+            _late_drops += 1
+            first = not _late_drop_warned
+            _late_drop_warned = True
+        extra = {
+            "nova_event": "capture.stream_record_dropped",
+            "reason": "capture_ended",
+            "stream": MODEL_CALLS_STREAM,
+        }
+        # Never the payload: the record holds the prompt and the answer.
+        message = ("capture: a streamed model call ended after the capture that "
+                   "made it had finished; its record was dropped, not written "
+                   "into another capsule")
+        if first:
+            _log.warning(message, extra=extra)
+        else:
+            _log.debug(message, extra=extra)
+        # The capture that made the call loses the record: count it there, never
+        # on whichever capture is current now.
+        recorder = getattr(binding.scope, "recorder", None)
+        if recorder is not None:
+            recorder.note_drop(MODEL_CALLS_STREAM)
+    except Exception:  # noqa: BLE001 -- the guard itself must never raise
+        pass
+
+
+@dataclass(frozen=True)
+class CaptureBinding:
+    """The capture a stream belongs to: fixed when the stream is created.
+
+    ``context`` is a copy of the creation context, so the capsule writer, the
+    task-scoped recorder (ADR-0224 D3) and the ``record.tool`` boundary
+    (ADR-0306 D3) resolve exactly as they did when the call was made. ``scope``
+    is the innermost live capture scope at creation, or ``None`` when the
+    stream was opened outside any bound capture (deferred install, a bare
+    thread); its ``live`` flag is flipped by the capture's release in every
+    context at once, which is what makes "has that capture ended?" answerable
+    from wherever the stream ends. Without a scope, ``hook_live`` answers it.
+    """
+
+    context: contextvars.Context
+    scope: Any
+    hook_live: HookLiveness | None = None
+
+    @classmethod
+    def capture(cls, hook_live: HookLiveness | None = None) -> CaptureBinding:
+        """Bind to the capture active in the calling context. Never raises."""
+        return cls(contextvars.copy_context(), current_scope_snapshot(), hook_live)
+
+    def is_live(self) -> bool:
+        """True while the capture that opened the stream is still running."""
+        if self.scope is not None:
+            return bool(self.scope.live)
+        if self.hook_live is not None:
+            return bool(self.hook_live())
+        return True
+
+    def run(self, fn: Callable[..., None], *args: Any) -> None:
+        """Call *fn* in a fresh copy of the creation context.
+
+        A copy, because one :class:`~contextvars.Context` cannot be entered
+        twice at once and a stream may end on any thread.
+        """
+        self.context.copy().run(fn, *args)
+
 
 class _StreamState:
-    def __init__(self, accumulator: Any, on_done: OnStreamDone) -> None:
+    def __init__(
+        self, accumulator: Any, on_done: OnStreamDone, binding: CaptureBinding | None = None,
+    ) -> None:
         self._acc = accumulator
         self._on_done = on_done
+        self._binding = binding if binding is not None else CaptureBinding.capture()
         self._t0 = time.monotonic()
         self._first_ms: int | None = None
         self._count = 0
         self._done = False
+        self._done_lock = threading.Lock()
 
     def add(self, item: Any) -> None:
         if self._first_ms is None:
@@ -383,11 +498,18 @@ class _StreamState:
             _log.debug("novafabric: could not fold a stream chunk", exc_info=True)
 
     def finish(self, complete: bool, error: BaseException | None = None) -> None:
-        if self._done:
-            return
-        self._done = True
+        with self._done_lock:
+            if self._done:
+                return
+            self._done = True
         try:
-            self._on_done(self._acc.response(), self._count, self._first_ms, complete, error)
+            if not self._binding.is_live():
+                _note_late_drop(self._binding)
+                return
+            self._binding.run(
+                self._on_done, self._acc.response(), self._count, self._first_ms,
+                complete, error,
+            )
         except Exception:  # noqa: BLE001 -- capture must never fail the workload
             _log.debug("novafabric: could not record a streamed response", exc_info=True)
 
@@ -395,10 +517,14 @@ class _StreamState:
 class RecordingStream:
     """Transparent proxy over a sync SDK stream that records it when it ends."""
 
-    def __init__(self, inner: Any, accumulator: Any, on_done: OnStreamDone) -> None:
+    def __init__(
+        self, inner: Any, accumulator: Any, on_done: OnStreamDone,
+        binding: CaptureBinding | None = None,
+    ) -> None:
         self._nf_inner = inner
         self._nf_iter: Any = None
-        self._nf_state = _StreamState(accumulator, on_done)
+        # Bound now, in the creating context: see CaptureBinding.
+        self._nf_state = _StreamState(accumulator, on_done, binding)
 
     def __iter__(self) -> RecordingStream:
         return self
@@ -451,10 +577,14 @@ class RecordingStream:
 class AsyncRecordingStream:
     """Transparent proxy over an async SDK stream that records it when it ends."""
 
-    def __init__(self, inner: Any, accumulator: Any, on_done: OnStreamDone) -> None:
+    def __init__(
+        self, inner: Any, accumulator: Any, on_done: OnStreamDone,
+        binding: CaptureBinding | None = None,
+    ) -> None:
         self._nf_inner = inner
         self._nf_iter: Any = None
-        self._nf_state = _StreamState(accumulator, on_done)
+        # Bound now, in the creating context: see CaptureBinding.
+        self._nf_state = _StreamState(accumulator, on_done, binding)
 
     def __aiter__(self) -> AsyncRecordingStream:
         return self
