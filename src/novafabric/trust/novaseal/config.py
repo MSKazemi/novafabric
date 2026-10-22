@@ -74,14 +74,29 @@ EKU and its chain to these anchors at the token's genTime, offline. ``crl_dir`` 
 
     tsa_ca_certs:
       - /etc/novaseal/tsa/freetsa-cacert.pem
+
+Without ``tsa_ca_certs`` (or ``nova verify --tsa-ca-bundle``) a timestamp is reported
+``timestamp_trust: unanchored``: the token is intact, but its time is not trusted.
+There is no built-in default TSA trust bundle, and ``tsa_url`` anchors nothing (it
+is only where seals request tokens).
+
+The optional ``previous_merkle_dbs`` key (ADR-0297 Amendment 2) lists this host's
+earlier Merkle logs — after an ADR-0313 migration to a new v2 ``merkle_db``, the
+retired v1 log. Verification only; nothing is appended to them. Without it, a v1
+capsule verified on a host whose log is v2 reports ``sealer_log:
+unverifiable-other-version`` (``nova verify --strict`` fails on it):
+
+    merkle_db: ~/.novafabric/novaseal-merkle-v2.db
+    previous_merkle_dbs:
+      - ~/.novafabric/novaseal-merkle.db
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from novafabric._paths import nova_home
 
@@ -110,6 +125,7 @@ def _default_config_path() -> Path:
 
 _SUPPORTED_PROFILES = frozenset({"local", "aws_kms", "azure_kv", "gcp_kms"})
 _MAX_TSA_CA_CERTS = 32
+_MAX_PREVIOUS_MERKLE_DBS = 32
 
 
 @dataclass
@@ -158,6 +174,10 @@ class SigningProfile:
     # ADR-0070 §5 (experimental): PEM files of operator-trusted TSA CA certificates
     # for RFC 3161 token trust-chain verification. Empty = no TSA chain check.
     tsa_ca_certs: list[Path] = field(default_factory=list)
+    # ADR-0297 Amendment 2: this host's earlier Merkle logs (SQLite paths or
+    # Postgres DSNs), e.g. the v1 log retired by an ADR-0313 migration. Verify-only:
+    # nothing is ever appended to them. Empty = only ``merkle_db`` is consulted.
+    previous_merkle_dbs: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.tsa_urls:
@@ -240,7 +260,11 @@ def _parse_profile(path: Path) -> SigningProfile:
         raw = yaml.safe_load(f)
     if not isinstance(raw, dict):
         raise SealConfigError(f"novaseal.yaml must be a YAML mapping: {path}")
+    previous_merkle_dbs = _parse_previous_merkle_dbs(raw)
+    return replace(_profile_from_raw(raw), previous_merkle_dbs=previous_merkle_dbs)
 
+
+def _profile_from_raw(raw: dict[str, Any]) -> SigningProfile:
     def req(key: str) -> str:
         if key not in raw:
             raise SealConfigError(f"novaseal.yaml missing required key: {key!r}")
@@ -368,6 +392,43 @@ def _parse_profile(path: Path) -> SigningProfile:
         crl_strict=crl_strict,
         tsa_ca_certs=tsa_ca_certs,
     )
+
+
+def _parse_previous_merkle_dbs(raw: dict[str, object]) -> list[str]:
+    """Parse the optional ``previous_merkle_dbs`` list (ADR-0297 Amendment 2).
+
+    This host's earlier Merkle logs — after an ADR-0313 migration, the v1 log the
+    host sealed into before it started a v2 one. ``nova verify`` checks a capsule
+    against them as well, so a v1-era capsule is confirmed by the log that sealed
+    it instead of reporting ``sealer_log: unverifiable-other-version``. Entries are
+    SQLite paths or Postgres DSNs. A listed SQLite file that does not exist is a
+    hard config error, never a silent downgrade to "not checked". Bounded to 32.
+    """
+    value = raw.get("previous_merkle_dbs")
+    if value is None:
+        return []
+    if (
+        not isinstance(value, list)
+        or not all(isinstance(v, str) and v.strip() for v in value)
+    ):
+        raise SealConfigError(
+            "novaseal.yaml previous_merkle_dbs must be a list of non-empty path/DSN strings"
+        )
+    if len(value) > _MAX_PREVIOUS_MERKLE_DBS:
+        raise SealConfigError(
+            f"novaseal.yaml previous_merkle_dbs lists {len(value)} logs; at most "
+            f"{_MAX_PREVIOUS_MERKLE_DBS} are allowed"
+        )
+    locations: list[str] = []
+    for entry in value:
+        text = entry.strip()
+        if not text.startswith(("postgres://", "postgresql://")):
+            path = Path(text).expanduser()
+            if not path.is_file():
+                raise SealConfigError(f"NovaSeal previous_merkle_dbs entry not found: {path}")
+            text = str(path)
+        locations.append(text)
+    return locations
 
 
 def _parse_ca_bundle(raw: dict[str, object]) -> Optional[Path]:

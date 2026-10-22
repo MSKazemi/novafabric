@@ -186,7 +186,10 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
                       {result ? (
                         <div className="flex items-center gap-1 flex-wrap">
                           <CheckBadge label="sig" ok={result.signature_ok} />
-                          <CheckBadge label="tsr" ok={result.timestamp_ok} />
+                          <CheckBadge
+                            label={result.timestamp_trust === 'unanchored' ? 'tsr unanchored' : 'tsr'}
+                            ok={result.timestamp_ok}
+                          />
                           <CheckBadge label="log" ok={result.log_integrity_ok} />
                         </div>
                       ) : (

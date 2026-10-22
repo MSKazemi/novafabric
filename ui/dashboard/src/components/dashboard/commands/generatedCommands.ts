@@ -4177,7 +4177,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "schema",
         "label": "--schema",
         "type": "text",
-        "hint": "JSON-schema file (contract).",
+        "hint": "JSON-schema file (contract). Validated offline: a $ref outside the file is never fetched and exits 2.",
         "flag": "--schema"
       },
       {
@@ -4758,7 +4758,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "timestamp-ok",
         "label": "--timestamp-ok",
         "type": "toggle",
-        "hint": "Assert an RFC 3161 timestamp verifies for this capsule (FRE-902(14) point 4).",
+        "hint": "Assert an RFC 3161 timestamp verifies for this capsule against a TSA trust anchor (FRE-902(14) point 4): `nova verify --tsa-ca-bundle` reports timestamp_trust=anchored. An unanchored token is not trusted time.",
         "flag": "--timestamp-ok"
       },
       {
@@ -4797,7 +4797,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "timestamp-ok",
         "label": "--timestamp-ok",
         "type": "toggle",
-        "hint": "The checker has independently verified an RFC 3161 timestamp.",
+        "hint": "The checker has independently verified an RFC 3161 timestamp against a TSA trust anchor (timestamp_trust=anchored, not merely an intact token).",
         "flag": "--timestamp-ok"
       }
     ],
@@ -6261,7 +6261,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "registry",
         "label": "--registry",
         "type": "text",
-        "hint": "Registry whose retention-policy.yaml, holds.jsonl and worm.db are read.",
+        "hint": "Registry whose retention-policy.yaml and worm.db are read, and whose legal holds are read from the shared hold store (nova hold / API).",
         "flag": "--registry"
       },
       {
@@ -7981,7 +7981,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "identity",
         "label": "--identity",
         "type": "text",
-        "hint": "Approver identity (Ed25519 keyring key; defaults to OS user).",
+        "hint": "Approver identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'approver' role. Defaults to the OS user.",
         "flag": "--identity",
         "defaultValue": ""
       },
@@ -8127,7 +8127,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "identity",
         "label": "--identity",
         "type": "text",
-        "hint": "Proposer identity (Ed25519 keyring key; defaults to OS user).",
+        "hint": "Proposer identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'proposer' role. Defaults to the OS user.",
         "flag": "--identity",
         "defaultValue": ""
       },
@@ -8385,6 +8385,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "number",
         "hint": "Reject a checkpoint epoch below this",
         "flag": "--observed-epoch"
+      },
+      {
+        "key": "merkle-db",
+        "label": "--merkle-db",
+        "type": "text",
+        "hint": "The NovaSeal Merkle log the checkpoint was appended to (SQLite path or Postgres DSN; opened read-only in effect, never created). Checks inclusion against that log: its leaves must hold the checkpoint at log_index and reproduce the recorded tree head; a checkpoint without a merkle block must be in the log. Failure exits 8.",
+        "flag": "--merkle-db"
       }
     ],
     "docsPath": "/docs/cli-reference/",
@@ -14692,8 +14699,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "json",
         "label": "--json",
         "type": "toggle",
-        "hint": "Print one JSON object instead of the text report (capsule directories, local backend). Carries identity_trust and timestamp_ok (null when the capsule has no RFC 3161 token) — ADR-0301. Exit code is unchanged.",
+        "hint": "Print one JSON object instead of the text report (capsule directories, local backend). Carries identity_trust and timestamp_ok (null when the capsule has no RFC 3161 token) — ADR-0301, timestamp_trust (anchored|unanchored|absent|invalid), sealer_log and unanchored_claims. Exit code is unchanged.",
         "flag": "--json"
+      },
+      {
+        "key": "strict",
+        "label": "--strict",
+        "type": "toggle",
+        "hint": "Also exit 1 when a passing check rests on something no anchor you trust vouches for (capsule directories, local backend): a self-asserted signer (no --ca-bundle), a timestamp whose TSA is not anchored (no --tsa-ca-bundle / tsa_ca_certs), Merkle inclusion shown only by the proof the capsule carries or not checked, or sealer_log=unverifiable-other-version. Listed as unanchored_claims.",
+        "flag": "--strict"
       }
     ],
     "docsPath": "/docs/cli-reference/",

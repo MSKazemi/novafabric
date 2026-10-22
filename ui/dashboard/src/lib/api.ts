@@ -510,6 +510,8 @@ export interface VerifyResult {
   valid: boolean;
   signature_ok: boolean;
   timestamp_ok: boolean | null;
+  // ADR-0297 Am.2: only 'anchored' (tsa_ca_certs) is trusted time.
+  timestamp_trust?: 'anchored' | 'unanchored' | 'absent' | 'invalid';
   log_integrity_ok: boolean | null;
   seal_available: boolean;
   errors: string[];
@@ -767,7 +769,12 @@ export interface CapsuleVerifyResult {
   capsule_id?: string;
   signature_ok?: boolean;
   timestamp_ok?: boolean;
+  // ADR-0297 Am.2: timestamp_ok is token integrity; only 'anchored' is trusted time.
+  timestamp_trust?: 'anchored' | 'unanchored' | 'absent' | 'invalid';
   log_integrity_ok?: boolean;
+  log_inclusion?: string;
+  sealer_log?: string;
+  unanchored_claims?: string[];
   valid?: boolean;
   errors?: string[];
   message?: string;

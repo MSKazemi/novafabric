@@ -115,7 +115,12 @@ export function IntegrityPanel({
   const checks: Check[] = r && r.sealed && r.configured
     ? [
         { label: 'DSSE signature', ok: r.signature_ok },
-        { label: 'RFC 3161 timestamp', ok: r.timestamp_ok },
+        {
+          label: r.timestamp_trust === 'unanchored'
+            ? 'RFC 3161 timestamp (token intact; TSA unanchored, time not trusted)'
+            : 'RFC 3161 timestamp',
+          ok: r.timestamp_ok,
+        },
         { label: 'Merkle log inclusion', ok: r.log_integrity_ok },
       ]
     : [];

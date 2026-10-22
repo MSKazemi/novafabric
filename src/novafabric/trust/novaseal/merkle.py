@@ -1512,3 +1512,28 @@ def open_merkle_log(uri: Union[str, Path]) -> "MerkleLog | PostgresMerkleLog":
     if uri_str.startswith(("postgresql://", "postgres://")):
         return PostgresMerkleLog(uri_str)
     return MerkleLog(Path(uri_str))
+
+
+_PG_PREFIXES = ("postgres://", "postgresql://", "postgresql:/", "postgres:/")
+
+
+def open_existing_merkle_log(
+    location: Union[str, Path, None],
+) -> "MerkleLog | PostgresMerkleLog | None":
+    """Open the Merkle log at *location* for verification, or None when it does not exist.
+
+    Verification must never *create* a log: an empty one proves nothing and
+    would litter an auditor's machine (ADR-0297 S2). A Postgres DSN is opened as
+    given; a SQLite path only when the file already exists.
+    """
+    if location is None:
+        return None
+    text = str(location)
+    if not text:
+        return None
+    if text.startswith(_PG_PREFIXES):
+        return open_merkle_log(text)
+    path = Path(text).expanduser()
+    if not path.is_file():
+        return None
+    return open_merkle_log(path)

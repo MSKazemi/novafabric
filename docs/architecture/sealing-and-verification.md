@@ -105,6 +105,28 @@ that behaviour, set it explicitly. The timestamp covers the signed envelope,
 signature included, so it sits outside the signature by design; `nova verify`
 checks that the token's message imprint matches this envelope.
 
+**An intact token is not a trusted time (works today).** Checking the token proves
+it is bound to this envelope and was not edited. It does not prove *who* the TSA
+is: anyone can mint a TSA certificate and sign any `genTime`, for example a
+backdated one. Only a TSA chain that reaches a TSA trust anchor you supply
+(`nova verify --tsa-ca-bundle`, or `tsa_ca_certs` in `novaseal.yaml`) makes the
+time trusted. There is no built-in default TSA trust bundle, and `tsa_url` anchors
+nothing (it is only where seals request tokens). The verifier reports this as
+`timestamp_trust`, separate from `timestamp_ok`:
+
+| `timestamp_trust` | Meaning | `timestamp_ok` |
+|---|---|---|
+| `anchored` | token intact, and its TSA chain reached your TSA anchor at its `genTime` | `true` |
+| `unanchored` | token intact and bound to this envelope; the TSA is not validated, so its time is a claim | `true` |
+| `absent` | no token (timestamping is opt-in) | `null` |
+| `invalid` | the token failed integrity, or failed the anchored chain check | `false` |
+
+`timestamp_ok` keeps its meaning (token integrity) and an unanchored token does
+not change the exit code, because failing every timestamped capsule for every
+verifier without a TSA CA bundle would be a breaking change. Instead the text report
+prints `UNANCHORED` with the claimed `genTime` and TSA name, never `OK`, and
+`nova verify --strict` fails on it.
+
 ## The Merkle log
 
 `trust/novaseal/merkle.py` keeps an **append-only log of seal events**. It is
@@ -143,6 +165,12 @@ log's own leaves. A v1 carried proof alone cannot detect a wrong `tree_size`; th
 report notes this. Existing v1 logs stay v1 and keep verifying. NovaFabric
 releases older than ADR-0313 cannot verify a v2 seal's carried proof.
 
+**Moving a host to v2 roots.** Start a new log file (`merkle_db`) and list the
+retired v1 log under `previous_merkle_dbs` in `novaseal.yaml`. Verification then
+checks v1-era capsules against the log that sealed them; nothing is appended to a
+previous log. If you leave it out, a v1 capsule verified on the host reports
+`sealer_log: unverifiable-other-version` (see check 3 below).
+
 A second Merkle construction belongs to the Evidence Bundle.
 `evidence/merkle.py:capsule_merkle_root` computes an RFC 6962-style root over
 **all files** in a capsule (the same tree shape as a v2 log root, over different
@@ -162,8 +190,8 @@ in turn:
 | # | Check | Passes when |
 |---|---|---|
 | 1 | DSSE signature | The envelope signature verifies against the embedded certificate. The signing intent is reported as `signed` only when the copy inside the signed payload (`_novaseal.signing_intent`, ADR-0309) agrees with the entry's label; an edited label fails. A seal made before ADR-0309 reports `label-only`. |
-| 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. If no token is present, the output says `NOT PRESENT`, `timestamp_ok` is `None` (absent, not passed) and the seal stays valid, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly (a BER encoding) is reported as a structural check only, never as OK, and still must prove the same bindings: the CMS signature verifies, the signed `messageDigest` equals the hash of the TSTInfo, and the TSTInfo `messageImprint` is this envelope's hash. A signature that cannot be extracted or checked fails (`timestamp_ok` False). |
-| 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root at its `tree_size` (under its `root_version`) and the entry names this capsule. If a local log is configured, it is checked as well: the recorded index must hold this leaf (a manifest sealed twice has the same leaf twice; each copy verifies at its own index), and the log's leaves must reproduce the recorded tree head (size and root). When that log holds other seals by the same signer under the record's root version, it is the sealer's log, and an entry missing from it **fails**, carried proof or not. Another signer's log, a fresh log, or no log keeps the carried-proof result. |
+| 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. This is integrity, not trusted time: without a TSA CA bundle the line reads `UNANCHORED` and `timestamp_trust` is `unanchored` (see [RFC 3161 timestamp](#rfc-3161-timestamp)). If no token is present, the output says `NOT PRESENT`, `timestamp_ok` is `None` (absent, not passed) and the seal stays valid, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly (a BER encoding) is reported as a structural check only, never as OK, and still must prove the same bindings: the CMS signature verifies, the signed `messageDigest` equals the hash of the TSTInfo, and the TSTInfo `messageImprint` is this envelope's hash. A signature that cannot be extracted or checked fails (`timestamp_ok` False). |
+| 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root at its `tree_size` (under its `root_version`) and the entry names this capsule. If a local log is configured, it is checked as well: the recorded index must hold this leaf (a manifest sealed twice has the same leaf twice; each copy verifies at its own index), and the log's leaves must reproduce the recorded tree head (size and root). A log that holds other seals by the same signer is the signer's log, whatever its root version. An entry missing from the signer's log of the record's root version **fails**, carried proof or not, and so does a record claiming a newer root version than every signer's log (a v2 record against a v1 log: v2 logs came later). A v1 record on a host whose signer's log is v2 is checked against `previous_merkle_dbs`; without them it keeps its carried-proof result but reports `sealer_log: unverifiable-other-version`. Another signer's log, a fresh log, or no log keeps the carried-proof result. |
 | 4 | Manifest binding | `capsule.yaml` on disk equals the signed payload, and `capsule_id` matches |
 | 5 | Per-file digests | Every file listed in `evidence_digests` exists and matches its SHA-256. Extra files are listed but do not fail the check. |
 
@@ -173,7 +201,33 @@ hardening flags are experimental:
 - `--ca-bundle` validates the signer certificate chain (and raises the reported
   signer trust level, below);
 - `--crl-dir` and `--crl-strict` add offline revocation checks;
-- `--tsa-ca-bundle` validates the TSA chain.
+- `--tsa-ca-bundle` validates the TSA chain (`timestamp_trust: anchored`);
+- `--strict` exits `1` when a passing check rests on an unanchored claim, listed
+  in `unanchored_claims`: a self-asserted signer, an unanchored timestamp,
+  inclusion shown only by the carried proof (or not checked), or
+  `sealer_log: unverifiable-other-version`. A pass under `--strict` needs
+  `--ca-bundle`, a TSA anchor (or no token), and the sealer's log.
+
+**What the sealer's log check can and cannot decide (`sealer_log`).** The record's
+`root_version` lives in `log-entry.json`, which whoever wrote the capsule controls,
+and it is not inside the signature (the log entry is appended after signing; and a
+key holder could sign any value anyway). So the verifier never lets that field
+decide whether a log counts:
+
+| `sealer_log` | Meaning |
+|---|---|
+| `entry-found` | a supplied log holds the entry (`log_inclusion` is `local-log`, or `failed` on a mismatch) |
+| `missing` | the signer's log lacks the entry, or the record claims a newer root version than it — fails |
+| `unverifiable-other-version` | only a newer-version signer's log is available. A genuine pre-migration v1 capsule and a key holder's forgery claiming v1 look the same here. Not a failure by default; `--strict` fails |
+| `not-sealer-log` | the supplied logs hold no seals by this signer (another sealer's log, or a fresh one) |
+| `no-log` | no log on this machine |
+| `not-consulted` | the capsule's own log metadata failed first |
+
+Library callers pass the earlier logs as `verify_seal_dir(..., previous_logs=[...])`,
+or use `verify_with_profile(seal_dir, profile)`, which opens `merkle_db`,
+`previous_merkle_dbs` and `tsa_ca_certs` from `novaseal.yaml` the way
+`nova verify` does. `POST /api/runs/{id}/verify` and the trust radar use it. The
+radar shows an unanchored timestamp as a warning, not a passed axis.
 
 `nova verify` also accepts an Evidence Bundle `.zip`, and runs the whole recipe
 below: `manifest_hash`, every artifact digest, every attestation's DSSE signature and
@@ -283,6 +337,7 @@ publication when `NOVA_REKOR_URL` is set, and an outer DSSE envelope.
 | Sigstore keyless signing, `nova seal sign --backend sigstore` and `nova verify --backend sigstore` | experimental, needs the `[sigstore]` extra | `cli/seal_propose.py`, `cli/verify.py` |
 | Rekor transparency-log publication | opt-in (`NOVA_REKOR_URL`), best effort | `promote/rekor_client.py` |
 | Witness cosigning of tree heads | experimental, library only | `trust/novaseal/witness.py` |
+| Ledger checkpoint Merkle inclusion, `nova ledger verify --merkle-db` | experimental | `trust/ledger/_verify.py` — without `--merkle-db`, exit 0 only means the checkpoint's (unsigned) `merkle` block is self-consistent; a fabricated one-leaf tree passes. With it, the log must hold the checkpoint and reproduce the recorded tree head |
 | PII redaction manifest (`RedactionManifest`, with its `legal_hold_mode` field; there is no capture flag for it) | experimental, library only | `compliance/pii/manifest.py` |
 | Signed subject-proof reports (`nova verify --check-redaction`) | experimental | `cli/redact.py` |
 

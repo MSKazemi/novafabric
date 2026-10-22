@@ -109,6 +109,34 @@ def _validate_bundle_id(bundle_id: str) -> None:
         raise HTTPException(status_code=400, detail="invalid bundle_id")
 
 
+def _bundle_tsa_chain_ok(tsr_bytes: bytes, timestamped: bytes) -> bool | None:
+    """TSA trust-chain result for a token over *timestamped*, or None with no anchors.
+
+    Anchors are ``tsa_ca_certs`` from ``novaseal.yaml``; without them nothing vouches
+    for the TSA, and the caller reports the time as ``unanchored`` — never as trusted.
+    """
+    import hashlib  # noqa: PLC0415
+
+    from novafabric.trust.novaseal.config import load_signing_profile  # noqa: PLC0415
+    from novafabric.trust.novaseal.tsa_trust import verify_tsa_trust_chain  # noqa: PLC0415
+
+    try:
+        profile = load_signing_profile()
+    except Exception:  # noqa: BLE001 — no usable config means no anchors, not a failure
+        return None
+    anchors = list(getattr(profile, "tsa_ca_certs", None) or [])
+    if not anchors:
+        return None
+    try:
+        anchors_pem = b"\n".join(Path(p).read_bytes() for p in anchors)
+    except OSError:
+        return False
+    outcome = verify_tsa_trust_chain(
+        tsr_bytes, anchors_pem, None, expected_digest=hashlib.sha256(timestamped).digest()
+    )
+    return outcome.valid
+
+
 def _confine_path(candidate: str | Path, roots: Sequence[Path]) -> Path:
     """Confine a request-supplied filesystem path to *roots*, as HTTP 400/403.
 
@@ -1799,6 +1827,9 @@ def create_app(
             "exit_code": exit_code_for(verdict),
             "reasons": verdict.reasons,
             "stream_verdicts": verdict.stream_verdicts,
+            # No log is consulted here and no signature is checked: a merkle block
+            # reads "self-consistent", never as inclusion in a log (ADR-0094 §A).
+            "merkle_inclusion": verdict.merkle_inclusion,
         }
 
     @app.get("/api/runs/{run_id}/safety-case", dependencies=[Depends(verify_token)])
@@ -1825,6 +1856,11 @@ def create_app(
           configured=False — NovaSeal config not found
           signature_ok, timestamp_ok, log_integrity_ok, valid, errors — full result
           timestamp_ok is null when no RFC 3161 token is present (ADR-0301)
+          timestamp_trust — anchored | unanchored | absent | invalid: timestamp_ok says a
+            token is intact; only "anchored" (tsa_ca_certs in novaseal.yaml) is trusted time
+          sealer_log, log_inclusion, unanchored_claims — what the logs established
+            (ADR-0297 Amendment 2); unanchored_claims lists what `nova verify --strict`
+            would fail on
           identity_trust, signer_subject, local_seal_identity — signer trust level (ADR-0301)
         """
         import json as _json
@@ -1851,13 +1887,7 @@ def create_app(
                 "message": "NovaSeal not configured — set NOVAFABRIC_SEAL_CONFIG or novaseal.yaml.",
             }
 
-        from novafabric.trust.novaseal import KeyConfig, NovaSeal
-        config = KeyConfig(
-            profile=profile.profile,
-            key_path=str(profile.key_path),
-            cert_path=str(profile.cert_path),
-        )
-        seal = NovaSeal(config=config, tsa_url=profile.tsa_url, db_path=str(profile.merkle_db))
+        from novafabric.trust.novaseal import unanchored_claims, verify_with_profile
 
         log_file = seal_dir / "log-entry.json"
         capsule_id = ""
@@ -1869,7 +1899,10 @@ def create_app(
                 pass
 
         try:
-            result = seal.verify(capsule_id=capsule_id, seal_dir=str(seal_dir))
+            # Opens the configured logs only if they exist (verification never
+            # creates one), checks previous_merkle_dbs and anchors the timestamp
+            # with tsa_ca_certs — the same inputs `nova verify` uses.
+            result = verify_with_profile(seal_dir, profile)
         except Exception as exc:
             return {
                 "sealed": True,
@@ -1877,6 +1910,7 @@ def create_app(
                 "capsule_id": capsule_id,
                 "signature_ok": False,
                 "timestamp_ok": False,
+                "timestamp_trust": "invalid",
                 "log_integrity_ok": False,
                 "valid": False,
                 "errors": [str(exc)],
@@ -1889,7 +1923,14 @@ def create_app(
             "signature_ok": result.signature_ok,
             # ADR-0301: null when the capsule carries no RFC 3161 token.
             "timestamp_ok": result.timestamp_ok,
+            # Only "anchored" is trusted time; "unanchored" = intact token, any TSA.
+            "timestamp_trust": result.timestamp_trust,
+            "timestamp_gen_time": result.timestamp_gen_time,
+            "tsa_subject": result.tsa_subject,
             "log_integrity_ok": result.log_integrity_ok,
+            "log_inclusion": result.log_inclusion,
+            "sealer_log": result.sealer_log,
+            "unanchored_claims": unanchored_claims(result),
             "valid": result.valid,
             "errors": list(result.errors),
             # ADR-0301: no CA bundle is consulted here, so at most "self-asserted".
@@ -2274,7 +2315,9 @@ def create_app(
 
         Checks (in order):
           1. signature_ok   — Ed25519 DSSE signature on attestations/run.intoto.json
-          2. timestamp_ok   — RFC 3161 TSR in manifest.dsse.tsr (null if not present)
+          2. timestamp_ok   — RFC 3161 TSR in manifest.dsse.tsr (null if not present);
+             timestamp_trust says whether its time is trusted: "anchored" only when
+             tsa_ca_certs in novaseal.yaml validate the TSA chain, else "unanchored"
           3. log_integrity_ok — NovaSeal Merkle inclusion (null if not configured)
         """
         import json as _json
@@ -2290,6 +2333,7 @@ def create_app(
         errors: list[str] = []
         signature_ok = False
         timestamp_ok: bool | None = None
+        tsa_chain_ok: bool | None = None
         log_integrity_ok: bool | None = None
         seal_available = False
         run_id = bundle_id
@@ -2335,6 +2379,12 @@ def create_app(
                             timestamp_ok = verify_timestamp(tsr_bytes, dsse_bytes)
                             if not timestamp_ok:
                                 errors.append("RFC 3161 TSR verification failed: hash mismatch")
+                            else:
+                                tsa_chain_ok = _bundle_tsa_chain_ok(tsr_bytes, dsse_bytes)
+                                if tsa_chain_ok is False:
+                                    errors.append(
+                                        "RFC 3161 TSA chain does not reach tsa_ca_certs"
+                                    )
                         except Exception as exc:
                             timestamp_ok = False
                             errors.append(f"TSR verification error: {exc}")
@@ -2385,13 +2435,21 @@ def create_app(
         except Exception:
             pass  # NovaSeal not configured or unavailable
 
-        valid = signature_ok and (timestamp_ok is not False) and (log_integrity_ok is not False)
+        from novafabric.trust.novaseal import timestamp_trust_for  # noqa: PLC0415
+
+        valid = (
+            signature_ok
+            and (timestamp_ok is not False)
+            and (tsa_chain_ok is not False)
+            and (log_integrity_ok is not False)
+        )
         return {
             "bundle_id": bundle_id,
             "run_id": run_id,
             "valid": valid,
             "signature_ok": signature_ok,
             "timestamp_ok": timestamp_ok,
+            "timestamp_trust": timestamp_trust_for(timestamp_ok, tsa_chain_ok),
             "log_integrity_ok": log_integrity_ok,
             "seal_available": seal_available,
             "errors": errors,

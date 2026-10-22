@@ -121,9 +121,28 @@ export default function CapsuleVerifyPanel({ runIds }: { runIds: string[] }) {
             <>
               <div className="space-y-1">
                 <CheckRow label="Signature (DSSE ECDSA P-256)" ok={result.signature_ok} />
-                <CheckRow label="Timestamp (RFC 3161)" ok={result.timestamp_ok} />
+                <CheckRow
+                  label={
+                    result.timestamp_trust === 'unanchored'
+                      ? 'Timestamp token intact (RFC 3161) — TSA unanchored'
+                      : 'Timestamp (RFC 3161)'
+                  }
+                  ok={result.timestamp_ok}
+                />
                 <CheckRow label="Merkle log inclusion" ok={result.log_integrity_ok} />
               </div>
+              {result.timestamp_trust === 'unanchored' && (
+                <p className="text-[10px] text-[var(--color-status-pending)]">
+                  ⚠ The token's time is not trusted: no TSA trust anchor (tsa_ca_certs) validated
+                  who issued it.
+                </p>
+              )}
+              {result.sealer_log === 'unverifiable-other-version' && (
+                <p className="text-[10px] text-[var(--color-status-pending)]">
+                  ⚠ Sealer's log UNVERIFIED: this host's log is a newer root version; list the
+                  retired log in previous_merkle_dbs.
+                </p>
+              )}
               {result.capsule_id && (
                 <p className="text-[10px] font-mono text-[var(--color-text-faint)]">
                   capsule_id: {result.capsule_id}
