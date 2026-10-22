@@ -67,8 +67,10 @@ Before it branches, `ReplayEngine.run`:
   up to v0.105.0 only `--allow-mutating` triggered it.
 
 Every mode writes `replay_result.yaml` (`replay/_result.py:write_replay_result`,
-`schemas/replay-result.schema.json`) under `.novafabric/replays/<ulid>/` in the
-current directory, or under `-o <dir>`.
+`schemas/replay-result.schema.json`) under `$NOVAFABRIC_HOME/replays/<ulid>/`
+(`_paths.default_replays_dir()`, the directory `nova init` creates), or under
+`-o <dir>`. Up to v0.106.0 the default was `./.novafabric/replays/` in the current
+directory.
 
 ## The modes
 

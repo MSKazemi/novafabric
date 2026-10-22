@@ -161,7 +161,9 @@ or an object NovaFabric cannot serialise — your call still returns exactly wha
 the SDK returned, or raises exactly the exception the SDK raised. The lost record
 is logged once as a `WARNING` (`nova_event=capture.record_dropped`, with the hook,
 the stream and the exception *type* — never its message, which may quote your
-prompt) and counted in the capsule's `capture-health.json`. SDK objects you pass
+prompt) and counted in the capsule's `capture-health.json` (under `nova capture`
+the workload process hands its counts over when it exits; `sources.workload`
+shows them). SDK objects you pass
 back into the next call — the common
 `messages.append(completion.choices[0].message)` pattern — are recorded the way
 the SDK sends them on the wire (`model_dump(mode="json", exclude_unset=True)`).

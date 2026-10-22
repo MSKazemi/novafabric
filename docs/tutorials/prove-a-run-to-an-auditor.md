@@ -173,7 +173,7 @@ nova replay 01KZ9VZPFQB95A63AAMD2TC7XD --mode forensic
 ```
 
 ```console
-✓ Replay written: .novafabric/replays/01KZ9VZX0A9KAXGDNP42QJF0Y4
+✓ Replay written: /home/you/.novafabric/replays/01KZ9VZX0A9KAXGDNP42QJF0Y4
   (replay_id=01KZ9VZX0A9KAXGDNP42QJF0Y4  mode=forensic)
 ```
 

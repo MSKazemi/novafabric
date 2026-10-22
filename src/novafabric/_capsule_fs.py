@@ -62,7 +62,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Final
+from typing import BinaryIO, Final, Literal
 
 __all__ = [
     "CapsuleEntryError",
@@ -76,6 +76,8 @@ __all__ = [
     "iter_capsule_dirs",
     "list_capsule",
     "open_capsule_file",
+    "open_capsule_file_for_write",
+    "open_capsule_member_for_write",
     "read_capsule_file",
     "read_capsule_member_or_none",
     "read_capsule_text",
@@ -245,12 +247,21 @@ def _is_link_at(name: str, dir_fd: int) -> bool:
 
 
 def _open_at(
-    name: str, flags: int, dir_fd: int, rel: str, operation: str, error: type[CapsuleLinkError]
+    name: str,
+    flags: int,
+    dir_fd: int,
+    rel: str,
+    operation: str,
+    error: type[CapsuleLinkError],
+    *,
+    perms: int = 0o777,
 ) -> int:
     try:
-        return os.open(name, flags, dir_fd=dir_fd)
+        return os.open(name, flags, perms, dir_fd=dir_fd)
     except OSError as exc:
-        if exc.errno in (errno.ELOOP, errno.EMLINK, errno.ENOTDIR) and _is_link_at(name, dir_fd):
+        # EEXIST: an ``O_CREAT | O_EXCL`` open of a planted link (never followed).
+        link_errnos = (errno.ELOOP, errno.EMLINK, errno.ENOTDIR, errno.EEXIST)
+        if exc.errno in link_errnos and _is_link_at(name, dir_fd):
             raise error(
                 f"{rel} goes through a symlink ({name}); {operation} never follows one",
                 links=(rel,),
@@ -419,6 +430,94 @@ def read_capsule_member_or_none(
     """
     return read_capsule_text_or_none(
         path.parent, path.name, operation=operation, max_bytes=max_bytes, errors=errors
+    )
+
+
+#: ``open(2)`` flag per write mode of :func:`open_capsule_file_for_write`.
+_WRITE_MODE_FLAGS: Final[dict[str, int]] = {
+    "a": os.O_APPEND,
+    "w": os.O_TRUNC,
+    "x": os.O_EXCL,
+}
+
+
+def open_capsule_file_for_write(
+    root: Path,
+    rel: str | PurePosixPath,
+    *,
+    mode: Literal["a", "w", "x"] = "a",
+    operation: str = "this operation",
+    error: type[CapsuleLinkError] = CapsuleLinkError,
+) -> BinaryIO:
+    """Open capsule file *rel* for binary writing, following no link on the way.
+
+    The write-side twin of :func:`open_capsule_file`, for code that writes into
+    a capsule that already exists (an append to ``assets.jsonl`` after capture,
+    a receipt written into a finished capsule). ``open(path, "a")`` follows a
+    link planted at *path* and writes **through** it, to wherever it points;
+    this never does. *mode* is ``"a"`` (append, create if missing), ``"w"``
+    (truncate, create if missing) or ``"x"`` (create, refuse an existing
+    entry). Parent directories are walked with ``openat(2)`` + ``O_NOFOLLOW``
+    and must already exist; the file itself is opened ``O_NOFOLLOW |
+    O_NONBLOCK`` and must be a regular file, so a FIFO is never written to (or
+    blocked on). A new file gets the usual ``0o666 & ~umask`` permissions.
+
+    Raises:
+        ValueError: *rel* is absolute, empty or holds ``..``; or *mode* is unknown.
+        CapsuleLinkError: *rel* or a parent directory is a symlink (as *error*).
+        CapsuleSpecialFileError: *rel* exists and is not a regular file.
+        FileExistsError: ``mode="x"`` and *rel* exists.
+        FileNotFoundError: a parent directory does not exist.
+    """
+    try:
+        mode_flag = _WRITE_MODE_FLAGS[mode]
+    except KeyError:
+        raise ValueError(f"unknown write mode {mode!r}; use 'a', 'w' or 'x'") from None
+    parts = _split_rel(rel)
+    rel_s = "/".join(parts)
+    flags = (
+        os.O_WRONLY | os.O_CREAT | mode_flag | _NOFOLLOW
+        | getattr(os, "O_NONBLOCK", 0) | _CLOEXEC
+    )
+    if os.open not in os.supports_dir_fd:  # pragma: no cover - non-POSIX fallback
+        path = root
+        for part in parts:
+            path = path / part
+            if path.is_symlink():
+                raise error(
+                    f"{rel_s} goes through a symlink ({part}); {operation} never follows one",
+                    links=(rel_s,),
+                )
+        fd = os.open(path, flags, 0o666)
+    else:
+        dir_fd = os.open(root, _DIR_FLAGS)
+        try:
+            for part in parts[:-1]:
+                next_fd = _open_at(part, _DIR_FLAGS | _NOFOLLOW, dir_fd, rel_s, operation, error)
+                os.close(dir_fd)
+                dir_fd = next_fd
+            fd = _open_at(parts[-1], flags, dir_fd, rel_s, operation, error, perms=0o666)
+        finally:
+            os.close(dir_fd)
+    fd = _require_regular(fd, rel_s)
+    return os.fdopen(fd, "ab" if mode == "a" else "wb")
+
+
+def open_capsule_member_for_write(
+    path: Path,
+    *,
+    mode: Literal["a", "w", "x"] = "a",
+    operation: str = "this operation",
+    error: type[CapsuleLinkError] = CapsuleLinkError,
+) -> BinaryIO:
+    """:func:`open_capsule_file_for_write` for *path*, a file directly in a capsule root.
+
+    The mechanical replacement for ``path.open("a")`` / ``path.write_text()``
+    when *path* is ``<capsule>/<name>``. The capsule root, ``path.parent``, may
+    itself be the link the caller named; only ``path.name`` is never followed.
+    """
+    return open_capsule_file_for_write(
+        path.parent, path.name, mode=mode, operation=operation, error=error
     )
 
 

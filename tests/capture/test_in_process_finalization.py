@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+from _sdk_capsule import only_capsule
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -240,14 +241,16 @@ def test_own_writer_adapter_is_sealed_and_verifies(tmp_path: Path, seal_config: 
 def test_sdk_agent_capsule_is_finalized_sealed_and_verifies(
     tmp_path: Path, seal_config: Path, late_secret: str, leaky_replay_policy: None
 ) -> None:
-    cap_dir = tmp_path / "capsule"
+    root = tmp_path / "capsules"
 
-    @agent(name="sdk-agent", version="1.0", capsule_dir=cap_dir)
+    @agent(name="sdk-agent", version="1.0", capsule_dir=root)
     def work() -> str:
-        (cap_dir / "outputs" / "answer.txt").write_text(f"gh={GITHUB_TOKEN}\n")
+        # The call's own capsule is the only one under the store root (M13).
+        (only_capsule(root) / "outputs" / "answer.txt").write_text(f"gh={GITHUB_TOKEN}\n")
         return "done"
 
     assert work() == "done"
+    cap_dir = only_capsule(root)
     for secret in (GITHUB_TOKEN, ANTHROPIC_KEY, LATE_TOKEN):
         _assert_absent(cap_dir, secret)
     assert set(_proof(cap_dir)["residual_check"]["residual_refs"]) == {
@@ -274,6 +277,7 @@ def test_sdk_agent_capsule_without_profile_is_unsealed_but_bound(tmp_path: Path)
         return 7
 
     assert work() == 7
+    cap_dir = only_capsule(cap_dir)
     assert not (cap_dir / ".seal").exists()
     manifest = _assert_bound(cap_dir)
     assert "metadata" not in manifest  # nothing to report: opt-in, not a failure
@@ -299,6 +303,7 @@ def test_finalization_failure_leaves_sdk_capsule_unsealed_and_result_unchanged(
         return {"answer": 42}
 
     assert work() == {"answer": 42}
+    cap_dir = only_capsule(cap_dir)
     assert not (cap_dir / ".seal").exists()
     reason = _manifest(cap_dir)["metadata"][FINALIZATION_KEY]
     assert "RuntimeError" in reason and "disk on fire" in reason
@@ -318,6 +323,7 @@ def test_finalization_failure_never_replaces_the_callers_exception(
 
     with pytest.raises(ValueError, match="the user's own error"):
         explode()
+    cap_dir = only_capsule(cap_dir)
     manifest = _manifest(cap_dir)
     assert manifest["status"] == "failure"
     assert "RuntimeError" in manifest["metadata"][FINALIZATION_KEY]

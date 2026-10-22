@@ -15,6 +15,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 import yaml
+from _sdk_capsule import only_capsule
 
 from novafabric.capture.orchestrator import CaptureOrchestrator
 from novafabric.capture.session import (
@@ -307,7 +308,7 @@ class TestSdkCapture:
             pass
 
         noop()
-        manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+        manifest = yaml.safe_load((only_capsule(cap_dir) / "capsule.yaml").read_text())
         assert manifest["session_id"] == SID
         assert manifest["sequence"] == 1
 
@@ -326,7 +327,7 @@ class TestSdkCapture:
             pass
 
         noop()
-        manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+        manifest = yaml.safe_load((only_capsule(cap_dir) / "capsule.yaml").read_text())
         assert manifest["session_id"] == OTHER_SID
         assert manifest["sequence"] == 7
 
@@ -340,6 +341,6 @@ class TestSdkCapture:
             pass
 
         noop()
-        manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+        manifest = yaml.safe_load((only_capsule(cap_dir) / "capsule.yaml").read_text())
         assert "session_id" not in manifest
         assert "sequence" not in manifest

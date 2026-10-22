@@ -15,6 +15,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 import yaml
+from _sdk_capsule import only_capsule
 
 from novafabric.capture.deployment_env import (
     CONVENTIONAL_ENVIRONMENTS,
@@ -276,7 +277,7 @@ class TestSdkCapture:
             pass
 
         noop()
-        manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+        manifest = yaml.safe_load((only_capsule(cap_dir) / "capsule.yaml").read_text())
         assert manifest["deployment_environment"] == "test"
         assert manifest["environment_source"] == "sdk-arg"
 
@@ -293,7 +294,7 @@ class TestSdkCapture:
             pass
 
         noop()
-        manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+        manifest = yaml.safe_load((only_capsule(cap_dir) / "capsule.yaml").read_text())
         assert manifest["deployment_environment"] == "staging"
         assert manifest["environment_source"] == "env-var"
 
@@ -310,6 +311,6 @@ class TestSdkCapture:
             pass
 
         noop()
-        manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+        manifest = yaml.safe_load((only_capsule(cap_dir) / "capsule.yaml").read_text())
         assert "deployment_environment" not in manifest
         assert "environment_source" not in manifest

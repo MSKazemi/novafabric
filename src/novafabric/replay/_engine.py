@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._paths import default_replays_dir
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._tool_codec import MUTATION_CLASSES
 from novafabric.capture._ulid import new_ulid
@@ -157,7 +158,7 @@ class ReplayEngine:
     ) -> None:
         self._capsule_dir = capsule_dir
         self._flags = flags
-        self._base_dir = base_dir or (Path.cwd() / ".novafabric" / "replays")
+        self._base_dir = base_dir or default_replays_dir()
         self._actor = actor
 
     def run(self) -> ReplayResult:

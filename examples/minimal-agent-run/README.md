@@ -8,8 +8,10 @@ end-to-end, into a single capsule directory you can validate and inspect.
 1. Decorates a Python function with `@agent(name=..., capsule_dir=...)`.
 2. Inside the function, calls Anthropic's API (one short message).
 3. NovaFabric's capture hooks intercept the SDK call and record it into
-   `capsule/model-calls.jsonl` along with `trace.jsonl`, `env.lock`,
-   `redaction-proof.json`, and `capsule.yaml`.
+   `capsule/<run_id>/model-calls.jsonl` along with `trace.jsonl`, `env.lock`,
+   `redaction-proof.json`, and `capsule.yaml`. `capsule_dir` is a capsule
+   store, like `nova capture --output-dir`: every call writes its own
+   `<run_id>/` directory, and the script prints its path.
 
 ## Run it
 
@@ -22,9 +24,9 @@ uv run python examples/minimal-agent-run/agent.py
 ## Inspect the capsule
 
 ```bash
-nova validate examples/minimal-agent-run/capsule
-cat examples/minimal-agent-run/capsule/model-calls.jsonl  # one line per LLM call
-cat examples/minimal-agent-run/capsule/capsule.yaml
+nova validate examples/minimal-agent-run/capsule/<run_id>
+cat examples/minimal-agent-run/capsule/<run_id>/model-calls.jsonl  # one line per LLM call
+cat examples/minimal-agent-run/capsule/<run_id>/capsule.yaml
 ```
 
 ## Without an API key

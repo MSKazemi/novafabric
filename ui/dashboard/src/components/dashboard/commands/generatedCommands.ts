@@ -2893,7 +2893,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "replay-dir",
         "label": "--replay-dir",
         "type": "text",
-        "hint": "Base directory for the intervention replay output (default: .novafabric/replays). Only with --intervene or --search-root-cause.",
+        "hint": "Base directory for the intervention replay output (default: $NOVAFABRIC_HOME/replays). Only with --intervene or --search-root-cause.",
         "flag": "--replay-dir"
       },
       {
@@ -4664,7 +4664,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "output-dir",
         "label": "--output-dir",
         "type": "text",
-        "hint": "Base dir for replay output",
+        "hint": "Base dir for replay output (default: $NOVAFABRIC_HOME/replays)",
         "flag": "--output-dir"
       },
       {
@@ -11269,7 +11269,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "output-dir",
         "label": "--output-dir",
         "type": "text",
-        "hint": "Base dir for replay output",
+        "hint": "Base dir for replay output (default: $NOVAFABRIC_HOME/replays)",
         "flag": "--output-dir"
       },
       {
@@ -13851,7 +13851,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "output-dir",
         "label": "--output-dir",
         "type": "text",
-        "hint": "Base directory for replay output (per-turn replay capsules plus the session replay result). Defaults to ./.novafabric/replays.",
+        "hint": "Base directory for replay output (per-turn replay capsules plus the session replay result). Defaults to $NOVAFABRIC_HOME/replays.",
         "flag": "--output-dir"
       },
       {

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import open_capsule_member_for_write
 from novafabric.adapters.git import get_head_sha
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.policy import (
@@ -319,15 +320,21 @@ def record_asset_consumption(
             ``"production"``, ``"staging"``, ``"development"``).
         capsule_dir: Path to the active capsule directory.
         registry: Registry identifier (default: ``"local"``).
+
+    Raises:
+        CapsuleLinkError: ``assets.jsonl`` is a symlink. It is never appended
+            through: a link planted in the capsule must not redirect the write.
     """
     record = {
         "asset_ref": asset_ref,
         "registry": registry,
         "status_at_consumption": status_at_consumption,
     }
-    assets_path = capsule_dir / "assets.jsonl"
-    with open(assets_path, "a") as fh:
-        fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+    line = json.dumps(record, separators=(",", ":")) + "\n"
+    with open_capsule_member_for_write(
+        capsule_dir / "assets.jsonl", mode="a", operation="recording asset consumption"
+    ) as fh:
+        fh.write(line.encode("utf-8"))
 
 
 def list_assets(

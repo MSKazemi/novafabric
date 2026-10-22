@@ -645,7 +645,7 @@ Subcommands:
   single-capsule replay engine (the four ADR-0005 modes; default `mocked`)
   once per turn — no new replay mode, no bypass of the inherited
   mutating-tool/secret-gate defaults (ADR-0012). Each turn produces its own
-  replay capsule under `--output-dir` (default `./.novafabric/replays`), and
+  replay capsule under `--output-dir` (default `$NOVAFABRIC_HOME/replays`), and
   the session gets one `SessionReplayResult` record
   (`schemas/session-replay-result.schema.json`): ordered per-turn verdicts
   (`reproduced` / `diverged` / `refused`) plus one `whole_session_verdict`.
@@ -1194,7 +1194,7 @@ Options:
 - **Policy gate.** Any of the three write-permitting rungs (`--allow-mutating`, `--allow-external-side-effects`, `--allow-unknown-mutation`), alone or combined, triggers the audited `replay_mutating` policy check before the replay starts, in every mode and with `--dry-run`. A deny, or a policy-engine error, refuses the replay before anything runs. `--allow-readonly` and no flag are not gated. *Unreleased (after v0.105.0):* up to v0.105.0 only `--allow-mutating` triggered the check.
 - The four rungs drive the `--dry-run` report. In a `mocked` replay they gate the intercepted tool surfaces (MCP `call_tool`, `record.tool`, Google ADK tools through the tool plugin, and OpenAI Agents function tools through `wrap_tools`) in two places only — ADR-0306, experimental: under `--permissive` an unmatched call runs live only if its class is permitted (`none` always is; a `record.tool` call uses its declared class, an ADK tool the class `make_tool_plugin` declares, an Agents SDK tool the class `wrap_tools` declares), and a `replay.yaml` `allow: true` override re-executes a tool only if its class is permitted. They never stop a tool replay does not intercept.
 - `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces run **live**, an unmatched MCP, `record.tool`, ADK or Agents SDK tool call runs live only if a ladder flag permits its mutation class — `--allow-unknown-mutation` for MCP, the declared class for `record.tool`, ADK and Agents SDK tools — and never when `replay.yaml` says `allow: false` (otherwise it is refused and counted in `replay_contract.tool_calls_refused`), and unconsumed recordings are only reported. *Changed in v0.105.0 (ADR-0306 Q3):* `--permissive` alone used to run every unmatched MCP call live. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
-- `--output-dir, -o PATH` — base directory for replay output (default: `.novafabric/replays/`)
+- `--output-dir, -o PATH` — base directory for replay output (default: `$NOVAFABRIC_HOME/replays/`, the directory `nova init` creates; up to v0.106.0 it was `./.novafabric/replays/` under the current directory)
 - `--environment ENV` — experimental (ADR-0126): only replay a capsule that recorded `ENV` as its `deployment_environment` (exact match, case-sensitive). Otherwise exit 2 before anything runs; a capsule with no recorded environment is refused. Usable as a CI gate, e.g. `nova replay --environment staging --dry-run <run-id>`. The `replay_mutating` policy input also carries the recorded value as `input.resource.deployment_environment` (`null` when absent).
 - `--intervention-file PATH` — InterventionSpec YAML for `--mode intervention` (experimental, ADR-0086): one target selector (`event_index` or `span_id`) + exactly one substitution (`replace_model_response` / `replace_tool_result` / `mutate_payload`) + optional named check-functions (`fatal: true` aborts). The output capsule is diffable against the baseline with `nova diff`. Only a `model-calls` substitution reaches the re-executed workload; a `tool-calls` one changes the output capsule and the checks only (tools run live), which the result records as `intervention.substitution_delivered_to_workload: false` and the CLI reports as a warning.
 
@@ -1251,10 +1251,10 @@ other non-zero value — `mocked`/`intervention` pass through the replayed comma
 exit code. A command that itself exits `124` also yields `124`, but with no
 `ReplayTimeout` error; `error.type` is what tells the two apart.
 
-Output is written to `.novafabric/replays/<replay-ulid>/replay_result.yaml`.
+Output is written to `$NOVAFABRIC_HOME/replays/<replay-ulid>/replay_result.yaml`.
 
 ```
-✓ Replay written: .novafabric/replays/01HXBM1Y3K2NGH9V0RD9P0ZDC4  (replay_id=01HXBM1Y3K2NGH9V0RD9P0ZDC4  mode=mocked)
+✓ Replay written: /home/you/.novafabric/replays/01HXBM1Y3K2NGH9V0RD9P0ZDC4  (replay_id=01HXBM1Y3K2NGH9V0RD9P0ZDC4  mode=mocked)
   model calls: 2 of 2 served from the capsule, 0 unmatched
   tool calls (MCP call_tool, record.tool, ADK, Agents SDK): 2 of 2 served, 0 live, 0 unmatched; 0 recorded on surfaces replay does not intercept
   network: 0 live connections from the replayed process — observed, not blocked
@@ -1453,7 +1453,7 @@ Options:
   `--search-root-cause` will test (default: `8`, hard ceiling: `50`). Only with
   `--search-root-cause`.
 - `--replay-dir PATH` — base directory for the intervention replay output
-  (default: `.novafabric/replays`). Only with `--intervene` or `--search-root-cause`.
+  (default: `$NOVAFABRIC_HOME/replays`). Only with `--intervene` or `--search-root-cause`.
 
 Algorithm (ADR-0084): decompose the run into ordered steps (src-411 module
 decomposition); a **coarse pass** scores each erroring step by explicit error signal,
@@ -10373,7 +10373,8 @@ nova energy probe
 
 Write one `EnergyReceipt` per action into `energy-receipts.jsonl` for a captured capsule.
 The degrade-safe default emits honest `unavailable` receipts; Slurm `sacct ConsumedEnergyRaw`
-yields the measured per-job class.
+yields the measured per-job class. If `energy-receipts.jsonl` in the capsule is a symlink
+(or a FIFO), the command refuses with exit 2 and never writes through it.
 
 ```bash
 nova energy attest ./my-capsule

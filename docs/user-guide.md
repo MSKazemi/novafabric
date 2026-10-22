@@ -258,7 +258,8 @@ decorator runs inside your process, so the capsule records `capture_mode:
 sdk-decorator` and a label (`@agent:<name>@<version>`) instead of a command.
 `nova replay --mode mocked` therefore refuses it (`CapsuleNotReplayable`, exit 1);
 `forensic` and `semantic` replay, `nova diff` and `nova validate` work as usual.
-Without `capsule_dir`,
+`capsule_dir` is a capsule store, like `nova capture --output-dir`: every call
+writes its own capsule to `capsules/<run_id>/`. Without `capsule_dir`,
 the decorator emits OTel spans only — no capsule is written. This is the
 original v0.1 observability mode and is still useful if you only need traces.
 
@@ -582,7 +583,7 @@ nova validate my-model.yaml
 **Replay result validation:**
 
 ```bash
-nova validate .novafabric/replays/01HXB.../
+nova validate ~/.novafabric/replays/01HXB.../
 # ✓ Valid replay result: 01HXB...  mode=forensic  status=success
 ```
 
@@ -827,7 +828,7 @@ against its recorded responses and diff the result.
 nova replay .novafabric/capsules/01HX.../ --dry-run
 ```
 
-Results land in `.novafabric/replays/<replay-ulid>/replay_result.yaml`. Use
+Results land in `$NOVAFABRIC_HOME/replays/<replay-ulid>/replay_result.yaml`. Use
 `--output-dir` to change the base directory.
 
 **Mode comparison:**

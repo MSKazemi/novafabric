@@ -412,7 +412,8 @@ def seal_approve_cmd(
                 target_run_id=capsule_id,
                 rationale=proposal_pred.get("justification"),
                 policy_version=proposal_pred.get("policy_version"),
-                seal_bundle_path=str(data_dir / capsule_id / f"approval_{approval_uuid}.json"),
+                # L21: the file put_approval() actually wrote (keyed by proposal).
+                seal_bundle_path=str(bundle_store.approval_path(capsule_id, proposal_uuid)),
             )
     except Exception:
         pass  # fail-open: never block the approval workflow
@@ -591,7 +592,8 @@ def seal_bypass_cmd(
                 target_run_id=capsule_id,
                 rationale=reason,
                 policy_version=None,
-                seal_bundle_path=str(data_dir / capsule_id / f"bypass_{bypass_uuid}.json"),
+                # L21: the file put_bypass() actually wrote.
+                seal_bundle_path=str(bundle_store.bypass_path(capsule_id, bypass_uuid)),
             )
     except Exception:
         pass  # fail-open: never block the bypass workflow

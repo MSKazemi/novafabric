@@ -8,9 +8,10 @@ Run:
     export ANTHROPIC_API_KEY=sk-...
     uv run python examples/minimal-agent-run/agent.py
 
-Then inspect the capsule:
-    nova validate examples/minimal-agent-run/capsule
-    cat examples/minimal-agent-run/capsule/model-calls.jsonl
+Then inspect the capsule. ``capsule_dir`` is a capsule store: every call
+writes its own ``capsule/<run_id>/`` (the script prints the path):
+    nova validate examples/minimal-agent-run/capsule/<run_id>
+    cat examples/minimal-agent-run/capsule/<run_id>/model-calls.jsonl
 
 If ANTHROPIC_API_KEY is unset or the `anthropic` SDK is not installed,
 the script exits cleanly with a helpful message — it does not fail loudly,
@@ -63,11 +64,14 @@ def main() -> int:
         return 0
 
     result = run_agent()
+    # Each call writes CAPSULE_DIR/<run_id>/; ULIDs sort by time, so the
+    # newest capsule is this run's.
+    capsule = max(p for p in CAPSULE_DIR.iterdir() if p.is_dir())
     print(f"\nAgent returned: {result!r}")
-    print(f"Capsule written to: {CAPSULE_DIR}")
+    print(f"Capsule written to: {capsule}")
     print("\nInspect with:")
-    print(f"  nova validate {CAPSULE_DIR}")
-    print(f"  cat {CAPSULE_DIR}/model-calls.jsonl")
+    print(f"  nova validate {capsule}")
+    print(f"  cat {capsule}/model-calls.jsonl")
     return 0
 
 

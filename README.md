@@ -107,7 +107,7 @@ nova lineage provenance 01HXAY7M5JZ8R7K4P9DPBYK2WX
 
 Capsules are written on **success and on failure**: a crash is captured evidence, not
 lost state. A replay writes a replay result (`replay_result.yaml`) under
-`./.novafabric/replays/`, not a new capsule. To compare behaviour, capture the run
+`$NOVAFABRIC_HOME/replays/` (default `~/.novafabric/replays/`), not a new capsule. To compare behaviour, capture the run
 again and diff the two capsules.
 
 <details>
@@ -139,12 +139,12 @@ again and diff the two capsules.
 ```python
 from novafabric.sdk.agent import agent
 
-@agent(name="research-agent", version="0.1.0", capsule_dir="capsule/")
+@agent(name="research-agent", version="0.1.0", capsule_dir="capsules/")
 def run():
     # OpenAI, Anthropic and httpx calls are captured automatically
     return client.chat.completions.create(...)
 
-run()
+run()   # each call writes its own capsules/<run_id>/
 ```
 
 Without `capsule_dir`, the decorator emits OpenTelemetry spans only and writes no capsule.

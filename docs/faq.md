@@ -83,8 +83,9 @@ level and are language-agnostic.
 
 ### Where does everything get written?
 
-Local mode writes to `~/.novafabric/` — capsules under `capsules/<ulid>/`. Replays
-land in `.novafabric/replays/` relative to where you run the command. Both paths are
+Local mode writes to `~/.novafabric/` (or `$NOVAFABRIC_HOME`) — capsules under
+`capsules/<ulid>/`, replays under `replays/<ulid>/`. Up to v0.106.0 replays landed in
+`./.novafabric/replays/` relative to where you ran the command. Both paths are
 configurable; see the [CLI reference](cli-reference.md).
 
 ### Can I move a capsule to another machine?

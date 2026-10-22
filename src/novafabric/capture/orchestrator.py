@@ -694,6 +694,11 @@ class CaptureOrchestrator:
         _health_seen: list[dict[str, int]] = []
 
         def _write_capture_health() -> None:
+            # M14: the workload's hooks ran in its own process, on its own
+            # recorder; fold the counts it handed off at exit into ours first.
+            from novafabric.capture.workload_health import merge_workload_drops
+
+            merge_workload_drops(capsule_dir, _event_recorder)
             _health_seen.append(_event_recorder.drop_counts)
             _event_recorder.finalize_health()
 

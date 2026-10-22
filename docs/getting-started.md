@@ -228,7 +228,8 @@ python examples/minimal-agent-run/agent.py
 ```
 
 This example uses the in-process `@agent` decorator (`novafabric.sdk.agent`), which writes
-its **own** capsule to `examples/minimal-agent-run/capsule/` — no `nova capture` wrapper
+its **own** capsule to `examples/minimal-agent-run/capsule/<run_id>/` (one per call; the
+script prints the path) — no `nova capture` wrapper
 needed (see the [User guide: SDK decorator](user-guide.md#sdk-decorator-in-process-capture)).
 If you do wrap it in `nova capture`, the model calls are filed into the decorator's capsule,
 and the wrapper capsule's `model-calls.jsonl` stays empty.
@@ -236,7 +237,7 @@ and the wrapper capsule's `model-calls.jsonl` stays empty.
 After the run, look at the model-calls record:
 
 ```bash
-cat examples/minimal-agent-run/capsule/model-calls.jsonl | python -m json.tool | head -40
+cat examples/minimal-agent-run/capsule/<run_id>/model-calls.jsonl | python -m json.tool | head -40
 ```
 
 You will see one JSON record per LLM call, following the
@@ -337,8 +338,9 @@ from the capsule directory. **No subprocess is launched and no network calls are
 made** — this is the safe way to inspect a run handed to you by a colleague or
 pulled from a CI artifact store.
 
-Results are written to `.novafabric/replays/<replay-ulid>/replay_result.yaml` under
-the **current directory** (not `$NOVAFABRIC_HOME`; pass `--output-dir` to choose). A
+Results are written to `$NOVAFABRIC_HOME/replays/<replay-ulid>/replay_result.yaml`
+(default `~/.novafabric/replays/`; pass `--output-dir` to choose). Up to v0.106.0 they
+went under the current directory instead. A
 replay result is not a capsule — to diff behaviour, capture the run again and
 `nova diff` the two capsules.
 
