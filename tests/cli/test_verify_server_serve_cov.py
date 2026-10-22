@@ -517,7 +517,7 @@ class TestServerRevokeRole:
     def test_revoke_role_success(self, monkeypatch):
         monkeypatch.setattr(
             "novafabric.server.rbac_store.revoke_role",
-            lambda user, role, db_path=None: True,
+            lambda user, role, db_path=None, oidc_configured=False: True,
         )
         result = runner.invoke(app, ["server", "revoke-role", "alice", "writer"])
         assert result.exit_code == 0, result.output
@@ -526,7 +526,7 @@ class TestServerRevokeRole:
     def test_revoke_role_not_found_exits_1(self, monkeypatch):
         monkeypatch.setattr(
             "novafabric.server.rbac_store.revoke_role",
-            lambda user, role, db_path=None: False,
+            lambda user, role, db_path=None, oidc_configured=False: False,
         )
         result = runner.invoke(app, ["server", "revoke-role", "alice", "writer"])
         assert result.exit_code == 1
@@ -535,7 +535,7 @@ class TestServerRevokeRole:
     def test_revoke_role_last_admin_exits_2(self, monkeypatch):
         from novafabric.server.rbac_store import LastAdminError
 
-        def _boom(user, role, db_path=None):
+        def _boom(user, role, db_path=None, oidc_configured=False):
             raise LastAdminError("cannot remove last admin")
 
         monkeypatch.setattr(
@@ -546,7 +546,7 @@ class TestServerRevokeRole:
         assert "Refused" in result.output
 
     def test_revoke_role_generic_error_exits_1(self, monkeypatch):
-        def _boom(user, role, db_path=None):
+        def _boom(user, role, db_path=None, oidc_configured=False):
             raise RuntimeError("db error")
 
         monkeypatch.setattr(

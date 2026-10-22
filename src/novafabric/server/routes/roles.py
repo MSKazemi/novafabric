@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from novafabric.serve import audit
@@ -61,6 +61,13 @@ def _oidc_configured() -> bool:
     return bool(
         os.environ.get("NOVA_OIDC_ISSUER") or os.environ.get("NOVA_OIDC_CLIENT_ID")
     )
+
+
+def _server_oidc_configured(request: Request) -> bool:
+    """The serving app's own OIDC state (YAML ``oidc:``), for the L15 guard input."""
+    config = getattr(request.app.state, "config", None)
+    oidc = getattr(config, "oidc", None)
+    return bool(getattr(oidc, "enabled", False))
 
 
 def _list_roles_response() -> dict[str, Any]:
@@ -131,6 +138,7 @@ async def assign_role(
 async def revoke_role(
     subject: str,
     role: str,
+    request: Request,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
 ) -> dict[str, Any]:
     """Revoke a role from a subject.
@@ -139,7 +147,9 @@ async def revoke_role(
     Returns 409 if revoking would leave the system with no admin path (lockout guard).
     """
     try:
-        deleted = rbac_store.revoke_role(subject, role)
+        deleted = rbac_store.revoke_role(
+            subject, role, oidc_configured=_server_oidc_configured(request)
+        )
     except LastAdminError as e:
         actor_fp = auth.subject[:8] if auth.subject else "anonymous"
         audit.append(

@@ -740,21 +740,40 @@ def revoke_role_cmd(
         Optional[Path],  # noqa: UP007
         typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
     ] = None,
+    config: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option(
+            "--config",
+            "-c",
+            help=(
+                "Server YAML config (as for `nova server start`; default "
+                "~/.config/novafabric/server.yaml). Its `oidc:` block decides "
+                "whether revoking the last admin row is a lockout."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Revoke a user's role on the NovaFabric server.
 
-    The last admin cannot be removed (lockout invariant enforced).
+    The last admin cannot be removed (lockout invariant enforced) unless the
+    server config has OIDC configured, so JWT-claim admins can still log in
+    (ADR-0060).
 
     Scope: single server.
 
     \b
     Examples:
       nova server revoke-role alice@example.com admin
+      nova server revoke-role alice@example.com admin --config /etc/nova/server.yaml
     """
     try:
+        from novafabric.server.config import load_config
         from novafabric.server.rbac_store import LastAdminError, revoke_role
 
-        deleted = revoke_role(user, role, db_path=db_path)
+        # L15: the guard's OIDC input is the server's own config (YAML oidc:),
+        # never an env var the server does not read.
+        oidc_configured = load_config(config).oidc.enabled
+        deleted = revoke_role(user, role, db_path=db_path, oidc_configured=oidc_configured)
     except LastAdminError as exc:
         typer.echo(f"Refused: {exc}", err=True)
         raise typer.Exit(code=2) from exc

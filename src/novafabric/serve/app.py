@@ -4309,7 +4309,9 @@ def create_app(
 
         prior_roles = sorted(rbac_store.get_roles(subject))
         try:
-            deleted = rbac_store.revoke_role(subject, role)
+            # L15: `nova serve` has no OIDC, so the ADR-0060 guard always applies
+            # here (a stray NOVA_OIDC_ISSUER env var used to switch it off).
+            deleted = rbac_store.revoke_role(subject, role, oidc_configured=False)
         except LastAdminError as e:
             audit.append(
                 action="revoke_role",

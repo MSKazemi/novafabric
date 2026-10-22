@@ -7421,8 +7421,11 @@ curl -X POST http://localhost:7433/v0/admin/roles \
 
 Revoke a role from a user. Per [ADR-0060](./decisions.md);
 enforces the **last-admin lockout invariant** at the store layer — if revoking
-would leave `role_assignments` with no `admin` row AND no `NOVA_OIDC_ISSUER`
-configured, the command refuses with exit code 2.
+would leave `role_assignments` with no `admin` row AND the server config has no
+OIDC (`oidc.issuer_url` + `oidc.audience` in the YAML read via `--config`, default
+`~/.config/novafabric/server.yaml`), the command refuses with exit code 2. With
+OIDC configured, JWT-claim admins can still log in, so the revoke is allowed. (The
+guard used to key on a `NOVA_OIDC_ISSUER` env var that the server never reads.)
 
 ```bash
 nova server revoke-role user@example.com writer
@@ -7435,6 +7438,8 @@ Arguments:
 
 Options:
 - `--db-path PATH` — SQLite database path (overrides default)
+- `--config PATH` / `-c` — server YAML config whose `oidc:` block decides the
+  lockout guard (default `~/.config/novafabric/server.yaml`)
 
 Exit codes:
 - `0` — success (role revoked)
@@ -8067,15 +8072,11 @@ failed).
 | `NOVAFABRIC_INFERENCE_DETERMINISTIC` | — | Inference-determinism contract: `1`/`true`/`yes`/`on` if the engine ran in a documented deterministic mode. |
 | `NOVAFABRIC_POSTGRES_DSN` | — | Postgres DSN for `nova doctor --check-storage` and `nova migrate-to-postgres` |
 | `NOVA_DSN` | — | Postgres DSN for `nova server start` (ADR-0029 resolution order) |
-| `NOVA_BACKEND` | `sqlite` | Storage backend for `nova server start` |
-| `NOVA_SERVER_CONFIG` | — | Absolute path to `nova-server.yaml` (overrides default search paths) |
 | `NOVAFABRIC_SERVER_HOST` | `127.0.0.1` | Bind address for `nova server start`. |
 | `NOVAFABRIC_SERVER_PORT` | `8000` | TCP port for `nova server start`. |
 | `NOVAFABRIC_SERVER_BACKEND` | `sqlite` | Storage backend for `nova server start`: `sqlite` or `postgres`. |
 | `NOVAFABRIC_SERVER_DB_PATH` | `$NOVAFABRIC_HOME/registry.db` | SQLite DB path for `nova server start` when `NOVAFABRIC_SERVER_BACKEND=sqlite`. |
-| `NOVA_OIDC_ENABLED` | `false` | Enable OIDC authentication on the server |
-| `NOVA_OIDC_ISSUER_URL` | — | OIDC issuer URL (e.g. `https://keycloak.example.com/realms/nova`) |
-| `NOVA_OIDC_CLIENT_ID` | — | OIDC client ID registered at the provider |
+| *(OIDC)* | — | There are **no OIDC environment variables**: configure `oidc.issuer_url` and `oidc.audience` in the server YAML (`--config`). |
 | `NOVAFABRIC_OFFLINE_KEY_PATH` | `~/.novafabric/keys/offline-key.pem` | Path to the ed25519 private key for offline tokens |
 | `NOVA_ADMIN_TOKEN` | — | Bearer token with admin role, used by `nova server flush-jwks-cache` |
 | `NOVAFABRIC_CLUSTER_ID` | — | Cluster identifier for collector and HPC hub binaries |

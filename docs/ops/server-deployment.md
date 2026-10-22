@@ -553,7 +553,7 @@ the NovaFabric `/v0/` error model.
   `role_assignments` rows immediately — the same table `nova server
   assign-role` writes; the `userName` is the auth subject.
 - The ADR-0060 **last-admin lockout guard** applies: a SCIM deprovision that
-  would remove the last admin (with no OIDC issuer configured) is refused
+  would remove the last admin (with no OIDC configured in the server YAML) is refused
   with a SCIM `409` and *nothing* is mutated — the user stays active and
   keeps its roles.
 - Every mutation appends an event (`user.create` / `user.update` /

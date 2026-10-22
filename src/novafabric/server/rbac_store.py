@@ -15,7 +15,6 @@ Schema:
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,8 +34,8 @@ class LastAdminError(Exception):
     """Raised when a revoke would leave the system with no admin path.
 
     See ADR-0060 for the invariant: at least one row with role='admin' in
-    role_assignments must remain, OR an OIDC issuer must be configured via
-    NOVA_OIDC_ISSUER so JWT-claim-based admins can still authenticate.
+    role_assignments must remain, OR the server must have OIDC configured (its
+    YAML ``oidc:`` block) so JWT-claim-based admins can still authenticate.
     """
 
 
@@ -135,14 +134,18 @@ def revoke_role(
     role: str,
     *,
     db_path: Path | None = None,
+    oidc_configured: bool = False,
 ) -> bool:
     """Revoke *role* from *subject*.
 
     Returns True if a row was deleted, False if the assignment did not exist.
 
     Raises LastAdminError if the deletion would leave the system with no admin
-    path (no remaining ``role_assignments`` admin row AND no OIDC issuer
-    configured via ``NOVA_OIDC_ISSUER``).
+    path: no remaining ``role_assignments`` admin row AND *oidc_configured* is
+    False. Callers pass the server's own ``config.oidc.enabled`` (L15: this used
+    to read the env var ``NOVA_OIDC_ISSUER``, which server-mode OIDC never
+    reads, so a real OIDC server got a false refusal and a stray env var
+    disabled the guard). The default keeps the guard on.
     """
     conn = _get_conn(db_path)
     try:
@@ -155,7 +158,7 @@ def revoke_role(
             # report not-found instead of tripping the last-admin guard below
             # (which previously fired on an empty store and masked the 404).
             return False
-        if role == "admin" and not os.environ.get("NOVA_OIDC_ISSUER"):
+        if role == "admin" and not oidc_configured:
             remaining = conn.execute(
                 "SELECT COUNT(*) AS c FROM role_assignments "
                 "WHERE role = 'admin' AND NOT (subject = ? AND role = ?)",
