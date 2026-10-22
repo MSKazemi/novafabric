@@ -151,9 +151,10 @@ def _envelope_subject_refs(capsule_dir: Path) -> list[str]:
     """Subject HMACs whose PII ``nova capture --pii-subject`` encrypted in this capsule.
 
     Read from ``redaction_manifest.json`` entries with ``protection: envelope``
-    (ADR-0314 D5). The raw subject id is never in the capsule; it is resolved
-    against ``dek.db`` with ``NOVA_PII_PEPPER`` at apply time. Unreadable or
-    absent bookkeeping yields ``[]``.
+    (ADR-0314 D5; only capsules captured with ``--pii-subject`` have them). The
+    raw subject id is never in the capsule; it is resolved against ``dek.db``
+    with ``NOVA_PII_PEPPER`` at apply time. Unreadable or absent bookkeeping
+    yields ``[]``.
     """
     path = capsule_dir / REDACTION_MANIFEST
     text = read_capsule_member_or_none(

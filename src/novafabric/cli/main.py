@@ -489,7 +489,10 @@ app.add_typer(
 app.add_typer(
     lineage_store_app,
     name="lineage-store",
-    help="Lineage store migration and deployment.",
+    help=(
+        "Lineage store migration (into a SQLite lineage store) and deployment "
+        "profiles (KuzuDB, JanusGraph)."
+    ),
 )
 app.add_typer(
     hold_app,

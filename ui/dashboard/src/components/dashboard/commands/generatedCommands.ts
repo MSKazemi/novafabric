@@ -1077,7 +1077,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "NovaFabric data root directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -1109,7 +1109,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "NovaFabric data root directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -1142,7 +1142,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "NovaFabric data root directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -1181,7 +1181,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "NovaFabric data root directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -8861,7 +8861,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-lineage-store-migrate",
     "name": "nova lineage-store migrate",
     "journey": "audit",
-    "description": "Migrate lineage edges from a Parquet file or ObjectCapsuleStore to a SQLite store.",
+    "description": "Migrate lineage edges from a Parquet file into a SQLite lineage store.",
     "fields": [
       {
         "key": "parquet",
@@ -8895,7 +8895,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "from-ocs",
         "label": "--from-ocs",
         "type": "toggle",
-        "hint": "Migrate from ObjectCapsuleStore (ADR-0022 canonical path). Requires --ocs-tenant and --ocs-run-ids.",
+        "hint": "Not implemented: refuses with exit 1. NovaFabric has no on-disk ObjectCapsuleStore reader for this command (ADR-0022 path planned).",
         "flag": "--from-ocs"
       },
       {
@@ -8918,7 +8918,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "ocs-data-dir",
         "label": "--ocs-data-dir",
         "type": "text",
-        "hint": "Local OCS data directory for the InMemoryWormAdapter fallback (used with --from-ocs)",
+        "hint": "Not read: --from-ocs is not implemented (kept for compatibility).",
         "flag": "--ocs-data-dir"
       }
     ],

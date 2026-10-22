@@ -77,11 +77,15 @@ def test_from_ocs_refuses_before_checking_its_other_arguments(tmp_path: Path) ->
 
 
 def test_group_help_names_only_the_sqlite_target() -> None:
+    """L12: the group's own description names SQLite as the migration target, nothing else."""
+    from novafabric.cli.lineage_migrate import lineage_store_app
+
     result = runner.invoke(app, ["lineage-store", "--help"])
     assert result.exit_code == 0, result.output
     text = " ".join(result.output.split())
-    assert "SQLite" in text
-    assert "Postgres" not in text and "KuzuDB)" not in text
+    assert "Lineage store migration (into a SQLite lineage store)" in text
+    assert "Postgres" not in text
+    assert "Postgres" not in str(lineage_store_app.info.help)
 
 
 def test_migrate_help_says_from_ocs_is_not_implemented() -> None:
