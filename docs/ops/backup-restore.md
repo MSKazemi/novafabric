@@ -246,6 +246,17 @@ hash-chained audit log, and a secret-redacted config. The signed manifest
 carries a **coverage table** — absences and skips are recorded evidence,
 never silence.
 
+**Capsule store outside the home (works today):** `nova backup create` finds
+capsules the way `nova capture` writes them — `$NOVAFABRIC_CAPSULE_DIR` when
+set, else `<home>/capsules`. A store outside the home (the Docker layout keeps
+capsules in `/data/capsules`) is archived under `external/capsule-dir/`
+(member origin `capsule-dir`, manifest schema 0.2.1), and the `capsules`
+coverage row names the directory. `nova restore` puts those capsules back by
+the same rule on the target: into `$NOVAFABRIC_CAPSULE_DIR` when set there,
+else `<target home>/capsules`. An existing capsule file is never overwritten
+without `--force`, which moves it aside under `.pre-restore-…/external/capsule-dir/`.
+Before this fix a Docker deployment's set recorded `capsules: absent`.
+
 > **Custody note:** because `dek.db` (raw per-subject DEKs) travels in the
 > default set, a backup set is a **sensitive artifact** — store it encrypted
 > at rest with restricted access. Crypto-shred replay on restore guarantees

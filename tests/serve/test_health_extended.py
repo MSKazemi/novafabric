@@ -87,12 +87,19 @@ def test_health_sqlite_backend_by_default(client: TestClient, monkeypatch: pytes
     assert data["backend_type"] == "sqlite"
 
 
-def test_health_postgres_backend_when_env_set(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """With NOVAFABRIC_DB_URL set, backend_type must be 'postgres'."""
+def test_health_backend_is_what_serve_opens_not_an_env_label(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-4: ``backend_type`` read NOVAFABRIC_DB_URL only to pick a label.
+
+    ``nova serve`` never connects to that URL: its registry is the SQLite file named
+    by ``db_path``. Setting the variable made the health panel claim "postgres" for a
+    process that reads SQLite.
+    """
     monkeypatch.setenv("NOVAFABRIC_DB_URL", "postgresql://localhost/test")
-    resp = client.get("/api/health", headers=LOCALHOST_HEADERS)
-    data = resp.json()
-    assert data["backend_type"] == "postgres"
+    data = client.get("/api/health", headers=LOCALHOST_HEADERS).json()
+    assert data["backend_type"] == "sqlite"
+    assert data["db_path"].endswith("registry.db")
 
 
 def test_health_db_path_follows_env_when_not_passed(

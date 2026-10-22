@@ -267,9 +267,7 @@ def run_alembic_upgrade(
         env["NOVAFABRIC_METADATA_DSN"] = resolved
         scrub = resolved
     else:
-        env.setdefault(
-            "NOVAFABRIC_DB_PATH", str(_nf_paths.metadata_db_path())
-        )
+        env[_nf_paths.METADATA_DB_PATH_ENV] = str(_nf_paths.metadata_db_path())
         scrub = None
 
     try:
@@ -322,7 +320,8 @@ def db_upgrade_cmd(
 
     Two parallel alembic tracks exist (ADR-0211): ``--track metadata``
     (default) migrates the MetadataStore tier — sqlite reads
-    NOVAFABRIC_DB_PATH (default $NOVAFABRIC_HOME/metadata.db), postgres reads
+    NOVAFABRIC_METADATA_DB_PATH (default $NOVAFABRIC_HOME/metadata.db; the
+    registry's NOVAFABRIC_DB_PATH is not read), postgres reads
     NOVAFABRIC_METADATA_DSN. ``--track registry`` (experimental) migrates the
     registry/server database — sqlite uses the registry DB path
     ($NOVAFABRIC_HOME/registry.db), postgres reads NOVAFABRIC_POSTGRES_DSN. The
@@ -385,12 +384,12 @@ def db_upgrade_cmd(
             )
             raise typer.Exit(code=2)
     else:
-        db_path = env.get(
-            "NOVAFABRIC_DB_PATH",
-            str(_nf_paths.metadata_db_path()),
-        )
-        env["NOVAFABRIC_DB_PATH"] = db_path
+        db_path = str(_nf_paths.metadata_db_path())
+        env[_nf_paths.METADATA_DB_PATH_ENV] = db_path
         console.print(f"  db_path: [dim]{db_path}[/dim]")
+        note = _legacy_db_path_note()
+        if note:
+            console.print(f"  [yellow]note:[/yellow] {note}", highlight=False)
 
     try:
         proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
@@ -410,6 +409,19 @@ def db_upgrade_cmd(
         raise typer.Exit(code=proc.returncode)
 
     console.print(f"[bold green]upgrade {revision} complete.[/bold green]")
+
+
+def _legacy_db_path_note() -> str | None:
+    """Tell an operator who set NOVAFABRIC_DB_PATH that it no longer selects this DB (L20)."""
+    if not os.environ.get("NOVAFABRIC_DB_PATH", "").strip():
+        return None
+    if os.environ.get(_nf_paths.METADATA_DB_PATH_ENV, "").strip():
+        return None
+    return (
+        "NOVAFABRIC_DB_PATH is set, but it names the registry DB and is not read by "
+        "the metadata track; set NOVAFABRIC_METADATA_DB_PATH to choose the metadata "
+        "DB (use --track registry to migrate the registry DB)."
+    )
 
 
 def _upgrade_registry_track(backend: str, revision: str) -> None:

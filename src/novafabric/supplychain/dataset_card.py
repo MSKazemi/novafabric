@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,36 @@ CARD_SCHEMA_VERSION = "dataset-provenance-card/1"
 # Lineage edge types that represent a dataset derivation (contribute a transform entry).
 _DERIVATION_EDGE_TYPES = {"produced_by", "transformed", "derived", "consumed"}
 
+#: A full SHA-256 digest, the schema's DigestMap.sha256 (bare lowercase hex).
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+class DatasetCardError(ValueError):
+    """A card input is malformed — e.g. a truncated content hash (L32).
+
+    Raised before anything is built or signed: a signature over a digest that
+    identifies nothing is not evidence.
+    """
+
+
+def normalize_sha256(value: str, *, field: str) -> str:
+    """Return the bare lowercase hex of a full SHA-256 given as hex or ``sha256:<hex>``.
+
+    Raises:
+        DatasetCardError: *value* is not exactly 64 hex digits after the optional
+            ``sha256:`` prefix (truncated, padded, another algorithm, empty).
+    """
+    hex_part = value.strip()
+    if hex_part[:7].lower() == "sha256:":
+        hex_part = hex_part[7:]
+    hex_part = hex_part.lower()
+    if not _SHA256_HEX.fullmatch(hex_part):
+        raise DatasetCardError(
+            f"{field} must be a full SHA-256 digest — 64 hex digits, optionally "
+            f"prefixed 'sha256:' — got {value!r} ({len(hex_part)} characters after the prefix)"
+        )
+    return hex_part
+
 
 class _Camel(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
@@ -59,7 +90,7 @@ class Source(_Camel):
 
 
 class DigestMap(_Camel):
-    sha256: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class Transform(_Camel):
@@ -160,22 +191,28 @@ def build_card(
     registry_digest: str | None = None,
     capsule_digest: str | None = None,
 ) -> DatasetProvenanceCard:
-    """Build an **unsigned** dataset provenance card (NF-058)."""
+    """Build an **unsigned** dataset provenance card (NF-058).
+
+    Raises:
+        DatasetCardError: *dataset_hash*, *registry_digest* or *capsule_digest* is not
+            a full SHA-256 (L32: a truncated hash used to be signed into the card).
+    """
+    content_hex = normalize_sha256(dataset_hash, field="dataset hash (--hash)")
     bound: BoundTo | None = None
     if registry_digest is not None:
+        registry_hex = normalize_sha256(registry_digest, field="registry digest")
+        capsule_hex = (
+            normalize_sha256(capsule_digest, field="capsule digest") if capsule_digest else None
+        )
         bound = BoundTo(
-            registryDigest="sha256:" + registry_digest.removeprefix("sha256:"),
-            capsuleDigest=(
-                "sha256:" + capsule_digest.removeprefix("sha256:")
-                if capsule_digest
-                else None
-            ),
+            registryDigest="sha256:" + registry_hex,
+            capsuleDigest="sha256:" + capsule_hex if capsule_hex else None,
         )
     return DatasetProvenanceCard(
         asset=asset,
         source=Source(uri=source_uri, retrievedAt=retrieved_at),
         version=version,
-        hash=DigestMap(sha256=dataset_hash.removeprefix("sha256:")),
+        hash=DigestMap(sha256=content_hex),
         license=license,
         tlp=tlp,
         transformHistory=transforms or [],

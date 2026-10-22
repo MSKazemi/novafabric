@@ -49,6 +49,25 @@ def _offline_key_path(request: Request) -> Path:
     return Path(key_path)
 
 
+def _signing_key_path(request: Request) -> Path:
+    """The private key to mint with; NOVAFABRIC_OFFLINE_KEY_PATH may name either file (L22).
+
+    A server given only the public key (``<key>.pub`` with no private sibling) can
+    verify offline tokens but cannot mint one, and a new keypair is never generated
+    over it: every token already issued would stop verifying.
+    """
+    from novafabric.server.offline_tokens import names_public_key_only, signing_key_path
+
+    key_path = _offline_key_path(request)
+    if names_public_key_only(key_path):
+        raise BadRequestError(
+            "NOVAFABRIC_OFFLINE_KEY_PATH names a public key with no private key next "
+            "to it; this server can verify offline tokens but not mint service-account "
+            "tokens. Point it at the private signing key to create service accounts."
+        )
+    return signing_key_path(key_path)
+
+
 @router.post("", status_code=201)
 async def create_service_account(
     body: CreateServiceAccountRequest,
@@ -63,7 +82,7 @@ async def create_service_account(
     """
     from novafabric.server.offline_tokens import generate_keypair, issue_token
 
-    key_path = _offline_key_path(request)
+    key_path = _signing_key_path(request)
     if not key_path.exists():
         generate_keypair(key_path)
 

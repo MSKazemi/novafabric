@@ -30,8 +30,12 @@ from novafabric.server.pagination import encode_keyset_cursor
 
 
 def _default_db_path() -> Path:
-    """``$NOVAFABRIC_HOME/metadata.db``, resolved per call (not at import)."""
-    return _nf_paths.nova_home() / "metadata.db"
+    """``$NOVAFABRIC_METADATA_DB_PATH`` else ``$NOVAFABRIC_HOME/metadata.db``, per call.
+
+    The same resolution the metadata migration track uses, so ``nova db upgrade``
+    migrates the database this store opens.
+    """
+    return _nf_paths.metadata_db_path()
 
 
 _DEV_WARNING = (
@@ -67,7 +71,7 @@ class SQLiteMetadataStore(MetadataStore):
     ----------
     db_path:
         Path to the SQLite database file.  Defaults to
-        ``~/.novafabric/metadata.db``.
+        ``$NOVAFABRIC_METADATA_DB_PATH``, else ``$NOVAFABRIC_HOME/metadata.db``.
     """
 
     def __init__(self, db_path: Path | str | None = None) -> None:

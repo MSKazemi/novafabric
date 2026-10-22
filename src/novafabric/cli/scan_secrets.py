@@ -40,7 +40,10 @@ def scan_secrets_cmd(
     fail_on: ScanSeverity | None = typer.Option(
         None,
         "--fail-on",
-        help="Exit 1 if any finding at or above this severity is found.",
+        help=(
+            "Exit 2 if any finding at or above this severity is found "
+            "(exit 1 means the redaction proof is missing or unreadable)."
+        ),
     ),
     json_output: bool = typer.Option(
         False,

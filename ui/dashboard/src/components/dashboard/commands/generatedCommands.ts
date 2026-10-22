@@ -1779,7 +1779,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "Root novafabric-data directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -2713,7 +2713,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "hash",
         "label": "--hash",
         "type": "text",
-        "hint": "Dataset content sha256 (bare hex or sha256:…).",
+        "hint": "Dataset content SHA-256: all 64 hex digits, bare or prefixed sha256:. A truncated or malformed digest exits 2 and nothing is signed.",
         "flag": "--hash",
         "required": true
       },
@@ -2749,7 +2749,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "registry-digest",
         "label": "--registry-digest",
         "type": "text",
-        "hint": "Content-addressed registry digest to bind to.",
+        "hint": "Content-addressed registry digest to bind to (full SHA-256, bare or sha256:).",
         "flag": "--registry-digest"
       },
       {
@@ -8453,7 +8453,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "edge-type",
         "label": "--edge-type",
         "type": "text",
-        "hint": "Walk only edges of these types (comma-separated): contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory",
+        "hint": "Walk only edges of these types (comma-separated): attested_by,consumed,contains,delegated_to,depends_on,derived_from,evaluated_by,member_of_session,produced_by,read_memory,replayed_from,spawned,wrote_memory",
         "flag": "--edge-type"
       },
       {
@@ -8735,7 +8735,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "edge-type",
         "label": "--edge-type",
         "type": "text",
-        "hint": "Walk only edges of these types (comma-separated): contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory",
+        "hint": "Walk only edges of these types (comma-separated): attested_by,consumed,contains,delegated_to,depends_on,derived_from,evaluated_by,member_of_session,produced_by,read_memory,replayed_from,spawned,wrote_memory",
         "flag": "--edge-type"
       },
       {
@@ -11482,7 +11482,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Capsule directory to sweep (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
@@ -11573,7 +11573,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Capsule directory to sweep (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
@@ -11612,7 +11612,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Capsule directory to sweep (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
@@ -11658,7 +11658,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Capsule directory to sweep (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
@@ -12041,7 +12041,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "fail-on",
         "label": "--fail-on",
         "type": "text",
-        "hint": "Exit 1 if any finding at or above this severity is found.",
+        "hint": "Exit 2 if any finding at or above this severity is found (exit 1 means the redaction proof is missing or unreadable).",
         "flag": "--fail-on"
       },
       {
@@ -13230,7 +13230,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "key-path",
         "label": "--key-path",
         "type": "text",
-        "hint": "Path to ed25519 private key PEM. Defaults to NOVAFABRIC_OFFLINE_KEY_PATH env var, or ~/.novafabric/keys/offline-key.pem.",
+        "hint": "Path to the ed25519 private key PEM, or its .pub sibling (the private key next to it is used). Defaults to NOVAFABRIC_OFFLINE_KEY_PATH env var, or $NOVAFABRIC_HOME/keys/offline-key.pem.",
         "flag": "--key-path"
       }
     ],

@@ -14,7 +14,7 @@
 """Compliance audit: control-mapping engine for NovaFabric evidence."""
 
 from .engine import AuditEngine
-from .loader import BUILT_IN_PROFILES, list_profiles, load_profile
+from .loader import BUILT_IN_PROFILES, ProfileValidationError, list_profiles, load_profile
 from .models import AuditReport, Control, ControlCoverage, ControlProfile, EvidenceRequirement
 
 __all__ = [
@@ -27,4 +27,5 @@ __all__ = [
     "EvidenceRequirement",
     "list_profiles",
     "load_profile",
+    "ProfileValidationError",
 ]

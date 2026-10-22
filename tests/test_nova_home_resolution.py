@@ -86,7 +86,7 @@ def test_shared_resolver_derives_everything_from_one_home(
 ) -> None:
     custom, user_home = homes
     assert _paths.keys_dir() == custom / "keys"
-    assert _paths.local_key_path() == custom / "keys" / "local-key.pem"
+    assert _paths.local_key_path() == custom / "keys" / "signing_key.pem"
     assert _paths.evidence_dir() == custom / "evidence"
     assert _paths.tokens_path() == custom / "tokens.jsonl"
     assert _paths.object_store_dir() == custom / "object_store"

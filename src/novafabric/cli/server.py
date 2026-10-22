@@ -391,9 +391,10 @@ def issue_token_cmd(
         typer.Option(
             "--key-path",
             help=(
-                "Path to ed25519 private key PEM. "
+                "Path to the ed25519 private key PEM, or its .pub sibling "
+                "(the private key next to it is used). "
                 "Defaults to NOVAFABRIC_OFFLINE_KEY_PATH env var, "
-                "or ~/.novafabric/keys/offline-key.pem."
+                "or $NOVAFABRIC_HOME/keys/offline-key.pem."
             ),
             exists=False,
         ),
@@ -411,12 +412,30 @@ def issue_token_cmd(
       nova server issue-token --subject alice@example.com
       nova server issue-token --subject worker-01 --roles reader,writer --expires-in 30d
     """
-    resolved_key = _resolve_key_path(key_path)
+    from novafabric.server.offline_tokens import names_public_key_only, signing_key_path
+
+    named_key = _resolve_key_path(key_path)
     role_list = [r.strip() for r in roles.split(",") if r.strip()]
     days = _parse_days(expires_in)
+    # L22: NOVAFABRIC_OFFLINE_KEY_PATH may name the keypair's .pub file (what the
+    # server needs). Sign with its private sibling; never generate a new keypair
+    # over a public key that servers already trust.
+    if names_public_key_only(named_key):
+        typer.echo(
+            f"Error: {named_key} is a public key and there is no private key next to "
+            f"it ({signing_key_path(named_key)}). Issue tokens on the host that holds "
+            "the private signing key, or pass --key-path <private-key.pem>.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    resolved_key = signing_key_path(named_key)
 
     try:
-        from novafabric.server.offline_tokens import generate_keypair, issue_token
+        from novafabric.server.offline_tokens import (
+            OfflineKeyError,
+            generate_keypair,
+            issue_token,
+        )
 
         if not resolved_key.exists():
             # L3: status lines go to stderr -- `TOKEN=$(nova server issue-token ...)`
@@ -440,6 +459,9 @@ def issue_token_cmd(
         # generic "Failed to issue token".
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1)
+    except OfflineKeyError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2)
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"Failed to issue token: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -456,8 +478,9 @@ def issue_token_cmd(
     typer.echo(
         f"The server accepts this token only if it was started with\n"
         f"  NOVAFABRIC_OFFLINE_KEY_PATH={resolved_key.with_suffix('.pub')}\n"
-        f"Without it, offline-JWT authentication is disabled and this token is "
-        f"rejected. See ADR-0018.",
+        f"(the public key is enough to verify; either file of the pair works here and "
+        f"for issue-token). Without it, offline-JWT authentication is disabled and "
+        f"this token is rejected. See ADR-0018.",
         err=True,
     )
     typer.echo(token)

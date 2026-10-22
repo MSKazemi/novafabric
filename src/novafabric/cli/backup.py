@@ -132,6 +132,11 @@ def create(
     manifest, or any output. A symbolic link under capsules/, runs/, spool/
     or seal/ratchet/ refuses the backup: the copy never follows a link.
 
+    The capsule store is found the way capture finds it: $NOVAFABRIC_CAPSULE_DIR
+    when set (for example the Docker layout's /data/capsules), else
+    <home>/capsules. A store outside the home travels as external/capsule-dir/
+    and `nova restore` puts it back under the same rule on the target.
+
     NOTE: the default set includes the PII DEK store (dek.db) so restored PII
     stays readable — treat backup sets as sensitive artifacts and store them
     encrypted at rest.

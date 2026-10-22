@@ -1434,8 +1434,22 @@ spec:
     - create_ticket
   prompts:
     system: "You are a support triage assistant. Classify incoming tickets by priority."
+  policies: []
   evals:
     - triage_accuracy_suite
+```
+
+Spec files are validated strictly: a key NovaFabric does not define — at the top level or
+inside `spec:` — is a validation error that names the key, so a typo such as `suite_name:`
+for `suite:` is caught instead of silently dropped. Put vendor or custom data under the
+optional top-level `extensions:` mapping (reverse-DNS keys, kept verbatim), or in `tags:` /
+`external_refs:` (string values). (Before this change, unknown keys were accepted and
+discarded.)
+
+```yaml
+extensions:
+  com.example.owner: fraud-team
+  com.example.cost-centre: {id: 4711}
 ```
 
 Supported asset types and their required `spec` fields:
@@ -1887,6 +1901,7 @@ may change between minor versions.
 |---|---|---|
 | `NOVAFABRIC_HOME` | `~/.novafabric` | Root directory for all internal NovaFabric data. Set this once to redirect all files (registry.db, .serve-token, dashboard audit log) to a shared location. |
 | `NOVAFABRIC_DB_PATH` | `$NOVAFABRIC_HOME/registry.db` | SQLite path for asset registry and lineage graph. Overrides `NOVAFABRIC_HOME` for this path only. |
+| `NOVAFABRIC_METADATA_DB_PATH` | `$NOVAFABRIC_HOME/metadata.db` | SQLite path for the MetadataStore (runtime and `nova db upgrade`). `NOVAFABRIC_DB_PATH` does not select it. |
 | `NOVAFABRIC_URL_REGISTRY` | (bundled) | Override path for the wire-level URL classification registry |
 | `NOVAFABRIC_CAPSULE_DIR` | — | Capsule storage directory. Set by `nova capture` in the subprocess; used by hook loader and proxy commands. Set explicitly to redirect captures to a shared path (e.g. a shared NFS mount). |
 | `NOVAFABRIC_SPAN_ID` | — | Root OTel span id injected into the subprocess by the orchestrator |

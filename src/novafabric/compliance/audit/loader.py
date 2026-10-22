@@ -16,8 +16,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from .models import Control, ControlProfile, EvidenceRequirement
 
@@ -37,6 +39,20 @@ _PROFILE_FILENAMES: dict[str, str] = {
 BUILT_IN_PROFILES = list(_PROFILE_FILENAMES.keys())
 
 
+class ProfileValidationError(ValueError):
+    """A profile YAML exists but is not a valid control profile (L25).
+
+    A ``ValueError`` subclass, so every caller that already reports an unknown
+    profile (``nova audit``, ``nova serve``'s 422) reports this too. The message
+    names the file and the offending field.
+    """
+
+    def __init__(self, path: Path, problem: str) -> None:
+        super().__init__(f"Invalid audit profile {path}: {problem}")
+        self.path = path
+        self.problem = problem
+
+
 def list_profiles() -> list[str]:
     """Return the list of built-in profile IDs."""
     return list(_PROFILE_FILENAMES.keys())
@@ -54,6 +70,8 @@ def load_profile(profile_id_or_path: str) -> ControlProfile:
 
     Raises:
         ValueError: If the profile ID is unknown and the path does not exist.
+        ProfileValidationError: If the file is not valid YAML or not a valid
+            control profile (missing field, wrong type).
     """
     path = _resolve_path(profile_id_or_path)
     return _parse_profile_yaml(path)
@@ -76,35 +94,89 @@ def _resolve_path(profile_id_or_path: str) -> Path:
 
 
 def _parse_profile_yaml(path: Path) -> ControlProfile:
-    with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as exc:
+        raise ProfileValidationError(path, f"not valid YAML ({exc})") from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ProfileValidationError(path, f"cannot be read ({exc})") from exc
+    try:
+        return _build_profile(data)
+    except ValidationError as exc:
+        raise ProfileValidationError(path, _first_error(exc)) from exc
+    except _ProfileShapeError as exc:
+        raise ProfileValidationError(path, str(exc)) from exc
 
+
+class _ProfileShapeError(Exception):
+    """Internal: a structural problem in the profile mapping (wrapped with the path)."""
+
+
+def _mapping(value: object, where: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise _ProfileShapeError(f"{where} must be a mapping, got {type(value).__name__}")
+    return value
+
+
+def _sequence(value: object, where: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise _ProfileShapeError(f"{where} must be a list, got {type(value).__name__}")
+    return value
+
+
+def _required(data: dict[str, Any], key: str, where: str) -> Any:
+    if key not in data:
+        raise _ProfileShapeError(f"{where} is missing required field {key!r}")
+    return data[key]
+
+
+def _build_profile(raw: object) -> ControlProfile:
+    data = _mapping(raw, "the profile document")
+    framework = _required(data, "framework", "the profile")
     controls: list[Control] = []
-    for ctrl_data in data.get("controls", []):
+    for index, raw_ctrl in enumerate(_sequence(data.get("controls", []), "'controls'")):
+        where = f"controls[{index}]"
+        ctrl_data = _mapping(raw_ctrl, where)
         requirements: list[EvidenceRequirement] = []
-        for req_data in ctrl_data.get("evidence_requirements", []):
+        raw_reqs = _sequence(
+            ctrl_data.get("evidence_requirements", []), f"{where}.evidence_requirements"
+        )
+        for req_index, raw_req in enumerate(raw_reqs):
+            req_where = f"{where}.evidence_requirements[{req_index}]"
+            req_data = _mapping(raw_req, req_where)
             requirements.append(
                 EvidenceRequirement(
-                    evidence_type=req_data["evidence_type"],
+                    evidence_type=_required(req_data, "evidence_type", req_where),
                     required=req_data.get("required", True),
-                    description=req_data["description"],
+                    description=_required(req_data, "description", req_where),
                 )
             )
         controls.append(
             Control(
-                id=ctrl_data["id"],
-                title=ctrl_data["title"],
-                description=ctrl_data["description"],
-                framework=data["framework"],
+                id=_required(ctrl_data, "id", where),
+                title=_required(ctrl_data, "title", where),
+                description=_required(ctrl_data, "description", where),
+                framework=framework,
                 evidence_requirements=requirements,
                 weight=ctrl_data.get("weight", 1.0),
             )
         )
 
     return ControlProfile(
-        id=data["id"],
-        name=data["name"],
-        framework=data["framework"],
-        version=str(data["version"]),
+        id=_required(data, "id", "the profile"),
+        name=_required(data, "name", "the profile"),
+        framework=framework,
+        version=str(_required(data, "version", "the profile")),
         controls=controls,
     )
+
+
+def _first_error(exc: ValidationError) -> str:
+    """One readable line from a pydantic error: ``field: message``."""
+    errors = exc.errors()
+    if not errors:
+        return str(exc)
+    first = errors[0]
+    field = ".".join(str(part) for part in first.get("loc", ())) or "value"
+    return f"field {field!r}: {first.get('msg', 'invalid')}"

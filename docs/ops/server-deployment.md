@@ -264,12 +264,22 @@ env -i PATH="$PATH" HOME="$HOME" NOVA_TOKEN="$TOKEN" sbatch job.sh
 ```
 
 `issue-token` also reads its key path from `NOVAFABRIC_OFFLINE_KEY_PATH` when
-`--key-path` is not given — point it at the private `.pem` there:
+`--key-path` is not given. The variable names **one keypair by either of its
+files**: given `offline-key.pub`, `issue-token` signs with the private key next to
+it (`offline-key.pem`, else `offline-key.key`, else `offline-key`), so the same
+export works for the server and for issuing (works today):
 
 ```bash
-NOVAFABRIC_OFFLINE_KEY_PATH=/etc/novafabric/keys/offline-key.pem \
+NOVAFABRIC_OFFLINE_KEY_PATH=/etc/novafabric/keys/offline-key.pub \
   nova server issue-token --subject user@example.com --roles reader
 ```
+
+On a verify-only host that holds just the `.pub`, `issue-token` refuses with
+exit 2 and names the missing private key; it never generates a new keypair over
+a public key the server trusts. (Before 2026-10-23 it read the `.pub` as a private
+key and failed, or — when the `.pub` did not exist yet — wrote the public key over
+the private one.) Service-account creation on the server follows the same rule:
+it needs the private key and answers 400 when the server was given only the `.pub`.
 
 ### Revoke a token
 

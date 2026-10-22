@@ -1058,7 +1058,7 @@ Disabled by default. This is the only path that leaves the trust boundary.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `NOVAFABRIC_DB_URL` | — | Only switches the `backend_type` label in `nova serve`'s `/api/health` to `postgres`. It is **not** a migration target: `nova migrate-to-postgres --target` and `nova db` read `NOVAFABRIC_POSTGRES_DSN` |
+| `NOVAFABRIC_DB_URL` | — | Not read by `nova serve` (its `/api/health` `backend_type` reports the SQLite registry it actually opens; before 2026-10-23 this variable flipped that label to `postgres`). It is **not** a migration target: `nova migrate-to-postgres --target` and `nova db` read `NOVAFABRIC_POSTGRES_DSN` |
 | `NOVAFABRIC_API_WORKERS` | `1` | ⚠ Read by `SQLiteMetadataStore`, which **refuses to construct** when this is > 1. It is the guard behind "SQLite cannot be shared across writer processes" — see §3 on `--workers` |
 | `NOVAFABRIC_AUDIT_LOG_PATH` | `$XDG_DATA_HOME/novafabric/audit.jsonl` when `XDG_DATA_HOME` is set, else `~/.local/share/novafabric/audit.jsonl` (`NOVAFABRIC_HOME` deliberately does not move it) | Hash-chained audit log path. Every writer and reader (exports, promotions, holds, `nova audit-log`, `nova policy explain`, `nova serve`, backup) resolves it the same way, at the moment it is used |
 
