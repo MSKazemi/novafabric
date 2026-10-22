@@ -351,16 +351,30 @@ Options:
   - Every runner except `local` forwards **only** `NOVAFABRIC_*` environment
     variables into the workload, plus `PATH` for `slurm` and whatever you name in
     `extra_env` for `docker`/`kubernetes`/`slurm`/`lsf` (ADR-0270, ADR-0311), e.g.
-    `--runner-option extra_env=OPENAI_API_KEY=sk-...`. `local` runs as you, on your
+    `--runner-option extra_env=LOG_LEVEL=debug`. `local` runs as you, on your
     machine, and keeps your full environment.
+  - **Where an `extra_env` value is visible.** A value typed on the command line is in
+    `nova capture`'s own argv, which every user on the host can read with `ps` for as
+    long as the run lasts — including the whole time a batch job is queued and running.
+    `slurm` and `lsf` hand the job script (with the `export` lines) to `sbatch` / `bsub`
+    on **stdin**, never on their command line and never as a file in the capsule
+    directory; the scheduler then stores it with the job, readable by you and the
+    scheduler's administrators. `docker` passes `extra_env` as `docker run -e K=V`
+    (argv, and `docker inspect`); `kubernetes` writes it into the Job object. Treat
+    `extra_env` as visible to the cluster's operators, and prefer a credential the job
+    reads from a file only you can read.
   - `slurm` and `lsf` also run `sbatch` / `bsub` with a minimal environment (the
     scheduler client's own `SLURM_*`/`SBATCH_*` or `LSF_*`/`LSB_*` variables, login
     basics such as `PATH`/`HOME`/`USER`/the POSIX `LC_*` names, `NOVAFABRIC_*` and
     `extra_env`), because
     both schedulers copy the submitting process's environment into the job by
     default. **Behaviour change (v0.106.0):** a SLURM or LSF job no longer inherits
-    API keys from your shell — pass them with `extra_env`. `extra_env` names must be
-    shell identifiers.
+    API keys from your shell — pass them with `extra_env` (see the visibility note
+    above). `extra_env` names must be shell identifiers; values are single-quoted in
+    the job script, so `$`, backticks, `;` and `&` reach the job verbatim and are never
+    expanded or executed by its shell. The same quoting applies to the command's own
+    arguments in the `slurm`, `lsf` and `pbs` job scripts: `$VAR` in an argument is
+    passed literally, as the `local` runner does.
   - **Experimental, since v0.105.0** ([ADR-0307](./decisions.md)): the capsule records
     which runner ran the workload as `host.runner.name`. `docker` and `kubernetes`
     also record `host.runner.image`: the `image=` reference plus the digest the
@@ -1220,12 +1234,16 @@ exit 3, also under `--dry-run`); `--permissive` starts and reports an
 
 **Exit codes:** `0` — replay succeeded, or a `--dry-run` the real run would not refuse ·
 `1` — replay failed or was aborted (a divergence under the fail-closed default,
-`CapsuleNotReplayable`, a launch error or timeout, a fatal intervention check) or a usage
+`CapsuleNotReplayable`, a replayed command that could not be launched —
+`error.type: ReplayLaunchError` — a fatal intervention check) or a usage
 error · `2` — `--environment` did not match the capsule's recorded environment · `3` —
 `mocked` refused to start because a `replay.yaml` `allow: false` override cannot be
-enforced (`ToolOverrideUnenforceable`, also under `--dry-run`) · any
+enforced (`ToolOverrideUnenforceable`, also under `--dry-run`) · `124` —
+`mocked`/`intervention`: the replayed command did not finish within 600 s and was killed
+(`error.type: ReplayTimeout`, printed and recorded in the replay result) · any
 other non-zero value — `mocked`/`intervention` pass through the replayed command's own
-exit code.
+exit code. A command that itself exits `124` also yields `124`, but with no
+`ReplayTimeout` error; `error.type` is what tells the two apart.
 
 Output is written to `.novafabric/replays/<replay-ulid>/replay_result.yaml`.
 
@@ -7948,7 +7966,8 @@ failed).
 | `NOVA_CLICKHOUSE_DB` | `nova` | ClickHouse database name used by `ClickHouseAccumulator` and `nova cost report`. |
 | `NOVA_CLICKHOUSE_USER` | `default` | ClickHouse username for Evidence Fabric Tier 2 connection. |
 | `NOVA_CLICKHOUSE_PASSWORD` | `` | ClickHouse password for Evidence Fabric Tier 2 connection. |
-| `NOVA_COLLECTOR_TOKEN` | — | Bearer token required on every request to the HPC collector HTTP API. Unset = no auth (local-dev only). |
+| `NOVA_COLLECTOR_TOKEN` | — | Token the Python cluster collector (`collector_app`, `POST /capsule`) requires in the `X-Nova-Token` header from every caller, loopback included; compared in constant time. **Unset = local mode:** only a loopback caller with a `localhost`/`127.0.0.1`/`[::1]` `Host` header and no proxy header (`Forwarded`, `X-Forwarded-For`, `X-Real-IP`) is served, everyone else gets `403`, and a warning is logged at startup. Set it before the collector is reachable from a network. |
+| `NOVA_COLLECTOR_TENANT` | `default` | The tenant the collector's caller is authenticated as (the token, or the local-mode caller). Every ingested event is stored under it; a request `tenant_id` or event `tenant` naming another tenant is refused with `403`. One collector and token per tenant. |
 | `NOVA_COLLECTOR_HEALTH_FILE` | — (then `$NOVAFABRIC_HOME/collector-health.json`, then `/tmp/novafabric-collector-health.json`) | Collector health-check file that `nova serve` reads for the dashboard's collector status; when set, it is tried first. |
 | `NOVA_CAP003_ENABLED` | `false` | Set to `true` to activate the dual-object-store erasure path (cap-003 compliance). Requires S3 GOVERNANCE Object Lock. |
 | `NOVA_DLQ_DIR` | — | Directory for the dead-letter queue. When set, events that fail forwarding are written here instead of dropped. |
@@ -8833,7 +8852,7 @@ runner = LSFRunner(RunnerSpec(image=None, command=["python", "agent.py"]))
 result = runner.run(capsule_dir=Path(".novafabric/runs/01HXAY7M"))
 ```
 
-The runner submits via `bsub`, polls via `bjobs`, and cancels via `bkill`. Job script is injected at `LSF_JOBSCRIPT`.
+The runner submits via `bsub`, polls via `bjobs`, and cancels via `bkill`. The job script is piped to `bsub` on stdin; it is never written to disk or put on a command line, because it carries the `extra_env` values.
 
 ---
 

@@ -126,10 +126,10 @@ class TestDockerInjectsTheHookLoader:
 
 
 class TestSlurmInjectsTheHookLoader:
-    def test_slurm_wrap_script_sets_pythonpath(self, tmp_path: Path) -> None:
-        from novafabric.runners._slurm import _build_wrap_script
+    def test_slurm_batch_script_sets_pythonpath(self, tmp_path: Path) -> None:
+        from novafabric.runners._slurm import _build_batch_script
 
-        script = _build_wrap_script(
+        script = _build_batch_script(
             ["python", "agent.py"],
             {"NOVAFABRIC_SPAN_ID": "a", "PATH": "/usr/bin"},
             tmp_path / "capsule",

@@ -19,9 +19,15 @@ remaining conflation rather than pretending it is fixed.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
+from typer.testing import CliRunner
 
+from novafabric.cli.main import app
 from novafabric.evidence.reperformance import verdict_for
 from novafabric.replay._engine import REPLAY_SUBPROCESS_TIMEOUT_S, ReplayEngine
 from novafabric.replay._result import ReplayResult
@@ -95,6 +101,86 @@ def test_the_timeout_is_a_named_constant() -> None:
     """It is reported in the message, so it must not be a bare literal."""
     assert isinstance(REPLAY_SUBPROCESS_TIMEOUT_S, int)
     assert REPLAY_SUBPROCESS_TIMEOUT_S > 0
+
+
+# ── what `nova replay` exits with, and what its --help says it exits with ─────
+
+
+def _replayable_capsule(tmp_path: Path) -> Path:
+    capsule = tmp_path / "cap"
+    capsule.mkdir()
+    (capsule / "capsule.yaml").write_text(
+        yaml.dump({"run_id": "r", "command": ["python", "-c", "pass"]})
+    )
+    (capsule / "model-calls.jsonl").write_text("")
+    return capsule
+
+
+def _replay_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: Callable[[], Any]
+) -> Any:
+    """Run `nova replay --mode mocked`; the replayed command's spawn yields ``outcome``."""
+    real_run = subprocess.run
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("timeout") == REPLAY_SUBPROCESS_TIMEOUT_S:  # the replayed command
+            return outcome()
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return CliRunner().invoke(
+        app,
+        ["replay", "--mode", "mocked", "-o", str(tmp_path / "r"),
+         str(_replayable_capsule(tmp_path))],
+        env={"COLUMNS": "400"},
+    )
+
+
+def test_cli_exits_124_when_the_replayed_command_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def timeout() -> Any:
+        raise subprocess.TimeoutExpired(cmd="python", timeout=REPLAY_SUBPROCESS_TIMEOUT_S)
+
+    out = _replay_cli(tmp_path, monkeypatch, timeout)
+    # Exit 1 from CliRunner can also be an uncaught traceback: insist on a SystemExit.
+    assert isinstance(out.exception, SystemExit), out.exception
+    assert out.exit_code == 124, out.output
+    assert "ReplayTimeout" in out.output, "the terminal must say it was a timeout"
+
+
+def test_cli_exits_1_when_the_replayed_command_cannot_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def launch_error() -> Any:
+        raise OSError("no such file")
+
+    out = _replay_cli(tmp_path, monkeypatch, launch_error)
+    assert isinstance(out.exception, SystemExit), out.exception
+    assert out.exit_code == 1, out.output
+    assert "ReplayLaunchError" in out.output
+
+
+def test_cli_passes_through_a_command_that_exits_124_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same code, different cause: only error.type tells them apart."""
+    out = _replay_cli(
+        tmp_path, monkeypatch, lambda: subprocess.CompletedProcess([], 124, b"", b"")
+    )
+    assert isinstance(out.exception, SystemExit), out.exception
+    assert out.exit_code == 124, out.output
+    assert "ReplayTimeout" not in out.output
+
+
+def test_help_states_the_exit_code_a_timeout_really_has() -> None:
+    out = CliRunner().invoke(app, ["replay", "--help"], env={"COLUMNS": "200"})
+    assert out.exit_code == 0, out.output
+    text = " ".join(out.output.split())
+    assert "launch error/timeout" not in text, "--help said a timeout exits 1; it exits 124"
+    assert f"124 mocked/intervention: the replayed command did not finish within " \
+           f"{REPLAY_SUBPROCESS_TIMEOUT_S}s" in text
+    assert "ReplayTimeout" in text and "ReplayLaunchError" in text
 
 
 # ── the part that is NOT fixed, documented so it cannot change silently ──────

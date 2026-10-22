@@ -26,6 +26,18 @@ def _mock_accumulator(method: str = "ingest_capsule_events", return_val: int = 3
     return acc
 
 
+@pytest.fixture(autouse=True)
+def _collector_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No token (local mode) and tenant ``t`` unless a test says otherwise."""
+    monkeypatch.delenv("NOVA_COLLECTOR_TOKEN", raising=False)
+    monkeypatch.setenv("NOVA_COLLECTOR_TENANT", "t")
+
+
+def _local(app: Any) -> TestClient:
+    """A loopback caller: the only kind local mode (no token) serves."""
+    return TestClient(app, client=("127.0.0.1", 50000), base_url="http://127.0.0.1:8090")
+
+
 def _duckdb_accumulator() -> Any:
     acc = MagicMock(spec=["ingest_capsule_events"])
     acc.ingest_capsule_events = MagicMock(return_value=2)
@@ -45,20 +57,21 @@ def _clickhouse_accumulator() -> Any:
 
 def test_health_returns_ok() -> None:
     acc = _duckdb_accumulator()
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
-# POST /capsule — no auth
+# POST /capsule — local mode (no token, loopback caller)
 # ---------------------------------------------------------------------------
 
 
-def test_ingest_capsule_duckdb_accumulator() -> None:
+def test_ingest_capsule_duckdb_accumulator(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOVA_COLLECTOR_TENANT", "tenant-a")
     acc = _duckdb_accumulator()
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     payload = {
         "capsule_id": "cap-001",
         "tenant_id": "tenant-a",
@@ -74,9 +87,10 @@ def test_ingest_capsule_duckdb_accumulator() -> None:
     assert all(e["tenant"] == "tenant-a" for e in enriched)
 
 
-def test_ingest_capsule_clickhouse_accumulator() -> None:
+def test_ingest_capsule_clickhouse_accumulator(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOVA_COLLECTOR_TENANT", "tenant-b")
     acc = _clickhouse_accumulator()
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     payload = {
         "capsule_id": "cap-002",
         "tenant_id": "tenant-b",
@@ -91,7 +105,7 @@ def test_ingest_capsule_clickhouse_accumulator() -> None:
 def test_ingest_capsule_empty_events() -> None:
     acc = _duckdb_accumulator()
     acc.ingest_capsule_events.return_value = 0
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     payload = {"capsule_id": "cap-003", "tenant_id": "t", "events": []}
     resp = client.post("/capsule", json=payload)
     assert resp.status_code == 200
@@ -101,7 +115,7 @@ def test_ingest_capsule_empty_events() -> None:
 def test_ingest_capsule_existing_run_id_not_overwritten() -> None:
     """Events that already have run_id set keep their own value."""
     acc = _duckdb_accumulator()
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     payload = {
         "capsule_id": "cap-from-body",
         "tenant_id": "t",
@@ -121,7 +135,7 @@ def test_ingest_capsule_existing_run_id_not_overwritten() -> None:
 def test_auth_valid_token_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NOVA_COLLECTOR_TOKEN", "secret-token")
     acc = _duckdb_accumulator()
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     payload = {"capsule_id": "c", "tenant_id": "t", "events": []}
     resp = client.post(
         "/capsule",
@@ -134,7 +148,7 @@ def test_auth_valid_token_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_missing_token_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NOVA_COLLECTOR_TOKEN", "secret-token")
     acc = _duckdb_accumulator()
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     payload = {"capsule_id": "c", "tenant_id": "t", "events": []}
     resp = client.post("/capsule", json=payload)
     assert resp.status_code == 401
@@ -143,7 +157,7 @@ def test_auth_missing_token_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_wrong_token_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NOVA_COLLECTOR_TOKEN", "secret-token")
     acc = _duckdb_accumulator()
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     payload = {"capsule_id": "c", "tenant_id": "t", "events": []}
     resp = client.post(
         "/capsule",
@@ -153,10 +167,13 @@ def test_auth_wrong_token_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resp.status_code == 401
 
 
-def test_auth_disabled_when_no_token_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_local_mode_serves_loopback_when_no_token_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No token = local mode: loopback is served (remote callers: see *_auth.py)."""
     monkeypatch.delenv("NOVA_COLLECTOR_TOKEN", raising=False)
     acc = _duckdb_accumulator()
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     payload = {"capsule_id": "c", "tenant_id": "t", "events": [{"x": 1}]}
     resp = client.post("/capsule", json=payload)
     assert resp.status_code == 200
@@ -179,7 +196,7 @@ def test_capsule_ingestion_request_model() -> None:
 
 def test_post_capsule_invalid_body_returns_422() -> None:
     acc = _duckdb_accumulator()
-    client = TestClient(create_collector_app(accumulator=acc))
+    client = _local(create_collector_app(accumulator=acc))
     resp = client.post("/capsule", json={"bad": "payload"})
     assert resp.status_code == 422
 

@@ -33,6 +33,7 @@ Live-cluster validation is a separate acceptance gate (see ROADMAP).
 from __future__ import annotations
 
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -387,10 +388,12 @@ class PBSRunner:
 # ------------------------------------------------------------------
 
 def _shell_quote(arg: str) -> str:
-    """Minimal POSIX-shell quoting (mirrors SlurmRunner helper)."""
-    if not arg or any(c in arg for c in " \t\n'\""):
-        return "'" + arg.replace("'", "'\"'\"'") + "'"
-    return arg
+    """POSIX-shell quoting (``shlex.quote``, as SlurmRunner and LSFRunner).
+
+    The job's shell sees each argument verbatim, as the local runner's ``exec`` does:
+    ``$``, backticks, ``;`` and ``&`` are neither expanded nor executed.
+    """
+    return shlex.quote(arg)
 
 
 def _seconds_to_hms(total_seconds: int) -> str:

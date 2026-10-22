@@ -424,8 +424,8 @@ the job. It does not silently submit a job that will produce empty capsules.
 | `NOVAFABRIC_URL_REGISTRY` | optional | Path to a site-local URL registry file (see section 4) |
 
 `NOVAFABRIC_CAPSULE_DIR` and `NOVAFABRIC_SPAN_ID` are set automatically by the
-orchestrator and injected into the sbatch wrap script. Do not set them manually
-when using `nova capture`.
+orchestrator and exported by the batch script the runner pipes to `sbatch`. Do not
+set them manually when using `nova capture`.
 
 #### runner_options for SlurmRunner
 
@@ -443,6 +443,26 @@ Pass via `--runner-option key=value` on the CLI or via `.novafabric/runners.yaml
 | `constraint` | no | Node feature constraint (`--constraint`) |
 | `poll_interval_s` | no | How often to poll for job state, in seconds. Default 5.0 |
 | `output_dir` | no | Where to write `slurm-<jobid>.out/.err`. Default: capsule directory |
+| `extra_env` | no | Variables to export in the job, e.g. `extra_env=LOG_LEVEL=debug,HF_HOME=/scratch/hf`. The job receives only these, `NOVAFABRIC_*` (minus credentials) and `PATH` (ADR-0270, ADR-0311). Names must be shell identifiers |
+
+#### How the job is submitted
+
+The runner generates a `/bin/sh` batch script — the `export` lines, then `exec` of
+your command — and hands it to `sbatch` **on stdin**. It is never passed as
+`sbatch --wrap <script>` and never written to the capsule directory: a command line is
+readable by every user on the submit host (`ps`, `/proc/<pid>/cmdline`), and the
+capsule directory is on a shared filesystem and is sealed into the capsule. SLURM
+stores the script with the job, where you and the cluster's administrators can read
+it (`scontrol write batch_script <jobid>`).
+
+Every value is single-quoted in the script (`shlex.quote`), so `$`, backticks, `;` and
+`&` in an `extra_env` value or a command argument reach the job verbatim; they are not
+expanded or executed on the compute node.
+
+> **Credentials in `extra_env`.** The value is visible to the cluster's
+> administrators (above), and if you type it on the command line it is in
+> `nova capture`'s own argv for the whole run. Prefer a credential the job reads from
+> a file in your home directory with mode `0600`.
 
 #### State polling: scontrol and sacct
 
@@ -611,7 +631,7 @@ implicitly, name it explicitly now:
 nova capture --runner kubernetes \
   --runner-option image=myorg/agent-runtime:abc1234 \
   --runner-option namespace=novafabric-runs \
-  --runner-option extra_env='{"LOG_LEVEL":"debug"}' \
+  --runner-option extra_env=LOG_LEVEL=debug \
   python my_agent.py
 ```
 
@@ -647,10 +667,14 @@ live cluster the way `slurm` has. They were previously documented nowhere, which
 is not the same as not existing — `nova capture --runner lsf` has been accepted
 by the CLI for some time.
 
-Both follow the SLURM model: write a job script into the capsule directory,
-submit it, poll for completion, and read stdout/stderr back. Wire-level capture
-works — each writes a fixed job-script template that puts the hook loader on
-`PYTHONPATH`.
+Both follow the SLURM model: build a job script, submit it, poll for completion,
+and read stdout/stderr back. Wire-level capture works — each uses a fixed
+job-script template that puts the hook loader on `PYTHONPATH`. `lsf` pipes its
+script to `bsub` on stdin and never writes it to disk, because it carries the
+`extra_env` values (as for `slurm`, above); `pbs` takes no `extra_env` and writes
+its script, which holds no values from your environment, to
+`nova-<run>.pbs` in the capsule directory for `qsub`. Arguments are single-quoted in
+both scripts, so the job sees them verbatim.
 
 ```bash
 nova capture --runner lsf \
@@ -674,6 +698,7 @@ nova capture --runner pbs \
 | resources | `resource_requirement` → `-R` | — |
 | poll | `poll_interval_s`, default 30.0 | `poll_interval_s`, default 30.0 |
 | logs | `output_dir`, default capsule dir | `output_dir`, default capsule dir |
+| environment | `extra_env`, exported in the stdin script (ADR-0311) | — (`#PBS -v` names only) |
 
 **Preconditions — not verified by the runner; the job fails loudly if wrong:**
 

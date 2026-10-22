@@ -68,6 +68,38 @@ Go node-collector (`collector/`, Lustre-safe spool + NovaSeal batch signing,
 (`collector_app/`, `POST /capsule`) both exist and forward into the object
 store and event bus described below.
 
+### Running the Python collector receiver securely
+
+`collector_app` is an ASGI factory; launch it with any ASGI server, e.g.
+`uvicorn --factory novafabric.collector_app:create_collector_app`. It reads two
+variables at startup (**works today**, experimental):
+
+| Variable | Effect |
+|---|---|
+| `NOVA_COLLECTOR_TOKEN` | Every `POST /capsule` must send `X-Nova-Token: <token>` — from any address, loopback included. Compared in constant time. |
+| `NOVA_COLLECTOR_TENANT` | The tenant that caller is authenticated as (default `default`). Every event is stored under it. |
+
+```bash
+export NOVA_COLLECTOR_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export NOVA_COLLECTOR_TENANT=team-a
+uvicorn --factory novafabric.collector_app:create_collector_app --host 0.0.0.0 --port 8090
+```
+
+- **No token = local mode.** The collector then serves only a caller that is provably
+  on the same machine: a loopback peer address, a `localhost`/`127.0.0.1`/`[::1]`
+  `Host` header, and no `Forwarded`/`X-Forwarded-For`/`X-Real-IP` header. Everyone
+  else gets `403`, and a warning is logged at startup. This keeps the zero-setup
+  local workflow working while making a collector started on `0.0.0.0` without a
+  token refuse remote evidence instead of accepting it from anyone. (The factory
+  cannot see the address it is bound to — the ASGI server owns the socket — so the
+  check is made on every request rather than at startup.)
+- **Behind a reverse proxy, set a token.** A proxy on the same host connects from
+  loopback, and its forwarding headers are exactly what local mode refuses.
+- **The tenant comes from the token, not the request.** A body `tenant_id` or an
+  event `tenant` that differs from `NOVA_COLLECTOR_TENANT` is refused with `403` and
+  nothing in the batch is ingested. `tenant_id` is optional. Serving several tenants
+  means one collector, with its own token, per tenant.
+
 ---
 
 ## The full architecture

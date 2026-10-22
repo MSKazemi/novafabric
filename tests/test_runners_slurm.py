@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from novafabric.runners import RunnerJobSpec, RunnerSpec, SlurmRunner
-from novafabric.runners._slurm import _build_wrap_script, _shell_quote
+from novafabric.runners._slurm import _build_batch_script, _shell_quote
 
 
 def _spec(
@@ -268,10 +268,10 @@ class TestSlurmRunnerSitecustomizeInjection:
         assert "novafabric.capture.hooks" in text
         assert "install_all" in text
 
-    def test_pythonpath_in_wrap_script_includes_capsule_dir(
+    def test_pythonpath_in_batch_script_includes_capsule_dir(
         self, tmp_path: Path,
     ) -> None:
-        """The wrap script's PYTHONPATH must point at capsule_dir so
+        """The batch script's PYTHONPATH must point at capsule_dir so
         Python finds sitecustomize.py at startup."""
         sbatch = subprocess.CompletedProcess([], 0, b"1\n", b"")
         scontrol = subprocess.CompletedProcess(
@@ -283,22 +283,20 @@ class TestSlurmRunnerSitecustomizeInjection:
             run_id="01X", command=["echo"], capsule_dir=capsule_dir,
             env={}, runner_options={"partition": "debug"},
         )
-        captured: list[list[str]] = []
+        stdin: list[bytes] = []
 
         def _record(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-            captured.append(argv)
             if argv and argv[0].endswith("sbatch"):
+                stdin.append(kwargs["input"])  # type: ignore[arg-type]
                 return sbatch
             return scontrol
 
         with patch("subprocess.run", side_effect=_record):
             SlurmRunner().run(spec)
-        sbatch_argv = captured[0]
-        # The wrap script is the last argv entry after --wrap.
-        wrap_idx = sbatch_argv.index("--wrap")
-        wrap_script = sbatch_argv[wrap_idx + 1]
-        assert "export PYTHONPATH=" in wrap_script
-        assert str(capsule_dir) in wrap_script
+        # The batch script is sbatch's stdin, never argv (--wrap put it in `ps`).
+        batch_script = stdin[0].decode()
+        assert "export PYTHONPATH=" in batch_script
+        assert str(capsule_dir) in batch_script
 
     def test_existing_pythonpath_preserved(self, tmp_path: Path) -> None:
         """If the orchestrator passes PYTHONPATH in env (e.g. user's
@@ -309,9 +307,9 @@ class TestSlurmRunnerSitecustomizeInjection:
         # We test the helper directly here (not the full SlurmRunner.run)
         # to isolate the PYTHONPATH-merge logic. The full-flow argv
         # tests above already exercise the runner end-to-end.
-        from novafabric.runners._slurm import _build_wrap_script
+        from novafabric.runners._slurm import _build_batch_script
         env = {"NOVAFABRIC_SPAN_ID": "0" * 16, "PYTHONPATH": "/user/site"}
-        script = _build_wrap_script(["echo", "hi"], env, capsule_dir)
+        script = _build_batch_script(["echo", "hi"], env, capsule_dir)
         assert "export PYTHONPATH=" in script
         assert str(capsule_dir) in script
         # The user's path is preserved appended after capsule_dir:
@@ -395,9 +393,9 @@ class TestShellQuoting:
         assert _shell_quote("don't") == "'don'\"'\"'t'"
 
 
-class TestWrapScript:
-    def test_wrap_exports_novafabric_env_and_execs(self, tmp_path: Path) -> None:
-        script = _build_wrap_script(
+class TestBatchScript:
+    def test_batch_script_exports_novafabric_env_and_execs(self, tmp_path: Path) -> None:
+        script = _build_batch_script(
             command=["python", "agent.py"],
             env={"NOVAFABRIC_SPAN_ID": "abc", "PATH": "/usr/bin", "OTHER": "ignored"},
             capsule_dir=tmp_path / "cap",

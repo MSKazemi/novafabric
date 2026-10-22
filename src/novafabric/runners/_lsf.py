@@ -8,8 +8,10 @@ home or scratch filesystem (NFS, GPFS, Spectrum Scale, etc.). The
 runner does NOT rsync artifacts; it relies entirely on the shared FS.
 
 This implementation follows the same pattern as :class:`SlurmRunner`:
-1. Write an LSF job script to a temporary file inside the capsule dir.
-2. Submit via ``bsub < script.lsf`` and parse the returned job ID.
+1. Build an LSF job script in memory.
+2. Submit it on ``bsub``'s stdin and parse the returned job ID. The script is
+   never written to disk: it carries the operator's ``extra_env`` values, and
+   the capsule dir is on a shared filesystem and is sealed into the capsule.
 3. Poll ``bjobs -noheader <job_id>`` until the job enters a terminal state.
 4. Read per-job stdout/stderr log files written by LSF.
 
@@ -36,6 +38,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -102,6 +105,9 @@ class LSFRunner:
       (``-R``), e.g. ``"rusage[mem=4096]"``. Default: not set.
     - ``poll_interval_s`` (float) — bjobs poll interval in seconds. Default 30.0.
     - ``output_dir`` (str) — directory for stdout/stderr logs. Default: capsule dir.
+    - ``extra_env`` (dict or ``"K=V,K2=V2"``) — variables exported in the job
+      (ADR-0311). They travel in the job script on ``bsub``'s stdin, never in argv
+      and never on disk.
 
     **Required preconditions** (not verified — the job will fail loudly if wrong):
     - ``capsule_dir`` must be on a shared filesystem visible to every LSF compute host.
@@ -202,7 +208,9 @@ class LSFRunner:
                 ),
             )
 
-        # 2. Build and write the LSF job script.
+        # 2. Build the LSF job script. It stays in memory: it carries extra_env
+        # values, and the capsule dir is a shared filesystem that is sealed into
+        # the capsule.
         command_str = " ".join(_shell_quote(a) for a in spec.command)
         # The operator's explicit extra_env is the only way a variable reaches the
         # job beyond the fixed exports above (ADR-0311).
@@ -228,30 +236,19 @@ class LSFRunner:
             command=command_str,
         )
 
-        script_path = spec.capsule_dir / f"nova-{spec.run_id[:8]}.lsf"
+        # 3. Submit via bsub with the script on stdin (LSF convention). LSF copies
+        # the submission environment into the job, so bsub runs with a minimal one,
+        # never the user's shell (ADR-0311).
         try:
-            script_path.write_text(script_content)
-        except OSError as exc:
-            return RunnerJobResult(
-                exit_code=127,
-                runner_status="failed_setup",
-                runner_error=f"Could not write LSF job script to {script_path}: {exc}",
+            sub = subprocess.run(
+                [self._bsub],
+                input=script_content.encode(),
+                capture_output=True,
+                timeout=30,
+                env=scheduler_submit_env(
+                    os.environ, client_prefixes=("LSF_", "LSB_"), extra_env=extra_env
+                ),
             )
-
-        # 3. Submit via bsub with the script piped on stdin (LSF convention).
-        try:
-            with script_path.open("rb") as script_fh:
-                # LSF copies the submission environment into the job, so bsub runs
-                # with a minimal one, never the user's shell (ADR-0311).
-                sub = subprocess.run(
-                    [self._bsub],
-                    stdin=script_fh,
-                    capture_output=True,
-                    timeout=30,
-                    env=scheduler_submit_env(
-                        os.environ, client_prefixes=("LSF_", "LSB_"), extra_env=extra_env
-                    ),
-                )
         except subprocess.TimeoutExpired as exc:
             return RunnerJobResult(
                 exit_code=127,
@@ -433,10 +430,12 @@ class LSFRunner:
 # ------------------------------------------------------------------
 
 def _shell_quote(arg: str) -> str:
-    """Minimal POSIX-shell quoting (mirrors SlurmRunner helper)."""
-    if not arg or any(c in arg for c in " \t\n'\""):
-        return "'" + arg.replace("'", "'\"'\"'") + "'"
-    return arg
+    """POSIX-shell quoting (``shlex.quote``, as SlurmRunner).
+
+    ``$``, backticks, ``;``, ``&``, ``|`` and ``\\`` in an ``extra_env`` value reach
+    the job verbatim instead of being expanded or executed by its shell.
+    """
+    return shlex.quote(arg)
 
 
 def _seconds_to_lsf_walltime(total_seconds: int) -> str:
