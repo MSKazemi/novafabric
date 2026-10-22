@@ -66,11 +66,12 @@ def _schema(path: Path) -> dict[str, Any]:
 
 def _validate_against(document: Any, schema_path: Path, *, what: str) -> None:
     try:
-        import jsonschema  # type: ignore[import-untyped]
+        # Offline: no $ref in a packaged widget schema is ever retrieved.
+        from novafabric._jsonschema_offline import offline_validator
     except ImportError as exc:  # pragma: no cover - jsonschema is a core dep
         raise DashboardError("jsonschema is required to validate a widget") from exc
 
-    validator = jsonschema.Draft202012Validator(_schema(schema_path))
+    validator = offline_validator(_schema(schema_path))
     errors = sorted(validator.iter_errors(document), key=lambda e: list(e.absolute_path))
     if errors:
         first = errors[0]

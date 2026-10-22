@@ -39,8 +39,7 @@ import string
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-import jsonschema  # type: ignore[import-untyped]
-
+from novafabric._jsonschema_offline import SchemaRefUnresolved, offline_validator
 from novafabric.eval.card import EvalCard, card_digest
 from novafabric.eval.scores import Score, ScoreSource, ScoreValueType
 from novafabric.evidence.merkle import capsule_merkle_root
@@ -57,6 +56,16 @@ CONTRACT_CARD = EvalCard(
 METAMORPHIC_CARD = EvalCard(
     card_id="nf-offline-metamorphic", name="Metamorphic", version="1.0.0", source=ScoreSource.CODE
 )
+
+
+class ContractSchemaError(ValueError):
+    """A ``run_contract`` schema could not be evaluated offline.
+
+    Raised when validation reaches a ``$ref`` outside the schema document (an
+    ``http(s)://``, ``file://`` or ``$id``-relative URI) or a dangling local
+    pointer. Such refs are never retrieved, so the contract cannot be scored
+    and no misleading fraction is emitted.
+    """
 
 
 def _capsule_subject(capsule_dir: Path) -> str:
@@ -122,18 +131,27 @@ def run_contract(
     """Fraction of records whose ``field`` satisfies *schema* (zero-token).
 
     A record missing ``field`` counts as a contract failure. With no records the score is
-    vacuously ``1.0``. Validation uses the bundled ``jsonschema`` (no model call).
+    vacuously ``1.0``. Validation uses the bundled ``jsonschema`` (no model call) and is
+    offline: a ``$ref`` outside the schema document is never retrieved. Reaching one (or a
+    dangling local pointer) raises :class:`ContractSchemaError` instead of emitting a score.
     """
     capsule_dir = Path(capsule_dir)
     records = _read_jsonl(capsule_dir / records_file)
     if not records:
         return _numeric_score(capsule_dir, CONTRACT_CARD, name, 1.0)
-    validator = jsonschema.Draft202012Validator(schema)
+    validator = offline_validator(schema)
     valid = 0
     for rec in records:
         if field not in rec:
             continue
-        if validator.is_valid(rec[field]):
+        try:
+            conforms = validator.is_valid(rec[field])
+        except SchemaRefUnresolved as exc:
+            raise ContractSchemaError(
+                f"contract schema $ref not retrieved (offline-only; refs outside the "
+                f"schema document are never fetched): {exc}"
+            ) from exc
+        if conforms:
             valid += 1
     return _numeric_score(capsule_dir, CONTRACT_CARD, name, valid / len(records))
 

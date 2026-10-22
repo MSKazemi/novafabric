@@ -10,7 +10,13 @@ present schema_ref into a recorded ``schema_validation`` verdict block
   ``errors[]`` and is NEVER raised into the captured application.
 - **Local-only resolution.** Relative refs resolve inside the capsule
   directory; absolute local paths are allowed; ``http(s)://`` refs are never
-  fetched (offline rule) and are recorded as ``schema-unresolved``.
+  fetched (offline rule) and are recorded as ``schema-unresolved``. The same
+  rule holds for ``$ref`` / ``$dynamicRef`` *inside* a loaded schema: only
+  refs within the schema document and the bundled JSON Schema meta-schemas
+  resolve (:mod:`novafabric._jsonschema_offline`); a ref to any other URI —
+  ``http(s)://``, ``file://``, or relative to a remote ``$id`` — is never
+  retrieved, and the target's verdict is ``null`` with one
+  ``schema-unresolved`` error (no partial violations are kept).
 - **Bounded.** ``errors[]`` is capped (default 50) with a synthetic
   ``truncated`` entry; schema files are size-capped; messages are
   secret-sanitized before entering the capsule.
@@ -94,33 +100,40 @@ def _check_target(
             "keyword": _UNRESOLVED_KEYWORD,
         })
         return None
+    # Collected locally and merged only on a completed pass: a pass aborted by
+    # an unresolved $ref is a ``null`` verdict and must not carry the half-set
+    # of violations found before the ref was reached.
+    found: list[dict[str, Any]] = []
     try:
         import jsonschema  # type: ignore[import-untyped]
 
-        validator = jsonschema.Draft202012Validator(
-            schema, format_checker=jsonschema.FormatChecker()
-        )
-        found = False
+        from novafabric._jsonschema_offline import SchemaRefUnresolved, offline_validator
+
+        # Never retrieves a $ref: only refs inside the schema document and the
+        # bundled meta-schemas resolve (offline rule — no http(s)://, no file://).
+        validator = offline_validator(schema, format_checker=jsonschema.FormatChecker())
         truncated = False
         for err in validator.iter_errors(payload):
-            found = True
-            if len(errors) >= MAX_ERRORS:
+            if len(errors) + len(found) >= MAX_ERRORS:
                 truncated = True
                 break
-            errors.append({
+            found.append({
                 "target": target,
                 "path": str(err.json_path),
                 "message": _sanitize(err.message),
                 "keyword": str(err.validator) if err.validator else "unknown",
             })
-        if truncated:
-            errors.append({
-                "target": target,
-                "path": "$",
-                "message": f"error list truncated at {MAX_ERRORS}",
-                "keyword": "truncated",
-            })
-        return not found
+    except SchemaRefUnresolved as exc:
+        errors.append({
+            "target": target,
+            "path": "$",
+            "message": _sanitize(
+                f"$ref not retrieved (offline-only; refs outside the schema "
+                f"document are never fetched): {exc}"
+            ),
+            "keyword": _UNRESOLVED_KEYWORD,
+        })
+        return None
     except Exception as exc:  # noqa: BLE001 — record-only; never raise
         errors.append({
             "target": target,
@@ -129,6 +142,15 @@ def _check_target(
             "keyword": _UNRESOLVED_KEYWORD,
         })
         return None
+    errors.extend(found)
+    if truncated:
+        errors.append({
+            "target": target,
+            "path": "$",
+            "message": f"error list truncated at {MAX_ERRORS}",
+            "keyword": "truncated",
+        })
+    return not found and not truncated
 
 
 def compute_verdict(

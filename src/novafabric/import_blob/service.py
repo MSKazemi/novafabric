@@ -431,11 +431,10 @@ def import_batch(
             return _refuse("INVALID", [f"manifest unreadable/invalid: {exc}"], EXIT_INVALID)
 
         # Step 2 — manifest structure against the closed ADR-0141 schema.
-        import jsonschema  # type: ignore[import-untyped]  # noqa: PLC0415
+        # Offline: no $ref in the manifest schema is ever retrieved.
+        from novafabric._jsonschema_offline import offline_validator  # noqa: PLC0415
 
-        validator = jsonschema.Draft202012Validator(
-            json.loads(_EXPORT_MANIFEST_SCHEMA_PATH.read_text())
-        )
+        validator = offline_validator(json.loads(_EXPORT_MANIFEST_SCHEMA_PATH.read_text()))
         schema_errors = [
             f"manifest schema violation at /{'/'.join(str(p) for p in error.path)}: {error.message}"
             for error in validator.iter_errors(raw)

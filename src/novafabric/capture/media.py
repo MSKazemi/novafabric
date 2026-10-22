@@ -420,13 +420,16 @@ def verify_media_blobs(capsule_dir: Path) -> list[str]:
 
 
 def _media_part_validator() -> Any:
-    """Draft 2020-12 validator over the packaged ``media-part.schema.json``."""
+    """Draft 2020-12 validator over the packaged ``media-part.schema.json``.
+
+    Offline like every validator in the package: no ``$ref`` is ever retrieved.
+    """
     import jsonschema  # type: ignore[import-untyped]
+
+    from novafabric._jsonschema_offline import offline_validator
 
     schema_path = (
         Path(__file__).parents[1] / "schemas" / "media-part.schema.json"
     )
     schema = json.loads(schema_path.read_text())
-    return jsonschema.Draft202012Validator(
-        schema, format_checker=jsonschema.FormatChecker()
-    )
+    return offline_validator(schema, format_checker=jsonschema.FormatChecker())
