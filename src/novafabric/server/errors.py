@@ -92,6 +92,18 @@ class PreconditionFailedError(Exception):
         self.code = code
 
 
+class ForbiddenError(Exception):
+    """An authenticated caller may not perform this action (403).
+
+    Raised by a policy gate rather than by RBAC, e.g. a single-actor promotion
+    into a protected stage without an explicit ``promote_direct`` allow (ADR-0312).
+    """
+
+    def __init__(self, message: str, code: str = "forbidden") -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class BadRequestError(Exception):
     """Invalid request parameters."""
 
@@ -132,6 +144,10 @@ async def bad_request_handler(request: Request, exc: BadRequestError) -> JSONRes
     return error_response(400, exc.code, str(exc))
 
 
+async def forbidden_error_handler(request: Request, exc: ForbiddenError) -> JSONResponse:
+    return error_response(403, exc.code, str(exc))
+
+
 def register_handlers(app: Any) -> None:
     """Attach all custom exception handlers to a FastAPI app instance."""
     app.add_exception_handler(NotFoundError, not_found_handler)
@@ -140,3 +156,4 @@ def register_handlers(app: Any) -> None:
     app.add_exception_handler(PayloadTooLargeError, payload_too_large_handler)
     app.add_exception_handler(PreconditionFailedError, precondition_failed_handler)
     app.add_exception_handler(BadRequestError, bad_request_handler)
+    app.add_exception_handler(ForbiddenError, forbidden_error_handler)

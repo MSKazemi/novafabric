@@ -3289,17 +3289,40 @@ def create_app(
             )
         from novafabric.registry.service import (
             AssetNotFoundError,
+            DirectPromotionDeniedError,
+            InvalidLifecycleTransitionError,
+            PromotionBlockedError,
             RollbackError,
             rollback_asset,
         )
 
         try:
+            # ADR-0312 D1: only a version with production history is restored
+            # without a policy decision; anything else is gated like a direct
+            # promote, with the authenticated credential as the policy subject.
             result = rollback_asset(
                 name=name,
                 target_version=None,
                 actor=body.actor,
                 db_path=db_path,
+                policy_subject=f"serve:{actor_fp}",
             )
+        except (InvalidLifecycleTransitionError, PromotionBlockedError) as e:
+            audit.append(
+                action="rollback_asset",
+                args={"name": name, "reason": body.reason},
+                cli_equivalent=f"nova rollback {name}",
+                actor_token_fp=actor_fp,
+                result="error",
+                error=str(e),
+            )
+            if isinstance(e, DirectPromotionDeniedError):
+                code = 403
+            elif isinstance(e, InvalidLifecycleTransitionError):
+                code = 409
+            else:
+                code = 412
+            raise HTTPException(status_code=code, detail=str(e)) from e
         except AssetNotFoundError as e:
             audit.append(
                 action="rollback_asset",

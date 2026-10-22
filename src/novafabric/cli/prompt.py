@@ -726,19 +726,21 @@ def prompt_promote(
 
     The one thing it adds is a type check: promoting a non-prompt asset
     through the prompt surface is refused, so the command means what its name
-    says.
+    says. Like `nova promote direct`, a protected stage (production) is refused
+    unless the `promote_direct` policy action explicitly allows it (ADR-0312);
+    --force does not bypass that. Use `nova promote propose` + `approve`.
 
     \b
     Examples:
       nova prompt promote triage@1.2.0 --to staging
-      nova prompt promote triage@1.2.0 --to production
+      nova prompt promote triage@1.2.0 --to production   # needs a promote_direct allow
     """
     from novafabric.registry.service import (
         AssetNotFoundError,
         InvalidLifecycleTransitionError,
         PromotionBlockedError,
         get_asset,
-        promote_asset,
+        promote_asset_direct,
     )
 
     if "@" not in prompt_ref:
@@ -771,7 +773,7 @@ def prompt_promote(
             raise typer.Exit(code=1)
 
     try:
-        result = promote_asset(name, version, to, actor="cli-user", force=force)
+        result = promote_asset_direct(name, version, to, actor="cli-user", force=force)
     except (
         AssetNotFoundError,
         InvalidLifecycleTransitionError,
