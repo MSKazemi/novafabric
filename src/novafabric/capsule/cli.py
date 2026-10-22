@@ -31,6 +31,7 @@ import typer
 from rich.console import Console
 from rich.tree import Tree
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capsule.ulid_util import new_ulid
 
 console = Console()
@@ -292,7 +293,10 @@ def lineage_cmd(
             lineage_path = entry / "lineage.jsonl"
             if not lineage_path.exists():
                 continue
-            for line in lineage_path.read_text(encoding="utf-8").splitlines():
+            capsule_text = (
+                read_capsule_member_or_none(lineage_path, operation="nova capsule") or ""
+            )
+            for line in capsule_text.splitlines():
                 line = line.strip()
                 if not line:
                     continue

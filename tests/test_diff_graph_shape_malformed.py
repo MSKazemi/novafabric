@@ -134,14 +134,17 @@ def test_an_unreadable_source_file_makes_the_side_unavailable(
     """The builder read an unreadable file as empty, so "same shape" was certified."""
     a = _capsule(tmp_path, "a", "RUNA", ())
     b = _capsule(tmp_path, "b", "RUNB", ("web_search",))
-    real_read_text = Path.read_text
+    from novafabric.diff import graph_shape
 
-    def _denied(self: Path, *args: object, **kwargs: object) -> str:
-        if self == b / "tool-calls.jsonl":
-            raise PermissionError(13, "Permission denied", str(self))
-        return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+    real_read = graph_shape.read_capsule_text
 
-    monkeypatch.setattr(Path, "read_text", _denied)
+    def _denied(root: Path, rel: str, **kwargs: object) -> str:
+        if Path(root) == b and rel == "tool-calls.jsonl":
+            raise PermissionError(13, "Permission denied", str(b / rel))
+        return real_read(root, rel, **kwargs)  # type: ignore[arg-type]
+
+    # The source counts are read through novafabric._capsule_fs (never a link).
+    monkeypatch.setattr(graph_shape, "read_capsule_text", _denied)
     diff = compare_graph_shapes(a, b)
     assert diff.status == "unavailable"
     assert diff.b.reason is not None and "Permission denied" in diff.b.reason

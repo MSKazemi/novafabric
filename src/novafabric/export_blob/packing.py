@@ -36,7 +36,7 @@ from pathlib import Path
 import yaml
 
 from novafabric import _capsule_fs
-from novafabric._capsule_fs import CapsuleLinkError, read_capsule_file
+from novafabric._capsule_fs import CapsuleLinkError, read_capsule_file, read_capsule_member_or_none
 
 _OPERATION = "a blob export"
 
@@ -54,7 +54,10 @@ def capsule_identifier(capsule_dir: Path) -> str:
     capsule_yaml = capsule_dir / "capsule.yaml"
     if capsule_yaml.is_file():
         try:
-            meta = yaml.safe_load(capsule_yaml.read_text())
+            capsule_text = (
+                read_capsule_member_or_none(capsule_yaml, operation="nova export-blob") or ""
+            )
+            meta = yaml.safe_load(capsule_text)
         except yaml.YAMLError:
             meta = None
         if isinstance(meta, dict) and meta.get("run_id"):

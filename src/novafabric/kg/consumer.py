@@ -11,16 +11,41 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import zipfile
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    is_capsule_regular_file,
+    open_capsule_file,
+    read_capsule_text_or_none,
+)
 from novafabric.capture.record_roles import non_counting_model_call_ids
 
 logger = logging.getLogger(__name__)
 
 # Files within a capsule that carry KG-relevant events
 _CAPSULE_EVENT_FILES = ("model-calls.jsonl", "tool-calls.jsonl", "events.jsonl")
+
+
+def _walk_no_follow(base: Path) -> list[Path]:
+    """Every real directory and ``*.zip`` file under *base* (not *base* itself), sorted.
+
+    ``os.walk(followlinks=False)`` never descends into a linked directory, and a
+    link entry is never returned, so the walk cannot leave *base*.
+    """
+    out: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
+        here = Path(dirpath)
+        for name in dirnames:
+            if not (here / name).is_symlink():
+                out.append(here / name)
+        for name in filenames:
+            if name.endswith(".zip"):
+                out.append(here / name)
+    return sorted(out)
 
 
 class CapsuleEventConsumer:
@@ -47,25 +72,32 @@ class CapsuleEventConsumer:
             logger.warning("iter_from_directory: %s is not a directory", capsule_dir)
             return
 
-        # Walk for both plain capsule dirs and zip archives
-        for path in sorted(capsule_dir.rglob("*")):
-            if path.suffix == ".zip" and path.is_file():
-                async for event in self._iter_from_zip(path):
-                    yield event
-            elif path.is_dir():
-                for fname in _CAPSULE_EVENT_FILES:
-                    events_file = path / fname
-                    if events_file.is_file():
-                        async for event in self._iter_from_jsonl(events_file):
-                            yield event
-                        break  # yield from first found file only per directory
+        # Walk for both plain capsule dirs and zip archives. No link is followed:
+        # os.walk does not descend into a linked directory, a linked directory
+        # or zip is not a candidate, and every file is opened through
+        # novafabric._capsule_fs (O_NOFOLLOW, regular files only).
+        for path in _walk_no_follow(capsule_dir):
+            if path.suffix == ".zip":
+                if is_capsule_regular_file(path.parent, path.name):
+                    async for event in self._iter_from_zip(path):
+                        yield event
+                continue
+            for fname in _CAPSULE_EVENT_FILES:
+                if is_capsule_regular_file(path, fname):
+                    async for event in self._iter_from_jsonl(path / fname):
+                        yield event
+                    break  # yield from first found file only per directory
 
     async def _iter_from_jsonl(self, jsonl_path: Path) -> AsyncIterator[dict[str, Any]]:
-        """Yield event dicts from a single .jsonl file."""
+        """Yield event dicts from a single .jsonl file (never through a link)."""
         try:
-            text = jsonl_path.read_text(encoding="utf-8")
+            text = read_capsule_text_or_none(
+                jsonl_path.parent, jsonl_path.name, operation="knowledge-graph ingest"
+            )
         except OSError as exc:
             logger.warning("CapsuleEventConsumer: cannot read %s: %s", jsonl_path, exc)
+            return
+        if text is None:
             return
         # ADR-0305: transport records (incl. pre-ADR-0305 duplicates) are not calls.
         transport = (
@@ -86,7 +118,12 @@ class CapsuleEventConsumer:
     async def _iter_from_zip(self, zip_path: Path) -> AsyncIterator[dict[str, Any]]:
         """Yield event dicts from a capsule zip archive."""
         try:
-            with zipfile.ZipFile(zip_path, "r") as zf:
+            with (
+                open_capsule_file(
+                    zip_path.parent, zip_path.name, operation="knowledge-graph ingest"
+                ) as raw,
+                zipfile.ZipFile(raw, "r") as zf,
+            ):
                 names = zf.namelist()
                 for fname in _CAPSULE_EVENT_FILES:
                     # Accept the file at any path depth within the zip
@@ -111,6 +148,8 @@ class CapsuleEventConsumer:
                         break  # first matching file only
         except zipfile.BadZipFile as exc:
             logger.warning("CapsuleEventConsumer: bad zip %s: %s", zip_path, exc)
+        except CapsuleEntryError as exc:
+            logger.warning("CapsuleEventConsumer: zip not followed %s: %s", zip_path, exc)
         except OSError as exc:
             logger.warning("CapsuleEventConsumer: cannot open zip %s: %s", zip_path, exc)
 

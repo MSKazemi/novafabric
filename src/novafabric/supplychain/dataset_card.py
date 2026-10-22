@@ -40,6 +40,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.trust.keyring import sign_payload, verify_sig
 
 CARD_SCHEMA_VERSION = "dataset-provenance-card/1"
@@ -121,7 +122,7 @@ def transforms_from_capsule(capsule_dir: str | Path) -> list[Transform]:
     transforms: list[Transform] = []
     if not lineage.exists():
         return transforms
-    for line in lineage.read_text(encoding="utf-8").splitlines():
+    for line in (read_capsule_member_or_none(lineage, operation="dataset card") or "").splitlines():
         line = line.strip()
         if not line:
             continue

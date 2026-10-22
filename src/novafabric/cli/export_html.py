@@ -52,6 +52,10 @@ def export_cmd(
     (or use the signed Evidence Bundle) for real verification. Redaction is
     preserved verbatim; the exporter never un-redacts.
 
+    A link, FIFO or device inside the capsule is never followed: a section
+    file that is one is skipped with a warning, and a linked capsule.yaml
+    refuses the export (exit 2). The capsule directory you name may be a link.
+
     \b
     Examples:
       nova export --html .novafabric/runs/01HX.../
@@ -64,6 +68,7 @@ def export_cmd(
         )
         raise typer.Exit(code=2)
 
+    from novafabric._capsule_fs import CapsuleEntryError
     from novafabric.viewer.html import export_capsule_html
 
     out_path = Path(output) if output else capsule_dir.parent / f"{capsule_dir.name}.html"
@@ -72,6 +77,10 @@ def export_cmd(
     except (FileNotFoundError, NotADirectoryError) as exc:
         console.print(f"[red]x[/red] {exc}")
         raise typer.Exit(code=1) from exc
+    except CapsuleEntryError as exc:
+        # capsule.yaml is a link, a FIFO or a device: never followed, nothing written.
+        console.print(f"[red]x[/red] Export refused: {exc}")
+        raise typer.Exit(code=2) from exc
 
     for warning in warnings:
         console.print(f"[yellow]![/yellow] {warning}")

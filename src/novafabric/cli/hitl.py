@@ -38,6 +38,7 @@ import yaml
 from rich.console import Console
 from rich.markup import escape
 
+from novafabric._capsule_fs import CapsuleEntryError, open_capsule_file
 from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.hitl._records import RecordDefect, dangling_refs, duplicate_turn_ids
 from novafabric.hitl.acted_as import bindings_for_turn, delegation_from_capsule
@@ -146,13 +147,19 @@ def read_manifest(ref: str) -> Manifest:
             raise CapsuleLoadError(
                 f"capsule.yaml is {size} bytes, over the {MAX_MANIFEST_BYTES}-byte limit"
             )
-        with manifest.open("rb") as handle:
+        # O_NOFOLLOW + regular-file check: a linked or FIFO manifest is refused.
+        with open_capsule_file(manifest.parent, manifest.name, operation="nova hitl") as handle:
             # Read one byte past the cap so a file that grew after stat() is
             # still refused rather than parsed unbounded.
             raw = handle.read(MAX_MANIFEST_BYTES + 1)
         if len(raw) > MAX_MANIFEST_BYTES:
             raise CapsuleLoadError(f"capsule.yaml exceeds the {MAX_MANIFEST_BYTES}-byte limit")
         data = yaml.safe_load(raw.decode("utf-8"))
+    except CapsuleEntryError as exc:
+        raise CapsuleLoadError(
+            f"capsule.yaml in {capsule_dir} is a symlink or not a regular file; "
+            "nova hitl never follows a symlink"
+        ) from exc
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise CapsuleLoadError(f"cannot read {manifest}: {type(exc).__name__}") from exc
     if not isinstance(data, dict):

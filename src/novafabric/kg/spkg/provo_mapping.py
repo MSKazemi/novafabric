@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.lineage._types import node_id_for
 
 from . import ontology
@@ -162,7 +163,7 @@ def read_lineage_edges(capsule_dir: str | Path) -> list[dict[str, Any]]:
     edges: list[dict[str, Any]] = []
     if not lineage_path.exists():
         return edges
-    for line in lineage_path.read_text(encoding="utf-8").splitlines():
+    for line in (read_capsule_member_or_none(lineage_path, operation="PROV-O") or "").splitlines():
         line = line.strip()
         if not line:
             continue
@@ -220,7 +221,10 @@ def capsule_manifest_to_provo(capsule_dir: str | Path) -> Graph:
     try:
         import yaml
 
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        capsule_text = (
+            read_capsule_member_or_none(manifest_path, operation="PROV-O") or ""
+        )
+        manifest = yaml.safe_load(capsule_text) or {}
     except Exception:
         return g
     if not isinstance(manifest, dict):

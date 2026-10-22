@@ -28,6 +28,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_text
+
 
 def build_trust_surfaces_router(
     verify_token: Callable[..., Any],
@@ -77,10 +79,12 @@ def build_trust_surfaces_router(
         findings: list[Any] = []
         if proof_path.is_file():
             try:
-                proof = json.loads(proof_path.read_text())
+                proof = json.loads(
+                    read_capsule_text(cdir, "redaction-proof.json", operation="nova serve")
+                )
                 if isinstance(proof, dict):
                     findings = proof.get("findings") or []
-            except (OSError, ValueError):
+            except (OSError, ValueError, CapsuleEntryError):
                 # An unreadable proof is reported as "nothing scanned" rather
                 # than a 500: a malformed sidecar must not take the capsule
                 # detail view down.

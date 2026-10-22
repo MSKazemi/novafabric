@@ -64,6 +64,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric._hashutil import sha256_prefixed
 from novafabric.science.provenance import (
     ScienceNode,
@@ -555,7 +556,7 @@ def _read_manifest(capsule_dir: Path) -> dict[str, Any]:
     if not path.is_file():
         raise ScienceMaterialMissingError(f"capsule.yaml not found in {capsule_dir}")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = yaml.safe_load((read_capsule_member_or_none(path, operation="FAIR RO-Crate") or ""))
     except (OSError, yaml.YAMLError) as exc:
         raise CrateCarrierError(f"could not read capsule.yaml: {exc}") from exc
     if not isinstance(data, dict):

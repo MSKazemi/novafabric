@@ -8,6 +8,7 @@ import typer
 import yaml
 from rich.console import Console
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.cli._capsule_ref import (
     AmbiguousCapsuleRefError,
     CapsuleRefError,
@@ -57,7 +58,10 @@ def _emit_capsule_validated(capsule_dir: Path, errors: list[str]) -> None:
 
         ref = capsule_dir.name
         try:
-            manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+            manifest = yaml.safe_load(
+                read_capsule_member_or_none(capsule_dir / "capsule.yaml", operation="nova validate")
+                or ""
+            )
             if isinstance(manifest, dict) and manifest.get("run_id"):
                 ref = str(manifest["run_id"])
         except Exception:  # noqa: BLE001 — best-effort ref resolution
@@ -104,7 +108,10 @@ def _validate_capsule(capsule_dir: Path) -> None:
     lineage_path = capsule_dir / "lineage.jsonl"
     if lineage_path.exists():
         lineage_schema = _load_schema("lineage-edge.schema.json")
-        for i, line in enumerate(lineage_path.read_text().splitlines(), 1):
+        capsule_text = (
+            read_capsule_member_or_none(lineage_path, operation="nova validate") or ""
+        )
+        for i, line in enumerate(capsule_text.splitlines(), 1):
             line = line.strip()
             if not line:
                 continue
@@ -139,7 +146,9 @@ def _validate_capsule(capsule_dir: Path) -> None:
             console.print(f"[red]✗[/red] {err}")
         raise typer.Exit(code=1)
 
-    manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+    manifest = yaml.safe_load(
+        read_capsule_member_or_none(capsule_dir / "capsule.yaml", operation="nova validate") or ""
+    )
 
     # ADR-0126: advisory warning (never an error) for a deployment_environment
     # value outside the conventional set — custom environments are legitimate.

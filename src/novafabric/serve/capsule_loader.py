@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
+from novafabric._capsule_fs import CapsuleEntryError, iter_capsule_dirs, read_capsule_file
 from novafabric.capture.record_roles import split_model_calls
 
 _log = logging.getLogger(__name__)
@@ -27,14 +27,40 @@ _OPERATION = "the dashboard"
 
 
 def discover_capsule_dirs(base: Path) -> list[Path]:
-    """Return every directory under `base` that contains a capsule.yaml."""
+    """Return every directory under `base` that contains a capsule.yaml.
+
+    Delegates to :func:`novafabric._capsule_fs.iter_capsule_dirs`: an entry
+    that is itself a link (to a directory inside *or* outside `base`) is never
+    listed, and neither is one whose ``capsule.yaml`` is a link.
+    """
     if not base.exists() or not base.is_dir():
         return []
-    out: list[Path] = []
-    for entry in sorted(base.iterdir()):
-        if entry.is_dir() and (entry / "capsule.yaml").exists():
-            out.append(entry)
-    return out
+    return iter_capsule_dirs(base)
+
+
+def confined_capsule_root(candidate: Path, capsule_dir: Path) -> Path | None:
+    """*candidate* (an entry of *capsule_dir*), or ``None`` if ``nova serve`` must refuse it.
+
+    A real directory is returned as is. A link is returned *resolved* when its
+    target lies inside the server's read roots (the capsule dir itself, so an
+    alias such as ``latest -> 01J...`` works, ``$NOVAFABRIC_HOME`` minus its
+    secrets, and any ``NOVAFABRIC_SERVE_PATH_ROOTS`` entry), and is ``None``
+    otherwise: a link to a directory elsewhere would put that directory behind
+    every ``{run_id}`` route. Returning the resolved path means a link swapped
+    after this check is not followed by the read.
+    """
+    if not candidate.is_symlink():
+        return candidate
+    from novafabric.serve import paths as serve_paths  # noqa: PLC0415
+
+    try:
+        return serve_paths.confine_read(candidate, capsule_dir)
+    except serve_paths.PathConfinementError as exc:
+        _log.warning(
+            "capsule_root_link_refused",
+            extra={"capsule": str(candidate), "reason": str(exc)[:200]},
+        )
+        return None
 
 
 # Event files KG ingest reads; a dir is "ingestable" if it has any of them.
@@ -52,11 +78,7 @@ def discover_ingestable_dirs(base: Path) -> list[Path]:
     """
     if not base.exists() or not base.is_dir():
         return []
-    out: list[Path] = []
-    for entry in sorted(base.iterdir()):
-        if entry.is_dir() and any((entry / f).exists() for f in _KG_EVENT_FILES):
-            out.append(entry)
-    return out
+    return iter_capsule_dirs(base, markers=_KG_EVENT_FILES)
 
 
 def load_capsule_manifest(capsule_dir: Path) -> dict[str, Any]:

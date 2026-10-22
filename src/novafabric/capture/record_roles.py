@@ -41,6 +41,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
+from novafabric._capsule_fs import read_capsule_text_or_none
+
 #: Reverse-DNS extension key naming the record's role.
 RECORD_ROLE_EXT = "io.novafabric.record_role"
 #: Reverse-DNS extension key linking a record to its logical call.
@@ -304,11 +306,20 @@ def count_logical_model_calls(records: Iterable[Any]) -> int:
 
 
 def _read_lines(path: Path) -> list[Any]:
-    """Every non-blank line, parsed; a malformed line is kept as the raw string."""
+    """Every non-blank line, parsed; a malformed line is kept as the raw string.
+
+    *path* is a capsule stream (``<capsule>/model-calls.jsonl``). It is opened
+    without following a link and refused if it is not a regular file, so a
+    planted ``model-calls.jsonl -> ~/.aws/credentials`` reads as no records.
+    """
     out: list[Any] = []
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_capsule_text_or_none(
+            path.parent, path.name, operation="reading model calls", errors="replace"
+        )
     except OSError:
+        return out
+    if text is None:
         return out
     for line in text.splitlines():
         if not line.strip():

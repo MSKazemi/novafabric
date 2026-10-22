@@ -35,6 +35,7 @@ from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
 
 SYSTEM_CARD_PREDICATE_TYPE = "https://novafabric.io/system-card/v0"
@@ -103,15 +104,19 @@ class SystemCardGenerator:
             return {}
         import yaml
 
-        with open(manifest_path) as fh:
-            return yaml.safe_load(fh) or {}
+        return yaml.safe_load(
+            read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+        ) or {}
 
     def _eval_facts(self, capsule_dir: Path) -> dict[str, Any] | None:
         eval_path = capsule_dir / "eval_result.json"
         if not eval_path.exists():
             return None
         try:
-            data = json.loads(eval_path.read_text())
+            capsule_text = (
+                read_capsule_member_or_none(eval_path, operation="compliance export") or ""
+            )
+            data = json.loads(capsule_text)
         except Exception:
             return None
         return {
@@ -127,4 +132,7 @@ class SystemCardGenerator:
         lineage_path = capsule_dir / "lineage.jsonl"
         if not lineage_path.exists():
             return 0
-        return sum(1 for line in lineage_path.read_text().splitlines() if line.strip())
+        capsule_text = (
+            read_capsule_member_or_none(lineage_path, operation="compliance export") or ""
+        )
+        return sum(1 for line in capsule_text.splitlines() if line.strip())

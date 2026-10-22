@@ -29,6 +29,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -180,7 +182,10 @@ class NISTAIRMFReporter:
         audit_path = capsule_dir / "audit_coverage.json"
         if audit_path.exists():
             try:
-                data = json.loads(audit_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(audit_path, operation="compliance export") or ""
+                )
+                data = json.loads(capsule_text)
                 coverage = data.get("coverage_fraction", 0.0)
                 metrics.append(
                     RMFMetric(
@@ -280,7 +285,10 @@ class NISTAIRMFReporter:
         eval_path = capsule_dir / "eval_result.json"
         if eval_path.exists():
             try:
-                data = json.loads(eval_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(eval_path, operation="compliance export") or ""
+                )
+                data = json.loads(capsule_text)
                 eval_metrics = data.get("metrics", [])
                 if eval_metrics:
                     # Normalise first numeric metric as primary performance score.
@@ -320,7 +328,11 @@ class NISTAIRMFReporter:
         regression_path = capsule_dir / "regression_report.json"
         if regression_path.exists():
             try:
-                data = json.loads(regression_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(regression_path, operation="compliance export")
+                    or ""
+                )
+                data = json.loads(capsule_text)
                 reg_detected = data.get("regression_detected", True)
                 metrics.append(
                     RMFMetric(
@@ -355,7 +367,10 @@ class NISTAIRMFReporter:
             redaction_path = capsule_dir / "redaction_manifest.json"
         if redaction_path.exists():
             try:
-                data = json.loads(redaction_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(redaction_path, operation="compliance export") or ""
+                )
+                data = json.loads(capsule_text)
                 entries = data.get("entries", data.get("redacted_items", []))
                 # Presence of a redaction manifest is itself the evidence; the
                 # rate is the share of detections that carry a redaction record.
@@ -424,5 +439,6 @@ class NISTAIRMFReporter:
             return {}
         import yaml
 
-        with open(manifest_path) as fh:
-            return yaml.safe_load(fh) or {}
+        return yaml.safe_load(
+            read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+        ) or {}

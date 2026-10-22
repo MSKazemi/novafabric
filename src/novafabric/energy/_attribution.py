@@ -19,6 +19,7 @@ from pathlib import Path
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capsule.ulid_util import new_ulid
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.energy._readers import _RAPL_BASE, probe_counters, rapl_delta_joules
@@ -52,7 +53,10 @@ RECEIPTS_FILE = "energy-receipts.jsonl"
 
 def _iter_jsonl(path: Path) -> Iterator[dict[str, object]]:
     try:
-        lines = path.read_text().splitlines()
+        capsule_text = (
+            read_capsule_member_or_none(path, operation="energy attribution") or ""
+        )
+        lines = capsule_text.splitlines()
     except OSError:
         return
     for line in lines:
@@ -78,7 +82,10 @@ def _first_id(record: dict[str, object]) -> str:
 def _read_run_id(capsule_dir: Path) -> str:
     path = capsule_dir / "capsule.yaml"
     try:
-        loaded = yaml.safe_load(path.read_text())
+        capsule_text = (
+            read_capsule_member_or_none(path, operation="energy attribution") or ""
+        )
+        loaded = yaml.safe_load(capsule_text)
     except (OSError, yaml.YAMLError):
         return new_ulid()
     if isinstance(loaded, dict):

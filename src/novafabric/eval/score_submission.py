@@ -52,6 +52,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from novafabric._capsule_fs import read_capsule_file, read_capsule_text_or_none
 from novafabric.eval.score_config import ScoreConfig, validate_score_against_config
 from novafabric.eval.score_config_catalog import find_config_for_score
 from novafabric.eval.scores import (
@@ -181,13 +182,18 @@ def capsule_known_digests(capsule_dir: str | Path) -> set[str]:
         annotation_subject_digest(root),
         # every root construction, so a subject recorded before ADR-0310 still resolves
         *(capsule_merkle_root(root, version=v) for v in ROOT_VERSIONS),
-        "sha256:" + hashlib.sha256((root / "capsule.yaml").read_bytes()).hexdigest(),
+        "sha256:"
+        + hashlib.sha256(
+            read_capsule_file(root, "capsule.yaml", operation="score submission")
+        ).hexdigest(),
     }
     for pattern in _EVIDENCE_GLOBS:
         for path in sorted(root.glob(pattern)):
-            try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
+            # Never through a link or into a FIFO (novafabric._capsule_fs).
+            text = read_capsule_text_or_none(
+                root, path.name, operation="score submission", errors="ignore"
+            )
+            if text is None:
                 continue
             digests.update(_SHA256_HEX_RE.findall(text))
     return digests
@@ -230,7 +236,7 @@ def submit_request(
         raise SubmissionInvalidError(f"invalid score: {exc}") from exc
 
     scores_path = root / SCORES_FILENAME
-    existing = read_scores(scores_path)
+    existing = read_scores(scores_path, capsule_member=True)
 
     # Rule 6 — idempotency by score_id.
     for prior in existing:

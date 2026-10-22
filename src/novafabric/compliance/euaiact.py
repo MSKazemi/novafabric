@@ -39,6 +39,8 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 _DEPLOYER_RETENTION_MONTHS: int = 6
 _PROVIDER_RETENTION_MONTHS: int = 120  # 10 years per Art.18
 
@@ -85,8 +87,12 @@ def infer_logging_event_types(meta: dict[str, Any], capsule_dir: Path) -> list[s
         try:
             first_line = next(
                 (
-                    line for line in (capsule_dir / "model-calls.jsonl")
-                    .read_text(encoding="utf-8").splitlines()
+                    line for line in (
+                        read_capsule_member_or_none(
+                            capsule_dir / "model-calls.jsonl", operation="compliance export"
+                        )
+                        or ""
+                    ).splitlines()
                     if line.strip()
                 ),
                 None,
@@ -100,7 +106,10 @@ def infer_logging_event_types(meta: dict[str, Any], capsule_dir: Path) -> list[s
     tool_calls_path = capsule_dir / "tool-calls.jsonl"
     if tool_calls_path.exists():
         try:
-            for raw in tool_calls_path.read_text(encoding="utf-8").splitlines():
+            capsule_text = (
+                read_capsule_member_or_none(tool_calls_path, operation="compliance export") or ""
+            )
+            for raw in capsule_text.splitlines():
                 raw = raw.strip()
                 if not raw:
                     continue
@@ -119,7 +128,10 @@ def infer_logging_event_types(meta: dict[str, Any], capsule_dir: Path) -> list[s
     evidence_path = capsule_dir / "evidence.json"
     if evidence_path.exists():
         try:
-            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            capsule_text = (
+                read_capsule_member_or_none(evidence_path, operation="compliance export") or ""
+            )
+            evidence = json.loads(capsule_text)
             if isinstance(evidence, dict) and evidence.get("input_classification"):
                 types.append("input_classification")
         except (OSError, json.JSONDecodeError):
@@ -181,8 +193,9 @@ class EuAiActExporter:
                 continue
 
             try:
-                with manifest_path.open(encoding="utf-8") as f:
-                    meta: dict[str, Any] = yaml.safe_load(f) or {}
+                meta: dict[str, Any] = yaml.safe_load(
+                    read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+                ) or {}
             except Exception:  # noqa: BLE001
                 continue
 

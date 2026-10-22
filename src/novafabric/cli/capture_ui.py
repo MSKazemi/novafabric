@@ -33,6 +33,7 @@ import typer
 import yaml
 from rich.console import Console
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture.ui import KEYSTROKE_RESIDUAL_RISK
 
 app = typer.Typer(
@@ -62,7 +63,10 @@ def _capsule_manifest(capsule: Path) -> dict[str, Any]:
         err_console.print(f"[red]capsule.yaml not found in[/red] {capsule}")
         raise typer.Exit(2)
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        capsule_text = (
+            read_capsule_member_or_none(path, operation="nova capture-ui") or ""
+        )
+        data = yaml.safe_load(capsule_text)
     except (OSError, yaml.YAMLError) as exc:
         err_console.print(f"[red]Could not read capsule.yaml:[/red] {exc}")
         raise typer.Exit(2) from exc

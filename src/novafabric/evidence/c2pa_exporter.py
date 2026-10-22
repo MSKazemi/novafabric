@@ -35,6 +35,8 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 _CLAIM_GENERATOR = "NovaFabric"
 _CLAIM_GENERATOR_VERSION = "0.32.0"
 
@@ -45,8 +47,9 @@ def _load_capsule_manifest(capsule_dir: Path) -> dict[str, Any]:
         raise FileNotFoundError(
             f"capsule.yaml not found in {capsule_dir}. Is this a valid capsule directory?"
         )
-    with manifest_path.open(encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    data = yaml.safe_load(
+        read_capsule_member_or_none(manifest_path, operation="C2PA export") or ""
+    )
     if not isinstance(data, dict):
         raise ValueError(f"capsule.yaml in {capsule_dir} did not parse as a dict")
     return data
@@ -66,7 +69,10 @@ def _extract_model_identity(capsule_dir: Path) -> tuple[str, str]:
     provider = "unknown"
     if not model_calls_path.exists():
         return model_name, provider
-    for raw in model_calls_path.read_text(encoding="utf-8").splitlines():
+    capsule_text = (
+        read_capsule_member_or_none(model_calls_path, operation="C2PA export") or ""
+    )
+    for raw in capsule_text.splitlines():
         raw = raw.strip()
         if not raw:
             continue

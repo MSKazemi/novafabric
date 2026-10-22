@@ -66,6 +66,10 @@ def contamination_check_cmd(
     cannot be read or validated (reported as invalid, with a reason: the
     check fails closed); 0 when all are current/unknown; 2 on a usage error.
 
+    Hashes compare as sha256:<lowercase hex> (case, prefix and whitespace are
+    normalised). Invalid too: a duplicate JSON key, a subdirectory in the facet
+    namespace, and a facet that is a symlink, FIFO, device or over 1 MiB.
+
     Scope: single capsule.
 
     \b

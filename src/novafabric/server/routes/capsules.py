@@ -27,6 +27,8 @@ from fastapi import APIRouter, Depends, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 # Imported eagerly, unlike the rest of this module's novafabric.eval imports:
 # the route decorator needs the model at import time to describe the request
 # body in the OpenAPI document (ADR-0227).
@@ -961,7 +963,7 @@ def _load_manifest(cdir: Path) -> dict[str, Any]:
     path = cdir / "capsule.yaml"
     if not path.exists():
         raise NotFoundError(f"capsule.yaml not found in {cdir}")
-    raw = yaml.safe_load(path.read_text())
+    raw = yaml.safe_load((read_capsule_member_or_none(path, operation="nova server") or ""))
     return dict(raw) if raw else {}
 
 
@@ -982,13 +984,16 @@ def _collect_summaries(capsule_dir: Path) -> list[dict[str, Any]]:
     if not capsule_dir.exists():
         return summaries
     for entry in sorted(capsule_dir.iterdir(), key=lambda p: p.name, reverse=True):
-        if not entry.is_dir():
-            continue
+        if entry.is_symlink() or not entry.is_dir():
+            continue  # a scan never lists a linked entry (novafabric._capsule_fs)
         yaml_path = entry / "capsule.yaml"
         if not yaml_path.exists():
             continue
         try:
-            manifest = yaml.safe_load(yaml_path.read_text()) or {}
+            capsule_text = (
+                read_capsule_member_or_none(yaml_path, operation="nova server") or ""
+            )
+            manifest = yaml.safe_load(capsule_text) or {}
             summaries.append(_capsule_summary(manifest))
         except Exception:  # noqa: BLE001
             pass

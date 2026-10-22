@@ -35,6 +35,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 from .models import (
     COMPLETENESS_COMPLETE,
     COMPLETENESS_MISSING,
@@ -130,7 +132,10 @@ def build_art12_report(
     manifest_path = capsule_dir / "capsule.yaml"
     if not manifest_path.exists():
         raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}")
-    manifest: dict[str, Any] = yaml.safe_load(manifest_path.read_text()) or {}
+    capsule_text = (
+        read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+    )
+    manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
 
     generated_at = _now()
     capsule_ref = build_capsule_ref(capsule_dir, generated_at)

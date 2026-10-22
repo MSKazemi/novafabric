@@ -9,6 +9,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 console = Console()
 
 _SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"]
@@ -66,7 +68,10 @@ def scan_secrets_cmd(
         )
         raise typer.Exit(code=1)
 
-    proof = json.loads(proof_path.read_text())
+    capsule_text = (
+        read_capsule_member_or_none(proof_path, operation="nova scan-secrets") or ""
+    )
+    proof = json.loads(capsule_text)
 
     if json_output:
         typer.echo(json.dumps(proof, indent=2))

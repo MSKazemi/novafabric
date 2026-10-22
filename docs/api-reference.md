@@ -48,6 +48,14 @@ before it is checked. A `..` segment, or a path that resolves outside the roots,
 `NOVAFABRIC_SERVE_PATH_ROOTS` (absolute paths, `os.pathsep`-separated).
 `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` is no longer honoured.
 
+The same roots bound **run ids**. An entry of the capsule directory that is a symlink is
+never listed by `/api/runs`, `/api/runs/search`, the reports, the cost report or any other
+route that scans capsules. Named directly (`/api/runs/latest`), it is served only when it
+resolves inside the read roots; otherwise every `{run_id}` route answers **403**. A capsule
+whose top level holds a symlink or a special file (FIFO, socket, device) is refused with **403**,
+and a symlinked or special file in a *sibling* capsule is read as absent by every scanning route.
+See [Links inside a capsule are never followed](concepts.md#links-inside-a-capsule-are-never-followed-works-today).
+
 A **read** never reaches the server's own secrets, even inside a root: the token stores
 (`tokens.jsonl`, `.serve-token`, `.server-token`), `.env`, the PII key store (`dek.db` and its
 SQLite sidecars), the NovaSeal ratchet state, `config.yaml` and the audit logs are refused with

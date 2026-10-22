@@ -29,6 +29,7 @@ from typing import Any
 
 import jsonschema  # type: ignore[import-untyped]
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric._jsonschema_offline import offline_validator
 
 _FACET_PRODUCER = "https://novafabric.io"
@@ -171,7 +172,10 @@ def _read_eval_verdict(capsule_dir: Path) -> tuple[str, str | None, list[dict[st
     if not eval_path.exists():
         return "n/a", None, None
     try:
-        data = json.loads(eval_path.read_text(encoding="utf-8"))
+        capsule_text = (
+            read_capsule_member_or_none(eval_path, operation="lineage facets") or ""
+        )
+        data = json.loads(capsule_text)
     except (ValueError, OSError):
         return "n/a", None, None
     passed = data.get("passed")

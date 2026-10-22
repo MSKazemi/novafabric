@@ -34,6 +34,7 @@ from pathlib import Path
 import yaml
 from cryptography.hazmat.primitives import serialization
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture._ulid import new_ulid
 from novafabric.evidence.intoto import dsse_pae, dsse_sign_payload
 from novafabric.evidence.signing import verify_with_pem
@@ -111,7 +112,10 @@ def _parse_ts(value: str) -> datetime | None:
 
 def _capsule_created_at(capsule_dir: Path) -> datetime | None:
     try:
-        meta = yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+        meta = yaml.safe_load(
+            read_capsule_member_or_none(capsule_dir / "capsule.yaml", operation="export-blob")
+            or ""
+        )
     except (OSError, yaml.YAMLError):
         return None
     if not isinstance(meta, dict):
@@ -287,7 +291,9 @@ def _check_unsafe_skips(capsule_dir: Path) -> int:
     if not proof.is_file():
         return 0
     try:
-        data = json.loads(proof.read_text())
+        data = json.loads(
+            read_capsule_member_or_none(proof, operation="export-blob") or "{}"
+        )
     except (OSError, ValueError):
         return 0
     return len(data.get("unsafe_skips") or [])

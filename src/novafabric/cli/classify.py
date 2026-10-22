@@ -29,6 +29,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.governance import AISystemRecord, ClassificationResult, RiskTierClassifier
 from novafabric.governance.classifier import _DEFAULT_VOCAB_DIR
 
@@ -261,8 +262,9 @@ def from_capsule(
         console.print(f"[red]x[/red] capsule.yaml not found in: {capsule_dir}")
         raise typer.Exit(code=2)
 
-    with open(manifest_path) as fh:
-        manifest = yaml.safe_load(fh)
+    manifest = yaml.safe_load(
+        read_capsule_member_or_none(manifest_path, operation="nova classify") or ""
+    )
 
     if not isinstance(manifest, dict):
         console.print("[red]x[/red] capsule.yaml did not parse as a mapping.")

@@ -38,6 +38,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -388,8 +390,9 @@ class HIPAASafeHarborExporter:
         try:
             import yaml  # already a core dependency
 
-            with open(manifest_path) as fh:
-                data = yaml.safe_load(fh)
+            data = yaml.safe_load(
+                read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+            )
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
@@ -448,7 +451,10 @@ class HIPAASafeHarborExporter:
         """
         results: list[tuple[str, str]] = []
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            capsule_text = (
+                read_capsule_member_or_none(path, operation="compliance export") or ""
+            )
+            data = json.loads(capsule_text)
         except Exception:
             return results
 

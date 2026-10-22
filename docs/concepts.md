@@ -109,18 +109,42 @@ follows one. They all share one module (`novafabric._capsule_fs`):
   component at a time with `O_NOFOLLOW`, so a link swapped in after the check
   is refused at open time instead of copied.
 - **`nova serve`:** `GET /api/runs/{id}/file/{path}` answers 404 for a link (or
-  a FIFO) and never returns its target. A run whose capsule holds a link at its
-  top level (`capsule.yaml`, a JSONL stream, `redaction-proof.json`, `inputs`,
-  `outputs`) is refused with 403 by every `/api/runs/{id}/...` route. The run
-  listing never parses a linked `capsule.yaml`, and the `inputs`/`outputs`
-  listings leave links out.
+  a FIFO) and never returns its target. A run whose capsule holds a link or a
+  special file (FIFO, socket, device) at its top level (`capsule.yaml`, a JSONL
+  stream, `redaction-proof.json`, `inputs`, `outputs`) is refused with 403 by
+  every `/api/runs/{id}/...` route. The run listing never parses a linked
+  `capsule.yaml`, and the `inputs`/`outputs` listings leave links out.
+- **Scans of many capsules** (the `nova serve` run listing, search, cost report,
+  `suggest-register`, run lineage, children, topology, AI-BOM status, the run
+  index, KG bulk ingest, `nova query`, the examiner and audit exporters, server
+  mode's capsule listing) never list an entry of the capsule directory that is
+  itself a link, whether it points inside the directory (`latest -> 01J...`, an
+  alias of a capsule the scan already lists) or outside it. Every file they read
+  in each capsule goes through the same no-follow open, so a link or a FIFO
+  planted in a *sibling* capsule is never followed either.
+- **A capsule root that is a link, in `nova serve`:** a run named directly
+  (`/api/runs/latest`) whose directory entry is a link is served only when the
+  link resolves inside the server's read roots (the capsule directory,
+  `$NOVAFABRIC_HOME` minus its secrets, any `NOVAFABRIC_SERVE_PATH_ROOTS` entry);
+  otherwise every route answers 403. The server reads through the resolved path.
+- **Readers:** every command that parses one well-known capsule file (`nova
+  export --html`, `nova diagnose`, `nova diff`, `nova replay`, `nova assure`,
+  `nova validate`, `nova verify`, `nova eval contamination-check`, the lineage
+  and OpenLineage importers, the knowledge-graph consumer, the content and query
+  indexes, and the compliance exporters) opens it the same way. A link, a FIFO
+  or a device is never followed and never blocks: the reader either refuses with
+  a named error or treats the file as absent and logs `capsule_file_not_followed`.
+  `nova export --html` skips such a section with a warning on stderr and in the
+  page; a linked `capsule.yaml` refuses the export (exit 2).
 - **`nova restore`** refuses a set whose listed member is a link entry, and
   never writes through a link at a destination path. `nova migrate-schema`
   skips (and reports) a capsule holding a link, and AI-BOM generation never
   writes `aibom.json` through one.
 
-The capsule *path you pass* may itself be a link (`runs/latest`); only links
-inside it are refused.
+The capsule *path you pass* to a CLI command may itself be a link
+(`runs/latest`); only links inside it are refused. That one link is followed
+because you named it. A scan never follows one it finds, and `nova serve`
+follows one only into its read roots.
 
 **Known limit: hard links are not refused.** A hard link is an ordinary
 directory entry for a regular file, so it is exported like any other file.

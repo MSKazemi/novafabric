@@ -25,6 +25,8 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_text
+
 from .models import (
     COMPLETENESS_COMPLETE,
     COMPLETENESS_MISSING,
@@ -235,8 +237,10 @@ class AnnexIVExporter:
                 f"capsule.yaml not found in {capsule_dir}. "
                 "Ensure the capsule directory is valid."
             )
-        with open(manifest_path) as f:
-            data = yaml.safe_load(f)
+        # Never through a link or into a FIFO: a refused manifest is a named error.
+        data = yaml.safe_load(
+            read_capsule_text(capsule_dir, "capsule.yaml", operation="compliance export")
+        )
         if not isinstance(data, dict):
             raise ValueError(
                 f"capsule.yaml in {capsule_dir} did not parse as a dict"

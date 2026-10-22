@@ -25,6 +25,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
 from novafabric._paths import nova_home
 from novafabric.capture._ulid import new_ulid
 
@@ -276,10 +277,14 @@ def list_sessions(root: Path | None = None) -> list[SessionManifest]:
 
 def capsule_manifest_digest(capsule_dir: Path) -> str:
     """``sha256:<hex>`` over the member capsule's ``capsule.yaml`` bytes."""
-    manifest_file = capsule_dir / "capsule.yaml"
-    if not manifest_file.is_file():
-        raise NotACapsuleError(f"{capsule_dir} has no capsule.yaml — not a Run Capsule")
-    return "sha256:" + hashlib.sha256(manifest_file.read_bytes()).hexdigest()
+    try:
+        raw = read_capsule_file(capsule_dir, "capsule.yaml", operation="a session")
+    except (FileNotFoundError, CapsuleEntryError):
+        raise NotACapsuleError(
+            f"{capsule_dir} has no regular capsule.yaml (links are never followed) "
+            "— not a Run Capsule"
+        ) from None
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
 def parse_capsule_ref(capsule_ref: str) -> tuple[str | None, str]:
@@ -327,7 +332,11 @@ def add_member(
     if not manifest_file.is_file():
         raise NotACapsuleError(f"{capsule_dir} has no capsule.yaml — not a Run Capsule")
     try:
-        capsule = yaml.safe_load(manifest_file.read_text(encoding="utf-8"))
+        capsule = yaml.safe_load(
+            read_capsule_file(capsule_dir, "capsule.yaml", operation="a session").decode("utf-8")
+        )
+    except CapsuleEntryError as exc:
+        raise NotACapsuleError(f"capsule.yaml in {capsule_dir} not read: {exc}") from exc
     except yaml.YAMLError as exc:
         raise NotACapsuleError(f"unreadable capsule.yaml in {capsule_dir}: {exc}") from exc
     if not isinstance(capsule, dict) or "run_id" not in capsule:

@@ -38,6 +38,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.diagnose.attribution import CapsuleNotFoundError, _load_steps
 
 #: Span kinds treated as claims (assert content) and as evidence (ground content).
@@ -106,9 +107,10 @@ def audit_claims(capsule_dir: Path | str) -> ClaimAudit:
     """
     capsule_dir = Path(capsule_dir)
     manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
-        raise CapsuleNotFoundError(f"No capsule.yaml under {capsule_dir}")
-    manifest = yaml.safe_load(manifest_path.read_text()) or {}
+    manifest_text = read_capsule_member_or_none(manifest_path, operation="nova diagnose")
+    if manifest_text is None:  # missing, or a link/FIFO that is never followed
+        raise CapsuleNotFoundError(f"No readable capsule.yaml under {capsule_dir}")
+    manifest = yaml.safe_load(manifest_text) or {}
     run_id = str(manifest.get("run_id", capsule_dir.name))
 
     steps = _load_steps(capsule_dir, manifest)  # already ordered earliest-first

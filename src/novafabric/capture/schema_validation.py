@@ -9,7 +9,13 @@ present schema_ref into a recorded ``schema_validation`` verdict block
 - **Record-only.** A validation failure is recorded in the verdict's
   ``errors[]`` and is NEVER raised into the captured application.
 - **Local-only resolution.** Relative refs resolve inside the capsule
-  directory; absolute local paths are allowed; ``http(s)://`` refs are never
+  directory, read without following a link (:mod:`novafabric._capsule_fs`).
+  Absolute local paths are allowed **at capture only**, where the recorded
+  application declares its own schema. Re-validating a stored capsule
+  (``nova validate --tool-schemas``, replay drift) is reading input someone
+  else wrote: there an absolute ref resolves only inside NovaFabric's packaged
+  ``schemas/`` directory and is otherwise ``schema-unresolved``, so a capsule
+  cannot make the reader parse an arbitrary local file. ``http(s)://`` refs are never
   fetched (offline rule) and are recorded as ``schema-unresolved``. The same
   rule holds for ``$ref`` / ``$dynamicRef`` *inside* a loaded schema: only
   refs within the schema document and the bundled JSON Schema meta-schemas
@@ -32,6 +38,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    CapsuleFileTooLargeError,
+    read_capsule_file,
+    read_capsule_text_or_none,
+)
+
 VALIDATOR_ID = "jsonschema/2020-12"
 MAX_ERRORS = 50
 MAX_SCHEMA_BYTES = 1_048_576  # 1 MiB per referenced schema file
@@ -50,28 +63,69 @@ def _sanitize(message: str) -> str:
     return redact_text(message)[:_MAX_MESSAGE_CHARS]
 
 
-def _load_schema(ref: str, base_dir: Path) -> tuple[Any, str | None]:
+def _packaged_schema_dir() -> Path:
+    return (Path(__file__).resolve().parents[1] / "schemas").resolve()
+
+
+def _read_relative(ref: str, base_dir: Path) -> tuple[bytes | None, str | None]:
+    """Read *ref* inside *base_dir*: no ``..``, no link, no FIFO, size-capped."""
+    try:
+        raw = read_capsule_file(
+            base_dir, ref, max_bytes=MAX_SCHEMA_BYTES, operation="schema validation"
+        )
+    except ValueError:
+        return None, f"relative schema_ref escapes the capsule directory: {ref}"
+    except CapsuleFileTooLargeError:
+        return None, f"schema file exceeds {MAX_SCHEMA_BYTES} bytes: {ref}"
+    except CapsuleEntryError:
+        return None, f"schema_ref is a link or not a regular file (never followed): {ref}"
+    except FileNotFoundError:
+        return None, f"schema file not found: {ref}"
+    except OSError as exc:
+        return None, f"schema unreadable ({type(exc).__name__}): {ref}"
+    return raw, None
+
+
+def _read_absolute(path: Path, ref: str, *, trusted: bool) -> tuple[bytes | None, str | None]:
+    """Read an absolute *ref*: anywhere when *trusted* (capture), else packaged schemas only."""
+    if not trusted:
+        resolved = path.resolve()
+        if ".." in path.parts or not resolved.is_relative_to(_packaged_schema_dir()):
+            return None, (
+                "absolute schema_ref is not read when re-validating a stored capsule "
+                f"(only the capsule and the packaged schemas are): {ref}"
+            )
+        path = resolved
+    try:
+        if not path.is_file():
+            return None, f"schema file not found: {ref}"
+        if path.stat().st_size > MAX_SCHEMA_BYTES:
+            return None, f"schema file exceeds {MAX_SCHEMA_BYTES} bytes: {ref}"
+        return path.read_bytes(), None
+    except OSError as exc:
+        return None, f"schema unreadable ({type(exc).__name__}): {ref}"
+
+
+def _load_schema(ref: str, base_dir: Path, *, trusted: bool = True) -> tuple[Any, str | None]:
     """Resolve *ref* to a parsed JSON Schema. Local-only; never the network.
 
+    *trusted* is True at capture (the recorded application declared the ref)
+    and False when re-validating a stored capsule; see the module docstring.
     Returns ``(schema, None)`` on success or ``(None, reason)`` when the ref
     cannot be resolved. Never raises.
     """
     if ref.startswith(("http://", "https://")):
         return None, f"network schema refs are not fetched (offline-only): {ref}"
     path = Path(ref)
-    if not path.is_absolute():
-        path = (base_dir / ref).resolve()
-        try:
-            path.relative_to(base_dir.resolve())
-        except ValueError:
-            return None, f"relative schema_ref escapes the capsule directory: {ref}"
+    if path.is_absolute():
+        raw, problem = _read_absolute(path, ref, trusted=trusted)
+    else:
+        raw, problem = _read_relative(ref, base_dir)
+    if raw is None:
+        return None, problem
     try:
-        if not path.is_file():
-            return None, f"schema file not found: {ref}"
-        if path.stat().st_size > MAX_SCHEMA_BYTES:
-            return None, f"schema file exceeds {MAX_SCHEMA_BYTES} bytes: {ref}"
-        schema = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        schema = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         return None, f"schema unreadable ({type(exc).__name__}): {ref}"
     if not isinstance(schema, (dict, bool)):
         return None, f"schema is not a JSON Schema object: {ref}"
@@ -84,6 +138,8 @@ def _check_target(
     target: str,
     base_dir: Path,
     errors: list[dict[str, Any]],
+    *,
+    trusted: bool = True,
 ) -> bool | None:
     """Validate *payload* against the schema at *ref*, appending SchemaErrors.
 
@@ -91,7 +147,7 @@ def _check_target(
     (schema unresolved — recorded with keyword ``schema-unresolved``).
     Never raises.
     """
-    schema, problem = _load_schema(ref, base_dir)
+    schema, problem = _load_schema(ref, base_dir, trusted=trusted)
     if schema is None:
         errors.append({
             "target": target,
@@ -154,7 +210,7 @@ def _check_target(
 
 
 def compute_verdict(
-    record: dict[str, Any], schema_base_dir: Path
+    record: dict[str, Any], schema_base_dir: Path, *, trusted: bool = True
 ) -> dict[str, Any] | None:
     """Compute the ``schema_validation`` verdict block for a tool-call record.
 
@@ -179,11 +235,13 @@ def compute_verdict(
     result_valid: bool | None = None
     if args_ref is not None:
         arguments_valid = _check_target(
-            record.get("arguments"), args_ref, "arguments", schema_base_dir, errors
+            record.get("arguments"), args_ref, "arguments", schema_base_dir, errors,
+            trusted=trusted,
         )
     if result_ref is not None and record.get("status", "success") == "success":
         result_valid = _check_target(
-            record.get("result"), result_ref, "result", schema_base_dir, errors
+            record.get("result"), result_ref, "result", schema_base_dir, errors,
+            trusted=trusted,
         )
     return {
         "arguments_valid": arguments_valid,
@@ -246,11 +304,13 @@ class CapsuleToolSchemaReport:
 
 
 def _read_tool_calls(capsule_dir: Path) -> list[dict[str, Any]]:
-    path = capsule_dir / "tool-calls.jsonl"
     records: list[dict[str, Any]] = []
-    if not path.exists():
+    text = read_capsule_text_or_none(
+        capsule_dir, "tool-calls.jsonl", operation="schema validation"
+    )
+    if text is None:
         return records
-    for line in path.read_text().splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -268,7 +328,7 @@ def validate_capsule_tool_calls(capsule_dir: Path) -> CapsuleToolSchemaReport:
     report = CapsuleToolSchemaReport()
     for record in _read_tool_calls(capsule_dir):
         report.total += 1
-        verdict = compute_verdict(record, capsule_dir)
+        verdict = compute_verdict(record, capsule_dir, trusted=False)
         report.verdicts.append(verdict)
         if verdict is None:
             report.no_schema += 1
@@ -305,7 +365,7 @@ def write_back_verdicts(capsule_dir: Path) -> int:
     annotated = 0
     lines: list[str] = []
     for record in records:
-        verdict = compute_verdict(record, capsule_dir)
+        verdict = compute_verdict(record, capsule_dir, trusted=False)
         if verdict is not None:
             record["schema_validation"] = verdict
             annotated += 1
@@ -327,7 +387,7 @@ def revalidate_tool_calls(
     drift: list[dict[str, Any]] = []
     for record in tool_calls:
         try:
-            verdict = compute_verdict(record, capsule_dir)
+            verdict = compute_verdict(record, capsule_dir, trusted=False)
         except Exception:  # noqa: BLE001 — replay surfacing must not crash replay
             continue
         if _is_violation(verdict):

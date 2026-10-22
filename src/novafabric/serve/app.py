@@ -40,7 +40,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from novafabric import _paths as _nf_paths
-from novafabric._capsule_fs import CapsuleEntryError, open_capsule_file
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    is_capsule_regular_file,
+    iter_capsule_dirs,
+    open_capsule_file,
+    read_capsule_text,
+    read_capsule_text_or_none,
+)
 from novafabric.registry.runs_cache import (
     count_cached_runs,
 )
@@ -59,6 +66,7 @@ from novafabric.serve.auth import (
 )
 from novafabric.serve.authz import build_authz_dependency, record_scope
 from novafabric.serve.capsule_loader import (
+    confined_capsule_root,
     discover_capsule_dirs,
     discover_ingestable_dirs,
     list_run_summaries,
@@ -556,12 +564,12 @@ def _cost_report_from_capsules(
     agg: dict[str, dict[str, Any]] = {}
     if not capsule_dir.is_dir():
         return agg
-    for cdir in capsule_dir.iterdir():
-        if not cdir.is_dir() or (run_id and cdir.name != run_id):
+    # No link is followed: a linked capsule entry is never listed, and a linked
+    # or special model-calls.jsonl reads as no records (record_roles).
+    for cdir in iter_capsule_dirs(capsule_dir, markers=("model-calls.jsonl",)):
+        if run_id and cdir.name != run_id:
             continue
         calls_file = cdir / "model-calls.jsonl"
-        if not calls_file.is_file():
-            continue
         from novafabric.capture.record_roles import read_logical_model_calls
 
         # ADR-0305: one entry per logical call, never one per wire attempt.
@@ -1893,7 +1901,9 @@ def create_app(
         capsule_id = ""
         if log_file.exists():
             try:
-                entry = _json.loads(log_file.read_bytes())
+                entry = _json.loads(
+                    read_capsule_text(cdir, ".seal/log-entry.json", operation="nova serve")
+                )
                 capsule_id = entry.get("entry", {}).get("capsule_id", "")
             except Exception:
                 pass
@@ -2426,7 +2436,11 @@ def create_app(
                         log_file = seal_dir / "log-entry.json"
                         capsule_id = ""
                         if log_file.exists():
-                            entry = _json.loads(log_file.read_bytes())
+                            entry = _json.loads(
+                                read_capsule_text(
+                                    cdir, ".seal/log-entry.json", operation="nova serve"
+                                )
+                            )
                             capsule_id = entry.get("entry", {}).get("capsule_id", "")
                         seal_result = seal.verify(capsule_id=capsule_id, seal_dir=str(seal_dir))
                         log_integrity_ok = seal_result.log_integrity_ok
@@ -3556,8 +3570,12 @@ def create_app(
         # Include the policy report text if written
         from novafabric.capture._ulid import new_ulid as _noop  # noqa: F401 (ensures path)
         report_path = cdir.parent / report.get("replay_id", "") / "dry_run_report.txt"
-        if report_path.exists():
-            report["dry_run_report"] = report_path.read_text()
+        report_text = (
+            read_capsule_text_or_none(report_path.parent, report_path.name, operation="nova serve")
+            if report.get("replay_id") else None
+        )
+        if report_text is not None:
+            report["dry_run_report"] = report_text
 
         audit.append(
             action="dry_run_replay",
@@ -3682,7 +3700,9 @@ def create_app(
             )
         try:
             import json as _json
-            data: dict[str, Any] = _json.loads(proof_path.read_text())
+            data: dict[str, Any] = _json.loads(
+                read_capsule_text(cdir, "redaction-proof.json", operation="nova serve")
+            )
             return data
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"failed to read proof: {e}")
@@ -3778,10 +3798,11 @@ def create_app(
                 continue
             try:
                 schema = _load_schema(schema_name)
+                text = read_capsule_text(cdir, filename, operation="nova serve")
                 if filename.endswith(".json"):
-                    data = _json.loads(artifact.read_text())
+                    data = _json.loads(text)
                 else:
-                    data = _yaml.safe_load(artifact.read_text())
+                    data = _yaml.safe_load(text)
                 jsonschema.validate(data, schema, format_checker=jsonschema.FormatChecker())
             except jsonschema.ValidationError as exc:
                 errors.append(f"{filename}: {exc.message}")
@@ -3797,7 +3818,8 @@ def create_app(
         lineage_path = cdir / "lineage.jsonl"
         if lineage_path.exists():
             lineage_schema = _load_schema("lineage-edge.schema.json")
-            for i, line in enumerate(lineage_path.read_text().splitlines(), 1):
+            lineage_text = read_capsule_text(cdir, "lineage.jsonl", operation="nova serve")
+            for i, line in enumerate(lineage_text.splitlines(), 1):
                 line = line.strip()
                 if not line:
                     continue
@@ -4494,10 +4516,12 @@ def create_app(
         capsule_path = _resolve_capsule(run_id, capsule_dir)
         try:
             import yaml as _yaml
-            manifest_path = capsule_path / "capsule.yaml"
             manifest: dict[str, Any] = {}
-            if manifest_path.exists():
-                raw = _yaml.safe_load(manifest_path.read_text())
+            manifest_text = read_capsule_text_or_none(
+                capsule_path, "capsule.yaml", operation="nova serve"
+            )
+            if manifest_text is not None:
+                raw = _yaml.safe_load(manifest_text)
                 if isinstance(raw, dict):
                     manifest = raw
         except Exception:
@@ -5258,7 +5282,10 @@ def create_app(
                 non_counting_model_call_ids(events_file)
                 if events_file.name == "model-calls.jsonl" else set()
             )
-            for raw in events_file.read_text(encoding="utf-8").splitlines():
+            events_text = read_capsule_text_or_none(
+                events_file.parent, events_file.name, operation="nova serve"
+            )
+            for raw in (events_text or "").splitlines():
                 raw = raw.strip()
                 if not raw:
                     continue
@@ -6143,7 +6170,10 @@ def create_app(
             )
             ingested = 0
             skipped = 0
-            for raw in events_file.read_text(encoding="utf-8").splitlines():
+            events_text = read_capsule_text_or_none(
+                events_file.parent, events_file.name, operation="nova serve"
+            )
+            for raw in (events_text or "").splitlines():
                 raw = raw.strip()
                 if not raw:
                     continue
@@ -6670,39 +6700,45 @@ def create_app(
         parent_dir = capsule_dir / _require_path_segment(run_id, "run_id")
         if not parent_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"Capsule directory not found: {run_id}")
-        _refuse_top_level_links(parent_dir)
-        manifest_path = parent_dir / "capsule.yaml"
-        if not manifest_path.exists():
-            manifest_path = parent_dir / "capsule.json"
+        parent_dir = _refuse_top_level_links(_confine_capsule_root(parent_dir, capsule_dir))
+        manifest_name = "capsule.yaml"
+        if not (parent_dir / manifest_name).exists():
+            manifest_name = "capsule.json"
         import yaml as _yaml
         try:
-            raw = manifest_path.read_text(encoding="utf-8")
+            raw = read_capsule_text(parent_dir, manifest_name, operation="nova serve")
             manifest = (
-                _yaml.safe_load(raw) if manifest_path.suffix == ".yaml"
+                _yaml.safe_load(raw) if manifest_name.endswith(".yaml")
                 else __import__("json").loads(raw)
             )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=422, detail=f"Cannot parse manifest: {exc}") from exc
         children: list[dict[str, Any]] = []
-        for child_dir in sorted(capsule_dir.iterdir()):
-            if child_dir == parent_dir or not child_dir.is_dir():
+        # A sibling is listed only as a real directory, and each file is read
+        # without following a link (iter_capsule_dirs / read_capsule_text_or_none).
+        for child_dir in iter_capsule_dirs(capsule_dir, markers=("lineage.jsonl",)):
+            if child_dir.name == parent_dir.name:
                 continue
-            lineage_file = child_dir / "lineage.jsonl"
-            if lineage_file.exists():
+            lineage_text = read_capsule_text_or_none(
+                child_dir, "lineage.jsonl", operation="nova serve"
+            )
+            if lineage_text is not None:
                 import json as _json
-                for line in lineage_file.read_text(encoding="utf-8").splitlines():
+                for line in lineage_text.splitlines():
                     try:
                         rec = _json.loads(line)
                         if rec.get("parent_run_id") == run_id or rec.get("parent_id") == run_id:
-                            child_manifest_p = child_dir / "capsule.yaml"
-                            if not child_manifest_p.exists():
-                                child_manifest_p = child_dir / "capsule.json"
-                            if child_manifest_p.exists():
+                            child_manifest = "capsule.yaml"
+                            if not (child_dir / child_manifest).exists():
+                                child_manifest = "capsule.json"
+                            _txt = read_capsule_text_or_none(
+                                child_dir, child_manifest, operation="nova serve"
+                            )
+                            if _txt is not None:
                                 try:
-                                    _txt = child_manifest_p.read_text()
                                     cm = (
                                         _yaml.safe_load(_txt)
-                                        if child_manifest_p.suffix == ".yaml"
+                                        if child_manifest.endswith(".yaml")
                                         else __import__("json").loads(_txt)
                                     )
                                     children.append({
@@ -6735,7 +6771,7 @@ def create_app(
         parent_dir = capsule_dir / _require_path_segment(run_id, "run_id")
         if not parent_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"Capsule directory not found: {run_id}")
-        _refuse_top_level_links(parent_dir)
+        parent_dir = _refuse_top_level_links(_confine_capsule_root(parent_dir, capsule_dir))
         try:
             from novafabric.capsule.validator import DistributedCapsuleValidator
         except ImportError as exc:
@@ -7861,13 +7897,9 @@ def create_app(
         total = 0
         covered = 0
         if caps_dir.is_dir():
-            for entry in caps_dir.iterdir():
-                if not entry.is_dir():
-                    continue
-                if not (entry / "capsule.yaml").exists():
-                    continue
+            for entry in iter_capsule_dirs(caps_dir):
                 total += 1
-                if (entry / "aibom.json").exists():
+                if is_capsule_regular_file(entry, "aibom.json"):
                     covered += 1
         missing = total - covered
         if total == 0:
@@ -8150,9 +8182,9 @@ def create_app(
             failed = 0
             errors: list[str] = []
             if capsule_dir.is_dir():
-                for entry in sorted(capsule_dir.iterdir()):
-                    if not entry.is_dir() or not (entry / "capsule.yaml").exists():
-                        continue
+                # Never a linked entry: it would read, and write aibom.json,
+                # outside the capsule dir.
+                for entry in iter_capsule_dirs(capsule_dir):
                     try:
                         if _generate_one(entry):
                             written += 1
@@ -8267,13 +8299,15 @@ def create_app(
 
         edges: list[dict[str, Any]] = []
         if capsule_dir.is_dir():
-            for entry in capsule_dir.iterdir():
-                if not entry.is_dir():
+            # Every sibling is scanned: list only real directories, and never
+            # follow a linked or special lineage.jsonl (it reads as no edges).
+            for entry in iter_capsule_dirs(capsule_dir, markers=("lineage.jsonl",)):
+                lineage_text = read_capsule_text_or_none(
+                    entry, "lineage.jsonl", operation="nova serve"
+                )
+                if lineage_text is None:
                     continue
-                lineage_path = entry / "lineage.jsonl"
-                if not lineage_path.exists():
-                    continue
-                for line in lineage_path.read_text(encoding="utf-8").splitlines():
+                for line in lineage_text.splitlines():
                     line = line.strip()
                     if not line:
                         continue
@@ -8356,8 +8390,10 @@ def create_app(
                 detail="missing redaction-proof.json — run `nova redact` first",
             )
         try:
-            proof = json.loads(proof_path.read_text())
-        except json.JSONDecodeError as exc:
+            proof = json.loads(
+                read_capsule_text(cdir, "redaction-proof.json", operation="nova serve")
+            )
+        except (json.JSONDecodeError, CapsuleEntryError) as exc:
             raise HTTPException(status_code=500, detail=f"corrupt proof: {exc}") from exc
         findings = proof.get("findings", [])
         triggered_count = 0
@@ -8447,12 +8483,8 @@ def create_app(
             edges_added = 0
             errors: list[str] = []
 
-            for cap_dir in sorted(capsule_dir.iterdir()):
-                if not cap_dir.is_dir():
-                    continue
-                manifest_path = cap_dir / "capsule.yaml"
-                if not manifest_path.exists():
-                    continue
+            # A linked entry is never listed, and no file is read through a link.
+            for cap_dir in iter_capsule_dirs(capsule_dir):
                 resolved_key = str(cap_dir.resolve())
                 if only_dirs is not None and resolved_key not in only_dirs:
                     continue
@@ -8460,7 +8492,9 @@ def create_app(
                 try:
                     import yaml as _yaml
 
-                    manifest = _yaml.safe_load(manifest_path.read_text())
+                    manifest = _yaml.safe_load(
+                        read_capsule_text(cap_dir, "capsule.yaml", operation="nova serve")
+                    )
                     status = "success" if manifest.get("exit_code", 1) == 0 else "failed"
                 except Exception:  # noqa: BLE001
                     status = "idle"
@@ -8531,11 +8565,7 @@ def create_app(
                 # Sync filesystem walk — runs in a worker thread so a large
                 # capsule store never stalls the event loop (B4).
                 found: set[str] = set()
-                for cap_dir in capsule_dir.iterdir():
-                    if not cap_dir.is_dir():
-                        continue
-                    if not (cap_dir / "capsule.yaml").exists():
-                        continue
+                for cap_dir in iter_capsule_dirs(capsule_dir):
                     key = str(cap_dir.resolve())
                     if key not in _topology_seeded_dirs:
                         found.add(key)
@@ -9619,7 +9649,7 @@ def _file_response(filepath: str, handle: BinaryIO, cap: int) -> dict[str, Any]:
 
 
 def _refuse_top_level_links(cdir: Path) -> Path:
-    """Refuse (403) a capsule whose top level holds a symbolic link.
+    """Refuse (403) a capsule whose top level holds a symbolic link or a special file.
 
     Every ``{run_id}`` route reads well-known top-level files (``capsule.yaml``,
     the JSONL streams, ``redaction-proof.json``) or the ``inputs``/``outputs``
@@ -9631,10 +9661,17 @@ def _refuse_top_level_links(cdir: Path) -> Path:
     """
     try:
         with os.scandir(cdir) as entries:
-            linked = sorted(e.name for e in entries if e.is_symlink())
+            linked: list[str] = []
+            special: list[str] = []
+            for e in entries:
+                if e.is_symlink():
+                    linked.append(e.name)
+                elif not (e.is_file(follow_symlinks=False) or e.is_dir(follow_symlinks=False)):
+                    special.append(e.name)  # a FIFO, socket or device: a read would hang
     except OSError as exc:
         raise HTTPException(status_code=404, detail="run not readable") from exc
     if linked:
+        linked.sort()
         logger.warning(
             "capsule_symlink_refused", extra={"capsule": str(cdir), "links": linked[:20]}
         )
@@ -9645,14 +9682,53 @@ def _refuse_top_level_links(cdir: Path) -> Path:
                 f"({', '.join(linked[:20])}); nova serve never follows a link in a capsule"
             ),
         )
+    if special:
+        special.sort()
+        logger.warning(
+            "capsule_special_file_refused",
+            extra={"capsule": str(cdir), "entries": special[:20]},
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"capsule holds {len(special)} special file(s) at its top level "
+                f"({', '.join(special[:20])}); a capsule holds only regular files "
+                "and directories"
+            ),
+        )
     return cdir
 
 
+def _confine_capsule_root(candidate: Path, capsule_dir: Path) -> Path:
+    """Refuse (403) a capsule-dir entry that is a link resolving outside the read roots.
+
+    ``nova serve`` lists only real directories (see
+    :func:`novafabric._capsule_fs.iter_capsule_dirs`), but a run can still be
+    named directly. An alias inside the capsule dir (``latest -> 01J...``) keeps
+    working; a link to a directory elsewhere would put that directory's files
+    behind every ``{run_id}`` route, past the confinement every request-supplied
+    path gets, so it is refused. The *resolved* path is returned, so a link
+    swapped after this check is not followed by the read.
+    """
+    confined = confined_capsule_root(candidate, capsule_dir)
+    if confined is None:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"run {candidate.name} is a symlink that resolves outside the "
+                "directories this server reads; nova serve never follows it"
+            ),
+        )
+    return confined
+
+
 def _resolve_capsule(run_id: str, capsule_dir: Path) -> Path:
-    """Find the capsule directory for a run_id; raise 404 if absent, 403 if linked."""
+    """Find the capsule directory for a run_id; 404 if absent, 403 if linked or out of roots."""
     if "/" in run_id or ".." in run_id or run_id in ("", "."):
         raise HTTPException(status_code=400, detail="invalid run_id")
     candidate = capsule_dir / run_id
+    if candidate.is_symlink() and candidate.is_dir():
+        candidate = _confine_capsule_root(candidate, capsule_dir)
     if candidate.is_dir() and (candidate / "capsule.yaml").exists():
         return _refuse_top_level_links(candidate)
     if candidate.is_dir() and (candidate / "capsule.yaml").is_symlink():

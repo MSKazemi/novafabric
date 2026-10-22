@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._tool_codec import MUTATION_CLASSES
 from novafabric.capture._ulid import new_ulid
@@ -89,8 +90,9 @@ def _now() -> str:
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     records = []
-    if path.exists():
-        for line in path.read_text().splitlines():
+    text = read_capsule_member_or_none(path, operation="nova replay")
+    if text is not None:
+        for line in text.splitlines():
             line = line.strip()
             if line:
                 try:
@@ -125,24 +127,24 @@ def _contract_fields(report: ReplayContractReport) -> dict[str, Any]:
 
 
 def _load_capsule(capsule_dir: Path) -> dict[str, Any]:
-    manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
-        raise ValueError(f"capsule.yaml not found in {capsule_dir}")
-    return yaml.safe_load(manifest_path.read_text()) or {}
+    text = read_capsule_member_or_none(capsule_dir / "capsule.yaml", operation="nova replay")
+    if text is None:  # missing, or a link/FIFO that is never followed
+        raise ValueError(f"capsule.yaml not found or not a regular file in {capsule_dir}")
+    return yaml.safe_load(text) or {}
 
 
 def _load_replay_policy(capsule_dir: Path) -> dict[str, Any]:
-    path = capsule_dir / "replay.yaml"
-    if not path.exists():
+    text = read_capsule_member_or_none(capsule_dir / "replay.yaml", operation="nova replay")
+    if text is None:
         return {"schema_version": "0.1.0"}
-    return yaml.safe_load(path.read_text()) or {}
+    return yaml.safe_load(text) or {}
 
 
 def _load_env_lock(capsule_dir: Path) -> dict[str, Any]:
-    path = capsule_dir / "env.lock"
-    if not path.exists():
+    text = read_capsule_member_or_none(capsule_dir / "env.lock", operation="nova replay")
+    if text is None:
         return {}
-    return yaml.safe_load(path.read_text()) or {}
+    return yaml.safe_load(text) or {}
 
 
 class ReplayEngine:

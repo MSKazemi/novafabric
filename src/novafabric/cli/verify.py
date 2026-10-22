@@ -10,6 +10,7 @@ import typer
 from rich.console import Console
 
 from novafabric import _paths as _nf_paths
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
 
 console = Console()
 err_console = Console(stderr=True)
@@ -887,8 +888,12 @@ def _capsule_binding_report(capsule_dir: Path, dsse_bytes: bytes) -> dict[str, A
         try:
             import yaml
 
-            on_disk = yaml.safe_load(manifest_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
+            # O_NOFOLLOW + regular-file check: a linked capsule.yaml is reported,
+            # never compared with the target's contents.
+            on_disk = yaml.safe_load(
+                read_capsule_file(capsule_dir, "capsule.yaml", operation="nova verify")
+            )
+        except (OSError, ValueError, CapsuleEntryError) as exc:
             report["errors"].append(f"Cannot read capsule.yaml: {exc}")
             on_disk = None
         if isinstance(on_disk, dict):
@@ -1181,7 +1186,12 @@ def _verify_sigstore(
         for candidate in ("manifest.json", "capsule.json"):
             manifest_file = capsule_dir / candidate
             if manifest_file.exists():
-                manifest_bytes = manifest_file.read_bytes()
+                try:
+                    manifest_bytes = read_capsule_file(
+                        capsule_dir, candidate, operation="nova verify"
+                    )
+                except CapsuleEntryError:
+                    continue  # a link or special file is never followed
                 if not effective_capsule_id:
                     effective_capsule_id = hashlib.sha256(manifest_bytes).hexdigest()
                 break

@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_file
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
 from novafabric.replay._result import ReplayResult
 
@@ -100,7 +101,9 @@ def build_reperformance_attestation(
         )
     manifest_path = capsule_dir / "capsule.yaml"
     capsule_hash = hashlib.sha256(
-        manifest_path.read_bytes() if manifest_path.exists() else b""
+        read_capsule_file(capsule_dir, "capsule.yaml", operation="reperformance")
+        if manifest_path.exists()
+        else b""
     ).hexdigest()
     return ReperformanceAttestation(
         run_id=result.replay_of_run_id,

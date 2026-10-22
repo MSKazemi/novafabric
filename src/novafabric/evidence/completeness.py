@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_file, read_capsule_member_or_none
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
 
 COMPLETENESS_PREDICATE_TYPE = "https://novafabric.io/completeness/v0"
@@ -74,7 +75,10 @@ class CompletenessAssertion(BaseModel):
 
 def _count_lines(path: Path) -> int:
     try:
-        return sum(1 for line in path.read_text().splitlines() if line.strip())
+        capsule_text = (
+            read_capsule_member_or_none(path, operation="evidence completeness") or ""
+        )
+        return sum(1 for line in capsule_text.splitlines() if line.strip())
     except OSError:
         return 0
 
@@ -82,7 +86,10 @@ def _count_lines(path: Path) -> int:
 def _probe_timestamps(path: Path) -> list[str]:
     stamps: list[str] = []
     try:
-        lines = path.read_text().splitlines()
+        capsule_text = (
+            read_capsule_member_or_none(path, operation="evidence completeness") or ""
+        )
+        lines = capsule_text.splitlines()
     except OSError:
         return stamps
     for line in lines:
@@ -108,7 +115,10 @@ def _read_manifest(capsule_dir: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        loaded = yaml.safe_load(path.read_text())
+        capsule_text = (
+            read_capsule_member_or_none(path, operation="evidence completeness") or ""
+        )
+        loaded = yaml.safe_load(capsule_text)
         return loaded if isinstance(loaded, dict) else {}
     except (OSError, yaml.YAMLError):
         return {}
@@ -164,7 +174,9 @@ def attest_completeness(
     """
     manifest_path = capsule_dir / "capsule.yaml"
     digest = hashlib.sha256(
-        manifest_path.read_bytes() if manifest_path.exists() else b""
+        read_capsule_file(capsule_dir, "capsule.yaml", operation="evidence completeness")
+        if manifest_path.exists()
+        else b""
     ).hexdigest()
     statement = make_intoto_statement(
         predicate_type=COMPLETENESS_PREDICATE_TYPE,

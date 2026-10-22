@@ -4,6 +4,7 @@ from pathlib import Path
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.assure.checks import ALL_CHECKS, BaseCheck
 from novafabric.assure.models import AssuranceReport
 
@@ -16,7 +17,10 @@ class AssuranceChecker:
         manifest_path = capsule_dir / "capsule.yaml"
         run_id = "unknown"
         if manifest_path.exists():
-            m = yaml.safe_load(manifest_path.read_text()) or {}
+            capsule_text = (
+                read_capsule_member_or_none(manifest_path, operation="nova assure") or ""
+            )
+            m = yaml.safe_load(capsule_text) or {}
             run_id = m.get("run_id", "unknown")
 
         results = [check.run(capsule_dir) for check in self._checks]
