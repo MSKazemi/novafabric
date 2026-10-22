@@ -247,9 +247,9 @@ nova server issue-token \
   --key-path /etc/novafabric/keys/offline-key.pem
 ```
 
-The command prints the raw JWT as the last line of stdout. Store it securely
-(on the very first call, when it generates the keypair, two "Generating …" lines
-also go to stdout — run it once beforehand so `$(…)` captures only the token):
+The command prints the raw JWT — and nothing else — on stdout; every status
+line (including the keypair-generation messages on the very first call) goes to
+stderr, so `$(…)` captures only the token. Store it securely:
 
 ```bash
 TOKEN=$(nova server issue-token --subject ci-runner --roles writer --expires-in 30d)

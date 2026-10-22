@@ -413,9 +413,14 @@ def issue_token_cmd(
         from novafabric.server.offline_tokens import generate_keypair, issue_token
 
         if not resolved_key.exists():
-            typer.echo(f"Key not found at {resolved_key}. Generating new keypair …")
+            # L3: status lines go to stderr -- `TOKEN=$(nova server issue-token ...)`
+            # captures stdout, which must hold the token and nothing else.
+            typer.echo(f"Key not found at {resolved_key}. Generating new keypair …", err=True)
             generate_keypair(resolved_key)
-            typer.echo(f"Keypair written to {resolved_key} / {resolved_key.with_suffix('.pub')}")
+            typer.echo(
+                f"Keypair written to {resolved_key} / {resolved_key.with_suffix('.pub')}",
+                err=True,
+            )
 
         token = issue_token(
             subject=subject,
