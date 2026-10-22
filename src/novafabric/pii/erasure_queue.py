@@ -42,6 +42,7 @@ import os
 import sqlite3
 import stat
 import threading
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,7 +52,7 @@ from pydantic import BaseModel, Field
 from novafabric import _paths as _nf_paths
 from novafabric.audit import resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
-from novafabric.pii.dek import ErasureDeferredReceipt, open_dek_store
+from novafabric.pii.dek import ErasureDeferredReceipt, ErasureHeldReceipt, open_dek_store
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +64,11 @@ STATE_PENDING = "PENDING"
 STATE_COMPLETED = "COMPLETED"
 STATE_DEFERRED = "DEFERRED"
 STATE_FAILED = "FAILED"
+#: A legal hold kept the DEK (GDPR Art.17(3)(e)); nothing was erased. Terminal: a
+#: new request after the holds are released creates a new row.
+STATE_HELD = "HELD"
 
-TERMINAL_STATES = frozenset({STATE_COMPLETED, STATE_DEFERRED, STATE_FAILED})
+TERMINAL_STATES = frozenset({STATE_COMPLETED, STATE_DEFERRED, STATE_FAILED, STATE_HELD})
 
 DEFAULT_REASON = "gdpr_art_17"
 
@@ -437,9 +441,10 @@ def _write_receipt_file(
     """
     if record.receipt is None:  # pragma: no cover - defensive
         return None
-    suffix = (
-        "deferred.receipt.json" if record.state == STATE_DEFERRED else "receipt.json"
-    )
+    suffix = {
+        STATE_DEFERRED: "deferred.receipt.json",
+        STATE_HELD: "held.receipt.json",
+    }.get(record.state, "receipt.json")
     path = receipt_dir / f"{record.request_id}.{suffix}"
     try:
         receipt_dir.mkdir(parents=True, exist_ok=True)
@@ -467,6 +472,7 @@ def execute_request(
     *,
     home: Path,
     retention_months: int | None = None,
+    hold_roots: Iterable[Path] = (),
 ) -> ErasureRequestRecord:
     """Execute one PENDING request synchronously through ``DEKStore.erase_subject``.
 
@@ -475,6 +481,7 @@ def execute_request(
 
     - ``ErasureReceipt``           -> COMPLETED (receipt verbatim)
     - ``ErasureDeferredReceipt``   -> DEFERRED (receipt verbatim)
+    - ``ErasureHeldReceipt``       -> HELD (legal hold, DEK retained; receipt verbatim)
     - ``KeyError`` + prior COMPLETED row -> COMPLETED (``already_erased``)
     - ``KeyError``, no prior completion  -> FAILED (``subject_not_found``)
     - any other exception          -> FAILED (error receipt, sanitized detail)
@@ -493,6 +500,7 @@ def execute_request(
                 subject_id=record.subject_id,
                 capsule_ids=list(record.capsule_ids),
                 retention_months=retention_months,
+                hold_roots=hold_roots,
             )
         finally:
             dek_store.close()
@@ -568,19 +576,19 @@ def execute_request(
         return final
 
     receipt = json.loads(result.model_dump_json())
-    state = (
-        STATE_DEFERRED if isinstance(result, ErasureDeferredReceipt) else STATE_COMPLETED
-    )
+    if isinstance(result, ErasureHeldReceipt):
+        state = STATE_HELD
+    elif isinstance(result, ErasureDeferredReceipt):
+        state = STATE_DEFERRED
+    else:
+        state = STATE_COMPLETED
     final = queue.finalize(record.request_id, state=state, receipt=receipt)
     _write_receipt_file(receipt_dir, final)
+    event = f"erasure_request_{state.lower()}"
     logger.info(
-        "erasure_request_completed" if state == STATE_COMPLETED else "erasure_request_deferred",
+        event,
         extra={
-            "event": (
-                "erasure_request_completed"
-                if state == STATE_COMPLETED
-                else "erasure_request_deferred"
-            ),
+            "event": event,
             "request_id": final.request_id,
             "subject_sha256_prefix": hash_prefix,
             "state": state,

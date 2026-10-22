@@ -22,6 +22,7 @@ the identical due-computation code path and touches nothing.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -34,6 +35,7 @@ from novafabric import _paths as _nf_paths
 from novafabric.audit import AuditLog, resolve_audit_log_path
 from novafabric.pii.dek import DEKStore, open_dek_store
 from novafabric.retention.actions import SweepExecutor
+from novafabric.retention.holds import capsule_base_holds_root
 from novafabric.retention.models import (
     Decision,
     PlannedDecision,
@@ -106,6 +108,28 @@ def _read_active_hold_ids(registry: str, capsule_dir: Path) -> list[str]:
     except InvalidRegistryNameError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc
+
+
+def _apply_time_hold_check(
+    registry: str, capsule_dir: Path, worm_db: Optional[Path]  # noqa: UP045
+) -> Callable[[PlannedDecision], Optional[str]]:  # noqa: UP045
+    """Re-read holds and WORM locks right before each action (ADR-0134 D4).
+
+    The plan was built from a snapshot; the confirmation prompt and the sweep
+    itself take time, and a hold placed meanwhile must still win.
+    """
+    from novafabric.retention.holds import active_hold_ids
+
+    def check(decision: PlannedDecision) -> Optional[str]:  # noqa: UP045
+        ids = active_hold_ids(registry, extra_roots=(capsule_base_holds_root(capsule_dir),))
+        if ids:
+            return f"legal_hold_active: {', '.join(ids)}"
+        locked_until = _read_worm_locks(registry, worm_db).get(decision.item.item_id)
+        if locked_until is not None and locked_until > datetime.now(tz=timezone.utc):
+            return "worm_hold"
+        return None
+
+    return check
 
 
 def _read_deletion_mode(registry: str) -> str:
@@ -338,6 +362,8 @@ def apply_cmd(
             dek_store=dek_store,
             receipt_dir=_nova_home() / "evidence" / "erasure",
             retention_months=retention_months,
+            hold_check=_apply_time_hold_check(registry, resolved_dir, worm_db),
+            hold_roots=(capsule_base_holds_root(resolved_dir),),
         )
         records = executor.execute(plan, dry_run=dry_run, limit=limit)
     finally:

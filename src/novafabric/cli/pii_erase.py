@@ -34,12 +34,18 @@ from rich.markup import escape
 from novafabric import _paths as _nf_paths
 from novafabric.pii.dek import (
     ErasureDeferredReceipt,
+    ErasureHeldReceipt,
     ErasureReceipt,
     open_dek_store,
 )
 from novafabric.pii.status import PIIStatusError, build_pii_status
 
 console = Console()
+
+#: ``nova pii erase`` exit code when a legal hold kept the DEK (GDPR Art.17(3)(e)):
+#: the request was valid but nothing was erased. Distinct from 1 (failure) and from
+#: typer's 2 (usage).
+EXIT_HELD = 3
 
 app = typer.Typer(
     help=(
@@ -129,8 +135,18 @@ def erase_cmd(
     WORM storage and NovaSeal manifest chains are not modified.
 
     If the DEK was created within the Art.17(3)(b) retention window
-    (--retention-months), an ErasureDeferredReceipt is written instead.
-    Exit code is 0 in both cases.
+    (--retention-months), an ErasureDeferredReceipt is written instead (exit 0).
+
+    Legal holds win (GDPR Art.17(3)(e)): while any legal hold is active
+    (`nova hold create` or POST /api/holds, any registry), the DEK is kept and an
+    ErasureHeldReceipt names the holds and the held capsules; exit 3. One DEK
+    protects all of a subject's capsules and holds are registry-global, so
+    nothing is erased while a hold is active. There is no override. Every
+    outcome is appended to the audit log as an erasure.request event
+    (subject hash only).
+
+    Exit codes: 0 = erased or deferred; 1 = failure (no DEK, store error);
+    3 = held by a legal hold (nothing erased).
 
     Scope: single data subject.
 
@@ -156,11 +172,14 @@ def erase_cmd(
         console.print(f"[red]✗[/red] Failed to open DEK store: {exc}")
         raise typer.Exit(code=1) from exc
 
+    from novafabric.retention.holds import capsule_base_holds_root
+
     try:
         result = dek_store.erase_subject(
             subject_id=subject_id,
             capsule_ids=capsule_ids,
             retention_months=retention_months,
+            hold_roots=(capsule_base_holds_root(capsule_dir),),
         )
     except KeyError as exc:
         console.print(f"[red]✗[/red] {exc}")
@@ -176,6 +195,7 @@ def erase_cmd(
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(receipt_json, encoding="utf-8")
+    _audit_erasure(subject_id, result)
 
     if isinstance(result, ErasureReceipt):
         console.print(
@@ -189,9 +209,57 @@ def erase_cmd(
             f"Earliest erasure: {result.earliest_erasure_at.isoformat()} "
             f"(retention_months={retention_months})"
         )
+    elif isinstance(result, ErasureHeldReceipt):
+        hold_ids = ", ".join(h.hold_id for h in result.holds)
+        console.print(
+            f"[yellow]⚠[/yellow] Erasure held for subject_id={subject_id!r}: active legal "
+            f"hold(s) {hold_ids}. The DEK was NOT destroyed; "
+            f"{len(result.held_capsules)} capsule(s) held (GDPR Art.17(3)(e)). "
+            "Repeat after the holds are released.",
+            soft_wrap=True,
+        )
 
     if output is None:
         sys.stdout.write(receipt_json + "\n")
+    if isinstance(result, ErasureHeldReceipt):
+        raise typer.Exit(code=EXIT_HELD)
+
+
+def _audit_erasure(
+    subject_id: str,
+    result: ErasureReceipt | ErasureDeferredReceipt | ErasureHeldReceipt,
+) -> None:
+    """Append one hash-only ``erasure.request`` event for this CLI erasure outcome."""
+    import hashlib
+
+    from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
+
+    extra: dict[str, object]
+    if isinstance(result, ErasureReceipt):
+        state, extra = "COMPLETED", {"capsule_ids": list(result.capsule_ids_affected)}
+    elif isinstance(result, ErasureDeferredReceipt):
+        state, extra = "DEFERRED", {"earliest_erasure_at": result.earliest_erasure_at.isoformat()}
+    else:
+        state, extra = "HELD", {
+            "hold_ids": [h.hold_id for h in result.holds],
+            "held_capsule_ids": [c.capsule_id for c in result.held_capsules],
+            "dek_retained": True,
+        }
+    subject_hash = hashlib.sha256(subject_id.encode("utf-8")).hexdigest()
+    AuditLog(resolve_audit_log_path()).append(
+        event_type=AuditEventType.ERASURE_REQUEST,
+        actor="cli-user",
+        resource_id=f"sha256:{subject_hash[:12]}",
+        details={
+            "via": "nova pii erase",
+            "subject_sha256": subject_hash,
+            "state": state,
+            "receipt_sha256": hashlib.sha256(
+                result.model_dump_json().encode("utf-8")
+            ).hexdigest(),
+            **extra,
+        },
+    )
 
 
 _DEK_STATE_STYLE = {"active": "green", "erased": "red", "unknown": "yellow"}

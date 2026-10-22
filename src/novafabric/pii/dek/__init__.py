@@ -22,7 +22,11 @@ from .store import (
     DEKStore,
     DEKSubjectRecord,
     ErasureDeferredReceipt,
+    ErasureHeldReceipt,
+    ErasureHold,
     ErasureReceipt,
+    HeldCapsule,
+    active_erasure_holds,
     open_dek_store,
 )
 
@@ -31,6 +35,10 @@ __all__ = [
     "DEKSubjectRecord",
     "DataSubjectDEK",
     "ErasureDeferredReceipt",
+    "ErasureHeldReceipt",
+    "ErasureHold",
     "ErasureReceipt",
+    "HeldCapsule",
+    "active_erasure_holds",
     "open_dek_store",
 ]
