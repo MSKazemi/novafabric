@@ -11,13 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""DEK store: per-subject AES-256-GCM key lifecycle for GDPR Art.17 crypto-shredding.
+"""DEK store: per-subject AES-256-GCM key lifecycle for GDPR Art.17 erasure.
+
+Status — experimental: key lifecycle only. Capture does not yet encrypt PII with
+per-subject keys, so the erasure bullet below describes the ADR-0069 design, not
+an effect on any capsule written today.
 
 Design per ADR-0069:
 - One AES-256-GCM DEK per data subject, generated at first PII detection.
 - DEKs are stored in a dedicated SQLite database (dek.db) outside the capsule store.
 - Erasure destroys the DEK (overwrite with os.urandom(32), then DELETE) so ciphertext
-  in capsule records becomes permanently unrecoverable without touching WORM storage.
+  in capsule records becomes permanently unrecoverable without touching WORM storage
+  (design intent; experimental: key lifecycle only — no capsule ciphertext yet).
 - Art.17(3)(b) retention window: erasure within the configured retention period produces
   an ErasureDeferredReceipt rather than an ErasureReceipt.
 
@@ -92,7 +97,10 @@ class ErasureReceipt(BaseModel):
     erased_at: datetime = Field(..., description="UTC timestamp of DEK destruction")
     capsule_ids_affected: list[str] = Field(
         default_factory=list,
-        description="Capsule IDs whose ciphertext is now permanently unrecoverable",
+        description=(
+            "Capsule IDs associated with the subject (experimental: key lifecycle "
+            "only — no capsule ciphertext is under this DEK yet)"
+        ),
     )
     method: str = Field(
         default="aes-256-gcm-dek-destruction",
@@ -298,7 +306,7 @@ class DEKStore:
         capsule_ids: list[str],
         retention_months: int = 6,
     ) -> ErasureReceipt | ErasureDeferredReceipt:
-        """Destroy the DEK for *subject_id* (GDPR Art.17 crypto-shredding).
+        """Destroy the DEK for *subject_id* (experimental: key lifecycle only).
 
         If the DEK was created within the Art.17(3)(b) retention window
         (``retention_months``), returns an :class:`ErasureDeferredReceipt`

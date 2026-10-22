@@ -674,7 +674,10 @@ app.add_typer(
 app.add_typer(
     pii_app,
     name="pii",
-    help="GDPR Art.17 PII crypto-shredding — destroy DEKs to erase data subjects (ADR-0069).",
+    help=(
+        "GDPR Art.17 per-subject DEK lifecycle (ADR-0069) — experimental: key lifecycle "
+        "only; capture does not yet encrypt PII with per-subject keys."
+    ),
 )
 # NF-179 (ADR-0149): portable agent-passport projection — offline green/amber/red.
 app.add_typer(passport_app, name="passport")

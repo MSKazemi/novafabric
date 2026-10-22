@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""PII crypto-shredding subsystem (cap-001, ADR-0069).
+"""Per-subject DEK lifecycle for GDPR Art.17 erasure (cap-001, ADR-0069).
 
-OQ-01 resolved: AES-256-GCM DEK lifecycle with ErasureReceipt chain.
+Status — experimental: key lifecycle only. AES-256-GCM DEKs are created and
+destroyed with an ErasureReceipt chain, but capture does not yet encrypt PII with
+per-subject keys, so destroying a DEK does not make captured PII unreadable.
 """

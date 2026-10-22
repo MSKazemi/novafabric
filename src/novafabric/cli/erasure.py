@@ -9,7 +9,9 @@ On a GDPR Art.17 surface that is the most damaging possible failure: the operato
 records an erasure as started, and nothing started. They now fail loudly and name
 the working paths rather than reporting a success that did not happen.
 
-Working today: ``nova pii erase <subject_id>`` (DEK crypto-shredding, ADR-0069)
+Working today: ``nova pii erase <subject_id>`` (per-subject DEK destruction,
+ADR-0069 — experimental: key lifecycle only; capture does not yet encrypt PII with
+per-subject keys)
 and the ``/v0/erasure`` server route, which uses the persisted queue in
 ``pii/erasure_queue.py`` behind an explicit confirmation and a fail-closed
 cap-003 gate.
@@ -42,7 +44,8 @@ def erasure_request_cmd(
     the most damaging possible behaviour, because the operator records an
     erasure that never started.
 
-    The real implementations are ``nova pii erase`` (crypto-shredding, ADR-0069)
+    The real implementations are ``nova pii erase`` (DEK destruction, ADR-0069;
+    experimental: key lifecycle only)
     and the ``/v0/erasure`` server route, which uses the persisted queue in
     ``pii/erasure_queue.py`` behind an explicit confirmation and a fail-closed
     cap-003 gate. Wiring this command to that queue is a change to what a
@@ -52,7 +55,7 @@ def erasure_request_cmd(
         "[red]nova erasure request is not implemented.[/red] It never queued "
         "anything; it only printed a message.\n"
         "  Use [bold]nova pii erase <subject_id>[/bold] for GDPR Art.17 "
-        "crypto-shredding (ADR-0069),\n"
+        "DEK destruction (ADR-0069; experimental: key lifecycle only),\n"
         "  or POST /v0/erasure on the server, which uses the persisted queue.\n"
         f"  (nothing was done for run_id={run_id})"
     )

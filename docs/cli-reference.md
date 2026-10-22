@@ -4784,9 +4784,9 @@ air-gapped HPC environments (use `--backend local` with RFC 3161 instead).
 
 #### nova pii erase \<subject_id\>
 
-**works today** — GDPR Art.17 crypto-shredding erasure (ADR-0069, v0.44.0). Destroys
-the AES-256-GCM DEK for a data subject, rendering all PII encrypted under that DEK
-permanently unreadable. Writes an `ErasureReceipt` (immediate) or
+**experimental: key lifecycle only** — capture does not yet encrypt PII with per-subject keys, so erasure destroys a DEK that protects no captured data; PII in existing capsules stays readable. Destroys the AES-256-GCM DEK for a data subject (ADR-0069, v0.44.0). ADR-0069 §2
+(write-time encryption of PII under that DEK) is **not implemented**, so no capsule
+ciphertext depends on the key. Writes an `ErasureReceipt` (immediate) or
 `ErasureDeferredReceipt` (Art.17(3)(b) retention window still active).
 
 ```bash
@@ -9054,7 +9054,7 @@ Exits 0 on success, 1 if Object Lock is absent or disabled.
 > It now fails loudly (exit `2`) and names the working path.
 
 **Use instead:** [`nova pii erase <subject_id>`](#nova-pii-erase-subject_id) for
-Art.17 crypto-shredding (ADR-0069), or `POST /v0/erasure` on the server, which
+Art.17 DEK destruction (ADR-0069; experimental: key lifecycle only), or `POST /v0/erasure` on the server, which
 uses the persisted queue in `pii/erasure_queue.py` behind an explicit
 confirmation and a fail-closed cap-003 gate.
 

@@ -58,4 +58,6 @@ def test_the_real_erasure_command_still_works() -> None:
     result = runner.invoke(app, ["pii", "erase", "--help"])
 
     assert result.exit_code == 0, result.output
-    assert "crypto-shredding" in result.output.lower()
+    # It destroys the subject's DEK; what that erases is labelled by the claim
+    # guard (tests/pii/test_erasure_claims_match_the_code.py).
+    assert "destroy" in result.output.lower() and "dek" in result.output.lower()

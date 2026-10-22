@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Data Encryption Key (DEK) store for GDPR Art.17 crypto-shredding (ADR-0069).
+"""Data Encryption Key (DEK) store for GDPR Art.17 erasure (ADR-0069).
 
-OQ-01 resolved: AES-256-GCM DEK lifecycle enables cryptographic erasure
-of PII without modifying capsule manifest chains or WORM storage.
+Status — experimental: key lifecycle only. The AES-256-GCM DEK lifecycle is
+implemented; capture does not yet encrypt PII with per-subject keys, so DEK
+destruction does not yet erase any captured PII.
 """
 
 from .store import (

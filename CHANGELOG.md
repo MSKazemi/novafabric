@@ -101,6 +101,13 @@ longer forwards the submitting shell's environment (ADR-0270).
   `tree_size` (ADR-0313).** The local-log check confirmed the leaf's position but ignored the
   recorded tree head; for a v1 seal, a proof for leaf 2 of 3 is byte-identical to one for
   leaf 2 of 4, so only the log can refuse the wrong size, and now does.
+- **Erasure documentation now matches what the code does (ADR-0069).** `nova pii erase`
+  destroys a data subject's DEK, but no capture path encrypted PII with that DEK, so the
+  claim that erasure made captured PII unreadable was not true. The CLI help, docstrings,
+  API reference, ROADMAP and user docs now label the feature **experimental: key lifecycle
+  only**. A guard test (`tests/pii/test_erasure_claims_match_the_code.py`) derives from the
+  AST of `src/` whether capture encrypts with a per-subject DEK and fails on any unlabelled
+  claim.
 
 - **The container eval suites' docs and comments no longer claim a published default image
   or a "host-env" fallback.** GAIA, AgentBench, MMLU, SWE-bench and TruthfulQA run only

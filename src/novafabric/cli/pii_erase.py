@@ -11,10 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""CLI commands for GDPR Art.17 PII crypto-shredding erasure (cap-001, ADR-0069).
+"""CLI commands for the GDPR Art.17 per-subject DEK lifecycle (cap-001, ADR-0069).
 
-OQ-01 resolved: AES-256-GCM DEK destruction renders ciphertext in capsule records
-permanently unrecoverable without touching WORM storage or manifest chains.
+Status — experimental: key lifecycle only. ``nova pii erase`` destroys a data
+subject's AES-256-GCM DEK, but capture does not yet encrypt PII with per-subject
+keys, so no capsule holds ciphertext under that DEK and erasure does not make any
+captured PII unreadable (ADR-0069 §2 is not implemented).
 """
 
 from __future__ import annotations
@@ -39,7 +41,10 @@ from novafabric.pii.status import PIIStatusError, build_pii_status
 console = Console()
 
 app = typer.Typer(
-    help="GDPR Art.17 PII crypto-shredding — request and confirm erasure of a data subject.",
+    help=(
+        "GDPR Art.17 per-subject DEK lifecycle — experimental: key lifecycle only; "
+        "capture does not yet encrypt PII with per-subject keys."
+    ),
     no_args_is_help=True,
 )
 
@@ -114,11 +119,12 @@ def erase_cmd(
         ),
     ),
 ) -> None:
-    """Destroy the AES-256-GCM DEK for a data subject (GDPR Art.17 crypto-shredding).
+    """Destroy the AES-256-GCM DEK for a data subject (experimental: key lifecycle only).
 
     Overwrites then deletes the per-subject Data Encryption Key from dek.db.
-    Capsule ciphertext becomes permanently unrecoverable; WORM storage and
-    NovaSeal manifest chains are not modified.
+    Experimental: key lifecycle only — capture does not yet encrypt PII with
+    per-subject keys, so this does not make PII in existing capsules unreadable.
+    WORM storage and NovaSeal manifest chains are not modified.
 
     If the DEK was created within the Art.17(3)(b) retention window
     (--retention-months), an ErasureDeferredReceipt is written instead.

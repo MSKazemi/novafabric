@@ -685,13 +685,15 @@ nova storage validate --endpoint https://s3.amazonaws.com --bucket nova-capsules
 # Show where a run's dual-object split lives (computes names; does not contact the store)
 nova storage inspect --run-id run_xyz --json
 
-# Erase a data subject (GDPR Art.17 crypto-shredding, ADR-0069)
+# Destroy a data subject's DEK (ADR-0069; experimental: key lifecycle only)
 nova pii erase <subject_id>
 nova pii status <capsule-id-or-path>
 ```
 
-This supports a GDPR right-to-erasure workflow: the audit trail (hashes, signatures,
-lineage) survives while the subject's PII payload becomes undecryptable. Dashboard
+Status — **experimental: key lifecycle only.** The design (ADR-0069) is a GDPR
+right-to-erasure workflow in which the audit trail survives while the subject's PII
+payload becomes undecryptable; today capture does not yet encrypt PII with
+per-subject keys, so erasure destroys the key and captured PII stays readable. Dashboard
 equivalents: the **Compliance** tab has a GDPR Erasure panel (which calls
 `/api/compliance/erasure/*`, the persisted queue of ADR-0210); the **Infra** tab has a
 Storage Operations card.

@@ -7645,7 +7645,7 @@ def create_app(
     async def compliance_pii_erase_endpoint(
         body: dict[str, Any] = Body(...),
     ) -> dict[str, Any]:
-        """Destroy a data subject's DEK (GDPR Art.17 crypto-shredding) — nova pii erase."""
+        """Destroy a data subject's DEK — nova pii erase (experimental: key lifecycle only)."""
         subject_id: str = body.get("subject_id", "")
         if not subject_id:
             raise HTTPException(status_code=422, detail="subject_id is required")
@@ -7667,7 +7667,8 @@ def create_app(
             )
             erased = isinstance(receipt, ErasureReceipt)
             note = (
-                "DEK destroyed; ciphertext is permanently unrecoverable (GDPR Art.17)."
+                "DEK destroyed (experimental: key lifecycle only — capture does not "
+                "yet encrypt PII with per-subject keys, so captured PII is unaffected)."
                 if erased
                 else (
                     f"Erasure deferred — within {retention_months}-month Art.17(3)(b) "
