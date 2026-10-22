@@ -837,8 +837,14 @@ def _capsule_binding_report(capsule_dir: Path, dsse_bytes: bytes) -> dict[str, A
             report["errors"].append(f"Cannot read capsule.yaml: {exc}")
             on_disk = None
         if isinstance(on_disk, dict):
+            # ``_novaseal`` is seal metadata bound into the signed payload (ADR-0309,
+            # the signing intent); it is never part of capsule.yaml.
+            from novafabric.trust.novaseal.envelope import SEAL_METADATA_KEY  # noqa: PLC0415
+
             differing = sorted(
-                k for k in set(signed) | set(on_disk) if signed.get(k) != on_disk.get(k)
+                k
+                for k in (set(signed) | set(on_disk)) - {SEAL_METADATA_KEY}
+                if signed.get(k) != on_disk.get(k)
             )
             report["differing_keys"] = differing
             report["manifest_ok"] = not differing

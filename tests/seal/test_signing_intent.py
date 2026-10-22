@@ -22,8 +22,12 @@ from cryptography.x509.oid import NameOID
 
 from novafabric.trust.novaseal import KeyConfig, NovaSeal, SigningIntent
 from novafabric.trust.novaseal.envelope import (
+    EnvelopeError,
+    bind_intent,
     create_envelope,
     extract_intent,
+    extract_payload,
+    read_intent,
     verify_envelope,
 )
 
@@ -107,6 +111,11 @@ class TestSigningIntentEnum:
 # ---------------------------------------------------------------------------
 
 
+def _bound(obj: dict, intent: SigningIntent) -> bytes:
+    """ADR-0309: an intent must be bound inside the payload before it is signed."""
+    return json.dumps(bind_intent(obj, intent), sort_keys=True).encode()
+
+
 class TestCreateEnvelopeWithIntent:
     def test_default_no_intent_has_no_intent_field(self, signing_materials):
         key_path, cert_path, _ = signing_materials
@@ -117,28 +126,28 @@ class TestCreateEnvelopeWithIntent:
 
     def test_authored_intent_stored_in_signature(self, signing_materials):
         key_path, cert_path, _ = signing_materials
-        payload = b'{"run_id": "authored-test"}'
+        payload = _bound({"run_id": "authored-test"}, SigningIntent.AUTHORED)
         env_bytes = create_envelope(payload, key_path, cert_path, intent=SigningIntent.AUTHORED)
         env = json.loads(env_bytes)
         assert env["signatures"][0]["intent"] == "authored"
 
     def test_approved_intent_stored_in_signature(self, signing_materials):
         key_path, cert_path, _ = signing_materials
-        payload = b'{"run_id": "approved-test"}'
+        payload = _bound({"run_id": "approved-test"}, SigningIntent.APPROVED)
         env_bytes = create_envelope(payload, key_path, cert_path, intent=SigningIntent.APPROVED)
         env = json.loads(env_bytes)
         assert env["signatures"][0]["intent"] == "approved"
 
     def test_verified_intent_stored_in_signature(self, signing_materials):
         key_path, cert_path, _ = signing_materials
-        payload = b'{"check": true}'
+        payload = _bound({"check": True}, SigningIntent.VERIFIED)
         env_bytes = create_envelope(payload, key_path, cert_path, intent=SigningIntent.VERIFIED)
         env = json.loads(env_bytes)
         assert env["signatures"][0]["intent"] == "verified"
 
     def test_envelope_still_verifies_with_intent(self, signing_materials):
         key_path, cert_path, _ = signing_materials
-        payload = b'{"run_id": "verify-intent"}'
+        payload = _bound({"run_id": "verify-intent"}, SigningIntent.REVIEWED)
         env_bytes = create_envelope(payload, key_path, cert_path, intent=SigningIntent.REVIEWED)
         assert verify_envelope(env_bytes) is True
 
@@ -157,28 +166,34 @@ class TestExtractIntent:
     def test_authored_roundtrip(self, signing_materials):
         key_path, cert_path, _ = signing_materials
         env_bytes = create_envelope(
-            b'{"x": 1}', key_path, cert_path, intent=SigningIntent.AUTHORED
+            _bound({"x": 1}, SigningIntent.AUTHORED), key_path, cert_path,
+            intent=SigningIntent.AUTHORED,
         )
         assert extract_intent(env_bytes) is SigningIntent.AUTHORED
 
     def test_approved_roundtrip(self, signing_materials):
         key_path, cert_path, _ = signing_materials
         env_bytes = create_envelope(
-            b'{"x": 1}', key_path, cert_path, intent=SigningIntent.APPROVED
+            _bound({"x": 1}, SigningIntent.APPROVED), key_path, cert_path,
+            intent=SigningIntent.APPROVED,
         )
         assert extract_intent(env_bytes) is SigningIntent.APPROVED
 
     def test_witnessed_roundtrip(self, signing_materials):
         key_path, cert_path, _ = signing_materials
         env_bytes = create_envelope(
-            b'{"x": 1}', key_path, cert_path, intent=SigningIntent.WITNESSED
+            _bound({"x": 1}, SigningIntent.WITNESSED), key_path, cert_path,
+            intent=SigningIntent.WITNESSED,
         )
         assert extract_intent(env_bytes) is SigningIntent.WITNESSED
 
     def test_unknown_intent_value_returns_none(self, signing_materials):
         """An unrecognised intent string should return None rather than raise."""
         key_path, cert_path, _ = signing_materials
-        env_bytes = create_envelope(b'{"x": 1}', key_path, cert_path, intent=SigningIntent.AUTHORED)
+        env_bytes = create_envelope(
+            _bound({"x": 1}, SigningIntent.AUTHORED), key_path, cert_path,
+            intent=SigningIntent.AUTHORED,
+        )
         env = json.loads(env_bytes)
         env["signatures"][0]["intent"] = "custom_intent"
         modified = json.dumps(env).encode()
@@ -284,3 +299,67 @@ class TestVerifyResultIntent:
 
         result = nova_seal.verify(bundle.capsule_id, str(seal_dir))
         assert "intent=" not in str(result)
+
+
+# ---------------------------------------------------------------------------
+# ADR-0309: the intent is signed, not only labelled
+# ---------------------------------------------------------------------------
+
+
+def _write_seal(capsule_dir, bundle, dsse=None):
+    seal_dir = capsule_dir / ".seal"
+    seal_dir.mkdir(parents=True, exist_ok=True)
+    (seal_dir / "manifest.dsse").write_bytes(dsse or bundle.dsse_envelope)
+    (seal_dir / "manifest.dsse.tsr").write_bytes(bundle.tsr)
+    (seal_dir / "log-entry.json").write_text(json.dumps(bundle.log_entry), encoding="utf-8")
+    return seal_dir
+
+
+def _relabel(dsse: bytes, label: str) -> bytes:
+    env = json.loads(dsse)
+    env["signatures"][0]["intent"] = label
+    return json.dumps(env).encode()
+
+
+class TestIntentIsSigned:
+    """Before ADR-0309 the intent label sat outside the DSSE PAE: editing
+    "authored" to "approved" left the signature valid and the edited intent reported."""
+
+    def test_the_seal_payload_carries_the_intent(self, nova_seal):
+        bundle = nova_seal.seal({"run_id": "bound"}, intent=SigningIntent.APPROVED)
+        payload = json.loads(extract_payload(bundle.dsse_envelope))
+        assert payload["_novaseal"] == {"signing_intent": "approved"}
+        assert read_intent(bundle.dsse_envelope).status == "signed"
+
+    def test_an_edited_label_is_detected_and_fails_the_seal(self, nova_seal, tmp_path):
+        bundle = nova_seal.seal({"run_id": "tampered"}, intent=SigningIntent.AUTHORED)
+        forged = _relabel(bundle.dsse_envelope, "approved")
+        assert verify_envelope(forged) is True  # the signature still verifies …
+        assert extract_intent(forged) is None  # … but the edited label is not believed
+        reading = read_intent(forged)
+        assert (reading.status, reading.label) == ("mismatch", "approved")
+        result = nova_seal.verify(bundle.capsule_id, str(_write_seal(tmp_path / "c", bundle, forged)))
+        assert result.valid is False
+        assert result.signing_intent is None
+        assert any("ADR-0309" in e for e in result.errors)
+
+    def test_an_intent_not_bound_in_the_payload_is_refused(self, signing_materials):
+        key_path, cert_path, _ = signing_materials
+        with pytest.raises(EnvelopeError, match="not bound in the payload"):
+            create_envelope(b'{"x": 1}', key_path, cert_path, intent=SigningIntent.APPROVED)
+
+    def test_a_pre_adr_0309_label_is_reported_as_unauthenticated(self, signing_materials):
+        key_path, cert_path, _ = signing_materials
+        legacy = _relabel(create_envelope(b'{"x": 1}', key_path, cert_path), "approved")
+        assert verify_envelope(legacy) is True
+        assert extract_intent(legacy) is None
+        assert read_intent(legacy).status == "label-only"
+
+    def test_verification_reports_the_status(self, nova_seal, tmp_path):
+        bundle = nova_seal.seal({"run_id": "status"}, intent=SigningIntent.REVIEWED)
+        result = nova_seal.verify(bundle.capsule_id, str(_write_seal(tmp_path / "s", bundle)))
+        assert result.valid is True
+        assert (result.signing_intent, result.signing_intent_status) == (
+            SigningIntent.REVIEWED,
+            "signed",
+        )

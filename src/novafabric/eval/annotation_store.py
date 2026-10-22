@@ -848,15 +848,12 @@ def annotation_subject_digest(capsule_dir: str | Path) -> str:
     (``scores.jsonl`` and ``comments.jsonl``): annotating evidence must never
     alter the identity of the evidence being annotated, so successive review
     rounds on the same capsule share one stable subject.
+
+    Like the comment subject it stays on the v1 (content-only) leaf (ADR-0310): it is a
+    stored identity, and moving it would re-enqueue and orphan existing items.
     """
     from novafabric.capsule.comments import COMMENTS_FILENAME
-    from novafabric.evidence.merkle import _leaf, _merkle_root
+    from novafabric.evidence.merkle import capsule_root
 
-    root = Path(capsule_dir)
     excluded = {SCORES_FILENAME, COMMENTS_FILENAME}
-    leaves = [
-        _leaf(path.read_bytes())
-        for path in sorted(root.rglob("*"))
-        if path.is_file() and path.name not in excluded
-    ]
-    return "sha256:" + _merkle_root(leaves).hex()
+    return capsule_root(Path(capsule_dir), version=1, exclude=lambda p: p.name in excluded)

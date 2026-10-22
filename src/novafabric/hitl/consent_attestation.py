@@ -73,6 +73,7 @@ from novafabric.evidence.intoto import (
     make_intoto_statement,
 )
 from novafabric.evidence.merkle import capsule_merkle_root
+from novafabric.evidence.merkle import capsule_root_matches as _root_matches
 from novafabric.evidence.signing import verify_with_pem
 from novafabric.hitl.consent import (
     CONSENT_NOTICE,
@@ -345,9 +346,8 @@ def verify_consent_attestation(
     _compare_with_capsule(attested, capsule, result)
 
     if capsule_dir is not None and isinstance(predicate.get("capsule_merkle_root"), str):
-        result.capsule_root_matches = predicate["capsule_merkle_root"] == capsule_merkle_root(
-            capsule_dir
-        )
+        # v2 or a pre-ADR-0310 v1 root (see evidence.merkle.capsule_root_matches)
+        result.capsule_root_matches = _root_matches(capsule_dir, predicate["capsule_merkle_root"])
         if not result.capsule_root_matches:
             # Informational: any later annotation (incl. a withdrawal) moves the root.
             result.stale("capsule Merkle root changed since attestation")

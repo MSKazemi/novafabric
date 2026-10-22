@@ -300,14 +300,14 @@ def capsule_subject_digest(capsule_dir: str | Path) -> str:
     itself: the annotation stream must never alter the identity of the
     evidence it annotates, so successive comments on the same capsule share
     one stable subject. On a capsule without a comment log this equals
-    ``capsule_merkle_root`` exactly.
-    """
-    from novafabric.evidence.merkle import _leaf, _merkle_root
+    ``capsule_merkle_root(version=1)`` exactly.
 
-    root = Path(capsule_dir)
-    leaves = [
-        _leaf(path.read_bytes())
-        for path in sorted(root.rglob("*"))
-        if path.is_file() and path.name != COMMENTS_FILENAME
-    ]
-    return "sha256:" + _merkle_root(leaves).hex()
+    It deliberately stays on the v1 (content-only) leaf (ADR-0310): it is the stored
+    identity existing comments are filed under, not an integrity proof, and moving it
+    would orphan every comment recorded before the change.
+    """
+    from novafabric.evidence.merkle import capsule_root
+
+    return capsule_root(
+        Path(capsule_dir), version=1, exclude=lambda path: path.name == COMMENTS_FILENAME
+    )

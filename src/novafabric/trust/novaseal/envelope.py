@@ -27,9 +27,10 @@ import base64
 import hashlib
 import json
 import struct
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -58,6 +59,74 @@ class SigningIntent(str, Enum):
 
 class EnvelopeError(Exception):
     """Raised on DSSE creation or verification failures."""
+
+
+# ---------------------------------------------------------------------------
+# Signing intent bound inside the signed payload (ADR-0309)
+#
+# DSSE signs only ``payloadType`` and ``payload``. The ``intent`` field of a
+# signature entry sits outside both, so before ADR-0309 anyone could change
+# "authored" to "approved" without breaking the signature. The intent is now
+# also written into the payload under the reserved ``_novaseal`` key, and only
+# that signed copy is reported as the intent.
+# ---------------------------------------------------------------------------
+
+#: Reserved payload member for seal metadata; never part of the capsule manifest.
+SEAL_METADATA_KEY = "_novaseal"
+
+IntentStatus = Literal["signed", "label-only", "mismatch", "absent"]
+
+
+@dataclass(frozen=True)
+class IntentReading:
+    """What an envelope says about its signing intent.
+
+    ``intent`` is set only when ``status == "signed"``: the payload carries the intent
+    and the signature-entry label (if any) agrees. ``label-only`` is a seal made before
+    ADR-0309 — its label is unauthenticated. ``mismatch`` means the unsigned label
+    contradicts the signed value, i.e. it was edited after signing.
+    """
+
+    intent: Optional[SigningIntent]
+    status: IntentStatus
+    label: Optional[str] = None
+
+
+def bind_intent(payload: dict[str, Any], intent: SigningIntent) -> dict[str, Any]:
+    """Return a copy of *payload* that carries *intent* inside the signed bytes."""
+    meta = dict(payload.get(SEAL_METADATA_KEY) or {})
+    meta["signing_intent"] = intent.value
+    return {**payload, SEAL_METADATA_KEY: meta}
+
+
+def _signed_intent_value(payload: bytes) -> Optional[str]:
+    try:
+        doc = json.loads(payload)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    meta = doc.get(SEAL_METADATA_KEY) if isinstance(doc, dict) else None
+    value = meta.get("signing_intent") if isinstance(meta, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def read_intent(envelope_bytes: bytes) -> IntentReading:
+    """Classify the intent of a (separately verified) envelope; never raises."""
+    try:
+        env = json.loads(envelope_bytes)
+        sigs = env.get("signatures") or []
+        label = sigs[0].get("intent") if sigs and isinstance(sigs[0], dict) else None
+        signed = _signed_intent_value(_b64_decode(env.get("payload", "")))
+    except Exception:
+        return IntentReading(None, "absent")
+    label = label if isinstance(label, str) else None
+    if signed is None:
+        return IntentReading(None, "label-only" if label else "absent", label)
+    if label is not None and label != signed:
+        return IntentReading(None, "mismatch", label)
+    try:
+        return IntentReading(SigningIntent(signed), "signed", label)
+    except ValueError:
+        return IntentReading(None, "absent", label)
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +298,10 @@ def create_envelope(
                    is provided).
         cert_path: Path to X.509 PEM certificate (ignored when *backend* is
                    provided).
-        intent:    Optional signing intent per FDA 21 CFR §11.50(a)(3).
-                   When provided, stored as ``intent`` in the signature entry.
+        intent:    Optional signing intent per FDA 21 CFR §11.50(a)(3). The
+                   payload must already carry it (:func:`bind_intent`, ADR-0309);
+                   it is also stored as the ``intent`` label of the signature
+                   entry for readers that predate ADR-0309.
         backend:   Optional ``SigningBackend`` instance.  When supplied the
                    *key_path* / *cert_path* arguments are not used; the backend
                    is responsible for signing the PAE digest and returning the
@@ -242,6 +313,12 @@ def create_envelope(
     Raises:
         EnvelopeError: on key loading, signing, or cert errors.
     """
+    if intent is not None and _signed_intent_value(payload) != intent.value:
+        # ADR-0309: an intent outside the signed bytes can be rewritten freely.
+        raise EnvelopeError(
+            f"signing intent {intent.value!r} is not bound in the payload; build the "
+            "payload with bind_intent() so the signature covers it"
+        )
     pae = _pae(PAYLOAD_TYPE, payload)
 
     if backend is not None:
@@ -554,25 +631,14 @@ def verify_envelope_encoding(
 
 
 def extract_intent(envelope_bytes: bytes) -> Optional[SigningIntent]:
-    """Return the signing intent from the first signature entry, or None.
+    """Return the *signed* signing intent, or None (ADR-0309).
 
-    Does not verify the signature — call verify_envelope() first if you need
-    authenticated intent extraction.
+    Only the copy bound inside the payload is returned; an unsigned signature-entry
+    label alone (seals made before ADR-0309) or a label that contradicts the signed
+    value yields None. Use :func:`read_intent` to see which case applies. Does not
+    verify the signature — call ``verify_envelope()`` first.
     """
-    try:
-        env = json.loads(envelope_bytes)
-        sigs = env.get("signatures", [])
-        if not sigs:
-            return None
-        raw = sigs[0].get("intent")
-        if raw is None:
-            return None
-        try:
-            return SigningIntent(raw)
-        except ValueError:
-            return None
-    except Exception:
-        return None
+    return read_intent(envelope_bytes).intent
 
 
 def _der_to_pem_cert(der: bytes) -> bytes:

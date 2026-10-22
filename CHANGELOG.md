@@ -75,6 +75,25 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **NovaSeal's signing intent is signed (security, ADR-0309).** The intent (authored, reviewed,
+  approved, …; FDA 21 CFR §11.50) was stored only as a label on the DSSE signature entry,
+  outside the signed bytes, so it could be changed without breaking the signature. It is now
+  bound into the sealed payload (`_novaseal.signing_intent`) and reported only when that signed
+  copy is present and agrees with the label (`signing_intent_status: signed`); an edited label
+  fails verification, and a seal made before this change reports `label-only` with no intent.
+  `create_envelope(intent=…)` refuses a payload that does not carry the intent.
+- **The capsule Merkle root commits to file names (security, ADR-0310).** The RFC 6962-shaped
+  root over a capsule hashed contents only, so renaming a file without changing the sort order
+  left it — and every Evidence Bundle subject, consent attestation, AI-BOM and baseline pin
+  built on it — unchanged. New roots use a v2 leaf that commits to each file's relative path;
+  roots recorded before the change still verify. Comment and annotation subjects keep the v1
+  construction so existing comments and queue items stay attached.
+- **SLURM and LSF jobs no longer inherit the submitting shell's environment (security,
+  ADR-0311, behaviour change).** The job script was filtered (ADR-0270), but `sbatch`/`bsub`
+  copy their own environment into the job by default, and they ran with the user's whole
+  shell. They now run with a minimal environment (scheduler client variables, login basics,
+  `NOVAFABRIC_*`); anything else a workload needs, such as an API key, is passed explicitly
+  with the new `extra_env` runner option, as for `docker` and `kubernetes`.
 - **Promote (maker-checker) signatures need a trust root, and a seal bypass needs a trusted
   approver (security, ADR-0315, behaviour change).** A promote envelope was verified against the
   certificate it carried itself, so the names the policy matched on (`proposer_key_ids`,

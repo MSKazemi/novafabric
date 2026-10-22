@@ -24,13 +24,28 @@ opt-in they can see and audit, rather than an inheritance they cannot.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 
 #: Variables NovaFabric itself sets and every runner must carry: they are what
 #: makes capture fire inside the job (capsule dir, span id, emit mode).
 FORWARDABLE_PREFIX = "NOVAFABRIC_"
 
-__all__ = ["FORWARDABLE_PREFIX", "forwardable_env", "is_forwardable"]
+__all__ = [
+    "FORWARDABLE_PREFIX",
+    "SUBMIT_LOGIN_KEYS",
+    "forwardable_env",
+    "is_forwardable",
+    "scheduler_submit_env",
+    "shell_safe_env",
+]
+
+#: Login variables a batch-scheduler client needs to submit as the user. None of
+#: them is a credential; they are what a fresh login shell would also have.
+SUBMIT_LOGIN_KEYS = frozenset(
+    {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TERM",
+     "KRB5CCNAME"}
+)
 
 
 def is_forwardable(key: str, *, also_allow: frozenset[str] = frozenset()) -> bool:
@@ -60,3 +75,48 @@ def forwardable_env(
     """
     allowed = frozenset(also_allow)
     return {k: v for k, v in env.items() if is_forwardable(k, also_allow=allowed)}
+
+
+def scheduler_submit_env(
+    environ: Mapping[str, str],
+    *,
+    client_prefixes: Iterable[str],
+    extra_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """The environment to run a batch scheduler's submit command (``sbatch``, ``bsub``) with.
+
+    Schedulers propagate the *submitting process's* environment into the job by
+    default — SLURM's ``--export=ALL``, LSF's copy of the submission environment —
+    so filtering the job script (``forwardable_env``) is not enough: the submit
+    process itself must not hold the user's secrets (ADR-0311, completing ADR-0270).
+    It keeps only the scheduler client's own variables (``client_prefixes``, e.g.
+    ``SLURM_``/``SBATCH_``), login basics (:data:`SUBMIT_LOGIN_KEYS`, ``LC_*``),
+    ``NOVAFABRIC_*``, and the operator's explicit ``extra_env``.
+
+    Args:
+        environ: the orchestrator process environment (``os.environ``).
+        client_prefixes: variable prefixes the scheduler client reads.
+        extra_env: variables the operator chose to send into the job.
+
+    Returns:
+        A new dict; never mutates ``environ``.
+    """
+    prefixes = (*tuple(client_prefixes), FORWARDABLE_PREFIX, "LC_")
+    env = {k: v for k, v in environ.items() if k in SUBMIT_LOGIN_KEYS or k.startswith(prefixes)}
+    env.update(extra_env or {})
+    return env
+
+
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def shell_safe_env(extra_env: Mapping[str, str]) -> dict[str, str]:
+    """Return *extra_env* if every name is a shell identifier, else raise ``ValueError``.
+
+    Batch runners write ``export NAME=value`` lines into a job script; a name is not
+    quoted there, so anything but ``[A-Za-z_][A-Za-z0-9_]*`` would be shell syntax.
+    """
+    bad = sorted(k for k in extra_env if not _ENV_NAME.fullmatch(k))
+    if bad:
+        raise ValueError(f"extra_env names must be shell identifiers; refused: {bad}")
+    return dict(extra_env)

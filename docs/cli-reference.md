@@ -350,8 +350,16 @@ Options:
 - `--runner {local,docker,kubernetes,slurm,lsf,pbs}` — execution backend (default: `local`). Tab-completion available via `nova --install-completion`.
   - Every runner except `local` forwards **only** `NOVAFABRIC_*` environment
     variables into the workload, plus `PATH` for `slurm` and whatever you name in
-    `extra_env` for `docker`/`kubernetes` (ADR-0270). `local` runs as you, on your
+    `extra_env` for `docker`/`kubernetes`/`slurm`/`lsf` (ADR-0270, ADR-0311), e.g.
+    `--runner-option extra_env=OPENAI_API_KEY=sk-...`. `local` runs as you, on your
     machine, and keeps your full environment.
+  - `slurm` and `lsf` also run `sbatch` / `bsub` with a minimal environment (the
+    scheduler client's own `SLURM_*`/`SBATCH_*` or `LSF_*`/`LSB_*` variables, login
+    basics such as `PATH`/`HOME`/`USER`/`LC_*`, `NOVAFABRIC_*` and `extra_env`), because
+    both schedulers copy the submitting process's environment into the job by
+    default. **Behaviour change (unreleased):** a SLURM or LSF job no longer inherits
+    API keys from your shell — pass them with `extra_env`. `extra_env` names must be
+    shell identifiers.
   - **Experimental, since v0.105.0** ([ADR-0307](./decisions.md)): the capsule records
     which runner ran the workload as `host.runner.name`. `docker` and `kubernetes`
     also record `host.runner.image`: the `image=` reference plus the digest the
@@ -4753,7 +4761,13 @@ Signing intents are expressed via the `SigningIntent` enum (`src/novafabric/trus
 | `witnessed` | Witnessed signature |
 | `verified` | Verification / QA signature |
 
-The intent value is embedded in the DSSE predicate and verified by `nova seal verify`.
+Since ADR-0309 the intent is signed: it is written into the sealed payload under the
+reserved `_novaseal.signing_intent` key (so the DSSE signature covers it) and repeated
+as the signature entry's `intent` label. `nova verify` reports the intent only when the
+signed copy is present and agrees with the label (`signing_intent_status: signed`). A seal
+made before ADR-0309 carries only the unsigned label and reports `label-only` with no
+intent; a label that contradicts the signed value means it was edited after signing, and
+verification fails.
 The five-check SoD verifier (exit codes 3–7) enforces the separation-of-duties
 required by FDA §11.50(b).
 

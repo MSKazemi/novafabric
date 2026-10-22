@@ -21,6 +21,7 @@ import pytest
 
 from novafabric.runners import DockerRunner, KubernetesRunner, RunnerJobSpec, SlurmRunner
 from novafabric.runners._env import forwardable_env
+from novafabric.runners._lsf import LSFRunner
 
 #: A secret that must never appear in anything a runner sends off-host.
 SECRET_KEY = "OPENAI_API_KEY"
@@ -157,6 +158,76 @@ class TestNoRunnerTransportsTheSubmittingEnvironment:
             ("kubernetes", k8s), ("docker", docker), ("slurm", slurm),
         ):
             assert secret not in payload, f"{label} runner transported {secret}"
+
+
+class TestBatchSchedulersSubmitWithAMinimalEnvironment:
+    """ADR-0311: filtering the job script was not enough.
+
+    ``sbatch`` and ``bsub`` propagate the environment of the *submit process* into
+    the job by default (SLURM ``--export=ALL``; LSF copies the submission
+    environment). The runners used to call them with the user's whole shell, so the
+    secret the script filter removed reached the job anyway. The submit process now
+    gets only the scheduler client's own variables, login basics, ``NOVAFABRIC_*``
+    and the operator's explicit ``extra_env``.
+    """
+
+    @staticmethod
+    def _submit(runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                **options: object) -> tuple[dict[str, str], str]:
+        monkeypatch.setenv(SECRET_KEY, SECRET_VALUE)
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-must-never-be-transported")
+        monkeypatch.setenv("SLURM_CONF", "/etc/slurm/slurm.conf")
+        monkeypatch.setenv("LSF_ENVDIR", "/etc/lsf")
+        fail = subprocess.CompletedProcess([], 1, b"", b"stop here\n")
+        with patch("shutil.which", return_value=f"/usr/bin/{runner}"), \
+             patch("subprocess.run", return_value=fail) as run:
+            if runner == "sbatch":
+                SlurmRunner().run(_spec(tmp_path, runner_options={"partition": "n", **options}))
+            else:
+                LSFRunner().run(_spec(tmp_path, runner_options=dict(options)))
+        call = run.call_args
+        script = (
+            " ".join(str(a) for a in call.args[0])
+            if runner == "sbatch"
+            else next(tmp_path.glob("capsule/*.lsf")).read_text()
+        )
+        return call.kwargs["env"], script
+
+    @pytest.mark.parametrize("runner", ["sbatch", "bsub"])
+    def test_the_submit_process_does_not_hold_the_users_secrets(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env, _ = self._submit(runner, tmp_path, monkeypatch)
+        assert SECRET_KEY not in env and "AWS_SECRET_ACCESS_KEY" not in env, (
+            f"{runner} runs with the submitting shell's secrets, and propagates them "
+            f"into the job by default: {sorted(env)}"
+        )
+        assert SECRET_VALUE not in json.dumps(env)
+        client = "SLURM_CONF" if runner == "sbatch" else "LSF_ENVDIR"
+        assert client in env, "the scheduler client's own configuration must survive"
+
+    @pytest.mark.parametrize("runner", ["sbatch", "bsub"])
+    def test_extra_env_is_the_explicit_opt_in(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env, script = self._submit(runner, tmp_path, monkeypatch, extra_env={"MODEL_TOKEN": "t1"})
+        assert env["MODEL_TOKEN"] == "t1"
+        assert "export MODEL_TOKEN=" in script
+
+    @pytest.mark.parametrize("runner", ["sbatch", "bsub"])
+    def test_an_extra_env_name_that_is_not_an_identifier_is_refused(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(SECRET_KEY, SECRET_VALUE)
+        with patch("shutil.which", return_value=f"/usr/bin/{runner}"), \
+             patch("subprocess.run") as run:
+            spec = _spec(tmp_path, runner_options={
+                "partition": "n", "extra_env": {"X;rm -rf /": "1"},
+            })
+            result = (SlurmRunner() if runner == "sbatch" else LSFRunner()).run(spec)
+        assert result.runner_status == "failed_setup"
+        assert "shell identifiers" in (result.runner_error or "")
+        run.assert_not_called()
 
 
 class TestLocalRunnerIsDeliberatelyExempt:

@@ -272,8 +272,10 @@ def _capsule(tmp_path: Path) -> Path:
 
 
 def test_subject_digest_matches_merkle_root_without_comments(tmp_path: Path) -> None:
+    # The comment subject deliberately stays on the v1 (content-only) root: it is the
+    # stored identity existing comments are filed under (ADR-0310).
     cap = _capsule(tmp_path)
-    assert capsule_subject_digest(cap) == capsule_merkle_root(cap)
+    assert capsule_subject_digest(cap) == capsule_merkle_root(cap, version=1)
 
 
 def test_subject_digest_stable_across_comments(tmp_path: Path) -> None:

@@ -280,6 +280,10 @@ def verify_pin(
             continue
         try:
             observed = _as_prefixed(capsule_merkle_root(directory))
+            # A pin recorded before ADR-0310 holds a v1 (content-only) root.
+            matches = observed == run.baseline_root or (
+                _as_prefixed(capsule_merkle_root(directory, version=1)) == run.baseline_root
+            )
         except Exception as exc:
             raise BaselineError(
                 f"cannot recompute the sealed root of {directory}: {exc}"
@@ -289,7 +293,7 @@ def verify_pin(
                 run_id=run.run_id,
                 pinned_root=run.baseline_root,
                 observed_root=observed,
-                matches=observed == run.baseline_root,
+                matches=matches,
             )
         )
     return results

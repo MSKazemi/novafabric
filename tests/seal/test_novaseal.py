@@ -93,8 +93,14 @@ class TestSealBundle:
     def test_capsule_id_deterministic(self, nova_seal):
         import hashlib
         import json
+
+        from novafabric.trust.novaseal.envelope import SigningIntent, bind_intent
+
         manifest = {"run_id": "test-004"}
-        payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+        # The capsule id is the hash of the signed payload, which carries the bound
+        # signing intent (ADR-0309; seal() defaults to AUTHORED).
+        signed = bind_intent(manifest, SigningIntent.AUTHORED)
+        payload = json.dumps(signed, sort_keys=True, separators=(",", ":")).encode()
         expected_id = hashlib.sha256(payload).hexdigest()
         bundle = nova_seal.seal(manifest)
         assert bundle.capsule_id == expected_id

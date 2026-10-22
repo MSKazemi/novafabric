@@ -174,12 +174,13 @@ def capsule_known_digests(capsule_dir: str | Path) -> set[str]:
     Bounded, read-only: each top-level evidence file is read once.
     """
     from novafabric.eval.annotation_store import annotation_subject_digest  # noqa: PLC0415
-    from novafabric.evidence.merkle import capsule_merkle_root  # noqa: PLC0415
+    from novafabric.evidence.merkle import ROOT_VERSIONS, capsule_merkle_root  # noqa: PLC0415
 
     root = Path(capsule_dir)
     digests: set[str] = {
         annotation_subject_digest(root),
-        capsule_merkle_root(root),
+        # every root construction, so a subject recorded before ADR-0310 still resolves
+        *(capsule_merkle_root(root, version=v) for v in ROOT_VERSIONS),
         "sha256:" + hashlib.sha256((root / "capsule.yaml").read_bytes()).hexdigest(),
     }
     for pattern in _EVIDENCE_GLOBS:

@@ -21,6 +21,7 @@ in CI.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -28,7 +29,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from novafabric.runners._env import forwardable_env
+from novafabric.runners._env import forwardable_env, scheduler_submit_env, shell_safe_env
+from novafabric.runners._options import coerce_str_dict
 from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
@@ -55,7 +57,10 @@ def _shell_quote(arg: str) -> str:
 
 
 def _build_wrap_script(
-    command: list[str], env: dict[str, str], capsule_dir: Path
+    command: list[str],
+    env: dict[str, str],
+    capsule_dir: Path,
+    extra_env: dict[str, str] | None = None,
 ) -> str:
     """Build the inline shell script for sbatch --wrap.
 
@@ -73,7 +78,10 @@ def _build_wrap_script(
     lines: list[str] = ["set -e"]
     # Default-deny (ADR-0270). PATH is the one addition SLURM needs: the batch
     # script runs on a compute node that must find the same interpreter.
-    for k, v in forwardable_env(env, also_allow={"PATH"}).items():
+    # The operator's explicit ``extra_env`` is the only other way in (ADR-0311).
+    forwarded = forwardable_env(env, also_allow={"PATH"})
+    forwarded.update(extra_env or {})
+    for k, v in forwarded.items():
         lines.append(f"export {k}={_shell_quote(v)}")
     # Make sure NOVAFABRIC_CAPSULE_DIR points at the (shared-FS) path.
     lines.append(f"export NOVAFABRIC_CAPSULE_DIR={_shell_quote(str(capsule_dir))}")
@@ -376,12 +384,27 @@ class SlurmRunner:
             mins = max(1, int(spec.timeout_s // 60))
             argv.append(f"--time={mins}")
 
-        wrap = _build_wrap_script(spec.command, spec.env, spec.capsule_dir)
+        try:
+            extra_env = shell_safe_env(coerce_str_dict(opts.get("extra_env")))
+        except ValueError as exc:
+            return RunnerJobResult(
+                exit_code=127, runner_status="failed_setup", runner_error=str(exc)
+            )
+        wrap = _build_wrap_script(spec.command, spec.env, spec.capsule_dir, extra_env)
         argv.extend(["--wrap", wrap])
 
-        # 1. Submit.
+        # 1. Submit. sbatch propagates its own environment into the job by default
+        # (--export=ALL), so it runs with a minimal one, never the user's shell
+        # (ADR-0311).
         try:
-            sub = subprocess.run(argv, capture_output=True, timeout=30)
+            sub = subprocess.run(
+                argv,
+                capture_output=True,
+                timeout=30,
+                env=scheduler_submit_env(
+                    os.environ, client_prefixes=("SLURM_", "SBATCH_"), extra_env=extra_env
+                ),
+            )
         except subprocess.TimeoutExpired as exc:
             return RunnerJobResult(
                 exit_code=127, runner_status="failed_setup",

@@ -34,6 +34,7 @@ Live-cluster validation is a separate acceptance gate (see ROADMAP).
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -41,6 +42,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from novafabric.runners._env import scheduler_submit_env, shell_safe_env
+from novafabric.runners._options import coerce_str_dict
 from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
@@ -66,7 +69,7 @@ _LSF_SCRIPT_TEMPLATE = """\
 export PYTHONPATH={sitecustomize_dir}:$PYTHONPATH
 export NOVAFABRIC_CAPSULE_DIR={capsule_dir}
 export NOVAFABRIC_SPAN_ID={span_id}
-
+{extra_exports}
 {command}
 """
 
@@ -190,6 +193,15 @@ class LSFRunner:
 
         # 2. Build and write the LSF job script.
         command_str = " ".join(_shell_quote(a) for a in spec.command)
+        # The operator's explicit extra_env is the only way a variable reaches the
+        # job beyond the fixed exports above (ADR-0311).
+        try:
+            extra_env = shell_safe_env(coerce_str_dict(opts.get("extra_env")))
+        except ValueError as exc:
+            return RunnerJobResult(
+                exit_code=127, runner_status="failed_setup", runner_error=str(exc)
+            )
+        extra_exports = "".join(f"export {k}={_shell_quote(v)}\n" for k, v in extra_env.items())
         span_id = spec.env.get("NOVAFABRIC_SPAN_ID", "0" * 16)
         script_content = _LSF_SCRIPT_TEMPLATE.format(
             job_name=job_name,
@@ -201,6 +213,7 @@ class LSFRunner:
             sitecustomize_dir=str(spec.capsule_dir),
             capsule_dir=str(spec.capsule_dir),
             span_id=span_id,
+            extra_exports=extra_exports,
             command=command_str,
         )
 
@@ -217,11 +230,16 @@ class LSFRunner:
         # 3. Submit via bsub with the script piped on stdin (LSF convention).
         try:
             with script_path.open("rb") as script_fh:
+                # LSF copies the submission environment into the job, so bsub runs
+                # with a minimal one, never the user's shell (ADR-0311).
                 sub = subprocess.run(
                     [self._bsub],
                     stdin=script_fh,
                     capture_output=True,
                     timeout=30,
+                    env=scheduler_submit_env(
+                        os.environ, client_prefixes=("LSF_", "LSB_"), extra_env=extra_env
+                    ),
                 )
         except subprocess.TimeoutExpired as exc:
             return RunnerJobResult(

@@ -179,9 +179,20 @@ def _try_seal_proof_report(report_path: Path, proof_bytes: bytes) -> None:
         return
 
     try:
-        from novafabric.trust.novaseal.envelope import SigningIntent, create_envelope
+        from novafabric.trust.novaseal.envelope import (
+            SigningIntent,
+            bind_intent,
+            create_envelope,
+        )
+
+        # ADR-0309: the intent is signed inside the payload, not only labelled.
+        payload = json.dumps(
+            bind_intent(json.loads(proof_bytes), SigningIntent.VERIFIED),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
         dsse_bytes = create_envelope(
-            proof_bytes,
+            payload,
             profile.key_path,
             profile.cert_path,
             intent=SigningIntent.VERIFIED,

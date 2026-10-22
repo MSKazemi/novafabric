@@ -37,9 +37,11 @@ from typing import TYPE_CHECKING, TypeGuard
 from novafabric.trust.novaseal.envelope import (
     EnvelopeError,
     SigningIntent,
+    bind_intent,
     create_envelope,
-    extract_intent,
+    extract_intent,  # noqa: F401  (re-exported; returns the signed intent only, ADR-0309)
     extract_payload,
+    read_intent,
     verify_envelope_encoding,
 )
 from novafabric.trust.novaseal.merkle import (  # noqa: F401
@@ -134,6 +136,10 @@ class VerificationResult:
     log_integrity_ok: bool
     errors: list[str] = field(default_factory=list)  # noqa: RUF009
     signing_intent: SigningIntent | None = None
+    # ADR-0309: "signed" (intent bound inside the signed payload), "label-only" (a seal
+    # made before ADR-0309 — the label is unauthenticated), "mismatch" (the unsigned
+    # label was edited after signing; the seal fails) or "absent".
+    signing_intent_status: str = "absent"
     # True only when a verifier-supplied CA bundle validated the signer chain
     # (``nova verify --ca-bundle``); ``verify_seal_dir`` alone never sets it.
     ca_chain_ok: bool = False
@@ -264,6 +270,9 @@ class NovaSeal:
         Raises:
             SealError: if signing or log-append fails.
         """
+        # ADR-0309: the intent is signed inside the payload, not only labelled.
+        if intent is not None:
+            capsule_manifest = bind_intent(dict(capsule_manifest), intent)
         payload = json.dumps(
             capsule_manifest, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
@@ -398,6 +407,7 @@ def verify_seal_dir(
     signature_ok = False
     pae_encoding: str | None = None
     signing_intent: SigningIntent | None = None
+    signing_intent_status = "absent"
     dsse_bytes = b""
     dsse_file = seal_path / "manifest.dsse"
     if not dsse_file.exists():
@@ -407,7 +417,13 @@ def verify_seal_dir(
         try:
             pae_encoding = verify_envelope_encoding(dsse_bytes)
             signature_ok = True
-            signing_intent = extract_intent(dsse_bytes)
+            reading = read_intent(dsse_bytes)
+            signing_intent, signing_intent_status = reading.intent, reading.status
+            if reading.status == "mismatch":
+                errors.append(
+                    f"Signing intent label {reading.label!r} contradicts the signed intent "
+                    "— the unsigned label was altered after signing (ADR-0309)"
+                )
         except EnvelopeError as exc:
             errors.append(f"Signature verification failed: {exc}")
 
@@ -461,7 +477,10 @@ def verify_seal_dir(
     signer = signer_certificate_info(dsse_bytes) if signature_ok else None
 
     valid = (
-        signature_ok and timestamp_ok is not False and log_inclusion != LOG_INCLUSION_FAILED
+        signature_ok
+        and timestamp_ok is not False
+        and log_inclusion != LOG_INCLUSION_FAILED
+        and signing_intent_status != "mismatch"
     )
     return VerificationResult(
         valid=valid,
@@ -472,6 +491,7 @@ def verify_seal_dir(
         log_integrity_ok=log_integrity_ok,
         errors=errors,
         signing_intent=signing_intent,
+        signing_intent_status=signing_intent_status,
         ca_chain_ok=ca_chain_ok,
         ca_chain_errors=ca_chain_errors,
         pae_encoding=pae_encoding,
