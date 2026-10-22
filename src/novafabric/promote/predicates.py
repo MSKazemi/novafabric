@@ -11,6 +11,8 @@ import base64
 import hashlib
 import importlib.resources
 import json
+import os
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,7 @@ import jsonschema  # type: ignore[import-untyped]
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509 import NameOID, load_pem_x509_certificate
+from cryptography.x509 import Certificate, NameOID, load_pem_x509_certificate
 
 from novafabric.promote.exceptions import PredicateValidationError
 
@@ -32,6 +34,11 @@ from novafabric.trust.novaseal.envelope import (
     _b64_encode,
     _pae,
     pae_candidates,
+)
+from novafabric.trust.novaseal.x509_identity import (
+    X509ChainError,
+    load_ca_bundle,
+    validate_certificate_chain,
 )
 
 # ---------------------------------------------------------------------------
@@ -50,6 +57,83 @@ BYPASS_PAYLOAD_TYPE = "application/vnd.novafabric.promote.bypass+json"
 
 class EnvelopeError(Exception):
     """Raised on DSSE creation or verification failures in promote subsystem."""
+
+
+class UntrustedSignerError(EnvelopeError):
+    """The signature verifies, but its certificate does not chain to a pinned trust root.
+
+    A subclass of :class:`EnvelopeError` so every caller that already treats an invalid
+    envelope as a failure fails closed on an untrusted signer too (ADR-0315).
+    """
+
+
+# ---------------------------------------------------------------------------
+# Trust root for promote signatures (ADR-0315, owner decision D3)
+# ---------------------------------------------------------------------------
+
+#: PEM bundle of CA certificates promote signers must chain to.
+PROMOTE_CA_BUNDLE_ENV = "NOVAFABRIC_PROMOTE_CA_BUNDLE"
+#: ``1`` accepts any self-signed certificate — development and tests only.
+PROMOTE_INSECURE_ENV = "NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED"
+
+_NO_TRUST_ROOT = (
+    "no promote trust root is configured, so the signer's identity cannot be checked "
+    "(the certificate inside an envelope is chosen by whoever signed it). Pass "
+    f"--ca-bundle <pem> or set {PROMOTE_CA_BUNDLE_ENV}; for local development only, "
+    f"--insecure-self-signed or {PROMOTE_INSECURE_ENV}=1 accepts any self-signed signer"
+)
+
+
+@dataclass(frozen=True)
+class PromoteTrust:
+    """Who may sign promote proposals, approvals, policies and bypasses.
+
+    ``anchors`` are the pinned CA certificates a signer must chain to (validated with
+    NovaSeal's offline RFC 5280 path builder). With no anchors, signatures are
+    refused unless ``insecure_self_signed`` was chosen explicitly.
+    """
+
+    anchors: tuple[Certificate, ...] = ()
+    insecure_self_signed: bool = False
+
+    @classmethod
+    def resolve(
+        cls, ca_bundle: Path | None = None, *, insecure_self_signed: bool = False
+    ) -> PromoteTrust:
+        """Explicit arguments first, then ``NOVAFABRIC_PROMOTE_*`` environment variables.
+
+        Raises:
+            EnvelopeError: the CA bundle cannot be read or holds no certificate.
+        """
+        path = ca_bundle or (Path(p) if (p := os.environ.get(PROMOTE_CA_BUNDLE_ENV)) else None)
+        insecure = insecure_self_signed or os.environ.get(PROMOTE_INSECURE_ENV) == "1"
+        if path is None:
+            return cls((), insecure)
+        try:
+            anchors = load_ca_bundle(path.read_bytes())
+        except (OSError, X509ChainError) as exc:
+            raise EnvelopeError(f"promote CA bundle {path}: {exc}") from exc
+        if not anchors:
+            raise EnvelopeError(f"promote CA bundle {path} holds no certificate")
+        return cls(tuple(anchors), insecure)
+
+    def require(self) -> None:
+        """Raise :class:`UntrustedSignerError` when no signer could ever be accepted."""
+        if not self.anchors and not self.insecure_self_signed:
+            raise UntrustedSignerError(_NO_TRUST_ROOT)
+
+    def check(self, cert: Certificate) -> None:
+        """Raise :class:`UntrustedSignerError` unless ``cert`` is an acceptable signer."""
+        if self.anchors:
+            result = validate_certificate_chain(cert, self.anchors)
+            if not result.valid:
+                raise UntrustedSignerError(
+                    f"signer certificate does not chain to the promote trust root: "
+                    f"{result.reason}"
+                )
+            return
+        if not self.insecure_self_signed:
+            raise UntrustedSignerError(_NO_TRUST_ROOT)
 
 
 # PAE — Pre-Authentication Encoding: defined once, in
@@ -159,12 +243,17 @@ def sign_promote_envelope(
 def verify_promote_envelope(
     envelope_bytes: bytes,
     expected_payload_type: str,
+    *,
+    trust: PromoteTrust | None = None,
 ) -> tuple[bytes, str]:
-    """Verify a promote DSSE envelope.
+    """Verify a promote DSSE envelope and that its signer is trusted (ADR-0315).
 
     Args:
         envelope_bytes:       JSON bytes of the DSSE envelope.
         expected_payload_type: Must match the envelope's payloadType.
+        trust:                Who may sign; ``None`` resolves it from the
+                              ``NOVAFABRIC_PROMOTE_*`` environment, which refuses every
+                              signer when nothing is configured.
 
     Returns:
         Tuple of (payload_bytes, cert_subject).
@@ -183,6 +272,8 @@ def verify_promote_envelope(
 
     if not sigs:
         raise EnvelopeError("Envelope has no signatures")
+    if trust is None:
+        trust = PromoteTrust.resolve()
 
     if payload_type != expected_payload_type:
         raise EnvelopeError(
@@ -215,6 +306,7 @@ def verify_promote_envelope(
     else:
         raise EnvelopeError("DSSE signature verification failed: signature mismatch")
 
+    trust.check(cert)
     subject = _cert_subject(cert)
     return payload, subject
 

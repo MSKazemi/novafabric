@@ -22,6 +22,8 @@ from novafabric.promote.policy_store import PolicyStore
 from novafabric.promote.predicates import (
     APPROVAL_PAYLOAD_TYPE,
     PROPOSAL_PAYLOAD_TYPE,
+    EnvelopeError,
+    PromoteTrust,
     build_approval_predicate,
     build_proposal_predicate,
     sign_promote_envelope,
@@ -40,6 +42,24 @@ seal_app = typer.Typer(
 
 _DEFAULT_DB = Path.home() / ".local" / "share" / "novafabric" / "merkle.db"
 _DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "novafabric"
+
+_CA_BUNDLE_HELP = (
+    "PEM CA bundle that proposer, approver, policy and bypass signers must chain to "
+    "(ADR-0315). Defaults to $NOVAFABRIC_PROMOTE_CA_BUNDLE; with neither, verification "
+    "refuses every signer."
+)
+_INSECURE_HELP = (
+    "Accept any self-signed signer certificate (no identity check). Local development "
+    "only; same as NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED=1."
+)
+
+
+def _promote_trust(ca_bundle: Path | None, insecure_self_signed: bool) -> PromoteTrust:
+    try:
+        return PromoteTrust.resolve(ca_bundle, insecure_self_signed=insecure_self_signed)
+    except EnvelopeError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
 
 
 @seal_app.command("sign")
@@ -292,6 +312,10 @@ def seal_approve_cmd(
     cert: Path = typer.Option(..., "--cert", help="Path to X.509 certificate PEM"),
     db_path: Path = typer.Option(_DEFAULT_DB, "--db", help="SQLite DB path"),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
+    ca_bundle: Path | None = typer.Option(None, "--ca-bundle", help=_CA_BUNDLE_HELP),
+    insecure_self_signed: bool = typer.Option(
+        False, "--insecure-self-signed", help=_INSECURE_HELP
+    ),
 ) -> None:
     """Approve a pending NovaSeal proposal (checker step).
 
@@ -320,9 +344,13 @@ def seal_approve_cmd(
     # Display proposal contents
     try:
         proposal_payload, proposer_subject = verify_promote_envelope(
-            proposal_envelope, PROPOSAL_PAYLOAD_TYPE
+            proposal_envelope,
+            PROPOSAL_PAYLOAD_TYPE,
+            trust=_promote_trust(ca_bundle, insecure_self_signed),
         )
         proposal_pred = json.loads(proposal_payload)
+    except typer.Exit:
+        raise
     except Exception as exc:  # pragma: no cover
         err_console.print(f"[red]Error:[/red] Cannot read proposal envelope: {exc}")
         raise typer.Exit(code=1)
@@ -418,6 +446,10 @@ def seal_verify_cmd(
     offline: bool = typer.Option(False, "--offline", help="Skip network checks"),
     db_path: Path = typer.Option(_DEFAULT_DB, "--db", help="SQLite DB path"),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
+    ca_bundle: Path | None = typer.Option(None, "--ca-bundle", help=_CA_BUNDLE_HELP),
+    insecure_self_signed: bool = typer.Option(
+        False, "--insecure-self-signed", help=_INSECURE_HELP
+    ),
 ) -> None:
     """Verify the full NovaSeal chain including proposer and approver signatures.
 
@@ -427,12 +459,13 @@ def seal_verify_cmd(
 
     \b
     Examples:
-      nova seal verify <capsule-id>
-      nova seal verify <capsule-id> --offline
+      nova seal verify <capsule-id> --ca-bundle /etc/novaseal/promote-ca.pem
+      nova seal verify <capsule-id> --insecure-self-signed   # development only
 
     Exit codes:
       0  — all checks passed
-      3  — proposer not in policy
+      2  — the --ca-bundle cannot be read
+      3  — proposer not in policy, untrusted signer, or no trust root configured
       4  — approver not in policy
       5  — proposal_digest mismatch
       6  — self-approval prohibited
@@ -443,7 +476,8 @@ def seal_verify_cmd(
     policy_store = PolicyStore(db_path)
     bundle_store = PromoteBundleStore(data_dir)
 
-    result = verify_sod(capsule_id, policy_store, bundle_store, offline=offline)
+    trust = _promote_trust(ca_bundle, insecure_self_signed)
+    result = verify_sod(capsule_id, policy_store, bundle_store, offline=offline, trust=trust)
 
     if result.passed:
         console.print("[green]SoD verification passed[/green]")

@@ -4,6 +4,14 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _self_signed_promote_fixtures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests sign with self-signed fixture certificates and exercise SoD logic,
+    not signer identity, so they opt in to ADR-0315's explicit insecure mode. Trust-root
+    enforcement is pinned in tests/seal/test_promote_trust_root.py."""
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED", "1")
+
 FIXTURE_KEYS = Path(__file__).parent.parent / "fixtures" / "promote" / "keys"
 
 

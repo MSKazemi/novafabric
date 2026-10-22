@@ -50,8 +50,9 @@ def _connect_ro(db_path: Path) -> sqlite3.Connection:
 class _ReadOnlyPolicySnapshot:
     """The ``promote_policy`` rows of a policy database, read once via a ``mode=ro`` connection.
 
-    Duck-types the single :class:`~novafabric.promote.policy_store.PolicyStore` method
-    :func:`~novafabric.promote.verifier.verify_sod` calls (``get_by_version``), with the same
+    Duck-types the two :class:`~novafabric.promote.policy_store.PolicyStore` methods
+    :func:`~novafabric.promote.verifier.verify_sod` calls (``get_by_version``, and
+    ``get_latest`` for the bypass approver check, ADR-0315), with the same
     semantics, so the verifier runs unchanged — but, unlike ``PolicyStore(path)``, it never
     creates the file, its directory, the table, or flips the database into WAL mode.
     """
@@ -87,6 +88,15 @@ class _ReadOnlyPolicySnapshot:
             raise PolicyNotFoundError(
                 f"No policy version {version} in namespace {namespace!r}"
             ) from None
+
+    def get_latest(self, namespace: str = "default") -> str:
+        """Return the highest version's bundle_json (as PolicyStore); the bypass check uses it."""
+        from novafabric.promote.exceptions import PolicyNotFoundError
+
+        versions = [v for (ns, v) in self._rows if ns == namespace]
+        if not versions:
+            raise PolicyNotFoundError(f"No policy found in namespace {namespace!r}")
+        return self._rows[(namespace, max(versions))]
 
     def close(self) -> None:
         """No-op: the connection is closed as soon as the rows are read."""

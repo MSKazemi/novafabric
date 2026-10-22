@@ -12365,6 +12365,20 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "text",
         "hint": "Data directory",
         "flag": "--data-dir"
+      },
+      {
+        "key": "ca-bundle",
+        "label": "--ca-bundle",
+        "type": "text",
+        "hint": "PEM CA bundle that proposer, approver, policy and bypass signers must chain to (ADR-0315). Defaults to $NOVAFABRIC_PROMOTE_CA_BUNDLE; with neither, verification refuses every signer.",
+        "flag": "--ca-bundle"
+      },
+      {
+        "key": "insecure-self-signed",
+        "label": "--insecure-self-signed",
+        "type": "toggle",
+        "hint": "Accept any self-signed signer certificate (no identity check). Local development only; same as NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED=1.",
+        "flag": "--insecure-self-signed"
       }
     ],
     "docsPath": "/docs/cli-reference/",
@@ -12712,6 +12726,20 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "text",
         "hint": "Data directory",
         "flag": "--data-dir"
+      },
+      {
+        "key": "ca-bundle",
+        "label": "--ca-bundle",
+        "type": "text",
+        "hint": "PEM CA bundle that proposer, approver, policy and bypass signers must chain to (ADR-0315). Defaults to $NOVAFABRIC_PROMOTE_CA_BUNDLE; with neither, verification refuses every signer.",
+        "flag": "--ca-bundle"
+      },
+      {
+        "key": "insecure-self-signed",
+        "label": "--insecure-self-signed",
+        "type": "toggle",
+        "hint": "Accept any self-signed signer certificate (no identity check). Local development only; same as NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED=1.",
+        "flag": "--insecure-self-signed"
       }
     ],
     "docsPath": "/docs/cli-reference/",
@@ -14595,7 +14623,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "public-key",
         "label": "--public-key",
         "type": "text",
-        "hint": "PEM-encoded ed25519 public key of the export signer (required when verifying an export-manifest.json).",
+        "hint": "PEM-encoded ed25519 public key of the export signer (required when verifying an export-manifest.json; for an Evidence Bundle ZIP, the key every attestation must be signed with).",
         "flag": "--public-key"
       },
       {

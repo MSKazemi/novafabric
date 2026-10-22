@@ -30,6 +30,14 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
+
+@pytest.fixture(autouse=True)
+def _self_signed_promote_fixtures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests sign with self-signed fixture certificates and exercise SoD logic,
+    not signer identity, so they opt in to ADR-0315's explicit insecure mode. Trust-root
+    enforcement is pinned in tests/seal/test_promote_trust_root.py."""
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED", "1")
+
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "novaseal" / "legacy-v0.102"
 
 

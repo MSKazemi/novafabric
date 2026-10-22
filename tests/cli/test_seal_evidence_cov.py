@@ -26,6 +26,14 @@ from typer.testing import CliRunner
 from novafabric.cli.main import app
 from novafabric.cli.seal_propose import seal_app
 
+
+@pytest.fixture(autouse=True)
+def _self_signed_promote_fixtures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests sign with self-signed fixture certificates and exercise SoD logic,
+    not signer identity, so they opt in to ADR-0315's explicit insecure mode. Trust-root
+    enforcement is pinned in tests/seal/test_promote_trust_root.py."""
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED", "1")
+
 runner = CliRunner()
 
 
@@ -73,9 +81,10 @@ def _seed_policy(db_path: Path, key_path: Path, cert_path: Path) -> None:
     )
 
     store = PolicyStore(db_path)
+    # ADR-0315: a bypass counts only when signed by a policy approver.
     predicate = build_policy_predicate(
         proposer_key_ids=["proposer"],
-        approver_key_ids=["approver"],
+        approver_key_ids=["approver", "BypassVfy"],
     )
     payload = json.dumps(predicate).encode()
     envelope = sign_promote_envelope(payload, POLICY_PAYLOAD_TYPE, key_path, cert_path)

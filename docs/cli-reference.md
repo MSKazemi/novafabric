@@ -5573,6 +5573,9 @@ Options:
 - `--cert PATH` — X.509 PEM certificate matching `--key`
 - `--db PATH` — Merkle log DB path
 - `--data-dir PATH` — bundle storage root
+- `--ca-bundle PATH` — PEM CA bundle the proposer's certificate must chain to before its
+  details are shown (default: `$NOVAFABRIC_PROMOTE_CA_BUNDLE`; see *Promote trust root* below)
+- `--insecure-self-signed` — accept any self-signed proposer certificate (development only)
 
 If the operator types anything other than `y` at the prompt → exits 0 with "Promotion approval cancelled." No bundle is written.
 
@@ -5587,12 +5590,22 @@ Exit codes: `0` (approval recorded or cancelled), `1` (proposal not found or sig
 Run the five-check SoD verifier. Loads the Proposal and Approval bundles, loads the policy version recorded in the Proposal, and runs five checks in order (stops at first failure).
 
 ```bash
-nova seal verify capsule-abc123
+nova seal verify capsule-abc123 --ca-bundle /etc/novaseal/promote-ca.pem
 # SoD verification passed   (exit 0)
 
-nova seal verify capsule-abc123 --offline
-# SoD verification passed   (exit 0; --offline accepted, no Rekor calls in v0.1)
+nova seal verify capsule-abc123 --insecure-self-signed   # development only
+# SoD verification passed   (exit 0; signer identity NOT checked)
 ```
+
+**Promote trust root (ADR-0315, experimental).** Every proposal, approval, signed policy and
+bypass carries the certificate that signed it, so the name the policy matches on is only as
+trustworthy as the CA that issued that certificate. The verifier therefore requires a trust
+root: `--ca-bundle` (or `$NOVAFABRIC_PROMOTE_CA_BUNDLE`), and every signer must chain to it
+(offline RFC 5280 path validation, the same code NovaSeal uses for `nova verify --ca-bundle`).
+With neither set, verification refuses with exit 3 and says how to configure one;
+`--insecure-self-signed` (or `NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED=1`) accepts any
+self-signed signer and is meant for local development only. `nova serve`, `nova server` and
+`nova export-model-independence` read the same environment variables.
 
 **The five checks and their exit codes on failure:**
 
@@ -5605,6 +5618,9 @@ nova seal verify capsule-abc123 --offline
 | 5 | Approval timestamp > Proposal timestamp (ordering) | 7 |
 
 Additional exit codes:
+- `3` — also: no trust root configured, a signer that does not chain to it, or a signed
+  policy whose signature does not verify
+- `2` — the `--ca-bundle` file cannot be read
 - `8` — Approval bundle not found for capsule
 - `9` — Proposal bundle not found for capsule
 - `1` — other error (missing policy, malformed envelope)
@@ -5614,6 +5630,16 @@ Options:
 - `--offline` — skip any network calls (accepted; fully functional in v0.1 since no Rekor calls are made at verify time)
 - `--db PATH` — Merkle log DB path
 - `--data-dir PATH` — bundle storage root
+- `--ca-bundle PATH` — PEM CA bundle every promote signer must chain to (default:
+  `$NOVAFABRIC_PROMOTE_CA_BUNDLE`)
+- `--insecure-self-signed` — accept any self-signed signer (development only)
+
+**When a bypass counts.** An active bypass skips the five checks only if all of these hold:
+its signature verifies and its signer chains to the trust root; the signer's certificate
+subject is in the **latest** policy's `approver_key_ids`; the signed predicate names this
+capsule; and it is unexpired by its **signed** `valid_until`. The copy of `valid_until` in the
+bundle store is not signed, so it can shorten a bypass but never extend it. A bypass that
+fails any condition is ignored and the five checks run as usual.
 
 **Policy-time loading:** the verifier loads the policy version recorded in the Proposal's `policy_version` field, not the latest policy. A policy change after proposal creation does not retroactively invalidate in-flight proposals (ADR-0059 §Proposal-time policy).
 

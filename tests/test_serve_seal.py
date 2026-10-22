@@ -15,6 +15,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from novafabric.serve.app import create_app  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _self_signed_promote_fixtures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests sign with self-signed fixture certificates and exercise SoD logic,
+    not signer identity, so they opt in to ADR-0315's explicit insecure mode. Trust-root
+    enforcement is pinned in tests/seal/test_promote_trust_root.py."""
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED", "1")
+
 _TOKEN = "test-serve-seal-token"
 FIXTURE_KEYS = Path(__file__).parent / "fixtures" / "promote" / "keys"
 # serve/app.py host guard requires localhost; TestClient sends "testserver" by default

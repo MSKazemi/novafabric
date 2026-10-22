@@ -62,6 +62,19 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Promote (maker-checker) signatures need a trust root, and a seal bypass needs a trusted
+  approver (security, ADR-0315, behaviour change).** A promote envelope was verified against the
+  certificate it carried itself, so the names the policy matched on (`proposer_key_ids`,
+  `approver_key_ids`) were whatever the signer typed into a self-signed certificate. A bypass
+  signed by *any* key skipped separation of duties, its expiry was read from an unsigned store
+  file, and a signed policy was unwrapped without checking its signature. Now every proposal,
+  approval, signed policy and bypass signer must chain to a pinned CA (`--ca-bundle` on
+  `nova seal verify` / `nova seal approve`, or `NOVAFABRIC_PROMOTE_CA_BUNDLE`; offline RFC 5280
+  validation shared with NovaSeal). With no trust root, verification refuses with exit 3 and
+  says how to configure one; `--insecure-self-signed` / `NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED=1`
+  accepts self-signed signers for development. A bypass counts only when signed by an approver
+  in the latest policy, for this capsule, and unexpired by its **signed** `valid_until`.
+  `nova serve`, `nova server` and `nova export-model-independence` read the same variables.
 - **`nova verify <bundle>.zip` now checks signatures, `manifest_hash` and subjects (security).**
   It used to recompute artifact digests only, so a bundle whose signed attestation had been
   edited — with the new digest written back into `manifest.json` — verified as PASSED, even

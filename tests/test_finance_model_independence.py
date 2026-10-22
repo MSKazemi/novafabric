@@ -43,6 +43,14 @@ from novafabric.promote.predicates import (
 )
 from novafabric.registry.store import get_connection, init_schema
 
+
+@pytest.fixture(autouse=True)
+def _self_signed_promote_fixtures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests sign with self-signed fixture certificates and exercise SoD logic,
+    not signer identity, so they opt in to ADR-0315's explicit insecure mode. Trust-root
+    enforcement is pinned in tests/seal/test_promote_trust_root.py."""
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED", "1")
+
 KEYS = Path(__file__).parent / "fixtures" / "promote" / "keys"
 
 
@@ -349,6 +357,10 @@ def test_seal_bypass_is_missing(tmp_path: Path) -> None:
         "admin",
     )
     bundles.put_bypass(CAPSULE, env, until)
+    # ADR-0315: a bypass counts only when its signer is an approver in the policy.
+    PolicyStore(tmp_path / "m.db").put(
+        json.dumps(build_policy_predicate(["proposer"], ["approver", "admin"]))
+    )
     rec = collect.collect_seal_record(CAPSULE, data_dir=tmp_path, policy_db=tmp_path / "m.db")
     assert rec is not None and rec.bypass_used and rec.state == "bypassed"
     assert rec.record_ref.endswith("/bypass")

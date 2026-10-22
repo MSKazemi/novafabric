@@ -23,6 +23,14 @@ from novafabric.promote.predicates import (
     verify_promote_envelope,
 )
 
+
+@pytest.fixture(autouse=True)
+def _self_signed_promote_fixtures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests sign with self-signed fixture certificates and exercise SoD logic,
+    not signer identity, so they opt in to ADR-0315's explicit insecure mode. Trust-root
+    enforcement is pinned in tests/seal/test_promote_trust_root.py."""
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED", "1")
+
 # ---------------------------------------------------------------------------
 # Key/cert generation helper
 # ---------------------------------------------------------------------------
@@ -232,7 +240,11 @@ class TestBypassSignVerify:
 
 class TestVerifySodBypass:
     def _make_policy_store(self, tmp_path, key_path, cert_path):
-        """Create a policy store with a valid policy including the cert CN."""
+        """Create a policy store with a valid policy including the cert CN.
+
+        ADR-0315: a bypass counts only when its signer is a policy approver, so the
+        bypass operator is listed among the approvers.
+        """
         from novafabric.promote.policy_store import PolicyStore
         from novafabric.promote.predicates import (
             POLICY_PAYLOAD_TYPE,
@@ -243,7 +255,7 @@ class TestVerifySodBypass:
         policy_store = PolicyStore(tmp_path / "policy.db")
         predicate = build_policy_predicate(
             proposer_key_ids=["proposer"],
-            approver_key_ids=["approver"],
+            approver_key_ids=["approver", "BypassOperator"],
         )
         payload = json.dumps(predicate).encode()
         envelope = sign_promote_envelope(payload, POLICY_PAYLOAD_TYPE, key_path, cert_path)

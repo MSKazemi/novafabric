@@ -7,6 +7,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import jcs  # type: ignore[import-untyped]
 
@@ -16,8 +17,10 @@ from novafabric.promote.policy_store import PolicyStore
 from novafabric.promote.predicates import (
     APPROVAL_PAYLOAD_TYPE,
     BYPASS_PAYLOAD_TYPE,
+    POLICY_PAYLOAD_TYPE,
     PROPOSAL_PAYLOAD_TYPE,
     EnvelopeError,
+    PromoteTrust,
     verify_promote_envelope,
 )
 
@@ -37,6 +40,8 @@ def verify_sod(
     policy_store: PolicyStore,
     bundle_store: PromoteBundleStore,
     offline: bool = False,
+    *,
+    trust: PromoteTrust | None = None,
 ) -> VerifyResult:
     """Run the five-check SoD verification for a capsule's promote bundles.
 
@@ -51,26 +56,23 @@ def verify_sod(
     Missing proposal → exit 9
     """
     # ------------------------------------------------------------------
-    # Bypass check — if a valid (non-expired) bypass exists, skip SoD
+    # Trust root (ADR-0315): every envelope below is signed by a certificate the
+    # envelope itself carries, so its identity means nothing until it chains to a
+    # pinned root. Unresolvable configuration fails closed.
     # ------------------------------------------------------------------
-    bypass_uuids = bundle_store.list_bypasses(capsule_id)
-    now = datetime.now(UTC)
-    for bypass_uuid in bypass_uuids:
-        try:
-            valid_until_str = bundle_store.get_bypass_valid_until(capsule_id, bypass_uuid)
-            valid_until = datetime.fromisoformat(valid_until_str)
-            if valid_until.tzinfo is None:
-                valid_until = valid_until.replace(tzinfo=UTC)
-            if valid_until > now:
-                bypass_env = bundle_store.get_bypass(capsule_id, bypass_uuid)
-                try:
-                    _, bypass_subject = verify_promote_envelope(bypass_env, BYPASS_PAYLOAD_TYPE)
-                except EnvelopeError:
-                    continue  # Invalid signature — try next bypass
-                msg = f"bypass active until {valid_until_str} (authorized by {bypass_subject})"
-                return VerifyResult(passed=True, exit_code=0, message=msg, bypass_used=True)
-        except BundleNotFoundError:
-            continue
+    try:
+        if trust is None:
+            trust = PromoteTrust.resolve()
+        trust.require()
+    except EnvelopeError as exc:
+        return VerifyResult(passed=False, exit_code=3, message=str(exc))
+
+    # ------------------------------------------------------------------
+    # Bypass check — a valid, trusted, authorised, unexpired bypass skips SoD
+    # ------------------------------------------------------------------
+    bypass_msg = _active_bypass(capsule_id, policy_store, bundle_store, trust)
+    if bypass_msg is not None:
+        return VerifyResult(passed=True, exit_code=0, message=bypass_msg, bypass_used=True)
 
     # ------------------------------------------------------------------
     # Load proposal
@@ -95,7 +97,7 @@ def verify_sod(
     # ------------------------------------------------------------------
     try:
         proposal_payload, proposer_subject = verify_promote_envelope(
-            proposal_envelope_bytes, PROPOSAL_PAYLOAD_TYPE
+            proposal_envelope_bytes, PROPOSAL_PAYLOAD_TYPE, trust=trust
         )
     except EnvelopeError as exc:
         msg = f"proposal signature invalid: {exc}"
@@ -107,22 +109,15 @@ def verify_sod(
 
     try:
         policy_version = int(policy_version_str)
-        policy_json = policy_store.get_by_version(policy_version)
+        policy = _load_policy(policy_store.get_by_version(policy_version), trust)
     except (ValueError, PolicyNotFoundError) as exc:
         msg = f"policy not found (version={policy_version_str!r}): {exc}"
         log.warning(msg)
         return VerifyResult(passed=False, exit_code=3, message=msg)
-
-    policy = json.loads(policy_json)
-    # policy_json may be a DSSE envelope (if policy sign was used) or raw predicate
-    # Unwrap if it's a DSSE envelope
-    if "payloadType" in policy and "payload" in policy:
-        import base64
-        raw_payload = policy["payload"]
-        pad = 4 - len(raw_payload) % 4
-        if pad != 4:
-            raw_payload += "=" * pad
-        policy = json.loads(base64.urlsafe_b64decode(raw_payload))
+    except EnvelopeError as exc:
+        msg = f"policy signature invalid (version={policy_version_str!r}): {exc}"
+        log.warning(msg)
+        return VerifyResult(passed=False, exit_code=3, message=msg)
 
     proposer_key_ids: list[str] = policy.get("proposer_key_ids", [])
     if proposer_subject not in proposer_key_ids:
@@ -145,7 +140,7 @@ def verify_sod(
     # ------------------------------------------------------------------
     try:
         approval_payload, approver_subject = verify_promote_envelope(
-            approval_envelope_bytes, APPROVAL_PAYLOAD_TYPE
+            approval_envelope_bytes, APPROVAL_PAYLOAD_TYPE, trust=trust
         )
     except EnvelopeError as exc:
         msg = f"approval signature invalid: {exc}"
@@ -196,3 +191,79 @@ def verify_sod(
         exit_code=0,
         message="SoD verification passed",
     )
+
+
+def _load_policy(policy_json: str, trust: PromoteTrust) -> dict[str, Any]:
+    """Parse a stored policy; a signed (DSSE) policy must verify under ``trust``.
+
+    Before ADR-0315 a signed policy was base64-unwrapped without checking its
+    signature, so the signature added nothing. A raw (unsigned) predicate is still
+    accepted: it is the operator's own local policy-store entry.
+
+    Raises:
+        EnvelopeError: a signed policy whose signature or signer does not verify.
+    """
+    policy: dict[str, Any] = json.loads(policy_json)
+    if "payloadType" in policy and "payload" in policy:
+        payload, _ = verify_promote_envelope(
+            policy_json.encode("utf-8"), POLICY_PAYLOAD_TYPE, trust=trust
+        )
+        policy = json.loads(payload)
+    return policy
+
+
+def _parse_utc(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _active_bypass(
+    capsule_id: str,
+    policy_store: PolicyStore,
+    bundle_store: PromoteBundleStore,
+    trust: PromoteTrust,
+) -> str | None:
+    """Return a message for the first bypass that may skip SoD, else ``None``.
+
+    A bypass counts only when (ADR-0315): its signature verifies and its signer chains
+    to the promote trust root; the signed predicate names this ``capsule_id``; it is
+    unexpired by **both** the signed ``valid_until`` and the store's copy (the store
+    file is unsigned, so it may shorten a bypass but never extend it); and its signer
+    is in the latest policy's ``approver_key_ids``. Anything else is skipped.
+    """
+    now = datetime.now(UTC)
+    approvers: list[str] | None = None
+    for bypass_uuid in bundle_store.list_bypasses(capsule_id):
+        try:
+            stored_until = _parse_utc(bundle_store.get_bypass_valid_until(capsule_id, bypass_uuid))
+            envelope = bundle_store.get_bypass(capsule_id, bypass_uuid)
+            payload, subject = verify_promote_envelope(envelope, BYPASS_PAYLOAD_TYPE, trust=trust)
+            predicate = json.loads(payload)
+        except (BundleNotFoundError, EnvelopeError, ValueError) as exc:
+            log.warning("bypass %s for %s rejected: %s", bypass_uuid, capsule_id, exc)
+            continue
+        if not isinstance(predicate, dict) or predicate.get("capsule_id") != capsule_id:
+            log.warning("bypass %s names a different capsule; ignored", bypass_uuid)
+            continue
+        signed_until = _parse_utc(predicate.get("valid_until"))
+        if signed_until is None or stored_until is None or min(signed_until, stored_until) <= now:
+            continue
+        if approvers is None:
+            try:
+                approvers = list(_load_policy(policy_store.get_latest(), trust).get(
+                    "approver_key_ids", []
+                ))
+            except (PolicyNotFoundError, EnvelopeError, ValueError) as exc:
+                log.warning("bypass refused: no usable promote policy: %s", exc)
+                return None
+        if subject not in approvers:
+            log.warning("bypass %s signer %r is not a policy approver", bypass_uuid, subject)
+            continue
+        until = min(signed_until, stored_until).isoformat()
+        return f"bypass active until {until} (authorized by {subject})"
+    return None
