@@ -74,6 +74,9 @@ DEFAULT_REASON = "gdpr_art_17"
 
 RETENTION_MONTHS_ENV = "NOVA_AI_ACT_RETENTION_MONTHS"
 DEFAULT_RETENTION_MONTHS = 6
+#: Upper bound for a caller-supplied retention window (100 years). The EU AI Act
+#: provider-mode floor is 120 months; anything beyond this is an input error.
+MAX_RETENTION_MONTHS = 1200
 
 _ERROR_DETAIL_MAX_LEN = 500
 
@@ -113,6 +116,31 @@ def sanitize_error_detail(detail: str, subject_id: str) -> str:
             subject_id, "sha256:" + subject_sha256(subject_id)[:12]
         )
     return detail[:_ERROR_DETAIL_MAX_LEN]
+
+
+def parse_retention_months(value: object, *, default: int) -> int:
+    """Validate a caller-supplied Art.17(3)(b) retention window, in months.
+
+    ``None`` means *default*. Anything else must be an ``int`` (``bool`` is refused
+    although Python counts it as one) in ``0..MAX_RETENTION_MONTHS``. No coercion: a
+    string, a float or a negative number used to be ``int()``-ed into a window that
+    could lie in the past, which made the deferral a no-op.
+
+    Raises:
+        ValueError: the value is not an integer in range (message names the field).
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"retention_months must be an integer number of months, got "
+            f"{type(value).__name__}"
+        )
+    if not 0 <= value <= MAX_RETENTION_MONTHS:
+        raise ValueError(
+            f"retention_months must be between 0 and {MAX_RETENTION_MONTHS}, got {value}"
+        )
+    return value
 
 
 def retention_months_from_env() -> int:

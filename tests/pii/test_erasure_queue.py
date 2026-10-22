@@ -240,7 +240,10 @@ def test_receipt_file_resolvable_by_restore_replay(home: Path) -> None:
     receipt_ref = str(
         home / "evidence" / "erasure" / f"{final.request_id}.receipt.json"
     )
-    assert _resolve_subject({"erasure_receipt_ref": receipt_ref}) == SUBJECT
+    record = {"erasure_receipt_ref": receipt_ref, "item_id": final.request_id}
+    assert _resolve_subject(record) == SUBJECT
+    # A receipt resolves only for the record it belongs to (restore hardening).
+    assert _resolve_subject({**record, "item_id": "another-request"}) is None
 
 
 def test_execute_deferred_within_retention_window(home: Path) -> None:

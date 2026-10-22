@@ -2,7 +2,7 @@ novafabric_spec_version: "1"
 asset_type: dataset
 name: transactions-cleaned
 version: 2.0.0
-status: production
+status: development  # new assets always register as development; promote with `nova promote`
 description: "Cleaned and deduplicated transactions dataset for fraud modeling"
 tags:
   team: data-eng

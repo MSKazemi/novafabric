@@ -2129,7 +2129,12 @@ paths:
       x-nova-contract: pending
   /api/assets/register-from-yaml:
     post:
-      description: Register an asset from a YAML spec string (used by suggest-register panel).
+      description: 'Register an asset from a YAML spec string (used by suggest-register panel).
+
+
+        Same rules as ``POST /api/assets``: the asset enters as ``development``; a spec
+
+        declaring any other status is refused (``ok: false``).'
       parameters:
       - in: query
         name: token

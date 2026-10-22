@@ -79,6 +79,13 @@ policy allow, and `force` does not bypass it. Without one, the answer is **403**
 is never an explicit allow. Reach `production` through `nova promote propose` + `approve`. The
 policy subject is `serve:<credential fingerprint>`, not the request's `actor` field.
 
+Registration is not a way in either. `POST /api/assets` registers every asset as
+`development`; a spec that declares any other `status` is refused with **422** (audited as
+an error) and `POST /api/assets/register-from-yaml` answers `ok: false`. A version that was
+ever in production cannot be registered again (**409**). A rollback restores, without a
+policy decision, only a version whose *current* registration has production history; see
+[`nova rollback`](cli-reference.md#nova-rollback-name---actor-id).
+
 ## Aggregates and the honest-degradation rule (ADR-0234, experimental)
 
 > An aggregate that cannot be computed faithfully must refuse, and say why. It may not render an
@@ -325,7 +332,7 @@ always reported as a gap, never fabricated. Each source is capped
 | `POST` | `/api/compliance/export/ropa` | Export GDPR Art.30 Records of Processing Activities (RoPA) — nova export-ropa. |
 | `POST` | `/api/compliance/export/{kind}` | Run one registry exporter — the same builder its CLI command calls. |
 | `GET` | `/api/compliance/nis2` | Build and return a NIS2 incident report as JSON. |
-| `POST` | `/api/compliance/pii/erase` | Destroy a data subject's DEK — nova pii erase (**experimental**: makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314). While any legal hold is active the DEK is kept: 409 `{error: "legal_hold_active", erased: false, receipt}` (GDPR Art.17(3)(e)). |
+| `POST` | `/api/compliance/pii/erase` | Destroy a data subject's DEK — nova pii erase (**experimental**: makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314). While any legal hold is active the DEK is kept: 409 `{error: "legal_hold_active", erased: false, receipt}` (GDPR Art.17(3)(e)). Optional `retention_months` must be an integer in `0..1200` (default 6; `0` = no Art.17(3)(b) window, as `nova pii erase --retention-months 0`); a negative, non-integer, boolean or string value is **422** and no key is touched. |
 | `GET` | `/api/compliance/subject-proof` | Return GDPR Art. 17 redaction proof for a data subject. |
 | `GET` | `/api/governance/classify` | Classify an AI system risk tier inferred from a Run Capsule. |
 | `POST` | `/api/governance/classify-manual` | Classify a manually described AI system — nova classify run. |

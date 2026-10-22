@@ -19,7 +19,10 @@
    ``CRYPTO_SHRED`` record in the retention decision log is re-applied against
    the restored DEK store: a DEK the log says was destroyed is destroyed again
    if the backup (or surrounding state) resurrected it. Shredded stays
-   shredded, deterministically, before the restore is declared done.
+   shredded, deterministically, before the restore is declared done. Only a log
+   whose audit hash chain verifies may destroy a key, each record's erasure
+   receipt must name the shredded item, and an active legal hold stops every
+   destruction (the step then fails: the hold wins, D4 is reported unmet).
 6. **Verification chain** — the doctor storage check and, when a Merkle log
    exists under the home, ``seal log verify`` — run programmatically. The
    restore is complete ONLY when verification passes (ADR-0181 D6).
@@ -552,6 +555,26 @@ def _replay_crypto_shreds(
     the step: shred preservation cannot be proven for it. Multiple logs (the
     restored one plus a moved-aside live one) are merged; replay is
     idempotent, so the union is always safe.
+
+    Destroying a key is irreversible, so the replay acts only on evidence it can
+    check (adversarial review, 2026-10-22):
+
+    * **The log's hash chain must verify** (:meth:`AuditLog.verify`). A log with
+      any chain error contributes no records — a line appended or edited outside
+      the chain cannot destroy a key — and the step fails. The chain is unkeyed:
+      this stops edits that do not recompute the chain, not a writer who
+      rewrites it (NovaSeal is the keyed layer).
+    * **The receipt must be about the record**: a regular file (not a symbolic
+      link) named ``<item_id>.receipt.json`` — the name every receipt writer uses
+      (the retention executor and the erasure queue) — so a record cannot borrow
+      another erasure's receipt. Otherwise the record is unresolvable.
+    * **Legal holds win** (ADR-0031, ADR-0134 D4, as in ``DEKStore.erase_subject``).
+      With any active hold — in the deployment's hold store or in the restored
+      home's ``registries/`` — no resurrected DEK is destroyed, and the step
+      fails: a key the log records as destroyed exists again, and only a person
+      can decide what
+      the hold requires. Release the hold (or establish that it does not cover
+      the subject) and restore again.
     """
     name = "crypto-shred-replay"
     paths = (
@@ -560,11 +583,30 @@ def _replay_crypto_shreds(
         else [decision_log_paths]
     )
     records: Optional[list[dict[str, object]]] = None
+    unverified: list[str] = []
     for log_path in paths:
         found = _read_shred_records(log_path)
         if found is None:
             continue
+        if found:
+            chain_errors = _audit_chain_errors(log_path)
+            if chain_errors:
+                unverified.append(
+                    f"{log_path} ({len(chain_errors)} chain error(s), first: {chain_errors[0]})"
+                )
+                found = []
         records = found if records is None else records + found
+    if unverified:
+        return RestoreStepResult(
+            name=name,
+            ok=False,
+            detail=(
+                "decision log audit chain does not verify: "
+                + "; ".join(unverified)
+                + " — no crypto-shred from an unverifiable log is replayed, "
+                "shred preservation cannot be proven, restore failed"
+            ),
+        )
     if records is None:
         return RestoreStepResult(
             name=name,
@@ -594,6 +636,8 @@ def _replay_crypto_shreds(
     re_shredded = 0
     noop = 0
     unresolved: list[str] = []
+    held: list[str] = []
+    hold_ids: Optional[list[str]] = None
     for record in records:
         if record.get("reason") == "no_dek":
             noop += 1  # nothing was ever shredded for this record
@@ -603,6 +647,11 @@ def _replay_crypto_shreds(
             unresolved.append(str(record.get("record_id") or record.get("item_id")))
             continue
         if _dek_exists(dek_db, subject_id):
+            if hold_ids is None:
+                hold_ids = _active_hold_ids(home)
+            if hold_ids:
+                held.append(str(record.get("item_id")))
+                continue
             _force_shred_dek(dek_db, subject_id)
             re_shredded += 1
         else:
@@ -612,6 +661,19 @@ def _replay_crypto_shreds(
         f"{len(records)} applied crypto-shred record(s): {absent} already absent, "
         f"{re_shredded} resurrected DEK(s) re-destroyed, {noop} no-DEK no-op(s)"
     )
+    if held:
+        return RestoreStepResult(
+            name=name,
+            ok=False,
+            detail=(
+                f"{detail}; {len(held)} resurrected DEK(s) left in place for item(s) "
+                f"{', '.join(held)}: legal hold(s) {', '.join(hold_ids or [])} active, "
+                "and a hold forbids destroying keys — a key the log records as destroyed "
+                "exists again, "
+                "restore failed. Release the hold (or establish that it does not cover "
+                "these subjects) and restore again."
+            ),
+        )
     if unresolved:
         return RestoreStepResult(
             name=name,
@@ -1142,17 +1204,56 @@ def _read_shred_records(decision_log_path: Path) -> Optional[list[dict[str, obje
     return records
 
 
+def _audit_chain_errors(log_path: Path) -> list[str]:
+    """Hash-chain errors of an audit-log file (empty = the chain verifies)."""
+    from novafabric.audit import AuditLog  # noqa: PLC0415
+
+    try:
+        return AuditLog(log_path).verify()
+    except (OSError, ValueError) as exc:
+        return [f"unreadable: {exc}"]
+
+
+def _active_hold_ids(home: Path) -> list[str]:
+    """Active legal holds that bind this deployment or the restored home.
+
+    The unified hold store (canonical ``$NOVAFABRIC_HOME/registries``, the legacy
+    working-directory root) plus the restored home's own ``registries/``. Holds are
+    registry-global today, as for every other deletion path. Fails closed: a
+    ledger that cannot be read counts as a hold.
+    """
+    from novafabric.retention.holds import active_hold_ids  # noqa: PLC0415
+
+    try:
+        return active_hold_ids(extra_roots=[home / "registries"])
+    except OSError as exc:
+        return [f"__unreadable__:{exc.__class__.__name__}"]
+
+
 def _resolve_subject(record: dict[str, object]) -> Optional[str]:
-    """Data-subject id for a shred record, via its erasure receipt."""
+    """Data-subject id for a shred record, via its erasure receipt.
+
+    The receipt path comes from the log, so the receipt must belong to the record:
+    a regular file (a symbolic link is refused) named ``<item_id>.receipt.json``,
+    the name both receipt writers give it (``retention.actions`` and
+    ``pii.erasure_queue``).
+    """
     receipt_ref = record.get("erasure_receipt_ref")
+    item_id = record.get("item_id")
     if not isinstance(receipt_ref, str) or not receipt_ref:
         return None
+    if not isinstance(item_id, str) or not item_id:
+        return None
     receipt_path = Path(receipt_ref)
-    if not receipt_path.is_file():
+    if receipt_path.name != f"{item_id}.receipt.json":
+        return None
+    if receipt_path.is_symlink() or not receipt_path.is_file():
         return None
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(receipt, dict):
         return None
     subject = receipt.get("subject_id")
     return subject if isinstance(subject, str) and subject else None
