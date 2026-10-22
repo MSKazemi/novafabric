@@ -100,6 +100,25 @@ Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-c
 | 0315 | Promote signers must chain to a pinned CA; a seal bypass counts only from a policy approver, for its own capsule, by its signed expiry | `nova seal verify\|approve --ca-bundle` | requiring a signed policy when a trust root is pinned |
 | — | `nova verify <bundle>.zip` checks `manifest_hash`, DSSE signatures and subjects; `--public-key` pins the signer. `attest-replay --mode exact` refuses an ineligible run. Every write-permitting replay flag goes through the `replay_mutating` policy | `nova verify`, `nova evidence attest-replay`, `nova replay` | — |
 
+### Next — open items from the 2026-10 code-vs-docs defect batch (unreleased fixes on `main`)
+
+These are known limits left after the defect batch in CHANGELOG `[Unreleased]`. Each is
+**planned** (no implementation yet) unless marked as an owner decision.
+
+| Item | Why it is open | Status |
+|---|---|---|
+| Capsule-scoped legal holds | Holds are registry-wide and a subject's DEK covers all their capsules, so **any** active hold defers every PII erasure | planned |
+| Retention sweep sees `capsule.yaml` capsules | The sweep enumerates `capsule.json` only, so no retention action reaches capsules NovaFabric writes; enabling it starts real deletion for deployments with bindings | owner decision |
+| `nova retention plan/apply` paths under `$NOVAFABRIC_HOME` | Policy, bindings and `worm.db` are still read relative to the working directory | planned |
+| Pin the signer trust list | `NOVAFABRIC_PROMOTE_SIGNERS` / `NOVAFABRIC_HOME` choose the trust list (ADR-0312 Limits); proposal: pin its sha256 in the registry | owner decision |
+| Annotation sign-off keys | `eval/annotation_store.py` still creates a keypair on first use | owner decision (which trust list/roles) |
+| `extra_env` from the environment | `--runner-option extra_env=K=V` puts the value in `nova capture`'s argv; a bare `extra_env=NAME` would copy it from the submitting shell (needs a CLI ADR); the JSON form is silently ignored by the parser | planned |
+| Capture-level enforcement | `minimal`/`standard` do not reduce capture; `GET /api/policy/capture-level` reports tiers as if enforced | planned |
+| Workload-process capture drops in `capture-health.json` | Drops counted in the workload's child process never reach the capsule's health file | planned |
+| `openai.DefaultAioHttpClient` double network events | httpx2 over aiohttp is recorded by both hooks (one logical call) | planned |
+| Hard links inside a capsule | Not detected by exporters (mitigated by `fs.protected_hardlinks`) | documented limit |
+| Collector 500 on an event without `event_type` | The DuckDB accumulator raises instead of returning 422 | planned |
+
 ### Next — specified, unclaimed, ready to build
 
 *(Nothing currently listed. The three capture adapters that stood here —
@@ -719,14 +738,14 @@ See [Storage Architecture](docs/architecture.md#production-storage-stack-polyglo
 ## Documentation & spec reconciliation (2026-07 as-built audit)
 
 A repo-wide code-vs-docs drift audit (2026-07-23) corrected the documentation to match the
-shipped code. Three items are genuine **code/spec gaps** (not just stale prose) and are tracked
-here for reconciliation:
+shipped code. Three items were found as genuine **code/spec gaps** (not just stale prose); REC-1 and REC-2
+are still open, REC-3 is closed:
 
 | ID | Item | Nature | Action |
 |---|---|---|---|
 | **REC-1** | `parent-child-capsule-v1.md` prose describes an earlier field model (`capsule_role ∈ {STANDALONE,PARENT,WORKER,COORDINATOR}`, `lifecycle_state`/`ACTIVE`) that diverged from its own frozen JSON schema (`{PARENT,CHILD,STANDALONE}` + `distribution_role`, `status`/`RUNNING`). | Doc-vs-own-schema drift; an as-built reconciliation callout was added, but the §2–§4 prose still needs a full pass or a `0.2.1` spec revision. | Reconcile prose to the schema, or cut a `0.2.1` normative revision. |
 | **REC-2** | `pending_parent_timeout`: the accepted spec decision (OQ-02) is **300 s**, but the shipped code (`capsule/orphan.py:98`, `FR-14`) defaults to **86 400 s / 24 h**. | Genuine spec-vs-code **conflict** — the accepted decision and the implementation disagree. | Decide which is correct; amend the ADR/spec **or** the code default so they match. Do not treat either value as settled until then. |
-| **REC-3** | `api/openapi.yaml` is a hand-maintained partial spec documenting ~30 of the ~64 shipped server-mode operations (missing orgs/workspaces/service-accounts/SCIM/SAML/seal/admin-roles/suggest-register groups). | Under-coverage of a shipped surface; `api-reference.md` and the spec's own `info.description` now flag it. | Add an OpenAPI generator (dump `app.openapi()`) or a curated authoring pass so the spec covers all shipped `/v0` routes. |
+| **REC-3** | ~~`api/openapi.yaml` was a hand-maintained partial spec (~30 of ~64 operations).~~ **Resolved in v0.64.0:** the spec is generated from the live server app by `scripts/gen_openapi.py` (`app.openapi()`), so it covers exactly the mounted routes. | Closed. | Regenerate with `uv run python scripts/gen_openapi.py` after any server-route change. |
 
 The at-scale lineage graph backends (KuzuDB/Postgres/AGE/JanusGraph) surfaced by the same audit
 are tracked under **Cluster-scale phases** above.

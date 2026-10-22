@@ -124,6 +124,28 @@ STRIDE analysis in the project's internal threat model:
   SLURM wrote them into the job script on `sbatch`'s command line; rotate any that
   were set when you used one of those runners.
 
+  Fixed in the next release: `--runner slurm` passed its job script — `extra_env`
+  values included — as `sbatch --wrap <script>`, readable by every user on the
+  submit host through `ps`; `--runner lsf` wrote the same values to
+  `nova-<run>.lsf` in the capsule directory, where the capsule sealed it; and
+  `--runner docker` passed `-e NAME=VALUE`. If you passed a credential through
+  `extra_env` with one of these runners, rotate it. The value given on `nova
+  capture`'s own command line (`--runner-option extra_env=K=V`) is still in that
+  process's argv for the run, and Docker values remain visible to `docker
+  inspect`.
+
+  Also fixed in the next release, in the opt-in server and export surfaces:
+  a symbolic link inside a capsule made `nova export-evidence` and other
+  exporters copy its target (any file the exporting user could read) into the
+  output, and let a read-scope `nova serve` token read it — **inspect bundles,
+  backups and exports made from capsules that contained links**; `nova serve`
+  wrote the first 8 characters of its token into the audit log and SIEM export —
+  **rotate the serve token if those records left the machine**; an
+  `operate`-scope token could read or write files anywhere the server could;
+  and the cluster collector served unauthenticated callers on every interface
+  when no `NOVA_COLLECTOR_TOKEN` was set (it now serves only loopback,
+  non-proxied requests — set a token whenever anything proxies to it).
+
 If you find a way to make any disabled-by-default surface reachable without
 explicit opt-in, that is a vulnerability — please report it.
 
@@ -150,7 +172,7 @@ docs for its own risk surface would have missed all four.
 |---|---|---|
 | `NOVAFABRIC_SERVER_INSECURE_NO_AUTH` | authentication | restores pre-ADR-0184 **anonymous admin** — every request is an administrator |
 | `NOVAFABRIC_SERVER_I_KNOW_THIS_IS_PUBLIC` | the non-loopback refusal | the two above **combine**: `insecure_no_auth` on a non-loopback bind raises `InsecureBindError` unless this is also set. ADR-0184 makes anonymous admin on a network-reachable interface a *doubly*-explicit choice — this is the second half |
-| `NOVAFABRIC_SERVE_PATH_ROOTS` | the `nova serve` path allowlist | Extra absolute directories, `:`-separated, that `nova serve` endpoints may read and write when a request names a path (evidence export, capsule migrate, policy sign/test, KG/lineage `capsule_path`, metadata rebuild). Without it, writes are confined to `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence` and `$NOVAFABRIC_EVIDENCE_DIR`, and reads also to `$NOVAFABRIC_HOME` and the capsule dir. This is an **allowlist**; the former denylist opt-out `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` is no longer honoured |
+| `NOVAFABRIC_SERVE_PATH_ROOTS` | the `nova serve` path allowlist | Extra absolute directories, `:`-separated, that `nova serve` endpoints may read and write when a request names a path (evidence export, capsule migrate, policy sign/test, KG/lineage `capsule_path`, metadata rebuild). Without it, writes are confined to `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence` and `$NOVAFABRIC_EVIDENCE_DIR`, and reads also to `$NOVAFABRIC_HOME` and the capsule dir. This is an **allowlist**; the former denylist opt-out `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` is no longer honoured. Reads never reach the server's own secrets (token stores, `.serve-token`, `.env`, `dek.db`, ratchet state, `config.yaml`, audit logs) nor, for source reads, key material |
 | `NOVAFABRIC_SERVER_WEBHOOKS_ALLOW_INSECURE_URL` | webhook URL validation | permits insecure webhook destinations; the outbound path is the only one that leaves the trust boundary |
 | `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT` | the device-grant guard | enables local/testing scaffolding whose `/approve` endpoint is **unauthenticated**. The code's own comment says it is off by default "so no production deployment exposes an unauthenticated role-approval surface" |
 | `NOVAFABRIC_ALLOW_SEALED_DELETE` | the sealed-capsule delete refusal | `DELETE /v0/capsules`, `bulk-delete` and `nova serve`'s `DELETE /api/runs` may delete a NovaSeal-sealed capsule (`.seal/` present), destroying sealed evidence. It never overrides a legal hold or WORM lock; deletions stay audited (experimental, ADR-0206) |

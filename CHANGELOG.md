@@ -82,6 +82,55 @@ entries below change behaviour** — read *Changed — BREAKING* before upgradin
   delete routes. Holds now live in `$NOVAFABRIC_HOME/registries/<r>/holds.jsonl`; holds at both
   old locations are still honoured and releasable. API hold create/release is audited.
 
+- **Rollback and every other route into production are gated.** "Promote to staging, then roll
+  back" put an unreviewed version into production: `rollback_asset` (`nova rollback`, `POST
+  /api/assets/{name}/rollback`) had no `promote_direct` gate and fell back to "any other version".
+  A new append-only `asset_status_history` records every status change; a rollback restores
+  without a policy decision only a version that was in production, and anything else needs an
+  explicit `promote_direct` allow plus the promote, eval and lifecycle gates. `PUT
+  /v0/assets/{id}/promote` (`nova server`) and `nova prompt promote` are gated too (403
+  `promote_direct_denied`).
+- **Relaxing a protected label is maker-checker.** Unprotect → set → re-protect moved a label with
+  no second person. `--unprotect`, fewer required approvals, or a changed or removed
+  `--policy-ref` now only *proposes* the change (new `--identity`); a trust-listed checker
+  approves it with `nova label approve-move <change-id>`. Strengthening stays single-actor.
+- **Legal holds stop PII erasure and are re-checked at the moment of action.** `nova pii erase`
+  and the REST erasure routes destroyed a held subject's key; they now keep it and report
+  `legal_hold_active` (GDPR Art. 17(3)(e); `nova pii erase` exits 3, HTTP 409, queue state `HELD`).
+  Holds are registry-wide today, so **any active hold defers every erasure** until it is released.
+  `nova retention apply` re-reads holds and WORM locks before every action; a held crypto-shred is
+  never recorded as applied.
+- **No capsule exporter or `nova serve` route follows a symbolic link.** Beyond `nova
+  export-evidence`, a link planted in a capsule was followed by `nova export-blob`, `nova migrate`
+  / `/api/capsule-migrate`, `nova export-rocrate` / `/api/compliance/export/rocrate`, `nova backup
+  create`, `nova audit bundle`, `nova export-examiner bagit` and the SDK's `upload_capsule`, and a
+  **read-scope** token got the target's contents from `GET /api/runs/{id}/file/...`. One shared
+  no-follow layer (per-component `O_NOFOLLOW` opens, exclusive copies, a re-check after copying)
+  now serves all of them; each refuses with a named error and writes nothing; the file route
+  answers 404 and run routes 403 for a capsule with a top-level link; `nova restore` refuses link
+  members. Hard links remain a documented limit.
+- **`nova serve` reads never reach the server's own secrets, and every path parameter is
+  confined.** Read roots covered all of `$NOVAFABRIC_HOME`, so a request could name the token
+  store or `dek.db` as a source. Token stores, `.serve-token`, `.env`, `dek.db`, ratchet state,
+  `config.yaml`, the audit logs and (for source reads) key material are now refused.
+  `/api/assure?capsule_path=`, compliance `profile`, ratchet `node_id`, sigstore and seal
+  `capsule_id`, `run_id` and `cart_id` are confined or validated as one path segment; ratchet
+  responses no longer return the chain key.
+- **A forged capsule cannot dodge the sealer-log check by claiming the other log version.**
+  `root_version` comes from the writer-controlled `log-entry.json`. The sealer's log is now
+  recognised by signer alone: a record claiming a newer version than the log fails; one claiming an
+  older version is checked against the retired logs in the new `novaseal.yaml` key
+  `previous_merkle_dbs`, and is otherwise reported `sealer_log: unverifiable-other-version`.
+- **An unanchored timestamp is never reported as OK.** A token from any self-made TSA verified as
+  `OK`. The new `timestamp_trust` (`anchored` / `unanchored` / `absent` / `invalid`) with
+  `timestamp_gen_time` and `tsa_subject` separates trusted time from token integrity; human output
+  prints `UNANCHORED`. `timestamp_ok` and the exit code keep their meaning.
+- **The docker runner keeps `extra_env` values off its command line**: `-e NAME`, with the value in
+  the docker client's environment (names the client itself reads keep `-e K=V`).
+- **Capture never consumes a streamed response.** The `requests` hook read `response.content` to
+  size the network event, so `stream=True` returned only when the stream ended — never, for SSE.
+  `response_size_bytes` is now an already-read body's size, else `Content-Length`, else `null`.
+
 ### Fixed
 
 - **Capture hooks are fail-open.** A recorder failure — an SDK object passed back in `messages`,
@@ -104,8 +153,28 @@ entries below change behaviour** — read *Changed — BREAKING* before upgradin
 - **The RLS static guard tests can fail.** `tests/metadata_store/test_grep_constraints.py` used a
   lookahead `grep -E` cannot parse, and counted grep's error exit as "no violation"; the guards are
   now Python scans with known-bad controls.
+- **`requests` 4xx/5xx responses were recorded as status 0 / success** (a failed `Response` is
+  falsy). Failure classifying a request now sends it unrecorded instead of raising, and positional
+  arguments to OpenAI/Anthropic `create` reach the SDK unchanged.
+- **`nova capsule delete` deletes.** With `--force` it printed "Deleted capsule" and audited a
+  deletion while removing nothing, and ignored holds. It now runs the governed delete core: holds in
+  any registry always refuse, and success is printed and audited only after the capsule is gone.
+- **`/api/tv5/ws` is reachable under `nova serve`.** It was registered after the WebSocket
+  catch-all and closed every connection with 1011.
+- **The collector's local mode refuses `Via` / `X-Forwarded-*` requests** and warns at startup to
+  set `NOVA_COLLECTOR_TOKEN` whenever anything proxies to it.
 - **`nova replay --help` states that a timeout exits 124** (`ReplayTimeout`), not 1, and the CLI
   prints why it stopped.
+
+### Added
+
+- `nova verify --strict` (fails on `unverifiable-other-version`, unanchored timestamps and other
+  unanchored claims, listed as `unanchored_claims`); `novaseal.yaml` `previous_merkle_dbs`;
+  `verify_with_profile()`.
+- `nova ledger verify --merkle-db`: checks each checkpoint's inclusion against the real log
+  (`merkle_inclusion`: `log` / `self-consistent` / `none`). Without it, exit 0 means the Merkle
+  block is self-consistent only.
+- `NOVAFABRIC_SERVE_PATH_ROOTS` (extra `nova serve` path roots).
 
 ### Changed — BREAKING
 
@@ -122,6 +191,16 @@ entries below change behaviour** — read *Changed — BREAKING* before upgradin
 - `$VAR` in a `slurm`/`lsf`/`pbs` command argument is passed literally, as the local runner does.
 - `nova ledger verify` exits 8 for a checkpoint logged before 0.106.0 (it has no `tree_size`).
 - `nova export-evidence` refuses a capsule containing a symlink.
+- `nova rollback` no longer falls back to a version with no production history, and `--to
+  <never-production>` needs a `promote_direct` allow.
+- `nova label protect --unprotect` (or fewer approvals / a changed policy) proposes the change and
+  needs `approve-move`.
+- `nova capsule delete`: holds in any registry block it, `--force` included; a missing capsule
+  exits 1; `--force` no longer skips `deletion_mode: prohibited`.
+- `nova pii erase` exits 3 while any legal hold is active.
+- A capsule containing any symbolic link can no longer be exported, packed, migrated, backed up or
+  served (`pack_capsule` followed links by design before).
+- `response_size_bytes` for a streamed response is the `Content-Length` or `null`.
 
 ### Documentation
 
