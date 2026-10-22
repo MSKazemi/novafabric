@@ -11,6 +11,18 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Security
+
+- **The `replay_mutating` policy gate now covers every write-permitting replay flag.**
+  `nova replay` and `ReplayEngine` evaluate the audited `replay_mutating` policy whenever
+  `--allow-mutating`, `--allow-external-side-effects` or `--allow-unknown-mutation` is set,
+  alone or combined; up to v0.105.0 the check ran only for `--allow-mutating`. A deny, or a
+  policy-engine error, refuses the replay before anything runs. Read-only replays (no flag,
+  `--allow-readonly`) are unchanged. The decision comes from one property,
+  `ReplayFlags.permits_writes`, which treats an `allow_*` flag nobody has classified as
+  write-permitting; a guard test fails until each one is classified. Operators whose policy
+  denies `replay_mutating` will now see replays using those two flags refused.
+
 ### Added
 
 - **Per-subject PII encryption at capture: `nova capture --pii-subject <id>` (ADR-0314,

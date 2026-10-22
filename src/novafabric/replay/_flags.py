@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Literal
 
@@ -27,6 +27,17 @@ LADDER_FLAG: dict[str, str] = {
     "external-side-effect": "--allow-external-side-effects",
     "unknown": "--allow-unknown-mutation",
 }
+
+
+#: Every ``allow_*`` field of :class:`ReplayFlags`, classified. A
+#: write-permitting flag lets a replay run side-effecting tools live, so it puts
+#: the replay behind the ``replay_mutating`` policy gate. A guard test fails
+#: when an ``allow_*`` field is in neither set; until it is classified,
+#: :attr:`ReplayFlags.permits_writes` treats it as write-permitting (fail closed).
+READ_ONLY_ALLOW_FLAGS: frozenset[str] = frozenset({"allow_readonly"})
+WRITE_PERMITTING_ALLOW_FLAGS: frozenset[str] = frozenset(
+    {"allow_mutating", "allow_external_side_effects", "allow_unknown_mutation"}
+)
 
 
 def ladder_flag(mutation_class: str) -> str:
@@ -60,6 +71,25 @@ class ReplayFlags:
     @property
     def divergence_policy(self) -> Literal["fail", "warn"]:
         return "warn" if self.permissive else "fail"
+
+    @property
+    def permits_writes(self) -> bool:
+        """True when any flag set here may let a tool beyond ``read-only`` run.
+
+        The single answer to "must this replay pass the ``replay_mutating``
+        policy gate?". Every ``allow_*`` field except the classified read-only
+        ones counts -- an unclassified new rung is gated, never skipped -- and
+        so does any rung :meth:`permits` grants above ``read-only``.
+        """
+        by_field = any(
+            getattr(self, f.name)
+            for f in fields(self)
+            if f.name.startswith("allow_") and f.name not in READ_ONLY_ALLOW_FLAGS
+        )
+        by_ladder = any(
+            self.permits(c) for c in _LADDER if c not in _ALLOW_READONLY_CLASSES
+        )
+        return by_field or by_ladder
 
     def permits(self, mutation_class: str) -> bool:
         if self.allow_unknown_mutation:

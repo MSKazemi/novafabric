@@ -441,8 +441,9 @@ actually served: `model_calls_mocked` of `model_calls_available`,
 ### Safety ladder (mocked replay)
 
 The safety ladder classifies the capsule's recorded tool calls by side-effect
-level. It drives the `--dry-run` report, and `--allow-mutating` triggers a
-policy-engine gate (an audited allow/deny) before a mutating replay starts. In
+level. It drives the `--dry-run` report, and every write-permitting rung
+(`--allow-mutating`, `--allow-external-side-effects`, `--allow-unknown-mutation`)
+triggers a policy-engine gate (an audited allow/deny) before the replay starts. In
 `mocked` mode the run-time rule is fixed by ADR-0300: an intercepted call (MCP
 `call_tool`, a `record.tool` function, an ADK tool through the tool plugin, or an Agents SDK tool through `wrap_tools`) is served from the capsule or refused,
 and every other tool runs live (the `--dry-run` report marks those `[LIVE]`). The

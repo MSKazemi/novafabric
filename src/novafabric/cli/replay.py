@@ -77,7 +77,8 @@ def replay_cmd(
             "--allow-external-side-effects",
             help=(
                 "Safety ladder (ADR-0012): permit external side effects (implies "
-                "--allow-mutating). In mocked mode, under --permissive an unmatched "
+                "--allow-mutating, including its replay_mutating policy check). In "
+                "mocked mode, under --permissive an unmatched "
                 "record.tool call of that class runs live, and a replay.yaml "
                 "`allow: true` override for such a tool is honoured (ADR-0306, "
                 "experimental)."
@@ -90,7 +91,8 @@ def replay_cmd(
             "--allow-unknown-mutation",
             help=(
                 "Safety ladder (ADR-0012): permit tools of unknown mutation class "
-                "(implies every lower rung). Every MCP call counts as unknown: in "
+                "(implies every lower rung, including the replay_mutating policy "
+                "check). Every MCP call counts as unknown: in "
                 "mocked mode this is the flag that lets an unmatched MCP call run "
                 "live under --permissive, and that a replay.yaml `allow: true` "
                 "override on an MCP tool needs before it re-executes (ADR-0306, "

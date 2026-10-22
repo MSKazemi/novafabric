@@ -775,8 +775,9 @@ every MCP call counts as `unknown`, so it needs `--allow-unknown-mutation`).
 MCP call live.
 
 The safety-ladder flags classify the capsule's recorded tool calls for the
-`--dry-run` report, and `--allow-mutating` adds an audited policy gate before the
-replay starts. Inside the replayed process they gate only the intercepted tool
+`--dry-run` report, and any write-permitting rung (`--allow-mutating`,
+`--allow-external-side-effects` or `--allow-unknown-mutation`) adds an audited
+`replay_mutating` policy gate before the replay starts; a deny refuses the replay. Inside the replayed process they gate only the intercepted tool
 surfaces (MCP, `record.tool` and, experimental, Google ADK tools through the tool
 plugin and OpenAI Agents tools through `wrap_tools`) — an unmatched call under `--permissive`, and a `replay.yaml`
 `allow: true` override — and never stop a tool replay does not intercept:
@@ -785,8 +786,8 @@ plugin and OpenAI Agents tools through `wrap_tools`) — an unmatched call under
 nova replay .novafabric/capsules/01HX.../ --mode mocked \
   --allow-readonly             # rung: read-only tool calls
   --allow-mutating             # rung: idempotent / non-idempotent writes (+ policy gate)
-  --allow-external-side-effects  # rung: external-side-effect tools
-  --allow-unknown-mutation     # rung: unclassified tools
+  --allow-external-side-effects  # rung: external-side-effect tools (+ policy gate)
+  --allow-unknown-mutation     # rung: unclassified tools (+ policy gate)
 ```
 
 **Per-tool overrides** (experimental, since v0.105.0, ADR-0306). A capsule's

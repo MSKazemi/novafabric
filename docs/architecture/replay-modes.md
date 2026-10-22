@@ -57,8 +57,12 @@ Before it branches, `ReplayEngine.run`:
 - re-validates each recorded tool call against its **current** declared schema
   (`capture/schema_validation.py:revalidate_tool_calls`, ADR-0128) and records
   any drift. Only `exact` mode refuses on drift.
-- if `--allow-mutating` is passed, evaluates the `replay_mutating` policy and
-  writes the decision to the audit log.
+- if any write-permitting ladder flag is passed (`--allow-mutating`,
+  `--allow-external-side-effects`, `--allow-unknown-mutation`;
+  `replay/_flags.py:ReplayFlags.permits_writes`), evaluates the
+  `replay_mutating` policy, writes the decision to the audit log, and refuses
+  the replay on a deny or a policy-engine error. *Unreleased (after v0.105.0):*
+  up to v0.105.0 only `--allow-mutating` triggered it.
 
 Every mode writes `replay_result.yaml` (`replay/_result.py:write_replay_result`,
 `schemas/replay-result.schema.json`) under `.novafabric/replays/<ulid>/` in the

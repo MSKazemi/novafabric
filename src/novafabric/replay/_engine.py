@@ -186,9 +186,11 @@ class ReplayEngine:
 
         schema_drift = revalidate_tool_calls(tool_calls, self._capsule_dir)
 
-        # Policy gate — only for mutating replay; read-only/forensic modes are
-        # never blocked because they never execute live side-effecting tools.
-        if self._flags.allow_mutating:
+        # Policy gate — for every replay a write-permitting ladder flag is set on
+        # (--allow-mutating, --allow-external-side-effects, --allow-unknown-mutation;
+        # ReplayFlags.permits_writes is the one source of truth). Read-only
+        # replays are never blocked. A policy engine error propagates: refused.
+        if self._flags.permits_writes:
             engine = get_policy_engine()
             inp = PolicyInput(
                 action="replay_mutating",
