@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 
 import jsonschema  # type: ignore[import-untyped]
+import pytest
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -209,3 +210,124 @@ def test_cli_help_smoke() -> None:
     result = runner.invoke(app, ["eval", "contamination-check", "--help"])
     assert result.exit_code == 0
     assert "contamination" in result.output.lower()
+
+
+# ── fail closed on a malformed facet ─────────────────────────────────────────
+#
+# Regression: a facet that could not be parsed or validated was silently
+# skipped, so a capsule whose only facet was malformed read as "No
+# dataset_provenance facets" and exited 0 — a CI contamination gate passed on
+# input it could not read. It is now an ``invalid`` verdict with a reason,
+# flagged like contamination (exit 4), and never a crash.
+
+FACET_SUBDIR = Path("extensions") / "dev.novafabric.dataset-provenance"
+
+
+def _write_raw_facet(cap: Path, name: str, data: bytes) -> Path:
+    fdir = cap / FACET_SUBDIR
+    fdir.mkdir(parents=True, exist_ok=True)
+    path = fdir / name
+    path.write_bytes(data)
+    return path
+
+
+_MALFORMED = {
+    "not-json": b"{not json",
+    "schema-bad-status": json.dumps({"name": "swe-bench", "status": "clean"}).encode(),
+    "missing-name": json.dumps({"dataset_hash": "sha256:aa11", "status": "current"}).encode(),
+    "empty-name": json.dumps({"name": "", "status": "current"}).encode(),
+    "json-array": b"[]",
+    "json-null": b"null",
+    "empty-file": b"",
+    "not-utf8": b"\xff\xfe\x00{",
+}
+
+
+@pytest.mark.parametrize("label", sorted(_MALFORMED))
+def test_malformed_facet_is_an_invalid_verdict(tmp_path: Path, label: str) -> None:
+    cap = _capsule(tmp_path)
+    _write_raw_facet(cap, f"{label}.json", _MALFORMED[label])
+    results = check_contamination(cap, None)
+    assert len(results) == 1
+    assert results[0].status == "invalid"
+    assert results[0].name == label
+    assert results[0].reason and f"{label}.json" in results[0].reason
+    assert is_flagged(results)
+
+
+def test_malformed_facet_beside_a_current_one_is_still_flagged(tmp_path: Path) -> None:
+    cap = _capsule(tmp_path)
+    write_facet(cap, _facet(status="current"))
+    _write_raw_facet(cap, "broken.json", b"{not json")
+    results = check_contamination(cap, None)
+    assert sorted(r.status for r in results) == ["current", "invalid"]
+    assert is_flagged(results)
+
+
+def test_registry_cannot_clear_an_invalid_facet(tmp_path: Path) -> None:
+    cap = _capsule(tmp_path)
+    _write_raw_facet(cap, "broken.json", b"{not json")
+    reg = ContaminationRegistry(contaminated=["sha256:zz"])
+    results = check_contamination(cap, reg)
+    assert [r.status for r in results] == ["invalid"]
+
+
+def test_facet_namespace_that_is_a_file_is_invalid(tmp_path: Path) -> None:
+    cap = _capsule(tmp_path)
+    (cap / "extensions").mkdir()
+    (cap / FACET_SUBDIR).write_text("{}")
+    results = check_contamination(cap, None)
+    assert [r.status for r in results] == ["invalid"]
+    assert results[0].reason and "not a directory" in results[0].reason
+    assert is_flagged(results)
+
+
+def test_unreadable_facet_is_invalid_not_a_crash(tmp_path: Path) -> None:
+    import os
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root reads a 0o000 file")
+    cap = _capsule(tmp_path)
+    path = _write_raw_facet(cap, "locked.json", _facet().model_dump_json().encode())
+    path.chmod(0)
+    try:
+        results = check_contamination(cap, None)
+    finally:
+        path.chmod(0o600)
+    assert [r.status for r in results] == ["invalid"]
+    assert results[0].reason and "could not read" in results[0].reason
+
+
+def test_valid_facets_carry_no_reason(tmp_path: Path) -> None:
+    cap = _capsule(tmp_path)
+    write_facet(cap, _facet(status="current"))
+    assert check_contamination(cap, None)[0].reason is None
+
+
+def test_read_facets_still_returns_only_valid_facets(tmp_path: Path) -> None:
+    """``read_facets`` keeps its contract (valid facets only); the verdict is check_contamination's."""
+    cap = _capsule(tmp_path)
+    write_facet(cap, _facet())
+    _write_raw_facet(cap, "broken.json", b"{not json")
+    assert [f.name for f in read_facets(cap)] == ["swe-bench"]
+
+
+def test_cli_malformed_facet_exits_4_with_reason(tmp_path: Path) -> None:
+    cap = _capsule(tmp_path)
+    _write_raw_facet(cap, "broken.json", b"{not json")
+    result = runner.invoke(app, ["eval", "contamination-check", str(cap)])
+    assert result.exit_code == 4, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert "invalid" in result.output
+    assert "broken.json" in result.output
+    assert "No dataset_provenance facets" not in result.output
+
+
+def test_cli_malformed_facet_json_output(tmp_path: Path) -> None:
+    cap = _capsule(tmp_path)
+    _write_raw_facet(cap, "broken.json", b"{not json")
+    result = runner.invoke(app, ["eval", "contamination-check", str(cap), "--json"])
+    assert result.exit_code == 4, result.output
+    data = json.loads(result.output)
+    assert data[0]["status"] == "invalid"
+    assert "broken.json" in data[0]["reason"]

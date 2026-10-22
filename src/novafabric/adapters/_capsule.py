@@ -2,12 +2,15 @@
 
 Every adapter does the same thing around a framework's call path: open a
 capsule, claim the wire hooks, run the framework, then write the manifest and
-supporting files. The eleven adapters that predate this module each carry their
-own copy of that body.
+supporting files. The eight adapters that predate this module each carry their
+own copy of that body: ``a2a``, ``autogen``, ``bedrock_agentcore``, ``crewai``,
+``dspy``, ``google_adk``, ``langgraph`` and ``openai_agents``.
 
-New adapters use this instead. It is deliberately **additive** — no existing
-adapter was changed to adopt it, because rewriting eleven working, tested
-adapters is a blast radius that buys nothing today.
+New adapters use this instead (``haystack``, ``llamaindex`` and ``pydantic_ai``
+do). It is deliberately **additive** — no existing adapter was changed to adopt
+it, because rewriting eight working, tested adapters is a blast radius that buys
+nothing today. ``tests/adapters/test_capsule_core_adoption.py`` keeps this list
+in step with the code.
 
 The manifest literal lives here, so
 ``tests/adapters/test_adapter_manifests_match_the_schema.py`` still checks it:

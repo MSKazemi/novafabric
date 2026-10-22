@@ -690,7 +690,10 @@ app.add_typer(memstore_app, name="memstore")
 policy_app.add_typer(
     capture_level_app,
     name="capture-level",
-    help="Get or set the capture-level policy for new runs.",
+    help=(
+        "Show or validate the capture level (experimental; read from NOVA_CAPTURE_LEVEL, "
+        "nothing is stored)."
+    ),
 )
 
 if __name__ == "__main__":

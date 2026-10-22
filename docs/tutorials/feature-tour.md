@@ -643,29 +643,32 @@ D3FEND countermeasure (ADR-0111 R2 — a bare anomaly score is SHACL-rejected).
 
 ## 12. Manage capture-level policy
 
-**Maturity:** experimental (cap-004)
+**Maturity:** experimental (cap-004) — only part of it works today; read the table.
 
-`nova capture` records different field sets depending on the capture-level policy. Four
-levels are available:
+The capture level comes from the `NOVA_CAPTURE_LEVEL` environment variable (default `standard`).
+There is no policy store: `nova policy capture-level set` validates a level and prints the variable
+to export, and saves nothing.
 
-| Level | What's captured |
-|---|---|
-| `minimal` | metadata only (run_id, event_type, timestamp, exit_code, duration_ms) |
-| `standard` | metadata + model_id, provider, token counts, tool name + result summary |
-| `forensic` | everything (prompts, responses, tool args, full context snapshots) |
-| `air_gapped` | everything + blocks external network calls in the runner |
+| Level | Works today | Planned (not implemented) |
+|---|---|---|
+| `minimal` | Same behaviour as `standard` | metadata-only capture (no model IDs, tool names) |
+| `standard` | adapter, tool-hook and record-façade paths keep digests, not payloads | redacted model-call content |
+| `forensic` | those paths also keep payloads (tool arguments and results, state, documents) | — |
+| `air_gapped` | same as `forensic` | blocking external network calls |
 
 ```bash
 nova policy capture-level get
 # Current capture level: standard
 
-# To change: set the env var and restart `nova serve` / re-invoke `nova capture`
+# To change it: export the variable, then re-run `nova capture` / restart `nova serve`
 export NOVA_CAPTURE_LEVEL=forensic
 ```
 
-By default NovaFabric does not capture full prompts and responses — `standard` records
-summaries, and `forensic` is the explicit opt-in to full context. Dashboard equivalent:
-the **Policy** tab has a Capture Level panel with the same get/set semantics.
+**No level keeps prompts out of a capsule.** Wire-level model-call capture writes the full request
+messages and response text to `model-calls.jsonl` at every level, including `minimal` — verified
+2026-10-22 by capturing `examples/blackbox_demo` at `minimal`, `standard` and `forensic`, which
+produced the same fields and the same prompt text. Dashboard equivalent: the **Policy** tab's
+Capture Level panel, which has the same get/validate semantics.
 
 ---
 
@@ -860,8 +863,9 @@ nova eval contamination-check ./my-capsule --registry known-bad.json --json
 
 It reports a status per dataset (`current` / `superseded` / `contaminated` / `unknown`)
 and **exits `4` when any dataset is contaminated or superseded** — so CI can gate on it.
-The registry is configurable (no hardcoded URL); it can only *raise* a facet's severity,
-never downgrade a recorded status. Detection only — no remediation.
+A facet it cannot read or validate is reported as `invalid`, with a reason, and also exits
+`4`: the check fails closed. The registry is configurable (no hardcoded URL); it can only
+*raise* a facet's severity, never downgrade a recorded status. Detection only — no remediation.
 
 ### Attach SLSA-for-ML provenance to a promotion (NF-057)
 

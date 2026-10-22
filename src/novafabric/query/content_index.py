@@ -351,7 +351,7 @@ def extract_docs(
     for filename, stream in _CORPUS:
         path = capsule_dir / filename
         if not path.exists() or not path.is_file():
-            continue  # absent stream (e.g. minimal capture level) — not an error
+            continue  # absent stream — not an error
         if path.stat().st_size > MAX_SOURCE_FILE_BYTES:
             logger.warning(
                 "content index: %s/%s exceeds %d bytes — file skipped",

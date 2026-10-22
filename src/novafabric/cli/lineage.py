@@ -49,7 +49,7 @@ _EdgeTypeArg = Annotated[
     typer.Option(
         "--edge-type",
         help=(
-            "Comma-separated edge types to filter: "
+            "Walk only edges of these types (comma-separated): "
             "contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory"
         ),
     ),
@@ -165,9 +165,9 @@ def provenance_cmd(
     """
     filter_types = _parse_edge_types(edge_type)
     store = _get_store()
-    results = store.provenance(ref=ref, kind=kind, depth=depth)
-    if filter_types is not None:
-        results = [r for r in results if r.get("edge_type") in filter_types]
+    # The filter restricts the traversal itself: the rows returned are nodes and
+    # carry no edge type, so filtering them afterwards always yielded nothing.
+    results = store.provenance(ref=ref, kind=kind, depth=depth, edge_type=filter_types)
     if not results and not store._node_id_for_ref(ref, kind):
         console.print(f"[red]x[/red] Unknown ref: {ref}")
         raise typer.Exit(code=1)
@@ -208,9 +208,9 @@ def blast_radius_cmd(
     """
     filter_types = _parse_edge_types(edge_type)
     store = _get_store()
-    results = store.blast_radius(ref=ref, kind=kind, depth=depth)
-    if filter_types is not None:
-        results = [r for r in results if r.get("edge_type") in filter_types]
+    # The filter restricts the traversal itself: the rows returned are nodes and
+    # carry no edge type, so filtering them afterwards always yielded nothing.
+    results = store.blast_radius(ref=ref, kind=kind, depth=depth, edge_type=filter_types)
     if not results and not store._node_id_for_ref(ref, kind):
         console.print(f"[red]x[/red] Unknown ref: {ref}")
         raise typer.Exit(code=1)
