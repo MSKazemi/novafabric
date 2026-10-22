@@ -32,6 +32,10 @@ Legal holds (no own override)
     One store for ``nova hold`` and ``/api/holds``:
     ``$NOVAFABRIC_HOME/registries/<registry>/holds.jsonl``.
 
+``NOVAFABRIC_EVIDENCE_TRUSTED_KEYS``
+    Evidence-bundle signer trust list read by ``nova serve`` (PEM public keys).
+    Default: ``$NOVAFABRIC_HOME/evidence-trusted-keys.pem``
+
 ``NOVAFABRIC_CAPSULE_DIR``
     Default capsule storage directory.
     Default: ``$NOVAFABRIC_HOME/capsules``
@@ -74,6 +78,20 @@ def evidence_dir() -> Path:
     """
     env = os.environ.get("NOVAFABRIC_EVIDENCE_DIR", "").strip()
     return Path(env) if env else nova_home() / "evidence"
+
+
+def evidence_trusted_keys_path() -> tuple[Path, bool]:
+    """Evidence-bundle signer trust list, and whether the operator named it explicitly.
+
+    Override with ``NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`` (blank counts as unset); falls
+    back to ``$NOVAFABRIC_HOME/evidence-trusted-keys.pem``. A PEM file of Ed25519
+    public keys, the format ``nova verify --public-key`` takes. An explicitly named
+    file that is missing is an error for the caller; an absent default is "no anchor".
+    """
+    env = os.environ.get("NOVAFABRIC_EVIDENCE_TRUSTED_KEYS", "").strip()
+    if env:
+        return Path(env).expanduser(), True
+    return nova_home() / "evidence-trusted-keys.pem", False
 
 
 def tokens_path() -> Path:

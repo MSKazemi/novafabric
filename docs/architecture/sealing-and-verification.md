@@ -236,6 +236,12 @@ signed, the run subject is recomputed from the bundle's `run-capsule/` copy and 
 subject from `edges.jsonl`, rather than read from the manifest. The verifying key ships inside
 the bundle, so pass `--public-key` to pin the signer; without it the report says the
 signer is not pinned. It also accepts an `export-manifest.json` from a batch export.
+`POST /api/evidence/{bundle_id}/verify` in `nova serve` calls the same
+`verify_bundle_archive`, so the dashboard and the CLI cannot disagree. Its anchor is the
+operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default
+`$NOVAFABRIC_HOME/evidence-trusted-keys.pem`, PEM public keys), never a key in the request:
+`signer_trust` is `anchored`, `unanchored` (no list: consistency only), `untrusted` (fails)
+or `none`. A configured list that cannot be used is an error, not "unanchored".
 
 **Signer trust level (experimental, ADR-0301).** Besides the pass/fail checks,
 `nova verify` reports what *the verifier* established about who signed, as
