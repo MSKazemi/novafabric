@@ -23,9 +23,10 @@ like a failed one, and the shaded area only ever claims what was actually
 verified. The X-Ray renders paths and states only; per ADR-0174 §1 the payload
 type carries no field value to render.
 
-In this first slice, each command takes a small **JSON document you assemble**
-from existing outputs (`nova verify`, seal metadata, masking findings) — the
-collectors that read these directly from a capsule are documented follow-ons.
+`nova trust-radar` and `nova redaction-xray` also accept `--capsule <dir>` and
+derive their input from the capsule directly. `nova merkle-tree` and
+`nova passport` take a small **JSON document you assemble** from existing outputs
+(seal metadata, `log-entry.json`).
 
 | Command | Shows | ADR |
 |---|---|---|
@@ -44,13 +45,18 @@ finding bodies, or component contents.
 
 Renders the Evidence Provenance Merkle proof tree from a sealed capsule's
 leaf hashes — `leaf → intermediate → seal-root → tsr`. The layers are
-enumerated by the *same* canonical pairing/padding code that computed the
-sealed root, so the projected tree can never diverge from what was signed. A
+enumerated by the NovaSeal log's own tree code (`trust/novaseal/merkle.py` — not
+the Evidence Bundle root in `evidence/merkle.py`), so the projected tree matches
+what was signed **provided you pass the right `root_version`**. A
 supplied `sealed_root` is compared against the recomputed root: match ⇒
 verified, mismatch ⇒ flagged.
 
 Input: a JSON object with `leaf_hashes` (required) plus optional
-`leaf_labels` (field paths, never values), `sealed_root`, and `tsr_hash`.
+`leaf_labels` (field paths, never values), `sealed_root`, `tsr_hash`,
+`root_version` (1 = legacy pairwise-pad, 2 = RFC 6962) and `tree_size`.
+⚠ **An absent `root_version` means 1.** Every NovaSeal log created since ADR-0313
+writes v2 roots, so copy `root_version` from `log-entry.json` — otherwise a genuine
+v2 root reports a mismatch, which reads like tampering.
 
 ```bash
 $ nova merkle-tree tree.json --capsule-id run-2041
@@ -79,9 +85,17 @@ capsules. Booleans plot as 0/1; `redaction_coverage` is a clamped ratio; an
 absent/`null` guarantee becomes an **`n/a` axis, kept distinct from a fail**
 (an unsealed capsule has no `signature_ok`; that is not a failure).
 
-Input: a JSON object of the guarantees, e.g. the flags from `nova verify`
-output (`signature_ok`, `timestamp_ok`, `log_integrity_ok`,
-`redaction_coverage`, `secret_scan_clean`, `policy_pass`, `eval_gate_pass`).
+Input: a JSON object of the guarantees (`signature_ok`, `timestamp_ok`,
+`log_integrity_ok`, `redaction_coverage`, `secret_scan_clean`, `policy_pass`,
+`eval_gate_pass`), or `--capsule <dir>`.
+
+⚠ **The radar is a projection of those seven keys only — it is not
+verification.** It ignores `nova verify`'s overall `valid`, the ADR-0251
+capsule-binding and capsule-id checks, and the CA/TSA chain results, and its
+`--capsule` / dashboard Seal-tab path runs only the NovaSeal signature, timestamp
+and log checks. A capsule whose content changed after sealing can therefore still
+render `attested`. Always gate on `nova verify`'s exit code; never treat
+`attested` as "verified" (fix tracked).
 
 ```bash
 $ nova trust-radar verify.json --capsule-id run-2041

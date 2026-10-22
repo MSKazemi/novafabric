@@ -14,15 +14,16 @@ The load-bearing design decision, stated up front because it shapes every
 output: **NovaFabric detects and evidences drift; it never rules on it.**
 `drifted` is a threshold fact, a silent failure is a detector observation,
 and a root cause is a correlation — none of them is a pass/fail verdict, and
-nothing is auto-remediated. Accordingly, all three subcommands exit `0`
+nothing is auto-remediated. Accordingly, all five `drift` subcommands exit `0`
 whether or not anything is flagged; `2` means bad input, nothing else.
 
 Each detector takes its samples in a JSON document. **`nova drift collect`
 now builds that document from your sealed capsules** — you no longer transcribe
 numbers by hand for `detect` and `silent-failure`. It reads through the same
 ADR-0129 scanner `nova query` uses, so both agree about what a capsule is and
-what a window means. Collecting a *trajectory* for `fingerprint`, and the
-provenance lists for `root-cause`, are still **planned**.
+what a window means. `--emit fingerprint` builds the trajectory document and
+`--emit root-cause` pulls both provenance lists from the lineage store, so no
+detector needs a hand-written document.
 
 ---
 

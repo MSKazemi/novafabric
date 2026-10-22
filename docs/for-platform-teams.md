@@ -21,7 +21,7 @@ never verdicts.
 | **Maturity** | **Beta, v0.106.1.** Local capture/replay/diff/lineage are stable and used daily. Server mode, the collector, the dashboard, and the at-scale lineage backends are `experimental`. |
 | **Format stability** | On-disk capsule and evidence-bundle formats are **not frozen** until the v1.0 schema freeze. Do not build a long-lived external contract on capsule internals yet. |
 | **Runtime dependency on us** | **None.** No accounts, no telemetry, no license server, no phone-home, no update check. If this project disappeared tomorrow, your capsules keep working — they are folders. |
-| **Where data lives** | Your infrastructure only. Local mode writes to `~/.novafabric/`; server mode writes to your own Postgres. |
+| **Where data lives** | Your infrastructure only. Local mode writes to `~/.novafabric/` (`nova capture`) or `./.novafabric/runs/` (SDK, adapters, `nova api-proxy`/`mcp-proxy`) — `NOVAFABRIC_HOME` / `NOVAFABRIC_CAPSULE_DIR` override; server mode writes to your own Postgres. |
 | **Network requirement** | Core features work fully offline and air-gapped. |
 | **Bus factor** | **One maintainer today.** This is the honest headline risk — see [below](#the-risks-we-would-raise-if-we-were-you). |
 

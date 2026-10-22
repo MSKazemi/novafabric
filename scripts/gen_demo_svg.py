@@ -48,8 +48,9 @@ class Line:
     pause: float = 0.35  # seconds before the NEXT line appears
 
 
-# Real output. Captured 2026-08-05 from novafabric 0.100.1; ULIDs shortened for
-# width only.
+# Real output. Captured 2026-08-05 from novafabric 0.100.1, and the replay/diff
+# tail re-recorded 2026-10-22 from 0.106.1 (a replay result is not a capsule, so
+# the diff compares two captures); ULIDs shortened for width only.
 FRAMES: list[Line] = [
     Line("pip install novafabric", "cmd", 0.6),
     Line("Successfully installed novafabric-0.100.1", "dim", 0.9),
@@ -67,12 +68,14 @@ FRAMES: list[Line] = [
     Line("✓ Replay written: .novafabric/replays/01KZ9VZX0A9KAXGD", "ok", 0.35),
     Line("  (mode=forensic — no network, no API keys, no tokens spent)", "dim", 0.9),
     Line("", "out", 0.2),
-    Line("nova diff 01KZ9VZPFQB95A63 01KZ9VZX0A9KAXGD", "cmd", 1.0),
-    Line("Diff: 01KZ9VZPFQB95A63 → 01KZ9VZX0A9KAXGD", "out", 0.25),
-    Line("  changed=2  added=0  removed=0", "out", 0.35),
+    Line("nova capture python agent.py", "cmd", 1.0),
+    Line("✓ Capsule written: ~/.novafabric/capsules/01KZ9W3B7RT2M8QH", "ok", 0.9),
+    Line("", "out", 0.2),
+    Line("nova diff 01KZ9VZPFQB95A63 01KZ9W3B7RT2M8QH", "cmd", 1.0),
+    Line("Diff: 01KZ9VZPFQB95A63 → 01KZ9W3B7RT2M8QH", "out", 0.25),
+    Line("  changed=1  added=0  removed=0", "out", 0.35),
     Line("Outputs:", "out", 0.2),
-    Line("  ~ outputs/stdout.txt", "dim", 0.15),
-    Line("  ~ outputs/stderr.txt", "dim", 0.9),
+    Line("  ~ outputs/stdout.txt", "dim", 0.9),
 ]
 
 COLOURS = {"cmd": FOREGROUND, "out": FOREGROUND, "ok": ACCENT, "dim": DIM}

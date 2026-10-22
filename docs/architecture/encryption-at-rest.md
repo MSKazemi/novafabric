@@ -63,6 +63,7 @@ does not require re-encrypting the payload.
 | 3 | Strict mode (`NOVA_OBJECT_STORE_REFUSE_V1_ENVELOPES=1`): an unbound v1 envelope must be pinned in the inventory. Checked before any key is unwrapped. | `LegacyEnvelopeRefusedError` | `EncryptingAdapter.get_object` |
 | 4 | The envelope has not been crypto-shredded. | `ShreddedBlobError` | `decrypt_blob` |
 | 5 | The ciphertext still hashes to `content_sha256`. Checked before any key material is touched. | `CiphertextIntegrityError` | `decrypt_blob` |
+| 5a | With per-tenant KEKs, the tenant's `<tenant>.kek` still exists. A missing file means the tenant was revoked or shredded, and the object is unreadable by design (ADR-0243); the error names the tenant. | `DekUnwrapError` | `trust/tenant_keys.py` |
 | 6 | The KEK unwraps the DEK. Any backend failure, local or cloud KMS, is mapped to one error without leaking SDK internals. | `DekUnwrapError` | `decrypt_blob` |
 | 7 | AES-GCM opens the ciphertext with the AAD of the key **being read**. An envelope copied to another key fails here. | `BlobAuthenticationError` | `decrypt_blob` |
 

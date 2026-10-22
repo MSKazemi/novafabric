@@ -32,12 +32,12 @@ are the part of the system that must keep working offline in five years.
 |---|---|---|---|---|
 | **in-toto Attestation / DSSE** | DSSE envelope, ECDSA P-256 or Ed25519 | Signs Evidence Bundles, and seals capsules when sealing is configured (opt-in: `novaseal.yaml` + your key), as DSSE envelopes | `nova verify <capsule-dir>` · `nova verify-envelope <file>` | works today |
 | **RFC 3161** | Time-Stamp Protocol | Adds a trusted timestamp to a seal when a `tsa_url` is configured (opt-in since v0.103.0); CRL caching so verification works air-gapped | `nova verify <capsule-dir>` | works today (opt-in) |
-| **RFC 8785** | JSON Canonicalization Scheme | Canonical JSON for digest computation, so a digest is reproducible across implementations | inspect `proposal_digest` in a sealed capsule | works today |
+| **RFC 8785** | JSON Canonicalization Scheme | Canonicalization of the promotion proposal envelope, so `proposal_digest` is reproducible by any JCS implementation (other digests use sorted-key JSON, not JCS) | inspect `proposal_digest` in a `nova promote` approval attestation | works today |
 | **JSON Schema** | draft 2020-12 | `schemas/run-capsule.schema.json` and siblings define every artefact the system emits | `nova validate <run-id>` — or validate the schema with any 2020-12 validator | works today |
-| **Merkle inclusion proofs** | RFC 6962-style tree | Evidence Provenance tree over capsule hashes | `nova merkle-tree <run-id>` | works today |
+| **Merkle inclusion proofs** | RFC 6962 / 9162 tree hash | NovaSeal Merkle log: RFC 6962 for logs created since ADR-0313 (root v2); legacy v1 roots duplicate the last odd node and verify only with their `tree_size` | `nova merkle-tree <tree.json>` renders the proof tree from a document of leaf hashes | works today |
 | **SLSA** | provenance for released artefacts | Build provenance and signed release artefacts in the publish pipeline | release attestations on the GitHub release | works today |
-| **CycloneDX** | 1.7, AI/ML profile | AI Bill of Materials built from the capsule's evidence files: one `machine-learning-model` component per distinct model in `model-calls.jsonl` with tokens summed per model, plus every tool in `tool-calls.jsonl` | `nova export-aibom <run-id>` | experimental |
-| **C2PA** | content credentials | Provenance manifest for generated media | `nova export-c2pa <run-id>` | experimental |
+| **CycloneDX** | 1.7, AI/ML profile | AI Bill of Materials built from the capsule's evidence files: one `machine-learning-model` component per distinct model in `model-calls.jsonl` with tokens summed per model, plus every tool in `tool-calls.jsonl` | `nova export-aibom <capsule-dir>` | experimental |
+| **C2PA** | v2.3 content credentials | Provenance manifest for generated media, emitted as **unsigned** JSON (signing deferred) | `nova export-c2pa <capsule-dir>` | experimental |
 
 **Why this section matters most.** An Evidence Bundle is designed to be verifiable with
 `sha256sum` and an ed25519 verifier — **no NovaFabric installation required**. If you can
@@ -56,7 +56,7 @@ data can leave the system.
 | **W3C PROV** | PROV-JSON and PROV-N | Exports a run's provenance — the run as a PROV `activity`, each evidence file as an `entity` `wasGeneratedBy` it, plus cross-capsule lineage edges | `nova lineage export-prov` · `--format prov-n` | works today |
 | **W3C PROV** | PROV-O (RDF) | Maps capsule provenance to PROV-O for the semantic knowledge graph — a *different* surface from `export-prov` above | `nova kg build-provenance --format turtle` with the `novafabric[spkg]` extra | experimental |
 | **SHACL** | shape validation | Validates provenance triples on ingest into the knowledge graph | `novafabric[spkg]` extra | experimental |
-| **openCypher** | query | Graph queries over the capsule knowledge graph | `nova kg query` | experimental |
+| **openCypher** | query | Fixed agent → model/tool queries over the embedded KùzuDB (openCypher) store (`nova kg query <agent-id>` — no user-written Cypher); Neo4j-ready Cypher export via `nova lineage export-graph --format cypher` | `nova kg query`, `nova lineage export-graph` | experimental |
 | **Model Context Protocol** | MCP tool exchanges | Transparent MCP proxy records tool calls; a conformance suite runs in CI | `nova mcp conformance` · `.github/workflows/mcp-conformance.yml` | experimental |
 
 ## 3. Regulatory and management-system frameworks
@@ -87,14 +87,17 @@ meets write-once-read-many requirements. It tests the storage, not your complian
 
 Ten mandatory cases covering immutability, retention locks, legal holds, and lifecycle
 exemptions, referenced against **SEC 17a-4**, **MiFID II**, **CFTC 1.31** and
-**FINRA 4370**. Backends: S3-compatible, Azure Blob, GCS.
+**FINRA 4370**. Backends: S3, MinIO, Ceph RGW (S3-compatible) and Azure Blob.
 
 ```bash
 pip install "git+https://github.com/MSKazemi/novafabric#subdirectory=packages/nova_worm_conformance"
-nova-worm-conformance run --backend s3 --bucket my-capsule-store
+nova-worm-test --backend s3 --endpoint https://s3.example.com \
+  --bucket my-capsule-store --framework sec-17a-4 --output report.json
 ```
 
-Also reachable in-tree as `nova storage validate`. **Maturity: experimental.**
+The package is `nova-worm-conformance`; its console script is `nova-worm-test`. The in-tree
+`nova storage validate` is a much narrower pre-flight — it only checks that S3 Object Lock is
+enabled on the bucket and does not run the conformance cases. **Maturity: experimental.**
 
 To attest the retention *posture* of a specific set of Evidence Bundles (not the backend),
 `nova export-retention --bundle <zip> --registry <name>` renders the policy window, legal-hold
@@ -162,7 +165,7 @@ a specification was ambiguous, under-specified for AI workloads, or expensive to
 correctly, that is recorded in the [ADR ledger](decisions.md) — those are exactly the
 findings an editor usually has to extract from implementers by hand.
 
-**2. Conformance suites you can run.** `nova-worm-conformance` (object-storage WORM) and
+**2. Conformance suites you can run.** `nova-worm-test` (package `nova-worm-conformance`, object-storage WORM) and
 `nova mcp conformance` are executable, not prose. If your group wants an independent
 implementation to test a draft against, these are available under Apache-2.0.
 

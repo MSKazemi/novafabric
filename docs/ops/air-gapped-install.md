@@ -112,10 +112,12 @@ nothing in the chart requires the public registry at runtime.
 `src/novafabric/server/offline_tokens.py`). This is the intended auth mode
 for air-gapped clusters, SLURM batch jobs, and CI without an OIDC provider.
 
-- `nova server` generates (or you point it at) an **ed25519 keypair**
-  (`offline_key_path` in `nova-server.yaml`, or
-  `NOVAFABRIC_OFFLINE_KEY_PATH`). JWTs are signed **and verified locally** —
-  no external endpoint is ever contacted.
+- `nova server issue-token` generates an **ed25519 keypair** on first use
+  (default `~/.novafabric/keys/offline-key.pem` plus `.pub`). The server
+  verifies tokens with the public key **only when started with
+  `NOVAFABRIC_OFFLINE_KEY_PATH=<key-dir>/offline-key.pub`** (environment only —
+  `offline_key_path` in the YAML file is ignored). JWTs are signed **and
+  verified locally** — no external endpoint is ever contacted.
 - Issue: `nova server issue-token --subject worker-01 --roles reader,writer
   --expires-in 30d` (prints the JWT).
 - Revoke: `nova server revoke-token <jti>`. Issue/revoke records live in a
@@ -123,8 +125,8 @@ for air-gapped clusters, SLURM batch jobs, and CI without an OIDC provider.
   (`<key-name>-tokens.db`); revoked tokens get 401 on the next call.
 - Verification checks the ed25519 signature, the `exp` claim, and the
   revocation record — all local I/O.
-- The key file must be mode 0600 and owned by the server user;
-  `nova server start` refuses a world-readable key.
+- Keep the private key mode 0600 (it is generated that way); the server does
+  not check the key file's permissions itself.
 
 Since v0.61, local no-OIDC mode also has the auto-generated local bearer
 token (`~/.novafabric/.server-token`,
@@ -184,14 +186,11 @@ a requirement. If you find a counter-example, file it as a bug.
 **Status: experimental** (each piece labelled above).
 
 ```yaml
-# /etc/novafabric/nova-server.yaml
+# /etc/novafabric/server.yaml — passed with --config; keys are top-level
 backend: postgres            # in-network Postgres; or sqlite for single-host
-server:
-  host: "127.0.0.1"          # or your internal interface
-  port: 7433
-offline_key_path: "/etc/novafabric/keys/offline-key.pem"
-# oidc.enabled defaults to false
-otel_endpoint: ""            # disabled
+host: "127.0.0.1"            # or your internal interface
+port: 7433
+# no oidc: block → OIDC off; secrets (DSN, offline key) come from the environment
 ```
 
 ```yaml
@@ -204,9 +203,11 @@ merkle_db: ~/.novafabric/novaseal-merkle.db
 ```
 
 ```bash
-export NOVA_DSN="postgresql://nova:***@pg.internal:5432/novafabric"
-nova server start --backend postgres
-nova server issue-token --subject batch-runner --roles writer --expires-in 90d
+export NOVAFABRIC_POSTGRES_DSN="postgresql://nova:***@pg.internal:5432/novafabric"
+nova server issue-token --subject batch-runner --roles writer --expires-in 90d \
+  --key-path /etc/novafabric/keys/offline-key.pem
+export NOVAFABRIC_OFFLINE_KEY_PATH=/etc/novafabric/keys/offline-key.pub
+nova server start --config /etc/novafabric/server.yaml --backend postgres
 ```
 
 Verify the deployment end-to-end without leaving the enclave:
@@ -252,7 +253,7 @@ make airgap-bundle           # needs NOVA_AIRGAP_SIGNING_KEY (ed25519 private ke
 # Verify (air-gapped side): names every problem — a tampered member, a
 # missing one, or an unsigned stowaway
 python scripts/verify_airgap_bundle.py \
-    --bundle novafabric-airgap.tar --public-key evidence.pub
+    --bundle dist/novafabric-airgap.tar --public-key evidence.pub
 ```
 
 A flipped byte in any member fails verification **naming that member**; a

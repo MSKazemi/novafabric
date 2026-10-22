@@ -109,7 +109,7 @@ weight is, not a quality signal.
 | `server/` | Server mode: REST API, auth, API keys, tenancy. |
 | `serve/` | The dashboard backend that `nova serve` exposes. `serve/introspect.py` is the one supported way to enumerate mounted HTTP routes (ADR-0250). |
 | `ui/dashboard/` (repository root, not under `src/`) | The dashboard frontend — Astro + React, with its own vitest suite. Its dashboard build is copied into `src/novafabric/serve/static/` (`ui/dashboard/scripts/copy-dashboard.mjs`), which ships in the wheel. |
-| `metadata_store/` | SQLite and Postgres metadata backends, including row-level security. `dsn.py` is the one place a Postgres DSN is normalised — see [below](#one-dsn-two-consumers). |
+| `metadata_store/` | SQLite and Postgres metadata backends, including row-level security. `dsn.py` is the canonical place a Postgres DSN is normalised — see [below](#one-dsn-two-consumers). |
 | `object_capsule_store/` | S3-compatible object storage for capsules at scale. |
 | `collector_app/`, `collector/` (repo root, Go) | The cluster-scale collector and node spool. |
 | `events/`, `envelope/`, `envelopes/` | Event Envelope v1 and the event bus. |
@@ -125,19 +125,23 @@ presentation and portability.
 
 ## Schema migrations
 
-Two independent Alembic tracks, selected by which config file you pass:
+Two independent Alembic universes (ADR-0211), each with a SQLite and a Postgres
+track. `nova db upgrade` drives both; `--track` picks the universe and `--backend`
+the database:
 
-| Track | Config | Versions | Applies to |
+| Universe | Versions | Applies to | Command |
 |---|---|---|---|
-| SQLite (registry) | `alembic.ini` | `alembic/sqlite/versions/` | The local-mode registry database |
-| Postgres | `alembic-postgres.ini` | `alembic/postgres/versions/` | The server-mode metadata store |
+| **MetadataStore** (default) | `src/novafabric/metadata_store/migrations/{sqlite,postgres}/` | The run metadata tier — SQLite at `NOVAFABRIC_DB_PATH` (default `$NOVAFABRIC_HOME/metadata.db`), Postgres at `NOVAFABRIC_METADATA_DSN` | `nova db upgrade [--backend postgres]` |
+| **Registry** (experimental) | `alembic/sqlite/versions/` (`alembic.ini`), `alembic/postgres/versions/` (`alembic-postgres.ini`) | The registry/server database (`assets`, `eval_results`, `lineage_*`) — SQLite at `$NOVAFABRIC_HOME/registry.db`, Postgres at `NOVAFABRIC_POSTGRES_DSN` | `nova db upgrade --track registry [--backend postgres]` |
+
+From a repository checkout the registry track can also be driven with Alembic directly:
 
 ```bash
-alembic upgrade head                              # SQLite / local
-alembic -c alembic-postgres.ini upgrade head      # Postgres / server
+alembic upgrade head                              # registry, SQLite
+alembic -c alembic-postgres.ini upgrade head      # registry, Postgres
 ```
 
-The Postgres track partitions `runs` quarterly by `started_at` (ADR-0051). Two
+The MetadataStore Postgres track partitions `runs` quarterly by `started_at` (ADR-0051). Two
 consequences are worth knowing before you touch that table:
 
 - **The primary key is `(run_id, tenant_id, started_at)`.** Postgres requires the
@@ -151,9 +155,10 @@ consequences are worth knowing before you touch that table:
   replace that guard with an `ON CONFLICT`, you silently redefine what "the same
   run" means — there is a test that fails when you do.
 
-A third copy of the registry track ships inside the wheel
-(`src/novafabric/migrations/registry`, declared in `pyproject.toml`) so an
-installed CLI can migrate its own database without the repository present.
+The repo-root `alembic/` tree is copied into the wheel at build time as
+`novafabric/migrations/registry` (`[tool.hatch.build.targets.wheel.force-include]`
+in `pyproject.toml`), so an installed CLI can migrate its own registry database
+without the repository present.
 
 ### One DSN, two consumers
 
@@ -173,8 +178,11 @@ fail with `ModuleNotFoundError: No module named 'psycopg2'`. `to_sqlalchemy_url`
 rewrites a bare scheme to `postgresql+psycopg://` and leaves an explicitly named
 driver (`+asyncpg`, `+psycopg2`) alone — naming a driver is a deliberate choice.
 
-**If you add a third consumer of the Postgres DSN, route it through that
-function** rather than re-deriving the rule. The bug survived precisely because
+**If you add another consumer of the Postgres DSN, route it through that
+function** rather than re-deriving the rule. (Today the MetadataStore Postgres
+track's `metadata_store/migrations/postgres/env.py` still carries its own,
+narrower rewrite — it handles only `postgresql://` and also rewrites an explicit
+`+psycopg2`; consolidating it onto `to_sqlalchemy_url` is tracked as a code fix.) The bug survived precisely because
 each consumer was individually correct.
 
 ---

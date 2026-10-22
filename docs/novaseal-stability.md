@@ -22,7 +22,7 @@ definition, and versioning policy.
 | Cap-004: `ToolPermissionEvent` schema | **Stable** | JSON Schema at `schemas/tool-permission-event.schema.json` |
 | Cap-001: `RedactionManifest` schema | **Experimental** | OQ-01 unresolved; may change before legal-hold mode is removed |
 | Cap-002: `AnnexIVDocument` schema | **Stable** | JSON Schema at `schemas/annex-iv-document.schema.json` |
-| Internal modules (`_engine.py`, `merkle.py`) | **Internal** | No stability guarantee |
+| Internal modules (`merkle.py` internals other than `open_merkle_log` and the `root_version` contract) | **Internal** | No stability guarantee |
 | CLI commands (`nova verify`, `nova seal`) | **Stable** | Flag renames require deprecation notice ≥1 minor version |
 | `SigningBackend` Protocol (`sign_digest`/`get_cert_der`) | **Stable** | Implemented by `LocalSigningBackend`/`AwsKmsSigningBackend`/`AzureKvSigningBackend`/`GcpKmsSigningBackend`; new backends may be added additively |
 | `KeyWrappingBackend` Protocol (`wrap_key`/`unwrap_key`/`kek_ref`, ADR-0185) | **Experimental** | Separate, additive capability protocol for envelope-encryption KEKs; live cloud backends verified only against SDK-contract fakes |
@@ -50,7 +50,7 @@ release may surface `NOVASEAL_MAJOR` as an explicit symbol in
 `NOVASEAL_MAJOR` MUST be incremented when:
 
 1. **DSSE envelope format changes** — e.g. new required header, payload encoding change.
-2. **Signing algorithm change** — e.g. Ed25519 → Ed448 or post-quantum algorithm.
+2. **Signing algorithm change** — e.g. ECDSA P-256 (the default seal algorithm) → a post-quantum scheme.
 3. **Merkle log format change** — node hashing scheme, tree structure.
 4. **`SealBundle` field removal or type change.**
 5. **`VerificationResult` field removal or type change** that could cause a verifier to

@@ -81,8 +81,9 @@ serve:
   # Extra args appended verbatim to the `nova serve` command, e.g. ["--no-browser"].
   extraArgs: []
 
-# server-mode settings (mode: server). OIDC is configured via env
-# (NOVAFABRIC_SERVER_* — see extraEnv / secret); without it the server runs in
+# server-mode settings (mode: server). OIDC is configured only through the
+# `oidc:` block of a server.yaml mounted at ~/.config/novafabric/server.yaml of
+# the container user — there are no OIDC env vars; without it the server runs in
 # local-token mode (auth still ON). Do not disable auth here.
 server:
   port: 7433

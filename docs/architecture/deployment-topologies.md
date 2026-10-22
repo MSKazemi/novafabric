@@ -68,7 +68,9 @@ contacted only if `tsa_url` or `tsa_urls` is configured (see
 
 **Object storage.** `object_capsule_store/` implements an S3-compatible,
 content-addressed capsule store with a write-once put protocol. Backends: S3,
-MinIO, Ceph RGW, GCS, Azure Blob and local. It is used today by backup, batch
+MinIO, Ceph RGW, Azure Blob, and an in-memory `local` backend for tests (a GCS
+WORM adapter exists in `worm/gcs.py` but is not selectable through the backend
+router yet). It is used today by backup, batch
 export and import, and rebuild. It is **not** wired into the server's capsule
 routes. The library is experimental, and serving capsules from it in server mode
 is not implemented.

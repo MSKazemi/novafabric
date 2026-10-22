@@ -95,8 +95,8 @@ beyond the public Apache-2.0 license; private features or forks.
 
 ## How to apply
 
-Email **[design-partners@novafabric.io](mailto:design-partners@novafabric.io)**
-with:
+Email **[hello@novafabric.ai](mailto:hello@novafabric.ai)** with the subject line
+"Design partner", and include:
 
 - Organization name
 - Your primary use case, one or two paragraphs

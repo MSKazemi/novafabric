@@ -17,7 +17,7 @@
   where NovaFabric stops (what is shipped today vs. what is still planned).
 
 Everything below runs locally, offline, with no accounts and no telemetry. NovaFabric
-is local-first, open-source (Apache-2.0), and has shipped v0.1 through v0.9. Where a
+is local-first, open-source (Apache-2.0), and has shipped v0.1 through v0.106. Where a
 capability is design intent rather than code, this guide labels it **PLANNED** — it
 never claims a roadmap item as done.
 
@@ -136,16 +136,21 @@ log lines?
 nova diff capsules/01KR9Q2A…  capsules/01KRB4F7…
 ```
 
-`nova diff` aligns the model and tool calls across the two runs and reports a
-structured comparison:
+`nova diff` aligns the model and tool calls across the two runs and reports what
+changed, call by call:
 
 ```
-model:          same     (qwen3:35b)
-tools_called:   same     (read_log, write_diagnosis)
-tool_args:      CHANGED — read_log now reads 40 lines, was 100
-output_length:  CHANGED — 312 tokens → 180 tokens
-classification: same     (OOM)
+Diff: 01KR9Q2A… → 01KRB4F7…
+  changed=3  added=0  removed=0
+
+Model calls:
+  ~ call at span 1a9c989341748be5
+Outputs:
+  ~ outputs/decision.json
+  ~ outputs/stdout.txt
 ```
+
+`nova diff --json` gives the full field-level comparison for each changed call.
 
 You can see immediately whether the prompt change caused a behavioral regression —
 even if the final label looks the same.
@@ -199,8 +204,8 @@ intercept still run live, so a change in their behaviour shows up here too.
 > calls. `exact` mode is for deterministic local/on-prem execution; for drifting remote
 > models, `semantic` mode judges meaning instead of tokens.
 
-A replay is itself a new capsule — so you can `nova diff` the original against the
-replay to see precisely what moved.
+A replay writes a replay result (`replay_result.yaml`), not a capsule — to see what
+moved between two runs, capture both and `nova diff` the two capsules.
 
 ---
 
@@ -218,7 +223,15 @@ provenance graph from those declarations:
 
 ```python
 # inside hpc_analyst/agent.py
-record_consumed("slurm-logs/job-42819-oom@v1")
+import os
+from pathlib import Path
+
+from novafabric.registry.service import record_asset_consumption
+
+record_asset_consumption(
+    "slurm-logs/job-42819-oom@v1", "production",
+    Path(os.environ["NOVAFABRIC_CAPSULE_DIR"]),
+)
 ```
 
 The lineage graph is a SQLite cache derived from each capsule's `lineage.jsonl`, with
@@ -227,7 +240,7 @@ levels (`observed` at runtime vs. `inferred` from structure). Query the blast ra
 every run downstream of the bad file:
 
 ```bash
-nova lineage blast-radius slurm-logs/job-42819-oom@v1
+nova lineage blast-radius local:slurm-logs/job-42819-oom@v1   # asset refs carry their registry prefix
 # → run:01KR9Q2AD…  run:01KRB4F7…  run:01KRC3X9…
 ```
 
@@ -285,7 +298,7 @@ exact chain of events entirely offline.
        ▼      ▼               ▼
    validate  diff          replay
               │               │
-              │         [replay capsule]  ←── itself diffable
+              │         [replay result]  ←── replay_result.yaml (not a capsule)
               │
          lineage (from lineage.jsonl)
               │
@@ -365,10 +378,8 @@ experiment reviewer, IoT anomaly detector, incident triage — so that live caps
 real diffs, and a growing lineage graph are always available to explore. It is the
 simplest proof that the whole pipeline works end to end.
 
-```bash
-make nova-loop       # run all agents in a continuous loop
-make nova-dashboard  # open the local dashboard
-```
+`nova-testbench` is a separate repository, not part of this one: its `make nova-loop`
+(run all agents continuously) and `make nova-dashboard` targets live there.
 
 ---
 

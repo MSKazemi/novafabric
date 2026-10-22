@@ -82,7 +82,7 @@ changes have been made to any external system at this point.
 
 ---
 
-## Phase 1 — Migrate to Postgres MetadataStore
+## Phase 1 — Migrate the registry and MetadataStore to Postgres
 
 ### 1.1 Start Postgres
 
@@ -99,29 +99,39 @@ docker run -d \
 
 ### 1.2 Run the migration
 
+Two separate SQLite databases move to Postgres, with two commands. Both are
+additive and idempotent — the SQLite files are never deleted.
+
 ```bash
-export NOVA_DSN="postgresql+asyncpg://novafabric_app:changeme@localhost:5432/novafabric"
+# A plain libpq URL: psycopg rejects SQLAlchemy-style schemes such as
+# postgresql+asyncpg://, and the command then exits 2.
+export NOVAFABRIC_POSTGRES_DSN="postgresql://novafabric_app:changeme@localhost:5432/novafabric"
+export NOVAFABRIC_METADATA_DSN="$NOVAFABRIC_POSTGRES_DSN"
 
-# Migrate capsule metadata from SQLite to Postgres.
-# This is additive — the SQLite database is NOT deleted.
-nova migrate-to-postgres --target "$NOVA_DSN" --log migration.jsonl
+# Create both schemas first.
+nova db upgrade --track registry --backend postgres
+nova db upgrade --backend postgres
+
+# Registry tables (assets, eval_results, lineage_nodes, lineage_edges):
+nova migrate-to-postgres --target "$NOVAFABRIC_POSTGRES_DSN" --log migration.jsonl
+
+# MetadataStore tables (runs and run metadata):
+nova db migrate-to-postgres --source ~/.novafabric/metadata.db \
+  --target "$NOVAFABRIC_METADATA_DSN"
 ```
 
-Expected output:
-```
-✓ Schema created (v0.14.0)
-✓ Migrated 1234 runs
-✓ Migrated 567 assets
-✓ Migrated 89 role_assignments
-✓ Migration complete — log: migration.jsonl
-```
+`nova migrate-to-postgres` prints a per-table row-count table (`assets`,
+`eval_results`, `lineage_nodes`, `lineage_edges`) followed by
+`PASS — row counts verified.`; exit `0` success, `1` row-count mismatch, `2`
+connection error. `nova db migrate-to-postgres` uses the same exit codes.
 
 ### 1.3 Verify
 
 ```bash
-# Switch to Postgres mode and verify.
-NOVA_BACKEND=postgres NOVA_DSN="$NOVA_DSN" nova list | head -n 15
-NOVA_BACKEND=postgres NOVA_DSN="$NOVA_DSN" nova server start --backend postgres
+# Start the server on Postgres (reads NOVAFABRIC_POSTGRES_DSN) and check storage.
+nova doctor --check-storage --backend postgres
+nova server start --backend postgres
+# Note: `nova list` always reads the local registry, not the server's Postgres.
 ```
 
 ### 1.4 Deploy PgBouncer (production)
@@ -187,7 +197,7 @@ extension instead of an embedded graph engine:
 
 - `PostgresLineageStore` (`lineage/backends/postgres.py`) — recursive-CTE
   queries against a plain Postgres table, no extension required.
-- `AgeLineageStore` (`lineage/backends/age.py`) — openCypher via the Apache AGE
+- `AGELineageStore` (`lineage/backends/age.py`) — openCypher via the Apache AGE
   extension, same query surface (`provenance`/`blast_radius`/`replay_chain`).
 
 Both answer identically to the SQLite reference per their parity suites
@@ -322,11 +332,12 @@ implemented and tested but reachable only from Python or tests, with no
 deployable entrypoint anywhere in the CLI.
 
 ```bash
-# Install the scale extra.
-pip install 'novafabric[scale]'
+# Install the scale extra (nats-py) and the KuzuDB extra (kuzu).
+pip install 'novafabric[scale,lineage-kuzu]'
 
-# Configure the collector to use NATS.
-export NOVAFABRIC_HUB_ADDRESS="nats://nats-hub:4222"
+# The Go `novafabric-hpc-hub` binary (collector side) reads
+# NOVAFABRIC_CLUSTER_ID (required — it exits 2 without it) and
+# NOVAFABRIC_HUB_ADDRESS. The Python consumer below reads NOVA_NATS_URL.
 export NOVAFABRIC_CLUSTER_ID="my-cluster-01"
 
 # Run the live lineage consumer (works today, given a reachable NATS server —
@@ -339,7 +350,7 @@ nova lineage consume --subject "novafabric.lineage.>" \
 
 # Start the collector's HPC-side spool/emit half (Slurm Prolog / Kubernetes
 # DaemonSet) — this half is the still hardware-gated piece.
-# See collector/scripts/slurm-prolog.sh and deploy/k8s/collector-daemonset.yaml.
+# See deploy/hpc/prolog.sh, deploy/hpc/epilog.sh and the manifests in deploy/k8s/.
 ```
 
 ---
@@ -347,10 +358,9 @@ nova lineage consume --subject "novafabric.lineage.>" \
 ## Phase 6 — Enable Postgres MetadataStore with RLS partitioning
 
 ```bash
-# Apply the v002 DDL migration (partition tables by tenant + time).
-# Requires ADR-0051 Postgres partition DDL — run after Phase 1.
-# NOTE (planned): the `--migrate-postgres-v002` flag does not exist yet; RLS/partition
-# DDL is applied through the metadata-store migrations, not a `nova server start` flag.
+# Apply the MetadataStore Postgres migrations (v002 partition DDL through v005).
+# Starting the server applies no migrations — `nova db upgrade` does.
+NOVAFABRIC_METADATA_DSN="$NOVAFABRIC_POSTGRES_DSN" nova db upgrade --backend postgres
 nova server start --backend postgres
 
 # Verify RLS is active.
@@ -363,11 +373,11 @@ uv run pytest tests/metadata_store/ -v -k "rls"
 
 | Phase | Rollback command |
 |---|---|
-| Phase 1 (Postgres) | `unset NOVA_BACKEND` → SQLite fallback is automatic |
-| Phase 2 (KuzuDB) | `unset NOVA_LINEAGE_BACKEND` → SQLite lineage fallback |
+| Phase 1 (Postgres) | Start the server with `--backend sqlite` (or unset `NOVAFABRIC_SERVER_BACKEND`); the SQLite files were never modified |
+| Phase 2 (KuzuDB) | Stop `nova lineage consume`. There is no backend switch to undo: the `nova lineage` CLI always reads the local SQLite lineage store |
 | Phase 3 (OCS) | `unset NOVA_OCS_BACKEND` → local filesystem |
-| Phase 4 (JanusGraph) | `unset NOVA_LINEAGE_JANUSGRAPH_URL` → KuzuDB |
-| Phase 5 (NATS) | `unset NOVAFABRIC_HUB_ADDRESS` → in-process queue |
+| Phase 4 (JanusGraph) | Stop writing to JanusGraph; no switch exists (the CLI never reads it) |
+| Phase 5 (NATS) | Stop `nova lineage consume` and the hub binary; an automatic in-process-queue fallback is **planned**, not implemented |
 | Phase 6 (RLS DDL) | Restore from Phase 0 backup |
 
 ---
@@ -379,7 +389,7 @@ After completing all phases:
 ```bash
 # Quality gates.
 uv run pytest --cov=novafabric --cov-report=term-missing
-uv run ruff check src tests
+uv run ruff check src tests scripts
 uv run mypy src
 
 # CLI smoke.
@@ -392,7 +402,8 @@ curl -s -H "Authorization: Bearer $(cat "${NOVAFABRIC_HOME:-$HOME/.novafabric}/.
 # WORM conformance (if OCS enabled).
 nova storage validate
 
-# Lineage integrity (if KuzuDB/JanusGraph enabled).
+# Lineage integrity — checks the local SQLite lineage store only; query
+# KuzuDB/JanusGraph through their Python backends.
 nova lineage blast-radius <any-run-id> --depth 3
 ```
 
