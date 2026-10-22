@@ -845,6 +845,11 @@ class _FakeCursor:
             (idx,) = params
             match = [r for r in store["leaves"] if r[0] == idx]
             self._result = [(match[0][1],)] if match else []
+        elif "SELECT 1 FROM nova_seal_leaves WHERE entry_json LIKE" in sql_norm:
+            (pattern,) = params
+            assert pattern.startswith("%") and pattern.endswith("%")
+            needle = pattern[1:-1]
+            self._result = [(1,)] if any(needle in r[2] for r in store["leaves"]) else []
         elif "SELECT leaf_index, leaf_hash, entry_json FROM nova_seal_leaves WHERE leaf_index IN" in sql_norm:
             wanted = set(params)
             self._result = [r for r in store["leaves"] if r[0] in wanted]
@@ -1026,6 +1031,26 @@ class TestPostgresMerkleLogMocked:
         result = log.verify_consistency(full=True)
         assert result.consistent is True
         assert result.leaf_count == 6
+
+    def test_has_entries_for_keyid(self, pg_log):
+        log, _ = pg_log
+        keyid = "ab" * 32
+        log.append({"capsule_id": "c", "has_tsr": False, "keyid": keyid})
+        assert log.has_entries_for_keyid(keyid) is True
+        assert log.has_entries_for_keyid("cd" * 32) is False
+        assert log.has_entries_for_keyid("%") is False  # never reaches SQL as a pattern
+
+    def test_duplicate_leaf_is_found_at_each_recorded_index(self, pg_log):
+        """Re-sealing an identical entry: the later copy verifies at its own index."""
+        from novafabric.trust.novaseal import _leaf_hash_at
+
+        log, _ = pg_log
+        entry = {"capsule_id": "same", "has_tsr": False, "keyid": "ab" * 32}
+        first, second = log.append(entry), log.append(entry)
+        assert first["leaf_hash"] == second["leaf_hash"]
+        assert _leaf_hash_at(log, 1) == second["leaf_hash"]
+        assert _leaf_hash_at(log, 7) is None
+        assert log.verify_entry(1) is True
 
     def test_close_resets_connection(self, pg_log):
         log, _ = pg_log

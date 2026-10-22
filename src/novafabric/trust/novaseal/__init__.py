@@ -384,8 +384,21 @@ def verify_seal_dir(
     * ``failed`` — anything inconsistent: the entry does not hash to its
       ``leaf_hash``, names another capsule, carries a proof that does not verify,
       sits at a different index in the supplied log, records a ``root_hash``
-      without its ``tree_size``, or records a tree head (size + root) that the
-      supplied log's leaves do not reproduce.
+      without its ``tree_size``, records a tree head (size + root) that the
+      supplied log's leaves do not reproduce, or is **absent from the sealer's
+      log** — a supplied log that holds other seals by the same signer
+      (``keyid`` / signer certificate fingerprint) under the record's root
+      version. A carried proof does not override that absence: the sealer's
+      log is the authority on what that sealer sealed.
+
+    A supplied log that holds no seals by this signer (another sealer's log, a
+    fresh log, or a log of the other root version after an ADR-0313 migration)
+    is not the sealer's: an entry absent from it keeps the ``carried-proof`` or
+    ``not-checked`` result, with a note.
+
+    A leaf may occur more than once in a log (the same manifest sealed twice
+    with the same key appends a byte-identical leaf); the check asks whether the
+    *recorded* index holds the leaf, so every copy verifies.
 
     Root version (ADR-0313): ``log-entry.json`` may carry ``root_version``
     (absent: v1, every seal written before it). A v1 root does not commit to the
@@ -449,10 +462,21 @@ def verify_seal_dir(
             timestamp_ok = False
             errors.append("Cannot verify TSR: DSSE envelope missing")
 
+    # --- Signer identity (ADR-0301) — what the capsule alone can establish ---
+    from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
+        signer_certificate_info,
+        unanchored_identity_trust,
+    )
+
+    signer = signer_certificate_info(dsse_bytes) if signature_ok else None
+
     # --- Merkle log inclusion ---
     payload_capsule_id = _payload_capsule_id(dsse_bytes) if signature_ok else None
     log_inclusion, log_notes = _check_log_inclusion(
-        seal_path / "log-entry.json", payload_capsule_id, merkle_log
+        seal_path / "log-entry.json",
+        payload_capsule_id,
+        merkle_log,
+        signer_keyid=signer.fingerprint_sha256 if signer else None,
     )
     if log_inclusion == LOG_INCLUSION_FAILED:
         errors.extend(log_notes)
@@ -467,14 +491,6 @@ def verify_seal_dir(
     # ``nova verify --ca-bundle`` sets it when a real chain check passes.
     _described, ca_chain_errors = _verify_ca_chain(dsse_bytes)
     ca_chain_ok = False
-
-    # --- Signer identity (ADR-0301) — what the capsule alone can establish ---
-    from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
-        signer_certificate_info,
-        unanchored_identity_trust,
-    )
-
-    signer = signer_certificate_info(dsse_bytes) if signature_ok else None
 
     valid = (
         signature_ok
@@ -519,8 +535,15 @@ def _check_log_inclusion(
     log_file: Path,
     payload_capsule_id: str | None,
     merkle_log: "MerkleLog | PostgresMerkleLog | None",
+    *,
+    signer_keyid: str | None = None,
 ) -> tuple[str, list[str]]:
-    """Return ``(log_inclusion status, notes)`` — see :func:`verify_seal_dir`."""
+    """Return ``(log_inclusion status, notes)`` — see :func:`verify_seal_dir`.
+
+    *signer_keyid* is the SHA-256 fingerprint of the certificate whose signature
+    verified; with the entry's own ``keyid`` it decides whether *merkle_log* is
+    this signer's log (:func:`_sealer_log_keyid`).
+    """
     if not log_file.exists():
         return LOG_INCLUSION_FAILED, [f"Missing {log_file}"]
     try:
@@ -606,13 +629,10 @@ def _check_log_inclusion(
 
     if merkle_log is not None:
         try:
-            found = merkle_log.find_leaf_index(leaf_hash)
-            if found is not None:
-                if found != leaf_index:
-                    return LOG_INCLUSION_FAILED, [
-                        f"log-entry.json says leaf_index={leaf_index} but the local log "
-                        f"holds this entry at leaf_index={found}"
-                    ]
+            # Ask about the recorded position, not about the first match: sealing an
+            # identical manifest twice appends a byte-identical leaf, and the lowest
+            # index holding it is the *earlier* seal's.
+            if _leaf_hash_at(merkle_log, leaf_index) == leaf_hash:
                 if not merkle_log.verify_entry(leaf_index):
                     return LOG_INCLUSION_FAILED, [
                         f"Merkle inclusion proof failed for leaf_index={leaf_index}"
@@ -631,8 +651,30 @@ def _check_log_inclusion(
                         ]
                 status = LOG_INCLUSION_LOCAL
                 notes.append("entry found in the local Merkle log and included under its root")
-            elif status == LOG_INCLUSION_NOT_CHECKED:
-                notes.append("entry is not in the local Merkle log (a different or fresh log)")
+            else:
+                found = merkle_log.find_leaf_index(leaf_hash)
+                if found is not None:
+                    return LOG_INCLUSION_FAILED, [
+                        f"log-entry.json says leaf_index={leaf_index} but the local log "
+                        f"holds this entry at leaf_index={found}, not at {leaf_index}"
+                    ]
+                sealer_keyid = _sealer_log_keyid(
+                    merkle_log, (entry.get("keyid"), signer_keyid), root_version
+                )
+                if sealer_keyid is not None:
+                    return LOG_INCLUSION_FAILED, [
+                        "this capsule's entry is not in the local Merkle log, yet that log "
+                        f"holds other seals by the same signer (keyid {sealer_keyid[:16]}…, "
+                        f"root v{root_version}): it is the sealer's log, and a carried proof "
+                        "cannot stand in for it. The log was rolled back or replaced, or the "
+                        "capsule was signed outside the sealing path. (If another host sealed "
+                        "it into its own log with a shared key, verify with that log, or with "
+                        "a novaseal.yaml whose merkle_db does not exist.)"
+                    ]
+                notes.append(
+                    "entry is not in the local Merkle log, which holds no seals by this "
+                    f"signer under root v{root_version} (a different or fresh log)"
+                )
         except MerkleError as exc:
             return LOG_INCLUSION_FAILED, [f"Merkle verification error: {exc}"]
 
@@ -642,6 +684,39 @@ def _check_log_inclusion(
             "proof; verify against the sealer's log for that check)"
         )
     return status, notes
+
+
+def _leaf_hash_at(
+    merkle_log: "MerkleLog | PostgresMerkleLog", leaf_index: int
+) -> str | None:
+    """The leaf hash the log stores at *leaf_index*, or None when it holds none."""
+    try:
+        return merkle_log.get_leaf_hash(leaf_index)
+    except MerkleError:
+        return None
+
+
+def _sealer_log_keyid(
+    merkle_log: "MerkleLog | PostgresMerkleLog",
+    keyids: tuple[object, ...],
+    root_version: int,
+) -> str | None:
+    """Return the keyid that makes *merkle_log* this capsule's sealer log, else None.
+
+    A log is the sealer's — so the capsule's entry *must* be in it — when it
+    holds seals by the same signer (the entry's ``keyid`` or the fingerprint of
+    the certificate whose signature verified) under the record's root version.
+    The version condition keeps the ADR-0313 migration working: a host that
+    started a fresh v2 log still verifies its v1-era capsules by carried proof.
+    A log of another signer, or a fresh log, is not the sealer's: absence there
+    keeps the carried-proof result (ADR-0297).
+    """
+    if merkle_log.root_version != root_version:
+        return None
+    for keyid in dict.fromkeys(k for k in keyids if isinstance(k, str)):
+        if merkle_log.has_entries_for_keyid(keyid):
+            return keyid
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -130,8 +130,10 @@ def ledger_verify_cmd(
 ) -> None:
     """Verify the ledger; exit with the ADR-0094 taxonomy.
 
-    Without ``--pubkey`` the check is structural (chains + epoch + anchor); the
-    signature is then not verified.
+    Without ``--pubkey`` the check is structural (chains + epoch + Merkle +
+    anchor); the signature is then not verified. Exit 8 applies only to a
+    checkpoint carrying a merkle block (appended to a NovaSeal log through the
+    Python API); checkpoints written by nova ledger anchor carry none.
 
     \b
     Exit codes: 0 ok | 3 tamper | 4 reorder | 5 truncation | 6 bad sig |

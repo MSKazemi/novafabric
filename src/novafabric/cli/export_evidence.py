@@ -329,6 +329,9 @@ def export_evidence_cmd(
     Ed25519 key, and a manifest.json with a SHA-256 for every file plus the
     verification recipe (full list: docs/architecture/sealing-and-verification.md).
 
+    A capsule holding a symbolic link is refused (exit 1): the export never
+    follows a link, whose target could be any file you can read.
+
     Scope: single capsule.
 
     \b

@@ -162,8 +162,8 @@ in turn:
 | # | Check | Passes when |
 |---|---|---|
 | 1 | DSSE signature | The envelope signature verifies against the embedded certificate. The signing intent is reported as `signed` only when the copy inside the signed payload (`_novaseal.signing_intent`, ADR-0309) agrees with the entry's label; an edited label fails. A seal made before ADR-0309 reports `label-only`. |
-| 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. If no token is present, the output says `NOT PRESENT`, `timestamp_ok` is `None` (absent, not passed) and the seal stays valid, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly is reported as a structural check only, never as OK. |
-| 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root at its `tree_size` (under its `root_version`) and the entry names this capsule. If a local log is configured, it is checked as well, including that the log's leaves reproduce the recorded tree head (size and root). |
+| 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. If no token is present, the output says `NOT PRESENT`, `timestamp_ok` is `None` (absent, not passed) and the seal stays valid, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly (a BER encoding) is reported as a structural check only, never as OK, and still must prove the same bindings: the CMS signature verifies, the signed `messageDigest` equals the hash of the TSTInfo, and the TSTInfo `messageImprint` is this envelope's hash. A signature that cannot be extracted or checked fails (`timestamp_ok` False). |
+| 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root at its `tree_size` (under its `root_version`) and the entry names this capsule. If a local log is configured, it is checked as well: the recorded index must hold this leaf (a manifest sealed twice has the same leaf twice; each copy verifies at its own index), and the log's leaves must reproduce the recorded tree head (size and root). When that log holds other seals by the same signer under the record's root version, it is the sealer's log, and an entry missing from it **fails**, carried proof or not. Another signer's log, a fresh log, or no log keeps the carried-proof result. |
 | 4 | Manifest binding | `capsule.yaml` on disk equals the signed payload, and `capsule_id` matches |
 | 5 | Per-file digests | Every file listed in `evidence_digests` exists and matches its SHA-256. Extra files are listed but do not fail the check. |
 
@@ -224,12 +224,20 @@ these live in `cli/seal_propose.py`.
 `nova export-evidence <capsule> -o bundle.zip` runs
 `evidence/bundle.py:EvidenceBundleBuilder`:
 
-1. **Check the capsule.** The required files, including `redaction-proof.json`,
-   and the `inputs/` and `outputs/` directories must exist. Otherwise the export
-   is refused.
+1. **Check the capsule.** The capsule must hold no symbolic link, and the
+   required files, including `redaction-proof.json`, and the `inputs/` and
+   `outputs/` directories must exist. Otherwise the export is refused, before
+   anything is written. A link would put its *target* (for example
+   `~/.ssh/id_rsa`) into the bundle as capsule content, signed and past
+   redaction; NovaFabric never writes one into a capsule, and a ZIP entry and
+   the capsule Merkle root cannot represent one. The refusal names each link
+   and whether it points inside or outside the capsule, or dangles. The path
+   used to reach the capsule may itself be a link (`runs/latest`).
 2. **Policy gate.** The export decision is recorded in the audit log.
 3. **Stage the contents:** `run-capsule/`, `lineage-subgraph/edges.jsonl`,
-   `schemas/` and a `README.md`.
+   `schemas/` and a `README.md`. The capsule is copied with links kept as links
+   and checked again, so a link that appears after step 1 is refused, never
+   followed.
 4. **Sign attestations.** It writes in-toto Statement v1 envelopes
    (`attestations/run.intoto.json`, `redaction.intoto.json`,
    `lineage.intoto.json`), signed with Ed25519 (`evidence/intoto.py`), each with

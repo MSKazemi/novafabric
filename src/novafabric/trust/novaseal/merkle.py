@@ -82,6 +82,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -695,6 +696,21 @@ END;
 
 _ROOT_VERSION_KEY = "root_version"
 
+_KEYID_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_keyid(value: object) -> bool:
+    """A seal entry ``keyid``: the lowercase SHA-256 hex of the signer certificate."""
+    return isinstance(value, str) and _KEYID_RE.fullmatch(value) is not None
+
+
+def _keyid_pattern(keyid: str) -> str:
+    """LIKE pattern for the canonical ``"keyid":"<hex>"`` member of a seal entry.
+
+    Only called with a validated hex digest, so the pattern holds no wildcard.
+    """
+    return f'%"keyid":"{keyid}"%'
+
 
 def _resolve_log_root_version(
     recorded: str | None, has_leaves: bool, requested: int | None, where: str
@@ -885,11 +901,34 @@ class MerkleLog:
         return str(row[0])
 
     def find_leaf_index(self, leaf_hash: str) -> int | None:
-        """Return the lowest leaf_index whose leaf_hash is *leaf_hash*, or None."""
+        """Return the lowest leaf_index whose leaf_hash is *leaf_hash*, or None.
+
+        A leaf hash can occur more than once: sealing an identical manifest
+        twice with the same key appends a byte-identical leaf. To ask whether
+        a *specific* position holds a leaf, compare :meth:`get_leaf_hash` at
+        that index — never compare this lowest match with a recorded index.
+        """
         row = self._conn.execute(
             "SELECT MIN(leaf_index) FROM leaves WHERE leaf_hash = ?", (leaf_hash,)
         ).fetchone()
         return None if row is None or row[0] is None else int(row[0])
+
+    def has_entries_for_keyid(self, keyid: str) -> bool:
+        """True when the log holds a seal entry whose ``keyid`` is *keyid*.
+
+        Seal entries are canonical JSON (``{"capsule_id", "has_tsr", "keyid"}``,
+        sorted keys, no whitespace), so the ``"keyid":"<hex>"`` member is matched
+        exactly. *keyid* must be a SHA-256 hex digest (a certificate
+        fingerprint); anything else returns False rather than reaching SQL as a
+        pattern.
+        """
+        if not _is_keyid(keyid):
+            return False
+        row = self._conn.execute(
+            "SELECT 1 FROM leaves WHERE entry_json LIKE ? LIMIT 1",
+            (_keyid_pattern(keyid),),
+        ).fetchone()
+        return row is not None
 
     def get_inclusion_proof(self, leaf_index: int) -> list[str]:
         """Return the inclusion proof (list of sibling hashes) for *leaf_index*.
@@ -1252,7 +1291,7 @@ class PostgresMerkleLog:
         return str(row[0])
 
     def find_leaf_index(self, leaf_hash: str) -> int | None:
-        """Return the lowest leaf_index whose leaf_hash is *leaf_hash*, or None."""
+        """Return the lowest leaf_index whose leaf_hash is *leaf_hash* (see MerkleLog)."""
         self._ensure_connected()
         with self._conn.cursor() as cur:
             cur.execute(
@@ -1261,6 +1300,19 @@ class PostgresMerkleLog:
             )
             row = cur.fetchone()
         return None if row is None or row[0] is None else int(row[0])
+
+    def has_entries_for_keyid(self, keyid: str) -> bool:
+        """True when the log holds a seal entry whose ``keyid`` is *keyid* (see MerkleLog)."""
+        if not _is_keyid(keyid):
+            return False
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM nova_seal_leaves WHERE entry_json LIKE %s LIMIT 1",
+                (_keyid_pattern(keyid),),
+            )
+            row = cur.fetchone()
+        return row is not None
 
     def get_inclusion_proof(self, leaf_index: int) -> list[str]:
         version = self.root_version

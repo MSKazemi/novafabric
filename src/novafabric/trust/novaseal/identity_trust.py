@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Optional
@@ -81,6 +82,8 @@ class SignerCertificateInfo:
     subject: str
     issuer: str
     local_seal_identity: bool
+    #: SHA-256 hex of the certificate's DER — the ``keyid`` a seal's log entry records.
+    fingerprint_sha256: Optional[str] = None
 
 
 def is_local_seal_name(name: x509.Name) -> bool:
@@ -132,6 +135,7 @@ def signer_certificate_info(dsse_bytes: bytes) -> Optional[SignerCertificateInfo
         subject=cert.subject.rfc4514_string(),
         issuer=cert.issuer.rfc4514_string(),
         local_seal_identity=is_local_seal_name(cert.subject),
+        fingerprint_sha256=hashlib.sha256(der).hexdigest(),
     )
 
 
