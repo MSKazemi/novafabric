@@ -91,7 +91,7 @@ def seal_sign_cmd(
     using the local ECDSA P-256 key configured in ``novaseal.yaml``.
 
     With ``--backend sigstore``, performs Sigstore keyless signing via OIDC.
-    Requires: pip install novafabric[sigstore].  The resulting Sigstore
+    Requires: pip install 'novafabric\\[sigstore]'.  The resulting Sigstore
     bundle is stored under ``<home>/sigstore/<capsule_id>.bundle.json``.
 
     Scope: single capsule.

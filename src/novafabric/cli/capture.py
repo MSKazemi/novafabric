@@ -461,7 +461,17 @@ def capture_cmd(
             except OSError:
                 pass  # daemon not reachable → fall through to in-process spawn
             else:
-                os.execvp("novacap", ["novacap", *cmd])  # never returns
+                try:
+                    os.execvp("novacap", ["novacap", *cmd])  # never returns on success
+                except OSError as exc:
+                    # M10: a reachable daemon but no runnable `novacap` (not on
+                    # PATH, not executable) must not block the workload — run it
+                    # in-process, as if no daemon were running.
+                    Console(stderr=True).print(
+                        "[yellow]warning:[/yellow] a capture daemon is running but "
+                        f"`novacap` could not be started ({exc.strerror or exc}); "
+                        "capturing in-process instead."
+                    )
 
     try:
         runner = get_runner(runner_name.value)

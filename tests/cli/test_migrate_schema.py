@@ -268,3 +268,35 @@ class TestMigrateCapsuleUnit:
     def test_migrate_capsule_dir_nonexistent(self, tmp_path: Path) -> None:
         report = migrate_capsule_dir(tmp_path / "ghost", dry_run=False, backup=False)
         assert report.results == []
+
+
+# ---------------------------------------------------------------------------
+# L10: the --help examples must be commands the CLI accepts
+# ---------------------------------------------------------------------------
+
+
+def _help_examples() -> list[str]:
+    """Argument strings of every ``nova migrate-schema …`` line in its own --help."""
+    import shlex
+
+    result = runner.invoke(app, ["migrate-schema", "--help"], terminal_width=200)
+    examples = []
+    for line in result.output.splitlines():
+        text = line.strip(" │")
+        if text.startswith("nova migrate-schema"):
+            examples.append(" ".join(shlex.split(text)[2:]))
+    return examples
+
+
+def test_help_examples_parse_and_run(tmp_path: Path, monkeypatch) -> None:
+    import shlex
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "capsules").mkdir()
+    examples = _help_examples()
+    assert len(examples) >= 2, examples
+    for args in examples:
+        result = runner.invoke(app, ["migrate-schema", *shlex.split(args)])
+        assert isinstance(result.exception, SystemExit) or result.exception is None, args
+        assert result.exit_code == 0, f"example `nova migrate-schema {args}`: {result.output}"
+        assert "capsules" in result.output

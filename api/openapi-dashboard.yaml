@@ -7422,7 +7422,18 @@ paths:
       x-nova-contract: pending
   /api/policy/capture-level:
     get:
-      description: Return current capture level + tier descriptions (DB-CAP-1, cap-004).
+      description: 'Return the current capture level, each tier''s field allowlist, and
+
+        whether selecting the tier changes capture today (DB-CAP-1, cap-004).
+
+
+        ``tiers`` is the *designed* per-field allowlist; no capture path applies it
+
+        (``allowlist_enforced: false``). ``enforcement[level].enforced`` says whether
+
+        choosing that level changes what capture records — today only ``forensic``
+
+        and ``air_gapped`` do (ADR-0066 Amendment 1).'
       parameters:
       - in: query
         name: token

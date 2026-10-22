@@ -40,7 +40,10 @@ def test_run_via_daemon_returns_exit_code():
     daemon_sock.close()
 
 
-def test_run_via_daemon_error_event_returns_1():
+def test_run_via_daemon_error_event_raises_refused():
+    # H4: a refusal is not a run result — main() turns it into a direct run.
+    import pytest
+
     client_sock, daemon_sock = socket.socketpair()
 
     def fake_daemon():
@@ -50,9 +53,10 @@ def test_run_via_daemon_error_event_returns_1():
 
     t = threading.Thread(target=fake_daemon)
     t.start()
-    code = client._run_via_daemon(client_sock, ["x"])
+    with pytest.raises(client.DaemonRefused) as excinfo:
+        client._run_via_daemon(client_sock, ["x"])
     t.join(timeout=5)
-    assert code == 1
+    assert excinfo.value.reason == "busy"
     client_sock.close()
     daemon_sock.close()
 

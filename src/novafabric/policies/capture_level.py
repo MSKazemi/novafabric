@@ -52,6 +52,47 @@ CAPTURE_LEVEL_ALLOWLIST: dict[CaptureLevel, set[str]] = {
     CaptureLevel.AIR_GAPPED: set(),
 }
 
+#: Levels whose selection changes what capture records today: the adapter,
+#: tool-hook and record-façade paths also keep payloads (ADR-0066 Amendment 1,
+#: ``capture/record.py::_payloads_enabled``). No other level changes capture.
+PAYLOAD_LEVELS: frozenset[CaptureLevel] = frozenset(
+    {CaptureLevel.FORENSIC, CaptureLevel.AIR_GAPPED}
+)
+
+#: The per-field allowlist above is applied by no capture path:
+#: ``CaptureLevelPolicy.validate_event`` has no caller
+#: (``tests/docs/test_capture_level_claims.py`` pins this).
+ALLOWLIST_ENFORCED = False
+
+#: What selecting each level does today — the honest counterpart of the allowlist.
+LEVEL_EFFECTS: dict[CaptureLevel, str] = {
+    CaptureLevel.MINIMAL: (
+        "Same behaviour as standard. The metadata-only field allowlist is not "
+        "applied by any capture path (planned)."
+    ),
+    CaptureLevel.STANDARD: (
+        "Default. Adapter, tool-hook and record-façade paths keep digests, not "
+        "payloads. Wire-level model calls still store full prompts and responses; "
+        "the field allowlist is not applied (planned)."
+    ),
+    CaptureLevel.FORENSIC: (
+        "Adapter, tool-hook and record-façade paths also keep payloads (tool "
+        "arguments and results, state dicts, document text)."
+    ),
+    CaptureLevel.AIR_GAPPED: (
+        "Same as forensic. External network calls are not blocked (planned)."
+    ),
+}
+
+
+def level_enforcement() -> dict[str, dict[str, Any]]:
+    """Per level: whether selecting it changes capture today, and how."""
+    return {
+        level.value: {"enforced": level in PAYLOAD_LEVELS, "effect": LEVEL_EFFECTS[level]}
+        for level in CaptureLevel
+    }
+
+
 # Fields exempt from the allowlist check at all levels.
 _EXEMPT_FIELDS: frozenset[str] = frozenset(
     {"schema_version", "allowed_processing_regions"}

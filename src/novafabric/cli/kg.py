@@ -71,7 +71,7 @@ def _transport_ids(events_file: Path) -> set[str]:
 
 kg_app = typer.Typer(
     name="kg",
-    help="Capsule Knowledge Graph: ingest, query, and inspect (requires novafabric[scale-kg]).",
+    help="Capsule Knowledge Graph: ingest, query, and inspect (requires novafabric\\[scale-kg]).",
     no_args_is_help=True,
 )
 
@@ -935,7 +935,7 @@ def kg_build_provenance_cmd(
     """Build the SPKG PROV-O provenance graph for a capsule (experimental, ADR-0111).
 
     Maps the capsule's ``lineage.jsonl`` to W3C PROV-O RDF and, by default, SHACL-validates
-    it (R11: invalid facts are rejected). Requires ``novafabric[spkg]`` (rdflib + pyshacl).
+    it (R11: invalid facts are rejected). Requires ``novafabric\\[spkg]`` (rdflib + pyshacl).
 
     Scope: single capsule.
 
@@ -1016,7 +1016,7 @@ def kg_build_cmd(
 
     The canonical RDF layer is validated first (R11) — on failure nothing is written to the
     operational KùzuDB store; then the LPG is (re)built from the same capsule (R4: the LPG
-    holds no state not derivable from the capsule). Requires ``novafabric[spkg]``.
+    holds no state not derivable from the capsule). Requires ``novafabric\\[spkg]``.
 
     Scope: single capsule.
 

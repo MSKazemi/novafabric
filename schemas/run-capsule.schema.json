@@ -504,6 +504,21 @@
     "content_provenance_ref": {
       "type": "string",
       "description": "ADR-0074 / EU AI Act Art.50: relative path to the C2PA synthetic-content provenance marker, written by `nova capture --mark-provenance` when the run produced >=1 model call. Absent otherwise."
+    },
+    "network_events_ref": {
+      "type": "string",
+      "const": "network_events.jsonl",
+      "description": "Optional. Relative path to network_events.jsonl (one NetworkEvent per line: an HTTP call an instrumented client made to a recognised model endpoint). Written by the capture orchestrator only when the stream is non-empty, so a present ref always names an existing file."
+    },
+    "file_events_ref": {
+      "type": "string",
+      "const": "file_events.jsonl",
+      "description": "Optional. Relative path to file_events.jsonl (one FileEvent per line). Written only when the stream is non-empty."
+    },
+    "human_approvals_ref": {
+      "type": "string",
+      "const": "human_approvals.jsonl",
+      "description": "Optional. Relative path to human_approvals.jsonl (one HumanApprovalEvent per line, e.g. a maker-checker decision). Written only when the stream is non-empty."
     }
   },
   "if": {

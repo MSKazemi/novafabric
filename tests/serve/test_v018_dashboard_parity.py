@@ -178,6 +178,30 @@ class TestCaptureLevelRoutes:
             "air_gapped",
         }
 
+    def test_get_says_which_tiers_are_enforced(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The allowlist ``tiers`` read as enforced; only forensic/air_gapped
+        change capture today (ADR-0066 Am.1). The response must say so."""
+        from novafabric.capture.record import _payloads_enabled
+
+        monkeypatch.delenv("NOVA_CAPTURE_LEVEL", raising=False)
+        body = client.get(f"/api/policy/capture-level?{TOKEN_Q}", headers=AUTH).json()
+        assert body["tiers"]["minimal"], "tiers keep their existing shape (additive change)"
+        assert body["allowlist_enforced"] is False
+        assert "not" in body["note"] and "allowlist" in body["note"]
+        enforcement = body["enforcement"]
+        assert set(enforcement) == set(body["tiers"])
+        for level, entry in enforcement.items():
+            monkeypatch.setenv("NOVA_CAPTURE_LEVEL", level)
+            assert entry["enforced"] is _payloads_enabled(), level
+            assert entry["effect"], level
+        assert [lvl for lvl, e in enforcement.items() if e["enforced"]] == [
+            "forensic",
+            "air_gapped",
+        ]
+        assert "not" in enforcement["air_gapped"]["effect"].lower()  # no network blocking
+
     def test_get_defaults_to_standard_when_env_unset(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:

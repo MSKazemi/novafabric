@@ -111,6 +111,11 @@ def _print_report_summary(report: AuditReport) -> None:
         f"[green]{report.covered_controls} covered[/green]  "
         f"[yellow]{report.partial_controls} partial[/yellow]  "
         f"[red]{report.missing_controls} missing[/red]"
+        + (
+            f"  [dim]{report.not_captured_controls} not captured by this version[/dim]"
+            if report.not_captured_controls
+            else ""
+        )
     )
     score_pct = f"{report.overall_score * 100:.1f}%"
     colour = "green" if report.overall_score >= 0.8 else (
@@ -136,10 +141,16 @@ def _print_coverage_table(report: AuditReport) -> None:
             cov.control_id,
             cov.control_title,
             f"[{colour}]{cov.status}[/{colour}]",
-            f"{cov.coverage_score * 100:.0f}%",
+            "—" if cov.status == "not_applicable" else f"{cov.coverage_score * 100:.0f}%",
             str(len(cov.capsule_ids)),
         )
     console.print(table)
+    if any(cov.evidence_not_captured for cov in report.coverages):
+        console.print(
+            "[dim]Not captured by this version: tool-permission-events.jsonl has no "
+            "producer, so tool-permission / policy-event evidence is reported as not "
+            "captured (not_applicable), never as missing.[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +261,8 @@ def audit_report(
             f"Controls: {report.total_controls} total, "
             f"{report.covered_controls} covered, "
             f"{report.partial_controls} partial, "
-            f"{report.missing_controls} missing",
+            f"{report.missing_controls} missing, "
+            f"{report.not_captured_controls} not captured by this version",
             "",
         ]
         for cov in report.coverages:
@@ -260,6 +272,8 @@ def audit_report(
             if cov.evidence_missing:
                 for m in cov.evidence_missing:
                     lines.append(f"  MISSING: {m}")
+            for m in cov.evidence_not_captured:
+                lines.append(f"  NOT CAPTURED: {m}")
         content = "\n".join(lines)
     else:
         content = report.model_dump_json(indent=2, by_alias=True, exclude_none=True)

@@ -5466,12 +5466,21 @@ def create_app(
 
     @app.get("/api/policy/capture-level", dependencies=[Depends(verify_token)])
     async def capture_level_get_endpoint() -> dict[str, Any]:
-        """Return current capture level + tier descriptions (DB-CAP-1, cap-004)."""
+        """Return the current capture level, each tier's field allowlist, and
+        whether selecting the tier changes capture today (DB-CAP-1, cap-004).
+
+        ``tiers`` is the *designed* per-field allowlist; no capture path applies it
+        (``allowlist_enforced: false``). ``enforcement[level].enforced`` says whether
+        choosing that level changes what capture records — today only ``forensic``
+        and ``air_gapped`` do (ADR-0066 Amendment 1).
+        """
         try:
             from novafabric.policies.capture_level import (
+                ALLOWLIST_ENFORCED,
                 CAPTURE_LEVEL_ALLOWLIST,
                 CaptureLevel,
                 CaptureLevelPolicy,
+                level_enforcement,
             )
         except ImportError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
@@ -5484,9 +5493,16 @@ def create_app(
             "current_level": policy.level.value,
             "env_var": "NOVA_CAPTURE_LEVEL",
             "tiers": tiers,
+            "allowlist_enforced": ALLOWLIST_ENFORCED,
+            "enforcement": level_enforcement(),
             "note": (
                 "Capture level is read at process start from NOVA_CAPTURE_LEVEL; "
-                "restart required to change."
+                "restart required to change. The per-tier field allowlist in "
+                "`tiers` is not applied by any capture path: minimal and standard "
+                "do not reduce what is captured, and wire-level model calls store "
+                "full prompts and responses at every level. Only forensic and "
+                "air_gapped change behaviour (they also keep payloads); see "
+                "`enforcement`."
             ),
         }
 
@@ -7255,6 +7271,7 @@ def create_app(
             "covered_controls": report.covered_controls,
             "partial_controls": report.partial_controls,
             "missing_controls": report.missing_controls,
+            "not_captured_controls": report.not_captured_controls,
             "coverages": [cov.model_dump(by_alias=True) for cov in report.coverages],
         }
 

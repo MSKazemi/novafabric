@@ -55,7 +55,7 @@ These files appear only in some runs:
 
 | Path | When |
 |---|---|
-| `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`). `nova capture` then also adds `network_events_ref` / `file_events_ref` / `human_approvals_ref` to `capsule.yaml` (`capture/orchestrator.py:_event_stream_refs`) — note these keys are not yet in the packaged schema, so `nova validate` rejects such a capsule today (known defect, being fixed) |
+| `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`). The manifest then carries the matching optional `network_events_ref`, `file_events_ref` or `human_approvals_ref` (each a fixed file name; `capture/orchestrator.py:_event_stream_refs`). Before this release those three keys were missing from the closed capsule schema, so `nova validate` rejected any capsule that had one — for example a run with a single instrumented HTTP call to a model endpoint |
 | `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass (since v0.105.0; v0.104.0 wrote it after sealing, unbound), so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. |
 | `c2pa-manifest.json` | `nova capture --mark-provenance` |
 | `otel-genai-spans.json` | `nova capture --emit-otel-genai` |
@@ -88,7 +88,14 @@ The schema requires `schema_version`, `run_id`, `created_at`, `finished_at`,
 `working_directory`, `host`, the `*_ref` pointers to the files above,
 `trace_root_span_id`, `inputs`, `outputs`, and the call counters
 (`model_call_count`, `tool_call_count`, `mutating_tool_count`). `model_call_count`
-counts logical model calls, not records (see below).
+counts logical model calls, not records (see below). Optional refs —
+`lineage_ref`, `attestations_ref`, `content_provenance_ref`, and the event-stream
+refs `network_events_ref`, `file_events_ref`, `human_approvals_ref` — appear only
+when their file exists. The top level is closed (`additionalProperties: false`),
+so every key a writer adds must be registered in all three schema copies
+(`src/novafabric/schemas/`, `schemas/`, `ui/dashboard/src/data/schemas/`);
+`tests/capture/test_event_stream_refs_schema.py` checks the event-stream refs
+against the orchestrator and validates a real capture end to end.
 
 ### The `host` block
 

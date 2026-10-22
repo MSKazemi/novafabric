@@ -130,8 +130,8 @@ nova safety signal list   --capsule <run_id> [--type deception|sandbagging|auton
 `--capsule` takes a capsule directory or a bare run id. Exit `0` whenever the capsule was read —
 including when nothing is recorded, which means *not evaluated*, never "safe", and when a
 tripwire fired or a successful sandbox escape was reported. Exit `2` for a missing capsule, a
-malformed facet, or an unknown `--type`. ⚠ An unrecognised `tripwire list --framework` value is
-**not** validated today: it matches nothing and prints an empty list with exit `0` — check the
-spelling (fix tracked). See the [CLI reference](cli-reference.md#nova-safety-control-show).
+malformed facet, or an unknown option value — including a misspelt `--framework`
+(only `anthropic_rsp`, `openai_preparedness`, `deepmind_fsf` and `other` are accepted), so a typo
+can never read as "nothing fired". See the [CLI reference](cli-reference.md#nova-safety-control-show).
 
 `nova safety` is unrelated to `nova safety-case` (the ADR-0095 Claims-Arguments-Evidence builder).

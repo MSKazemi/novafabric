@@ -243,15 +243,29 @@ def _trigger_rows(triggers: tuple[TripwireTrigger, ...]) -> Table:
     return table
 
 
+class FrameworkName(str, Enum):
+    """The ``--framework`` filter of ``nova safety tripwire list``.
+
+    Mirrors :data:`novafabric.frontier_safety._common.Framework` (a test pins the
+    two together). A closed choice, so a typo exits 2 instead of filtering every
+    trigger away and reading as "nothing fired" (M7).
+    """
+
+    anthropic_rsp = "anthropic_rsp"
+    openai_preparedness = "openai_preparedness"
+    deepmind_fsf = "deepmind_fsf"
+    other = "other"
+
+
 @tripwire_app.command("list")
 def tripwire_list(
     capsule: CapsuleOpt,
     framework: Annotated[
-        str | None,
+        FrameworkName | None,
         typer.Option(
             "--framework",
-            help="Only triggers for this framework (anthropic_rsp, "
-            "openai_preparedness, deepmind_fsf, other).",
+            help="Only triggers for this framework. An unknown name exits 2.",
+            case_sensitive=True,
         ),
     ] = None,
     as_json: JsonOpt = False,
@@ -264,7 +278,7 @@ def tripwire_list(
     capsule_dir, facet = _load_facet(capsule)
     triggers = facet.all_tripwire_triggers() if facet else ()
     if framework is not None:
-        triggers = tuple(t for t in triggers if t.framework == framework)
+        triggers = tuple(t for t in triggers if t.framework == framework.value)
     if as_json:
         _emit_json(
             {

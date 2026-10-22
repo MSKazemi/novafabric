@@ -100,7 +100,7 @@ def query_cmd(
         Optional[str],
         typer.Option(
             "--order-by",
-            help="Sort rows: '<alias> [asc|desc]' (default: first select, descending).",
+            help="Sort rows: '<alias> \\[asc|desc]' (default: first select, descending).",
         ),
     ] = None,
     scope: Annotated[

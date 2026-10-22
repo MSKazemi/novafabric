@@ -175,6 +175,28 @@ def test_fired_tripwires_exit_zero(populated: Path) -> None:
     assert "2 tripwire trigger(s) fired" in result.output
 
 
+@pytest.mark.parametrize("bad", ["anthropic_rps", "deepmind", "ANTHROPIC-RSP", ""])
+def test_tripwire_list_rejects_an_unknown_framework(populated: Path, bad: str) -> None:
+    """M7: a typo must not read as "nothing fired" — it is an input error (exit 2)."""
+    result = runner.invoke(
+        app,
+        ["safety", "tripwire", "list", "--capsule", str(populated), "--framework", bad, "--json"],
+    )
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == 2, result.output
+    assert "tripwire_triggers" not in result.output
+    assert "anthropic_rsp" in result.output  # the valid choices are named
+
+
+def test_tripwire_framework_choices_match_the_model() -> None:
+    from typing import get_args
+
+    from novafabric.cli.frontier_safety import FrameworkName
+    from novafabric.frontier_safety._common import Framework
+
+    assert [f.value for f in FrameworkName] == list(get_args(Framework))
+
+
 def test_tripwire_list_json_and_framework_filter(populated: Path) -> None:
     result = runner.invoke(
         app,

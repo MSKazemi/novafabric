@@ -362,7 +362,7 @@ the generic `{kind}` route is registered last so it never shadows them
 
 | Method | Path | Summary |
 |---|---|---|
-| `GET` | `/api/policy/capture-level` | Return current capture level + tier descriptions (DB-CAP-1, cap-004). |
+| `GET` | `/api/policy/capture-level` | Return the current capture level, each tier's designed field allowlist (`tiers` — **not enforced**, `allowlist_enforced: false`), and per tier `enforcement.<level>.{enforced, effect}`: whether selecting it changes capture today (only `forensic` and `air_gapped`). DB-CAP-1, cap-004, ADR-0066 Am.1. |
 | `POST` | `/api/policy/capture-level` | Validate a capture-level value and return restart instructions (DB-CAP-1). |
 | `POST` | `/api/policy/check` | Evaluate a policy check interactively. |
 | `GET` | `/api/policy/explain` | Look up a past policy decision from the audit log (nova policy explain). Bounded O(page) tail read, **newest-first**; `limit` (default 100, max 1000) + byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). |

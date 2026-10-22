@@ -64,14 +64,15 @@ def migrate_to_postgres_cmd(
 ) -> None:
     """Migrate a local SQLite registry to Postgres.
 
-    One-time, idempotent migration. Requires novafabric[server] and
-    NOVAFABRIC_DB_URL pointing to the target Postgres database.
+    One-time, idempotent migration. Requires the 'novafabric\\[server]' extra
+    and a target Postgres DSN: --target, or NOVAFABRIC_POSTGRES_DSN.
 
     Scope: registry-wide.
 
     \b
     Examples:
-      NOVAFABRIC_DB_URL=postgresql://user:pass@localhost/nova nova migrate-to-postgres
+      nova migrate-to-postgres --target postgresql://user:pass@localhost/nova
+      NOVAFABRIC_POSTGRES_DSN=postgresql://user:pass@localhost/nova nova migrate-to-postgres
     """
     if not dry_run and not target:
         console.print(
