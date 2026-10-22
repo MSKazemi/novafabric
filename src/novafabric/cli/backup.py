@@ -129,7 +129,8 @@ def create(
     carries a coverage table — what was NOT captured is recorded, never
     silent. Signing keys are excluded unless --include-keys. Connection
     strings are treated as secrets: the DSN never appears in the set, the
-    manifest, or any output.
+    manifest, or any output. A symbolic link under capsules/, runs/, spool/
+    or seal/ratchet/ refuses the backup: the copy never follows a link.
 
     NOTE: the default set includes the PII DEK store (dek.db) so restored PII
     stays readable — treat backup sets as sensitive artifacts and store them

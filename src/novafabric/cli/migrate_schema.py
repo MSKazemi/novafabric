@@ -28,6 +28,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric import _paths as _nf_paths
+from novafabric._capsule_fs import find_capsule_links
 
 console = Console()
 
@@ -99,6 +100,20 @@ def migrate_capsule(
     """
     capsule_id = capsule_dir.name
     manifest_path = capsule_dir / "manifest.json"
+
+    # ── Never through a link ──────────────────────────────────────────────
+    # A linked manifest.json / legacy event log would be read through, copied
+    # into a real .bak file (laundering the target into the capsule) and then
+    # overwritten in place: refuse the capsule instead.
+    links = find_capsule_links(capsule_dir)
+    if links:
+        return _CapsuleResult(
+            capsule_id=capsule_id,
+            old_version="—",
+            action="error",
+            result=f"capsule holds symlink(s), never followed: {', '.join(links[:5])}",
+            failed=True,
+        )
 
     # ── Read manifest ─────────────────────────────────────────────────────
     if not manifest_path.exists():

@@ -302,6 +302,8 @@ def audit_bundle(
     """Export audit evidence as a ZIP archive for a compliance profile.
 
     Includes the audit report and all contributing capsule evidence files.
+    A contributing capsule holding a symbolic link refuses the bundle (exit 1,
+    nothing written).
 
     Scope: all capsules under --data-dir.
 
@@ -319,27 +321,32 @@ def audit_bundle(
     for cov in report.coverages:
         contributing_ids.update(cov.capsule_ids)
 
+    # Read every evidence file before the archive is opened: a capsule holding a
+    # symlink refuses the whole bundle and nothing is written. rglob + zf.write
+    # used to follow a planted link and archive its target (ADR-0011 Am. 2).
+    from novafabric._capsule_fs import CapsuleEntryError, list_capsule, read_capsule_file
+
+    evidence: list[tuple[str, bytes]] = []
+    try:
+        if capsules_root.is_dir():
+            for capsule_dir in sorted(capsules_root.iterdir()):
+                if capsule_dir.name not in contributing_ids or not capsule_dir.is_dir():
+                    continue
+                listing = list_capsule(capsule_dir, operation="an audit bundle")
+                for rel in listing.files:
+                    data = read_capsule_file(listing.root, rel, operation="an audit bundle")
+                    evidence.append((f"capsules/{capsule_dir.name}/{rel}", data))
+    except CapsuleEntryError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         # Write the audit report as audit-report.json at the root
         report_json = report.model_dump_json(indent=2, by_alias=True, exclude_none=True)
         zf.writestr("audit-report.json", report_json)
-
-        # Include evidence files from each contributing capsule
-        files_added = 0
-        if capsules_root.is_dir():
-            for capsule_dir in capsules_root.iterdir():
-                if not capsule_dir.is_dir():
-                    continue
-                if capsule_dir.name not in contributing_ids:
-                    continue
-                for evidence_file in sorted(capsule_dir.rglob("*")):
-                    if evidence_file.is_file():
-                        rel = evidence_file.relative_to(capsule_dir)
-                        arc_name = str(
-                            Path("capsules") / capsule_dir.name / rel
-                        )
-                        zf.write(evidence_file, arc_name)
-                        files_added += 1
+        for arc_name, data in evidence:
+            zf.writestr(arc_name, data)
+    files_added = len(evidence)
 
     console.print(
         f"[green]ok[/green] Audit bundle written to [cyan]{output}[/cyan]  "

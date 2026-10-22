@@ -606,9 +606,14 @@ def build_authz_dependency(server_token: str) -> Callable[..., Any]:
         if scope.get("type") != "http":
             # ADR-0228 OQ-2: scope on a long-lived subscription is an open
             # question — mid-stream revocation has no agreed semantics yet — so
-            # WebSockets keep exactly the guard they had: `/api/tv5/ws` and
-            # `/topology/stream` re-check host and token inline before accept.
-            # Standing aside here is the deferral, not an oversight.
+            # WebSockets keep exactly the guard they had. Each WebSocket route
+            # checks the Host header and the server token inline, before
+            # accept(): `/topology/stream` (create_app, `--topology`) and the
+            # TV-5 router's `/api/tv5/ws` (passed to create_app by `nova serve`
+            # via `extra_routers`); the `/{ws_path:path}` catch-all closes every
+            # other socket with 1011. Standing aside here is the deferral, not an
+            # oversight; tests/serve/test_websocket_routes_require_token.py pins
+            # that every mounted WebSocket route rejects a missing or wrong token.
             return
 
         route = scope.get("route")

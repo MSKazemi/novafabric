@@ -29,6 +29,9 @@ def export_rocrate_cmd(
     packaging research data with structured metadata. Use for publishing
     runs to scientific repositories or data archives.
 
+    A capsule holding a symbolic link is refused (exit 1, nothing written):
+    the export never follows a link.
+
     Scope: single capsule.
 
     \b
@@ -36,13 +39,15 @@ def export_rocrate_cmd(
       nova export-rocrate path/to/my-capsule/
       nova export-rocrate path/to/my-capsule/ --output my-run.crate.zip
     """
+    from novafabric._capsule_fs import CapsuleEntryError
     from novafabric.compliance.export.ro_crate import export_ro_crate
 
     out_path = Path(output) if output else capsule_dir.parent / f"{capsule_dir.name}.rocrate.zip"
 
     try:
         written = export_ro_crate(capsule_dir, out_path)
-    except (FileNotFoundError, NotADirectoryError) as exc:
+    except (FileNotFoundError, NotADirectoryError, CapsuleEntryError) as exc:
+        # CapsuleEntryError: the capsule holds a symlink, never followed.
         console.print(f"[red]x[/red] {exc}")
         raise typer.Exit(code=1) from exc
 

@@ -34,7 +34,10 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_file, refuse_capsule_links
 from novafabric._hashutil import sha256_file_hex, sha256_hex
+
+_OPERATION = "an examiner BagIt export"
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -132,29 +135,40 @@ class BagItExporter:
 
         Returns:
             Path to the written ZIP file.
+
+        Raises:
+            CapsuleLinkError: the capsule holds a symbolic link. Nothing is written.
         """
-        output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{self.capsule_id}-bag.zip"
+
+        # Never follow a link: a planted capsule.yaml -> ~/.ssh/id_rsa used to be
+        # bagged as payload. Any link in the capsule refuses the export before
+        # anything is written.
+        refuse_capsule_links(self.data_dir, operation=_OPERATION)
 
         # Collect payload files from the capsule directory
         payload: dict[str, bytes] = {}  # filename (relative to data/) -> bytes
 
         # Always include capsule manifest if present
         for candidate in ["capsule.yaml", "capsule-manifest.json"]:
-            src = self.data_dir / candidate
-            if src.exists():
-                payload[candidate] = src.read_bytes()
+            if (self.data_dir / candidate).is_file():
+                payload[candidate] = read_capsule_file(
+                    self.data_dir, candidate, operation=_OPERATION
+                )
 
         # Include evidence bundle zip if present
         for zip_path in sorted(self.data_dir.glob("*.zip")):
             if zip_path != output_path:
-                payload[zip_path.name] = zip_path.read_bytes()
+                payload[zip_path.name] = read_capsule_file(
+                    self.data_dir, zip_path.name, operation=_OPERATION
+                )
 
         # Include audit report
-        if include_audit_report:
-            audit_path = self.data_dir / "audit-report.json"
-            if audit_path.exists():
-                payload["audit-report.json"] = audit_path.read_bytes()
+        if include_audit_report and (self.data_dir / "audit-report.json").is_file():
+            payload["audit-report.json"] = read_capsule_file(
+                self.data_dir, "audit-report.json", operation=_OPERATION
+            )
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # Compute checksums
         manifest_lines: list[str] = []

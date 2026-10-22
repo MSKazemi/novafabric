@@ -29,6 +29,7 @@ No CycloneDX SDK dependency — the format is plain JSON per the ECMA-424 2nd Ed
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +37,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import CapsuleLinkError
 from novafabric.capture.record_roles import logical_model_calls
 
 # ---------------------------------------------------------------------------
@@ -311,9 +313,27 @@ class AIBOMExporter:
         }
 
     def export_json(self, document: AIBOMDocument, output_path: Path) -> Path:
-        """Write the CycloneDX ML-BOM to *output_path* as JSON."""
+        """Write the CycloneDX ML-BOM to *output_path* as JSON.
+
+        Never writes through a symlink at *output_path*: the default target is
+        ``<capsule>/aibom.json``, and a link planted there (dangling or not)
+        used to redirect the write to wherever it pointed.
+
+        Raises:
+            CapsuleLinkError: *output_path* is a symbolic link.
+        """
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as fh:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(output_path, flags, 0o644)
+        except OSError as exc:
+            if output_path.is_symlink():
+                raise CapsuleLinkError(
+                    f"{output_path} is a symlink; an AI-BOM is never written through one",
+                    links=(output_path.name,),
+                ) from exc
+            raise
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(self.to_payload(document), fh, indent=2, default=str)
         return output_path
 

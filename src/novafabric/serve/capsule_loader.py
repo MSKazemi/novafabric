@@ -2,17 +2,28 @@
 
 The CLI never centralised this logic — each command did its own parsing.
 The dashboard needs it as a single, typed entry point.
+
+Every capsule file is read through :mod:`novafabric._capsule_fs`, so a link
+planted in a capsule (``capsule.yaml -> ~/.kube/config``) is never followed: the
+manifest reads as missing, a JSONL stream reads as empty (logged), and the
+``inputs``/``outputs`` listings leave links out.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import stat
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
 from novafabric.capture.record_roles import split_model_calls
+
+_log = logging.getLogger(__name__)
+_OPERATION = "the dashboard"
 
 
 def discover_capsule_dirs(base: Path) -> list[Path]:
@@ -50,25 +61,36 @@ def discover_ingestable_dirs(base: Path) -> list[Path]:
 
 def load_capsule_manifest(capsule_dir: Path) -> dict[str, Any]:
     """Parse capsule.yaml and return its dict. Raises FileNotFoundError if missing."""
-    manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}")
-    with manifest_path.open("r") as f:
-        return yaml.safe_load(f) or {}
+    try:
+        raw = read_capsule_file(capsule_dir, "capsule.yaml", operation=_OPERATION)
+    except CapsuleEntryError as exc:
+        # A linked or special manifest is unreadable, never followed.
+        raise FileNotFoundError(
+            f"capsule.yaml in {capsule_dir} is not a regular file: {exc}"
+        ) from exc
+    except FileNotFoundError:
+        raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}") from None
+    return yaml.safe_load(raw.decode("utf-8")) or {}
 
 
 def load_jsonl(capsule_dir: Path, filename: str) -> list[dict[str, Any]]:
     """Parse a JSONL file relative to the capsule directory; empty list if missing."""
-    p = capsule_dir / filename
-    if not p.exists():
+    try:
+        raw = read_capsule_file(capsule_dir, filename, operation=_OPERATION)
+    except FileNotFoundError:
+        return []
+    except CapsuleEntryError as exc:
+        _log.warning(
+            "capsule_file_not_followed",
+            extra={"capsule": str(capsule_dir), "file": filename, "reason": str(exc)},
+        )
         return []
     out: list[dict[str, Any]] = []
-    with p.open("r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            out.append(json.loads(line))
+    for line in raw.decode("utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        out.append(json.loads(line))
     return out
 
 
@@ -128,12 +150,14 @@ def run_summaries_for(base: Path, run_ids: list[str]) -> list[dict[str, Any]]:
 def _list_dir_files(capsule_dir: Path, subdir: str) -> list[dict[str, Any]]:
     """Return [{name, size_bytes}] for files directly inside a capsule subdirectory."""
     d = capsule_dir / subdir
-    if not d.is_dir():
+    if d.is_symlink() or not d.is_dir():
         return []
-    return sorted(
-        [{"name": f.name, "size_bytes": f.stat().st_size} for f in d.iterdir() if f.is_file()],
-        key=lambda x: x["name"],
-    )
+    files: list[dict[str, Any]] = []
+    for f in d.iterdir():
+        st = f.lstat()  # a link is left out: its target's size is not capsule data
+        if stat.S_ISREG(st.st_mode):
+            files.append({"name": f.name, "size_bytes": st.st_size})
+    return sorted(files, key=lambda x: x["name"])
 
 
 def load_full_capsule(capsule_dir: Path) -> dict[str, Any]:

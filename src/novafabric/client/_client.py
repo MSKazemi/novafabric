@@ -18,6 +18,7 @@ from urllib.parse import quote
 
 import httpx
 
+from novafabric._capsule_fs import list_capsule, read_capsule_file
 from novafabric.client._errors import (
     NovaFabricConfigError,
     NovaFabricTimeout,
@@ -102,16 +103,21 @@ def _zip_directory(directory: Path) -> bytes:
     Entries are sorted and rooted at the directory name (the server strips one
     leading path component on extract); timestamps are pinned so identical
     trees produce identical bytes.
+
+    Raises:
+        CapsuleLinkError: the directory holds a symbolic link. An upload never
+            follows one: ``rglob`` + ``read_bytes`` used to send the link's
+            target (e.g. ``~/.ssh/id_rsa``) to the server as capsule content.
     """
+    listing = list_capsule(directory, operation="a capsule upload")
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        files = sorted(p for p in directory.rglob("*") if p.is_file())
-        for path in files:
-            arcname = f"{directory.name}/{path.relative_to(directory).as_posix()}"
+        for rel in listing.files:
+            arcname = f"{directory.name}/{rel}"
             info = zipfile.ZipInfo(arcname, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
-            zf.writestr(info, path.read_bytes())
+            zf.writestr(info, read_capsule_file(listing.root, rel, operation="a capsule upload"))
     return buffer.getvalue()
 
 

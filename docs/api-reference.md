@@ -33,10 +33,12 @@ The audit fingerprint of the server token (`actor_token_fp` in route records,
 characters of a domain-separated SHA-256 of the token. It is stable, and it is never a prefix of
 the token.
 
-### Paths in request bodies
+### Paths in requests
 
 Fields that name a server-side file or directory (`output_path`, `key_path`, `cert_path`,
-`db_path`, `source`, `output`, `capsule_path`, `capsule_base`, `bundle_path`, `target_db`) are
+`db_path`, `source`, `output`, `capsule_path` (body, and the `?capsule_path=` query of
+`GET /api/assure/{run_id}`), `capsule_base`, `bundle_path`, `target_db`, a non-built-in
+compliance `profile`, and an `/api/ingest-capsule` `run_id` that contains a `/`) are
 confined to allowlisted roots. A **write** may target only `$NOVAFABRIC_HOME/exports`,
 `$NOVAFABRIC_HOME/evidence` or `$NOVAFABRIC_EVIDENCE_DIR`. A **read** may also target
 `$NOVAFABRIC_HOME` and the server's capsule directory. Each path is resolved, symlinks included,
@@ -45,6 +47,29 @@ before it is checked. A `..` segment, or a path that resolves outside the roots,
 `$NOVAFABRIC_HOME` (reads) or `$NOVAFABRIC_HOME/exports` (writes). Operators add directories with
 `NOVAFABRIC_SERVE_PATH_ROOTS` (absolute paths, `os.pathsep`-separated).
 `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` is no longer honoured.
+
+A **read** never reaches the server's own secrets, even inside a root: the token stores
+(`tokens.jsonl`, `.serve-token`, `.server-token`), `.env`, the PII key store (`dek.db` and its
+SQLite sidecars), the NovaSeal ratchet state, `config.yaml` and the audit logs are refused with
+**403**, and so is a directory that contains one of them (`$NOVAFABRIC_HOME` itself, for
+example). A source read (`source`, `capsule_path`, `capsule_base`, `bundle_path`, `profile`)
+also refuses key material: `$NOVAFABRIC_HOME/keys`, the NovaSeal keyring, and any `*.pem` or
+`*.key` file. `key_path`/`cert_path` may name key material, which the server uses to sign and
+never returns.
+
+Values a route joins onto a server directory as one name (`node_id` on `/api/seal/ratchet/*`,
+`capsule_id` on `/api/seal/sigstore/*` and `/api/seal/{capsule_id}/...`, `run_id` on
+`/children` and `/validate-distributed`) are refused with **400** if they contain `/`, `\`,
+`..` or a NUL byte, or are absolute; an evidence-cart `cart_id` must match `[A-Za-z0-9_-]+`
+(**422** otherwise). Ratchet responses never include the chain key.
+
+### Capsule files and symbolic links
+
+No route returns the target of a symbolic link planted in a capsule.
+`GET /api/runs/{run_id}/file/{path}` answers **404** for a link or a special file; a capsule
+with a link at its top level is refused with **403** by every `/api/runs/{run_id}/...` route;
+`POST /api/compliance/export/rocrate` answers **422** for a capsule holding any link. See
+[Concepts: links inside a capsule](concepts.md#links-inside-a-capsule-are-never-followed-works-today).
 
 ### Single-actor promotion into a protected stage
 

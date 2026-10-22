@@ -48,6 +48,9 @@ def migrate_capsule_cmd(
     Copies SOURCE to OUTPUT and bumps all schema_version fields.
     The original source directory is not modified.
 
+    A source holding a symbolic link is refused (exit 1, no output): a
+    migration never follows a link.
+
     Scope: single capsule directory.
 
     \b

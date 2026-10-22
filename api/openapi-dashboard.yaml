@@ -61,6 +61,7 @@ components:
         cart_id:
           anyOf:
           - maxLength: 64
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
           - type: 'null'
           title: Cart Id
@@ -2792,7 +2793,14 @@ paths:
       x-nova-contract: pending
   /api/assure/{run_id}:
     get:
-      description: Run OWASP Top 10 for LLM evidence checks against a capsule.
+      description: 'Run OWASP Top 10 for LLM evidence checks against a capsule.
+
+
+        ``capsule_path`` is a bare run id or a directory path. A path must lie
+
+        inside the server''s read roots; anything else is refused (403) whether
+
+        or not it exists.'
       parameters:
       - in: path
         name: run_id
@@ -10569,7 +10577,7 @@ paths:
       x-nova-contract: pending
   /api/seal/ratchet/status:
     get:
-      description: Show a node's current signing epoch and registry history.
+      description: Show a node's current signing epoch and registry history (never its chain key).
       parameters:
       - in: query
         name: node_id

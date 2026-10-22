@@ -89,6 +89,49 @@ Capsules support additive, optional `extensions:` blocks (for example `slurm`,
 new top-level format. Readers tolerate unknown fields; old capsules stay readable
 forever.
 
+### Links inside a capsule are never followed (works today)
+
+A capsule is a plain directory, so anyone who can write into it can plant a
+symbolic link such as `inputs/data.csv -> ~/.ssh/id_rsa`. NovaFabric never
+writes a link into a capsule, and neither a ZIP entry nor the capsule Merkle root
+can represent one. So nothing that copies, archives or serves capsule files
+follows one. They all share one module (`novafabric._capsule_fs`):
+
+- **Refused with a named error, nothing written:** `nova export-evidence`,
+  `nova export-blob` (exit 2, "Export refused"), `nova migrate` and
+  `/api/capsule-migrate`, `nova export-rocrate` and
+  `/api/compliance/export/rocrate` (HTTP 422), `nova backup create` (also for
+  links under `spool/` and `seal/ratchet/`), `nova audit bundle`,
+  `nova export-examiner bagit`, and the SDK's `upload_capsule`. Any link counts:
+  one to a file or a directory outside the capsule, a dangling one, and one that
+  stays inside the capsule. The error names each link and where it points.
+- **Never followed, even when planted mid-export:** files are opened one path
+  component at a time with `O_NOFOLLOW`, so a link swapped in after the check
+  is refused at open time instead of copied.
+- **`nova serve`:** `GET /api/runs/{id}/file/{path}` answers 404 for a link (or
+  a FIFO) and never returns its target. A run whose capsule holds a link at its
+  top level (`capsule.yaml`, a JSONL stream, `redaction-proof.json`, `inputs`,
+  `outputs`) is refused with 403 by every `/api/runs/{id}/...` route. The run
+  listing never parses a linked `capsule.yaml`, and the `inputs`/`outputs`
+  listings leave links out.
+- **`nova restore`** refuses a set whose listed member is a link entry, and
+  never writes through a link at a destination path. `nova migrate-schema`
+  skips (and reports) a capsule holding a link, and AI-BOM generation never
+  writes `aibom.json` through one.
+
+The capsule *path you pass* may itself be a link (`runs/latest`); only links
+inside it are refused.
+
+**Known limit: hard links are not refused.** A hard link is an ordinary
+directory entry for a regular file, so it is exported like any other file.
+Under Linux's default `fs.protected_hardlinks = 1`, a user can only hard-link a
+file they own or can already read and write, so a planted hard link exposes
+nothing the planter could not read already. NovaFabric never creates hard links.
+Refusing every file with more than one link would break capsule trees kept in
+`rsync --link-dest` or `cp -al` snapshots. On a system with
+`fs.protected_hardlinks = 0`, do not export capsules from a directory other
+users can write to.
+
 ### Sessions vs parent/child (two different groupings)
 
 Two distinct, composable ways of relating capsules exist — do not conflate them:

@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
-import shutil
-import stat
 import tempfile
 import zipfile
 from collections.abc import Sequence
@@ -15,6 +12,14 @@ from typing import Any
 import yaml
 
 from novafabric import __version__ as NF_VERSION
+from novafabric._capsule_fs import (
+    CapsuleLinkError,
+    CapsuleSpecialFileError,
+    copy_capsule_tree,
+    find_capsule_links,
+    read_capsule_file,
+    refuse_capsule_links,
+)
 from novafabric._hashutil import sha256_file_prefixed, sha256_prefixed
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
@@ -74,7 +79,7 @@ class UnsafeSkipsError(Exception):
     pass
 
 
-class CapsuleSymlinkError(CapsuleValidationError):
+class CapsuleSymlinkError(CapsuleValidationError, CapsuleLinkError):
     """The capsule holds a symbolic link; an evidence export never follows one.
 
     Following a link would put its *target* — anything the exporting user can
@@ -82,69 +87,35 @@ class CapsuleSymlinkError(CapsuleValidationError):
     past redaction. NovaFabric never writes links into a capsule, and neither a
     ZIP entry nor the capsule Merkle root can represent one, so any link refuses
     the export. A subclass of :class:`CapsuleValidationError`, so every caller
-    that already reports a malformed capsule reports this too.
+    that already reports a malformed capsule reports this too, and of the shared
+    :class:`novafabric._capsule_fs.CapsuleLinkError` every other capsule exporter
+    raises.
     """
 
 
-#: Most symlinks named in one refusal message (the count is always given).
-_MAX_LINKS_REPORTED = 20
+_OPERATION = "an evidence export"
 
 
 def _capsule_symlinks(root: Path) -> list[str]:
-    """Describe every symlink under *root*, without following any of them.
-
-    *root* itself may be reached through a link (``runs/latest``); it is resolved
-    once and only links *inside* it are reported, as ``"<rel> (<where it points>)"``.
-    """
-    base = root.resolve()
-    found: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
-        for name in sorted(dirnames + filenames):
-            path = Path(dirpath) / name
-            if not path.is_symlink():
-                continue
-            target = Path(os.path.realpath(path))
-            if not target.exists():
-                where = "dangling"
-            elif target == base or base in target.parents:
-                where = "points inside the capsule"
-            else:
-                where = "points outside the capsule"
-            found.append(f"{path.relative_to(base).as_posix()} ({where})")
-    return sorted(found)
+    """Describe every symlink under *root*, without following any of them."""
+    return find_capsule_links(root)
 
 
 def _refuse_symlinks(root: Path, capsule_name: str) -> None:
     """Raise :class:`CapsuleSymlinkError` when *root* holds any symlink."""
-    links = _capsule_symlinks(root)
-    if not links:
-        return
-    shown = ", ".join(links[:_MAX_LINKS_REPORTED])
-    more = len(links) - _MAX_LINKS_REPORTED
-    raise CapsuleSymlinkError(
-        f"capsule {capsule_name} holds {len(links)} symlink(s); an evidence export never "
-        f"follows a symlink (its target would be exported as capsule content): {shown}"
-        + (f", and {more} more" if more > 0 else "")
-        + ". Replace them with regular files or remove them, then export again."
+    refuse_capsule_links(
+        root, operation=_OPERATION, capsule_name=capsule_name, error=CapsuleSymlinkError
     )
 
 
 def _read_regular_file(path: Path) -> bytes:
-    """Read *path* only if it is a regular file, refusing to follow a final symlink."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    """Read *path* only if it is a regular file, refusing to follow a symlink."""
     try:
-        fd = os.open(path, flags)
-    except OSError as exc:
-        if path.is_symlink():
-            raise CapsuleSymlinkError(
-                f"{path.name} is a symlink; an evidence export never follows one"
-            ) from exc
-        raise
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
-        os.close(fd)
-        raise CapsuleValidationError(f"{path.name} is not a regular file")
-    with os.fdopen(fd, "rb") as handle:
-        return handle.read()
+        return read_capsule_file(
+            path.parent, path.name, operation=_OPERATION, error=CapsuleSymlinkError
+        )
+    except CapsuleSpecialFileError as exc:
+        raise CapsuleValidationError(f"{path.name} is not a regular file") from exc
 
 
 class PolicyAuditUnavailableError(Exception):
@@ -325,11 +296,12 @@ class EvidenceBundleBuilder:
         dest = staging / dest_rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         source = (capsule_dir or self._capsule_dir).resolve()
-        # symlinks=True copies a link as a link — never its target. A link that
-        # appeared after _validate_capsule (a race) is therefore copied inert and
-        # refused here, before anything reads, hashes or zips the staged tree.
-        shutil.copytree(source, dest, symlinks=True)
-        _refuse_symlinks(dest, source.name)
+        # Never shutil.copytree: even with symlinks=True it re-resolves each path
+        # between its link check and the copy, so a file swapped for a link in
+        # that window was copied *through* the link. copy_capsule_tree opens every
+        # file with O_NOFOLLOW on each path component and re-checks the copy, so
+        # a link that appeared after _validate_capsule is refused, never followed.
+        copy_capsule_tree(source, dest, operation=_OPERATION, error=CapsuleSymlinkError)
 
     def _stage_lineage_subgraph(
         self,

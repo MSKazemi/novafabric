@@ -42,7 +42,7 @@ import sqlite3
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Optional
+from typing import IO, TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:  # pragma: no cover
     from novafabric.object_capsule_store.worm.base import WormAdapter
@@ -213,6 +213,7 @@ def restore_backup(
         )
     for member in manifest.members:
         _reject_unsafe_member(member.path, allow_keys=manifest.includes_keys)
+    _reject_non_regular_members(set_path, [m.path for m in manifest.members])
 
     roots = {
         "audit_log_path": audit_log_path,
@@ -362,6 +363,42 @@ def _reject_unsafe_member(path: str, *, allow_keys: bool = False) -> None:
         )
 
 
+def _reject_non_regular_members(set_path: Path, paths: list[str]) -> None:
+    """Refuse a set whose listed member is a link, directory or device entry.
+
+    ``tarfile.extractfile`` resolves a symlink or hard-link entry to the member
+    it names, so a crafted set can alias one member's bytes under another
+    member's path and still pass the digest check. A set written by
+    ``create_backup`` only ever holds regular-file members.
+    """
+    with tarfile.open(set_path, "r:gz") as tar:
+        for path in paths:
+            try:
+                info = tar.getmember(path)
+            except KeyError:
+                continue  # verification already reported it missing
+            if not info.isreg():
+                raise RestoreError(
+                    f"Set member {path!r} is not a regular file (tar type "
+                    f"{info.type!r}) — a backup set never holds links; refusing to restore"
+                )
+
+
+def _write_member_bytes(fh: IO[bytes], dst: Path) -> None:
+    """Write *fh* to *dst*, never following a symlink at *dst* itself."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(dst, flags, 0o644)
+    except OSError as exc:
+        if dst.is_symlink():
+            raise RestoreError(
+                f"Restore target {dst} is a symlink — refusing to write through it"
+            ) from exc
+        raise
+    with os.fdopen(fd, "wb") as out:
+        shutil.copyfileobj(fh, out)
+
+
 def _dest_for(
     member: BackupMember, home: Path, roots: dict[str, Optional[Path]]
 ) -> Path:
@@ -463,8 +500,8 @@ def _extract_members(
             ):
                 raise RestoreError(f"Member {member.path!r} escapes the target home")
             dst.parent.mkdir(parents=True, exist_ok=True)
-            with fh, open(dst, "wb") as out:
-                shutil.copyfileobj(fh, out)
+            with fh:
+                _write_member_bytes(fh, dst)
             if member.sensitive:
                 os.chmod(dst, 0o600)
             count += 1

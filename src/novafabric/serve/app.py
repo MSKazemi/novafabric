@@ -19,9 +19,10 @@ import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from fastapi import (
+    APIRouter,
     Body,
     Depends,
     FastAPI,
@@ -39,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from novafabric import _paths as _nf_paths
+from novafabric._capsule_fs import CapsuleEntryError, open_capsule_file
 from novafabric.registry.runs_cache import (
     count_cached_runs,
 )
@@ -62,7 +64,6 @@ from novafabric.serve.capsule_loader import (
     list_run_summaries,
     load_capsule_manifest,
     load_full_capsule,
-    load_jsonl,
 )
 from novafabric.serve.http_cache import conditional_json
 from novafabric.serve.pagination import clamp_limit, decode_keyset, encode_keyset
@@ -137,17 +138,20 @@ def _bundle_tsa_chain_ok(tsr_bytes: bytes, timestamped: bytes) -> bool | None:
     return outcome.valid
 
 
-def _confine_path(candidate: str | Path, roots: Sequence[Path]) -> Path:
-    """Confine a request-supplied filesystem path to *roots*, as HTTP 400/403.
+def _confine_path(
+    candidate: str | Path, confiner: Callable[[str | Path], Path]
+) -> Path:
+    """Confine a request-supplied filesystem path with *confiner*, as HTTP 400/403.
 
-    The allowlist itself lives in :mod:`novafabric.serve.paths`. Inside
-    ``create_app`` the ``_confine_read`` / ``_confine_write`` closures pick the
-    root set. Every route that takes a filesystem path from the request body goes
-    through one of them. A denylist of system directories preceded this, and it
-    left the rest of the filesystem open to any ``operate``-scoped token.
+    The allowlist and the secret deny list live in :mod:`novafabric.serve.paths`.
+    Inside ``create_app`` the ``_confine_read`` / ``_confine_key`` /
+    ``_confine_write`` closures pick the rule set. Every route that takes a
+    filesystem path from the request (body or query) goes through one of them. A
+    denylist of system directories preceded this, and it left the rest of the
+    filesystem open to any ``operate``-scoped token.
     """
     try:
-        return _serve_paths.confine(candidate, roots)
+        return confiner(candidate)
     except _serve_paths.PathConfinementError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
@@ -618,8 +622,15 @@ def create_app(
     static_mounted_by_caller: bool = False,
     topology_enabled: bool = False,
     topology_louvain_resolution: float | None = None,
+    extra_routers: Sequence[APIRouter] = (),
 ) -> FastAPI:
     """Build the FastAPI app. Pure factory; no side effects beyond app creation.
+
+    ``extra_routers`` are included after every built-in route but **before** the
+    WebSocket catch-all (``/{ws_path:path}``). A router a caller includes after
+    ``create_app`` returns is unreachable over WebSocket, because Starlette
+    matches in registration order and the catch-all closes the socket (1011).
+    ``nova serve`` passes the TV-5 router (``/api/tv5/ws``) here for that reason.
 
     ``static_mounted_by_caller`` exists because ``nova serve`` deliberately
     mounts the static site **after** ``create_app`` returns, so that routers
@@ -814,12 +825,18 @@ def create_app(
         )
 
     def _confine_read(candidate: str | Path) -> Path:
-        """A path the request asks the server to read: $NOVAFABRIC_HOME, capsules, exports."""
-        return _confine_path(candidate, _serve_paths.read_roots(capsule_dir))
+        """A source the request asks the server to read: the read roots minus secrets."""
+        return _confine_path(candidate, lambda c: _serve_paths.confine_read(c, capsule_dir))
+
+    def _confine_key(candidate: str | Path) -> Path:
+        """A signing key/certificate the request names: key material allowed, no other secret."""
+        return _confine_path(candidate, lambda c: _serve_paths.confine_key(c, capsule_dir))
 
     def _confine_write(candidate: str | Path) -> Path:
         """A path the request asks the server to write: the export/evidence dirs only."""
-        return _confine_path(candidate, _serve_paths.write_roots())
+        return _confine_path(
+            candidate, lambda c: _serve_paths.confine(c, _serve_paths.write_roots())
+        )
 
     def _capsule_target(capsule_path_str: str, *, require_manifest: bool = True) -> Path:
         """Resolve a ``capsule_path`` field: a bare run id, or a confined directory path.
@@ -838,7 +855,21 @@ def create_app(
             raise HTTPException(
                 status_code=404, detail=f"Directory not found: {capsule_path_str}"
             )
-        return target
+        return _refuse_top_level_links(target)
+
+    def _profile_arg(profile: object) -> str:
+        """A compliance profile a request names: a built-in id, or a confined YAML path.
+
+        ``load_profile`` treats anything that is not a built-in id as a file
+        path. Unconfined, a read-scope ``?profile=/etc/...`` was an existence and
+        parse oracle for any file the server user can read.
+        """
+        from novafabric.compliance.audit.loader import list_profiles  # noqa: PLC0415
+
+        text = str(profile)
+        if text in list_profiles():
+            return text
+        return str(_confine_read(text))
 
     def verify_token(
         t: str | None = Query(default=None, alias="token"),
@@ -1757,46 +1788,15 @@ def create_app(
         else:
             raise HTTPException(status_code=400, detail="path too deep")
         cdir = _resolve_capsule(run_id, capsule_dir)
-        path = cdir / filepath
-        if not path.exists() or not path.is_file():
-            raise HTTPException(status_code=404, detail="file not found")
-        # Bounded-memory serving: never read more than the cap from disk,
-        # so one request for a huge artifact cannot balloon server RSS.
-        cap = _max_file_response_bytes()
-        size = path.stat().st_size
-        if filepath.endswith(".jsonl"):
-            if size <= cap:
-                return {"filename": filepath, "lines": load_jsonl(cdir, filepath)}
-            lines: list[Any] = []
-            consumed = 0
-            with path.open("r", encoding="utf-8", errors="replace") as f:
-                for raw in f:
-                    consumed += len(raw.encode("utf-8", errors="replace"))
-                    if consumed > cap:
-                        break
-                    stripped = raw.strip()
-                    if not stripped:
-                        continue
-                    try:
-                        lines.append(json.loads(stripped))
-                    except ValueError:
-                        continue
-            return {
-                "filename": filepath,
-                "lines": lines,
-                "truncated": True,
-                "size_bytes": size,
-            }
-        if size <= cap:
-            return {"filename": filepath, "content": path.read_text(errors="replace")}
-        with path.open("rb") as fb:
-            head = fb.read(cap)
-        return {
-            "filename": filepath,
-            "content": head.decode("utf-8", errors="replace"),
-            "truncated": True,
-            "size_bytes": size,
-        }
+        # One open, never following a link on any path component (a link
+        # planted in inputs/ used to return ~/.ssh/id_rsa to a read token), and
+        # every later read uses that descriptor: nothing re-resolves the path.
+        try:
+            handle = open_capsule_file(cdir, filepath, operation="nova serve")
+        except (CapsuleEntryError, FileNotFoundError, NotADirectoryError, ValueError):
+            raise HTTPException(status_code=404, detail="file not found") from None
+        with handle:
+            return _file_response(filepath, handle, _max_file_response_bytes())
 
     @app.get("/api/runs/{run_id}/energy", dependencies=[Depends(verify_token)])
     async def get_run_energy(run_id: str) -> dict[str, Any]:
@@ -3104,7 +3104,7 @@ def create_app(
         # filesystem: the key is read from a read root, the bundle is written to
         # a write root (serve.paths). Server-chosen defaults are not confined.
         key_pem_default = _nf_paths.local_key_path()
-        key_path = _confine_read(body.key_path) if body.key_path else key_pem_default
+        key_path = _confine_key(body.key_path) if body.key_path else key_pem_default
         out_default = _nf_paths.nova_home() / "evidence" / f"{run_id}.zip"
         output_path = _confine_write(body.output_path) if body.output_path else out_default
 
@@ -4554,7 +4554,7 @@ def create_app(
             ) from exc
 
         try:
-            ctrl_profile = load_profile(profile)
+            ctrl_profile = load_profile(_profile_arg(profile))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -4597,7 +4597,7 @@ def create_app(
         capsule_path = _resolve_capsule(run_id, capsule_dir)
 
         try:
-            ctrl_profile = load_profile(profile)
+            ctrl_profile = load_profile(_profile_arg(profile))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -4790,6 +4790,7 @@ def create_app(
     @app.get("/api/seal/{capsule_id}/proposals", dependencies=[Depends(verify_token)])
     async def seal_list_proposals_endpoint(capsule_id: str) -> list[dict[str, Any]]:
         """List all proposals for a capsule with their approval status."""
+        capsule_id = _require_path_segment(capsule_id, "capsule_id")
         import json as _json
 
         from novafabric.promote.bundle_store import PromoteBundleStore
@@ -4870,6 +4871,11 @@ def create_app(
         The resulting Sigstore bundle v0.3 is persisted to disk alongside
         capsule metadata.
         """
+        capsule_id = str(body.get("capsule_id", "")).strip()
+        if not capsule_id:
+            raise HTTPException(status_code=422, detail="capsule_id is required")
+        # Joined into <home>/<bundle dir>/<capsule_id>.bundle.json: one segment only.
+        capsule_id = _require_path_segment(capsule_id, "capsule_id")
         try:
             from novafabric.trust.novaseal.sigstore_signer import (  # noqa: PLC0415
                 SigstoreBundleStore,
@@ -4883,10 +4889,6 @@ def create_app(
                     "run: pip install novafabric[sigstore]"
                 ),
             )
-
-        capsule_id = body.get("capsule_id", "").strip()
-        if not capsule_id:
-            raise HTTPException(status_code=422, detail="capsule_id is required")
 
         manifest_json = body.get("manifest_json") or f'{{"capsule_id": "{capsule_id}"}}'
         artifact_bytes = (
@@ -4952,6 +4954,11 @@ def create_app(
         Sigstore's offline verification against the stored inclusion proof.
         Requires novafabric[sigstore] to be installed.
         """
+        capsule_id = str(body.get("capsule_id", "")).strip()
+        if not capsule_id:
+            raise HTTPException(status_code=422, detail="capsule_id is required")
+        # Joined into <home>/<bundle dir>/<capsule_id>.bundle.json: one segment only.
+        capsule_id = _require_path_segment(capsule_id, "capsule_id")
         try:
             from novafabric.trust.novaseal.sigstore_signer import (  # noqa: PLC0415
                 SigstoreBundleStore,
@@ -4965,10 +4972,6 @@ def create_app(
                     "run: pip install novafabric[sigstore]"
                 ),
             )
-
-        capsule_id = body.get("capsule_id", "").strip()
-        if not capsule_id:
-            raise HTTPException(status_code=422, detail="capsule_id is required")
 
         home = _nf_paths.nova_home()
         bundle = SigstoreBundleStore.load_bundle(capsule_id, home)
@@ -5001,6 +5004,7 @@ def create_app(
     @app.post("/api/seal/{capsule_id}/verify", dependencies=[Depends(verify_token)])
     async def seal_verify_endpoint(capsule_id: str) -> dict[str, Any]:
         """Run the five-check SoD verifier for a capsule's promote bundles."""
+        capsule_id = _require_path_segment(capsule_id, "capsule_id")
         from novafabric.promote.bundle_store import PromoteBundleStore
         from novafabric.promote.policy_store import PolicyStore
         from novafabric.promote.verifier import verify_sod
@@ -5049,6 +5053,7 @@ def create_app(
     @app.post("/api/seal/{capsule_id}/bypass", dependencies=[Depends(verify_token)])
     async def seal_bypass_endpoint(capsule_id: str, body: dict[str, Any]) -> dict[str, Any]:
         """Create a time-limited SoD bypass, DSSE-signed and permanently logged (ADR-0059)."""
+        capsule_id = _require_path_segment(capsule_id, "capsule_id")
         import hashlib
         from datetime import UTC, datetime, timedelta
 
@@ -6662,9 +6667,10 @@ def create_app(
     @app.get("/api/runs/{run_id}/children", dependencies=[Depends(verify_token)])
     async def get_run_children_endpoint(run_id: str) -> dict[str, Any]:
         """Return parent capsule metadata + list of child capsule summaries."""
-        parent_dir = capsule_dir / run_id
+        parent_dir = capsule_dir / _require_path_segment(run_id, "run_id")
         if not parent_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"Capsule directory not found: {run_id}")
+        _refuse_top_level_links(parent_dir)
         manifest_path = parent_dir / "capsule.yaml"
         if not manifest_path.exists():
             manifest_path = parent_dir / "capsule.json"
@@ -6726,9 +6732,10 @@ def create_app(
     @app.post("/api/runs/{run_id}/validate-distributed", dependencies=[Depends(verify_token)])
     async def validate_distributed_endpoint(run_id: str) -> dict[str, Any]:
         """Validate a distributed parent capsule + its workers (nova run validate-distributed)."""
-        parent_dir = capsule_dir / run_id
+        parent_dir = capsule_dir / _require_path_segment(run_id, "run_id")
         if not parent_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"Capsule directory not found: {run_id}")
+        _refuse_top_level_links(parent_dir)
         try:
             from novafabric.capsule.validator import DistributedCapsuleValidator
         except ImportError as exc:
@@ -7169,7 +7176,7 @@ def create_app(
                 detail=f"compliance audit module not available: {exc}",
             ) from exc
         try:
-            ctrl_profile = load_profile(profile)
+            ctrl_profile = load_profile(_profile_arg(profile))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
@@ -7207,7 +7214,7 @@ def create_app(
             ) from exc
         profile = body.get("profile", "nist-ai-rmf")
         try:
-            ctrl_profile = load_profile(profile)
+            ctrl_profile = load_profile(_profile_arg(profile))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
@@ -7279,32 +7286,30 @@ def create_app(
 
     @app.get("/api/assure/{run_id}", dependencies=[Depends(verify_token)])
     async def api_assure(run_id: str, capsule_path: str | None = None) -> dict[str, Any]:
-        """Run OWASP Top 10 for LLM evidence checks against a capsule."""
-        # Resolve capsule path: explicit param > auto-discover from capsule_dir
-        if capsule_path:
-            cap = Path(capsule_path)
-        else:
-            cap = capsule_dir / run_id
-            if not cap.exists() or not (cap / "capsule.yaml").exists():
-                # Fallback: scan capsule_dir for matching run_id in manifest
-                cap_found: Path | None = None
-                for d in discover_capsule_dirs(capsule_dir):
-                    try:
-                        m = load_capsule_manifest(d)
-                    except FileNotFoundError:
-                        continue
-                    if m.get("run_id") == run_id:
-                        cap_found = d
-                        break
-                if cap_found is not None:
-                    cap = cap_found
+        """Run OWASP Top 10 for LLM evidence checks against a capsule.
 
-        if not cap.exists() or not (cap / "capsule.yaml").exists():
-            return {
-                "ok": False,
-                "backend": "stub",
-                "reason": f"Capsule not found for run_id={run_id}",
-            }
+        ``capsule_path`` is a bare run id or a directory path. A path must lie
+        inside the server's read roots; anything else is refused (403) whether
+        or not it exists.
+        """
+        # capsule_path was once read unconfined (Path(capsule_path)), an
+        # existence oracle for any directory holding a capsule.yaml.
+        not_found = {
+            "ok": False,
+            "backend": "stub",
+            "reason": f"Capsule not found for run_id={run_id}",
+        }
+        try:
+            if capsule_path:
+                cap = _capsule_target(capsule_path, require_manifest=False)
+            else:
+                cap = _resolve_capsule(run_id, capsule_dir)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return not_found
+            raise
+        if not (cap / "capsule.yaml").is_file():
+            return not_found
 
         try:
             from novafabric.assure.checker import AssuranceChecker
@@ -7539,7 +7544,10 @@ def create_app(
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 zip_path = Path(tmp) / f"{cap_dir.name}.rocrate.zip"
-                export_ro_crate(cap_dir, zip_path)
+                try:
+                    export_ro_crate(cap_dir, zip_path)
+                except CapsuleEntryError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
                 zip_bytes = zip_path.read_bytes()
             return {
                 "ok": True,
@@ -7549,6 +7557,8 @@ def create_app(
                 "size_bytes": len(zip_bytes),
                 "note": "W3C RO-Crate v1.1 — decode zip_base64 to download",
             }
+        except HTTPException:
+            raise
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -8002,8 +8012,8 @@ def create_app(
         db_raw = body.get("db_path")
         # Confine every request-supplied path before any existence check, so a
         # refused path never reveals whether something exists outside the roots.
-        key_path = _confine_read(key_raw) if key_raw else None
-        cert_path = _confine_read(cert_raw) if cert_raw else None
+        key_path = _confine_key(key_raw) if key_raw else None
+        cert_path = _confine_key(cert_raw) if cert_raw else None
         db_path_policy = (
             _confine_write(str(db_raw))
             if db_raw
@@ -8185,7 +8195,15 @@ def create_app(
         if all_capsules:
             indexed = watcher.ingest_all()
             return {"ok": True, "indexed": indexed}
-        found, is_new = watcher.ingest_one(str(run_id))
+        # A bare id names a capsule under the server's capsule dir; anything with
+        # a separator is a path and goes through the read confinement. The
+        # watcher used to take an absolute path as-is.
+        target = str(run_id)
+        if "/" in target or "\\" in target:
+            target = str(_confine_read(target))
+        else:
+            target = _require_path_segment(target, "run_id")
+        found, is_new = watcher.ingest_one(target)
         if not found:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
         return {"ok": True, "found": True, "is_new": is_new}
@@ -9094,7 +9112,7 @@ def create_app(
         run_id: str, body: dict[str, Any] = Body(default={})
     ) -> dict[str, Any]:
         """Build criterion-evidence bindings for a capsule against a profile."""
-        profile = str(body.get("profile", "nist-ai-rmf"))
+        profile = _profile_arg(body.get("profile", "nist-ai-rmf"))
         try:
             from novafabric.evidence.binding import build_bindings
 
@@ -9109,13 +9127,14 @@ def create_app(
 
     @app.get("/api/seal/ratchet/status", dependencies=[Depends(verify_token)])
     async def api_ratchet_status(node_id: str) -> dict[str, Any]:
-        """Show a node's current signing epoch and registry history."""
+        """Show a node's current signing epoch and registry history (never its chain key)."""
+        node_id = _require_path_segment(node_id, "node_id")
         try:
             from novafabric.trust.novaseal.ratchet import EpochRegistry, load_state
 
             state = load_state(node_id)
             records = EpochRegistry().records(node_id)
-            return {"ok": True, "state": _dump(state),
+            return {"ok": True, "state": _ratchet_state_public(state),
                     "registry_epochs": [r.epoch for r in records]}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "node_id": node_id, "error": str(exc)}
@@ -9126,11 +9145,12 @@ def create_app(
         node_id = str(body.get("node_id", "")).strip()
         if not node_id:
             raise HTTPException(status_code=422, detail="node_id is required")
+        node_id = _require_path_segment(node_id, "node_id")
         try:
             from novafabric.trust.novaseal.ratchet import init_ratchet
 
             state = init_ratchet(node_id)
-            return {"ok": True, "state": _dump(state)}
+            return {"ok": True, "state": _ratchet_state_public(state)}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "node_id": node_id, "error": str(exc)}
 
@@ -9142,11 +9162,12 @@ def create_app(
             raise HTTPException(status_code=400, detail="rotate requires confirmed=true")
         if not node_id:
             raise HTTPException(status_code=422, detail="node_id is required")
+        node_id = _require_path_segment(node_id, "node_id")
         try:
             from novafabric.trust.novaseal.ratchet import rotate
 
             state = rotate(node_id)
-            return {"ok": True, "state": _dump(state)}
+            return {"ok": True, "state": _ratchet_state_public(state)}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "node_id": node_id, "error": str(exc)}
 
@@ -9230,6 +9251,9 @@ def create_app(
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
+
+    for extra_router in extra_routers:
+        app.include_router(extra_router)
 
     # ---------- WebSocket catch-all ----------
     # StaticFiles(html=True) mounted at "/" only handles HTTP. Any WebSocket
@@ -9524,13 +9548,115 @@ def _parse_prom_gauge(text: str, metric_name: str) -> float | None:
     return None
 
 
+def _require_path_segment(value: object, field: str) -> str:
+    """Return *value* if it is one safe path segment, else raise HTTP 400.
+
+    For request values a route joins onto a server directory (a node id, a
+    capsule id, a run id). ``/``, ``\\``, NUL, any ``..`` and an absolute value
+    are refused, so the join can never leave that directory.
+    """
+    text = str(value).strip() if value is not None else ""
+    if (
+        not text
+        or text == "."
+        or ".." in text
+        or any(ch in text for ch in ("/", "\\", "\x00"))
+        or os.path.isabs(text)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid {field}: must be a single name without '/', '\\' or '..'",
+        )
+    return text
+
+
+def _ratchet_state_public(state: Any) -> dict[str, Any]:
+    """A ratchet state as a response may show it: never the chain key.
+
+    The chain key is the forward-secure secret the ratchet erases on rotation;
+    a copy in an HTTP response (or a proxy log) would defeat that.
+    """
+    data = state.model_dump(mode="json")
+    data.pop("chain_key_hex", None)
+    return dict(data)
+
+
+def _file_response(filepath: str, handle: BinaryIO, cap: int) -> dict[str, Any]:
+    """Body of ``GET /api/runs/{id}/file/{path}`` from an already-open file.
+
+    Bounded-memory serving: never read more than *cap* bytes from disk, so one
+    request for a huge artifact cannot balloon server RSS.
+    """
+    size = os.fstat(handle.fileno()).st_size
+    head = handle.read(cap + 1)
+    truncated = len(head) > cap or size > cap
+    head = head[:cap]
+    if filepath.endswith(".jsonl"):
+        text = head.decode("utf-8", errors="replace")
+        raw_lines = text.splitlines()
+        if truncated and raw_lines and not text.endswith("\n"):
+            raw_lines = raw_lines[:-1]  # a cut-off last line is dropped, never half-parsed
+        lines: list[Any] = []
+        for raw in raw_lines:
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                lines.append(json.loads(stripped))
+            except ValueError:
+                if not truncated:
+                    raise HTTPException(
+                        status_code=422, detail=f"{filepath} is not valid JSONL"
+                    ) from None
+                continue
+        if not truncated:
+            return {"filename": filepath, "lines": lines}
+        return {"filename": filepath, "lines": lines, "truncated": True, "size_bytes": size}
+    content = head.decode("utf-8", errors="replace")
+    if not truncated:
+        return {"filename": filepath, "content": content}
+    return {"filename": filepath, "content": content, "truncated": True, "size_bytes": size}
+
+
+def _refuse_top_level_links(cdir: Path) -> Path:
+    """Refuse (403) a capsule whose top level holds a symbolic link.
+
+    Every ``{run_id}`` route reads well-known top-level files (``capsule.yaml``,
+    the JSONL streams, ``redaction-proof.json``) or the ``inputs``/``outputs``
+    directories. A link planted there would hand its target to a read-scope
+    caller. NovaFabric never writes a link into a capsule, so one at the top
+    level means the capsule was tampered with. One ``scandir`` per request keeps
+    this cheap; files under ``inputs``/``outputs`` are opened through
+    :mod:`novafabric._capsule_fs` by the file route itself.
+    """
+    try:
+        with os.scandir(cdir) as entries:
+            linked = sorted(e.name for e in entries if e.is_symlink())
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="run not readable") from exc
+    if linked:
+        logger.warning(
+            "capsule_symlink_refused", extra={"capsule": str(cdir), "links": linked[:20]}
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"capsule holds {len(linked)} symlink(s) at its top level "
+                f"({', '.join(linked[:20])}); nova serve never follows a link in a capsule"
+            ),
+        )
+    return cdir
+
+
 def _resolve_capsule(run_id: str, capsule_dir: Path) -> Path:
-    """Find the capsule directory for a run_id; raise 404 if absent."""
-    if "/" in run_id or ".." in run_id:
+    """Find the capsule directory for a run_id; raise 404 if absent, 403 if linked."""
+    if "/" in run_id or ".." in run_id or run_id in ("", "."):
         raise HTTPException(status_code=400, detail="invalid run_id")
     candidate = capsule_dir / run_id
     if candidate.is_dir() and (candidate / "capsule.yaml").exists():
-        return candidate
+        return _refuse_top_level_links(candidate)
+    if candidate.is_dir() and (candidate / "capsule.yaml").is_symlink():
+        return _refuse_top_level_links(candidate)  # a dangling linked manifest: 403
     # Fallback: scan in case run_id is the manifest's run_id, not the directory name
     for d in discover_capsule_dirs(capsule_dir):
         try:
@@ -9538,7 +9664,7 @@ def _resolve_capsule(run_id: str, capsule_dir: Path) -> Path:
         except FileNotFoundError:
             continue
         if m.get("run_id") == run_id:
-            return d
+            return _refuse_top_level_links(d)
     raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
 
 
