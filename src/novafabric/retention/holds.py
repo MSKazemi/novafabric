@@ -144,6 +144,27 @@ def hold_roots(extra_roots: Iterable[Path] = ()) -> list[Path]:
     return roots
 
 
+RETENTION_POLICY_FILENAME = "retention-policy.yaml"
+
+
+def retention_policy_paths(
+    registry: str, *, extra_roots: Iterable[Path] = ()
+) -> list[Path]:
+    """Every existing ``retention-policy.yaml`` for *registry*, canonical first.
+
+    Resolved like holds (:func:`hold_roots`): ``$NOVAFABRIC_HOME/registries/<r>/``,
+    then the legacy ``./.novafabric/registries/<r>/`` under the working directory,
+    then any caller-known root. A deletion gate must apply **every** file found,
+    so the stricter one wins and a stale legacy policy is never silently ignored.
+    """
+    validate_registry_name(registry)
+    return [
+        path
+        for root in hold_roots(extra_roots)
+        if (path := root / registry / RETENTION_POLICY_FILENAME).is_file()
+    ]
+
+
 def validate_registry_name(registry: str) -> str:
     """Return *registry* if it names exactly one directory inside a hold root.
 
