@@ -138,7 +138,9 @@ capsule with `status: failure` for a command that crashed. So the action:
 
 1. runs your command and records its exit code without aborting;
 2. locates the capsule **regardless** of that exit code;
-3. validates it, uploads it, writes the job summary;
+3. validates it, uploads it, writes the job summary — ⚠ if `nova validate` rejects
+   the capsule, that step fails and the upload is skipped, so no artifact is produced
+   (set `validate: false` to always upload; a fix is tracked);
 4. and only then, as its **last** step, re-raises your command's exit code.
 
 The ordering is load-bearing. A composite action abandons its remaining steps

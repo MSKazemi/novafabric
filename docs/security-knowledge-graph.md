@@ -132,7 +132,9 @@ nova kg attack-path ~/.novafabric/capsules/01HXAY7M \
 ```
 
 If no path exists within `--max-depth` (default 6), it prints
-`✓ No attack path …`. Either way the command exits `0` (informational).
+`✓ No attack path …`. Either way the command exits `0` (informational). A malformed
+entity spec (anything that is not `kind:ref`) exits `2`, here and in `blast-radius`;
+`build` and `build-provenance` exit `1` when SHACL validation rejects the graph.
 
 ### 4. Compute blast radius
 

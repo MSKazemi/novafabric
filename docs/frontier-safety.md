@@ -61,8 +61,11 @@ from novafabric.frontier_safety import (
 )
 
 capsule = record_control_decision(capsule, ControlDecision(
-    protocol="resample",            # trusted_monitor | untrusted_monitor | resample | defer_to_trusted
-    decision="resample",            #   | defer_to_human | interrogate | other
+    # protocol: trusted_monitor | untrusted_monitor | resample | defer_to_trusted
+    #           | defer_to_human | interrogate | other
+    protocol="resample",
+    # decision: accept | edit | resample | defer | audit
+    decision="resample",
     governed_action_ref=digest_ref(action_json),   # the action the protocol governed
     monitor_ref=digest_ref(monitor_identity),      # model/config identity, never its prompt
     verdict_ref=digest_ref(protocol_log_entry),    # the protocol's own decision record
