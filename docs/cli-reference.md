@@ -4909,6 +4909,9 @@ nova export-rocrate .novafabric/runs/01HX.../ --output ./out.rocrate.zip
 Options:
 - `--output, -o PATH` — output ZIP file path (default: `<capsule_dir>.rocrate.zip` next to the capsule dir)
 
+A capsule holding a symbolic link anywhere is refused (exit 1, no archive written); the export
+never follows a link. See [Concepts](concepts.md#links-inside-a-capsule-are-never-followed-works-today).
+
 #### nova export-rocrate-science --capsule \<capsule\>
 
 Export a science capsule as a FAIR **Workflow-Run-RO-Crate science profile** (ADR-0164 NF-324).
@@ -5202,6 +5205,8 @@ interrupted export **resumes**. The Ed25519/DSSE-signed `export-manifest.json`
 atomic completion marker: it lists every member's `capsule_id`, `content_hash`, and
 `size`, plus a `batch_digest` over the sorted member list, so a recipient can verify
 integrity **and completeness** offline. Source capsules are never modified.
+A capsule holding a symbolic link is refused (exit 2, "Export refused", nothing written):
+packing used to follow links and store their targets. See [Concepts](concepts.md#links-inside-a-capsule-are-never-followed-works-today).
 
 **experimental** — implemented; API may change.
 
@@ -7673,7 +7678,9 @@ never silent. The `pg` profile adds a `pg_dump` member; the `manifest`
 profile (WORM object-store deployments) records chain heads + checkpoints
 instead of blobs. Signing keys are excluded unless `--include-keys`.
 Connection strings are treated as secrets: the DSN never appears in the set,
-the manifest, or any output.
+the manifest, or any output. A symbolic link under `capsules/`, `runs/`, `spool/` or
+`seal/ratchet/` refuses the backup (exit 1, no set written); the copy never follows a link.
+See [Concepts](concepts.md#links-inside-a-capsule-are-never-followed-works-today).
 
 > **Custody note:** the default set includes the PII DEK store (`dek.db`) so
 > restored PII stays readable — treat backup sets as sensitive artifacts and
@@ -7731,7 +7738,9 @@ migrate to head → replay crypto-shreds (shredded data stays shredded — a
 moved-aside live audit log is also replayed, so shreds applied after the
 backup survive) → advance regressed ratchet epochs → storage, seal-log, and
 per-store integrity checks. The restore is complete ONLY when verification
-passes — there is no flag to skip it.
+passes — there is no flag to skip it. A set whose listed member is a link (symlink or
+hard-link tar entry) is refused before the home is touched, and no member is ever written
+through a link at its destination.
 
 `pg`-dump sets restore automatically (ADR-0217): a non-empty target DB is
 refused without `--force` (which first takes a safety dump into the
@@ -8806,6 +8815,9 @@ nova audit bundle --profile eu-ai-act-high-risk --output audit.zip
 
 **Options:** `--output PATH` / `-o` — output ZIP (default: `audit-bundle.zip`).
 
+A contributing capsule that holds a symbolic link refuses the bundle (exit 1, nothing
+written); the bundle never follows a link.
+
 ### nova audit coverage
 
 Show regulatory control coverage for the data directory and exit 1 if the score is below
@@ -8839,6 +8851,8 @@ nova export-examiner bagit 01HXAY7M5JZ8R7K4P9DPBYK2WX \
 - `--output-dir DIR` / `-o` (required) — directory that receives `<capsule-id>-bag.zip`
 - `--contact-email TEXT` — written to `bag-info.txt`
 - `--no-audit-report` — leave `audit-report.json` out of the payload even if present
+
+A capsule directory holding a symbolic link is refused (exit 1, no bag written).
 
 **Output:** BagIt ZIP containing `bagit.txt`, `bag-info.txt`, `manifest-sha256.txt`, `tagmanifest-sha256.txt`, and the capsule payload under `data/`.
 

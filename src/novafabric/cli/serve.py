@@ -11,7 +11,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -255,8 +255,18 @@ def serve_cmd(
     static_dir = Path(__file__).parent.parent / "serve" / "static"
     static_arg = static_dir if static_dir.exists() else None
 
-    # Build the app WITHOUT the static mount so that routers added below
-    # (TV-5) are registered before the "/" catch-all StaticFiles mount.
+    # The TV-5 router goes INTO create_app (extra_routers), so it is registered
+    # before both the WebSocket catch-all and the "/" StaticFiles mount. Included
+    # after create_app returned, /api/tv5/ws was shadowed by the catch-all.
+    tv5_router: Any = None
+    tv5_layout_pipe: Any = None
+    if topology or tv5:
+        try:
+            tv5_router, tv5_layout_pipe = _build_tv5_router(token)
+        except Exception as _e:  # noqa: BLE001
+            console.print(f"[yellow]warning:[/yellow] TV-5 router failed to mount: {_e}")
+
+    # Build the app WITHOUT the static mount (mounted last, below).
     app = create_app(
         token=token,
         capsule_dir=resolved_capsule_dir,
@@ -267,24 +277,10 @@ def serve_cmd(
         static_mounted_by_caller=static_arg is not None,
         topology_enabled=topology,
         topology_louvain_resolution=topology_louvain_resolution,
+        extra_routers=[tv5_router] if tv5_router is not None else [],
     )
-
-    if topology or tv5:
-        import logging as _logging
-        _tv5_logger = _logging.getLogger(__name__)
-        try:
-            from novafabric.serve.topology.layout_pipeline_3d import LayoutPipeline3D
-            from novafabric.serve.topology.router_tv5 import make_tv5_router
-            from novafabric.serve.topology.snapshot_store_3d import SnapshotStore3D
-
-            snap_store = SnapshotStore3D()
-            layout_pipe = LayoutPipeline3D(snap_store)
-            tv5_router = make_tv5_router(snap_store, layout_pipe, token=token)
-            app.include_router(tv5_router)
-            app.state.tv5_layout_pipe = layout_pipe  # exposed to seed endpoint
-            _tv5_logger.info("TV-5 3D topology router mounted at /api/tv5/")
-        except Exception as _e:  # noqa: BLE001
-            console.print(f"[yellow]warning:[/yellow] TV-5 router failed to mount: {_e}")
+    if tv5_layout_pipe is not None:
+        app.state.tv5_layout_pipe = tv5_layout_pipe  # exposed to seed endpoint
 
     # Mount static files LAST — the "/" catch-all must not shadow any route above.
     if static_arg is not None and static_arg.exists():
@@ -362,3 +358,24 @@ def serve_cmd(
         # the next start so process restarts (e.g. docker restart) keep the same
         # token and don't break open browser sessions.
         console.print("\n[dim]nova serve stopped.[/dim]")
+
+
+def _build_tv5_router(token: str) -> tuple[Any, Any]:
+    """Build the TV-5 3D topology router (``/api/tv5/*``) and its layout pipeline.
+
+    The TV-5 WebSocket (``/api/tv5/ws``) checks the Host header and the token
+    inline before ``accept()``: the app-level authorization dependency stands
+    aside for WebSockets (ADR-0228 OQ-2). Pass the router to
+    ``create_app(extra_routers=...)`` so the WebSocket catch-all cannot shadow it.
+    """
+    import logging as _logging
+
+    from novafabric.serve.topology.layout_pipeline_3d import LayoutPipeline3D
+    from novafabric.serve.topology.router_tv5 import make_tv5_router
+    from novafabric.serve.topology.snapshot_store_3d import SnapshotStore3D
+
+    snap_store = SnapshotStore3D()
+    layout_pipe = LayoutPipeline3D(snap_store)
+    router = make_tv5_router(snap_store, layout_pipe, token=token)
+    _logging.getLogger(__name__).info("TV-5 3D topology router mounted at /api/tv5/")
+    return router, layout_pipe

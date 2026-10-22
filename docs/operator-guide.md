@@ -1439,7 +1439,7 @@ without any error.
 |----------|----------------|----------------------|--------|
 | `NOVAFABRIC_HOME` | `/data/nova` | `~/.novafabric` | Registry DB, serve token, audit log root |
 | `NOVAFABRIC_EVIDENCE_DIR` | `/data/capsules/evidence` | `~/.novafabric/evidence` | Where `nova export-evidence` writes ZIPs; where the Evidence tab reads them |
-| `NOVAFABRIC_SERVE_PATH_ROOTS` | *(unset)* | *(unset)* | Extra absolute directories (`:`-separated) that `nova serve` may read and write when a request names a path. Without it, writes are confined to `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence` and `$NOVAFABRIC_EVIDENCE_DIR`, and reads also to `$NOVAFABRIC_HOME` and the capsule dir. Replaces `NOVAFABRIC_SERVE_ALLOW_ANY_PATH`, which is no longer honoured |
+| `NOVAFABRIC_SERVE_PATH_ROOTS` | *(unset)* | *(unset)* | Extra absolute directories (`:`-separated) that `nova serve` may read and write when a request names a path. Without it, writes are confined to `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence` and `$NOVAFABRIC_EVIDENCE_DIR`, and reads also to `$NOVAFABRIC_HOME` and the capsule dir. Reads never reach the server's secrets (token stores, `.env`, `dek.db`, ratchet state, `config.yaml`, audit logs, and for source paths key material), even under a listed root. Replaces `NOVAFABRIC_SERVE_ALLOW_ANY_PATH`, which is no longer honoured |
 | `NOVAFABRIC_METADATA_BACKEND` | `postgres` | `sqlite` | MetadataStore backend |
 | `NOVAFABRIC_METADATA_DSN` | `postgresql://nova:nova@postgres:5432/nova` | *(SQLite file)* | DB connection string |
 | `NOVAFABRIC_SERVER_BACKEND` | `postgres` | *(sqlite)* | Server-mode Postgres DSN alias |

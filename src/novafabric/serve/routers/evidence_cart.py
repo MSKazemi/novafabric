@@ -117,7 +117,8 @@ class CartItemIn(BaseModel):
 
 
 class CartExportRequest(BaseModel):
-    cart_id: str | None = Field(default=None, max_length=64)
+    #: Joined into the bundle's file name, so one plain segment only.
+    cart_id: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     items: list[CartItemIn] = Field(default_factory=list)
     confirmed: bool = False
     #: Proceed when some references did not resolve, recording the omissions.

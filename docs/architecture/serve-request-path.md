@@ -113,7 +113,27 @@ path, a NUL byte, or a path that cannot be resolved gets **400**.
 | Kind | Roots | Fields |
 |---|---|---|
 | write | `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence`, `$NOVAFABRIC_EVIDENCE_DIR` | evidence `output_path`, policy-sign `db_path`, capsule-migrate `output`, rebuild `target_db` |
-| read | `$NOVAFABRIC_HOME`, the server's capsule dir, and the write roots | evidence `key_path`, policy-sign `key_path`/`cert_path`, capsule-migrate `source`, `capsule_path` (lineage import, KG ingest/detect/attack-path/blast-radius), KG ingest-all `capsule_base`, policy-test `bundle_path` |
+| key read | the read roots, minus `secret_paths()` | evidence `key_path`, policy-sign `key_path`/`cert_path` |
+| source read | the read roots, minus `secret_paths()` and key material | capsule-migrate `source`, `capsule_path` (lineage import, KG ingest/detect/attack-path/blast-radius, `/api/assure` query), KG ingest-all `capsule_base`, policy-test `bundle_path`, a non-built-in compliance `profile`, an `/api/ingest-capsule` `run_id` path |
+
+The read roots are `$NOVAFABRIC_HOME`, the server's capsule dir and the write
+roots. Because that home also holds the server's secrets, every read is checked
+against a deny list (`serve/paths.py:secret_paths`): `tokens.jsonl`,
+`.serve-token`, `.server-token`, `.env`, `dek.db` and its sidecars, the ratchet
+dir, `config.yaml`, the dashboard audit log and the hash-chained audit log. A
+path is refused (403, `PathDeniedError`) if it is one, lies inside one, or is a
+directory that contains one. A source read also refuses `keys/`, the NovaSeal
+keyring and any `*.pem`/`*.key` file (`confine_read`); a signing-key read may
+name key material (`confine_key`).
+
+Values joined onto a server directory as a single name (`node_id`,
+`capsule_id`, `run_id` on routes that do not go through `_resolve_capsule`) go
+through `_require_path_segment` (400 on `/`, `\`, `..`, NUL or an absolute
+value).
+
+Capsule files themselves are read through `novafabric._capsule_fs`: the file
+route opens with `O_NOFOLLOW` on every path component (404 on a link), and
+`_resolve_capsule` refuses (403) a capsule with a link at its top level.
 
 A relative path is taken relative to the first root of its kind:
 `$NOVAFABRIC_HOME` for reads, `$NOVAFABRIC_HOME/exports` for writes. The write

@@ -4177,7 +4177,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "schema",
         "label": "--schema",
         "type": "text",
-        "hint": "JSON-schema file (contract).",
+        "hint": "JSON-schema file (contract). Validated offline: a $ref outside the file is never fetched and exits 2.",
         "flag": "--schema"
       },
       {
@@ -6261,7 +6261,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "registry",
         "label": "--registry",
         "type": "text",
-        "hint": "Registry whose retention-policy.yaml, holds.jsonl and worm.db are read.",
+        "hint": "Registry whose retention-policy.yaml and worm.db are read, and whose legal holds are read from the shared hold store (nova hold / API).",
         "flag": "--registry"
       },
       {
@@ -7981,7 +7981,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "identity",
         "label": "--identity",
         "type": "text",
-        "hint": "Approver identity (Ed25519 keyring key; defaults to OS user).",
+        "hint": "Approver identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'approver' role. Defaults to the OS user.",
         "flag": "--identity",
         "defaultValue": ""
       },
@@ -8127,7 +8127,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "identity",
         "label": "--identity",
         "type": "text",
-        "hint": "Proposer identity (Ed25519 keyring key; defaults to OS user).",
+        "hint": "Proposer identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'proposer' role. Defaults to the OS user.",
         "flag": "--identity",
         "defaultValue": ""
       },

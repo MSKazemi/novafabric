@@ -39,13 +39,15 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 from urllib.parse import urlsplit
 
 from novafabric import __version__ as _nova_version
+from novafabric._capsule_fs import CapsuleLinkError
 from novafabric.backup.coverage import (
     CoverageError,
     collect_extended_components,
+    copy_tree_files,
     sqlite_snapshot,
 )
 from novafabric.backup.models import (
@@ -93,6 +95,22 @@ _DSN_ENV_VARS = ("NOVA_DSN", "NOVAFABRIC_POSTGRES_DSN")
 
 class BackupCreateError(Exception):
     """Raised when a backup set cannot be created."""
+
+
+class BackupLinkError(BackupCreateError, CapsuleLinkError):
+    """A directory the backup copies holds a symbolic link; a backup never follows one.
+
+    Following it would store the link's target (anything the backing-up user can
+    read) in the set as NovaFabric data. Nothing is written.
+    """
+
+
+
+def _skip_denied(dirname: str) -> Callable[[str], bool]:
+    def skip(rel: str) -> bool:
+        return is_denied(PurePosixPath(dirname) / rel)
+
+    return skip
 
 
 class PgDumpNotFoundError(BackupCreateError):
@@ -255,14 +273,13 @@ def create_backup(
             src_dir = home / dirname
             if not src_dir.is_dir():
                 continue
-            for src in sorted(p for p in src_dir.rglob("*") if p.is_file()):
-                rel = PurePosixPath(dirname) / src.relative_to(src_dir).as_posix()
-                if is_denied(rel):
-                    continue
-                dst = stage / rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(src, dst)
-                members.append(_member(dst, str(rel), kind="blob", role="capsules"))
+            # Never follow a link: rglob + copyfile put the target of a planted
+            # capsules/<id>/inputs/x -> ~/.ssh/id_rsa into the set (ADR-0011 Am. 2).
+            for rel_in_dir in copy_tree_files(
+                src_dir, stage / dirname, skip=_skip_denied(dirname), error=BackupLinkError
+            ):
+                rel = PurePosixPath(dirname) / rel_in_dir
+                members.append(_member(stage / rel, str(rel), kind="blob", role="capsules"))
                 capsule_members += 1
         if manifest_profile == PROFILE_MANIFEST_ONLY:
             coverage.append(
@@ -317,15 +334,19 @@ def create_backup(
                 )
             )
         else:
-            for collected in collect_extended_components(
-                home,
-                stage,
-                _member,
-                audit_log_path=audit_log_path,
-                include_keys=include_keys,
-                keyring_dir=keyring_dir,
-                seal_config_path=seal_config_path,
-            ):
+            try:
+                extended = collect_extended_components(
+                    home,
+                    stage,
+                    _member,
+                    audit_log_path=audit_log_path,
+                    include_keys=include_keys,
+                    keyring_dir=keyring_dir,
+                    seal_config_path=seal_config_path,
+                )
+            except CapsuleLinkError as exc:  # spool/ or seal/ratchet/ holds a link
+                raise BackupLinkError(str(exc), links=exc.links) from exc
+            for collected in extended:
                 members.extend(collected.members)
                 coverage.append(collected.coverage)
 
