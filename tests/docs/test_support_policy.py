@@ -49,7 +49,9 @@ def _ci_job_ids() -> list[str]:
 # marker strings (any one suffices) that count as documentation of that job.
 # Adding a CI job without extending this mapping AND the doc fails below by name.
 _JOB_DOC_MARKERS: dict[str, list[str]] = {
+    "lint": ["`lint`"],
     "unit": ["--cov=novafabric"],
+    "coverage": ["`coverage`"],
     "typecheck": ["mypy src"],
     "seal-latency-gate": ["seal_latency", "NovaSeal p99"],
     "capture-overhead-gate": ["capture-overhead-gate"],

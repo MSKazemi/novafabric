@@ -103,14 +103,15 @@ contribution.
 
 ### Running tests
 
-The suite is ~11.5K tests — use the tiered targets instead of a serial full run:
+The suite is ~20K tests — use the tiered targets instead of a serial full run:
 
 ```bash
-make test-changed  # inner loop: reruns only the tests your diff can affect
+make test-direct   # inner loop: the tests directly covering your change (~17 s)
 make test-watch    # the same, on every save
 make test-fast     # dev loop: parallel (-n auto), no coverage, no Docker (~4 min)
 make test-container # the Docker tier on its own
-make test-par      # release gate — exactly what CI's `unit` job runs (~5 min)
+make test-par      # release gate — the whole suite as CI's `unit` shards run it (~5 min)
+make test-shard SHARD=3/6  # exactly one of CI's six unit shards (ADR-0316)
 make test          # everything, serial, incl. tests/integration — WIDER than the
                    # gate above, and without its coverage floor
 ```

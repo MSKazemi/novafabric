@@ -45,7 +45,7 @@ inputs:
     default: "90"
   novafabric-version:
     description: >-
-      Version specifier passed to pip, e.g. `0.100.1`. Empty installs the
+      Version passed to the installer (uv), e.g. `0.100.1`. Empty installs the
       latest release. **Pin this** if you want reproducible CI.
     required: false
     default: ""
@@ -86,6 +86,13 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        # The cache would key on files in the CALLER's repository, which says
+        # nothing about this install; keep the action's footprint to its job.
+        enable-cache: false
+
     - name: Install NovaFabric
       shell: bash
       run: |
@@ -97,8 +104,9 @@ runs:
         if [ -n "${{ inputs.novafabric-version }}" ]; then
           spec="${spec}==${{ inputs.novafabric-version }}"
         fi
-        python -m pip install --quiet --upgrade pip
-        python -m pip install --quiet "${spec}"
+        # Into the interpreter set up above — the same environment pip used, so
+        # `nova` and `import novafabric` resolve exactly as before — via uv.
+        uv pip install --quiet --python "$(command -v python)" "${spec}"
         nova --version
 
     - name: Capture

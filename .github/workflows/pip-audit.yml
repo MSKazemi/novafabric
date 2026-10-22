@@ -77,8 +77,11 @@ jobs:
         # pip-audit exits non-zero when it finds anything; the severity +
         # waiver gate below decides what actually blocks, so findings are
         # not a failure of THIS step — a missing/empty report is.
+        # Run through uv (`uvx`, already installed above) at an EXACT version:
+        # `pipx run pip-audit` took whatever release was newest that day, so the
+        # auditor itself was the one unpinned tool in the gate. Bump deliberately.
         run: |
-          pipx run pip-audit -r requirements-audit.txt --no-deps \
+          uvx --from "pip-audit==2.10.1" pip-audit -r requirements-audit.txt --no-deps \
             --format json --output pip-audit-report.json \
             || echo "pip-audit reported findings; the gate step decides below"
           test -s pip-audit-report.json

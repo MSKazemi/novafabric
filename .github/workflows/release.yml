@@ -16,7 +16,17 @@ permissions:
   contents: write
 
 jobs:
+  ci-green:
+    # Nothing in this workflow publishes until CI has passed on this exact
+    # commit (ADR-0316) — v0.106.0 shipped while it was red.
+    if: github.repository == 'MSKazemi/novafabric'
+    uses: ./.github/workflows/require-green-ci.yml
+    permissions:
+      actions: read
+      contents: read
+
   github-release:
+    needs: ci-green
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # Release only from the public repo, matching publish-pypi/image/chart. A tag

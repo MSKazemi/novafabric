@@ -29,7 +29,7 @@ make check-links   # every relative link in a public doc resolves
 ```
 
 Before a release, or when you have touched storage or the server:
-`make test-par` — exactly the command CI's `unit` job runs (~5 min). **Coverage must stay at or above
+`make test-par` — the whole suite as CI's sharded `unit` job runs it (~5 min). **Coverage must stay at or above
 90%.** Never run the ~11.6K-test suite serially during development.
 
 For any CLI change, also smoke-test `uv run nova --help` and the affected
