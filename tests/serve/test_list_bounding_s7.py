@@ -520,7 +520,9 @@ class TestAdminTokensBounding:
         assert r.status_code == 200
         body = r.json()
         assert [t["fingerprint"] for t in body["tokens"]] == ["fp0004", "fp0003"]
-        assert body["session_token_fingerprint"] == VALID_TOKEN[:8]
+        from novafabric.serve.auth import token_fingerprint
+
+        assert body["session_token_fingerprint"] == token_fingerprint(VALID_TOKEN)
         assert body["truncated"] is True
         assert body["next_cursor"] is not None
         # raw token values must never appear

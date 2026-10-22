@@ -110,14 +110,22 @@ class TestLineageImportEndpoint:
         assert r.status_code == 422
         assert "capsule_path" in r.json()["detail"]
 
-    def test_nonexistent_path_returns_404(self, client: TestClient) -> None:
+    def test_nonexistent_path_returns_404(self, client: TestClient, capsule_dir: Path) -> None:
+        r = client.post(
+            f"/api/lineage/import?{TOKEN_Q}",
+            headers=H,
+            json={"capsule_path": str(capsule_dir / "definitely_does_not_exist_abc123")},
+        )
+        assert r.status_code == 404
+        assert "not found" in r.json()["detail"].lower()
+
+    def test_path_outside_the_allowed_roots_returns_403(self, client: TestClient) -> None:
         r = client.post(
             f"/api/lineage/import?{TOKEN_Q}",
             headers=H,
             json={"capsule_path": "/tmp/definitely_does_not_exist_abc123"},
         )
-        assert r.status_code == 404
-        assert "not found" in r.json()["detail"].lower()
+        assert r.status_code == 403
 
     def test_valid_capsule_dir_with_empty_capsules_returns_ok(
         self, client: TestClient, capsule_dir: Path

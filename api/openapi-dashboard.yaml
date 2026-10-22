@@ -2423,7 +2423,8 @@ paths:
       x-nova-contract: pending
   /api/assets/{asset_id}/promote:
     post:
-      description: Promote by UUID — resolves name+version from the registry then delegates.
+      description: Promote by UUID — resolves name+version from the registry then delegates (same ADR-0312
+        gate).
       parameters:
       - in: path
         name: asset_id
@@ -2731,6 +2732,12 @@ paths:
       x-nova-contract: pending
   /api/assets/{name}/{version}/promote:
     post:
+      description: 'Single-actor promotion, gated exactly like `nova promote direct` (ADR-0312).
+
+
+        `production` needs an explicit `promote_direct` policy allow (403 otherwise);
+
+        `force` does not bypass it.'
       parameters:
       - in: path
         name: name
@@ -2902,7 +2909,10 @@ paths:
       x-nova-contract: pending
   /api/capsule-migrate:
     post:
-      description: Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6).
+      description: 'Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6).
+
+
+        `source` must be under a read root and `output` under a write root (serve.paths).'
       parameters:
       - in: query
         name: token

@@ -196,15 +196,18 @@ def test_audit_trail_routes_require_the_audit_scope() -> None:
     assert required_scope("GET", "/api/policy/recent-decisions") is Scope.audit
 
 
-def test_parse_scope_falls_back_rather_than_raising() -> None:
-    """Runs on the request path against on-disk data — must not take the server down."""
+def test_parse_scope_fails_closed_rather_than_raising() -> None:
+    """Runs on the request path against on-disk data: never raises, never grants.
+
+    An unrecognised value used to fall back to ``admin``, so a typo in a stored
+    scope granted everything. It now yields ``None`` -- no scope at all.
+    """
     assert parse_scope("read") is Scope.read
-    assert parse_scope(None) is Scope.admin
-    assert parse_scope("") is Scope.admin
-    assert parse_scope("nonsense") is Scope.admin
-    assert parse_scope("nonsense", default=Scope.read) is Scope.read
+    assert parse_scope("audit") is Scope.audit
+    for bad in (None, "", "nonsense", "Admin", " admin", "admin ", 3, ["admin"], {"a": 1}):
+        assert parse_scope(bad) is None, bad
     # `public` is a route classification and must never be read back as held.
-    assert parse_scope("public", default=Scope.read) is Scope.read
+    assert parse_scope("public") is None
 
 
 # ---------------------------------------------------------------------------

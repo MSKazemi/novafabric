@@ -142,6 +142,14 @@ def serve_cmd(
     POST /api/admin/tokens with {"scope": "read"} to grant a colleague
     visibility without the power to erase evidence.
 
+    Paths: a server-side path named in a request is confined. Writes may
+    target only $NOVAFABRIC_HOME/exports and the evidence directory. Reads may
+    also use $NOVAFABRIC_HOME and --capsule-dir. List any other directory in
+    NOVAFABRIC_SERVE_PATH_ROOTS (absolute paths, ':'-separated).
+
+    Promotion into production from the dashboard is gated like
+    `nova promote direct` (ADR-0312): it needs an explicit policy allow.
+
     Tenancy (ADR-0229): single-tenant by default. Multi-tenant mode
     (NOVAFABRIC_SERVE_TENANCY=multi) is refused while the runs index, the
     knowledge graph or the lineage store cannot answer a tenant-scoped

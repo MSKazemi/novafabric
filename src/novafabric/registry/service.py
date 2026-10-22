@@ -683,14 +683,25 @@ def promote_asset_direct(
     actor: str,
     force: bool = False,
     db_path: Path | None = None,
+    *,
+    policy_subject: str | None = None,
     **gate_kwargs: Any,
 ) -> dict[str, Any]:
-    """Single-actor promotion (``nova promote direct``), gated for protected stages.
+    """Single-actor promotion, gated for protected stages (ADR-0312 D1).
+
+    This is the one gate for every single-actor route into a protected stage:
+    ``nova promote direct`` and the ``nova serve`` promote endpoints both call it,
+    so they refuse and allow exactly the same promotions.
 
     For a target in :data:`PROTECTED_STAGES` the ``promote_direct`` policy action must
     return an explicit allow before :func:`promote_asset` runs. ``force`` does not bypass
     this gate (it only overrides the eval gates), and a :class:`NoopEngine` decision (no
     OPA configured) is not an explicit allow. Other stages are unchanged (ADR-0312 D1).
+
+    *policy_subject* is the ``subject.user`` the policy sees, and defaults to *actor*.
+    A caller that has an authenticated identity, such as the HTTP server's credential
+    fingerprint, passes it here so an allow rule cannot be satisfied by a
+    caller-chosen *actor* label. *actor* is still what ``promoted_by`` records.
 
     Raises:
         DirectPromotionDeniedError: protected target without an explicit policy allow.
@@ -709,11 +720,12 @@ def promote_asset_direct(
             conn.close()
         if not row:
             raise AssetNotFoundError(f"Asset '{name}@{version}' not found.")
+        subject = policy_subject or actor
         engine = get_policy_engine()
         decision = engine.evaluate(
             PolicyInput(
                 action="promote_direct",
-                subject=PolicySubject(user=actor),
+                subject=PolicySubject(user=subject),
                 resource=PolicyResource(
                     kind="asset",
                     ref=f"{name}@{version}",
@@ -724,19 +736,22 @@ def promote_asset_direct(
             )
         )
         explicit_allow = decision.allow and not isinstance(engine, NoopEngine)
+        details: dict[str, Any] = {
+            "decision_id": decision.decision_id,
+            "reason": decision.reason,
+            "action": "promote_direct",
+            "to_status": to_status.value,
+            "forced": bool(force),
+        }
+        if policy_subject:
+            details["actor_label"] = actor
         AuditLog(resolve_audit_log_path()).append(
             event_type=(
                 AuditEventType.POLICY_ALLOW if explicit_allow else AuditEventType.POLICY_DENY
             ),
-            actor=actor,
+            actor=subject,
             resource_id=f"{name}@{version}",
-            details={
-                "decision_id": decision.decision_id,
-                "reason": decision.reason,
-                "action": "promote_direct",
-                "to_status": to_status.value,
-                "forced": bool(force),
-            },
+            details=details,
         )
         if not explicit_allow:
             why = (

@@ -313,7 +313,7 @@ SERVE = Flow(
         Edge("r2", "M322 282 H350", "seal"),
         Edge("r3", "M528 282 H556", "seal"),
         Edge("df", "M440 230 V208 H972 V427 H960", "ver", "observe",
-             "public route, or unknown credential: straight to the route", 560, 220),
+             "public route, or classified + unknown credential: to the route", 560, 220),
         Edge("r4", "M734 282 H762", "seal"),
         Edge("dn", "M800 334 V358 H560 V382", "warn", "deny"),
         Edge("ok", "M900 334 V382", "ver"),
@@ -338,27 +338,31 @@ SERVE = Flow(
         Step(("resolve",), ("r2",),
              "One app-level dependency, enforce_scope, maps the credential: the server token "
              "holds admin, an issued token its minted scope.",
-             "<p>A token issued before scopes existed reads as <code>admin</code>, so a "
-             "laptop behaves exactly as before. WebSocket routes are skipped here and keep "
-             "their inline host and token checks (ADR-0228 OQ-2).</p>",
+             "<p>A token issued before scopes existed (no <code>scope</code> field) reads as "
+             "<code>admin</code>, so a laptop behaves exactly as before. A record whose "
+             "<code>scope</code> is not recognised, such as a typo, holds <em>no</em> scope "
+             "and is refused everywhere but public routes. WebSocket routes are skipped here "
+             "and keep their inline host and token checks (ADR-0228 OQ-2).</p>",
              "serve/authz.py:build_authz_dependency · resolve_scope",
              "experimental", "resolve", "seal"),
         Step(("table", "handler"), ("r3", "df"),
-             "required_scope looks up (method, route template). A public route or an "
-             "unknown credential goes on to the route, which answers 401.",
-             "<p>Deferring an unknown credential keeps the answer a 401 rather than a 403, "
-             "which would also reveal that the route exists. The table is one dict, so a "
-             "test can check that every mounted route is classified.</p>",
+             "required_scope looks up (method, route template). A public route, or an "
+             "unknown credential on a classified route, goes on (401).",
+             "<p>Deferring an unknown credential on a classified route keeps the answer a "
+             "401 rather than a 403. An unclassified route is not deferred: it may have no "
+             "<code>verify_token</code> of its own, so it is denied even to an anonymous "
+             "caller. The table is one dict, so a test can check that every mounted route "
+             "is classified.</p>",
              "serve/authz.py:required_scope · ROUTE_SCOPES",
              "experimental", "table", "seal"),
         Step(("sat", "deny"), ("r4", "dn"),
              "If the held scope does not satisfy the route, or the route is unclassified, "
              "the answer is 403 and one authz.denied record is appended.",
-             "<p>An unclassified route is denied to everyone, the server token included "
-             "(ADR-0228 D3). The record names both scopes and states how well it knows the "
-             "actor: <code>shared-token</code> for the one <code>.serve-token</code>, "
-             "<code>credential</code> for an issued token (ADR-0231). An audit failure never "
-             "turns a denial into an allow.</p>",
+             "<p>An unclassified route is denied to everyone, the server token and anonymous "
+             "callers included (ADR-0228 D3). The record names both scopes and states how "
+             "well it knows the actor: <code>shared-token</code> for the one "
+             "<code>.serve-token</code>, <code>credential</code> for an issued token "
+             "(ADR-0231). An audit failure never turns a denial into an allow.</p>",
              "serve/authz.py:satisfies · _audit_denial → serve/audit.py:append",
              "experimental", "sat", "warn"),
         Step(("handler",), ("ok",),

@@ -16,7 +16,7 @@ import re
 import stat
 import threading
 import time
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -46,10 +46,16 @@ from novafabric.registry.runs_cache import (
     query_runs as _query_runs_cache,
 )
 from novafabric.serve import audit, token_store
+from novafabric.serve import paths as _serve_paths
 from novafabric.serve import reports as _reports
 from novafabric.serve.aggregates import AggregateCondition, computable, refuse
-from novafabric.serve.auth import extract_bearer, is_localhost_host, token_matches
-from novafabric.serve.authz import build_authz_dependency
+from novafabric.serve.auth import (
+    extract_bearer,
+    is_localhost_host,
+    token_fingerprint,
+    token_matches,
+)
+from novafabric.serve.authz import build_authz_dependency, record_scope
 from novafabric.serve.capsule_loader import (
     discover_capsule_dirs,
     discover_ingestable_dirs,
@@ -91,73 +97,31 @@ _RUN_AGGREGATE_REPORTS: frozenset[str] = frozenset(
 _BUNDLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 
 
+def _effective_scope_label(record: dict[str, Any]) -> str:
+    """The scope an issued-token record is enforced with, as a display label."""
+    held = record_scope(record)
+    return held.value if held is not None else "none"
+
+
 def _validate_bundle_id(bundle_id: str) -> None:
     """Reject any evidence bundle_id that is not a safe path segment."""
     if not _BUNDLE_ID_RE.match(bundle_id):
         raise HTTPException(status_code=400, detail="invalid bundle_id")
 
 
-def _serve_allows_any_path() -> bool:
-    return os.environ.get("NOVAFABRIC_SERVE_ALLOW_ANY_PATH", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+def _confine_path(candidate: str | Path, roots: Sequence[Path]) -> Path:
+    """Confine a request-supplied filesystem path to *roots*, as HTTP 400/403.
 
-
-# System directories a dashboard-supplied path must never touch. This is a
-# denylist, deliberately NOT a sandbox: the evidence-export / capsule-migrate /
-# promote-sign endpoints are designed to use caller-chosen paths (home, project
-# dirs, mounted volumes, tmp), so confining to a fixed root would break them.
-# But reading or writing under a system-critical directory is never a legitimate
-# use and is the highest-impact attack — clobbering binaries or config for RCE
-# or persistence — which matters because container/Helm dashboard mode binds
-# 0.0.0.0 with token-only auth (`nova serve --host 0.0.0.0 --insecure`).
-_SENSITIVE_PREFIXES: tuple[str, ...] = (
-    "/etc",
-    "/usr",
-    "/bin",
-    "/sbin",
-    "/lib",
-    "/lib64",
-    "/boot",
-    "/sys",
-    "/proc",
-    "/dev",
-    "/root",
-)
-
-
-def _confine_path(candidate: str | Path) -> Path:
-    """Resolve a caller-supplied filesystem path and refuse system-critical targets.
-
-    Several dashboard endpoints accept a filesystem path in the request body
-    (evidence-export ``output_path``/``key_path``, promote-envelope
-    ``key_path``/``cert_path``/``db_path``, capsule-migrate ``source``/``output``).
-    The path is resolved (following ``..`` and symlinks) and rejected with HTTP
-    403 if it lands under any :data:`_SENSITIVE_PREFIXES` entry. This blocks the
-    worst outcomes without breaking the endpoints' intended arbitrary-path use;
-    operators who must reach even a system path set
-    ``NOVAFABRIC_SERVE_ALLOW_ANY_PATH=1`` (discouraged; documented opt-out).
-
-    Returns the resolved path; raises HTTP 403 for a system-critical target.
+    The allowlist itself lives in :mod:`novafabric.serve.paths`. Inside
+    ``create_app`` the ``_confine_read`` / ``_confine_write`` closures pick the
+    root set. Every route that takes a filesystem path from the request body goes
+    through one of them. A denylist of system directories preceded this, and it
+    left the rest of the filesystem open to any ``operate``-scoped token.
     """
-    resolved = Path(candidate).expanduser().resolve()
-    if _serve_allows_any_path():
-        return resolved
-    for prefix in _SENSITIVE_PREFIXES:
-        root = Path(prefix)
-        if resolved == root or resolved.is_relative_to(root):
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"path resolves under the system directory {prefix!r}, which "
-                    "the dashboard refuses to read or write; set "
-                    "NOVAFABRIC_SERVE_ALLOW_ANY_PATH=1 to override"
-                ),
-            )
-    return resolved
+    try:
+        return _serve_paths.confine(candidate, roots)
+    except _serve_paths.PathConfinementError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 # ---------- Cursor pagination helpers (B-1) ----------
@@ -808,6 +772,46 @@ def create_app(
 
     # ---------- auth dependency ----------
 
+    #: The server token's audit fingerprint, computed once (see token_fingerprint).
+    server_token_fp = token_fingerprint(token)
+
+    # ---------- request-supplied filesystem paths (serve.paths allowlist) ----------
+
+    if os.environ.get(_serve_paths.LEGACY_ALLOW_ANY_ENV, "").strip():
+        logger.warning(
+            "%s is set but no longer honoured: request-supplied paths are confined "
+            "to allowlisted roots; list extra directories in %s",
+            _serve_paths.LEGACY_ALLOW_ANY_ENV,
+            _serve_paths.PATH_ROOTS_ENV,
+        )
+
+    def _confine_read(candidate: str | Path) -> Path:
+        """A path the request asks the server to read: $NOVAFABRIC_HOME, capsules, exports."""
+        return _confine_path(candidate, _serve_paths.read_roots(capsule_dir))
+
+    def _confine_write(candidate: str | Path) -> Path:
+        """A path the request asks the server to write: the export/evidence dirs only."""
+        return _confine_path(candidate, _serve_paths.write_roots())
+
+    def _capsule_target(capsule_path_str: str, *, require_manifest: bool = True) -> Path:
+        """Resolve a ``capsule_path`` field: a bare run id, or a confined directory path.
+
+        A bare id (no ``/``) names a capsule under the server's capsule dir, as it
+        always did; ``.`` and ``..`` are not ids. Anything else is a filesystem
+        path and goes through the read allowlist, then must be a directory.
+        """
+        if "/" not in capsule_path_str and capsule_path_str not in (".", ".."):
+            if require_manifest:
+                return _resolve_capsule(capsule_path_str, capsule_dir)
+            target = _confine_read(capsule_dir / capsule_path_str)
+        else:
+            target = _confine_read(capsule_path_str)
+        if not target.is_dir():
+            raise HTTPException(
+                status_code=404, detail=f"Directory not found: {capsule_path_str}"
+            )
+        return target
+
     def verify_token(
         t: str | None = Query(default=None, alias="token"),
         authorization: str | None = Header(default=None),
@@ -821,8 +825,9 @@ def create_app(
                 detail="missing or invalid token",
             )
         if _consteq(candidate, token):
-            # Returns a short fingerprint for audit logging.
-            return candidate[:8]
+            # A digest, never a slice of the token: this value is written to the
+            # audit log and exported to the SIEM as `user.uid`.
+            return server_token_fp
         # ADR-0252: a token minted by POST /api/admin/tokens used to get 401 on
         # every endpoint — the endpoint said "save this token" for a credential
         # that worked nowhere. Checked only after the server token misses, so the
@@ -2552,16 +2557,9 @@ def create_app(
         capsule_path_str: str = body.get("capsule_path", "")
         if not capsule_path_str:
             raise HTTPException(status_code=422, detail="capsule_path is required")
-        if not capsule_path_str.startswith("/") and "/" not in capsule_path_str:
-            # bare run_id — resolve to capsule directory
-            cap_dir = capsule_dir / capsule_path_str
-        else:
-            cap_dir = Path(capsule_path_str)
-        if not cap_dir.is_dir():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Capsule directory not found: {capsule_path_str}",
-            )
+        # A bare run id names a directory under the capsule dir; anything else is
+        # a path confined to the read roots (serve.paths).
+        cap_dir = _capsule_target(str(capsule_path_str), require_manifest=False)
         try:
             from novafabric.lineage._importer import import_capsule_dir  # noqa: PLC0415
             results = import_capsule_dir(cap_dir)
@@ -2826,7 +2824,7 @@ def create_app(
             verify_token,
             capsule_dir=capsule_dir,
             resolve_capsule=_resolve_capsule,
-            server_token_fp=token[:8],
+            server_token_fp=server_token_fp,
             audit_append=audit.append,
         )
     )
@@ -3044,6 +3042,14 @@ def create_app(
                 status_code=400,
                 detail="confirmation required (set confirmed=true)",
             )
+        # Request-supplied paths are confined before anything else touches the
+        # filesystem: the key is read from a read root, the bundle is written to
+        # a write root (serve.paths). Server-chosen defaults are not confined.
+        key_pem_default = _nf_paths.local_key_path()
+        key_path = _confine_read(body.key_path) if body.key_path else key_pem_default
+        out_default = _nf_paths.nova_home() / "evidence" / f"{run_id}.zip"
+        output_path = _confine_write(body.output_path) if body.output_path else out_default
+
         cdir = _resolve_capsule(run_id, capsule_dir)
         try:
             from novafabric.evidence.bundle import (
@@ -3055,8 +3061,6 @@ def create_app(
         except ImportError as e:
             raise HTTPException(status_code=501, detail=f"evidence bundle module unavailable: {e}")
 
-        key_pem_default = _nf_paths.local_key_path()
-        key_path = _confine_path(body.key_path) if body.key_path else key_pem_default
         key_was_autogenerated = False
         if not key_path.exists():
             if body.key_path:
@@ -3107,8 +3111,6 @@ def create_app(
                     detail=f"Failed to auto-generate signing key at {key_path}: {e}",
                 )
 
-        out_default = _nf_paths.nova_home() / "evidence" / f"{run_id}.zip"
-        output_path = _confine_path(body.output_path) if body.output_path else out_default
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -3167,7 +3169,7 @@ def create_app(
         body: PromoteRequest = Body(...),
         actor_fp: str = Depends(verify_token),
     ) -> dict[str, Any]:
-        """Promote by UUID — resolves name+version from the registry then delegates."""
+        """Promote by UUID — resolves name+version from the registry then delegates (same ADR-0312 gate)."""  # noqa: E501
         if not body.confirmed:
             raise HTTPException(
                 status_code=400, detail="confirmation required (set confirmed=true)"
@@ -3193,6 +3195,11 @@ def create_app(
         body: PromoteRequest = Body(...),
         actor_fp: str = Depends(verify_token),
     ) -> dict[str, Any]:
+        """Single-actor promotion, gated exactly like `nova promote direct` (ADR-0312).
+
+        `production` needs an explicit `promote_direct` policy allow (403 otherwise);
+        `force` does not bypass it.
+        """
         if not body.confirmed:
             raise HTTPException(
                 status_code=400,
@@ -3200,9 +3207,10 @@ def create_app(
             )
         from novafabric.registry.service import (
             AssetNotFoundError,
+            DirectPromotionDeniedError,
             InvalidLifecycleTransitionError,
             PromotionBlockedError,
-            promote_asset,
+            promote_asset_direct,
         )
         from novafabric.spec.models import AssetStatus
 
@@ -3211,45 +3219,46 @@ def create_app(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"invalid to_status: {body.to_status}")
 
+        cli_equivalent = f"nova promote direct {name}@{version} --to {body.to_status}" + (
+            " --force" if body.force else ""
+        )
+        # ADR-0312 D1: this is a single-actor promotion, so it goes through the
+        # same gate as `nova promote direct`. A protected stage (production)
+        # needs an explicit `promote_direct` policy allow; force does not bypass
+        # it. The policy subject is the authenticated credential, never the
+        # caller-chosen `actor` label (which is only recorded as promoted_by).
         try:
-            result = promote_asset(
+            result = promote_asset_direct(
                 name=name,
                 version=version,
                 to_status=target,
                 actor=body.actor,
                 force=body.force,
                 db_path=db_path,
+                policy_subject=f"serve:{actor_fp}",
             )
-        except AssetNotFoundError as e:
+        except (
+            AssetNotFoundError,
+            InvalidLifecycleTransitionError,
+            PromotionBlockedError,
+        ) as e:
             audit.append(
                 action="promote_asset",
                 args={"name": name, "version": version, "to_status": body.to_status},
-                cli_equivalent=f"nova promote {name}@{version} --to {body.to_status}",
+                cli_equivalent=cli_equivalent,
                 actor_token_fp=actor_fp,
                 result="error",
                 error=str(e),
             )
-            raise HTTPException(status_code=404, detail=str(e))
-        except InvalidLifecycleTransitionError as e:
-            audit.append(
-                action="promote_asset",
-                args={"name": name, "version": version, "to_status": body.to_status},
-                cli_equivalent=f"nova promote {name}@{version} --to {body.to_status}",
-                actor_token_fp=actor_fp,
-                result="error",
-                error=str(e),
-            )
-            raise HTTPException(status_code=409, detail=str(e))
-        except PromotionBlockedError as e:
-            audit.append(
-                action="promote_asset",
-                args={"name": name, "version": version, "to_status": body.to_status},
-                cli_equivalent=f"nova promote {name}@{version} --to {body.to_status}",
-                actor_token_fp=actor_fp,
-                result="error",
-                error=str(e),
-            )
-            raise HTTPException(status_code=412, detail=str(e))
+            if isinstance(e, AssetNotFoundError):
+                code = 404
+            elif isinstance(e, InvalidLifecycleTransitionError):
+                code = 409
+            elif isinstance(e, DirectPromotionDeniedError):
+                code = 403  # policy refusal, not an unmet precondition
+            else:
+                code = 412
+            raise HTTPException(status_code=code, detail=str(e)) from e
 
         audit.append(
             action="promote_asset",
@@ -3259,10 +3268,7 @@ def create_app(
                 "to_status": body.to_status,
                 "force": body.force,
             },
-            cli_equivalent=(
-                f"nova promote {name}@{version} --to {body.to_status}"
-                + (" --force" if body.force else "")
-            ),
+            cli_equivalent=cli_equivalent,
             actor_token_fp=actor_fp,
             extra={"asset_id": result.get("id")},
         )
@@ -4006,9 +4012,10 @@ def create_app(
                     "fingerprint": t.get("fingerprint", ""),
                     "created_at": t.get("created_at", ""),
                     "revoked": t.get("revoked", False),
-                    # A record predating ADR-0228 has no scope key and is
-                    # enforced as admin; report that rather than an empty cell.
-                    "scope": t.get("scope", "admin"),
+                    # Report what is *enforced*, not the raw field: a record
+                    # predating ADR-0228 (no scope key) is admin, and one whose
+                    # scope is not recognised holds nothing ("none").
+                    "scope": _effective_scope_label(t),
                 })
             except Exception:  # noqa: BLE001
                 pass
@@ -4018,7 +4025,7 @@ def create_app(
                 break
         return {
             "tokens": tokens,
-            "session_token_fingerprint": token[:8],
+            "session_token_fingerprint": server_token_fp,
             "next_cursor": next_cursor,
             "truncated": next_cursor is not None,
         }
@@ -5987,16 +5994,8 @@ def create_app(
         novaseal_verified: bool = bool(body.get("verified", False))
         if not capsule_path_str:
             raise HTTPException(status_code=422, detail="capsule_path is required")
-        # Accept bare run_id (no slashes) — resolve to its capsule directory.
-        if not capsule_path_str.startswith("/") and "/" not in capsule_path_str:
-            target = _resolve_capsule(capsule_path_str, capsule_dir)
-        else:
-            target = Path(capsule_path_str)
-            if not target.is_dir():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Directory not found: {capsule_path_str}",
-                )
+        # A bare run id resolves in the capsule dir; a path is confined (serve.paths).
+        target = _capsule_target(str(capsule_path_str))
         kg_path = str(_kg_db_path())
         try:
             from novafabric.kg.pipeline import KGIngestionPipeline
@@ -6064,16 +6063,8 @@ def create_app(
         top: int = int(body.get("top", 5))
         if not capsule_path_str:
             raise HTTPException(status_code=422, detail="capsule_path is required")
-        # Accept bare run_id (no slashes) — resolve to its capsule directory.
-        if not capsule_path_str.startswith("/") and "/" not in capsule_path_str:
-            target = _resolve_capsule(capsule_path_str, capsule_dir)
-        else:
-            target = Path(capsule_path_str)
-            if not target.is_dir():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Directory not found: {capsule_path_str}",
-                )
+        # A bare run id resolves in the capsule dir; a path is confined (serve.paths).
+        target = _capsule_target(str(capsule_path_str))
         from novafabric.kg.spkg.detect import StructuralAnomalyDetector, to_findings
         from novafabric.kg.spkg.provo_mapping import read_lineage_edges
 
@@ -6114,14 +6105,7 @@ def create_app(
                 status_code=422,
                 detail="capsule_path, from_entity, and to_entity are required",
             )
-        if not capsule_path_str.startswith("/") and "/" not in capsule_path_str:
-            target = _resolve_capsule(capsule_path_str, capsule_dir)
-        else:
-            target = Path(capsule_path_str)
-            if not target.is_dir():
-                raise HTTPException(
-                    status_code=404, detail=f"Directory not found: {capsule_path_str}"
-                )
+        target = _capsule_target(str(capsule_path_str))
         try:
             from novafabric.kg.spkg.graph_store import SpkgGraphStore
             from novafabric.kg.spkg.provo_mapping import read_lineage_edges
@@ -6162,14 +6146,7 @@ def create_app(
             raise HTTPException(
                 status_code=422, detail="capsule_path and entity are required"
             )
-        if not capsule_path_str.startswith("/") and "/" not in capsule_path_str:
-            target = _resolve_capsule(capsule_path_str, capsule_dir)
-        else:
-            target = Path(capsule_path_str)
-            if not target.is_dir():
-                raise HTTPException(
-                    status_code=404, detail=f"Directory not found: {capsule_path_str}"
-                )
+        target = _capsule_target(str(capsule_path_str))
         try:
             from novafabric.kg.spkg.graph_store import SpkgGraphStore
             from novafabric.kg.spkg.provo_mapping import read_lineage_edges
@@ -6211,7 +6188,7 @@ def create_app(
         Returns ``{ok, total, newly_ingested, skipped, failed, capsule_base, kg_path}``.
         """
         capsule_base_str: str = body.get("capsule_base", "") if body else ""
-        base: Path = Path(capsule_base_str) if capsule_base_str else capsule_dir
+        base: Path = _confine_read(capsule_base_str) if capsule_base_str else capsule_dir
         if not base.is_dir():
             raise HTTPException(
                 status_code=404,
@@ -6917,6 +6894,12 @@ def create_app(
         import shutil
         import subprocess
 
+        # A request-supplied bundle is confined to the read roots (serve.paths)
+        # and passed on as an absolute resolved path, so it can never be read
+        # by `opa` as a command-line flag either.
+        requested = body.get("bundle_path")
+        confined_bundle = str(_confine_read(requested)) if requested else None
+
         opa_bin = shutil.which("opa")
         if not opa_bin:
             return {
@@ -6930,7 +6913,7 @@ def create_app(
         except Exception:  # noqa: BLE001
             default_bundle = str(_nf_paths.nova_home() / "policy" / "bundle")
 
-        bundle_path = body.get("bundle_path") or default_bundle
+        bundle_path = confined_bundle or default_bundle
         try:
             proc = subprocess.run(
                 [opa_bin, "test", bundle_path, "--verbose"],
@@ -7889,19 +7872,23 @@ def create_app(
             validate_predicate,
         )
 
-        key_raw = str(body.get("key_path", ""))
-        cert_raw = str(body.get("cert_path", ""))
-        key_path = _confine_path(key_raw) if key_raw else Path(key_raw)
-        cert_path = _confine_path(cert_raw) if cert_raw else Path(cert_raw)
-        proposers = [str(s) for s in (body.get("proposer_subjects") or []) if str(s).strip()]
-        approvers = [str(s) for s in (body.get("approver_subjects") or []) if str(s).strip()]
-        bypass_valid_hours = int(body.get("bypass_valid_hours", 24) or 24)
+        key_raw = str(body.get("key_path", "") or "")
+        cert_raw = str(body.get("cert_path", "") or "")
         db_raw = body.get("db_path")
+        # Confine every request-supplied path before any existence check, so a
+        # refused path never reveals whether something exists outside the roots.
+        key_path = _confine_read(key_raw) if key_raw else None
+        cert_path = _confine_read(cert_raw) if cert_raw else None
         db_path_policy = (
-            _confine_path(str(db_raw))
+            _confine_write(str(db_raw))
             if db_raw
             else Path.home() / ".local" / "share" / "novafabric" / "merkle.db"
         )
+        if key_path is None or cert_path is None:
+            raise HTTPException(status_code=422, detail="key_path and cert_path are required")
+        proposers = [str(s) for s in (body.get("proposer_subjects") or []) if str(s).strip()]
+        approvers = [str(s) for s in (body.get("approver_subjects") or []) if str(s).strip()]
+        bypass_valid_hours = int(body.get("bypass_valid_hours", 24) or 24)
 
         if not proposers:
             raise HTTPException(status_code=400, detail="proposer_subjects must not be empty")
@@ -8749,15 +8736,18 @@ def create_app(
 
     @app.post("/api/capsule-migrate", dependencies=[Depends(verify_token)])
     async def capsule_migrate_endpoint(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        """Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6)."""
+        """Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6).
+
+        `source` must be under a read root and `output` under a write root (serve.paths).
+        """
         source: str = body.get("source", "")
         output: str = body.get("output", "")
         if not source:
             raise HTTPException(status_code=422, detail="source is required")
         if not output:
             raise HTTPException(status_code=422, detail="output is required")
-        source_path = _confine_path(source)
-        output_path = _confine_path(output)
+        source_path = _confine_read(source)
+        output_path = _confine_write(output)
         if not source_path.exists():
             raise HTTPException(status_code=404, detail=f"Source not found: {source}")
         try:
@@ -9094,7 +9084,10 @@ def create_app(
             raise HTTPException(status_code=400, detail="rebuild requires confirmed=true")
         prefix = str(body.get("prefix", ""))
         backend = str(body.get("backend", "local"))
-        target_db = str(body.get("target_db", "nova-metadata-rebuild.db"))
+        # The target DB is written, so it is confined to the write roots; a
+        # relative name (including the default) lands in $NOVAFABRIC_HOME/exports
+        # rather than in whatever directory the server happened to start in.
+        target_db = str(_confine_write(body.get("target_db") or "nova-metadata-rebuild.db"))
         try:
             from novafabric.object_capsule_store.backend_router import make_adapter
             from novafabric.object_capsule_store.rebuild import (
