@@ -218,8 +218,11 @@ def verify_cmd(
       # Verify a Sigstore bundle
       nova verify --backend sigstore --capsule-id <capsule-id> path/to/my-capsule/
 
-      # Verify an Evidence Bundle ZIP (recomputes every artifact digest)
+      # Verify an Evidence Bundle ZIP (manifest_hash, digests, signatures, subjects)
       nova verify path/to/evidence-bundle.zip
+
+      # ... and pin the key every attestation must be signed with
+      nova verify --public-key signer.pub.pem path/to/evidence-bundle.zip
     """
     if json_out and (
         check_redaction is not None

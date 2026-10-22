@@ -400,16 +400,16 @@ Inside the re-spawned process:
   workload declared with `novafabric.capture.record.tool`, before the function
   body runs, matched by name and signature-bound arguments. Records are servable
   only when captured at the `forensic`/`air_gapped` level with JSON-native
-  values; anything else is refused with the reason. *Unreleased (after v0.105.0,
-  slice 4):* a declared function that itself called a model or tool is served too,
+  values; anything else is refused with the reason. *Since v0.106.0
+  (slice 4):* a declared function that itself called a model or tool is served too,
   and the records it wrote are consumed as covered; MCP arguments a capsule
   redacted at seal now match the live call (redact-then-hash).
-- **Experimental, unreleased (ADR-0306 slice 3, not in v0.105.0):** it also
+- **Experimental (ADR-0306 slice 3, since v0.106.0):** it also
   serves **Google ADK** tool calls made through the NovaFabric tool plugin
   (`novafabric.adapters.google_adk.make_tool_plugin()`, first in the `Runner`'s
   plugins), through ADK's documented `before_tool_callback` short-circuit — for
   workloads captured with `nova capture python …` only.
-- **Experimental, unreleased (ADR-0306 slice 3, not in v0.105.0):** it also
+- **Experimental (ADR-0306 slice 3, since v0.106.0):** it also
   serves **OpenAI Agents SDK** function tools passed through
   `novafabric.adapters.openai_agents.wrap_tools()`, by replacing the tool's
   `on_invoke_tool` — an **undocumented SDK seam**, checked against
@@ -419,7 +419,7 @@ Inside the re-spawned process:
   intercepted. The
   result reports them as `tool_calls_not_interceptable`, and the outbound
   connections the replayed process opened as `network_connections_live`
-  (observed, not blocked). *Unreleased (after v0.105.0, slice 4, experimental):*
+  (observed, not blocked). *Since v0.106.0 (slice 4, experimental):*
   the result an undeclared function sends back to the model is compared with the
   recorded one and a difference is reported in `replay_contract.tool_result_echo`
   — report-only, never a failure.

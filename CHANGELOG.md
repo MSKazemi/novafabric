@@ -11,6 +11,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+## [0.106.0] - 2026-10-22
+
+**Signatures that cover what they claim, verified Evidence Bundles, a trusted maker-checker,
+real PII crypto-shred, and batch jobs that no longer inherit your shell.** NovaSeal's signing
+intent is now inside the signed bytes; the capsule Merkle root commits to file names; NovaSeal
+log roots commit to their tree size; `nova verify <bundle>.zip` checks signatures,
+`manifest_hash` and subjects; `attest-replay --mode exact` refuses a run it cannot vouch for;
+promote and registry maker-checker signatures are checked against a pinned trust root or a
+bound trust list; SLURM and LSF jobs run with a minimal environment; `nova capture
+--pii-subject` makes `nova pii erase` a real crypto-shred (experimental); and mocked replay
+serves Google ADK and OpenAI Agents SDK tools (experimental). **Several entries below are
+behaviour changes; read the upgrade notes.** Full narrative:
+[docs/releases/v0.106.0.md](docs/releases/v0.106.0.md).
+
 ### Security
 
 - **The `replay_mutating` policy gate now covers every write-permitting replay flag.**
@@ -98,14 +112,28 @@ longer forwards the submitting shell's environment (ADR-0270).
   root over a capsule hashed contents only, so renaming a file without changing the sort order
   left it — and every Evidence Bundle subject, consent attestation, AI-BOM and baseline pin
   built on it — unchanged. New roots use a v2 leaf that commits to each file's relative path;
-  roots recorded before the change still verify. Comment and annotation subjects keep the v1
-  construction so existing comments and queue items stay attached.
+  roots recorded before the change still verify. v2 leaves are hashed under their own domain
+  byte (`0x02`, apart from v1 leaves `0x00` and inner nodes `0x01`), so accepting v1 roots
+  cannot be used as a downgrade: without it, files whose content was each v2 leaf's preimage
+  gave a v1 root equal to another capsule's v2 root. Comment and annotation subjects keep the
+  v1 construction so existing comments and queue items stay attached.
 - **SLURM and LSF jobs no longer inherit the submitting shell's environment (security,
   ADR-0311, behaviour change).** The job script was filtered (ADR-0270), but `sbatch`/`bsub`
   copy their own environment into the job by default, and they ran with the user's whole
   shell. They now run with a minimal environment (scheduler client variables, login basics,
   `NOVAFABRIC_*`); anything else a workload needs, such as an API key, is passed explicitly
-  with the new `extra_env` runner option, as for `docker` and `kubernetes`.
+  with the new `extra_env` runner option, as for `docker` and `kubernetes`. The query and
+  cancel commands (`scontrol`, `sacct`, `bjobs`, `bkill`) get the same environment, and only
+  the POSIX `LC_*` locale names are kept.
+- **No off-host runner forwards a NovaFabric credential (security, ADR-0270 Amendment,
+  behaviour change).** The `NOVAFABRIC_*` prefix that capture needs inside the job also
+  matched server and client credentials (`NOVAFABRIC_SERVER_TOKEN`, `NOVAFABRIC_SCIM_TOKEN`,
+  `NOVAFABRIC_API_KEY`, `NOVAFABRIC_TOKEN`, `NOVAFABRIC_POSTGRES_DSN`, `NOVAFABRIC_DB_URL`,
+  …), so `docker`, `kubernetes`, `slurm` and `lsf` carried them into the job, and SLURM also
+  wrote them into the `--wrap` script on `sbatch`'s command line. A `NOVAFABRIC_*` name
+  containing `TOKEN`, `SECRET`, `PASSWORD`, `DSN`, `API_KEY`, `PRIVATE_KEY`, `CREDENTIAL`,
+  `PEPPER` or `DB_URL`, or ending in `_KEY`, is no longer forwarded; `extra_env` still sends
+  one deliberately.
 - **Promote (maker-checker) signatures need a trust root, and a seal bypass needs a trusted
   approver (security, ADR-0315, behaviour change).** A promote envelope was verified against the
   certificate it carried itself, so the names the policy matched on (`proposer_key_ids`,
@@ -128,9 +156,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   subject must equal the manifest's `subject_hashes` (a run statement's, the manifest's
   `capsule_hash`). The key ships inside the bundle, so on its own a pass proves internal
   consistency, not identity: `--public-key` now pins the signer, and without it the output
-  says the signer is not pinned. Malformed or hostile manifests, envelopes, certificates and
-  signed statements are reported, never raised on (`evidence/bundle_verify.py`). Bundles
-  exported by `nova export-evidence` verify unchanged.
+  says the signer is not pinned. Because `manifest.json` itself is not signed, the run
+  statement's subject is also recomputed from the bundle's own `run-capsule/` copy (and the
+  lineage subject from its `edges.jsonl`): an edited or added capsule file fails even when the
+  attacker repairs every digest and `manifest_hash`, and every file under `run-capsule/` must
+  sit in a copy a verified run statement signs. Malformed or hostile manifests, envelopes,
+  certificates and signed statements are reported, never raised on
+  (`evidence/bundle_verify.py`). Bundles exported by `nova export-evidence` verify unchanged.
+- **`nova verify` names the signer whose signature verified.** `signer_subject` and
+  `local_seal_identity` were read from `signatures[0]` even when that entry did not verify,
+  so a junk first entry carrying someone else's certificate put that name in the report while
+  another entry's signature carried the envelope. The trust level was never raised by it.
 - **`nova evidence attest-replay --mode exact` no longer signs `match: exact` for an ineligible
   run (security).** Exact mode re-executes nothing; it reports whether the recorded run meets
   the exact-replay preconditions in `exact_eligible`. An ineligible (or unassessed) result is

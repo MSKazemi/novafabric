@@ -430,7 +430,7 @@ capsule, capture the script that runs the agent with `nova capture -- python age
 adapter's entry-point and capture-mode details, is in
 [`cli-reference.md`](cli-reference.md) §Framework Adapters.
 
-**Google ADK tools in a mocked replay (experimental, unreleased — not in v0.105.0).**
+**Google ADK tools in a mocked replay (experimental, since v0.106.0).**
 For an ADK agent captured with `nova capture -- python agent.py`, add
 `novafabric.adapters.google_adk.make_tool_plugin()` as the **first** plugin of the
 `Runner`. Under capture each ADK tool call is recorded (payloads at
@@ -443,7 +443,7 @@ capsules from `make_google_adk_plugin()` replayable — those keep a pseudo-comm
 (ADR-0306 open question 7). Details: [`cli-reference.md`](cli-reference.md) §Google
 ADK adapter and [`architecture/replay-modes.md`](architecture/replay-modes.md).
 
-**OpenAI Agents SDK tools in a mocked replay (experimental, unreleased — not in v0.105.0).**
+**OpenAI Agents SDK tools in a mocked replay (experimental, since v0.106.0).**
 For an Agents SDK workload captured with `nova capture -- python agent.py`, pass the
 agent's tools through `novafabric.adapters.openai_agents.wrap_tools([...], {"tool": "read-only"})`.
 Under capture each function-tool call is recorded (payloads at

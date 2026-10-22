@@ -230,6 +230,10 @@ def evidence_attest_replay_cmd(
     ``--anchor`` (ADR-0094, experimental) are additive: without them the
     behavior is unchanged, including exit 2 on mismatch.
 
+    ``--mode exact`` re-executes nothing: it attests whether the recorded run
+    meets the exact-replay preconditions, and refuses (exit 1, nothing signed)
+    when the run is not exact-eligible.
+
     Scope: single capsule; runs the replay engine under its safety defaults.
 
     \b

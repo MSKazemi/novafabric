@@ -215,7 +215,7 @@ fallback described in [Model-call record roles](run-capsule.md#model-call-record
 
 | Command | What it does | Module |
 |---|---|---|
-| `nova verify <capsule>` | Checks the seal: DSSE signature, timestamp, Merkle inclusion, manifest binding and per-file digests. Exit 0 or 1. It also verifies an Evidence Bundle `.zip` by recomputing every artifact digest. | `cli/verify.py` |
+| `nova verify <capsule>` | Checks the seal: DSSE signature, timestamp, Merkle inclusion, manifest binding and per-file digests. Exit 0 or 1. It also verifies an Evidence Bundle `.zip`: `manifest_hash`, every artifact digest, the attestation signatures and subjects (`--public-key` pins the signer). | `cli/verify.py` |
 | `nova export-evidence <capsule>` | Builds the **Evidence Bundle** ZIP: the capsule, a lineage subgraph, Ed25519-signed in-toto DSSE attestations (`run`, `redaction`, `lineage`), vendored schemas and a `manifest.json` | `evidence/bundle.py:EvidenceBundleBuilder` |
 | `nova audit map / report / bundle / coverage` | Maps capsule evidence to the controls of a regulatory profile (default `nist-ai-rmf`) | `cli/audit.py`, `compliance/audit/` |
 

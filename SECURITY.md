@@ -97,9 +97,12 @@ STRIDE analysis in the project's internal threat model:
   labeled `capture_level: ingested-otlp`.
 - **Remote runners** (`nova capture --runner {docker,kubernetes,slurm,lsf,pbs}`)
   — send the workload to a container, cluster or batch scheduler. They forward a
-  **default-deny allowlist** of environment variables (`NOVAFABRIC_*`, plus
-  `PATH` for `slurm` and any explicit `extra_env`), never the submitting shell's
-  environment (ADR-0270). `--runner local` is the deliberate exception: it runs
+  **default-deny allowlist** of environment variables (`NOVAFABRIC_*` except
+  credential-shaped names such as `NOVAFABRIC_SERVER_TOKEN` or `NOVAFABRIC_POSTGRES_DSN`,
+  plus `PATH` for `slurm` and any explicit `extra_env`), never the submitting shell's
+  environment (ADR-0270). Since v0.106.0, `sbatch` and `bsub` themselves also run
+  with a minimal environment (ADR-0311), because both copy their own environment
+  into the job by default. `--runner local` is the deliberate exception: it runs
   as you, on your machine, inside the existing trust boundary.
 
   Fixed in this line: **B2** (disclosed 2026-08-28, fixed 2026-09-10) — the
@@ -108,6 +111,18 @@ STRIDE analysis in the project's internal threat model:
   If you ran `nova capture --runner kubernetes` on an affected version, treat any
   credential that was in that shell as exposed to anyone with read access to the
   namespace, and rotate it.
+
+  Fixed in v0.106.0 (ADR-0311): with `--runner slurm` or `--runner lsf`, the
+  job script was filtered but `sbatch` / `bsub` copied the submitting shell's
+  whole environment into the job, as both do by default. If you used either
+  runner on v0.105.0 or earlier, treat any credential that was in that shell as
+  readable by the job and by anyone who can read its environment on the
+  cluster, and rotate it. Workloads that need a variable now get it through
+  `extra_env`. Also fixed in v0.106.0: every off-host runner (`docker`,
+  `kubernetes`, `slurm`, `lsf`) forwarded `NOVAFABRIC_*` credentials such as
+  `NOVAFABRIC_SERVER_TOKEN`, `NOVAFABRIC_API_KEY` or a `NOVAFABRIC_*_DSN`, and
+  SLURM wrote them into the job script on `sbatch`'s command line; rotate any that
+  were set when you used one of those runners.
 
 If you find a way to make any disabled-by-default surface reachable without
 explicit opt-in, that is a vulnerability — please report it.

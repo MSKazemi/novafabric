@@ -355,9 +355,10 @@ Options:
     machine, and keeps your full environment.
   - `slurm` and `lsf` also run `sbatch` / `bsub` with a minimal environment (the
     scheduler client's own `SLURM_*`/`SBATCH_*` or `LSF_*`/`LSB_*` variables, login
-    basics such as `PATH`/`HOME`/`USER`/`LC_*`, `NOVAFABRIC_*` and `extra_env`), because
+    basics such as `PATH`/`HOME`/`USER`/the POSIX `LC_*` names, `NOVAFABRIC_*` and
+    `extra_env`), because
     both schedulers copy the submitting process's environment into the job by
-    default. **Behaviour change (unreleased):** a SLURM or LSF job no longer inherits
+    default. **Behaviour change (v0.106.0):** a SLURM or LSF job no longer inherits
     API keys from your shell — pass them with `extra_env`. `extra_env` names must be
     shell identifiers.
   - **Experimental, since v0.105.0** ([ADR-0307](./decisions.md)): the capsule records
@@ -3379,7 +3380,7 @@ nova evidence attest-replay <capsule> --key ed25519.pem --mode exact --certify -
 Options:
 - `--key PATH` — PEM-encoded ed25519 private key; when given, output is a DSSE-signed in-toto envelope (predicate types `novafabric.io/{completeness,criterion-binding,reperformance}/v0`). `attest-replay` always requires it.
 - `--profile ID|PATH` — audit profile (`eu-ai-act-high-risk`, `gdpr`, `iso42001`, `nist-ai-rmf`, `scientific-reproducibility`, `soc2-type2`, or a YAML path).
-- `--mode {mocked,forensic,semantic,exact}` — replay mode for `attest-replay` (default `mocked`); the verdict (`exact`/`semantic-match`/`mismatch`) is recorded separately from the mode. Exit 2 on `mismatch`.
+- `--mode {mocked,forensic,semantic,exact}` — replay mode for `attest-replay` (default `mocked`); the verdict (`exact`/`semantic-match`/`mismatch`) is recorded separately from the mode. Exit 2 on `mismatch`. `--mode exact` re-executes nothing: it attests whether the recorded run meets the exact-replay preconditions (`exact_eligible`). An ineligible or unassessed run is refused with exit 1 and nothing is signed (`NotAttestableError`).
 - `--certify` — (experimental, ADR-0094 B) after the re-performance attestation, also emit a DSSE-signed determinism certificate (`ReplayAttestation`, predicate `novafabric.io/replay-attestation/v0`) to `replay-attestation-<capsule>.intoto.json`. `determinism_class` ∈ `BIT_EXACT`/`BOUNDED_EQUIVALENT`/`NON_DETERMINISTIC` is derived honestly from the capsule's recorded pins (`model-calls.jsonl` `gen_ai.*` + `env.lock`): a missing seed/model digest or a non-`exact` verdict downgrades to `NON_DETERMINISTIC` with the reasons recorded — hosted models without a digest and pinned seed never classify `BIT_EXACT`. When a ledger checkpoint exists (or `--anchor` is given) the certificate back-links via `ledger_ref`.
 - `--anchor` — (experimental, ADR-0094 A) append the attestation digest to `<capsule>/attestations.jsonl` and seal it via the accountability-ledger path (per-stream sidecar hash chains + a signed checkpoint with a local finalize anchor), making the attestation tamper-evident. Verify with `nova ledger verify`. Existing `.jsonl` evidence streams are never modified.
 - `--output, -o PATH` — output file.
@@ -3428,6 +3429,21 @@ Options:
 - `--crl-dir DIR` — **experimental** (ADR-0070 §3, ADR-0055 OQ-55-3). Directory of CRLs (DER or PEM) an operator syncs locally; **never fetched**. Every certificate of the validated signer chain below a self-signed root (leaf, intermediates — including a bundled intermediate, checked against its root's CRL) is checked against the CRL issued by its issuer, authenticated with the issuer's key. Per-certificate lines are printed under `Revocation (CRL, offline, soft-fail|strict)`: `GOOD`, `REVOKED` (with reason/date — always exit 1), or `WARNING no_crl` / `stale` / `invalid_crl` (forged or unsigned CRL). Skipped files (non-CRL, oversize > 16 MiB, delta/indirect CRLs) are listed. More than 256 files fails closed. Requires `--ca-bundle` or `ca_bundle` in `novaseal.yaml` (otherwise exit 2); overrides `crl_dir` in `novaseal.yaml`.
 - `--crl-strict` — with `--crl-dir`: a missing, stale or invalid CRL also fails (exit 1). Also enabled by `crl_strict: true` in `novaseal.yaml`.
 - `--tsa-ca-bundle PATH` — **experimental** (ADR-0070 §1). Operator TSA CA bundle (concatenated PEM). When the capsule's `.seal/manifest.dsse.tsr` (or an Evidence Bundle ZIP's `manifest.dsse.tsr`) holds an RFC 3161 token, adds a `TSA certificate chain (RFC 3161, TSA CA bundle)` check, fully offline and fail-closed: the CMS signature over the signed attributes verifies under the TSA signer certificate, `messageDigest` matches the `TSTInfo`, the `signingCertificate`/`signingCertificateV2` (ESSCertID) hash binds that certificate, the certificate's `extendedKeyUsage` is **critical** and only `id-kp-timeStamping`, the message imprint equals SHA-256 of the DSSE envelope (ZIP: of `attestations/run.intoto.json`), and the certificate chains to the bundle **at the token's genTime** (depth ≤ 10). `--crl-dir` / `--crl-strict` also revocation-check this chain as of genTime, with CRL freshness judged at verification time so a CRL synced today works under `--crl-strict`; `keyCompromise`/`cACompromise` entries (or an `invalidityDate` ≤ genTime) revoke even when dated after genTime (and `--crl-dir` is then accepted without `--ca-bundle`). Overrides `tsa_ca_certs` in `novaseal.yaml`; when neither is set the check is skipped and output is unchanged. With TSA anchors set, a missing or empty token **fails** (exit 1) — the `.tsr` is not covered by the DSSE signature, so a deleted token must not pass. The message imprint's hash algorithm must be SHA-256. RSASSA-PSS and SHA-1 message digests are rejected.
+
+- `--public-key PATH` — PEM-encoded Ed25519 public key. For an Evidence Bundle ZIP, every attestation must be signed with this key; for an `export-manifest.json` (batch export) it is required.
+
+**Evidence Bundle ZIP.** `nova verify bundle.zip` runs the bundle's whole verification
+recipe (`evidence/bundle_verify.py`): it recomputes `manifest_hash` and every artifact
+digest, verifies each attestation's DSSE signature under the key in its `signatures[]`
+entry (which must also match the detached `.sig`), and checks that each statement's subject
+equals the manifest's `subject_hashes` (for the run statement, `capsule_hash`).
+`manifest.json` is not signed, so the run subject is also recomputed from the bundle's own
+`run-capsule/` copy and the lineage subject from its `edges.jsonl`; a capsule file edited or
+added after export fails even when every digest and `manifest_hash` has been rewritten. The key
+ships inside the bundle, so on its own a pass proves the bundle is internally consistent,
+not who signed it: pass `--public-key` to pin the signer. Without it the output says
+`signer not pinned`. Malformed or hostile manifests, envelopes and statements are reported
+as failures, never raised.
 
 Exit codes: `0` (all checks pass), `1` (any check fails or .seal/ missing).
 
@@ -9684,9 +9700,9 @@ Each trace produces one capsule in the adapter default directory (`$NOVAFABRIC_H
 
 Top-level alias: `from novafabric.adapters import register_openai_agents`
 
-#### Agents SDK tool seam — record and serve function-tool calls (experimental, unreleased)
+#### Agents SDK tool seam — record and serve function-tool calls (experimental)
 
-**Status: experimental** (ADR-0306 slice 3; on `main`, not in v0.105.0). `register()`
+**Status: experimental** (ADR-0306 slice 3; since v0.106.0). `register()`
 above records traces but its capsules cannot be replayed. A separate helper,
 `wrap_tools`, makes function-tool calls replayable offline. It does nothing on its own:
 run the script under `nova capture python …`, then replay the capsule with `nova replay`
@@ -9757,9 +9773,9 @@ The adapter implements `before_run_callback` and `after_run_callback` on a
 
 Top-level alias: `from novafabric.adapters import make_google_adk_plugin`
 
-#### ADK tool plugin — record and serve ADK tool calls (experimental, unreleased)
+#### ADK tool plugin — record and serve ADK tool calls (experimental)
 
-**Status: experimental** (ADR-0306 slice 3; on `main`, not in v0.105.0). A second,
+**Status: experimental** (ADR-0306 slice 3; since v0.106.0). A second,
 separate plugin makes ADK tool calls replayable offline. It does nothing on its own:
 run the script under `nova capture python …`, then replay the capsule with
 `nova replay` (mocked).

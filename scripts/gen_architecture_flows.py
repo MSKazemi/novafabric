@@ -47,7 +47,7 @@ STORY_END = "/* END generated story */"
 MATURITY = ("works today", "experimental", "planned", "future design")
 # The last tagged release. Steps marked ``unreleased`` describe behaviour on main
 # after it; bump this (and clear those flags) when the next release is cut.
-LAST_RELEASE = "v0.105.0"
+LAST_RELEASE = "v0.106.0"
 
 WIDTH = 980
 SLOT_SECONDS = 3.4  # how long each step stays lit

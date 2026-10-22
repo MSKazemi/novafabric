@@ -147,7 +147,12 @@ A second Merkle construction belongs to the Evidence Bundle.
 `evidence/merkle.py:capsule_merkle_root` computes an RFC 6962-style root over
 **all files** in a capsule (the same tree shape as a v2 log root, over different
 leaves — the two are never mixed). That root is the subject digest of the bundle's
-in-toto statements (see below).
+in-toto statements (see below). Its v2 leaf (ADR-0310) commits to each file's
+capsule-relative path as well as its contents, so renaming or moving a file changes
+the root. v2 leaves use their own domain byte (`0x02`; v1 leaves `0x00`, inner nodes
+`0x01`), so a v1 root over other files cannot equal a v2 root. Roots recorded before ADR-0310 (v1, contents only) still verify through
+`capsule_root_matches`; a renamed capsule never satisfies a v2 root. Comment and
+annotation subjects deliberately stay on v1, so existing comments stay attached.
 
 ## Verification: `nova verify <capsule>`
 
@@ -156,7 +161,7 @@ in turn:
 
 | # | Check | Passes when |
 |---|---|---|
-| 1 | DSSE signature | The envelope signature verifies against the embedded certificate |
+| 1 | DSSE signature | The envelope signature verifies against the embedded certificate. The signing intent is reported as `signed` only when the copy inside the signed payload (`_novaseal.signing_intent`, ADR-0309) agrees with the entry's label; an edited label fails. A seal made before ADR-0309 reports `label-only`. |
 | 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. If no token is present, the output says `NOT PRESENT`, `timestamp_ok` is `None` (absent, not passed) and the seal stays valid, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly is reported as a structural check only, never as OK. |
 | 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root at its `tree_size` (under its `root_version`) and the entry names this capsule. If a local log is configured, it is checked as well, including that the log's leaves reproduce the recorded tree head (size and root). |
 | 4 | Manifest binding | `capsule.yaml` on disk equals the signed payload, and `capsule_id` matches |
@@ -170,8 +175,13 @@ hardening flags are experimental:
 - `--crl-dir` and `--crl-strict` add offline revocation checks;
 - `--tsa-ca-bundle` validates the TSA chain.
 
-`nova verify` also accepts an Evidence Bundle `.zip` and recomputes every
-artifact digest, and an `export-manifest.json` from a batch export.
+`nova verify` also accepts an Evidence Bundle `.zip`, and runs the whole recipe
+below: `manifest_hash`, every artifact digest, every attestation's DSSE signature and
+each statement's subject (`evidence/bundle_verify.py`). Because `manifest.json` is not
+signed, the run subject is recomputed from the bundle's `run-capsule/` copy and the lineage
+subject from `edges.jsonl`, rather than read from the manifest. The verifying key ships inside
+the bundle, so pass `--public-key` to pin the signer; without it the report says the
+signer is not pinned. It also accepts an `export-manifest.json` from a batch export.
 
 **Signer trust level (experimental, ADR-0301).** Besides the pass/fail checks,
 `nova verify` reports what *the verifier* established about who signed, as
@@ -201,6 +211,11 @@ v0.102.x or earlier, verified away from the sealer's log, check 3 prints
 `nova seal propose` (maker) and `nova seal approve` (checker) add a
 separation-of-duties signature chain on top of the capsule seal. `nova seal verify`
 checks that chain. `nova seal bypass` creates a time-limited, audited exception.
+Every promote signer must chain to a pinned CA (`--ca-bundle` or
+`NOVAFABRIC_PROMOTE_CA_BUNDLE`, ADR-0315); with none configured, verification refuses
+(exit 3) unless `--insecure-self-signed` is given for development. A bypass counts
+only when it is signed by an approver in the latest policy, names this capsule and is
+unexpired by its **signed** `valid_until`.
 `nova seal ratchet` is an opt-in forward-secure per-node key ratchet. All of
 these live in `cli/seal_propose.py`.
 
@@ -247,7 +262,8 @@ The recipe needs only a SHA-256 tool and an Ed25519 verifier:
 1. Recompute the manifest hash.
 2. Recompute each artifact's SHA-256.
 3. Verify each DSSE envelope over its pre-authentication encoding.
-4. Check that each statement's subject matches `subject.capsule_hash`.
+4. Check that each statement's subject matches `subject.capsule_hash`, and recompute
+   that root from the files under `run-capsule/`.
 
 Optional additions: `--timestamp` (an RFC 3161 token for the bundle), Rekor
 publication when `NOVA_REKOR_URL` is set, and an outer DSSE envelope.

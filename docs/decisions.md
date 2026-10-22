@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**290 decisions recorded** — **274** accepted · **13** proposed · **3** superseded.
+**297 decisions recorded** — **281** accepted · **13** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -323,3 +323,10 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0306` | Mocked replay substitutes non-MCP tool results on owned boundaries only, and enforces replay.yaml tool_overrides inside the replayed process | accepted | 2026-10-09 |
 | `ADR-0307` | Capsules record the runner, the image digest the runtime resolved, and the Slurm job context | accepted | 2026-10-09 |
 | `ADR-0308` | Container eval suites require a user-supplied image and digest; no placeholder default | accepted | 2026-10-12 |
+| `ADR-0309` | NovaSeal binds the signing intent inside the signed payload; an unsigned intent label is never reported as the intent | accepted | 2026-10-22 |
+| `ADR-0310` | The evidence capsule Merkle root (RFC 6962 shape) commits to file paths — v2 leaves; v1 roots still verify | accepted | 2026-10-22 |
+| `ADR-0311` | SLURM and LSF submit with a minimal environment; extra_env is the explicit opt-in (completes ADR-0270) | accepted | 2026-10-22 |
+| `ADR-0312` | Maker-checker signatures are verified against a bound signer trust list; promote direct is policy-gated | accepted | 2026-10-22 |
+| `ADR-0313` | NovaSeal log roots are versioned; v2 commits to tree size; v1 verifies only with tree_size | accepted | 2026-10-22 |
+| `ADR-0314` | Per-subject DEK envelope encryption makes `nova pii erase` a real crypto-shred | accepted | 2026-10-22 |
+| `ADR-0315` | Promote signatures require a pinned trust root; a seal bypass counts only from a trusted policy approver, for its own capsule, by its signed expiry | accepted | 2026-10-22 |

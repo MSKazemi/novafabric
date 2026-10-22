@@ -653,7 +653,7 @@ See [`docs/releases/v0.60.0.md`](docs/releases/v0.60.0.md) and
 
 ### v0.62–v0.101 — all `experimental`
 
-The latest tagged release is **v0.105.0**. Since v0.61, each release has shipped one
+The latest tagged release is **v0.106.0**. Since v0.61, each release has shipped one
 verifiable, additive slice at a time (no big-bang rewrites); highlights:
 
 - **Enterprise audit closure (v0.62–v0.63)** — SIEM egress, `ops.*` alerting
@@ -708,7 +708,7 @@ verifiable, additive slice at a time (no big-bang rewrites); highlights:
 
 See [`CHANGELOG.md`](CHANGELOG.md) and [`ROADMAP.md`](ROADMAP.md) for the full
 release-by-release detail, and `docs/releases/v0.64.0.md` through
-`docs/releases/v0.105.0.md` for individual release notes.
+`docs/releases/v0.106.0.md` for individual release notes.
 
 > **Not yet frozen:** on-disk Run Capsule and Evidence Bundle formats change until the
 > v1.0 schema freeze. Do not treat capsule internals as a stable contract before then.
@@ -818,6 +818,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Architecture decisions](docs/decisions.md) — every recorded architecture decision and its status
 
 ### Release notes
+- [v0.106.0 — Signatures that cover what they claim, verified Evidence Bundles, a trusted maker-checker, real PII crypto-shred, and batch jobs that no longer inherit your shell](docs/releases/v0.106.0.md)
 - [v0.105.0 — Mocked replay that fails closed, a diff gate that tells a difference from a failure to compare, and one secret pipeline for every capsule](docs/releases/v0.105.0.md)
 - [v0.104.0 — Every capsule file secret-scanned, run-to-run diff that pairs separate captures, and replayable tool-calling turns](docs/releases/v0.104.0.md)
 - [v0.103.0 — Governed delete, opt-in timestamping, spec-conformant seals, and a dashboard that explores capsules](docs/releases/v0.103.0.md)
@@ -937,7 +938,7 @@ To cite a specific software release instead:
   author  = {Seyedkazemi Ardebili, Mohsen},
   title   = {{NovaFabric}: replayable, verifiable execution evidence for {AI} agents},
   url     = {https://github.com/MSKazemi/novafabric},
-  version = {0.105.0},
+  version = {0.106.0},
   license = {Apache-2.0}
 }
 ```
