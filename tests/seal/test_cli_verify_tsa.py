@@ -34,6 +34,7 @@ from typer.testing import CliRunner
 from novafabric.cli.main import app
 from novafabric.evidence.bundle import PREDICATE_RUN, _canonical_manifest_hash
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
+from novafabric.evidence.merkle import root_over_files
 from novafabric.evidence.signing import LocalSigner, generate_keypair
 from novafabric.trust.novaseal import KeyConfig, NovaSeal
 from novafabric.trust.novaseal.config import SealConfigError, _parse_profile
@@ -296,7 +297,12 @@ def test_config_bounds_tsa_ca_certs(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-_CAPSULE_HASH = "sha256:" + "cd" * 32
+# The run subject is recomputed from the bundle's own run-capsule/ copy, so the
+# fixture carries a one-file capsule whose root it signs.
+_CAPSULE_FILES = {"run-capsule/capsule.yaml": b"run_id: r1\n"}
+_CAPSULE_HASH = root_over_files(
+    [(n.removeprefix("run-capsule/"), b) for n, b in _CAPSULE_FILES.items()]
+)
 _SIGNED_RUN: dict[Path, tuple[bytes, bytes, bytes]] = {}
 
 
@@ -322,7 +328,7 @@ def _bundle(tmp_path: Path, tsr: bytes | None, attestation: bytes | None = None)
     envelope, sig, cert = _signed_run(tmp_path)
     if attestation is None and tsr is None:
         attestation = envelope
-    files: dict[str, bytes] = {}
+    files: dict[str, bytes] = dict(_CAPSULE_FILES)
     if attestation is not None:
         files["attestations/run.intoto.json"] = attestation
         files["signatures/run.sig"] = sig

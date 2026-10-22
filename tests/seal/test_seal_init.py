@@ -351,6 +351,36 @@ class TestSealAndVerify:
         assert code == 1
         assert data["identity_trust"] == IDENTITY_NONE
 
+    def test_signer_subject_is_the_signature_that_verified(
+        self, home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A junk first entry carrying someone else's certificate must not name the signer.
+
+        The envelope verifies under "any" through the second entry; the report used to
+        read ``signatures[0].cert`` and so printed the victim's subject.
+        """
+        victim_home = tmp_path / "victim-home"
+        monkeypatch.setenv("NOVAFABRIC_HOME", str(victim_home))
+        _seal_init(victim_home)
+        victim_env = json.loads(
+            (_sealed_capsule(victim_home, "victim") / ".seal" / "manifest.dsse").read_bytes()
+        )
+        monkeypatch.setenv("NOVAFABRIC_HOME", str(home))
+        _seal_init(home)
+        capsule = _sealed_capsule(home, "run-a")
+        _, honest = _verify_json(capsule)
+
+        dsse = capsule / ".seal" / "manifest.dsse"
+        env = json.loads(dsse.read_bytes())
+        junk = dict(victim_env["signatures"][0], sig=env["signatures"][0]["sig"][::-1])
+        env["signatures"].insert(0, junk)
+        dsse.write_text(json.dumps(env))
+        _, data = _verify_json(capsule)
+        assert data["signature_ok"] is True
+        assert data["signer_subject"] == honest["signer_subject"]
+        victim = signer_certificate_info(json.dumps({**victim_env}).encode())
+        assert victim is not None and data["signer_subject"] != victim.subject
+
     def test_unsealed_capsule_json(self, home: Path) -> None:
         capsule = home / "capsules" / "plain"
         capsule.mkdir(parents=True)

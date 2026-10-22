@@ -39,15 +39,20 @@ def _iter_capsule_files(capsule_dir: Path) -> Iterable[Path]:
 #: Root constructions, newest first. Verifiers accept any of them (ADR-0310).
 ROOT_VERSIONS = (2, 1)
 
+_V2_LEAF_PREFIX = b"\x02"
+
 
 def _leaf_v2(rel_path: str, data: bytes) -> bytes:
     """Leaf committing to the file's capsule-relative path *and* its content.
 
-    ``0x00 || len(path) (4 bytes, big-endian) || path (UTF-8, POSIX) || sha256(content)``.
-    The length prefix makes the path/content boundary unambiguous.
+    ``0x02 || len(path) (4 bytes, big-endian) || path (UTF-8, POSIX) || sha256(content)``.
+    The length prefix makes the path/content boundary unambiguous. The ``0x02`` domain
+    byte keeps v2 leaves apart from v1 leaves (``0x00``) and inner nodes (``0x01``):
+    with a shared prefix, a file whose *content* is a v2 leaf preimage gives a v1 leaf
+    equal to that v2 leaf, so a v1 root over crafted files could equal a v2 root.
     """
     path = rel_path.encode("utf-8")
-    return _h(b"\x00" + len(path).to_bytes(4, "big") + path + _h(data))
+    return _h(_V2_LEAF_PREFIX + len(path).to_bytes(4, "big") + path + _h(data))
 
 
 def capsule_root(
@@ -79,6 +84,23 @@ def capsule_root(
     return "sha256:" + _merkle_root(leaves).hex()
 
 
+def root_over_files(files: Iterable[tuple[str, bytes]], *, version: int = 2) -> str:
+    """:func:`capsule_root` over ``(capsule-relative POSIX path, content)`` pairs.
+
+    For a capsule that is not on disk, such as the ``run-capsule/`` copy inside an
+    Evidence Bundle ZIP. Files are ordered by path components, which is the order
+    ``sorted(capsule_dir.rglob("*"))`` gives, so both functions agree on one tree.
+    """
+    ordered = sorted(files, key=lambda item: item[0].split("/"))
+    if version == 2:
+        leaves = [_leaf_v2(rel, data) for rel, data in ordered]
+    elif version == 1:
+        leaves = [_leaf(data) for _, data in ordered]
+    else:
+        raise ValueError(f"unknown capsule root version {version!r}; known: {ROOT_VERSIONS}")
+    return "sha256:" + _merkle_root(leaves).hex()
+
+
 def capsule_merkle_root(capsule_dir: Path, *, version: int = 2) -> str:
     """The capsule's Merkle root (:func:`capsule_root`; v2 unless *version* says otherwise)."""
     return capsule_root(capsule_dir, version=version)
@@ -89,8 +111,9 @@ def capsule_root_matches(
 ) -> bool:
     """True when *expected* is this capsule's root under any known construction.
 
-    Accepting v1 does not let a v2-recorded root be satisfied by a renamed capsule:
-    the recorded value is a v2 root, and a v1 root of other files cannot equal it.
+    Accepting v1 does not let a v2-recorded root be satisfied by other files: v1 and v2
+    leaves and inner nodes are hashed under distinct domain bytes, so a v1 root equals a
+    v2 root only through a SHA-256 collision.
     """
     return any(
         expected == capsule_root(capsule_dir, version=v, exclude=exclude) for v in ROOT_VERSIONS

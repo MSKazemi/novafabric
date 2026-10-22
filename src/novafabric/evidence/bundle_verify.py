@@ -12,7 +12,12 @@ signed attestation had been edited, with the edited file's digest written back i
    detached ``signature_path`` file is the envelope's own signature.
 4. Each statement's subject digests equal the attestation's ``subject_hashes`` in the
    manifest, and a run-capsule statement's subject is one of the manifest's
-   ``subject.capsule_hash`` values.
+   ``subject.capsule_hash`` values. The run subject is also recomputed from the
+   bundle's own ``run-capsule/`` copy (v2 or v1 capsule root), and a lineage subject
+   from its ``edges.jsonl``: ``manifest.json`` is not signed and its ``manifest_hash``
+   is a self-hash anyone can recompute, so a subject compared only with the manifest
+   binds nothing. Every file under ``run-capsule/`` must lie in a copy whose root a
+   verified run statement signs.
 
 The key that checks the signatures ships *inside* the bundle, so on its own a pass
 proves the bundle is internally consistent and was signed as a whole — not who
@@ -33,8 +38,13 @@ from typing import Any
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 
-from novafabric.evidence.bundle import PREDICATE_RUN, _canonical_manifest_hash
+from novafabric.evidence.bundle import (
+    PREDICATE_LINEAGE,
+    PREDICATE_RUN,
+    _canonical_manifest_hash,
+)
 from novafabric.evidence.intoto import dsse_verify
+from novafabric.evidence.merkle import ROOT_VERSIONS, root_over_files
 from novafabric.evidence.signing import verify_with_pem
 
 
@@ -130,6 +140,7 @@ def verify_bundle_signatures(
     }
     trusted_fp = _public_key_fingerprint(trusted_public_pem) if trusted_public_pem else None
     capsule_hashes = _capsule_hashes(manifest)
+    covered_copies: list[str] = []
 
     for att in raw_attestations:
         if not isinstance(att, dict):
@@ -170,10 +181,92 @@ def verify_bundle_signatures(
             report.signer_fingerprints.append(fingerprint)
         if trusted_fp is not None and fingerprint != trusted_fp:
             report.signer_not_trusted.append(path)
-        problem = _subject_problem(statement, att, capsule_hashes)
+        problem = _subject_problem(statement, att, capsule_hashes) or _content_problem(
+            statement, names, read, covered_copies
+        )
         if problem:
             report.bad_subjects.append(f"{path} ({problem})")
+    uncovered = sorted(
+        n
+        for n in names
+        if n.startswith(_CAPSULE_COPY)
+        and not n.endswith("/")
+        and not any(n.startswith(prefix) for prefix in covered_copies)
+    )
+    if uncovered:
+        report.bad_subjects.append(
+            f"{len(uncovered)} file(s) under {_CAPSULE_COPY} are not in a capsule copy that a "
+            f"verified run attestation signs (first: {uncovered[0]})"
+        )
     return report
+
+
+_CAPSULE_COPY = "run-capsule/"
+
+
+def _predicate_run_id(statement: dict[str, Any]) -> str | None:
+    predicate = statement.get("predicate")
+    run_id = predicate.get("run_id") if isinstance(predicate, dict) else None
+    if isinstance(run_id, str) and run_id and "/" not in run_id and run_id not in (".", ".."):
+        return run_id
+    return None
+
+
+def _statement_digests(statement: dict[str, Any]) -> set[str]:
+    return {
+        _bare(entry["digest"]["sha256"])
+        for entry in _as_list(statement.get("subject"))
+        if isinstance(entry, dict)
+        and isinstance(entry.get("digest"), dict)
+        and isinstance(entry["digest"].get("sha256"), str)
+    }
+
+
+def _content_problem(
+    statement: object,
+    names: set[str],
+    read: Callable[[str], bytes],
+    covered_copies: list[str],
+) -> str:
+    """Why a signed subject does not match the bundle's own files; "" when it does.
+
+    A run statement's subject must be the capsule root of its ``run-capsule/`` copy
+    (``run-capsule/<run_id>/`` in a capsule-set bundle); on success that copy's prefix
+    is appended to *covered_copies*. A lineage statement's subject must be the
+    SHA-256 of its ``edges.jsonl``.
+    """
+    if not isinstance(statement, dict):
+        return ""
+    predicate_type = statement.get("predicateType")
+    digests = _statement_digests(statement)
+    run_id = _predicate_run_id(statement)
+    try:
+        if predicate_type == PREDICATE_RUN:
+            prefix = _CAPSULE_COPY
+            if run_id and any(n.startswith(f"{_CAPSULE_COPY}{run_id}/") for n in names):
+                prefix = f"{_CAPSULE_COPY}{run_id}/"
+            members = [
+                (n[len(prefix):], read(n))
+                for n in names
+                if n.startswith(prefix) and not n.endswith("/")
+            ]
+            if not members:
+                return f"the bundle has no capsule copy under {prefix}"
+            roots = {_bare(root_over_files(members, version=v)) for v in ROOT_VERSIONS}
+            if not digests & roots:
+                return f"the capsule copy under {prefix} does not hash to the signed subject"
+            covered_copies.append(prefix)
+        elif predicate_type == PREDICATE_LINEAGE:
+            candidates = [f"lineage-subgraph/{run_id}/edges.jsonl"] if run_id else []
+            candidates.append("lineage-subgraph/edges.jsonl")
+            present = [c for c in candidates if c in names]
+            if len(present) != 1:
+                return f"expected one lineage edges.jsonl for this run, found {len(present)}"
+            if hashlib.sha256(read(present[0])).hexdigest() not in digests:
+                return f"{present[0]} does not hash to the signed subject"
+    except (KeyError, ValueError, OSError) as exc:
+        return f"cannot read the signed content ({type(exc).__name__}: {exc})"
+    return ""
 
 
 def _subject_problem(statement: object, att: dict[str, Any], capsule_hashes: set[str]) -> str:

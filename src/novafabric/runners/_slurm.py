@@ -34,6 +34,16 @@ from novafabric.runners._options import coerce_str_dict
 from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
+
+def _client_env() -> dict[str, str]:
+    """Minimal environment for the query and cancel commands (scontrol, sacct).
+
+    The same rule as the submit command (ADR-0311), without ``extra_env``: these
+    commands need the client's own variables, not the user's shell.
+    """
+    return scheduler_submit_env(os.environ, client_prefixes=("SLURM_", "SBATCH_"))
+
+
 logger = logging.getLogger(__name__)
 
 # sacct end states. JobState column values that mean "done, succeeded".
@@ -161,6 +171,7 @@ class SlurmRunner:
             sc = subprocess.run(
                 [self._scontrol, "show", "job", jobid],
                 capture_output=True, timeout=10,
+                env=_client_env(),
             )
             if sc.returncode == 0:
                 state, exit_code = self._parse_scontrol_show_job(
@@ -178,6 +189,7 @@ class SlurmRunner:
                  "--format=JobID,State,ExitCode",
                  "--noheader", "--parsable2"],
                 capture_output=True, timeout=10,
+                env=_client_env(),
             )
             if sacct.returncode == 0:
                 lines = [
@@ -233,6 +245,7 @@ class SlurmRunner:
         try:
             proc = subprocess.run(
                 [self._sbatch, "--version"], capture_output=True, timeout=5,
+                env=_client_env(),
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             return False, f"could not run `{self._sbatch} --version`: {exc}"
@@ -260,6 +273,7 @@ class SlurmRunner:
             proc = subprocess.run(
                 [self._scontrol, "show", "config"],
                 capture_output=True, timeout=10,
+                env=_client_env(),
             )
             if proc.returncode == 0:
                 for line in proc.stdout.decode(errors="replace").splitlines():
@@ -294,6 +308,7 @@ class SlurmRunner:
                 [self._sacct, "-j", jobid, f"--format={SACCT_ENERGY_FORMAT}",
                  "--parsable2"],
                 capture_output=True, timeout=15,
+                env=_client_env(),
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.warning("sacct energy query failed for job %s: %s", jobid, exc)

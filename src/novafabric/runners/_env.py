@@ -31,9 +31,29 @@ from collections.abc import Iterable, Mapping
 #: makes capture fire inside the job (capsule dir, span id, emit mode).
 FORWARDABLE_PREFIX = "NOVAFABRIC_"
 
+#: ``NOVAFABRIC_*`` names that hold a credential (server and SCIM tokens, client API
+#: keys, database DSNs) are server- or client-side configuration that capture inside a
+#: job never reads. The prefix alone forwarded them to every off-host runner, and SLURM
+#: also put them in the ``--wrap`` script on ``sbatch``'s command line. A workload that
+#: really needs one gets it through ``extra_env``.
+_SECRET_NAME = re.compile(
+    r"TOKEN|SECRET|PASSWORD|PASSWD|DSN|API_?KEY|PRIVATE_KEY|CREDENTIAL|PEPPER|DB_URL"
+    r"|DATABASE_URL|_KEY$"
+)
+
+#: POSIX locale categories. Matching every ``LC_*`` name forwarded arbitrary
+#: user variables that merely start with ``LC_``.
+LOCALE_KEYS = frozenset(
+    {"LC_ALL", "LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE", "LC_MONETARY",
+     "LC_MESSAGES", "LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE",
+     "LC_MEASUREMENT", "LC_IDENTIFICATION"}
+)
+
 __all__ = [
     "FORWARDABLE_PREFIX",
+    "LOCALE_KEYS",
     "SUBMIT_LOGIN_KEYS",
+    "is_secret_name",
     "forwardable_env",
     "is_forwardable",
     "scheduler_submit_env",
@@ -48,14 +68,24 @@ SUBMIT_LOGIN_KEYS = frozenset(
 )
 
 
+def is_secret_name(key: str) -> bool:
+    """True for a ``NOVAFABRIC_*`` name that holds a credential (see ``_SECRET_NAME``)."""
+    return key.startswith(FORWARDABLE_PREFIX) and bool(
+        _SECRET_NAME.search(key[len(FORWARDABLE_PREFIX):])
+    )
+
+
 def is_forwardable(key: str, *, also_allow: frozenset[str] = frozenset()) -> bool:
     """Return whether ``key`` may cross a runner's trust boundary.
 
     ``also_allow`` carries the per-runner exceptions — SLURM needs ``PATH`` so
     the compute node can find the interpreter; a container gets its ``PATH``
-    from the image and must not inherit the submitter's.
+    from the image and must not inherit the submitter's. An explicitly allowed key
+    is forwarded even when :func:`is_secret_name` would refuse it.
     """
-    return key.startswith(FORWARDABLE_PREFIX) or key in also_allow
+    if key in also_allow:
+        return True
+    return key.startswith(FORWARDABLE_PREFIX) and not is_secret_name(key)
 
 
 def forwardable_env(
@@ -90,8 +120,10 @@ def scheduler_submit_env(
     so filtering the job script (``forwardable_env``) is not enough: the submit
     process itself must not hold the user's secrets (ADR-0311, completing ADR-0270).
     It keeps only the scheduler client's own variables (``client_prefixes``, e.g.
-    ``SLURM_``/``SBATCH_``), login basics (:data:`SUBMIT_LOGIN_KEYS`, ``LC_*``),
-    ``NOVAFABRIC_*``, and the operator's explicit ``extra_env``.
+    ``SLURM_``/``SBATCH_``), login basics (:data:`SUBMIT_LOGIN_KEYS`,
+    :data:`LOCALE_KEYS`), forwardable ``NOVAFABRIC_*`` (not :func:`is_secret_name`),
+    and the operator's explicit ``extra_env``. Called without ``extra_env`` it is
+    also the environment for the scheduler's query and cancel commands.
 
     Args:
         environ: the orchestrator process environment (``os.environ``).
@@ -101,8 +133,15 @@ def scheduler_submit_env(
     Returns:
         A new dict; never mutates ``environ``.
     """
-    prefixes = (*tuple(client_prefixes), FORWARDABLE_PREFIX, "LC_")
-    env = {k: v for k, v in environ.items() if k in SUBMIT_LOGIN_KEYS or k.startswith(prefixes)}
+    prefixes = tuple(client_prefixes)
+    env = {
+        k: v
+        for k, v in environ.items()
+        if k in SUBMIT_LOGIN_KEYS
+        or k in LOCALE_KEYS
+        or k.startswith(prefixes)
+        or is_forwardable(k)
+    }
     env.update(extra_env or {})
     return env
 

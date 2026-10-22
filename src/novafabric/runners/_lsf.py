@@ -48,6 +48,16 @@ from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
+
+def _client_env() -> dict[str, str]:
+    """Minimal environment for the scheduler's query and cancel commands (bjobs, bkill).
+
+    The same rule as the submit command (ADR-0311), without ``extra_env``: these
+    commands need the client's own variables, not the user's shell.
+    """
+    return scheduler_submit_env(os.environ, client_prefixes=("LSF_", "LSB_"))
+
+
 # LSF bjobs STAT values that indicate terminal states.
 _LSF_TERMINAL_STATES = {"DONE", "EXIT", "ZOMBI"}
 _LSF_SUCCESS_STATES = {"DONE"}
@@ -131,6 +141,7 @@ class LSFRunner:
                 [self._bsub, "-V"],
                 capture_output=True,
                 timeout=5,
+                env=_client_env(),
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             return False, f"could not run `{self._bsub} -V`: {exc}"
@@ -329,6 +340,7 @@ class LSFRunner:
             capture_output=True,
             check=True,
             timeout=15,
+            env=_client_env(),
         )
 
     # ------------------------------------------------------------------
@@ -359,6 +371,7 @@ class LSFRunner:
                 [self._bjobs, "-noheader", job_id],
                 capture_output=True,
                 timeout=10,
+                env=_client_env(),
             )
         except (subprocess.TimeoutExpired, OSError):
             return None

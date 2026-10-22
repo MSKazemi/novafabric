@@ -55,6 +55,12 @@ VERIFIER_INSTRUCTIONS = (
     "     PAE = 'DSSEv1 LEN(type) SP type SP LEN(payload) SP payload', verify\n"
     "     using the public key in the matching `signatures[*].certificate_path`.\n"
     "  4. Confirm each statement's subject digest matches `subject.capsule_hash`.\n"
+    "  5. Recompute that root from the files under `run-capsule/` (manifest.json\n"
+    "     is not signed). Order files by path components; leaf = sha256(0x02 ||\n"
+    "     len(path) as 4-byte big-endian || path || sha256(content)); node =\n"
+    "     sha256(0x01 || left || right), splitting at the largest power of two\n"
+    "     below the count (RFC 6962). Bundles exported before v0.106.0 use\n"
+    "     leaf = sha256(0x00 || content).\n"
 )
 
 

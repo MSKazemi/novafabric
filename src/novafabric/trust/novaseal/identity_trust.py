@@ -73,7 +73,10 @@ IDENTITY_TRUST_HEADLINES: dict[str, str] = {
 
 @dataclass(frozen=True)
 class SignerCertificateInfo:
-    """Unverified description of the first signature's embedded certificate."""
+    """Description of the embedded certificate of the signature that verified.
+
+    The certificate itself is not validated here (no anchor); see ``--ca-bundle``.
+    """
 
     subject: str
     issuer: str
@@ -89,18 +92,41 @@ def is_local_seal_name(name: x509.Name) -> bool:
 
 
 def signer_certificate_info(dsse_bytes: bytes) -> Optional[SignerCertificateInfo]:
-    """Describe ``signatures[0].cert``; ``None`` when absent or unparseable. Never raises."""
+    """Describe the certificate of the first signature entry that verifies.
+
+    ``None`` when no entry verifies or its certificate is absent or unparseable. Never
+    raises. Reading ``signatures[0]`` regardless of whether *it* verified let a junk
+    first entry carrying someone else's certificate put that name in the report while
+    another entry's signature carried the envelope.
+    """
     if not dsse_bytes:
         return None
+    from novafabric.trust.novaseal.envelope import (  # noqa: PLC0415
+        EnvelopeError,
+        _b64_decode,
+        _verify_signature_entry_any_pae,
+        pae_candidates,
+    )
+
     try:
         envelope = json.loads(dsse_bytes)
-        cert_b64 = envelope["signatures"][0]["cert"]
+        candidates = pae_candidates(
+            envelope.get("payloadType", ""), _b64_decode(envelope.get("payload", ""))
+        )
+        cert_b64 = None
+        for entry in envelope["signatures"]:
+            try:
+                _verify_signature_entry_any_pae(entry, candidates)
+            except (EnvelopeError, ValueError, KeyError, TypeError, AttributeError):
+                continue
+            cert_b64 = entry.get("cert")
+            break
         if not isinstance(cert_b64, str) or not cert_b64:
             return None
         normalised = cert_b64.replace("-", "+").replace("_", "/")
         der = base64.b64decode(normalised + "=" * (-len(normalised) % 4))
         cert = x509.load_der_x509_certificate(der)
-    except (ValueError, KeyError, IndexError, TypeError, binascii.Error):
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError, binascii.Error):
         return None
     return SignerCertificateInfo(
         subject=cert.subject.rfc4514_string(),

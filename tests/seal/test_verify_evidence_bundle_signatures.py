@@ -538,3 +538,65 @@ def test_cli_a_malformed_signed_statement_fails_cleanly(
     result = _verify(_write_zip(files, manifest, tmp_path / "m.zip"))
     _assert_clean_failure(result)
     assert "subject" in result.output
+
+
+# ── the signed subject must be the bundle's own content ─────────────────────────
+# manifest.json is not signed and manifest_hash is a self-hash, so comparing the signed
+# run subject with `subject.capsule_hash` alone binds nothing: an attacker who edits a
+# capsule file and repairs digests + manifest_hash kept a passing, *pinned* bundle.
+
+
+def _capsule_member(files: Files) -> str:
+    return next(n for n in sorted(files) if n.startswith("run-capsule/") and n.endswith(".yaml"))
+
+
+def test_an_edited_capsule_file_fails_even_with_the_signer_pinned(exported: Exported) -> None:
+    files, manifest = exported.copy()
+    member = _capsule_member(files)
+    files[member] = files[member] + b"\n# edited after signing\n"
+    _repair(files, manifest)
+    report = _check(files, manifest, exported.public_key.read_bytes())
+    assert not report.ok
+    assert any("does not hash to the signed subject" in s for s in report.bad_subjects)
+
+
+def test_a_file_added_to_the_capsule_copy_fails(exported: Exported) -> None:
+    files, manifest = exported.copy()
+    files["run-capsule/injected.txt"] = b"not captured"
+    manifest["artifacts"].append({"path": "run-capsule/injected.txt", "sha256": ""})
+    _repair(files, manifest)
+    report = _check(files, manifest, exported.public_key.read_bytes())
+    assert any("does not hash to the signed subject" in s for s in report.bad_subjects)
+
+
+def test_a_genuine_copy_elsewhere_does_not_cover_an_edited_capsule(exported: Exported) -> None:
+    """Redirecting the root check to an intact copy leaves the edited files uncovered."""
+    files, manifest = exported.copy()
+    run_id = _statement(files, RUN_ATT)["predicate"]["run_id"]
+    for name in [n for n in files if n.startswith("run-capsule/")]:
+        files[f"run-capsule/{run_id}/{name.removeprefix('run-capsule/')}"] = files[name]
+        manifest["artifacts"].append({"path": f"run-capsule/{run_id}/{name[12:]}", "sha256": ""})
+    member = _capsule_member(files)
+    files[member] = files[member] + b"\n# edited\n"
+    _repair(files, manifest)
+    report = _check(files, manifest, exported.public_key.read_bytes())
+    assert any("not in a capsule copy" in s for s in report.bad_subjects), report.bad_subjects
+
+
+def test_edited_lineage_edges_fail(exported: Exported) -> None:
+    files, manifest = exported.copy()
+    files["lineage-subgraph/edges.jsonl"] = b'{"forged": true}\n'
+    _repair(files, manifest)
+    report = _check(files, manifest, exported.public_key.read_bytes())
+    assert any("edges.jsonl does not hash" in s for s in report.bad_subjects)
+
+
+def test_cli_reports_an_edited_capsule_file(exported: Exported, tmp_path: Path) -> None:
+    files, manifest = exported.copy()
+    member = _capsule_member(files)
+    files[member] = files[member] + b"\n# edited\n"
+    _repair(files, manifest)
+    result = _verify(_write_zip(files, manifest, tmp_path / "t.zip"),
+                     "--public-key", str(exported.public_key))
+    _assert_clean_failure(result)
+    assert "does not hash to the signed subject" in result.output

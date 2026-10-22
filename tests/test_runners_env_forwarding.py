@@ -26,6 +26,7 @@ from novafabric.runners._lsf import LSFRunner
 #: A secret that must never appear in anything a runner sends off-host.
 SECRET_KEY = "OPENAI_API_KEY"
 SECRET_VALUE = "sk-live-must-never-be-transported"
+NF_SECRET_KEY = "NOVAFABRIC_SERVER_TOKEN"
 
 
 def _spec(tmp_path: Path, **kwargs: object) -> RunnerJobSpec:
@@ -44,6 +45,8 @@ def _spec(tmp_path: Path, **kwargs: object) -> RunnerJobSpec:
             "HOME": "/home/someone",
             "AWS_SECRET_ACCESS_KEY": "aws-must-never-be-transported",
             SECRET_KEY: SECRET_VALUE,
+            # Shares the NOVAFABRIC_ prefix capture needs, but is a server credential.
+            NF_SECRET_KEY: "nf-token-must-never-be-transported",
         },
         **kwargs,  # type: ignore[arg-type]
     )
@@ -66,6 +69,24 @@ class TestForwardableEnvHelper:
         env = {"NOVAFABRIC_A": "1", SECRET_KEY: SECRET_VALUE}
         forwardable_env(env)
         assert SECRET_KEY in env, "helper mutated the caller's environment"
+
+    @pytest.mark.parametrize("name", [
+        "NOVAFABRIC_SERVER_TOKEN", "NOVAFABRIC_TOKEN", "NOVAFABRIC_API_KEY",
+        "NOVAFABRIC_SCIM_TOKEN", "NOVAFABRIC_POSTGRES_DSN", "NOVAFABRIC_METADATA_DSN",
+        "NOVAFABRIC_DB_URL", "NOVAFABRIC_SERVE_TOKEN", "NOVAFABRIC_SIGNING_KEY",
+    ])
+    def test_a_novafabric_credential_is_not_forwarded(self, name: str) -> None:
+        assert name not in forwardable_env({name: "secret"})
+        assert forwardable_env({name: "s"}, also_allow={name}) == {name: "s"}, (
+            "an explicit extra_env must still be able to send it"
+        )
+
+    @pytest.mark.parametrize("name", [
+        "NOVAFABRIC_CAPSULE_DIR", "NOVAFABRIC_SPAN_ID", "NOVAFABRIC_HOME",
+        "NOVAFABRIC_SERVER_URL", "NOVAFABRIC_OFFLINE_KEY_PATH", "NOVAFABRIC_SESSION_ID",
+    ])
+    def test_what_capture_reads_in_the_job_is_still_forwarded(self, name: str) -> None:
+        assert forwardable_env({name: "v"}) == {name: "v"}
 
     def test_prefix_match_is_not_a_substring_match(self) -> None:
         # MY_NOVAFABRIC_TOKEN contains the prefix but does not start with it.
@@ -145,7 +166,7 @@ class TestNoRunnerTransportsTheSubmittingEnvironment:
         # PATH is SLURM's one documented exception — the compute node needs it.
         assert "export PATH=" in script
 
-    @pytest.mark.parametrize("secret", [SECRET_KEY, "AWS_SECRET_ACCESS_KEY"])
+    @pytest.mark.parametrize("secret", [SECRET_KEY, "AWS_SECRET_ACCESS_KEY", NF_SECRET_KEY])
     def test_no_off_host_runner_transports_any_secret(
         self, tmp_path: Path, secret: str
     ) -> None:
@@ -205,6 +226,42 @@ class TestBatchSchedulersSubmitWithAMinimalEnvironment:
         assert SECRET_VALUE not in json.dumps(env)
         client = "SLURM_CONF" if runner == "sbatch" else "LSF_ENVDIR"
         assert client in env, "the scheduler client's own configuration must survive"
+
+    @pytest.mark.parametrize("runner", ["sbatch", "bsub"])
+    def test_novafabric_credentials_and_lc_lookalikes_stay_behind(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(NF_SECRET_KEY, "nf-token-must-never-be-transported")
+        monkeypatch.setenv("LC_SECRET", "not-a-locale")
+        monkeypatch.setenv("LC_ALL", "C.UTF-8")
+        env, script = self._submit(runner, tmp_path, monkeypatch)
+        assert NF_SECRET_KEY not in env and "nf-token-must-never" not in script
+        assert "LC_SECRET" not in env
+        assert env["LC_ALL"] == "C.UTF-8"
+        assert "NOVAFABRIC_SPAN_ID" in script, "capture's own variables must reach the job"
+
+    @pytest.mark.parametrize("runner", ["slurm", "lsf"])
+    def test_query_commands_run_with_the_client_environment(
+        self, runner: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """scontrol / sacct / bjobs / bkill used to run with the user's whole shell."""
+        monkeypatch.setenv(SECRET_KEY, SECRET_VALUE)
+        monkeypatch.setenv(NF_SECRET_KEY, "nf-token-must-never-be-transported")
+        fail = subprocess.CompletedProcess([], 1, b"", b"")
+        with patch("shutil.which", return_value="/usr/bin/x"), \
+             patch("subprocess.run", return_value=fail) as run:
+            if runner == "slurm":
+                SlurmRunner()._query_state("42")
+                SlurmRunner().supports()
+            else:
+                LSFRunner()._query_state("42")
+                LSFRunner().supports()
+                LSFRunner().cancel("42")
+        assert run.call_count >= 3
+        for call in run.call_args_list:
+            env = call.kwargs.get("env")
+            assert env is not None, f"{call.args[0][0]} inherits the whole shell"
+            assert SECRET_KEY not in env and NF_SECRET_KEY not in env
 
     @pytest.mark.parametrize("runner", ["sbatch", "bsub"])
     def test_extra_env_is_the_explicit_opt_in(

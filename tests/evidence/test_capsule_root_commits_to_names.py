@@ -85,3 +85,32 @@ def test_both_entry_points_default_to_v2(tmp_path: Path) -> None:
     v2 = capsule_root(capsule, version=2)
     assert capsule_root(capsule) == capsule_merkle_root(capsule) == v2
     assert v2 != capsule_root(capsule, version=1)
+
+
+def test_a_v1_root_over_crafted_files_cannot_equal_a_v2_root(tmp_path: Path) -> None:
+    """With a shared 0x00 leaf prefix, files whose content is each v2 leaf's preimage
+    gave a v1 root equal to the original's v2 root — satisfying it with none of its
+    bytes. v2 leaves are domain-separated (0x02), so this is now a SHA-256 collision."""
+    import hashlib
+
+    original = _capsule(tmp_path / "o", ORIGINAL)
+    crafted = {
+        rel: len(rel.encode()).to_bytes(4, "big") + rel.encode() + hashlib.sha256(data).digest()
+        for rel, data in ORIGINAL.items()
+    }
+    forged = _capsule(tmp_path / "f", crafted)
+    v2_root = capsule_merkle_root(original)
+    assert capsule_merkle_root(forged, version=1) != v2_root
+    assert not capsule_root_matches(forged, v2_root)
+
+
+@pytest.mark.parametrize("version", ROOT_VERSIONS)
+def test_root_over_files_matches_the_on_disk_root(tmp_path: Path, version: int) -> None:
+    """One order for both entry points, including names where '-' sorts before '/'."""
+    from novafabric.evidence.merkle import root_over_files
+
+    files = {"a/b.txt": b"1", "a-c.txt": b"2", "a.txt": b"3", "z/y/x": b"4", "B": b"5"}
+    capsule = _capsule(tmp_path / "c", files)
+    assert root_over_files(files.items(), version=version) == capsule_root(
+        capsule, version=version
+    )

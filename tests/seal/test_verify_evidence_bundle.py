@@ -33,6 +33,7 @@ from typer.testing import CliRunner
 from novafabric.cli.main import app
 from novafabric.evidence.bundle import PREDICATE_RUN, _canonical_manifest_hash
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
+from novafabric.evidence.merkle import root_over_files
 from novafabric.evidence.signing import LocalSigner, generate_keypair
 
 runner = CliRunner()
@@ -49,7 +50,10 @@ def _make_bundle(path: Path, files: dict[str, bytes]) -> Path:
     (``test_verify_evidence_bundle_signatures.py``), so a bundle without them is not
     "intact"; this helper adds exactly what the format requires and nothing else.
     """
-    capsule_hash = "sha256:" + "cd" * 32
+    # The verifier recomputes the run subject from the bundle's run-capsule/ copy.
+    capsule_hash = root_over_files(
+        [(n.removeprefix("run-capsule/"), b) for n, b in files.items() if n.startswith("run-capsule/")]
+    )
     priv, _ = generate_keypair(path.parent / f"{path.stem}-keys")
     signer = LocalSigner(priv)
     env = dsse_sign(make_intoto_statement(PREDICATE_RUN, "r1", capsule_hash, {}), signer)
