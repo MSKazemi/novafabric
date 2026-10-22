@@ -19,6 +19,11 @@ longer forwards the submitting shell's environment (ADR-0270).
   floor over the union, and proves every test ran in exactly one shard. A `lint` job reports
   lockfile, ruff and CLI-smoke failures in about a minute. New `make test-shard SHARD=I/N`
   reproduces one shard locally; `make test-durations` re-balances from CI's timings.
+- **CI and the published capture action install with uv, not pip.** `pip-audit` runs via
+  `uvx` at an exact version (`pip-audit==2.10.1`; `pipx run` took whatever was newest), and
+  `.github/actions/capture` installs NovaFabric with `uv pip install` into the same
+  interpreter as before. A guard (`tests/docs/test_ci_installs_with_uv.py`) fails on any new
+  `pip install` / `pipx run` under `.github/`.
 - **A release publishes nothing unless CI passed on the tagged commit** (ADR-0316). The
   GitHub Release, PyPI, container-image and Helm-chart workflows each wait for `ci.yml` on
   the tagged SHA and fail closed otherwise. v0.106.0 was published to PyPI and as a GitHub
