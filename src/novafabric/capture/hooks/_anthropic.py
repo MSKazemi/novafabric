@@ -26,6 +26,7 @@ from novafabric.capture.hooks._sdk_streams import (
     API_SURFACE_EXT,
     AnthropicStreamAccumulator,
     AsyncRecordingStream,
+    CaptureBinding,
     RecordingStream,
     attach_stream_info,
     is_async_stream,
@@ -60,6 +61,9 @@ class AnthropicHook:
         #: The sync ``Messages.create`` original (kept for callers).
         self._original: Any = None
         self._patched: list[tuple[Any, str, Any]] = []
+        #: Set by :meth:`uninstall`: the capture this hook served has ended, so a
+        #: stream it opened outside any capture scope records nothing after it.
+        self._torn_down = False
 
     def install(self) -> None:
         try:
@@ -102,7 +106,12 @@ class AnthropicHook:
 
         return patched
 
+    def is_live(self) -> bool:
+        """False once :meth:`uninstall` has run (see ``CaptureBinding``)."""
+        return not self._torn_down
+
     def uninstall(self) -> None:
+        self._torn_down = True
         while self._patched:
             owner, attr, original = self._patched.pop()
             try:
@@ -130,6 +139,7 @@ class AnthropicHook:
                 return RecordingStream(
                     response, AnthropicStreamAccumulator(),
                     self._on_stream_done(started, t0, kwargs, call_id),
+                    CaptureBinding.capture(self.is_live),
                 )
             return response  # the recording wrapper failed: hand back the raw stream
         with fail_open(_HOOK, MODEL_CALLS_STREAM):
@@ -157,6 +167,7 @@ class AnthropicHook:
                 return AsyncRecordingStream(
                     response, AnthropicStreamAccumulator(),
                     self._on_stream_done(started, t0, kwargs, call_id),
+                    CaptureBinding.capture(self.is_live),
                 )
             return response  # the recording wrapper failed: hand back the raw stream
         with fail_open(_HOOK, MODEL_CALLS_STREAM):
