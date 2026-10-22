@@ -11,11 +11,22 @@ Auth
     address, loopback included. The comparison is constant-time.
 
 ``NOVA_COLLECTOR_TOKEN`` unset — **local mode**
-    The collector serves only a caller that is provably on this machine: a loopback
-    peer address, a ``localhost``/``127.0.0.1``/``[::1]`` ``Host`` header (DNS-rebinding
-    defence), and no ``Forwarded``/``X-Forwarded-For``/``X-Real-IP`` header (a reverse
-    proxy on this host would otherwise make every remote caller look like loopback).
-    Anyone else gets ``403``. A warning is logged at startup.
+    The collector serves only a caller that looks local: a loopback peer address, a
+    ``localhost``/``127.0.0.1``/``[::1]`` ``Host`` header (DNS-rebinding defence), and
+    no proxy header -- ``Forwarded``, ``X-Forwarded-*``, ``X-Real-IP`` or ``Via`` (a
+    reverse proxy on this host would otherwise make every remote caller look like
+    loopback). Anyone else gets ``403``. A warning is logged at startup.
+
+    **Residual -- a header-less proxy.** A same-host reverse proxy that adds none of
+    those headers is indistinguishable from a local caller: nginx's
+    ``proxy_pass http://127.0.0.1:<port>`` connects from loopback, sends
+    ``Host: 127.0.0.1:<port>`` and no ``X-Forwarded-*`` by default. No check the app
+    can make sees the remote client behind it. So the rule is operational, and the
+    startup warning says it: set ``NOVA_COLLECTOR_TOKEN`` whenever anything proxies
+    to the collector. There is deliberately no "allow unauthenticated local" switch:
+    defaulting it on is today's behaviour, defaulting it off would break the zero-setup
+    local mode, and an operator who knows a proxy is there already has the stronger
+    control -- a token, which turns local mode off entirely.
 
     Why not refuse to start instead: this module is an ASGI *factory*; whatever
     launches it (``uvicorn --factory``, gunicorn, a test client) owns the socket, so
@@ -62,7 +73,14 @@ DEFAULT_TENANT: Final[str] = "default"
 
 #: Headers a reverse proxy adds. Their presence means the TCP peer is the proxy, not
 #: the caller, so a loopback peer proves nothing about where the request came from.
-_PROXY_HEADERS: Final[tuple[str, ...]] = ("forwarded", "x-forwarded-for", "x-real-ip")
+#: Beyond the client-address headers: ``Via`` (Squid, Varnish, RFC 9110 §7.6.3),
+#: ``X-Forwarded-Host``/``-Server`` (Apache ``mod_proxy``), ``X-Forwarded-Proto``/
+#: ``-Port`` (Traefik, Envoy, cloud load balancers). A proxy that adds none of them
+#: (nginx ``proxy_pass`` defaults) is NOT detected -- see the module docstring.
+_PROXY_HEADERS: Final[tuple[str, ...]] = (
+    "forwarded", "x-forwarded-for", "x-real-ip", "via",
+    "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-forwarded-server",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +238,11 @@ def create_collector_app(accumulator: Any = None) -> FastAPI:
             "collector_app: %s is not set — running UNAUTHENTICATED in local mode. "
             "Only loopback callers (no proxy headers, localhost Host) are served; "
             "every other request gets 403. Set %s before exposing the collector "
-            "on a network.",
-            TOKEN_ENV, TOKEN_ENV,
+            "on a network, and set %s whenever anything proxies to the collector: "
+            "a reverse proxy on this host that adds no X-Forwarded-*/Via header "
+            "(nginx proxy_pass defaults) makes every remote caller look local.",
+            TOKEN_ENV, TOKEN_ENV, TOKEN_ENV,
+            extra={"nova_event": "collector.unauthenticated_local_mode"},
         )
     auth_dep = _make_auth_dependency(collector_token, tenant)
 

@@ -22,7 +22,11 @@ from urllib.parse import urlparse
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder, get_current_writer
-from novafabric.capture.hooks._fail_open import MODEL_CALLS_STREAM, fail_open
+from novafabric.capture.hooks._fail_open import (
+    MODEL_CALLS_STREAM,
+    fail_open,
+    note_capture_failure,
+)
 from novafabric.capture.hooks._layering import claim_higher_layer
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
@@ -92,11 +96,22 @@ class RequestsHook:
         finally:
             self._original_send = None
 
+    def _target_url(self, prepared_request: Any) -> str | None:
+        """The URL to record, or ``None`` to pass the call through. Never raises:
+        a classification failure (a custom registry, an odd request object)
+        loses the record, never the user's request (ADR-0021)."""
+        try:
+            url = str(getattr(prepared_request, "url", ""))
+            return url if self._registry.is_known(url) else None
+        except Exception as exc:  # noqa: BLE001 -- capture must never block the workload
+            note_capture_failure(_LIBRARY, MODEL_CALLS_STREAM, exc)
+            return None
+
     def _wrapped_send(
         self, prepared_request: Any, original: Any = None, **kwargs: Any
     ) -> Any:
-        url = str(getattr(prepared_request, "url", ""))
-        if not self._registry.is_known(url):
+        url = self._target_url(prepared_request)
+        if url is None:
             if original is not None:
                 # Even passthroughs must claim the layer so a lower hook
                 # (e.g. Urllib3Hook) does not also record the same call.
@@ -137,10 +152,13 @@ class RequestsHook:
                 body = {}
             if not isinstance(body, dict):
                 body = {}
+            # ``response is None``, never ``not response``: a requests
+            # ``Response`` is falsy for every 4xx/5xx (``__bool__`` is ``.ok``),
+            # which recorded a 503 as status 0 and ``"success"``.
             status_code = (
                 error_status
                 if error_status is not None
-                else getattr(response, "status_code", 200) if response else 0
+                else getattr(response, "status_code", 200) if response is not None else 0
             )
             record = build_record_envelope(
                 model_call_id=new_ulid(),

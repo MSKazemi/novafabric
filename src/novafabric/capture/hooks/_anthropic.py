@@ -83,6 +83,8 @@ class AnthropicHook:
             @functools.wraps(original)
             async def patched_async(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
                 bound = original.__get__(inner_self, type(inner_self))
+                if args:  # see the sync wrapper: the SDK gets the call as written
+                    return await bound(*args, **kwargs)
                 return await hook_self._intercept_async(bound, kwargs)
 
             return patched_async
@@ -90,6 +92,12 @@ class AnthropicHook:
         @functools.wraps(original)
         def patched(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
             original_bound = original.__get__(inner_self, type(inner_self))
+            if args:
+                # ``Messages.create`` is keyword-only, so a positional call is the
+                # SDK's to reject. It used to be recorded with the positional
+                # arguments silently DROPPED -- a call the SDK refuses succeeded
+                # under capture. Pass it through exactly as written, unrecorded.
+                return original_bound(*args, **kwargs)
             return hook_self._intercept(original_bound, **kwargs)
 
         return patched

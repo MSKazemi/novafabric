@@ -25,7 +25,11 @@ from urllib.parse import urlparse
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder, get_current_writer
-from novafabric.capture.hooks._fail_open import MODEL_CALLS_STREAM, fail_open
+from novafabric.capture.hooks._fail_open import (
+    MODEL_CALLS_STREAM,
+    fail_open,
+    note_capture_failure,
+)
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
@@ -113,6 +117,16 @@ class AiohttpHook:
         finally:
             self._original_request = None
 
+    def _target_url(self, str_or_url: Any) -> str | None:
+        """The URL to record, or ``None`` to pass the call through. Never raises:
+        a classification failure loses the record, never the user's request."""
+        try:
+            url = str(str_or_url)
+            return url if self._registry.is_known(url) else None
+        except Exception as exc:  # noqa: BLE001 -- capture must never block the workload
+            note_capture_failure(_LIBRARY, MODEL_CALLS_STREAM, exc)
+            return None
+
     async def _wrapped_request(
         self,
         method: str,
@@ -120,8 +134,8 @@ class AiohttpHook:
         original: Any = None,
         **kwargs: Any,
     ) -> Any:
-        url = str(str_or_url)
-        if not self._registry.is_known(url):
+        url = self._target_url(str_or_url)
+        if url is None:
             if original is not None:
                 return await original(method, str_or_url, **kwargs)
             raise RuntimeError("original _request function required")

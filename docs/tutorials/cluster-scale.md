@@ -87,14 +87,20 @@ uvicorn --factory novafabric.collector_app:create_collector_app --host 0.0.0.0 -
 
 - **No token = local mode.** The collector then serves only a caller that is provably
   on the same machine: a loopback peer address, a `localhost`/`127.0.0.1`/`[::1]`
-  `Host` header, and no `Forwarded`/`X-Forwarded-For`/`X-Real-IP` header. Everyone
-  else gets `403`, and a warning is logged at startup. This keeps the zero-setup
-  local workflow working while making a collector started on `0.0.0.0` without a
-  token refuse remote evidence instead of accepting it from anyone. (The factory
-  cannot see the address it is bound to — the ASGI server owns the socket — so the
-  check is made on every request rather than at startup.)
-- **Behind a reverse proxy, set a token.** A proxy on the same host connects from
-  loopback, and its forwarding headers are exactly what local mode refuses.
+  `Host` header, and no proxy header (`Forwarded`, `X-Forwarded-*`, `X-Real-IP`,
+  `Via`). Everyone else gets `403`, and a warning is logged at startup. This keeps
+  the zero-setup local workflow working while making a collector started on
+  `0.0.0.0` without a token refuse remote evidence instead of accepting it from
+  anyone. (The factory cannot see the address it is bound to — the ASGI server owns
+  the socket — so the check is made on every request rather than at startup.)
+- **⚠ Set `NOVA_COLLECTOR_TOKEN` whenever anything proxies to the collector.** A
+  proxy on the same host connects from loopback. Local mode refuses the requests of
+  a proxy that marks itself with a forwarding header — but it **cannot detect one
+  that adds none**. nginx's `proxy_pass http://127.0.0.1:8090;` with its defaults
+  sends `Host: 127.0.0.1:8090` and no `X-Forwarded-*`, so every remote caller
+  behind it looks local and is served without authentication. Only a token closes
+  this, which is why there is no separate "allow unauthenticated local" switch: a
+  token already turns local mode off entirely.
 - **The tenant comes from the token, not the request.** A body `tenant_id` or an
   event `tenant` that differs from `NOVA_COLLECTOR_TENANT` is refused with `403` and
   nothing in the batch is ingested. `tenant_id` is optional. Serving several tenants

@@ -505,14 +505,25 @@ class AsyncRecordingStream:
 
 
 def is_sync_stream(obj: Any) -> bool:
-    """A sync SDK stream object (iterable, not a response with choices/content)."""
-    return hasattr(obj, "__iter__") and hasattr(obj, "__next__") and not isinstance(
-        obj, (str, bytes, dict, list, tuple)
-    )
+    """A sync SDK stream object (iterable, not a response with choices/content).
+
+    Never raises: ``hasattr`` swallows only ``AttributeError``, and a proxy
+    whose ``__getattr__`` raises anything else must not reach the workload.
+    """
+    try:
+        return hasattr(obj, "__iter__") and hasattr(obj, "__next__") and not isinstance(
+            obj, (str, bytes, dict, list, tuple)
+        )
+    except Exception:  # noqa: BLE001 -- capture must never block the workload
+        return False
 
 
 def is_async_stream(obj: Any) -> bool:
-    return hasattr(obj, "__aiter__")
+    """An async SDK stream object. Never raises (see :func:`is_sync_stream`)."""
+    try:
+        return hasattr(obj, "__aiter__")
+    except Exception:  # noqa: BLE001 -- capture must never block the workload
+        return False
 
 
 def streaming_block(chunk_count: int, first_token_ms: int | None) -> dict[str, Any]:

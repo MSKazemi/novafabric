@@ -24,7 +24,11 @@ from urllib.parse import urlparse
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder, get_current_writer
-from novafabric.capture.hooks._fail_open import MODEL_CALLS_STREAM, fail_open
+from novafabric.capture.hooks._fail_open import (
+    MODEL_CALLS_STREAM,
+    fail_open,
+    note_capture_failure,
+)
 from novafabric.capture.hooks._layering import is_inside_higher_layer
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
@@ -130,6 +134,16 @@ class Urllib3Hook:
         finally:
             self._original_urlopen = None
 
+    def _target_url(self, pool_self: Any, url_path: Any) -> str | None:
+        """The URL to record, or ``None`` to pass the call through. Never raises:
+        a classification failure loses the record, never the user's request."""
+        try:
+            full_url = _build_url(pool_self, url_path)
+            return full_url if self._registry.is_known(full_url) else None
+        except Exception as exc:  # noqa: BLE001 -- capture must never block the workload
+            note_capture_failure(_LIBRARY, MODEL_CALLS_STREAM, exc)
+            return None
+
     def _wrapped_urlopen(
         self,
         pool_self: Any,
@@ -145,8 +159,8 @@ class Urllib3Hook:
                 return original(method, url_path, **kwargs)
             raise RuntimeError("original urlopen function required")
 
-        full_url = _build_url(pool_self, url_path)
-        if not self._registry.is_known(full_url):
+        full_url = self._target_url(pool_self, url_path)
+        if full_url is None:
             if original is not None:
                 return original(method, url_path, **kwargs)
             raise RuntimeError("original urlopen function required")

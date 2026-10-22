@@ -442,3 +442,135 @@ def _exported_value(script: str, name: str) -> str:
     probe = f'{exports}\nprintf "%s" "${name}"\n'
     out = subprocess.run(["/bin/sh", "-c", probe], capture_output=True, check=True)
     return out.stdout.decode()
+
+
+#: Every value that must never be on a command line, whichever way it arrived.
+_ALL_SECRET_VALUES = (
+    SECRET_VALUE, "nf-token-must-never-be-transported", "aws-must-never-be-transported",
+)
+
+
+class TestNoRunnerPutsAValueOnACommandLine:
+    """No runner puts a variable's value in any argv it executes -- every runner.
+
+    ``argv`` is world-readable on the host (``ps``, ``/proc/<pid>/cmdline``). The
+    batch runners were fixed in ADR-0311 Amendment 2, but ``docker`` still ran
+    ``docker run -e OPENAI_API_KEY=sk-...``, visible for the container's whole
+    lifetime -- and ``extra_env`` is the documented way to pass an API key. Asserted
+    once over **every** runner, with the secret both in the submitting shell and in
+    ``extra_env``, so the next runner that forgets fails here.
+    """
+
+    EXTRA_KEY = "MODEL_API_KEY"
+
+    def _calls(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> list[Any]:
+        monkeypatch.setenv(SECRET_KEY, SECRET_VALUE)
+        monkeypatch.setenv(NF_SECRET_KEY, "nf-token-must-never-be-transported")
+        fail = subprocess.CompletedProcess([], 1, b"", b"stop here\n")
+        extra = {"extra_env": {self.EXTRA_KEY: SECRET_VALUE}}
+        with patch("shutil.which", return_value=f"/usr/bin/{runner}"), \
+             patch("subprocess.run", return_value=fail) as run:
+            if runner == "docker":
+                DockerRunner().run(_spec(tmp_path, runner_options={"image": "img", **extra}))
+            elif runner == "kubernetes":
+                KubernetesRunner().run(_spec(
+                    tmp_path, runner_options={"image": "img", "namespace": "ns", **extra}))
+            elif runner == "slurm":
+                SlurmRunner().run(_spec(tmp_path, runner_options={"partition": "n", **extra}))
+            elif runner == "lsf":
+                LSFRunner().run(_spec(tmp_path, runner_options=extra))
+            else:
+                PBSRunner().run(_spec(tmp_path, runner_options={}))
+        return list(run.call_args_list)
+
+    # Not "docker" first: the container-tier guard (tests/docs/
+    # test_container_marker_is_complete.py) reads a list literal that starts with
+    # "docker" as a docker CLI call. Nothing here talks to a daemon.
+    @pytest.mark.parametrize("runner", ["kubernetes", "docker", "slurm", "lsf", "pbs"])
+    def test_no_secret_value_appears_in_any_argv(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._calls(runner, tmp_path, monkeypatch)
+        assert calls, f"the {runner} runner executed nothing"
+        for call in calls:
+            argv = [str(a) for a in call.args[0]]
+            for value in _ALL_SECRET_VALUES:
+                assert not any(value in a for a in argv), (
+                    f"the {runner} runner put a secret on {argv[0]}'s command line, "
+                    f"readable by every user on the host via ps: {argv}"
+                )
+
+    def test_docker_names_the_variable_and_hands_docker_the_value(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The container still receives the value: ``-e NAME`` tells docker to copy
+        it from the docker client's own environment, which is where it now is."""
+        run = next(c for c in self._calls("docker", tmp_path, monkeypatch)
+                   if c.args[0][1:2] == ["run"])
+        argv = [str(a) for a in run.args[0]]
+        assert argv[argv.index(self.EXTRA_KEY) - 1] == "-e"
+        client_env = run.kwargs.get("env")
+        assert client_env is not None, "docker must be run with the values in its environment"
+        assert client_env[self.EXTRA_KEY] == SECRET_VALUE
+        assert client_env["NOVAFABRIC_CAPSULE_DIR"] == "/novafabric/capsule"
+        # The default-deny filter is unchanged (ADR-0270): only named variables are
+        # forwarded into the container, whatever the client's own environment holds.
+        names = {argv[i + 1].split("=", 1)[0] for i, a in enumerate(argv) if a == "-e"}
+        assert SECRET_KEY not in names and NF_SECRET_KEY not in names
+        assert {self.EXTRA_KEY, "NOVAFABRIC_SPAN_ID", "PYTHONPATH"} <= names
+
+    def test_docker_eval_container_keeps_values_off_the_command_line(
+        self, tmp_path: Path
+    ) -> None:
+        ok = subprocess.CompletedProcess([], 0, b"24.0.7\n", b"")
+        with patch("shutil.which", return_value="/usr/bin/docker"), \
+             patch("subprocess.run", return_value=ok) as run:
+            DockerRunner().run_eval_container(
+                image_ref="ghcr.io/org/eval:v1", digest="sha256:" + "a" * 64,
+                capsule_path=tmp_path, command=["true"], env={"JUDGE_KEY": SECRET_VALUE},
+            )
+        docker_run = run.call_args_list[-1]
+        assert not any(SECRET_VALUE in str(a) for a in docker_run.args[0])
+        assert docker_run.kwargs["env"]["JUDGE_KEY"] == SECRET_VALUE
+
+    def test_a_real_docker_client_receives_the_value_and_argv_does_not(
+        self, tmp_path: Path
+    ) -> None:
+        """End to end with a real child process: what ``/proc/<pid>/cmdline`` shows,
+        and what the docker client reads for ``-e NAME``."""
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        docker = bindir / "docker"
+        docker.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$0" "$@" >> "{bindir}/docker.argv"\n'
+            f'if [ "$1" = run ]; then printf "%s" "${self.EXTRA_KEY}" > "{bindir}/value"; fi\n'
+        )
+        docker.chmod(0o700)
+        result = DockerRunner(docker_bin=str(docker)).run(_spec(
+            tmp_path, runner_options={"image": "img",
+                                      "extra_env": {self.EXTRA_KEY: SECRET_VALUE}},
+            timeout_s=30.0,
+        ))
+        assert result.exit_code == 0, result.runner_error
+        assert SECRET_VALUE not in (bindir / "docker.argv").read_text()
+        assert (bindir / "value").read_text() == SECRET_VALUE
+
+    def test_a_docker_client_variable_keeps_the_literal_form(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``PATH``/``DOCKER_*`` steer the docker client itself; putting a container
+        value for them in the client's environment would change which daemon or
+        binary it uses. They stay ``-e NAME=VALUE`` (documented: never a secret)."""
+        fail = subprocess.CompletedProcess([], 1, b"", b"stop here\n")
+        monkeypatch.setenv("DOCKER_HOST", "unix:///run/user/1000/docker.sock")
+        with patch("shutil.which", return_value="/usr/bin/docker"), \
+             patch("subprocess.run", return_value=fail) as run:
+            DockerRunner().run(_spec(tmp_path, runner_options={
+                "image": "img", "extra_env": {"DOCKER_HOST": "tcp://inside:2375"},
+            }))
+        docker_run = next(c for c in run.call_args_list if c.args[0][1:2] == ["run"])
+        assert "DOCKER_HOST=tcp://inside:2375" in docker_run.args[0]
+        assert docker_run.kwargs["env"]["DOCKER_HOST"] == "unix:///run/user/1000/docker.sock"
