@@ -8907,9 +8907,13 @@ nova classify from-capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX --data-dir ~/novafabric-da
 
 ## Compliance audit commands (v0.16)
 
-All five commands work over the capsules under `--data-dir` / `-d` (default
-`~/novafabric-data`) and take `--profile` / `-p` (default `nist-ai-rmf`; a profile ID
-or the path to a custom profile YAML) — except `nova audit verify`, which checks one report file.
+All five commands work over a set of capsules and take `--profile` / `-p` (default
+`nist-ai-rmf`; a profile ID or the path to a custom profile YAML) — except
+`nova audit verify`, which checks one report file. Without `--data-dir` they read the
+capsules `nova capture` writes: `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules`.
+`--data-dir` / `-d ROOT` reads `ROOT/capsules/` instead. (Earlier versions defaulted to
+`~/novafabric-data`, a directory capture never writes, so a default audit scanned no
+capsules.)
 
 **Available profiles:** `nist-ai-rmf`, `eu-ai-act-high-risk`, `gdpr`, `soc2-type2`, `iso42001`, `scientific-reproducibility`.
 
