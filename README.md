@@ -107,8 +107,9 @@ nova lineage provenance 01HXAY7M5JZ8R7K4P9DPBYK2WX
 
 Capsules are written on **success and on failure**: a crash is captured evidence, not
 lost state. A replay writes a replay result (`replay_result.yaml`) under
-`./.novafabric/replays/`, not a new capsule. To compare behaviour, capture the run
-again and diff the two capsules.
+`./.novafabric/replays/`, not a new capsule (only the experimental `intervention` mode
+also writes a counterfactual capsule). To compare behaviour, capture the run again and
+diff the two capsules.
 
 <details>
 <summary><b>What is inside a capsule</b></summary>

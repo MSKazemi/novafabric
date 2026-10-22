@@ -356,8 +356,9 @@ pulled from a CI artifact store.
 
 Results are written to `.novafabric/replays/<replay-ulid>/replay_result.yaml` under
 the **current directory** (not `$NOVAFABRIC_HOME`; pass `--output-dir` to choose). A
-replay result is not a capsule — to diff behaviour, capture the run again and
-`nova diff` the two capsules.
+replay result is not a capsule (only the experimental `intervention` mode also writes a
+counterfactual capsule) — to diff behaviour, capture the run again and `nova diff` the
+two capsules.
 
 The other modes each answer a different question:
 

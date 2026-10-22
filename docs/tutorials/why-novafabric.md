@@ -204,7 +204,8 @@ intercept still run live, so a change in their behaviour shows up here too.
 > calls. `exact` mode is for deterministic local/on-prem execution; for drifting remote
 > models, `semantic` mode judges meaning instead of tokens.
 
-A replay writes a replay result (`replay_result.yaml`), not a capsule — to see what
+A replay writes a replay result (`replay_result.yaml`), not a capsule (only the
+experimental `intervention` mode also writes a counterfactual capsule) — to see what
 moved between two runs, capture both and `nova diff` the two capsules.
 
 ---
