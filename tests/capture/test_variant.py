@@ -19,6 +19,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 import yaml
+from _sdk_capsule import only_capsule
 
 from novafabric.capture.orchestrator import CaptureOrchestrator
 from novafabric.capture.variant import (
@@ -366,7 +367,7 @@ class TestSdkCapture:
             pass
 
         noop()
-        manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+        manifest = yaml.safe_load((only_capsule(cap_dir) / "capsule.yaml").read_text())
         assert manifest["variant"] == {
             "experiment_id": "exp-sdk",
             "variant_id": "arm-sdk",
@@ -387,7 +388,7 @@ class TestSdkCapture:
             pass
 
         noop()
-        manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+        manifest = yaml.safe_load((only_capsule(cap_dir) / "capsule.yaml").read_text())
         assert manifest["variant"]["variant_id"] == "arm-env"
 
     def test_sdk_default_leaves_block_absent(self, tmp_path: Path) -> None:
@@ -400,7 +401,7 @@ class TestSdkCapture:
             pass
 
         noop()
-        manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+        manifest = yaml.safe_load((only_capsule(cap_dir) / "capsule.yaml").read_text())
         assert "variant" not in manifest
 
     def test_incomplete_sdk_variant_raises_before_workload_runs(

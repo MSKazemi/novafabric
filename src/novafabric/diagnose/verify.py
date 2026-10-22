@@ -47,6 +47,7 @@ from typing import Any
 import yaml
 
 from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._paths import default_replays_dir
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.diagnose.attribution import (
     AgentErrorTaxonomy,
@@ -287,7 +288,7 @@ def verify_hypothesis(
     ``INCONCLUSIVE`` verdict with the reason recorded.
     """
     capsule_dir = Path(capsule_dir)
-    base_dir = replays_base_dir or (Path.cwd() / ".novafabric" / "replays")
+    base_dir = replays_base_dir or default_replays_dir()
     original_outcome = {"status": attribution.status}
 
     if attribution.responsible is None:
@@ -423,7 +424,7 @@ def search_root_cause(
     )
     manifest = yaml.safe_load(manifest_text or "") or {}
     model_calls = _load_model_calls(capsule_dir, manifest)
-    base_dir = replays_base_dir or (Path.cwd() / ".novafabric" / "replays")
+    base_dir = replays_base_dir or default_replays_dir()
     original_outcome = {"status": causal.status}
 
     considered = causal.root_candidates[:capped]

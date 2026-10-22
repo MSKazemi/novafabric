@@ -66,10 +66,10 @@ def analyse():
 analyse()
 ```
 
-Re-running the cell writes a capsule per call. Verified in a real kernel.
-
-Note the two differ: `nova capture --output-dir DIR` creates `DIR/<run_id>/`,
-while `@agent(capsule_dir=DIR)` treats `DIR` itself as the capsule directory.
+Re-running the cell writes a capsule per call: like `nova capture --output-dir
+DIR`, `@agent(capsule_dir=DIR)` treats `DIR` as a capsule store and creates a
+fresh `DIR/<run_id>/` for every call. (Releases up to v0.106.0 wrote every call
+into `DIR` itself, so repeated calls merged into one capsule.)
 
 ## Requirement: one environment
 

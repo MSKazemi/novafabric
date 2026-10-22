@@ -71,7 +71,7 @@ process, e.g. a single function inside a larger long-lived service.
 |---|---|---|
 | `name` | `str` | Asset name (matches a registered asset, if any) |
 | `version` | `str` | Asset version (semver) |
-| `capsule_dir` | `Path \| str \| None` | Directory to write the capsule. If `None`, OTel spans only — no capsule is written. |
+| `capsule_dir` | `Path \| str \| None` | Capsule store, like `nova capture --output-dir`: each call writes its own capsule to `<capsule_dir>/<run_id>/`. If `None`, OTel spans only — no capsule is written. |
 | `deployment_environment` | `str \| None` | **Experimental (ADR-0126).** Delivery-lifecycle tag for the run (e.g. `production`, `staging`), recorded verbatim as the additive optional `deployment_environment` manifest field with `environment_source: sdk-arg`. The `nova capture --environment` flag and the `NOVAFABRIC_ENVIRONMENT` env var take precedence. |
 | `variant` | `Mapping[str, Any] \| None` | **Experimental (ADR-0116, record-only).** Which A/B experiment/variant an *external* allocator had active: a mapping with `experiment_id`, `variant_id`, `assignment_source` (plus optional `variant_label`, `assigned_at`, `extensions`), copied verbatim into the capsule's optional `variant` block. NovaFabric never assigns variants; an incomplete explicit block raises before the workload runs. `NOVAFABRIC_VARIANT*` env vars take precedence. |
 | `session_id` | `str \| None` | **Experimental (ADR-0122, record-only).** ULID of the session this run is one turn of (create with `nova session new`); recorded as an additive optional back-reference — the `session.json` manifest stays authoritative. `NOVAFABRIC_SESSION_ID` takes precedence. |
@@ -103,7 +103,10 @@ def summarise(text: str) -> str:
 result = summarise("Long document text here...")
 ```
 
-Every call to `summarise()` writes a new capsule under `capsules/<ulid>/`.
+Every call to `summarise()` writes a new capsule under `capsules/<run_id>/` (a
+fresh ULID per call, logged as `sdk_capsule_started`). Releases up to v0.106.0
+wrote every call into `capsule_dir` itself, so a second call overwrote
+`capsule.yaml` while the JSONL streams appended: one capsule, several runs.
 
 **Behaviour**
 
@@ -387,7 +390,7 @@ sandbox or against test credentials.
 |---|---|
 | `capsule_dir` | `Path` |
 | `flags` | `ReplayFlags` |
-| `base_dir` | `Path \| None` — defaults to `.novafabric/replays/` |
+| `base_dir` | `Path \| None` — defaults to `$NOVAFABRIC_HOME/replays/` (`_paths.default_replays_dir()`; `./.novafabric/replays/` under the current directory up to v0.106.0) |
 
 ### `ReplayEngine.run() → ReplayResult`
 

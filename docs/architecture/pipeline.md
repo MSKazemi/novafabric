@@ -145,7 +145,7 @@ imported from OpenTelemetry) is refused before anything is spawned
 (`CapsuleNotReplayable`). What v0.104.0 served versus v0.105.0 is in
 [Replay modes › Release scope](replay-modes.md). `forensic`, `semantic` and `exact` analyse the capsule
 without re-running it. Every mode writes
-`.novafabric/replays/<ulid>/replay_result.yaml`. `intervention` is the only mode
+`$NOVAFABRIC_HOME/replays/<ulid>/replay_result.yaml` (or under `-o <dir>`). `intervention` is the only mode
 that also writes a new capsule.
 
 Details: [Replay modes](replay-modes.md).

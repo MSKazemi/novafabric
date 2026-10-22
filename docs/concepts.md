@@ -140,6 +140,14 @@ follows one. They all share one module (`novafabric._capsule_fs`):
   never writes through a link at a destination path. `nova migrate-schema`
   skips (and reports) a capsule holding a link, and AI-BOM generation never
   writes `aibom.json` through one.
+- **Writers into a finished capsule** never write through a link either:
+  `nova energy attest` and the SLURM runner's sacct receipt
+  (`energy-receipts.jsonl`), `nova validate --write` (`tool-calls.jsonl`), the
+  registry's asset-consumption append (`assets.jsonl`), and the `nova capture`
+  workload's capture-health hand-off all open the file with `O_NOFOLLOW`
+  (`_capsule_fs.open_capsule_file_for_write`). A link, a dangling link or a FIFO
+  at that path is refused with a named error (`nova energy attest` exits 2; the
+  SLURM receipt is skipped with a warning) and its target is left untouched.
 
 The capsule *path you pass* to a CLI command may itself be a link
 (`runs/latest`); only links inside it are refused. That one link is followed
@@ -241,7 +249,7 @@ monkey-patches for:
 - **requests** — `requests.Session.send`, same URL-registry classification (v0.5; RFC-0001 Option C wire-level layer). Covers LangChain HTTP adapters, LlamaIndex REST clients, and any SDK that ships over `requests`.
 - **aiohttp** — `aiohttp.ClientSession._request`, async wire-level capture (v0.6 / C-3.1). Catches LangChain async paths, FastAPI agents, streaming-first SDKs.
 - **urllib3** — `urllib3.connectionpool.HTTPConnectionPool.urlopen`, lowest-tier wire-level capture (v0.6 / C-3.2). Sits below `requests` and `boto3`; transitively covers AWS Bedrock and any SDK that uses `urllib3` directly. Layered with the higher hooks via a context-local guard so a single `requests` call records exactly once.
-- **MCP (Model Context Protocol)** — `mcp.client.session.ClientSession.call_tool`, recording every tool invocation as a `tool-calls.jsonl` entry with `transport=mcp` and a synthesized JSON-RPC envelope (v0.5; ADR-0015 §Primary). **Works today — fail-open:** the hooked call returns, or raises, exactly what the un-hooked call would have. If the record cannot be built or written (a full disk, a removed capsule directory, a response object whose attributes raise), the record is dropped — never reported as a tool error — and the workload continues. The loss is counted (`MCPHook.dropped_records` and the capture's in-process drop counter) and logged once as a structured warning (`nova_event=capture.record_dropped`, exception type only). Known gap: under `nova capture` the hook runs in the workload's child process, so that count is not yet written to the capsule's `capture-health.json`.
+- **MCP (Model Context Protocol)** — `mcp.client.session.ClientSession.call_tool`, recording every tool invocation as a `tool-calls.jsonl` entry with `transport=mcp` and a synthesized JSON-RPC envelope (v0.5; ADR-0015 §Primary). **Works today — fail-open:** the hooked call returns, or raises, exactly what the un-hooked call would have. If the record cannot be built or written (a full disk, a removed capsule directory, a response object whose attributes raise), the record is dropped — never reported as a tool error — and the workload continues. The loss is counted (`MCPHook.dropped_records` and the capture's in-process drop counter) and logged once as a structured warning (`nova_event=capture.record_dropped`, exception type only). Under `nova capture` the hook runs in the workload's own process; that process hands its drop counts to `nova capture` when it exits, and they land in the capsule's `capture-health.json` under `sources.workload` (a process that ends with `os._exit` or is killed hands off nothing).
 - **Third-party plugins** — any class registered under the `novafabric.hooks` entry-point group is auto-discovered alongside the built-ins (v0.5.x experimental; RFC-0001 §Detailed design — Option C). Plugin authors: see [`docs/integrations/writing-a-hook-plugin.md`](integrations/writing-a-hook-plugin.md).
 
 The layering is deliberate: **per-SDK hooks** capture rich, structured request

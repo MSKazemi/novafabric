@@ -19,7 +19,7 @@ from pathlib import Path
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import open_capsule_member_for_write, read_capsule_member_or_none
 from novafabric.capsule.ulid_util import new_ulid
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.energy._readers import _RAPL_BASE, probe_counters, rapl_delta_joules
@@ -316,10 +316,19 @@ def _unavailable_receipts(
 
 
 def write_receipts(capsule_dir: Path, receipts: list[EnergyReceipt]) -> Path:
+    """(Re)write the capsule's energy receipts file and return its path.
+
+    Raises :class:`~novafabric._capsule_fs.CapsuleLinkError` when the receipts
+    file is a symlink: a link planted in a capsule is never written through.
+    """
     path = capsule_dir / RECEIPTS_FILE
-    with path.open("w") as fh:
-        for receipt in receipts:
-            fh.write(json.dumps(receipt.to_record(), separators=(",", ":")) + "\n")
+    body = "".join(
+        json.dumps(receipt.to_record(), separators=(",", ":")) + "\n" for receipt in receipts
+    )
+    with open_capsule_member_for_write(
+        path, mode="w", operation="writing energy receipts"
+    ) as fh:
+        fh.write(body.encode("utf-8"))
     return path
 
 

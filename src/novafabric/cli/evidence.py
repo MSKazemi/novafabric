@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 import typer
 from rich.console import Console
 
-from novafabric._paths import default_capsule_dir
+from novafabric._paths import default_capsule_dir, default_replays_dir
 from novafabric.audit import resolve_audit_log_path
 from novafabric.evidence.admissibility import (
     ChainOfCustody,
@@ -200,7 +200,10 @@ def evidence_attest_replay_cmd(
     output: _OutOpt = None,
     output_dir: Annotated[
         Optional[Path],
-        typer.Option("--output-dir", help="Base dir for replay output"),
+        typer.Option(
+            "--output-dir",
+            help="Base dir for replay output (default: $NOVAFABRIC_HOME/replays)",
+        ),
     ] = None,
     certify: Annotated[
         bool,
@@ -247,7 +250,7 @@ def evidence_attest_replay_cmd(
 
     capsule_dir = _resolve_capsule(capsule)
     signer = _load_signer(key)
-    base = output_dir or (Path.cwd() / ".novafabric" / "replays")
+    base = output_dir or default_replays_dir()
     flags = ReplayFlags(mode=mode.value, output_dir=base)
     result = ReplayEngine(capsule_dir=capsule_dir, flags=flags, base_dir=base).run()
     try:

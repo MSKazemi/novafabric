@@ -41,6 +41,18 @@ class PromoteBundleStore:
     def _approval_path(self, capsule_id: str, proposal_uuid: str) -> Path:
         return self._base / "promote" / capsule_id / "approval" / f"{proposal_uuid}.json"
 
+    def approval_path(self, capsule_id: str, proposal_uuid: str) -> Path:
+        """Where :meth:`put_approval` stores the approval for *proposal_uuid*.
+
+        Keyed by the proposal it approves, not by the approval's own UUID. For
+        evidence that must point at the stored bundle (L21).
+        """
+        return self._approval_path(capsule_id, proposal_uuid)
+
+    def bypass_path(self, capsule_id: str, bypass_uuid: str) -> Path:
+        """Where :meth:`put_bypass` stores the bypass *bypass_uuid* (L21)."""
+        return self._bypass_dir(capsule_id) / f"{bypass_uuid}.json"
+
     # ------------------------------------------------------------------
     # Proposal
     # ------------------------------------------------------------------
@@ -114,7 +126,7 @@ class PromoteBundleStore:
     def put_bypass(self, capsule_id: str, envelope_bytes: bytes, valid_until: str) -> str:
         """Write a bypass envelope; return the generated UUID."""
         bypass_uuid = str(uuid.uuid4())
-        path = self._bypass_dir(capsule_id) / f"{bypass_uuid}.json"
+        path = self.bypass_path(capsule_id, bypass_uuid)
         path.parent.mkdir(parents=True, exist_ok=True)
         doc = {
             "envelope": envelope_bytes.decode("utf-8"),

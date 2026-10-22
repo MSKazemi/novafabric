@@ -13,9 +13,9 @@ Fail-open (ADR-0021): the hooked `call_tool` returns — or raises — exactly w
 the un-hooked call would have. A failure to build or persist the record is
 never raised into the workload; it is counted (`MCPHook.dropped_records`, and
 on the active capture recorder via `EventRecorder.note_drop`) and logged once
-as a structured warning. Known gap: under `nova capture` the hook runs in the
-workload's child process, whose recorder is never finalized, so that count does
-not yet reach the capsule's `capture-health.json`.
+as a structured warning. Under `nova capture` the hook runs in the workload's
+child process; that process hands its recorder's counts to the orchestrator at
+exit (`capture/workload_health.py`, M14), so they reach `capture-health.json`.
 """
 from __future__ import annotations
 

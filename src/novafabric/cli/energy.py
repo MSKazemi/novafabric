@@ -16,6 +16,7 @@ from typing import Annotated
 
 import typer
 
+from novafabric._capsule_fs import CapsuleEntryError
 from novafabric.energy._attribution import attest_capsule, load_receipts, write_receipts
 from novafabric.energy._conservation import compute_conservation
 from novafabric.energy._readers import probe_counters
@@ -61,7 +62,12 @@ def attest(
     """Write energy receipts for every action in the capsule."""
     base = rapl_base or Path("/sys/class/powercap")
     receipts = attest_capsule(capsule_dir, rapl_base=base, node_id=node_id)
-    path = write_receipts(capsule_dir, receipts)
+    try:
+        path = write_receipts(capsule_dir, receipts)
+    except CapsuleEntryError as exc:
+        # A link (or FIFO) planted at the receipts path: refuse, never write through.
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
     typer.echo(f"wrote {len(receipts)} energy receipt(s) to {path}")
 
 

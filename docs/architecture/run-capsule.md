@@ -46,7 +46,7 @@ order. A failed run gets the same set of files.
 | 4 | `replay.yaml` | Replay policy (`schemas/replay-policy.schema.json`); capture writes a minimal policy, which you can extend | `capture/replay.py:minimal_replay_policy` |
 | 5 | `capsule.yaml` | The run manifest, redacted as a data structure before it is written | orchestrator |
 | 6 | `lineage.jsonl` | Typed lineage edges for this run | `lineage/_writer.py:LineageWriter` |
-| 7 | `capture-health.json` | Dropped-event counts, only when the recorder dropped events. Written before the residual pass, so it is scanned and listed in `evidence_digests` | `capture/event_recorder.py:EventRecorder.finalize_health` |
+| 7 | `capture-health.json` | Dropped-event counts, only when the recorder dropped events — the orchestrator's own and those the workload process handed off at exit. Written before the residual pass, so it is scanned and listed in `evidence_digests` | `capture/event_recorder.py:EventRecorder.finalize_health`, `capture/workload_health.py` |
 | 8 | `redaction-proof.json` | The secret-scan proof (see below), written once after the residual pass | `capture/secrets.py:SecretScannerV0` |
 | 9 | `capsule.yaml` (rewritten) | The manifest again, now with `evidence_digests` | orchestrator, `_evidence_digests` |
 | 10 | `.seal/manifest.dsse`, `.seal/manifest.dsse.tsr`, `.seal/log-entry.json` | The seal, only when NovaSeal is configured | orchestrator, `_seal_capsule` |
@@ -56,7 +56,7 @@ These files appear only in some runs:
 | Path | When |
 |---|---|
 | `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`). The manifest then carries the matching optional `network_events_ref`, `file_events_ref` or `human_approvals_ref` (each a fixed file name; `capture/orchestrator.py:_event_stream_refs`). Before this release those three keys were missing from the closed capsule schema, so `nova validate` rejected any capsule that had one — for example a run with a single instrumented HTTP call to a model endpoint |
-| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass (since v0.105.0; v0.104.0 wrote it after sealing, unbound), so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. |
+| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass (since v0.105.0; v0.104.0 wrote it after sealing, unbound), so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. `dropped_events` covers both processes of a `nova capture` run: the hooks run in the workload's own Python process, which writes its counts to a hidden `.capture-health.workload.<pid>.json` at exit; `nova capture` merges and deletes those files just before writing `capture-health.json`. When the workload dropped anything, the additive optional `sources` object splits the total into `orchestrator` and `workload`. A workload process that ends with `os._exit` or is killed hands off nothing. |
 | `c2pa-manifest.json` | `nova capture --mark-provenance` |
 | `otel-genai-spans.json` | `nova capture --emit-otel-genai` |
 

@@ -33,6 +33,7 @@ import json
 import logging
 import secrets
 import threading
+from collections.abc import Mapping
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
@@ -417,6 +418,10 @@ class EventRecorder:
         # (bounded: one key per JSONL stream) so capture loss is visible in
         # logs and, via finalize_health(), in the capsule itself.
         self._drops: dict[str, int] = {}
+        # Drops counted by *another* process's recorder and merged in (M14:
+        # the ``nova capture`` workload's own recorder), keyed by source.
+        # Bounded: one key per source, one per stream within it.
+        self._merged: dict[str, dict[str, int]] = {}
         self._warned: set[str] = set()
 
     # ------------------------------------------------------------------
@@ -469,6 +474,37 @@ class EventRecorder:
         """
         self._note_drop(stream)
 
+    def merge_drops(self, counts: Mapping[str, int], *, source: str) -> None:
+        """Add drops another recorder counted, e.g. the workload process's (M14).
+
+        The counts join :attr:`drop_counts`, and :meth:`finalize_health` then
+        breaks the total down by source in the optional ``sources`` block. A
+        non-positive or non-integer count is ignored. Never raises.
+        """
+        try:
+            with self._lock:
+                bucket = self._merged.setdefault(source, {})
+                for stream, n in counts.items():
+                    if type(n) is not int or n <= 0:
+                        continue
+                    self._drops[stream] = self._drops.get(stream, 0) + n
+                    bucket[stream] = bucket.get(stream, 0) + n
+        except Exception:  # pragma: no cover — last-resort guard
+            pass
+
+    def _sources_block(self) -> dict[str, dict[str, int]] | None:
+        """``{"orchestrator": own, <source>: merged}``, or None when nothing was merged."""
+        with self._lock:
+            merged = {k: dict(v) for k, v in self._merged.items() if v}
+            if not merged:
+                return None
+            own = dict(self._drops)
+        for counts in merged.values():
+            for stream, n in counts.items():
+                own[stream] = own.get(stream, 0) - n
+        own = {stream: n for stream, n in own.items() if n > 0}
+        return {"orchestrator": own, **merged} if own else merged
+
     @property
     def drop_counts(self) -> dict[str, int]:
         """Events dropped by fail-open handling, keyed by JSONL stream."""
@@ -486,16 +522,21 @@ class EventRecorder:
             if not drops:
                 return
             target = (capsule_dir or self._capsule_dir) / "capture-health.json"
-            report = {
+            report: dict[str, Any] = {
                 "run_id": self._run_id,
                 "capsule_id": self._capsule_id,
                 "generated_at": self._utc_now(),
                 "dropped_events": drops,
-                "note": (
-                    "Counts of events the fail-open capture layer could not "
-                    "persist; the workload was never blocked (ADR-0021)."
-                ),
             }
+            # Additive, optional (M14): present only when another process's
+            # drops were merged in, so every earlier report shape is unchanged.
+            sources = self._sources_block()
+            if sources is not None:
+                report["sources"] = sources
+            report["note"] = (
+                "Counts of events the fail-open capture layer could not "
+                "persist; the workload was never blocked (ADR-0021)."
+            )
             target.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         except Exception:
             pass  # fail-open

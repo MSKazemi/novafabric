@@ -203,3 +203,23 @@ def test_no_channel_configured_is_audited_as_not_configured(
     assert result.exit_code == 0, result.output
     audited = _audit_entries("seal.bypass.notify")
     assert [a["details"]["outcome"] for a in audited] == ["not_configured"]
+
+
+def test_bypass_event_names_the_stored_bypass_bundle(tmp_path: Path) -> None:
+    """L21: the human_approvals event's seal_bundle_path is the file actually stored."""
+    from novafabric.capture.event_recorder import EventRecorder, set_current_recorder
+
+    capsule = tmp_path / "active-capsule"
+    capsule.mkdir()
+    set_current_recorder(EventRecorder(capsule_dir=capsule, run_id="r", capsule_id="r"))
+    try:
+        result = _cli_bypass(tmp_path)
+    finally:
+        set_current_recorder(None)
+    assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+    events = [json.loads(ln) for ln in (capsule / "human_approvals.jsonl").read_text().splitlines()]
+    assert [e["action"] for e in events] == ["bypassed"]
+    bundle = Path(events[0]["seal_bundle_path"])
+    assert bundle.is_file(), f"event points at nothing: {bundle}"
+    stored = PromoteBundleStore(tmp_path / "data").list_bypasses("cap-h3")
+    assert bundle == tmp_path / "data" / "promote" / "cap-h3" / "bypass" / f"{stored[0]}.json"

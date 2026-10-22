@@ -408,3 +408,47 @@ def test_seal_approve_proposal_not_found(setup_policy: tuple[Path, Path, int]) -
     ])
     assert result.exit_code == 1
     assert "not found" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# L21: the human_approvals event points at the approval bundle actually stored
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def active_recorder(tmp_path: Path):  # type: ignore[no-untyped-def]
+    from novafabric.capture.event_recorder import EventRecorder, set_current_recorder
+
+    capsule = tmp_path / "active-capsule"
+    capsule.mkdir()
+    rec = EventRecorder(capsule_dir=capsule, run_id="r-l21", capsule_id="r-l21")
+    set_current_recorder(rec)
+    try:
+        yield capsule
+    finally:
+        set_current_recorder(None)
+
+
+def test_seal_approve_event_names_the_stored_approval_bundle(
+    proposal_created: tuple[Path, Path, str], active_recorder: Path
+) -> None:
+    import json
+
+    db_path, data_dir, proposal_uuid = proposal_created
+    result = runner.invoke(app, [
+        "seal", "approve", proposal_uuid,
+        "--capsule-id", "cap-approve-test",
+        "--key", str(_approver_key()),
+        "--cert", str(_approver_cert()),
+        "--db", str(db_path),
+        "--data-dir", str(data_dir),
+    ], input="y\n")
+    assert result.exit_code == 0, result.output
+    events = [
+        json.loads(line)
+        for line in (active_recorder / "human_approvals.jsonl").read_text().splitlines()
+    ]
+    assert [e["action"] for e in events] == ["approved"]
+    bundle = Path(events[0]["seal_bundle_path"])
+    assert bundle.is_file(), f"event points at nothing: {bundle}"
+    assert bundle == data_dir / "promote" / "cap-approve-test" / "approval" / f"{proposal_uuid}.json"

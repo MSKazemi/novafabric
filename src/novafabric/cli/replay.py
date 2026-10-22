@@ -7,6 +7,7 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
+from novafabric._paths import default_replays_dir
 from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.replay._engine import ReplayEngine
 from novafabric.replay._errors import ReplayOverrideUnenforceableError
@@ -101,7 +102,12 @@ def replay_cmd(
         ),
     ] = False,
     output_dir: Annotated[
-        Path | None, typer.Option("--output-dir", "-o", help="Base dir for replay output")
+        Path | None,
+        typer.Option(
+            "--output-dir",
+            "-o",
+            help="Base dir for replay output (default: $NOVAFABRIC_HOME/replays)",
+        ),
     ] = None,
     intervention_file: Annotated[
         Path | None,
@@ -257,7 +263,7 @@ def replay_cmd(
         permissive=permissive,
     )
 
-    base = output_dir or (Path.cwd() / ".novafabric" / "replays")
+    base = output_dir or default_replays_dir()
     engine = ReplayEngine(capsule_dir=capsule, flags=flags, base_dir=base)
     try:
         result = engine.run()

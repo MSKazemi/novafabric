@@ -187,6 +187,20 @@ def default_capsule_dir() -> Path:
     return Path(env) if env else nova_home() / "capsules"
 
 
+def default_replays_dir() -> Path:
+    """Default base directory for replay output: ``$NOVAFABRIC_HOME/replays``.
+
+    The default of ``nova replay``, ``nova evidence attest-replay``, ``nova
+    session replay``, ``nova diagnose --intervene|--search-root-cause`` and the
+    library :class:`~novafabric.replay.ReplayEngine`; ``nova init`` creates it.
+    Each replay lands in ``<this>/<replay-ulid>/``. Releases up to v0.106.0
+    used ``./.novafabric/replays`` under the current directory, which wrote
+    replay capsules into whatever checkout the command ran from (L29). Pass
+    ``--output-dir`` (or ``base_dir=``) to choose another location.
+    """
+    return nova_home() / "replays"
+
+
 def project_runs_dir() -> Path:
     """Project-local capsule directory: ``./.novafabric/runs`` under the CWD.
 

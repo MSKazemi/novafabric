@@ -41,6 +41,7 @@ from typing import Any
 from novafabric._capsule_fs import (
     CapsuleEntryError,
     CapsuleFileTooLargeError,
+    open_capsule_file_for_write,
     read_capsule_file,
     read_capsule_text_or_none,
 )
@@ -360,6 +361,8 @@ def write_back_verdicts(capsule_dir: Path) -> int:
 
     Records without a schema_ref are rewritten unchanged. Returns the number
     of records annotated (existing verdicts are recomputed and replaced).
+    Raises :class:`~novafabric._capsule_fs.CapsuleLinkError` when
+    ``tool-calls.jsonl`` is a symlink at write time; it is never written through.
     """
     records = _read_tool_calls(capsule_dir)
     annotated = 0
@@ -371,7 +374,11 @@ def write_back_verdicts(capsule_dir: Path) -> int:
             annotated += 1
         lines.append(json.dumps(record, separators=(",", ":")))
     if records:
-        (capsule_dir / "tool-calls.jsonl").write_text("\n".join(lines) + "\n")
+        # Never through a link, even one planted after the read above.
+        with open_capsule_file_for_write(
+            capsule_dir, "tool-calls.jsonl", mode="w", operation="nova validate --write"
+        ) as fh:
+            fh.write(("\n".join(lines) + "\n").encode("utf-8"))
     return annotated
 
 

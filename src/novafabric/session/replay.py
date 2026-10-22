@@ -51,6 +51,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from novafabric._paths import default_replays_dir
 from novafabric.replay._engine import ReplayEngine, _load_replay_policy, _read_jsonl
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._policy import PolicyEvaluator
@@ -390,7 +391,7 @@ def replay_session(
     selected = select_range(manifest, from_seq, to_seq, turn_modes)
     pins = dict(turn_modes or {})
     resolved = resolve_members(manifest, root=root, capsule_base=capsule_base)
-    replays_dir = base_dir or (Path.cwd() / ".novafabric" / "replays")
+    replays_dir = base_dir or default_replays_dir()
 
     started_at = _now()
     turns: list[TurnReplayResult] = []
