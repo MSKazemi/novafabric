@@ -36,12 +36,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from click.testing import Result
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from novafabric.capture.orchestrator import CaptureOrchestrator
 from novafabric.cli.main import app
@@ -141,7 +140,8 @@ def _failures(report: BundleSignatureReport) -> dict[str, list[str]]:
 
 
 def _statement(files: Files, path: str) -> dict[str, Any]:
-    return json.loads(base64.b64decode(json.loads(files[path])["payload"]))
+    statement: dict[str, Any] = json.loads(base64.b64decode(json.loads(files[path])["payload"]))
+    return statement
 
 
 def _sign_into(
