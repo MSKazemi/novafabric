@@ -28,6 +28,10 @@ Environment variables
     Maker-checker signer trust list (ADR-0312).
     Default: ``$NOVAFABRIC_HOME/promote-signers.yaml``
 
+Legal holds (no own override)
+    One store for ``nova hold`` and ``/api/holds``:
+    ``$NOVAFABRIC_HOME/registries/<registry>/holds.jsonl``.
+
 ``NOVAFABRIC_CAPSULE_DIR``
     Default capsule storage directory.
     Default: ``$NOVAFABRIC_HOME/capsules``
@@ -115,6 +119,20 @@ def promote_signers_path() -> Path:
     """
     env = os.environ.get("NOVAFABRIC_PROMOTE_SIGNERS", "").strip()
     return Path(env) if env else nova_home() / "promote-signers.yaml"
+
+
+def legal_holds_root() -> Path:
+    """The one legal-hold store both writers use: ``$NOVAFABRIC_HOME/registries``.
+
+    Each registry's ledger is ``<root>/<registry>/holds.jsonl``. It follows
+    ``NOVAFABRIC_HOME`` rather than the shell's working directory, so a hold placed
+    by ``nova hold`` and one placed through ``POST /api/holds`` land in the same file
+    whatever directory or capsule base either process was started with. It is also
+    where the default ``nova serve`` capsule base (``$NOVAFABRIC_HOME/capsules``)
+    has always kept them. Readers additionally consult the pre-unification
+    locations; see :mod:`novafabric.retention.holds`.
+    """
+    return nova_home() / "registries"
 
 
 def serve_token_path() -> Path:

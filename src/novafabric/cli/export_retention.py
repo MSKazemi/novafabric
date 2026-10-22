@@ -50,7 +50,10 @@ def export_retention_cmd(
         str | None,
         typer.Option(
             "--registry",
-            help="Registry whose retention-policy.yaml, holds.jsonl and worm.db are read.",
+            help=(
+                "Registry whose retention-policy.yaml and worm.db are read, and whose "
+                "legal holds are read from the shared hold store (nova hold / API)."
+            ),
         ),
     ] = None,
     worm_db: Annotated[
@@ -94,8 +97,8 @@ def export_retention_cmd(
     from novafabric.compliance.export.finance.retention_collect import (
         CorruptEvidenceError,
         collect_bundle_facts,
-        read_holds,
         read_policy,
+        read_registry_holds,
     )
 
     registry_dir = _REGISTRIES / registry if registry is not None else None
@@ -103,7 +106,7 @@ def export_retention_cmd(
         worm_db = registry_dir / "worm.db"
     try:
         policy = read_policy(registry_dir) if registry_dir is not None else None
-        holds = read_holds(registry_dir) if registry_dir is not None else None
+        holds = read_registry_holds(registry) if registry is not None else None
         facts = collect_bundle_facts(
             bundles,
             worm_db=worm_db,

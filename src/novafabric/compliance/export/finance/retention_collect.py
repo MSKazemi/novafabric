@@ -6,7 +6,9 @@ existence:
 
 * ``.novafabric/registries/<registry>/retention-policy.yaml`` via the ADR-0031
   :class:`~novafabric.storage._retention.RetentionPolicy` model;
-* ``.novafabric/registries/<registry>/holds.jsonl`` (the ``nova hold`` legal-hold ledger);
+* the legal-hold ledgers of the one hold store (:mod:`novafabric.retention.holds` —
+  ``$NOVAFABRIC_HOME/registries/<registry>/holds.jsonl``, written by ``nova hold`` and
+  ``POST /api/holds``, plus the pre-unification locations);
 * the local ADR-0031 WORM adapter database (``worm.db``) written by
   :class:`~novafabric.storage._local_worm.LocalWormAdapter`, queried through a ``mode=ro``
   connection (never the adapter, whose constructor runs DDL) and only when it already exists;
@@ -72,30 +74,64 @@ def read_policy(registry_dir: Path) -> PolicyFacts | None:
     )
 
 
+def _hold_facts(ref: str, present: bool, records: Iterable[Any]) -> HoldFacts:
+    active: list[str] = []
+    released: list[str] = []
+    for hold in records:
+        if hold.corrupt:
+            raise CorruptEvidenceError(f"invalid legal-hold ledger {hold.source}: {hold.reason}")
+        (active if hold.active else released).append(hold.hold_id)
+    return HoldFacts(
+        ref=ref, present=present, active_hold_ids=active, released_hold_ids=released
+    )
+
+
 def read_holds(registry_dir: Path) -> HoldFacts:
-    """Read the ``holds.jsonl`` legal-hold ledger (absent file = no hold ever recorded).
+    """Read one ``holds.jsonl`` legal-hold ledger (absent file = no hold ever recorded).
+
+    Single-file reader kept for callers that name a registry directory; the CLI uses
+    :func:`read_registry_holds`, which covers every hold location.
 
     Raises:
         CorruptEvidenceError: a line is not a JSON object carrying ``hold_id``.
     """
-    path = registry_dir / "holds.jsonl"
+    from novafabric.retention.holds import HOLDS_FILENAME, read_ledger
+
+    path = registry_dir / HOLDS_FILENAME
     if not path.exists():
         return HoldFacts(ref=str(path), present=False)
-    active: list[str] = []
-    released: list[str] = []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for line in lines:
-            if not line.strip():
-                continue
-            hold = json.loads(line)
-            hold_id = str(hold["hold_id"])
-            (released if hold.get("released_at") is not None else active).append(hold_id)
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-        raise CorruptEvidenceError(f"invalid legal-hold ledger {path}: {exc}") from exc
-    return HoldFacts(
-        ref=str(path), present=True, active_hold_ids=active, released_hold_ids=released
+    return _hold_facts(str(path), True, read_ledger(path, registry_dir.name))
+
+
+def read_registry_holds(
+    registry: str, *, extra_roots: Iterable[Path] = ()
+) -> HoldFacts:
+    """Legal-hold state of *registry* from the one hold store (every hold location).
+
+    ``ref`` names each ledger read (``; ``-separated), or the canonical ledger path when
+    none exists (``present=False``).
+
+    Raises:
+        CorruptEvidenceError: a ledger line is unreadable, or *registry* is not a valid
+            registry name.
+    """
+    from novafabric.retention.holds import (
+        HOLDS_FILENAME,
+        InvalidRegistryNameError,
+        canonical_holds_root,
+        read_holds,
     )
+
+    try:
+        records = read_holds(registry, extra_roots=extra_roots)
+    except InvalidRegistryNameError as exc:
+        raise CorruptEvidenceError(str(exc)) from exc
+    sources = list(dict.fromkeys(str(h.source) for h in records))
+    if not sources:
+        return HoldFacts(
+            ref=str(canonical_holds_root() / registry / HOLDS_FILENAME), present=False
+        )
+    return _hold_facts("; ".join(sources), True, records)
 
 
 def read_local_worm(worm_db: Path, run_ids: Iterable[str]) -> dict[str, WormFacts]:

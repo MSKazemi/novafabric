@@ -211,6 +211,13 @@ class SweepExecutor:
         return self._record(decision, SweepOutcome.APPLIED)
 
     def _apply_crypto_shred(self, decision: PlannedDecision) -> RetentionActionRecord:
+        """Destroy the DEK of the manifest's ``metadata.pii_subject_id`` (experimental).
+
+        Honest limit (pinned by ``tests/retention/test_crypto_shred_current_limits.py``):
+        nothing in NovaFabric writes ``metadata.pii_subject_id`` today — ``nova capture
+        --pii-subject`` records only an HMAC ``subject_ref`` — so this records ``no_dek``
+        and destroys no key. ``nova pii erase`` is the working crypto-shred.
+        """
         subject_id = decision.item.pii_subject_id
         if subject_id is None or self._dek_store is None:
             # No PII subject / no DEK store: no-op erasure (spec edge case).

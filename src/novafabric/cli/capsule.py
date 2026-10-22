@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import typer
 from rich.console import Console
 
+from novafabric import _paths as _nf_paths
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.storage._retention import LegalHold, RetentionPolicy, RetentionPolicyEngine
 
@@ -40,21 +40,27 @@ def capsule_delete(
       nova capsule delete <capsule-id> --registry my-registry --force
     """
     if not force:
-        # Check active holds first — independent of whether a retention-policy.yaml exists.
-        holds_path = Path(f".novafabric/registries/{registry}/holds.jsonl")
-        active_holds: list[LegalHold] = []
-        if holds_path.exists():
-            for line in holds_path.read_text().splitlines():
-                if line.strip():
-                    h = json.loads(line)
-                    if h["released_at"] is None:
-                        active_holds.append(
-                            LegalHold(
-                                hold_id=h["hold_id"],
-                                reason=h["reason"],
-                                duration_days=h.get("duration_days"),
-                            )
-                        )
+        # Check active holds first — independent of whether a retention-policy.yaml
+        # exists. One store for `nova hold` and `/api/holds` (retention.holds), plus
+        # the pre-unification locations; a damaged ledger line counts as a hold.
+        from novafabric.retention.holds import (
+            InvalidRegistryNameError,
+            capsule_base_holds_root,
+        )
+        from novafabric.retention.holds import active_holds as _active_holds
+
+        try:
+            held = _active_holds(
+                registry,
+                extra_roots=(capsule_base_holds_root(_nf_paths.default_capsule_dir()),),
+            )
+        except InvalidRegistryNameError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from None
+        active_holds: list[LegalHold] = [
+            LegalHold(hold_id=h.hold_id, reason=h.reason, duration_days=h.duration_days)
+            for h in held
+        ]
         if active_holds:
             hold_ids = [h.hold_id for h in active_holds]
             console.print(f"[red]Deletion blocked: active legal holds: {hold_ids}[/red]")

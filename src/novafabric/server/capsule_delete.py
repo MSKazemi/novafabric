@@ -164,39 +164,19 @@ def capsule_exists(capsule_dir: Path, run_id: str) -> bool:
 
 
 def active_hold_ids(capsule_dir: Path) -> list[str]:
-    """Unreleased hold ids across every registry's ``holds.jsonl``.
+    """Unreleased hold ids across every registry, from the one legal-hold store.
 
-    Same files serve's delete route and ``cli/retention.py`` read:
-    ``<capsule_dir>/../registries/*/holds.jsonl``, active ⇔
-    ``released_at is None``. Holds are registry-global (spec §Legal-hold).
+    Reads :mod:`novafabric.retention.holds` — the store ``nova hold`` and
+    ``/api/holds`` both write (``$NOVAFABRIC_HOME/registries/*/holds.jsonl``) —
+    plus the pre-unification locations, including this capsule base's
+    ``<capsule_dir>/../registries``. Holds are registry-global here (spec
+    §Legal-hold). An unreadable ledger line is reported as an active
+    ``__corrupt__:<registry>`` hold, so a damaged ledger refuses deletion.
     """
-    holds: list[str] = []
-    registries_base = capsule_dir.parent / "registries"
-    if not registries_base.exists():
-        return holds
-    for reg_dir in sorted(registries_base.iterdir()):
-        holds_path = reg_dir / "holds.jsonl"
-        if not reg_dir.is_dir() or not holds_path.exists():
-            continue
-        for line in holds_path.read_text().splitlines():
-            if not line.strip():
-                continue
-            try:
-                h = json.loads(line)
-            except json.JSONDecodeError:
-                # Fail closed: a corrupt line may encode an *active* hold, so
-                # treat it as a blocking hold rather than silently dropping it
-                # (which would make a held capsule deletable). Surface it too.
-                logger.warning(
-                    "Corrupt line in %s — treating as an active hold to fail "
-                    "closed on deletion.",
-                    holds_path,
-                )
-                holds.append(f"__corrupt__:{reg_dir.name}")
-                continue
-            if h.get("released_at") is None:
-                holds.append(str(h["hold_id"]))
-    return holds
+    from novafabric.retention.holds import active_hold_ids as _store_active_hold_ids
+    from novafabric.retention.holds import capsule_base_holds_root
+
+    return _store_active_hold_ids(extra_roots=(capsule_base_holds_root(capsule_dir),))
 
 
 def worm_locked_until(capsule_dir: Path, run_id: str) -> datetime | None:
