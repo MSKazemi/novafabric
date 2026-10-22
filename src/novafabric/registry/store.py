@@ -135,7 +135,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             approver         TEXT,
             approver_key_fp  TEXT,
             approver_sig     TEXT,
-            approved_at      TEXT
+            approved_at      TEXT,
+            signoff_scheme   TEXT  -- ADR-0312; NULL = legacy, unverified
         );
 
         -- ADR-0121 P3: comments on registry assets. Capsule comments live in
@@ -166,6 +167,25 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_eval_results_run_at ON eval_results(run_at DESC);
         """
     )
+    _ensure_additive_columns(conn)
     # Scale-S1: runs_cache — indexed capsule summaries (replaces O(N) disk scan)
     from novafabric.registry.runs_cache import ensure_runs_cache  # noqa: PLC0415
     ensure_runs_cache(conn)
+
+
+# Additive, nullable columns added after a table first shipped: (table, column, type).
+# A database created before the column existed gets it via ALTER TABLE ADD COLUMN;
+# existing rows read NULL. Never drop or retype a column here.
+_ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # ADR-0312: signature scheme a proposal was verified under. NULL = stored before
+    # signatures were verified (reported as "unverified").
+    ("promotion_proposals", "signoff_scheme", "TEXT"),
+)
+
+
+def _ensure_additive_columns(conn: sqlite3.Connection) -> None:
+    for table, column, col_type in _ADDITIVE_COLUMNS:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    conn.commit()

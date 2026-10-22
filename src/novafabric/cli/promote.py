@@ -9,19 +9,30 @@ from typing import Any, Optional
 import typer
 from rich.console import Console
 
+from novafabric._paths import promote_signers_path
 from novafabric.registry.service import (
     AssetNotFoundError,
     InvalidLifecycleTransitionError,
     PromotionBlockedError,
+    SelfApprovalError,
     SoDViolationError,
     approve_promotion,
-    promote_asset,
+    get_open_proposal,
+    new_proposal_id,
+    promote_asset_direct,
     propose_promotion,
+)
+from novafabric.registry.signers import (
+    SignerVerificationError,
+    approval_payload,
+    proposal_payload,
 )
 from novafabric.spec.models import AssetStatus
 from novafabric.trust.keyring import (
-    canonical_payload,
+    KeyNotFoundError,
     ensure_keypair,
+    key_path_for,
+    public_key_b64,
     sign_payload,
 )
 
@@ -31,6 +42,27 @@ promote_app = typer.Typer(
     help="Promote assets (direct single-actor or maker-checker SoD).",
     no_args_is_help=True,
 )
+
+#: Exit codes for maker-checker failures, consistent with `nova seal verify` (ADR-0059):
+#: 3 = proposal-side signature/trust failure, 4 = approval-side, 6 = self-approval.
+EXIT_PROPOSAL_SIGNATURE = 3
+EXIT_APPROVAL_SIGNATURE = 4
+EXIT_SELF_APPROVAL = 6
+
+_IDENTITY_HELP = (
+    "Signer identity. REQUIRED: it must name a keyring key created with "
+    "`nova promote keygen` and bound to this identity in the signer trust list "
+    "(ADR-0312). There is no default."
+)
+
+
+def _load_signing_key(identity: str) -> tuple[Any, str]:
+    """Load an existing keyring key; never create one on the propose/approve path."""
+    try:
+        return ensure_keypair(identity, create=False)
+    except KeyNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise typer.Exit(code=1) from None
 
 
 def _parse_ref(asset_ref: str) -> tuple[str, str]:
@@ -162,14 +194,15 @@ def promote_direct_cmd(
     """Promote an asset directly (single-actor, no maker-checker).
 
     Moves the asset through the lifecycle: draft → development → staging → production.
-    Use `nova promote propose` + `nova promote approve` for maker-checker SoD.
+    A protected stage (production) is refused unless the `promote_direct` policy action
+    explicitly allows it (ADR-0312); --force does not bypass that. Use
+    `nova promote propose` + `nova promote approve` for maker-checker SoD.
 
     Scope: single asset.
 
     \b
     Examples:
       nova promote direct my-agent@v1.1 --to staging
-      nova promote direct my-agent@v1.1 --to production
       nova promote direct my-agent@v1.1 --to staging --significance-gate
     """
     name, version = _parse_ref(asset_ref)
@@ -181,7 +214,7 @@ def promote_direct_cmd(
             raise typer.Exit(code=1)
 
     try:
-        result = promote_asset(
+        result = promote_asset_direct(
             name,
             version,
             to,
@@ -192,7 +225,7 @@ def promote_direct_cmd(
             sig_scores_metric=metric,
         )
     except (AssetNotFoundError, InvalidLifecycleTransitionError, PromotionBlockedError) as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
         raise typer.Exit(code=1)
 
     tag = " [yellow](forced)[/yellow]" if result["forced_promotion"] else ""
@@ -212,33 +245,70 @@ def promote_direct_cmd(
         console.print(f"[green]✓[/green] {profile}SLSA provenance written: {prov_path}")
 
 
+@promote_app.command("keygen")
+def promote_keygen_cmd(
+    identity: str = typer.Option(
+        ..., "--identity", help="Identity to create an Ed25519 keyring key for."
+    ),
+) -> None:
+    """Create a maker-checker signing key and print its signer trust-list entry.
+
+    The only command that creates a keyring key for `propose` / `approve` (ADR-0312).
+    Idempotent: an existing key is never overwritten. The key is not trusted until an
+    operator adds the printed entry to the signer trust list (keep only the roles the
+    person actually holds).
+
+    Scope: local keyring.
+
+    \b
+    Examples:
+      nova promote keygen --identity alice
+    """
+    path = key_path_for(identity)
+    existed = path.exists()
+    private_key, key_fp = ensure_keypair(identity, create=True)
+    state = "already exists (unchanged)" if existed else "created"
+    console.print(f"Key for {identity!r} {state}: {path} (fingerprint {key_fp})", soft_wrap=True)
+    console.print(
+        "To bind it, an operator adds this entry under `signers:` in "
+        f"{promote_signers_path()}:",
+        soft_wrap=True,
+    )
+    # Plain stdout: the stanza must be copy-pasteable YAML, free of Rich markup/wrapping.
+    typer.echo(
+        f"  - identity: {json.dumps(identity)}\n"
+        f"    public_key: {public_key_b64(private_key.public_key())}\n"
+        f"    fingerprint: {key_fp}\n"
+        "    roles: [proposer, approver]"
+    )
+
+
 @promote_app.command("propose")
 def promote_propose_cmd(
     asset_ref: str = typer.Argument(..., help="name@version"),
     to: AssetStatus = typer.Option(..., "--to", help="Target status"),
-    identity: str = typer.Option(
-        default_factory=getpass.getuser,
-        help="Proposer identity (defaults to OS username)",
-    ),
+    identity: str = typer.Option(..., "--identity", help=_IDENTITY_HELP),
 ) -> None:
     """Propose a promotion for maker-checker review (maker step).
 
-    Creates a signed proposal that must be approved by a separate key-holder
-    using `nova promote approve` before the promotion takes effect.
+    Signs the proposal (proposal id, asset, target stage) with the keyring key for
+    --identity. The signature is verified against the signer trust list before the
+    proposal is stored; it must then be approved by a different bound identity with
+    `nova promote approve`. Exit 3: the signature or its trust-list binding failed.
 
     Scope: single asset.
 
     \b
     Examples:
-      nova promote propose my-agent@v1.1 --to production
+      nova promote propose my-agent@v1.1 --to production --identity alice
     """
     name, version = _parse_ref(asset_ref)
 
-    private_key, key_fp = ensure_keypair(identity)
-    proposal_id_placeholder = f"pending|{name}@{version}:{to.value}"
-    # Sign before proposal_id is known; service will assign the UUID.
-    # We sign over a deterministic pre-image so the sig is verifiable post-creation.
-    payload = canonical_payload(proposal_id_placeholder, name, version, to.value)
+    private_key, key_fp = _load_signing_key(identity)
+    proposal_id = new_proposal_id()
+    payload = proposal_payload(
+        proposal_id=proposal_id, name=name, version=version, to_status=to.value
+    )
     sig = sign_payload(private_key, payload)
 
     try:
@@ -249,41 +319,63 @@ def promote_propose_cmd(
             proposer=identity,
             proposer_key_fp=key_fp,
             proposer_sig=sig,
+            proposal_id=proposal_id,
         )
+    except SignerVerificationError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise typer.Exit(code=EXIT_PROPOSAL_SIGNATURE) from None
     except (AssetNotFoundError, InvalidLifecycleTransitionError, SoDViolationError) as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
         raise typer.Exit(code=1)
 
+    superseded = (
+        f"\n  superseded unverified proposal: {result['superseded']}"
+        if result.get("superseded")
+        else ""
+    )
     console.print(
         f"[green]Proposal created[/green] {result['proposal_id']}\n"
         f"  {name}@{version} → {result['to_status']}\n"
-        f"  proposer: {identity} (key fp: {key_fp})\n"
-        f"  Run [bold]nova promote approve {asset_ref}[/bold] as a different identity to complete."
+        f"  proposer: {result['proposer']} (key fp: {key_fp}, signature verified)"
+        f"{superseded}\n"
+        f"  Run [bold]nova promote approve {asset_ref} --identity APPROVER[/bold] "
+        "as a different bound identity to complete."
     )
 
 
 @promote_app.command("approve")
 def promote_approve_cmd(
     asset_ref: str = typer.Argument(..., help="name@version"),
-    identity: str = typer.Option(
-        default_factory=getpass.getuser,
-        help="Approver identity (defaults to OS username)",
-    ),
+    identity: str = typer.Option(..., "--identity", help=_IDENTITY_HELP),
 ) -> None:
     """Approve a pending promotion proposal (checker step).
 
-    Verifies and countersigns a proposal created with `nova promote propose`.
+    Countersigns the open proposal (bound to its id, target stage and the maker's
+    signature) with the keyring key for --identity. Both signatures are verified
+    against the signer trust list and the two keys must be bound to different
+    identities. Exit 3: the proposal is unverified or its signature fails. Exit 4:
+    the approval signature or its binding fails. Exit 6: self-approval.
 
     Scope: single asset.
 
     \b
     Examples:
-      nova promote approve my-agent@v1.1
+      nova promote approve my-agent@v1.1 --identity bob
     """
     name, version = _parse_ref(asset_ref)
 
-    private_key, key_fp = ensure_keypair(identity)
-    payload = canonical_payload(f"pending|{name}@{version}:approve", name, version, "approve")
+    private_key, key_fp = _load_signing_key(identity)
+    proposal = get_open_proposal(name, version)
+    if proposal is None:
+        console.print(f"[red]No open promotion proposal found for '{name}@{version}'.[/red]")
+        raise typer.Exit(code=1)
+    payload = approval_payload(
+        proposal_id=str(proposal["proposal_id"]),
+        name=name,
+        version=version,
+        to_status=str(proposal["to_status"]),
+        proposer_sig=str(proposal["proposer_sig"]),
+    )
     sig = sign_payload(private_key, payload)
 
     try:
@@ -294,13 +386,20 @@ def promote_approve_cmd(
             approver_key_fp=key_fp,
             approver_sig=sig,
         )
+    except SignerVerificationError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        code = EXIT_PROPOSAL_SIGNATURE if exc.party == "proposer" else EXIT_APPROVAL_SIGNATURE
+        raise typer.Exit(code=code) from None
+    except SelfApprovalError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise typer.Exit(code=EXIT_SELF_APPROVAL) from None
     except (AssetNotFoundError, SoDViolationError, PromotionBlockedError) as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
         raise typer.Exit(code=1)
 
     console.print(
         f"[green]Promotion approved and executed[/green] "
         f"{name}@{version} → {result['status']}\n"
         f"  proposal: {result['proposal_id']}\n"
-        f"  approver: {identity} (key fp: {key_fp})"
+        f"  approver: {result['approver']} (key fp: {key_fp}, signatures verified)"
     )

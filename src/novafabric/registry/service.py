@@ -10,10 +10,20 @@ from typing import Any
 from novafabric.adapters.git import get_head_sha
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.policy import (
+    NoopEngine,
     PolicyInput,
     PolicyResource,
     PolicySubject,
     get_policy_engine,
+)
+from novafabric.registry.signers import (
+    SIGNOFF_SCHEME,
+    SignerTrustList,
+    TrustedSigner,
+    UnverifiedProposalError,
+    approval_payload,
+    load_signer_trust_list,
+    proposal_payload,
 )
 from novafabric.registry.store import get_connection, init_schema
 from novafabric.spec.models import AssetStatus, AssetType, BaseAssetSpec
@@ -43,6 +53,11 @@ _VALID_TRANSITIONS: dict[AssetStatus, set[AssetStatus]] = {
 
 _AGENT_GATE_STATUSES = {AssetStatus.staging, AssetStatus.production}
 
+#: Stages a single actor may not enter through `nova promote direct` without an explicit
+#: `promote_direct` policy allow (ADR-0312 D1). Maker-checker (propose + approve) is the
+#: default way in. A NoopEngine "allow" (no OPA configured) is not an explicit allow.
+PROTECTED_STAGES: frozenset[AssetStatus] = frozenset({AssetStatus.production})
+
 
 class DuplicateAssetError(Exception):
     pass
@@ -60,8 +75,16 @@ class InvalidLifecycleTransitionError(Exception):
     pass
 
 
+class DirectPromotionDeniedError(PromotionBlockedError):
+    """Single-actor promotion into a protected stage lacks an explicit policy allow."""
+
+
 class SoDViolationError(Exception):
     pass
+
+
+class SelfApprovalError(SoDViolationError):
+    """Maker and checker resolve to the same bound identity or key (ADR-0312)."""
 
 
 class RollbackError(Exception):
@@ -653,6 +676,86 @@ def promote_asset(
         conn.close()
 
 
+def promote_asset_direct(
+    name: str,
+    version: str,
+    to_status: AssetStatus,
+    actor: str,
+    force: bool = False,
+    db_path: Path | None = None,
+    **gate_kwargs: Any,
+) -> dict[str, Any]:
+    """Single-actor promotion (``nova promote direct``), gated for protected stages.
+
+    For a target in :data:`PROTECTED_STAGES` the ``promote_direct`` policy action must
+    return an explicit allow before :func:`promote_asset` runs. ``force`` does not bypass
+    this gate (it only overrides the eval gates), and a :class:`NoopEngine` decision (no
+    OPA configured) is not an explicit allow. Other stages are unchanged (ADR-0312 D1).
+
+    Raises:
+        DirectPromotionDeniedError: protected target without an explicit policy allow.
+        AssetNotFoundError / InvalidLifecycleTransitionError / PromotionBlockedError:
+            as :func:`promote_asset`.
+    """
+    if to_status in PROTECTED_STAGES:
+        conn = get_connection(db_path)
+        init_schema(conn)
+        try:
+            row = conn.execute(
+                "SELECT asset_type FROM assets WHERE name = ? AND version = ?",
+                (name, version),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            raise AssetNotFoundError(f"Asset '{name}@{version}' not found.")
+        engine = get_policy_engine()
+        decision = engine.evaluate(
+            PolicyInput(
+                action="promote_direct",
+                subject=PolicySubject(user=actor),
+                resource=PolicyResource(
+                    kind="asset",
+                    ref=f"{name}@{version}",
+                    asset_type=row["asset_type"],
+                    to_status=to_status.value,
+                ),
+                context={"protected_stage": True},
+            )
+        )
+        explicit_allow = decision.allow and not isinstance(engine, NoopEngine)
+        AuditLog(resolve_audit_log_path()).append(
+            event_type=(
+                AuditEventType.POLICY_ALLOW if explicit_allow else AuditEventType.POLICY_DENY
+            ),
+            actor=actor,
+            resource_id=f"{name}@{version}",
+            details={
+                "decision_id": decision.decision_id,
+                "reason": decision.reason,
+                "action": "promote_direct",
+                "to_status": to_status.value,
+                "forced": bool(force),
+            },
+        )
+        if not explicit_allow:
+            why = (
+                "no policy engine is configured (opa not on PATH), so there is no "
+                "explicit allow"
+                if isinstance(engine, NoopEngine)
+                else f"policy denied: {decision.reason} (decision_id={decision.decision_id})"
+            )
+            raise DirectPromotionDeniedError(
+                f"Direct (single-actor) promotion of '{name}@{version}' into protected "
+                f"stage '{to_status.value}' refused: {why}. Use `nova promote propose` + "
+                "`nova promote approve` (maker-checker), or load a policy that allows "
+                "action 'promote_direct' (ADR-0312). --force does not bypass this gate."
+            )
+    return promote_asset(
+        name, version, to_status, actor=actor, force=force, db_path=db_path, **gate_kwargs
+    )
+
+
 def approve_asset(
     name: str,
     version: str,
@@ -1185,6 +1288,54 @@ def list_stale_assets(
 # ---------------------------------------------------------------------------
 
 
+def new_proposal_id() -> str:
+    """A fresh proposal id. The maker signs over it, so the client chooses it (ADR-0312)."""
+    return str(uuid.uuid4())
+
+
+def _require_proposal_id(proposal_id: str) -> None:
+    try:
+        canonical = str(uuid.UUID(proposal_id))
+    except (ValueError, TypeError, AttributeError):
+        canonical = ""
+    if canonical != proposal_id:
+        raise ValueError(f"proposal_id must be a canonical UUID string, got {proposal_id!r}")
+
+
+def proposal_verification(row: sqlite3.Row | dict[str, Any]) -> str:
+    """``"verified"`` for a row written under ADR-0312, else ``"unverified"`` (legacy)."""
+    keys = row.keys()
+    scheme = row["signoff_scheme"] if "signoff_scheme" in keys else None
+    return "verified" if scheme else "unverified"
+
+
+def get_open_proposal(
+    name: str, version: str, db_path: Path | None = None
+) -> dict[str, Any] | None:
+    """Return the open promotion proposal for ``name@version``, or ``None``.
+
+    The dict carries every stored column plus ``verification`` (``"verified"`` /
+    ``"unverified"``); a legacy row stored before ADR-0312 reads as ``"unverified"``.
+    The approver needs ``proposal_id``, ``to_status`` and ``proposer_sig`` to build the
+    payload it signs (:func:`novafabric.registry.signers.approval_payload`).
+    """
+    conn = get_connection(db_path)
+    init_schema(conn)
+    try:
+        row = conn.execute(
+            "SELECT * FROM promotion_proposals "
+            "WHERE asset_name = ? AND asset_version = ? AND state = 'open'",
+            (name, version),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    result: dict[str, Any] = {k: row[k] for k in row.keys()}
+    result["verification"] = proposal_verification(row)
+    return result
+
+
 def propose_promotion(
     name: str,
     version: str,
@@ -1193,16 +1344,31 @@ def propose_promotion(
     proposer_key_fp: str,
     proposer_sig: str,
     db_path: Path | None = None,
+    *,
+    proposal_id: str,
+    trust_list: SignerTrustList | None = None,
 ) -> dict[str, Any]:
-    """Create a promotion proposal (maker step).
+    """Create a promotion proposal (maker step), verifying the maker's signature.
+
+    The signature must verify over
+    :func:`~novafabric.registry.signers.proposal_payload` for *proposal_id* with the
+    public key the signer trust list binds to *proposer*, and that identity must hold the
+    ``proposer`` role (ADR-0312). An open proposal stored before ADR-0312 (unverified)
+    is superseded rather than blocking the asset forever.
 
     Raises:
         AssetNotFoundError: asset does not exist.
         InvalidLifecycleTransitionError: transition not allowed from current status.
-        SoDViolationError: an open proposal already exists for this asset.
+        SignerVerificationError: trust list missing/malformed, key unbound or bound to
+            another identity, role missing, or signature invalid.
+        SoDViolationError: a verified open proposal already exists, or the id was used.
+        ValueError: *proposal_id* is not a canonical UUID.
     """
+    _require_proposal_id(proposal_id)
+    trust = trust_list or load_signer_trust_list()
     conn = get_connection(db_path)
     init_schema(conn)
+    superseded: str | None = None
     try:
         row = conn.execute(
             "SELECT * FROM assets WHERE name = ? AND version = ?",
@@ -1218,52 +1384,86 @@ def propose_promotion(
                 f"{current_status.value} to {to_status.value}."
             )
 
+        maker: TrustedSigner = trust.verify(
+            claimed_identity=proposer,
+            key_fp=proposer_key_fp,
+            role="proposer",
+            payload=proposal_payload(
+                proposal_id=proposal_id, name=name, version=version,
+                to_status=to_status.value,
+            ),
+            signature=proposer_sig,
+            party="proposer",
+        )
+
         existing = conn.execute(
-            "SELECT proposal_id FROM promotion_proposals "
+            "SELECT * FROM promotion_proposals "
             "WHERE asset_name = ? AND asset_version = ? AND state = 'open'",
             (name, version),
         ).fetchone()
-        if existing:
+        if existing and proposal_verification(existing) == "verified":
             raise SoDViolationError(
                 f"An open proposal ({existing['proposal_id']}) already exists for "
-                f"'{name}@{version}'. Reject it before opening a new one."
+                f"'{name}@{version}'. Approve it before opening a new one."
+            )
+        if existing:
+            # Legacy, unverified: it can never be approved (approve_promotion refuses it),
+            # so leaving it open would block the asset forever.
+            superseded = str(existing["proposal_id"])
+            conn.execute(
+                "UPDATE promotion_proposals SET state = 'superseded' "
+                "WHERE proposal_id = ? AND state = 'open'",
+                (superseded,),
             )
 
-        proposal_id = str(uuid.uuid4())
         proposed_at = _now()
-        conn.execute(
-            """
-            INSERT INTO promotion_proposals
-                (proposal_id, asset_name, asset_version, to_status,
-                 proposer, proposer_key_fp, proposer_sig, proposed_at, state)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')
-            """,
-            (proposal_id, name, version, to_status.value,
-             proposer, proposer_key_fp, proposer_sig, proposed_at),
-        )
+        try:
+            conn.execute(
+                """
+                INSERT INTO promotion_proposals
+                    (proposal_id, asset_name, asset_version, to_status,
+                     proposer, proposer_key_fp, proposer_sig, proposed_at, state,
+                     signoff_scheme)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                """,
+                (proposal_id, name, version, to_status.value,
+                 maker.identity, maker.fingerprint, proposer_sig, proposed_at,
+                 SIGNOFF_SCHEME),
+            )
+        except sqlite3.IntegrityError as exc:
+            conn.rollback()
+            raise SoDViolationError(
+                f"Proposal id {proposal_id} has already been used; sign a new proposal."
+            ) from exc
         conn.commit()
     finally:
         conn.close()
 
+    details: dict[str, Any] = {
+        "proposal_id": proposal_id,
+        "to_status": to_status.value,
+        "proposer_key_fp": maker.fingerprint,
+        "signoff_scheme": SIGNOFF_SCHEME,
+    }
+    if superseded:
+        details["superseded_unverified_proposal"] = superseded
     AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.PROMOTE_PROPOSE,
-        actor=proposer,
+        actor=maker.identity,
         resource_id=f"{name}@{version}",
-        details={
-            "proposal_id": proposal_id,
-            "to_status": to_status.value,
-            "proposer_key_fp": proposer_key_fp,
-        },
+        details=details,
     )
     return {
         "proposal_id": proposal_id,
         "asset_name": name,
         "asset_version": version,
         "to_status": to_status.value,
-        "proposer": proposer,
-        "proposer_key_fp": proposer_key_fp,
+        "proposer": maker.identity,
+        "proposer_key_fp": maker.fingerprint,
         "proposed_at": proposed_at,
         "state": "open",
+        "verification": "verified",
+        "superseded": superseded,
     }
 
 
@@ -1274,13 +1474,26 @@ def approve_promotion(
     approver_key_fp: str,
     approver_sig: str,
     db_path: Path | None = None,
+    *,
+    trust_list: SignerTrustList | None = None,
 ) -> dict[str, Any]:
     """Counter-sign an open promotion proposal (checker step) and execute the transition.
 
+    Both signatures are verified against the signer trust list (ADR-0312): the stored
+    maker signature is re-verified (so an edited proposal, or a maker since removed from
+    the list, is refused) and the checker's signature must verify over
+    :func:`~novafabric.registry.signers.approval_payload` for this exact proposal. SoD
+    compares the identities the trust list binds the two keys to.
+
     Raises:
         AssetNotFoundError: no open proposal for this asset.
-        SoDViolationError: approver identity or key fingerprint matches the proposer.
+        UnverifiedProposalError: the open proposal predates ADR-0312.
+        SignerVerificationError: either signature or binding fails (``exc.party`` says
+            which side).
+        SelfApprovalError: maker and checker are the same bound identity or key.
+        SoDViolationError: the proposal stopped being open while approving.
     """
+    trust = trust_list or load_signer_trust_list()
     conn = get_connection(db_path)
     init_schema(conn)
     try:
@@ -1293,52 +1506,87 @@ def approve_promotion(
             raise AssetNotFoundError(
                 f"No open promotion proposal found for '{name}@{version}'."
             )
-
-        if approver_key_fp == proposal["proposer_key_fp"]:
-            raise SoDViolationError(
-                "Approver key fingerprint matches proposer key fingerprint — "
-                "SoD violation: maker and checker must use distinct keypairs."
+        proposal_id = str(proposal["proposal_id"])
+        to_status = str(proposal["to_status"])
+        if proposal_verification(proposal) != "verified":
+            raise UnverifiedProposalError(
+                f"Open proposal {proposal_id} for '{name}@{version}' is unverified: it was "
+                "stored before maker-checker signatures were verified (ADR-0312) and cannot "
+                "be approved. Open a new one with `nova promote propose` (it supersedes "
+                "the unverified proposal).",
+                party="proposer",
             )
-        if approver == proposal["proposer"]:
-            raise SoDViolationError(
-                f"Approver identity '{approver}' matches proposer — "
-                "SoD violation: maker and checker must be different identities."
+
+        maker = trust.verify(
+            claimed_identity=str(proposal["proposer"]),
+            key_fp=str(proposal["proposer_key_fp"]),
+            role="proposer",
+            payload=proposal_payload(
+                proposal_id=proposal_id, name=name, version=version, to_status=to_status
+            ),
+            signature=str(proposal["proposer_sig"]),
+            party="proposer",
+        )
+        checker = trust.verify(
+            claimed_identity=approver,
+            key_fp=approver_key_fp,
+            role="approver",
+            payload=approval_payload(
+                proposal_id=proposal_id, name=name, version=version, to_status=to_status,
+                proposer_sig=str(proposal["proposer_sig"]),
+            ),
+            signature=approver_sig,
+            party="approver",
+        )
+        if checker.identity == maker.identity or checker.fingerprint == maker.fingerprint:
+            raise SelfApprovalError(
+                f"SoD violation: maker and checker resolve to the same bound identity "
+                f"{maker.identity!r} — they must be different people with distinct "
+                "keypairs bound in the signer trust list."
             )
 
         approved_at = _now()
-        conn.execute(
+        cur = conn.execute(
             """
             UPDATE promotion_proposals
             SET state = 'approved', approver = ?, approver_key_fp = ?,
                 approver_sig = ?, approved_at = ?
-            WHERE proposal_id = ?
+            WHERE proposal_id = ? AND state = 'open'
             """,
-            (approver, approver_key_fp, approver_sig, approved_at,
-             proposal["proposal_id"]),
+            (checker.identity, checker.fingerprint, approver_sig, approved_at, proposal_id),
         )
+        if cur.rowcount != 1:
+            conn.rollback()
+            raise SoDViolationError(
+                f"Proposal {proposal_id} is no longer open; nothing was approved."
+            )
         conn.commit()
     finally:
         conn.close()
 
     AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.PROMOTE_APPROVE,
-        actor=approver,
+        actor=checker.identity,
         resource_id=f"{name}@{version}",
         details={
-            "proposal_id": proposal["proposal_id"],
-            "to_status": proposal["to_status"],
-            "approver_key_fp": approver_key_fp,
+            "proposal_id": proposal_id,
+            "to_status": to_status,
+            "approver_key_fp": checker.fingerprint,
+            "proposer": maker.identity,
+            "proposer_key_fp": maker.fingerprint,
+            "signoff_scheme": SIGNOFF_SCHEME,
         },
     )
 
     result = promote_asset(
         name,
         version,
-        AssetStatus(proposal["to_status"]),
-        actor=approver,
+        AssetStatus(to_status),
+        actor=checker.identity,
         db_path=db_path,
     )
-    result["proposal_id"] = proposal["proposal_id"]
-    result["approver"] = approver
+    result["proposal_id"] = proposal_id
+    result["approver"] = checker.identity
     result["approved_at"] = approved_at
+    result["verification"] = "verified"
     return result

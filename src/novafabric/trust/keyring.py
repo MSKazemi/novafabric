@@ -31,8 +31,37 @@ def _fingerprint(public_key: Ed25519PublicKey) -> str:
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def ensure_keypair(identity: str | None = None) -> tuple[Ed25519PrivateKey, str]:
-    """Return (private_key, fingerprint) for *identity*, generating if absent."""
+class KeyNotFoundError(FileNotFoundError):
+    """No keyring key exists for an identity and the caller did not ask to create one."""
+
+
+def key_path_for(identity: str) -> Path:
+    """Path of the keyring PEM for *identity* (whether or not it exists)."""
+    return _key_path(identity)
+
+
+def fingerprint_of(public_key: Ed25519PublicKey) -> str:
+    """Keyring fingerprint: the first 16 hex chars of SHA-256 over the raw public key."""
+    return _fingerprint(public_key)
+
+
+def public_key_b64(public_key: Ed25519PublicKey) -> str:
+    """Standard base64 of the raw 32-byte Ed25519 public key (signer trust-list form)."""
+    raw = public_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return base64.b64encode(raw).decode()
+
+
+def ensure_keypair(
+    identity: str | None = None, *, create: bool = True
+) -> tuple[Ed25519PrivateKey, str]:
+    """Return (private_key, fingerprint) for *identity*.
+
+    With ``create=True`` (the default, kept for the existing signing callers) a missing
+    key is generated. With ``create=False`` a missing key raises :class:`KeyNotFoundError`
+    and nothing is written: the maker-checker promote path uses this, so naming a new
+    identity can never mint a key on the fly (ADR-0312). Keys for that path are created
+    only by ``nova promote keygen``.
+    """
     ident = identity or _default_identity()
     path = _key_path(ident)
     if path.exists():
@@ -40,6 +69,12 @@ def ensure_keypair(identity: str | None = None) -> tuple[Ed25519PrivateKey, str]
         private_key = serialization.load_pem_private_key(pem, password=None)
         if not isinstance(private_key, Ed25519PrivateKey):
             raise ValueError(f"Key at {path} is not Ed25519")
+    elif not create:
+        raise KeyNotFoundError(
+            f"No keyring key for identity {ident!r} (expected {path}). "
+            f"Create one explicitly with `nova promote keygen --identity {ident}`, "
+            "then have the signer trust list bind its public key to that identity."
+        )
     else:
         private_key = Ed25519PrivateKey.generate()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -63,8 +98,8 @@ def sign_payload(private_key: Ed25519PrivateKey, payload: bytes) -> str:
 def verify_sig(public_key: Ed25519PublicKey, sig_b64: str, payload: bytes) -> bool:
     """Return True if *sig_b64* is a valid Ed25519 signature over *payload*."""
     padding = "=" * (-len(sig_b64) % 4)
-    sig_bytes = base64.urlsafe_b64decode(sig_b64 + padding)
     try:
+        sig_bytes = base64.urlsafe_b64decode(sig_b64 + padding)
         public_key.verify(sig_bytes, payload)
         return True
     except Exception:

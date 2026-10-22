@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from .model_independence import MakerCheckerRecord
 
@@ -162,9 +162,16 @@ def collect_registry_records(db_path: Path, model_id: str) -> list[MakerCheckerR
             checker_key_fp=row["approver_key_fp"],
             proposed_at=row["proposed_at"],
             approved_at=row["approved_at"],
+            signature_verification=_registry_signature_verification(row),
         )
         for row in rows
     ]
+
+
+def _registry_signature_verification(row: sqlite3.Row) -> Literal["verified", "unverified"]:
+    """ADR-0312: a row without ``signoff_scheme`` (or a pre-ADR-0312 schema) is unverified."""
+    scheme = row["signoff_scheme"] if "signoff_scheme" in row.keys() else None
+    return "verified" if scheme else "unverified"
 
 
 def _envelope_subject(envelope: bytes, payload_type: str) -> tuple[str | None, str | None]:

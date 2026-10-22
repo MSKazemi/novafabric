@@ -37,6 +37,9 @@ class PolicyResource(BaseModel):
     # "production". None (Rego ``null``) when not recorded or not capsule-scoped;
     # never inferred. See _environment.py.
     deployment_environment: str | None = None
+    # Target lifecycle stage of a promotion (ADR-0312), e.g. "production". Set by the
+    # `promote_direct` gate; None (Rego ``null``) for every other action.
+    to_status: str | None = None
 
 
 class PolicyInput(BaseModel):

@@ -24,6 +24,10 @@ Environment variables
     Asset registry SQLite database path.
     Default: ``$NOVAFABRIC_HOME/registry.db``
 
+``NOVAFABRIC_PROMOTE_SIGNERS``
+    Maker-checker signer trust list (ADR-0312).
+    Default: ``$NOVAFABRIC_HOME/promote-signers.yaml``
+
 ``NOVAFABRIC_CAPSULE_DIR``
     Default capsule storage directory.
     Default: ``$NOVAFABRIC_HOME/capsules``
@@ -101,6 +105,16 @@ def registry_db_path() -> Path:
     """
     env = os.environ.get("NOVAFABRIC_DB_PATH")
     return Path(env) if env else nova_home() / "registry.db"
+
+
+def promote_signers_path() -> Path:
+    """Maker-checker signer trust list (ADR-0312).
+
+    Override with ``NOVAFABRIC_PROMOTE_SIGNERS`` (blank counts as unset); falls back to
+    ``$NOVAFABRIC_HOME/promote-signers.yaml``.
+    """
+    env = os.environ.get("NOVAFABRIC_PROMOTE_SIGNERS", "").strip()
+    return Path(env) if env else nova_home() / "promote-signers.yaml"
 
 
 def serve_token_path() -> Path:

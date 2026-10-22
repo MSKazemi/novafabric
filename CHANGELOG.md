@@ -117,6 +117,39 @@ longer forwards the submitting shell's environment (ADR-0270).
   build time, in both the wheel `METADATA` and the sdist `PKG-INFO`. `README.md` on GitHub is
   unchanged. See `docs/developer-guide.md`.
 
+### Changed — BREAKING (behaviour)
+
+- **Registry maker-checker signatures are verified against a signer trust list
+  (ADR-0312).** `nova promote propose` and `nova promote approve` used to store the
+  proposer and approver signatures without verifying them, and bound no key to an
+  identity. Now each signature is verified, over a canonical payload, with the public key
+  that an operator-held trust list binds to the claimed identity. The trust list lives at
+  `NOVAFABRIC_PROMOTE_SIGNERS`, or `$NOVAFABRIC_HOME/promote-signers.yaml`. Each identity
+  must hold the `proposer` or `approver` role, and separation of duties compares the
+  *bound* identities. An approval is bound to one proposal (its id, target stage and the
+  maker's signature).
+  Exit codes: `3` for a proposal-side failure, `4` for an approval-side failure, `6` for
+  self-approval.
+- **`--identity` is required on `nova promote propose` / `approve`, and keys are no longer
+  created on that path.** The OS-username default is gone. A missing key exits `1` and
+  writes nothing. The new `nova promote keygen --identity NAME` creates the key and prints
+  its trust-list entry. `ensure_keypair(..., create=False)` is the library form.
+- **`nova promote direct` into a protected stage is policy-gated (ADR-0312).**
+  `production` is protected. A direct promotion into it needs an explicit allow from the
+  new `promote_direct` policy action. The shipped default policy denies it, and the
+  no-OPA `NoopEngine` does not count as an allow. `--force` does not bypass this gate.
+  Other stages are unchanged.
+
+  **Migration:** (1) each signer runs `nova promote keygen --identity <name>`. (2) An
+  operator collects the printed entries into the trust list, keeping only the roles each
+  person holds. (3) Add `--identity` to every `propose`/`approve` call. (4) Replace scripted
+  `promote direct --to production` with `propose` + `approve`, or load an OPA policy that
+  allows `promote_direct` for the cases you accept. Proposals stored earlier still read, as
+  `unverified` (`nova export-model-independence` shows `signature_verification`). An open
+  unverified proposal cannot be approved, and a new `propose` supersedes it. The registry
+  gains one nullable column, `promotion_proposals.signoff_scheme`, which is added in place.
+  The HTTP/dashboard promote endpoints are not yet covered by the protected-stage gate.
+
 ### Changed
 
 - **NovaSeal log roots are versioned, and new logs write a root that commits to the tree

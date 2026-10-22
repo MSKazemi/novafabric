@@ -1,4 +1,9 @@
-"""Tests for D-5 maker-checker dual-approval (ADR-0058)."""
+"""Tests for D-5 maker-checker dual-approval (ADR-0058), as verified since ADR-0312.
+
+Until ADR-0312 the service stored whatever signature and fingerprint it was handed
+(these tests passed ``"fakesig"``). Every proposal and approval is now verified
+against an operator-held signer trust list, so the service tests below sign for real.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,18 +13,27 @@ import pytest
 from novafabric.audit._models import AuditEventType
 from novafabric.registry.service import (
     AssetNotFoundError,
+    SelfApprovalError,
     SoDViolationError,
     approve_promotion,
+    get_open_proposal,
+    new_proposal_id,
     promote_asset,
     propose_promotion,
     register_asset,
 )
-from novafabric.registry.store import get_connection, init_schema  # noqa: F401
+from novafabric.registry.signers import (
+    SignerTrustList,
+    approval_payload,
+    parse_signer_trust_list,
+    proposal_payload,
+)
+from novafabric.registry.store import get_connection, init_schema
 from novafabric.spec.models import AssetStatus
 from novafabric.spec.validator import validate_spec
 from novafabric.trust.keyring import (
-    canonical_payload,
     ensure_keypair,
+    public_key_b64,
     sign_payload,
     verify_sig,
 )
@@ -29,6 +43,7 @@ from novafabric.trust.keyring import (
 # ---------------------------------------------------------------------------
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+NAME, VERSION = "fraud-model", "1.0.0"
 
 
 def _register_model(tmp_db: Path) -> None:
@@ -37,7 +52,64 @@ def _register_model(tmp_db: Path) -> None:
 
 
 def _promote_to_validated(tmp_db: Path) -> None:
-    promote_asset("fraud-model", "1.0.0", AssetStatus.validated, actor="ci", db_path=tmp_db)
+    promote_asset(NAME, VERSION, AssetStatus.validated, actor="ci", db_path=tmp_db)
+
+
+@pytest.fixture
+def keyring(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    import novafabric.trust.keyring as kr
+
+    path = tmp_path / "keyring"
+    monkeypatch.setattr(kr, "_KEYRING_DIR", path)
+    return path
+
+
+def _trust(bindings: dict[str, list[str]]) -> SignerTrustList:
+    """Trust list binding each identity's keyring key to that identity and roles."""
+    signers = []
+    for identity, roles in bindings.items():
+        key, _ = ensure_keypair(identity)
+        signers.append(
+            {"identity": identity, "public_key": public_key_b64(key.public_key()),
+             "roles": roles}
+        )
+    return parse_signer_trust_list({"signers": signers}, source="test")
+
+
+@pytest.fixture
+def trust(keyring: Path) -> SignerTrustList:
+    return _trust({"alice": ["proposer"], "bob": ["approver"]})
+
+
+def _propose(
+    tmp_db: Path, trust: SignerTrustList, who: str = "alice",
+    to: AssetStatus = AssetStatus.staging,
+) -> dict[str, object]:
+    key, fp = ensure_keypair(who)
+    pid = new_proposal_id()
+    sig = sign_payload(
+        key, proposal_payload(proposal_id=pid, name=NAME, version=VERSION, to_status=to.value)
+    )
+    return propose_promotion(
+        NAME, VERSION, to, who, fp, sig, db_path=tmp_db, proposal_id=pid, trust_list=trust
+    )
+
+
+def _approve(tmp_db: Path, trust: SignerTrustList, who: str = "bob") -> dict[str, object]:
+    key, fp = ensure_keypair(who)
+    open_ = get_open_proposal(NAME, VERSION, db_path=tmp_db)
+    assert open_ is not None
+    sig = sign_payload(
+        key,
+        approval_payload(
+            proposal_id=open_["proposal_id"], name=NAME, version=VERSION,
+            to_status=open_["to_status"], proposer_sig=open_["proposer_sig"],
+        ),
+    )
+    return approve_promotion(
+        NAME, VERSION, approver=who, approver_key_fp=fp, approver_sig=sig,
+        db_path=tmp_db, trust_list=trust,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +163,7 @@ def test_sign_and_verify(tmp_path: Path) -> None:
         sig = sign_payload(private_key, payload)
         assert verify_sig(private_key.public_key(), sig, payload)
         assert not verify_sig(private_key.public_key(), sig, b"tampered")
+        assert not verify_sig(private_key.public_key(), "not base64 !!", payload)
     finally:
         kr._KEYRING_DIR = original_dir
 
@@ -100,63 +173,62 @@ def test_sign_and_verify(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_propose_promotion_happy_path(tmp_path: Path) -> None:
+def test_propose_promotion_happy_path(tmp_path: Path, trust: SignerTrustList) -> None:
     tmp_db = tmp_path / "test.db"
     _register_model(tmp_db)
     _promote_to_validated(tmp_db)
 
-    result = propose_promotion(
-        name="fraud-model",
-        version="1.0.0",
-        to_status=AssetStatus.staging,
-        proposer="alice",
-        proposer_key_fp="aabbcc001122",
-        proposer_sig="fakesig",
-        db_path=tmp_db,
-    )
+    result = _propose(tmp_db, trust)
     assert result["state"] == "open"
     assert result["to_status"] == "staging"
     assert result["proposer"] == "alice"
-    assert len(result["proposal_id"]) == 36  # UUID
+    assert result["verification"] == "verified"
+    assert len(str(result["proposal_id"])) == 36  # UUID
 
 
-def test_propose_promotion_asset_not_found(tmp_path: Path) -> None:
+def test_propose_promotion_asset_not_found(tmp_path: Path, trust: SignerTrustList) -> None:
     tmp_db = tmp_path / "test.db"
     conn = get_connection(tmp_db)
     init_schema(conn)
     conn.close()
     with pytest.raises(AssetNotFoundError):
         propose_promotion(
-            "ghost", "1.0.0", AssetStatus.staging, "alice", "fp", "sig", db_path=tmp_db
+            "ghost", "1.0.0", AssetStatus.staging, "alice", "fp", "sig", db_path=tmp_db,
+            proposal_id=new_proposal_id(), trust_list=trust,
         )
 
 
-def test_propose_promotion_invalid_transition(tmp_path: Path) -> None:
+def test_propose_promotion_invalid_transition(tmp_path: Path, trust: SignerTrustList) -> None:
+    from novafabric.registry.service import InvalidLifecycleTransitionError
+
     tmp_db = tmp_path / "test.db"
     _register_model(tmp_db)
-    # development → production is valid; development → archived is valid;
-    # validated → development is NOT valid.
+    # validated → development is NOT a valid transition.
     _promote_to_validated(tmp_db)
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidLifecycleTransitionError):
+        _propose(tmp_db, trust, to=AssetStatus.development)
+
+
+def test_propose_promotion_rejects_a_non_uuid_proposal_id(
+    tmp_path: Path, trust: SignerTrustList
+) -> None:
+    tmp_db = tmp_path / "test.db"
+    _register_model(tmp_db)
+    _promote_to_validated(tmp_db)
+    with pytest.raises(ValueError, match="canonical UUID"):
         propose_promotion(
-            "fraud-model", "1.0.0", AssetStatus.development,
-            "alice", "fp", "sig", db_path=tmp_db
+            NAME, VERSION, AssetStatus.staging, "alice", "fp", "sig", db_path=tmp_db,
+            proposal_id="pending|fraud-model@1.0.0:staging", trust_list=trust,
         )
 
 
-def test_propose_promotion_blocks_duplicate_open(tmp_path: Path) -> None:
+def test_propose_promotion_blocks_duplicate_open(tmp_path: Path, trust: SignerTrustList) -> None:
     tmp_db = tmp_path / "test.db"
     _register_model(tmp_db)
     _promote_to_validated(tmp_db)
-    propose_promotion(
-        "fraud-model", "1.0.0", AssetStatus.staging,
-        "alice", "fp_a", "sig_a", db_path=tmp_db
-    )
+    _propose(tmp_db, trust)
     with pytest.raises(SoDViolationError, match="open proposal"):
-        propose_promotion(
-            "fraud-model", "1.0.0", AssetStatus.staging,
-            "alice", "fp_a", "sig_a2", db_path=tmp_db
-        )
+        _propose(tmp_db, trust)
 
 
 # ---------------------------------------------------------------------------
@@ -164,75 +236,55 @@ def test_propose_promotion_blocks_duplicate_open(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_approve_promotion_happy_path(tmp_path: Path) -> None:
+def test_approve_promotion_happy_path(tmp_path: Path, trust: SignerTrustList) -> None:
     tmp_db = tmp_path / "test.db"
     _register_model(tmp_db)
     _promote_to_validated(tmp_db)
 
-    propose_promotion(
-        "fraud-model", "1.0.0", AssetStatus.staging,
-        "alice", "fp_alice", "sig_alice", db_path=tmp_db
-    )
-    result = approve_promotion(
-        "fraud-model", "1.0.0",
-        approver="bob",
-        approver_key_fp="fp_bob",
-        approver_sig="sig_bob",
-        db_path=tmp_db,
-    )
+    _propose(tmp_db, trust)
+    result = _approve(tmp_db, trust)
     assert result["status"] == "staging"
     assert result["approver"] == "bob"
+    assert result["verification"] == "verified"
     assert "proposal_id" in result
 
 
-def test_approve_promotion_same_key_blocked(tmp_path: Path) -> None:
+def test_approve_promotion_same_key_blocked(tmp_path: Path, keyring: Path) -> None:
+    """One key holding both roles cannot countersign its own proposal."""
+    trust = _trust({"alice": ["proposer", "approver"]})
     tmp_db = tmp_path / "test.db"
     _register_model(tmp_db)
     _promote_to_validated(tmp_db)
 
-    propose_promotion(
-        "fraud-model", "1.0.0", AssetStatus.staging,
-        "alice", "fp_shared", "sig_alice", db_path=tmp_db
-    )
-    with pytest.raises(SoDViolationError, match="distinct keypairs"):
-        approve_promotion(
-            "fraud-model", "1.0.0",
-            approver="bob",
-            approver_key_fp="fp_shared",  # same fingerprint — SoD violation
-            approver_sig="sig_bob",
-            db_path=tmp_db,
-        )
+    _propose(tmp_db, trust)
+    with pytest.raises(SelfApprovalError, match="distinct"):
+        _approve(tmp_db, trust, who="alice")
+    assert get_open_proposal(NAME, VERSION, db_path=tmp_db) is not None
 
 
-def test_approve_promotion_same_identity_blocked(tmp_path: Path) -> None:
+def test_self_approval_is_still_a_sod_violation(tmp_path: Path, keyring: Path) -> None:
+    """Existing ``except SoDViolationError`` handlers keep catching self-approval."""
+    trust = _trust({"alice": ["proposer", "approver"]})
     tmp_db = tmp_path / "test.db"
     _register_model(tmp_db)
     _promote_to_validated(tmp_db)
 
-    propose_promotion(
-        "fraud-model", "1.0.0", AssetStatus.staging,
-        "alice", "fp_alice", "sig_alice", db_path=tmp_db
-    )
-    with pytest.raises(SoDViolationError, match="different identities"):
-        approve_promotion(
-            "fraud-model", "1.0.0",
-            approver="alice",  # same identity — SoD violation
-            approver_key_fp="fp_alice2",
-            approver_sig="sig_alice2",
-            db_path=tmp_db,
-        )
+    _propose(tmp_db, trust)
+    with pytest.raises(SoDViolationError, match="SoD violation"):
+        _approve(tmp_db, trust, who="alice")
 
 
-def test_approve_promotion_no_open_proposal(tmp_path: Path) -> None:
+def test_approve_promotion_no_open_proposal(tmp_path: Path, trust: SignerTrustList) -> None:
     tmp_db = tmp_path / "test.db"
     _register_model(tmp_db)
     with pytest.raises(AssetNotFoundError, match="No open promotion proposal"):
         approve_promotion(
-            "fraud-model", "1.0.0",
+            NAME, VERSION,
             approver="bob",
             approver_key_fp="fp_bob",
             approver_sig="sig_bob",
             db_path=tmp_db,
+            trust_list=trust,
         )
 
 
@@ -241,7 +293,9 @@ def test_approve_promotion_no_open_proposal(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_audit_entries_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_audit_entries_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trust: SignerTrustList
+) -> None:
     import json
 
     audit_log_path = tmp_path / "audit.jsonl"
@@ -251,62 +305,12 @@ def test_audit_entries_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     _register_model(tmp_db)
     _promote_to_validated(tmp_db)
 
-    propose_promotion(
-        "fraud-model", "1.0.0", AssetStatus.staging,
-        "alice", "fp_alice", "sig_alice", db_path=tmp_db
-    )
-    approve_promotion(
-        "fraud-model", "1.0.0",
-        approver="bob",
-        approver_key_fp="fp_bob",
-        approver_sig="sig_bob",
-        db_path=tmp_db,
-    )
+    _propose(tmp_db, trust)
+    _approve(tmp_db, trust)
 
     lines = [json.loads(line) for line in audit_log_path.read_text().splitlines() if line.strip()]
     event_types = [entry["event_type"] for entry in lines]
     assert AuditEventType.PROMOTE_PROPOSE in event_types
     assert AuditEventType.PROMOTE_APPROVE in event_types
-
-
-# ---------------------------------------------------------------------------
-# CLI integration tests
-# ---------------------------------------------------------------------------
-
-
-def test_cli_promote_propose_and_approve(tmp_path: Path) -> None:
-    import novafabric.trust.keyring as kr
-
-    original_keyring = kr._KEYRING_DIR
-    kr._KEYRING_DIR = tmp_path / "keyring"
-
-    tmp_db = tmp_path / "test.db"
-    _register_model(tmp_db)
-    _promote_to_validated(tmp_db)
-
-    try:
-        # Propose
-        alice_key, alice_fp = ensure_keypair("alice")
-        payload_a = canonical_payload("pending|fraud-model@1.0.0:staging", "fraud-model", "1.0.0", "staging")
-        sig_a = sign_payload(alice_key, payload_a)
-        prop = propose_promotion(
-            "fraud-model", "1.0.0", AssetStatus.staging,
-            "alice", alice_fp, sig_a, db_path=tmp_db
-        )
-        assert prop["state"] == "open"
-
-        # Approve with a different identity
-        bob_key, bob_fp = ensure_keypair("bob")
-        payload_b = canonical_payload("pending|fraud-model@1.0.0:approve", "fraud-model", "1.0.0", "approve")
-        sig_b = sign_payload(bob_key, payload_b)
-        result = approve_promotion(
-            "fraud-model", "1.0.0",
-            approver="bob",
-            approver_key_fp=bob_fp,
-            approver_sig=sig_b,
-            db_path=tmp_db,
-        )
-        assert result["status"] == "staging"
-        assert alice_fp != bob_fp
-    finally:
-        kr._KEYRING_DIR = original_keyring
+    approve = next(e for e in lines if e["event_type"] == AuditEventType.PROMOTE_APPROVE)
+    assert approve["actor"] == "bob"

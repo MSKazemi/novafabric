@@ -20,6 +20,7 @@ def _parse_package_from_rego(source: str) -> str | None:
 
 _ACTION_TO_PACKAGE: dict[str, str] = {
     "promote": "novafabric/defaults/promote_gate",
+    "promote_direct": "novafabric/defaults/promote_direct",
     "replay_mutating": "novafabric/defaults/replay_mutating",
     "evidence_export": "novafabric/defaults/evidence_export",
     "dataset_license": "novafabric/defaults/dataset_license",

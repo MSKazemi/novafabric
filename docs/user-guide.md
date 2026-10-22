@@ -1525,9 +1525,14 @@ Single-actor promotion (original behaviour):
 
 ```bash
 nova promote direct fraud-detection-model@1.2.0 --to staging
-nova promote direct fraud-detection-model@1.2.0 --to production
 nova promote direct fraud-detection-model@1.2.0 --to archived
 ```
+
+**Protected stages (ADR-0312).** `production` is protected. `nova promote direct --to
+production` is refused unless an OPA policy explicitly allows the `promote_direct`
+action, and the shipped default policy denies it. With no OPA installed there is no
+explicit allow, so it is refused. `--force` does not bypass this. Use `propose` +
+`approve` below, or see the CLI reference for loading an allow policy.
 
 **Eval gate.** Agent assets require a passing `nova eval` result before
 promotion to `staging` or `production`. Use `--force` to override
@@ -1551,25 +1556,59 @@ nova promote direct my-model@1.0.0 --to staging \
 
 #### nova promote propose + nova promote approve
 
-Maker-checker two-step flow for regulated deployments. Requires two
-cryptographically distinct identities (different Ed25519 keypairs):
+Maker-checker two-step flow for regulated deployments (ADR-0058, verified since
+ADR-0312). Two different people, each with their own Ed25519 key, and each key bound
+to that person by an operator-held **signer trust list**.
+
+**One-time setup.**
 
 ```bash
-# Step 1 — maker proposes (signs with their keypair)
-nova promote propose fraud-detection-model@1.2.0 --to staging
-
-# Step 2 — checker approves (must be a different identity/key)
-nova promote approve fraud-detection-model@1.2.0 --identity checker-alice
+# Each signer creates a key; this prints the trust-list entry for it.
+nova promote keygen --identity alice
+nova promote keygen --identity bob
 ```
 
-Separation of duties is enforced at the cryptographic level: the approver's key
-fingerprint must differ from the proposer's. Attempting to self-approve raises
-`SoDViolationError`. Ed25519 keypairs are auto-generated at
-`~/.novafabric/keys/{identity}.ed25519` on first use.
+An operator copies the printed entries into the trust list. It is read from
+`NOVAFABRIC_PROMOTE_SIGNERS` if set, otherwise `$NOVAFABRIC_HOME/promote-signers.yaml`.
+Each entry should keep only the roles that person holds:
 
-**Opt-in Rego gate.** Load `maker_checker_gate.rego` to block
-`nova promote direct` to `staging`/`production` and require the two-step
-flow. See [ADR-0058](./decisions.md).
+```yaml
+signers:
+  - identity: alice
+    public_key: <from keygen>
+    roles: [proposer]
+  - identity: bob
+    public_key: <from keygen>
+    roles: [approver]
+```
+
+**Each promotion.**
+
+```bash
+# Step 1 — maker proposes (signature verified before the proposal is stored)
+nova promote propose fraud-detection-model@1.2.0 --to production --identity alice
+
+# Step 2 — checker approves (both signatures verified, then the asset is promoted)
+nova promote approve fraud-detection-model@1.2.0 --identity bob
+```
+
+What is enforced today:
+
+- `--identity` is **required** on both commands. It must name a key that already exists.
+  Neither command ever creates a key.
+- Each signature is verified with the public key the trust list binds to the claimed
+  identity. An unlisted key, a key bound to another name, a missing role, or a
+  signature that does not verify is refused: exit `3` on the proposal side, `4` on the
+  approval side.
+- The approval is bound to one proposal: its id, target stage and the maker's signature.
+  Editing the stored proposal makes approval fail.
+- Separation of duties compares the bound identities and keys, so one person cannot
+  approve their own proposal under a second name. Self-approval exits `6`.
+- Proposals stored before ADR-0312 still list, as `unverified`. They cannot be approved.
+  A new `propose` supersedes them.
+
+**Limit.** The trust list is the trust anchor. Anyone who can edit it can bind a second
+key to a second name. Keep it owned by an operator and read-only to signers.
 
 ---
 
@@ -1626,8 +1665,9 @@ group.
 nova eval agent support-triage-agent@v1.0.0
 ```
 
-After a passing eval, `nova promote direct <name@version> --to staging` (or `--to production`) will
-succeed without `--force`.
+After a passing eval, `nova promote direct <name@version> --to staging` will succeed without
+`--force`. `production` is a protected stage: reach it with `nova promote propose` +
+`nova promote approve`, unless a policy explicitly allows `promote_direct` (ADR-0312).
 
 The bundled **standard eval suites** (GAIA, SWE-bench, AgentBench, MMLU, Smoke)
 run in OCI-pinned containers, and promotion can be Rego-gated to block on a

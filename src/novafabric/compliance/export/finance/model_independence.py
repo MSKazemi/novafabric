@@ -77,6 +77,10 @@ class MakerCheckerRecord(BaseModel):
     approved_at: str | None = None
     bypass_used: bool = False
     verification_failure: str | None = None
+    # ADR-0312, registry rows only: "verified" when the row was written with its maker
+    # (and, once approved, checker) signature verified against the signer trust list;
+    # "unverified" for rows stored before that check existed. None for seal records.
+    signature_verification: Literal["verified", "unverified"] | None = None
 
 
 class IndependenceRecord(BaseModel):

@@ -780,15 +780,18 @@ optional — small teams often go straight from `development` to `staging`.
 **Promoting an asset updates one database record.** That is all NovaFabric does.
 
 ```
-nova promote direct my-agent@v1.2.0 --to production
+nova promote direct my-agent@v1.2.0 --to staging
 ```
 
 Internally this:
 
-1. Checks the policy engine — allow or deny, written to the audit log.
+1. Checks the policy engine — allow or deny, written to the audit log. A target of
+   `production` is a *protected stage* (ADR-0312): a single actor needs an explicit
+   `promote_direct` policy allow, and none exists by default, so `production` is
+   normally reached through `nova promote propose` + `nova promote approve`.
 2. For `agent` type going to `staging`/`production`: verifies a passing eval
    result exists. Blocks if not (unless `--force`).
-3. Runs `UPDATE assets SET status = 'production', promoted_at = ..., promoted_by = 'cli-user'`
+3. Runs `UPDATE assets SET status = 'staging', promoted_at = ..., promoted_by = 'cli-user'`
    (the CLI records the fixed actor `cli-user`; a named human sign-off is the
    approval record written by `nova approve <name@version> --approver alice`).
 4. Returns the updated record.
@@ -835,12 +838,15 @@ on every PR. Only if evals pass and a team lead approves does the agent reach
 ```bash
 # .github/workflows/deploy-agent.yml (simplified)
 - run: nova eval agent summariser@${{ github.sha }}
-- run: nova promote direct summariser@${{ github.sha }} --to pending_approval
-# ... human approves in the dashboard or via `nova approve summariser@<sha> --approver <name>` ...
-- run: |
-    nova promote direct summariser@${{ github.sha }} --to production
-    helm upgrade summariser ./chart --set image.tag=${{ github.sha }}
+- run: nova promote propose summariser@${{ github.sha }} --to production --identity ci-bot
+# ... the team lead countersigns from their own machine (a separate, trust-listed key):
+#     nova promote approve summariser@<sha> --identity team-lead
+# ... a later job, once the registry reports `production`:
+- run: helm upgrade summariser ./chart --set image.tag=${{ github.sha }}
 ```
+
+`production` is a protected stage, so a single-actor `nova promote direct --to
+production` in CI is refused by default (ADR-0312).
 
 **Use case 2 — Safe prompt rollout without a full redeploy**
 

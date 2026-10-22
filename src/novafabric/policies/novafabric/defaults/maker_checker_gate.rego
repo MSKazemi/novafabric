@@ -1,9 +1,10 @@
 package novafabric.defaults.maker_checker_gate
 
-# Opt-in SoD gate (ADR-0058).
-# Load this policy file to block single-actor `nova promote direct`
-# for promotions targeting staging or production.
-# Teams that do not load this file are unaffected.
+# Historical opt-in SoD gate from ADR-0058. NOT EVALUATED: no NovaFabric action maps to
+# this package (see policy/_opa_engine.py _ACTION_TO_PACKAGE), so `deny_direct` has
+# never blocked anything. Superseded by ADR-0312: the `promote_direct` action
+# (promote_direct.rego) gates single-actor promotion into protected stages and denies
+# `production` by default. Kept so existing bundles that reference it still load.
 
 default deny_direct := false
 

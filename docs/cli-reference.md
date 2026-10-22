@@ -5355,9 +5355,9 @@ Show full metadata for an asset. If version is omitted, shows the latest registe
 
 ### nova promote
 
-**v0.13.0:** `nova promote` is now a sub-group with three sub-commands:
-`direct`, `propose`, and `approve`. Old scripts must add `direct` as the first
-positional argument.
+**v0.13.0:** `nova promote` is now a sub-group: `direct`, `propose`, and `approve`
+(plus `keygen` since ADR-0312). Old scripts must add `direct` as the first positional
+argument.
 
 #### nova promote direct \<name@version\> --to \<status\> [--force] [--significance-gate]
 
@@ -5372,6 +5372,8 @@ Promote an asset in a single step (no SoD enforcement). Valid transitions:
 
 Agent assets require a passing eval result to promote to `staging` or `production`.
 Use `--force` to override the eval gate (interactive confirmation required; audit-logged).
+**`production` is a protected stage:** direct promotion into it needs an explicit
+`promote_direct` policy allow and is refused by default. See *Protected stages* below.
 
 **`--significance-gate`** (opt-in, ADR-0080) — replace the single-passing-eval
 check with a *statistical* regression gate. A Wald SPRT runs over the asset's
@@ -5392,7 +5394,8 @@ instead of the `eval_results` table. Omitting `--scores-file` preserves the exac
 also emit a DSSE-signed SLSA v1 provenance (`slsa.dev/provenance/v1`) recording the promotion
 decision (and the `significance-gate/v1` gate when `--significance-gate` is set). The subject
 digest is the sha256 of the registered asset spec; the attestation is signed with the keyring
-Ed25519 key for `--identity` (default: OS username) and written to `<name>-<version>.slsa.json`
+Ed25519 key for `--identity` (default: OS username; this SLSA option is the one place an
+identity still defaults) and written to `<name>-<version>.slsa.json`
 (or `--slsa-out`). Verify it with `nova verify-envelope`. **Opt-in:** without the flag, promotion
 behavior and output are unchanged.
 
@@ -5416,27 +5419,107 @@ nova promote direct my-model@1.0.0 --to staging --slsa-provenance \
 
 The dashboard Promote dialog (`Registry tab → PROMOTE →`) maps to `nova promote direct`.
 
-#### nova promote propose \<name@version\> --to \<status\> [--identity NAME]
+#### Protected stages (ADR-0312) — works today
 
-Open a maker-checker proposal (maker step). Signs a canonical payload with the
-proposer's Ed25519 key (auto-generated at `~/.config/novafabric/keyring/<identity>.pem`
-if absent). The proposal ID is printed and stored in the `promotion_proposals` table.
+`nova promote direct` into a **protected stage** is refused unless the `promote_direct`
+policy action returns an explicit allow. Today exactly one stage is protected:
+`production`. Every other target behaves as before.
 
-- `--identity NAME` — name for the keypair (default: OS username). Must differ from
-  the approver's identity.
+- The default policy (`policies/novafabric/defaults/promote_direct.rego`) denies
+  `production`. With no OPA binary on `PATH`, NovaFabric runs the allow-all `NoopEngine`
+  for the other gates, but **a NoopEngine result does not count as an explicit allow**
+  here, so `--to production` is refused.
+- `--force` overrides the eval gates only. It does **not** bypass this gate.
+- To allow direct promotion for cases you accept, install OPA and point
+  `NOVAFABRIC_POLICY_BUNDLE_PATH` at a bundle whose `novafabric.defaults.promote_direct`
+  package allows them. The policy input carries `resource.to_status`,
+  `resource.asset_type` and `resource.ref`. The CLI subject (`cli-user`) is not an
+  authenticated identity, so do not key an allow on it.
+- A refusal exits `1` and is recorded as a `policy.deny` audit event with
+  `action: promote_direct`.
+- The intended route into `production` is `nova promote propose` + `nova promote approve`.
 
-#### nova promote approve \<name@version\> [--identity NAME]
+#### nova promote keygen --identity NAME
 
-Approve the latest open proposal for `name@version` (checker step). Enforces
-Separation of Duties at the cryptographic level:
+Create the Ed25519 keyring key that `propose` and `approve` sign with
+(`~/.config/novafabric/keyring/<identity>.pem`). Then print the **signer trust-list entry** an
+operator adds to bind that key to the identity. Idempotent: an existing key is never
+overwritten. This is the only command that creates a key for the maker-checker path. A
+new key is **not trusted** until it is added to the trust list.
 
-- The approver's key fingerprint must differ from the proposer's.
-- The approver's identity string must differ from the proposer's.
+```bash
+nova promote keygen --identity alice
+# Key for 'alice' created: …/keyring/alice.pem (fingerprint 1a2b3c4d5e6f7a8b)
+# To bind it, an operator adds this entry under `signers:` in ~/.novafabric/promote-signers.yaml:
+#   - identity: "alice"
+#     public_key: <base64 raw Ed25519 public key>
+#     fingerprint: 1a2b3c4d5e6f7a8b
+#     roles: [proposer, approver]
+```
 
-On success, promotes the asset and records a `promote.approve` audit event.
+#### Signer trust list (ADR-0312) — works today
 
-**Opt-in Rego gate:** Load `src/novafabric/policies/novafabric/defaults/maker_checker_gate.rego`
-to block `nova promote direct` to `staging`/`production` and require the two-step flow.
+`propose` and `approve` verify every signature against an operator-held trust list. It
+is found at `NOVAFABRIC_PROMOTE_SIGNERS` if that is set, otherwise at
+`$NOVAFABRIC_HOME/promote-signers.yaml`:
+
+```yaml
+signers:
+  - identity: alice
+    public_key: <base64 of the raw 32-byte Ed25519 public key>
+    fingerprint: 1a2b3c4d5e6f7a8b   # optional; must match public_key if present
+    roles: [proposer]
+  - identity: bob
+    public_key: <base64>
+    roles: [approver]
+```
+
+- Each key is bound to **exactly one** identity. A key listed twice refuses the whole file.
+- `roles` is drawn from `proposer` and `approver`. Give each person only the roles they hold.
+- A missing, unreadable or malformed list refuses maker-checker promotion. It is never
+  read as "trust everyone".
+- The list is a trust anchor: whoever can write it decides who may approve. Keep it
+  owned by an operator and read-only to signers. NovaFabric does not sign or protect
+  the file itself.
+
+#### nova promote propose \<name@version\> --to \<status\> --identity NAME
+
+Open a maker-checker proposal (maker step). Signs a canonical payload with the keyring key
+for `--identity`: proposal id, asset ref, target stage, and a domain-separation tag. Before
+the proposal is stored, the signature is verified with the public key the trust list
+binds to that identity, and the identity must hold the `proposer` role.
+
+- `--identity NAME` — **required** (no default since ADR-0312). It must name an existing
+  key from `nova promote keygen`. A missing key exits `1` and creates nothing.
+- Exit `3`: the trust list is missing or malformed, the key is not listed, the key is bound
+  to another identity, the role is missing, or the signature does not verify.
+- An open proposal stored before ADR-0312 (unverified) is marked `superseded` by the new
+  proposal instead of blocking the asset.
+
+#### nova promote approve \<name@version\> --identity NAME
+
+Approve the open proposal for `name@version` (checker step). The approver signs a payload
+bound to that exact proposal: its id, target stage and a hash of the maker's signature.
+Before anything changes:
+
+- The stored **maker** signature is re-verified against the trust list. An edited
+  proposal, or a maker since removed from the list, is refused with exit `3`. A proposal
+  stored before ADR-0312 reads as `unverified` and is refused with exit `3`; open a new
+  one with `propose`.
+- The **checker** signature must verify with the key bound to `--identity`, and that
+  identity must hold the `approver` role. Otherwise the command exits `4`.
+- Separation of duties compares the **bound** identities and keys, not the typed names.
+  If maker and checker resolve to the same bound identity, the command exits `6`.
+
+`--identity NAME` is **required** and must name an existing key. A missing key exits `1`
+and creates nothing. On success, promotes the asset and records a `promote.approve` audit
+event naming both bound identities and fingerprints.
+
+Rows written before ADR-0312 still read. `nova export-model-independence` reports them
+with `signature_verification: unverified`.
+
+`maker_checker_gate.rego` (ADR-0058) is **not evaluated** by any action and has never
+blocked anything. Protected-stage gating is the `promote_direct` action described above.
 
 ---
 
