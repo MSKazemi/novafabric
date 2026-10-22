@@ -7383,8 +7383,15 @@ Options:
 
 ### nova server assign-role \<user\> \<role\>
 
-Assign a local role to a user. Writes to the `role_assignments` table on the
+Record a local role for a user. Writes to the `role_assignments` table on the
 active backend. Per [ADR-0018](./decisions.md).
+
+⚠ A row is consulted only once the workspace/org model is in use (at least one
+scoped membership or service account, ADR-0178). Until then it grants nothing,
+and the command prints `Role '<role>' recorded for '<user>'` plus a
+`warning: this assignment is not in force` on stderr (exit 0) instead of
+`assigned to`. Grant a role in a stock deployment through the token itself (OIDC
+`nova_roles`/`roles` claim, or `nova server issue-token --roles`).
 
 ```bash
 nova server assign-role user@example.com writer

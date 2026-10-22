@@ -512,9 +512,13 @@ def assign_role_cmd(
         typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
     ] = None,
 ) -> None:
-    """Assign a role to a user (reader, writer, admin, or auditor).
+    """Record a role for a user (reader, writer, admin, or auditor).
 
     Scope: single server.
+
+    The row takes effect only once the workspace/org model is in use (a scoped
+    membership or service account exists, ADR-0178); until then a principal's
+    roles come from its token, and the command says so on stderr.
 
     \b
     Examples:
@@ -535,7 +539,18 @@ def assign_role_cmd(
         typer.echo(f"Failed to assign role: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(f"Role '{role}' assigned to '{user}'.")
+    from novafabric.server.rbac import NOT_IN_FORCE_EXPLANATION, role_assignments_in_force
+
+    if role_assignments_in_force(db_path=db_path):
+        typer.echo(f"Role '{role}' assigned to '{user}'.")
+        return
+    # H6: the row is written (the ADR-0060 last-admin guard counts it, and it
+    # takes effect the moment the workspace/org model is in use), but it grants
+    # nothing today — never print "assigned" for an assignment with no effect.
+    typer.echo(f"Role '{role}' recorded for '{user}' in role_assignments.")
+    typer.echo(
+        f"warning: this assignment is not in force: {NOT_IN_FORCE_EXPLANATION}", err=True
+    )
 
 
 # ---------------------------------------------------------------------------

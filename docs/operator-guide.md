@@ -1342,7 +1342,9 @@ ADR-0018/ADR-0058 roles (`reader,writer,admin,auditor,promoter,approver`), and
 `clock_skew_seconds > 300` are rejected at load time. Unmapped attribute values
 fail closed to `default_roles` (default `[]`) — never to `admin`. If
 `attribute_role_map` is absent, roles come from the existing local
-role-assignment table (`nova server assign-role`), same as the OIDC fallback.
+role-assignment table (`nova server assign-role`), same as the OIDC fallback —
+which is consulted only once the workspace/org model is in use (ADR-0178);
+`assign-role` warns when a row is not in force.
 
 ### Registering NovaFabric with the IdP
 

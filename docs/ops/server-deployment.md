@@ -482,11 +482,16 @@ Roles are stored in the `role_assignments` table. When using OIDC, roles can
 also be carried in the `nova_roles` (or `roles`) JWT claim. **The token's own
 roles are checked first;** `role_assignments` rows are only a fallback, and that
 fallback is consulted only once the workspace/org model is in use (at least one
-scoped membership or service account exists). ⚠ In a stock deployment that has
-neither, `assign-role` therefore has no effect on OIDC or offline-token
-principals, although the command reports success (known gap, tracked as a code
-fix). `promoter` and `approver` also exist for separation-of-duties and SCIM
-group mapping (`nova server scim-map-group`).
+scoped membership or service account exists, ADR-0178). ⚠ In a stock deployment
+that has neither, a recorded row has **no effect** on OIDC or offline-token
+principals. `assign-role` still writes the row (the last-admin guard counts it,
+and it takes effect the moment the workspace/org model is in use), but it then
+prints `Role '<role>' recorded for '<subject>'` and a `warning: this assignment is
+not in force` on stderr instead of claiming success. `GET /v0/admin/roles`
+reports the same thing per row as `effective_now`. To grant a role in a stock
+deployment today, carry it in the token: the OIDC `nova_roles`/`roles` claim, or
+`nova server issue-token --roles …`. `promoter` and `approver` also exist for
+separation-of-duties and SCIM group mapping (`nova server scim-map-group`).
 
 ---
 

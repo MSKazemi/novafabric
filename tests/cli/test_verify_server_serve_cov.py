@@ -491,7 +491,10 @@ class TestServerAssignRole:
         )
         assert result.exit_code == 0, result.output
         assert recorded == {"user": "alice@example.com", "role": "reader"}
-        assert "assigned to" in result.output
+        # H6: no workspace/org model in this fresh home → the row is recorded
+        # but not in force, and the CLI must say so rather than "assigned to".
+        assert "recorded for" in result.output
+        assert "not in force" in result.output
 
     def test_assign_role_invalid_role_exits_1(self):
         result = runner.invoke(app, ["server", "assign-role", "bob", "superuser"])

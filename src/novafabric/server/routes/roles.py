@@ -19,7 +19,12 @@ from pydantic import BaseModel, Field
 from novafabric.serve import audit
 from novafabric.server import rbac_store
 from novafabric.server.auth import AuthContext
-from novafabric.server.rbac import Role, require_role
+from novafabric.server.rbac import (
+    NOT_IN_FORCE_EXPLANATION,
+    Role,
+    require_role,
+    role_assignments_in_force,
+)
 from novafabric.server.rbac_store import LastAdminError
 from novafabric.server.step_up import require_step_up
 
@@ -61,28 +66,22 @@ def _oidc_configured() -> bool:
 def _list_roles_response() -> dict[str, Any]:
     """Build the GET /admin/roles response.
 
-    Adds an `effective_now` flag per assignment so callers can see the v0.14
-    gap documented in ADR-0060: assignments don't yet alter live OIDC auth.
+    Adds an `effective_now` flag per assignment so callers can see the gap
+    documented in ADR-0060: a row alters live authorization only once the
+    ADR-0178 workspace/org model is in use (``rbac.role_assignments_in_force``).
     """
     oidc = _oidc_configured()
+    # H6: ``effective_now`` used to be ``not <env var set>``, keyed on env vars
+    # server-mode OIDC never reads (it uses YAML ``oidc.issuer_url``), so a stock
+    # deployment reported every row effective while ``require_role`` ignored them.
+    # It now asks the exact gate ``require_role`` applies.
+    in_force = role_assignments_in_force()
     assignments = rbac_store.list_assignments()
-    enriched = [
-        {**row, "effective_now": not oidc}
-        for row in assignments
-    ]
+    enriched = [{**row, "effective_now": in_force} for row in assignments]
     return {
         "server_mode": oidc,
         "roles": enriched,
-        "message": (
-            ""
-            if oidc
-            else (
-                "Role management requires server mode with OIDC configured"
-                " (NOVA_OIDC_ISSUER, NOVA_OIDC_CLIENT_ID) for assignments to affect"
-                " live authorization. In local mode the assignments are stored but"
-                " do not change the shared-token admin behavior."
-            )
-        ),
+        "message": "" if in_force else f"Assignments are not in force: {NOT_IN_FORCE_EXPLANATION}",
     }
 
 
