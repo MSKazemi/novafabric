@@ -1458,7 +1458,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-capsule-delete",
     "name": "nova capsule delete",
     "journey": "infra",
-    "description": "Delete a capsule record, subject to retention policy and legal holds.",
+    "description": "Delete a capsule, subject to legal holds, WORM, seals and retention policy.",
     "fields": [
       {
         "key": "capsule-id",
@@ -1488,8 +1488,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "force",
         "label": "--force",
         "type": "toggle",
-        "hint": "Skip retention check (dangerous, requires confirmation)",
+        "hint": "Skip the retention-window check only. Legal holds, WORM locks, NovaSeal seals and deletion_mode=prohibited still refuse.",
         "flag": "--force"
+      },
+      {
+        "key": "capsule-dir",
+        "label": "--capsule-dir",
+        "type": "text",
+        "hint": "Capsule store to delete from (default: NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
+        "flag": "--capsule-dir"
       }
     ],
     "docsPath": "/docs/cli-reference/",
@@ -4177,7 +4184,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "schema",
         "label": "--schema",
         "type": "text",
-        "hint": "JSON-schema file (contract).",
+        "hint": "JSON-schema file (contract). Validated offline: a $ref outside the file is never fetched and exits 2.",
         "flag": "--schema"
       },
       {
@@ -6261,7 +6268,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "registry",
         "label": "--registry",
         "type": "text",
-        "hint": "Registry whose retention-policy.yaml, holds.jsonl and worm.db are read.",
+        "hint": "Registry whose retention-policy.yaml and worm.db are read, and whose legal holds are read from the shared hold store (nova hold / API).",
         "flag": "--registry"
       },
       {
@@ -7981,7 +7988,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "identity",
         "label": "--identity",
         "type": "text",
-        "hint": "Approver identity (Ed25519 keyring key; defaults to OS user).",
+        "hint": "Approver identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'approver' role. Defaults to the OS user.",
         "flag": "--identity",
         "defaultValue": ""
       },
@@ -8127,7 +8134,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "identity",
         "label": "--identity",
         "type": "text",
-        "hint": "Proposer identity (Ed25519 keyring key; defaults to OS user).",
+        "hint": "Proposer identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'proposer' role. Defaults to the OS user.",
         "flag": "--identity",
         "defaultValue": ""
       },
@@ -8190,8 +8197,16 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "unprotect",
         "label": "--unprotect",
         "type": "toggle",
-        "hint": "Revert the label to free ADR-0113 behaviour.",
+        "hint": "Revert the label to free ADR-0113 behaviour. On a protected label this is proposed, not applied: it needs maker-checker approval.",
         "flag": "--unprotect"
+      },
+      {
+        "key": "identity",
+        "label": "--identity",
+        "type": "text",
+        "hint": "Maker identity for a relaxation (--unprotect, fewer approvals, or a different --policy-ref on a protected label). Proposer identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'proposer' role. Defaults to the OS user.",
+        "flag": "--identity",
+        "defaultValue": ""
       },
       {
         "key": "json",
@@ -8248,7 +8263,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-label-status",
     "name": "nova label status",
     "journey": "govern",
-    "description": "Label protection config, current targets, and pending moves.",
+    "description": "Label protection config, current targets, pending moves and protection changes.",
     "fields": [
       {
         "key": "asset",
@@ -11675,7 +11690,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "to",
         "label": "--to",
         "type": "text",
-        "hint": "Explicit target version to restore (e.g. v1.8.0). If omitted, the most recent previous production version is used.",
+        "hint": "Explicit target version to restore (e.g. v1.8.0). If omitted, the most recent previous production version is used. A version the registry never recorded in production needs an explicit 'promote_direct' policy allow, like `nova promote direct` (ADR-0312).",
         "flag": "--to"
       },
       {

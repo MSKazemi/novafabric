@@ -3927,9 +3927,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
                 title: Response Compliance Pii Erase Endpoint Api Compliance Pii Erase Post
-                type: object
           description: Successful Response
         '422':
           content:

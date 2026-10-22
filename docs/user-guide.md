@@ -1616,8 +1616,16 @@ What is enforced today:
 - Proposals stored before ADR-0312 still list, as `unverified`. They cannot be approved.
   A new `propose` supersedes them.
 
-**Limit.** The trust list is the trust anchor. Anyone who can edit it can bind a second
-key to a second name. Keep it owned by an operator and read-only to signers.
+**Every single-actor route into production is gated the same way.** `nova promote direct`,
+`nova prompt promote`, the dashboard and `nova serve` promote endpoints, the `nova server`
+route `PUT /v0/assets/{id}/promote` (403 `promote_direct_denied`), and a `nova rollback` to a
+version that was never in production all need an explicit `promote_direct` policy allow;
+`--force` does not bypass it.
+
+**Limit.** The trust list is the trust anchor. Anyone who can edit it — or who can set
+`NOVAFABRIC_PROMOTE_SIGNERS` / `NOVAFABRIC_HOME` for the process doing the approving — can bind
+a second key to a second name. Keep it owned by an operator and read-only to signers, and do
+not let signers choose the environment of the process that verifies them (ADR-0312 Limits).
 
 ---
 
@@ -1637,10 +1645,14 @@ Steps performed in a single DB transaction:
 2. Find the most recent prior `production` version (auto, or use `--to`).
 3. Archive the current production version.
 4. Promote the prior version back to `production`.
-5. Write an audit log entry with a `rollback_reason` field.
+5. Write an audit log entry with a `rollback_reason` and a `gate` field.
 
-If the discovered prior version is archived, the command errors and asks you to
-supply `--to` explicitly. `--actor` is required and recorded in the audit trail.
+"Prior production version" comes from the registry's append-only status history. A version
+that was in production before is restored at once, even if it is archived — that is what
+incident response needs. A `--to` target that was **never** in production is refused unless
+the `promote_direct` policy action explicitly allows it (ADR-0312), the same gate as
+`nova promote direct`; otherwise `promote --to staging` followed by a rollback would be a
+single-person path into production. `--actor` is recorded in the audit trail.
 
 ---
 

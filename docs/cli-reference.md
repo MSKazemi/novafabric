@@ -4852,6 +4852,16 @@ that DEK, so after erasure it is permanently unreadable and readers render it as
 not affected. Writes an `ErasureReceipt` (immediate) or
 `ErasureDeferredReceipt` (Art.17(3)(b) retention window still active).
 
+**Legal holds win (GDPR Art.17(3)(e)).** While any legal hold is active
+(`nova hold create` or `POST /api/holds`, in any registry; a damaged hold
+ledger counts as a hold), the DEK is **not** destroyed: the command writes an
+`ErasureHeldReceipt` (`outcome: held`, `dek_retained: true`, the active `holds`, and each
+associated capsule under `held_capsules` with its hold ids) and exits `3`. One DEK protects
+all of a subject's capsules and holds are registry-global today, so nothing is erased while a
+hold is active — repeat the request after release. There is no override flag. Every outcome
+(completed, deferred, held) is appended to the audit log as an `erasure.request` event carrying
+the subject's SHA-256 only.
+
 ```bash
 nova pii erase "user@example.com"
 nova pii erase "user@example.com" --output receipt.json
@@ -4863,7 +4873,8 @@ Options:
 - `--capsule-dir PATH` — search for redaction manifests here (default: `$NOVAFABRIC_HOME/capsules/`)
 - `--retention-months INT` — Art.17(3)(b) retention floor in months (default: `6`; provider mode: `120`)
 
-Exit codes: `0` (receipt written), `1` (subject not found or error).
+Exit codes: `0` (erased or deferred; receipt written), `1` (subject not found or error),
+`3` (held by a legal hold — nothing erased; `ErasureHeldReceipt` written).
 
 Scope: single data subject. Requires DEK store at `$NOVAFABRIC_HOME/dek.db`.
 
@@ -6424,10 +6435,13 @@ dedicated `nova prompt promote <prompt_id>@<version> --to <status> [--force]` al
 available (works today, ADR-0112 P4): a thin, deliberate wrapper around `nova promote direct`
 so prompts go through the exact same eval/policy gates and audit trail as any other asset —
 it adds only a type check that refuses to "promote" a non-prompt asset through this surface.
+Like `nova promote direct`, `--to production` is refused unless the `promote_direct` policy
+action explicitly allows it (ADR-0312; `--force` does not bypass this) — use
+`nova promote propose` + `nova promote approve` instead.
 
 ```bash
 nova prompt promote triage@1.2.0 --to staging
-nova prompt promote triage@1.2.0 --to production
+nova prompt promote triage@1.2.0 --to production   # needs an explicit promote_direct allow
 ```
 
 ### Prompt composition (experimental, ADR-0115)
@@ -6573,16 +6587,33 @@ the same append-only `asset_label_history` audit table, reusing the pending move
 its `move_id`. Free (unprotected) labels are completely unchanged. Fully offline; the
 optional `--policy-ref` Rego gate (ADR-0019) fails closed if the policy file is unreadable.
 
-### nova label protect \<asset\> \<label\> [--required-approvals N] [--policy-ref PATH] [--note TEXT] [--unprotect] [--json]
+**Relaxing a protection is maker-checker too** (ADR-0114 Amendment 2). Removing protection
+(`--unprotect`), lowering `--required-approvals`, or replacing or dropping an existing
+`--policy-ref` on a protected label does **not** apply: `nova label protect` records a signed
+pending *protection change* (maker = `--identity`, `proposer` role) and the protection stays
+in force until as many distinct trust-listed checkers as it currently requires approve it with
+`nova label approve-move`. A change proposed against a configuration that has since changed is
+`superseded` and never applies. Protecting a free label, raising `--required-approvals`, or
+adding a `--policy-ref` is still a single-actor action. Before this, one person could
+unprotect, move, and re-protect a label with three exit-0 commands.
 
-Mark a label protected (or `--unprotect` to revert to free ADR-0113 behaviour). Protecting an
+### nova label protect \<asset\> \<label\> [--required-approvals N] [--policy-ref PATH] [--note TEXT] [--unprotect] [--identity NAME] [--json]
+
+Mark a label protected, or raise its protection; this applies at once. Protecting an
 already-assigned label does not move it — it only governs future moves. Config changes are
 append-only events; the active setting is the newest one.
+
+On a protected label, a **relaxation** (`--unprotect`, fewer `--required-approvals`, or a
+different or removed `--policy-ref`) is proposed, not applied: the command prints (or with
+`--json` returns) a pending protection change id, signed by `--identity` (an existing keyring
+key bound with the `proposer` role; default: the OS user). Approve it with
+`nova label approve-move <asset> <label> <change-id>`. Exit codes for a relaxation: `0`
+proposed, `1` usage/state error or missing key, `3` maker-side trust-list or signature failure.
 
 ```bash
 nova label protect prompt:triage production
 nova label protect prompt:triage production --required-approvals 2 --note "gates live traffic"
-nova label protect prompt:triage production --unprotect
+nova label protect prompt:triage production --unprotect --identity alice   # proposes; needs approvals
 ```
 
 ### nova label propose-move \<asset\> \<label\> --to \<version\> [--reason TEXT] [--identity NAME] [--json]
@@ -6599,7 +6630,11 @@ nova label propose-move prompt:triage production --to 8 --reason "v8 passed the 
 
 ### nova label approve-move \<asset\> \<label\> \<move_id\> [--reject] [--note TEXT] [--identity NAME] [--json]
 
-Checker step: approve (or `--reject`, terminal) a pending move. Before anything is
+Checker step: approve (or `--reject`, terminal) a pending move — or a pending protection
+change, when the id names one. A protection change applies (atomically, as a new protection
+event whose note names the change and its approvers) once trust-verified approvals from
+distinct bound identities reach the `required_approvals` of the protection that was in force
+when it was proposed; the same signer, re-verification and SoD rules apply. Before anything is
 recorded, the checker's key must exist and be bound to `--identity` with the `approver` role,
 the maker's stored signature is re-verified (approve only), and SoD compares the **bound**
 identities and key fingerprints. When trust-verified approvals from distinct bound identities
@@ -6620,8 +6655,8 @@ nova label approve-move prompt:triage production 01J2Q8ZK7M4YZ2K7N9DPBYK2WX --re
 
 ### nova label status \<asset\> [--label L] [--json]
 
-Protection config, current label targets, and all recorded moves (pending and terminal) for
-an asset.
+Protection config, current label targets, all recorded moves (pending and terminal), and all
+protection changes (`protection_changes` in `--json`) for an asset.
 
 ```bash
 nova label status prompt:triage
@@ -6704,14 +6739,25 @@ Steps performed in one DB transaction:
 2. Find the most recent prior `production` version (auto, or use `--to`).
 3. Archive the current production version.
 4. Promote the prior version back to `production`.
-5. Write an audit log entry with a `rollback_reason` field.
+5. Write an audit log entry with a `rollback_reason` and a `gate` field.
+
+**Gate (ADR-0312 D1).** "Prior production version" is read from the registry's append-only
+status history (`asset_status_history`, which records every status change). A version that
+history shows was in `production` is restored without a policy decision
+(`gate: previously_production`) — archived or not. Any other `--to` target is a single-actor
+move into production: it is refused (exit 1) unless the `promote_direct` policy action
+explicitly allows it, exactly like `nova promote direct`, and it must also pass the lifecycle,
+`promote` policy and eval gates (`gate: promote_direct`). Auto-discovery considers only
+versions with production history; it never falls back to "some other version". A registry
+created before the history table records its current production versions when first opened
+by this release; versions archived before that have no history and take the gated path.
 
 Options:
 - `--to <version>` — target an explicit rollback version instead of auto-discovery.
-- `--actor <id>` — required; recorded in the audit log.
+- `--actor <id>` — recorded in the audit log and as `promoted_by` (default: `cli-user`).
 
-Errors clearly if the discovered prior version is archived (requires `--to`) or if
-no production history exists.
+Errors (exit 1) when there is no current production version, no prior production version in
+the history, or a `--to` target without production history lacks a `promote_direct` allow.
 
 ### nova unregister \<name@version\>
 
@@ -8186,7 +8232,9 @@ Exits with code 1 if the hold ID is not found or already released.
 
 ### nova capsule delete \<capsule-id\>
 
-Delete a capsule record, subject to retention policy and legal holds.
+Delete a capsule: removes the capsule directory and its runs-cache index rows through the
+same governed core as `DELETE /v0/capsules/{run_id}` and the dashboard delete route
+(ADR-0206), and reports success only once the capsule is actually gone.
 
 ```bash
 nova capsule delete cap-01JXXXXX --registry my-registry
@@ -8195,16 +8243,30 @@ nova capsule delete cap-01JXXXXX --registry my-registry --force
 ```
 
 Options:
-- `--registry TEXT` — required; the registry name owning this capsule
+- `--registry TEXT` — required; the registry whose retention policy applies
 - `--age-days N` — age of the capsule in days (used for retention window check; default: 0)
-- `--force` — skip retention and hold checks (dangerous; use only for emergency recovery)
+- `--force` — skip the retention-window check **only** (holds, WORM, seals and
+  `deletion_mode: prohibited` still refuse)
+- `--capsule-dir PATH` — capsule store (default: `NOVAFABRIC_CAPSULE_DIR`, else
+  `$NOVAFABRIC_HOME/capsules`)
 
-Deletion is blocked when:
-- One or more active legal holds exist for the registry (even without a `retention-policy.yaml`)
-- A `retention-policy.yaml` exists and the capsule is within the retention window
-- `deletion_mode: prohibited` is set in the policy
+Deletion is refused (exit 1, nothing reported or audited as deleted) when:
+- any legal hold is active — in **any** registry, `--force` included (holds are
+  registry-global, as on the server delete routes; a damaged ledger counts as a hold)
+- an unexpired WORM lock or a NovaSeal seal protects the capsule
+  (`NOVAFABRIC_ALLOW_SEALED_DELETE=1` lifts the seal refusal only)
+- a retention policy sets `deletion_mode: prohibited`
+- the capsule is within a policy's retention window (unless `--force`)
+- the capsule does not exist
 
-On success, a signed `capsule.delete` entry is appended to the audit log.
+Retention policies are read from `$NOVAFABRIC_HOME/registries/<registry>/retention-policy.yaml`
+and the legacy `./.novafabric/registries/<registry>/retention-policy.yaml`; every file found
+applies, and an unreadable one refuses (fail closed). A refusal by a hold, WORM lock or seal is
+recorded as a `run.index_delete_refused` audit event. After the capsule is gone, a
+`capsule.delete` entry is appended to the hash-chained audit log.
+
+Before this release the command printed "Deleted capsule", exited 0 and audited
+`capsule.delete` without removing anything, and `--force` also skipped the hold check.
 
 ---
 
@@ -8270,6 +8332,13 @@ nova retention plan --registry my-registry --json
 Apply due retention actions. Confirm-gated: prompts unless `--yes` (or
 `--dry-run`). Idempotent and fail-safe — re-runs are no-ops; a per-item
 failure is recorded `error` and the sweep continues.
+
+Holds are re-read **immediately before every action**, not only while planning: a legal
+hold or WORM lock placed while the confirmation prompt waits, or during the sweep, still wins
+(recorded `skipped` with `legal_hold_active: <ids>` or `worm_hold`). If the re-check itself
+fails, the item is `skipped` (`hold_check_failed`). A `crypto-shred` that the DEK store
+refuses under a hold is recorded `skipped` (`legal_hold_active`), never `applied`, so a later
+`nova restore` does not replay it.
 
 ```bash
 nova retention apply --registry my-registry --dry-run          # preview
