@@ -27,6 +27,7 @@ from novafabric.capture import _tool_codec as codec
 from novafabric.capture import _tool_scope
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import get_current_writer
+from novafabric.capture.hooks._fail_open import TOOL_CALLS_STREAM, fail_open
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
@@ -148,11 +149,11 @@ class PythonToolHook:
         self, pending: _Pending, nested: int, *,
         value: Any = None, error: BaseException | None = None,
     ) -> None:
-        try:
+        # Recording never raises into the workload; a failure is logged and
+        # counted in capture-health.json rather than silently dropped.
+        with fail_open("record.tool", TOOL_CALLS_STREAM):
             record = self.build_record(pending, nested, value=value, error=error)
             get_current_writer(self._writer).append_tool_call(record)
-        except Exception:  # noqa: BLE001 -- recording never raises into the workload
-            pass
 
     def build_record(
         self, pending: _Pending, nested: int, *,

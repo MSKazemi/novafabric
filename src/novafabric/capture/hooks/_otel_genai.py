@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from novafabric.capture._jsonable import to_jsonable
+
 # OTel-aligned mapping from request-body keys to semconv attribute names.
 # Both the OpenAI and Anthropic Messages API surface these keys with the
 # same JSON name (the differences are at the SDK call site, not the
@@ -70,6 +72,26 @@ def _extract_choice_count(body: dict[str, Any]) -> int | None:
     if isinstance(n, int) and n > 0:
         return n
     return None
+
+
+def _request_messages(value: Any) -> list[Any]:
+    """``messages`` as a JSON-safe list.
+
+    The SDK hooks pass the caller's own ``kwargs``, whose messages may hold SDK
+    objects (``completion.choices[0].message`` passed back into the next call).
+    Each one is converted the way the SDK serialises it on the wire (see
+    :mod:`novafabric.capture._jsonable`), so the record never holds a value
+    ``json.dumps`` rejects and later steps (media annotation) see plain dicts.
+    Wire-hook bodies are parsed JSON already and come back equal.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        try:
+            value = list(value)
+        except TypeError:  # not iterable: nothing to record
+            return []
+    return [to_jsonable(m) for m in value]
 
 
 def extract_request_attributes(
@@ -113,7 +135,7 @@ def extract_request_attributes(
         "gen_ai.operation.name": operation_name,
         "gen_ai.request.model": model,
         "gen_ai.response.model": model,
-        "gen_ai.request.messages": list(body.get("messages", [])),
+        "gen_ai.request.messages": _request_messages(body.get("messages")),
         "gen_ai.response.choices": [],
         "gen_ai.usage.input_tokens": 0,
         "gen_ai.usage.output_tokens": 0,

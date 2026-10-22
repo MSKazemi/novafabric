@@ -20,9 +20,11 @@ import json
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder, get_current_writer
+from novafabric.capture.hooks._fail_open import MODEL_CALLS_STREAM, fail_open
 from novafabric.capture.hooks._layering import is_inside_higher_layer
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
@@ -37,6 +39,10 @@ from novafabric.capture.record_roles import stamp_wire_record
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
+
+
+_LIBRARY = "urllib3"
+NETWORK_EVENTS_STREAM = "network_events.jsonl"
 
 
 def _now() -> str:
@@ -156,7 +162,18 @@ class Urllib3Hook:
             error_status = 599
             raise
         finally:
-            duration_ms = int((time.monotonic() - t0) * 1000)
+            self._record(method, full_url, kwargs, response, started,
+                         int((time.monotonic() - t0) * 1000), error_status)
+        return response
+
+    def _record(
+        self, method: str, full_url: str, kwargs: dict[str, Any], response: Any,
+        started: str, duration_ms: int, error_status: int | None,
+    ) -> None:
+        """Write the model-call record and the network event. Never raises:
+        the response or the transport's exception passes through unchanged."""
+        status_code = 0
+        with fail_open(_LIBRARY, MODEL_CALLS_STREAM):
             body = _extract_body_from_kwargs(kwargs)
             status_code = (
                 error_status
@@ -175,34 +192,25 @@ class Urllib3Hook:
                 body, url=full_url,
                 gen_ai_system=self._registry.gen_ai_system(full_url),
             ))
-            try:
-                get_current_writer(self._writer).append_model_call(
-                    stamp_wire_record(record)
-                )
-            except Exception:
-                pass
+            get_current_writer(self._writer).append_model_call(stamp_wire_record(record))
 
-            # Record a NetworkEvent in the active capsule (fail-open) —
-            # ADR-0209 D2.4 parity with the httpx/requests hooks. Reached only
-            # when no higher-layer hook owns the call (see the layering guard
-            # early-return above), so a requests-initiated urllib3 call is
-            # never double-recorded.
-            try:
-                _recorder = get_current_recorder()
-                if _recorder is not None:
-                    from urllib.parse import urlparse
-                    _parsed = urlparse(full_url)
-                    _recorder.record_network_event(
-                        method=str(method or "UNKNOWN"),
-                        url=full_url,
-                        host=_parsed.hostname or "",
-                        port=_parsed.port,
-                        status_code=status_code if status_code != 0 else None,
-                        response_size_bytes=safe_response_size(response),
-                        duration_ms=float(duration_ms),
-                        library="urllib3",
-                        is_ai_api=_is_ai_api(full_url),
-                    )
-            except Exception:
-                pass  # fail-open
-        return response
+        # Record a NetworkEvent in the active capsule (fail-open) —
+        # ADR-0209 D2.4 parity with the httpx/requests hooks. Reached only
+        # when no higher-layer hook owns the call (see the layering guard
+        # early-return in _wrapped_urlopen), so a requests-initiated urllib3
+        # call is never double-recorded.
+        with fail_open(_LIBRARY, NETWORK_EVENTS_STREAM):
+            _recorder = get_current_recorder()
+            if _recorder is not None:
+                _parsed = urlparse(full_url)
+                _recorder.record_network_event(
+                    method=str(method or "UNKNOWN"),
+                    url=full_url,
+                    host=_parsed.hostname or "",
+                    port=_parsed.port,
+                    status_code=status_code if status_code != 0 else None,
+                    response_size_bytes=safe_response_size(response),
+                    duration_ms=float(duration_ms),
+                    library=_LIBRARY,
+                    is_ai_api=_is_ai_api(full_url),
+                )
