@@ -71,7 +71,7 @@ these instruments.
 | **EU AI Act** | Annex IV technical-documentation export; risk-tier classification | `nova export-annex-iv` · `nova classify run` | experimental |
 | **NIST AI RMF 1.0** | Risk report mapped from capsule facts | `nova export-nist-rmf` | experimental |
 | **ISO/IEC 42001** | AI management-system evidence export; examiner package | `nova export-compliance iso42001` · `nova export-examiner iso42001` | experimental |
-| **GDPR** | Art. 30 Records of Processing; Art. 17 per-subject DEK destruction (experimental: key lifecycle only — capture does not yet encrypt PII with per-subject keys); DSAR assembly | `nova export-ropa` · `nova pii erase` · `nova dsar assemble` | experimental |
+| **GDPR** | Art. 30 Records of Processing; Art. 17 crypto-shredding of PII captured with `nova capture --pii-subject` (ADR-0314; other capsules are not encrypted); DSAR assembly | `nova export-ropa` · `nova pii erase` · `nova dsar assemble` | experimental |
 | **NIS2** | Incident report export | `nova export-nis2` | experimental |
 | **HIPAA** | Safe Harbor de-identification proof | `nova export-hipaa-proof` | experimental |
 | **OMB M-24-10** | Risk-tier vocabulary in classification | `nova classify list-vocabularies` | experimental |

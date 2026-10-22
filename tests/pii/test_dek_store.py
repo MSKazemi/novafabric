@@ -206,3 +206,20 @@ def test_erasure_receipt_json_round_trip(store: DEKStore) -> None:
     assert restored.legal_basis == receipt.legal_basis
     assert set(restored.capsule_ids_affected) == {"capsule-abc", "capsule-xyz"}
     assert restored.erased_at == receipt.erased_at
+
+
+def test_erased_key_bytes_leave_every_store_file_even_with_an_idle_reader(
+    tmp_path: Path,
+) -> None:
+    """ADR-0314: an idle second connection kept the destroyed key in dek.db-wal."""
+    writer = DEKStore(tmp_path / "dek.db")
+    reader = DEKStore(tmp_path / "dek.db")
+    try:
+        key = writer.get_or_create_dek("subject-wal").dek_hex
+        assert reader.get_dek("subject-wal") is not None
+        writer.erase_subject("subject-wal", capsule_ids=[], retention_months=0)
+        blob = b"".join(p.read_bytes() for p in tmp_path.glob("dek.db*"))
+        assert key.encode() not in blob
+    finally:
+        reader.close()
+        writer.close()

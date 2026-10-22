@@ -13,10 +13,11 @@
 # limitations under the License.
 """CLI commands for the GDPR Art.17 per-subject DEK lifecycle (cap-001, ADR-0069).
 
-Status — experimental: key lifecycle only. ``nova pii erase`` destroys a data
-subject's AES-256-GCM DEK, but capture does not yet encrypt PII with per-subject
-keys, so no capsule holds ciphertext under that DEK and erasure does not make any
-captured PII unreadable (ADR-0069 §2 is not implemented).
+Status — experimental (ADR-0314). ``nova pii erase`` destroys a data subject's
+AES-256-GCM DEK. PII captured with ``nova capture --pii-subject <id>`` is encrypted
+under that DEK, so after erasure it is unreadable and renders as ``[erased]``. PII
+in capsules captured without --pii-subject is not encrypted; erasure does not touch
+it.
 """
 
 from __future__ import annotations
@@ -42,8 +43,8 @@ console = Console()
 
 app = typer.Typer(
     help=(
-        "GDPR Art.17 per-subject DEK lifecycle — experimental: key lifecycle only; "
-        "capture does not yet encrypt PII with per-subject keys."
+        "GDPR Art.17 crypto-shredding — experimental: erasure makes PII unreadable "
+        "only in capsules captured with --pii-subject (ADR-0314)."
     ),
     no_args_is_help=True,
 )
@@ -119,11 +120,12 @@ def erase_cmd(
         ),
     ),
 ) -> None:
-    """Destroy the AES-256-GCM DEK for a data subject (experimental: key lifecycle only).
+    """Destroy the AES-256-GCM DEK for a data subject (experimental, ADR-0314).
 
     Overwrites then deletes the per-subject Data Encryption Key from dek.db.
-    Experimental: key lifecycle only — capture does not yet encrypt PII with
-    per-subject keys, so this does not make PII in existing capsules unreadable.
+    PII captured with `nova capture --pii-subject <id>` is encrypted under this
+    DEK and becomes unreadable (readers render the placeholder 'erased'); PII in
+    capsules captured without --pii-subject is not encrypted and stays readable.
     WORM storage and NovaSeal manifest chains are not modified.
 
     If the DEK was created within the Art.17(3)(b) retention window

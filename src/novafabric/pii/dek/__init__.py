@@ -13,9 +13,8 @@
 # limitations under the License.
 """Data Encryption Key (DEK) store for GDPR Art.17 erasure (ADR-0069).
 
-Status — experimental: key lifecycle only. The AES-256-GCM DEK lifecycle is
-implemented; capture does not yet encrypt PII with per-subject keys, so DEK
-destruction does not yet erase any captured PII.
+Status — experimental (ADR-0314). DEK destruction erases the PII that capture
+encrypted under the DEK, which happens only for ``nova capture --pii-subject <id>``.
 """
 
 from .store import (

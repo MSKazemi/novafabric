@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -53,6 +55,15 @@ class RedactionManifestEntry(BaseModel):
     redacted_at_utc: str = Field(
         ...,
         description="ISO 8601 UTC timestamp when the redaction was applied",
+    )
+    protection: Literal["envelope", "mask"] | None = Field(
+        default=None,
+        description=(
+            "ADR-0314 (additive, optional): 'envelope' = the span was replaced by an "
+            "AES-256-GCM envelope under the subject's DEK (readable until "
+            "`nova pii erase`); 'mask' = the span was replaced by a redaction token "
+            "(not recoverable). Absent on manifests written before ADR-0314."
+        ),
     )
 
     model_config = {"frozen": True}

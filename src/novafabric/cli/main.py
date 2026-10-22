@@ -675,8 +675,8 @@ app.add_typer(
     pii_app,
     name="pii",
     help=(
-        "GDPR Art.17 per-subject DEK lifecycle (ADR-0069) — experimental: key lifecycle "
-        "only; capture does not yet encrypt PII with per-subject keys."
+        "GDPR Art.17 crypto-shredding (ADR-0069/0314) — experimental: erasure makes PII "
+        "unreadable only in capsules captured with --pii-subject."
     ),
 )
 # NF-179 (ADR-0149): portable agent-passport projection — offline green/amber/red.

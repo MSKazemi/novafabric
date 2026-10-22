@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/pii-envelope.schema.json",
+  "$comment": "schema_version 1; ADR-0314 (amends ADR-0069 section 2), experimental. Additive and optional: an envelope exists only in capsules captured with `nova capture --pii-subject`. Inline form inside any captured string: [NFPII:v1:<entity_type>:<subject_ref>:<nonce>:<ciphertext in '.'-separated groups of <=16 hex chars>]. Associated data (not stored) = 'novafabric/pii-envelope/v1\\n' + canonical JSON {entity_type, field_path, run_id, span_index, subject_id}.",
+  "title": "PIIEnvelope",
+  "description": "Parsed form of one per-subject PII envelope token: AES-256-GCM ciphertext of one PII span under the data subject's DEK ($NOVAFABRIC_HOME/dek.db). Destroying the DEK (`nova pii erase`) makes it permanently unopenable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "alg", "entity_type", "subject_ref", "nonce", "ciphertext"],
+  "properties": {
+    "version": {"const": 1},
+    "alg": {"const": "AES-256-GCM"},
+    "entity_type": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_+]{1,64}$",
+      "description": "Detection rule(s) that matched, '+'-joined when spans overlapped (e.g. EMAIL, SUBJECT_ID, EMAIL+PERSON)."
+    },
+    "subject_ref": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "HMAC-SHA256(NOVA_PII_PEPPER, subject_id); the raw subject id is never stored in a capsule."
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{24}$",
+      "description": "12 random bytes, fresh per envelope."
+    },
+    "ciphertext": {
+      "type": "string",
+      "pattern": "^[0-9a-f]+$",
+      "description": "AES-256-GCM ciphertext followed by its 16-byte tag, lowercase hex."
+    }
+  }
+}

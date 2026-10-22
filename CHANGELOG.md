@@ -13,6 +13,19 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Per-subject PII encryption at capture: `nova capture --pii-subject <id>` (ADR-0314,
+  experimental).** Detected PII and every literal occurrence of the subject id in the
+  capsule's text targets are replaced by versioned AES-256-GCM envelope tokens
+  (`[NFPII:v1:…]`, `schemas/pii-envelope.schema.json`) under the subject's DEK from
+  `$NOVAFABRIC_HOME/dek.db`; associated data binds run id, field path, position, rule and
+  subject. Each protected span is listed in `redaction_manifest.json` (new optional
+  `protection` field), which `nova pii status` reads. After `nova pii erase <id>` the
+  tokens cannot be opened; `novafabric.pii.envelope` readers render `[erased]`, and a
+  modified token renders `[tampered]`. Requires `NOVA_PII_PEPPER`. If the DEK is
+  unavailable the PII is masked and a `masker_errors[]` entry is recorded; it is never
+  stored in plaintext and the workload is not blocked. Not covered: binary or oversize
+  artifacts, media blobs, in-process (adapter/decorator) capsules, and the ADR-0009
+  proof's whole-file `hash_before`. Without `--pii-subject`, capture is unchanged.
 - **Mocked replay serves `record.tool` boundaries that called a model or tool (ADR-0306
   slice 4, experimental).** The records written inside a served boundary are consumed as
   *covered* (nested boundaries too), so later calls still get their own recorded answers;
@@ -101,13 +114,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   `tree_size` (ADR-0313).** The local-log check confirmed the leaf's position but ignored the
   recorded tree head; for a v1 seal, a proof for leaf 2 of 3 is byte-identical to one for
   leaf 2 of 4, so only the log can refuse the wrong size, and now does.
-- **Erasure documentation now matches what the code does (ADR-0069).** `nova pii erase`
-  destroys a data subject's DEK, but no capture path encrypted PII with that DEK, so the
-  claim that erasure made captured PII unreadable was not true. The CLI help, docstrings,
-  API reference, ROADMAP and user docs now label the feature **experimental: key lifecycle
-  only**. A guard test (`tests/pii/test_erasure_claims_match_the_code.py`) derives from the
-  AST of `src/` whether capture encrypts with a per-subject DEK and fails on any unlabelled
-  claim.
+- **Erasure documentation now matches what the code does (ADR-0069, ADR-0314).**
+  `nova pii erase` destroyed a data subject's DEK, but no capture path encrypted PII with
+  that DEK, so the claim that erasure made captured PII unreadable was not true. CLI help,
+  docstrings, API reference, ROADMAP and user docs now state that erasure makes PII
+  unreadable only in capsules captured with `--pii-subject` (below). A guard test
+  (`tests/pii/test_erasure_claims_match_the_code.py`) derives from the AST of `src/`
+  whether `nova capture` reaches per-subject DEK encryption and fails on any erasure claim
+  that does not carry the matching qualifier.
+- **A destroyed DEK no longer survives in `dek.db-wal`.** With a second connection open
+  (for example `nova serve`), the frames holding the erased key stayed in the WAL file.
+  `DEKStore` now sets `secure_delete` and truncates the WAL after an erasure; a deferred
+  checkpoint is logged (`dek_erasure_wal_checkpoint_deferred`).
 
 - **The container eval suites' docs and comments no longer claim a published default image
   or a "host-env" fallback.** GAIA, AgentBench, MMLU, SWE-bench and TruthfulQA run only

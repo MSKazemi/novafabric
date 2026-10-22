@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 if TYPE_CHECKING:
     from novafabric.masking import MaskingPipeline
@@ -335,6 +335,20 @@ def capture_cmd(
             ),
         ),
     ] = None,
+    pii_subject: Annotated[
+        str | None,
+        typer.Option(
+            "--pii-subject",
+            help=(
+                "EXPERIMENTAL (ADR-0314): the data subject this run's PII belongs to. "
+                "Detected PII (and every literal occurrence of the id) is encrypted "
+                "with the subject's AES-256-GCM DEK from $NOVAFABRIC_HOME/dek.db, so "
+                "`nova pii erase <id>` makes it unreadable. Requires NOVA_PII_PEPPER. "
+                "If the DEK is unavailable the PII is masked instead, never stored "
+                "in plaintext. Without --pii-subject PII is not encrypted."
+            ),
+        ),
+    ] = None,
     daemon: Annotated[
         bool,
         typer.Option(
@@ -382,6 +396,9 @@ def capture_cmd(
 
       # Mark AI-generated output for EU AI Act Art.50 (writes c2pa-manifest.json)
       nova capture --mark-provenance python agent.py
+
+      # Encrypt a data subject's PII under its DEK (ADR-0314, experimental)
+      NOVA_PII_PEPPER=... nova capture --pii-subject user-42 -- python agent.py
     """
     # Collect args: explicit Argument list + any extra args captured via context
     cmd = list(command) + list(ctx.args)
@@ -397,9 +414,11 @@ def capture_cmd(
         or masking_config is not None
         or _default_masking_yaml.is_file()
     )
-    pipeline = None
+    pipeline: Any = None
     if _masking_requested:
         pipeline = _build_masking_pipeline(masker, masking_config, _default_masking_yaml)
+    if pii_subject is not None:
+        pipeline = _add_pii_envelope_stage(pipeline, pii_subject)
 
     # Warm-daemon delegation (ADR-0092): only for a *plain* invocation. The thin
     # client forwards argv/cwd/env only, so any flag the daemon worker does not
@@ -541,6 +560,28 @@ def capture_cmd(
         _print_first_capsule_invite(result.capsule_dir)
     if result.exit_code != 0:
         raise typer.Exit(code=result.exit_code)
+
+
+def _add_pii_envelope_stage(pipeline: Any, subject_id: str) -> Any:
+    """Append the ADR-0314 per-subject envelope stage after the ADR-0135 maskers.
+
+    Resolved before the workload runs: a missing pepper or an empty subject id is a
+    configuration error and aborts at start, never a silent plaintext capture.
+    """
+    from novafabric.pii.capture_stage import ChainedCaptureStages, SubjectEnvelopeStage
+
+    pepper = os.environ.get("NOVA_PII_PEPPER", "")
+    if not pepper:
+        raise typer.BadParameter(
+            "NOVA_PII_PEPPER must be set to use --pii-subject: the capsule references "
+            "the subject only by its HMAC, never by the raw id.",
+            param_hint="'--pii-subject'",
+        )
+    try:
+        stage = SubjectEnvelopeStage(subject_id, pepper=pepper.encode("utf-8"))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="'--pii-subject'") from exc
+    return ChainedCaptureStages([pipeline, stage])
 
 
 def _build_masking_pipeline(

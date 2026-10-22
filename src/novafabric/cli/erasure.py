@@ -10,8 +10,8 @@ records an erasure as started, and nothing started. They now fail loudly and nam
 the working paths rather than reporting a success that did not happen.
 
 Working today: ``nova pii erase <subject_id>`` (per-subject DEK destruction,
-ADR-0069 — experimental: key lifecycle only; capture does not yet encrypt PII with
-per-subject keys)
+ADR-0069/0314 — experimental; it makes PII unreadable only in capsules captured with
+``--pii-subject``)
 and the ``/v0/erasure`` server route, which uses the persisted queue in
 ``pii/erasure_queue.py`` behind an explicit confirmation and a fail-closed
 cap-003 gate.
@@ -45,7 +45,7 @@ def erasure_request_cmd(
     erasure that never started.
 
     The real implementations are ``nova pii erase`` (DEK destruction, ADR-0069;
-    experimental: key lifecycle only)
+    experimental: unreadable only for PII captured with ``--pii-subject``)
     and the ``/v0/erasure`` server route, which uses the persisted queue in
     ``pii/erasure_queue.py`` behind an explicit confirmation and a fail-closed
     cap-003 gate. Wiring this command to that queue is a change to what a
@@ -55,7 +55,7 @@ def erasure_request_cmd(
         "[red]nova erasure request is not implemented.[/red] It never queued "
         "anything; it only printed a message.\n"
         "  Use [bold]nova pii erase <subject_id>[/bold] for GDPR Art.17 "
-        "DEK destruction (ADR-0069; experimental: key lifecycle only),\n"
+        "DEK destruction (experimental: covers PII captured with --pii-subject),\n"
         "  or POST /v0/erasure on the server, which uses the persisted queue.\n"
         f"  (nothing was done for run_id={run_id})"
     )

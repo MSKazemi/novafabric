@@ -685,15 +685,16 @@ nova storage validate --endpoint https://s3.amazonaws.com --bucket nova-capsules
 # Show where a run's dual-object split lives (computes names; does not contact the store)
 nova storage inspect --run-id run_xyz --json
 
-# Destroy a data subject's DEK (ADR-0069; experimental: key lifecycle only)
+# Capture with per-subject encryption, then erase the subject (ADR-0314, experimental)
+NOVA_PII_PEPPER=... nova capture --pii-subject <subject_id> -- python agent.py
 nova pii erase <subject_id>
 nova pii status <capsule-id-or-path>
 ```
 
-Status — **experimental: key lifecycle only.** The design (ADR-0069) is a GDPR
-right-to-erasure workflow in which the audit trail survives while the subject's PII
-payload becomes undecryptable; today capture does not yet encrypt PII with
-per-subject keys, so erasure destroys the key and captured PII stays readable. Dashboard
+Status — **experimental** (ADR-0314). For a capsule captured with `--pii-subject`, the
+audit trail (hashes, signatures, lineage) survives while the subject's PII becomes
+undecryptable: readers show `[erased]`. PII in capsules captured without `--pii-subject`
+is not encrypted and erasure does not affect it. Dashboard
 equivalents: the **Compliance** tab has a GDPR Erasure panel (which calls
 `/api/compliance/erasure/*`, the persisted queue of ADR-0210); the **Infra** tab has a
 Storage Operations card.

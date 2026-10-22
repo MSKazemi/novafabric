@@ -13,16 +13,16 @@
 # limitations under the License.
 """DEK store: per-subject AES-256-GCM key lifecycle for GDPR Art.17 erasure.
 
-Status — experimental: key lifecycle only. Capture does not yet encrypt PII with
-per-subject keys, so the erasure bullet below describes the ADR-0069 design, not
-an effect on any capsule written today.
+Status — experimental (ADR-0314). Capture encrypts PII under these DEKs only for
+``nova capture --pii-subject <id>`` (:mod:`novafabric.pii.capture_stage`); the
+erasure bullet below holds for that PII and for no other capsule content.
 
 Design per ADR-0069:
 - One AES-256-GCM DEK per data subject, generated at first PII detection.
 - DEKs are stored in a dedicated SQLite database (dek.db) outside the capsule store.
 - Erasure destroys the DEK (overwrite with os.urandom(32), then DELETE) so ciphertext
   in capsule records becomes permanently unrecoverable without touching WORM storage
-  (design intent; experimental: key lifecycle only — no capsule ciphertext yet).
+  (experimental: for PII captured with --pii-subject, ADR-0314).
 - Art.17(3)(b) retention window: erasure within the configured retention period produces
   an ErasureDeferredReceipt rather than an ErasureReceipt.
 
@@ -98,8 +98,8 @@ class ErasureReceipt(BaseModel):
     capsule_ids_affected: list[str] = Field(
         default_factory=list,
         description=(
-            "Capsule IDs associated with the subject (experimental: key lifecycle "
-            "only — no capsule ciphertext is under this DEK yet)"
+            "Capsule IDs associated with the subject; only PII captured with "
+            "--pii-subject is ciphertext under the destroyed DEK (ADR-0314)"
         ),
     )
     method: str = Field(
@@ -176,6 +176,8 @@ class DEKStore:
         )
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
+        # ADR-0314: a destroyed DEK must not survive in freed pages.
+        self._conn.execute("PRAGMA secure_delete=ON")
         self._bootstrap()
 
     def _bootstrap(self) -> None:
@@ -306,7 +308,7 @@ class DEKStore:
         capsule_ids: list[str],
         retention_months: int = 6,
     ) -> ErasureReceipt | ErasureDeferredReceipt:
-        """Destroy the DEK for *subject_id* (experimental: key lifecycle only).
+        """Destroy the DEK for *subject_id* (experimental, ADR-0314; --pii-subject PII only).
 
         If the DEK was created within the Art.17(3)(b) retention window
         (``retention_months``), returns an :class:`ErasureDeferredReceipt`
@@ -380,6 +382,26 @@ class DEKStore:
             self._conn.execute(
                 "DELETE FROM data_subject_deks WHERE subject_id = ?",
                 (subject_id,),
+            )
+
+        # ADR-0314: the overwrite and delete above are WAL frames; the frames that
+        # still hold the old key bytes stay in dek.db-wal until a checkpoint, and an
+        # idle second connection (nova serve, the erasure queue) keeps the WAL alive.
+        # Fold the WAL into the main file and truncate it now. Best effort: a busy
+        # reader can defer it, so the result is logged, never raised.
+        try:
+            busy, _log, _ckpt = self._conn.execute(
+                "PRAGMA wal_checkpoint(TRUNCATE)"
+            ).fetchone()
+        except sqlite3.Error:
+            busy = 1
+        if busy:
+            logger.warning(
+                "dek_erasure_wal_checkpoint_deferred",
+                extra={
+                    "event": "dek_erasure_wal_checkpoint_deferred",
+                    "subject_sha256_prefix": _subject_hash_prefix(subject_id),
+                },
             )
 
         logger.info(

@@ -13,7 +13,8 @@
 # limitations under the License.
 """Per-subject DEK lifecycle for GDPR Art.17 erasure (cap-001, ADR-0069).
 
-Status — experimental: key lifecycle only. AES-256-GCM DEKs are created and
-destroyed with an ErasureReceipt chain, but capture does not yet encrypt PII with
-per-subject keys, so destroying a DEK does not make captured PII unreadable.
+Status — experimental (ADR-0314). AES-256-GCM DEKs are created and destroyed with
+an ErasureReceipt chain; :mod:`novafabric.pii.capture_stage` encrypts PII under them
+for captures run with ``nova capture --pii-subject <id>``, and only that PII becomes
+unreadable when the DEK is destroyed.
 """

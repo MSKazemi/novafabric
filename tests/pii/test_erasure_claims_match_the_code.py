@@ -28,7 +28,8 @@ This guard ties every such claim to a fact derived from the code:
   ``key lifecycle only``;
 * once **wired**, every claim paragraph must name the opt-in that actually
   encrypts (``--pii-subject``), because capsules captured without it still hold
-  plaintext PII and erasure destroys only the key for them.
+  plaintext PII and erasure destroys only the key for them — and the phase-A
+  label, now false, must be gone everywhere.
 """
 
 from __future__ import annotations
@@ -139,19 +140,24 @@ def _imported_modules(tree: ast.AST, own: str) -> set[str]:
 
 
 def envelope_encryption_callers(src_root: Path) -> set[str]:
-    """Modules (outside the DEK store itself) that call both ``get_or_create_dek``
-    and an AEAD ``encrypt`` — i.e. that actually encrypt with a per-subject DEK."""
-    callers: set[str] = set()
+    """Modules (outside the DEK store itself) that obtain a per-subject DEK with
+    ``get_or_create_dek`` *and* encrypt with it — an AEAD ``.encrypt(...)`` call in
+    the same module or in a ``src`` module it imports."""
+    trees: dict[str, ast.AST] = {}
     for path in sorted(src_root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        trees[_module_name(path, src_root)] = ast.parse(path.read_text(encoding="utf-8"))
+    encrypting = {m for m, t in trees.items() if _calls_attr(t, {"encrypt"})}
+    callers: set[str] = set()
+    for mod, tree in trees.items():
         defines = any(
             isinstance(n, ast.FunctionDef) and n.name == "get_or_create_dek"
             for n in ast.walk(tree)
         )
-        if defines:
+        if defines or not _calls_attr(tree, {"get_or_create_dek"}):
             continue
-        if _calls_attr(tree, {"get_or_create_dek"}) and _calls_attr(tree, {"encrypt"}):
-            callers.add(_module_name(path, src_root))
+        reach = {mod} | _imported_modules(tree, mod)
+        if reach & encrypting:
+            callers.add(mod)
     return callers
 
 
@@ -265,10 +271,24 @@ def unqualified_claims(required: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+#: The phase-A wording, false once capture encrypts.
+_STALE_PHASE_A = re.compile(r"key\s+lifecycle\s+only|does\s+not\s+yet\s+encrypt", re.I)
+
+
+def stale_phase_a_labels() -> list[str]:
+    return [
+        f"{where}: {' '.join(para.split())[:160]}"
+        for where, para in claim_surfaces()
+        if _STALE_PHASE_A.search(" ".join(para.split()))
+    ]
+
+
 def test_every_erasure_claim_matches_what_capture_does() -> None:
     wired = capture_is_wired(SRC)
     required = OPT_IN if wired else PHASE_A_LABEL
     offenders = unqualified_claims(required)
+    if wired:
+        offenders += [f"stale phase-A label: {s}" for s in stale_phase_a_labels()]
     state = (
         "capture encrypts PII with per-subject DEKs only under --pii-subject"
         if wired
@@ -321,6 +341,16 @@ def test_wiring_detector_requires_a_capture_reachable_encrypting_caller(tmp_path
 
     # Imported by the capture CLI: wired.
     (root / "cli" / "capture.py").write_text("from novafabric.pii.seal import thing\n")
+    assert capture_is_wired(root) is True
+
+    # The AEAD call may live in a helper module the DEK caller imports.
+    (root / "pii" / "seal.py").unlink()
+    (root / "pii" / "aead.py").write_text("def seal(k):\n    return AESGCM(k).encrypt(n, p, a)\n")
+    (root / "pii" / "stage.py").write_text(
+        "from novafabric.pii.aead import seal\nseal(s.get_or_create_dek('x'))\n"
+    )
+    (root / "cli" / "capture.py").write_text("from novafabric.pii.stage import Stage\n")
+    assert envelope_encryption_callers(root) == {"novafabric.pii.stage"}
     assert capture_is_wired(root) is True
 
 
