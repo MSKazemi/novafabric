@@ -3295,6 +3295,12 @@ Options:
 When the capsule has an `energy-receipts.jsonl` stream, a signed `PREDICATE_ENERGY` energy
 attestation is added to the bundle automatically (experimental, ADR-0093).
 
+A capsule that contains a **symbolic link** is refused (exit 1, nothing written): the
+export never follows a link, because it would copy the link's target — any file you can
+read — into the signed bundle, past redaction. The error lists each link and whether it
+points outside the capsule, inside it, or nowhere. Replace links with regular files or
+remove them. The capsule path you pass may itself be a link.
+
 Generate a fresh keypair from Python:
 
 ```python
@@ -3431,8 +3437,8 @@ Checks (all must pass for exit 0; a check that could not run is printed `⊘ …
 |---|---|
 | Signature | DSSE envelope signature — ECDSA P-256 against the certificate embedded in the envelope |
 | Signer identity | Not a pass/fail check: the **trust level** this verifier established for the signer (ADR-0301) — `SELF-ASSERTED local key` (`identity_trust=self-asserted`: the holder of the key signed; nothing you trust vouches for the certificate), `LOCAL CA PINNED` (`--ca-bundle` validated the chain to a `nova seal init` local CA), `CA-ANCHORED` (`--ca-bundle` validated the chain to another CA) or `NONE` (no valid signature). An unanchored certificate's subject is printed as an *unverified claim* |
-| Timestamp | RFC 3161 token, offline: the token covers SHA-256 of the whole DSSE envelope (signature included — the token is computed over the signature, so it is outside it by design, ADR-0030). Checked positionally: TSTInfo `messageImprint` equals that hash, `messageDigest` equals the hash of the TSTInfo, the CMS signature verifies under the embedded TSA certificate bound by ESSCertID. A response with no TSA-signed token fails. *Who* the TSA is needs `--tsa-ca-bundle` (below). A token the strict parser cannot read is reported `structural check only` |
-| Merkle log | `log-entry.json`'s entry must hash to its `leaf_hash` and name the signed payload's capsule id; then inclusion is checked by every means available — the **inclusion proof carried in `log-entry.json`** (seals from v0.103) must recompute the recorded `root_hash`, and when the local (sealer's) log holds the entry it must sit at the recorded index under the log's root. A capsule with neither (sealed by ≤ v0.102.x, verified away from the sealer's log) prints `⊘ Merkle log inclusion: NOT CHECKED — log not available` and does **not** fail. The carried proof's tree head is not independently anchored (not signed or witnessed) |
+| Timestamp | RFC 3161 token, offline: the token covers SHA-256 of the whole DSSE envelope (signature included — the token is computed over the signature, so it is outside it by design, ADR-0030). Checked positionally: TSTInfo `messageImprint` equals that hash, `messageDigest` equals the hash of the TSTInfo, the CMS signature verifies under the embedded TSA certificate bound by ESSCertID. A response with no TSA-signed token fails. *Who* the TSA is needs `--tsa-ca-bundle` (below). A token the strict parser cannot read (BER encoding) is reported `structural check only` and must still prove the same three bindings; one whose TSA signature cannot be extracted or verified **fails** |
+| Merkle log | `log-entry.json`'s entry must hash to its `leaf_hash` and name the signed payload's capsule id; then inclusion is checked by every means available — the **inclusion proof carried in `log-entry.json`** (seals from v0.103) must recompute the recorded `root_hash`, and when the local (sealer's) log holds the entry it must sit at the recorded index under the log's root (a manifest sealed twice verifies at each of its indexes). When the configured log holds other seals by the same signer under the record's root version it is the sealer's log, and an entry **missing** from it fails, carried proof or not; a capsule sealed elsewhere with a shared key is verified with that host's log, or with a `--seal-config` whose `merkle_db` does not exist. A log of another signer, a fresh log, or no log keeps the carried-proof result. A capsule with neither (sealed by ≤ v0.102.x, verified away from the sealer's log) prints `⊘ Merkle log inclusion: NOT CHECKED — log not available` and does **not** fail. The carried proof's tree head is not independently anchored (not signed or witnessed) |
 | Manifest binding | `capsule.yaml` on disk matches the signed DSSE payload, and `capsule_id` is recomputed from that payload rather than read from `log-entry.json` (ADR-0251) |
 | Evidence binding | every file listed in the manifest's `evidence_digests` still hashes to the value that was signed (ADR-0251) |
 
@@ -10148,8 +10154,19 @@ nova ledger anchor ./my-capsule --key ~/.config/novafabric/keyring/ed25519.pem
 ### nova ledger verify
 
 Verify the chains against the signed checkpoint. Detects content edits, reordering, and
-truncation even after a host compromise. Seal-style exit codes (`3` tamper, `4` reorder,
-`5` truncation, `6` bad signature, `10` no checkpoint).
+truncation even after a host compromise. Exit codes (ADR-0094): `0` ok, `3` tamper,
+`4` reorder, `5` truncation, `6` bad signature (with `--pubkey`), `7` epoch rollback
+(with `--observed-epoch`), `8` Merkle inclusion failure, `9` external-anchor mismatch,
+`10` no checkpoint.
+
+Exit `8` applies to a checkpoint that carries a `merkle` block (one appended to a NovaSeal
+Merkle log through the Python API, `sign_checkpoint(..., merkle_log=...)`): its `leaf_hash`
+must be the hash of this checkpoint's signed body, its root is verified only together with
+its `tree_size` (ADR-0313; checkpoints logged before v0.106.0 lack it and exit `8`), and its
+inclusion proof must recompute that root. `nova ledger anchor` does not append to a log, so
+its checkpoints carry no `merkle` block, make no inclusion claim and are not checked for
+one. The `merkle` block is written after signing, so this detects a wrong block, not a
+removed one.
 
 ```bash
 nova ledger verify ./my-capsule

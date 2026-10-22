@@ -912,6 +912,21 @@ inclusion proof and no log holding its entry was supplied — a capsule sealed b
 or earlier, verified away from the sealer's log. Any inconsistency (an entry that names
 another capsule, a proof that does not recompute its root) is `failed`.
 
+`seal.verify()` passes the sealer's own log, and `verify_seal_dir(..., merkle_log=log)`
+any log you open. The log is checked at the index `log-entry.json` records, so a manifest
+sealed twice (the same leaf twice in the log) verifies at each index. When the supplied log
+holds other seals by the same signer (the entry's `keyid` or the signing certificate's
+SHA-256 fingerprint) under the record's root version, it is that sealer's log: an entry
+missing from it is `failed`, even if the carried proof verifies. A log with no seals by that
+signer, a fresh log, or a log of the other root version (after starting a new v2 log,
+ADR-0313) is not the sealer's, and absence there keeps `carried-proof`, with a note in
+`log_notes`.
+
+`timestamp_ok` is `False` for a token that cannot be cryptographically verified. A token
+the strict DER parser rejects is checked on a lenient-encoding path (`timestamp_strict`
+False) that still requires a verifying TSA signature, a signed `messageDigest` equal to the
+hash of the TSTInfo, and that TSTInfo's imprint equal to the envelope hash.
+
 `verify()` reads `manifest.dsse`, an optional `manifest.dsse.tsr`, and
 `log-entry.json` from the `.seal/` directory. An **absent or empty** TSR is
 reported as absent — `timestamp_ok=None` (ADR-0301; it was `True` before) — and does

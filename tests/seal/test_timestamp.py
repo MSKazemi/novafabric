@@ -393,11 +393,19 @@ class TestVerifyTsaSignature:
 
 
 class TestVerifyTimestampWithCms:
-    def test_valid_tsr_with_correct_hash_returns_true(self):
-        """End-to-end: valid signature + correct hash ⟹ True."""
+    def test_cms_signature_over_the_envelope_is_not_a_timestamp(self):
+        """A CMS message signing the envelope itself carries no TSTInfo — no time at all.
+
+        ``_build_cms_tsr`` is PKCS#7 *signed data* (content = the envelope,
+        ``messageDigest`` = its hash) under a self-signed certificate: anyone can make
+        one, and no TSA attested a time. This test used to assert ``True`` — it pinned
+        the degraded path's scan-for-the-hash behaviour as the contract. A timestamp
+        needs a signed ``TSTInfo`` whose imprint is the envelope hash.
+        """
         dsse = b"authentic-dsse-envelope"
         tsr = _build_cms_tsr(dsse)
-        assert verify_timestamp(tsr, dsse) is True
+        assert _verify_tsa_signature(tsr) is True  # the signature itself is genuine
+        assert verify_timestamp(tsr, dsse) is False
 
     def test_valid_tsr_wrong_dsse_returns_false(self):
         """Hash mismatch must be caught even when the signature is valid."""
@@ -679,11 +687,12 @@ class TestVerifyTsaSignatureDegrade:
 
 
 class TestVerifyTimestampRsa:
-    def test_rsa_tsr_correct_hash_returns_true(self):
-        """RSA-signed TSR with matching DSSE → True."""
+    def test_rsa_cms_signature_over_the_envelope_is_not_a_timestamp(self):
+        """RSA variant of the test above: signed data without a TSTInfo is not a timestamp."""
         dsse = b"rsa-authentic-dsse"
         tsr = _build_rsa_cms_tsr(dsse)
-        assert verify_timestamp(tsr, dsse) is True
+        assert _verify_tsa_signature(tsr) is True
+        assert verify_timestamp(tsr, dsse) is False
 
     def test_rsa_tsr_wrong_hash_returns_false(self):
         """RSA-signed TSR with wrong DSSE content → False."""

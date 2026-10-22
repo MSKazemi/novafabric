@@ -1289,8 +1289,9 @@ nova ledger verify $BASE
 #   - stream tool-calls: record count 2 != sealed 3
 ```
 
-Full taxonomy: `3` tamper, `4` reorder, `5` truncation, `6` bad signature, `10` no
-checkpoint. Restore the original stream and verification returns to `✓ ledger OK`.
+Full taxonomy: `3` tamper, `4` reorder, `5` truncation, `6` bad signature, `7` epoch
+rollback, `8` Merkle inclusion failure (only for a checkpoint appended to a NovaSeal log,
+which `nova ledger anchor` does not do), `9` anchor mismatch, `10` no checkpoint. Restore the original stream and verification returns to `✓ ledger OK`.
 
 ### Evidence-grounded safety case (`nova safety-case`, ADR-0095)
 

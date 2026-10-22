@@ -209,9 +209,22 @@ def test_signature_block_without_value_fails_sig_check(
 def test_anchor_against_merkle_root_mismatch(
     tmp_path: Path, signer: LocalSigner
 ) -> None:
+    """A genuinely logged checkpoint whose anchor names a value other than its root.
+
+    The ``merkle`` block used to be a fabricated root/leaf pair; since exit 8 is
+    produced, that block fails inclusion first, so the checkpoint is logged for real.
+    """
+    from novafabric.trust.novaseal.merkle import MerkleLog
+
     capsule, _ = _sealed_capsule(tmp_path, signer)
+    log = MerkleLog(tmp_path / "merkle.db")
+    try:
+        record = build_checkpoint(capsule, node_id="n1", epoch=3, epoch_pubkey="pk")
+        sign_checkpoint(record, signer, capsule_dir=capsule, merkle_log=log)
+    finally:
+        log.close()
     checkpoint = json.loads((capsule / ".ledger" / "checkpoint.json").read_text())
-    checkpoint["merkle"] = {"root": "sha256:" + "b" * 64, "leaf_hash": "sha256:" + "c" * 64}
+    assert checkpoint["merkle"]["root"] != "sha256:" + "d" * 64
     checkpoint["anchor"] = {
         "method": "rfc3161",
         "anchored_value": "sha256:" + "d" * 64,  # != merkle root
