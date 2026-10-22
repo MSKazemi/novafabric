@@ -583,7 +583,9 @@ command — provision the SCIM bearer token via `$NOVAFABRIC_SCIM_TOKEN` for now
 The config file is `~/.config/novafabric/server.yaml`, or the file passed with
 `nova server start --config <path>` — there is no other search path.
 (`NOVAFABRIC_SERVER_CONFIG` is set internally to hand the path to `--workers`
-child processes; do not set it yourself.) Keys are top-level; the main ones, with
+child processes; do not set it yourself — `nova server start` overwrites it, or
+clears an inherited value when `--config` is absent, so every worker loads the
+same file as the parent.) Keys are top-level; the main ones, with
 their defaults:
 
 ```yaml

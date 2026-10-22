@@ -326,8 +326,14 @@ def _launch_workers(
         os.environ["NOVAFABRIC_SERVER_I_KNOW_THIS_IS_PUBLIC"] = "1"
     if cfg.i_accept_shared_capsule_store:  # type: ignore[attr-defined]
         os.environ["NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE"] = "1"
+    # L17: hand workers exactly the file the parent resolved. Without --config
+    # the parent used the default path, so an inherited CONFIG_ENV (internal,
+    # never user-facing) must be cleared -- otherwise every worker would load a
+    # different file than the one the parent validated.
     if config_path is not None:
         os.environ[CONFIG_ENV] = str(config_path)
+    else:
+        os.environ.pop(CONFIG_ENV, None)
 
     uvicorn.run(  # type: ignore[attr-defined]
         FACTORY_TARGET,
