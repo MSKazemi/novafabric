@@ -16,8 +16,9 @@
 
 Compares a capsule's recorded ``dataset_provenance`` facets against a configurable
 known-contaminated/superseded hash registry and reports a status per dataset. Exits
-``4`` when any dataset is contaminated or superseded (so CI can gate on it), ``0`` when
-all datasets are current/unknown, ``2`` on a usage error.
+``4`` when any dataset is contaminated or superseded, or when a facet cannot be read or
+validated (``invalid`` — the check fails closed, so CI can gate on it), ``0`` when all
+datasets are current/unknown, ``2`` on a usage error.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from novafabric.cli._output import emit_json
@@ -38,6 +40,7 @@ _STATUS_STYLE = {
     "superseded": "yellow",
     "current": "green",
     "unknown": "dim",
+    "invalid": "red",
 }
 
 
@@ -58,6 +61,10 @@ def contamination_check_cmd(
     ] = False,
 ) -> None:
     """Flag a capsule run against a contaminated or superseded benchmark (NF-028).
+
+    Exits 4 when any dataset is contaminated or superseded, or when a facet
+    cannot be read or validated (reported as invalid, with a reason: the
+    check fails closed); 0 when all are current/unknown; 2 on a usage error.
 
     Scope: single capsule.
 
@@ -98,9 +105,15 @@ def contamination_check_cmd(
         table.add_column("Dataset", style="bold")
         table.add_column("Version")
         table.add_column("Status")
+        show_reason = any(r.reason for r in results)
+        if show_reason:
+            table.add_column("Reason", overflow="fold")
         for r in results:
             style = _STATUS_STYLE.get(r.status, "")
-            table.add_row(r.name, r.version or "-", f"[{style}]{r.status}[/{style}]")
+            row = [r.name, r.version or "-", f"[{style}]{r.status}[/{style}]"]
+            if show_reason:
+                row.append(escape(r.reason or ""))
+            table.add_row(*row)
         console.print(table)
 
     if is_flagged(results):

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,24 @@ from novafabric.registry.store import get_connection
 
 #: Node identity is defined once, in ``_types``; every backend shares it.
 _make_node_from_edge_dict = node_from_edge_dict
+
+#: An edge-type filter: one type, a collection of types, or ``None``/empty for all.
+EdgeTypeFilter = str | Collection[str] | None
+
+
+def _edge_type_clause(edge_type: EdgeTypeFilter, column: str) -> tuple[str, tuple[str, ...]]:
+    """Return an ``AND <column> IN (...)`` clause and its parameters.
+
+    A traversal with an edge-type filter walks only edges of those types, so the
+    filter has to sit in the recursive query itself: the rows a traversal returns
+    are nodes and carry no edge type to filter on afterwards. ``None``, ``""``
+    and an empty collection all mean "no filter".
+    """
+    if not edge_type:
+        return "", ()
+    types = (edge_type,) if isinstance(edge_type, str) else tuple(sorted(set(edge_type)))
+    placeholders = ",".join("?" * len(types))
+    return f"AND {column} IN ({placeholders})", types
 
 
 _DDL = """
@@ -225,15 +244,14 @@ class LineageStore:
 
     def blast_radius(
         self, ref: str, kind: str | None = None, depth: int = 5,
-        edge_type: str | None = None,
+        edge_type: EdgeTypeFilter = None,
     ) -> list[dict[str, Any]]:
         start = self._node_id_for_ref(ref, kind)
         if start is None:
             return []
-        edge_filter = "AND e.edge_type = ?" if edge_type else ""
-        root_filter = "AND edge_type = ?" if edge_type else ""
-        et_param: tuple[Any, ...] = (edge_type,) if edge_type else ()
-        params: tuple[Any, ...] = (start,) + et_param + (depth,) + et_param
+        root_filter, et_param = _edge_type_clause(edge_type, "edge_type")
+        edge_filter, _ = _edge_type_clause(edge_type, "e.edge_type")
+        params: tuple[Any, ...] = (start, *et_param, depth, *et_param)
         rows = self._conn.execute(
             f"""
             WITH RECURSIVE blast AS (
@@ -254,15 +272,14 @@ class LineageStore:
 
     def provenance(
         self, ref: str, kind: str | None = None, depth: int = 5,
-        edge_type: str | None = None,
+        edge_type: EdgeTypeFilter = None,
     ) -> list[dict[str, Any]]:
         start = self._node_id_for_ref(ref, kind)
         if start is None:
             return []
-        edge_filter = "AND e.edge_type = ?" if edge_type else ""
-        root_filter = "AND edge_type = ?" if edge_type else ""
-        et_param_prov: tuple[Any, ...] = (edge_type,) if edge_type else ()
-        params = (start,) + et_param_prov + (depth,) + et_param_prov
+        root_filter, et_param = _edge_type_clause(edge_type, "edge_type")
+        edge_filter, _ = _edge_type_clause(edge_type, "e.edge_type")
+        params: tuple[Any, ...] = (start, *et_param, depth, *et_param)
         rows = self._conn.execute(
             f"""
             WITH RECURSIVE prov AS (

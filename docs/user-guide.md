@@ -645,8 +645,10 @@ dependencies) and only ever contains **post-redaction** capsule text — the
 same four files the secret scanner redacts before a capsule is complete.
 New capsules are indexed automatically at ingest (`nova serve` /
 `nova ingest-capsule`); run `nova search --reindex` once to backfill
-capsules captured before this feature. Capsules captured at `minimal`
-capture level simply contribute fewer (or no) content rows. All query terms
+capsules captured before this feature. A capsule missing one of those files
+simply contributes fewer (or no) content rows; the `minimal` capture level does
+not drop any of them today (it is planned, not implemented — see
+[`nova policy capture-level`](cli-reference.md#nova-policy-capture-level-set)). All query terms
 must match (AND); a trailing `*` does prefix search; FTS5 operators like
 `OR`/`NEAR`/`-` are matched literally. The same search is available in the
 dashboard API via `GET /api/runs/search?scope=content`. Set
@@ -1684,6 +1686,8 @@ nova eval contamination-check ./my-capsule --registry known-bad.json --json
 
 It reports a status per dataset (`current` / `superseded` / `contaminated` / `unknown`)
 and **exits `4`** when any dataset is contaminated or superseded, so CI can gate on it.
+It fails closed: a facet it cannot read or validate is reported as `invalid`, with a
+reason, and also exits `4`.
 Detection only — no remediation. See the [feature tour](tutorials/feature-tour.md#17-prove-supply-chain-provenance--eval-integrity)
 for the dataset provenance and SLSA-for-ML surfaces that pair with it.
 

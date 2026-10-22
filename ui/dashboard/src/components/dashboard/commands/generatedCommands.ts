@@ -1679,6 +1679,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--masking-config"
       },
       {
+        "key": "pii-subject",
+        "label": "--pii-subject",
+        "type": "text",
+        "hint": "EXPERIMENTAL (ADR-0314): the data subject this run's PII belongs to. Detected PII (and every literal occurrence of the id) is encrypted with the subject's AES-256-GCM DEK from $NOVAFABRIC_HOME/dek.db, so `nova pii erase <id>` makes it unreadable. Requires NOVA_PII_PEPPER. If the DEK is unavailable the PII is masked instead, never stored in plaintext. Without --pii-subject PII is not encrypted.",
+        "flag": "--pii-subject"
+      },
+      {
         "key": "daemon",
         "label": "--daemon",
         "type": "toggle",
@@ -8424,7 +8431,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "edge-type",
         "label": "--edge-type",
         "type": "text",
-        "hint": "Comma-separated edge types to filter: contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory",
+        "hint": "Walk only edges of these types (comma-separated): contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory",
         "flag": "--edge-type"
       },
       {
@@ -8706,7 +8713,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "edge-type",
         "label": "--edge-type",
         "type": "text",
-        "hint": "Comma-separated edge types to filter: contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory",
+        "hint": "Walk only edges of these types (comma-separated): contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory",
         "flag": "--edge-type"
       },
       {
@@ -9725,7 +9732,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-pii-erase",
     "name": "nova pii erase",
     "journey": "audit",
-    "description": "Destroy the AES-256-GCM DEK for a data subject (GDPR Art.17 crypto-shredding).",
+    "description": "Destroy the AES-256-GCM DEK for a data subject (experimental, ADR-0314).",
     "fields": [
       {
         "key": "subject-id",
@@ -9797,7 +9804,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-policy-capture-level-get",
     "name": "nova policy capture-level get",
     "journey": "govern",
-    "description": "Show the current capture-level policy.",
+    "description": "Show the capture level this process resolves (experimental).",
     "fields": [],
     "docsPath": "/docs/cli-reference/",
     "generated": true
@@ -9806,13 +9813,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-policy-capture-level-set",
     "name": "nova policy capture-level set",
     "journey": "govern",
-    "description": "Set the capture-level policy for new runs.",
+    "description": "Validate a capture level and print the variable to export (experimental).",
     "fields": [
       {
         "key": "level",
         "label": "--level",
         "type": "text",
-        "hint": "Capture level: minimal, standard, forensic, air_gapped",
+        "hint": "Capture level to validate: minimal, standard, forensic, air_gapped",
         "flag": "--level",
         "required": true
       }
@@ -11226,14 +11233,14 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "allow-external-side-effects",
         "label": "--allow-external-side-effects",
         "type": "toggle",
-        "hint": "Safety ladder (ADR-0012): permit external side effects (implies --allow-mutating). In mocked mode, under --permissive an unmatched record.tool call of that class runs live, and a replay.yaml `allow: true` override for such a tool is honoured (ADR-0306, experimental).",
+        "hint": "Safety ladder (ADR-0012): permit external side effects (implies --allow-mutating, including its replay_mutating policy check). In mocked mode, under --permissive an unmatched record.tool call of that class runs live, and a replay.yaml `allow: true` override for such a tool is honoured (ADR-0306, experimental).",
         "flag": "--allow-external-side-effects"
       },
       {
         "key": "allow-unknown-mutation",
         "label": "--allow-unknown-mutation",
         "type": "toggle",
-        "hint": "Safety ladder (ADR-0012): permit tools of unknown mutation class (implies every lower rung). Every MCP call counts as unknown: in mocked mode this is the flag that lets an unmatched MCP call run live under --permissive, and that a replay.yaml `allow: true` override on an MCP tool needs before it re-executes (ADR-0306, experimental).",
+        "hint": "Safety ladder (ADR-0012): permit tools of unknown mutation class (implies every lower rung, including the replay_mutating policy check). Every MCP call counts as unknown: in mocked mode this is the flag that lets an unmatched MCP call run live under --permissive, and that a replay.yaml `allow: true` override on an MCP tool needs before it re-executes (ADR-0306, experimental).",
         "flag": "--allow-unknown-mutation"
       },
       {

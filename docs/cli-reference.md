@@ -2612,7 +2612,11 @@ nova lineage provenance <ref> [--depth N] [--kind run|asset|artifact] [--edge-ty
 Show what the given node depends on (forward traversal).
 
 Options:
-- `--edge-type TYPES` — comma-separated edge types to include. Valid values: `contains`, `spawned`, `delegated_to`, `replayed_from`. Omit for all edge types.
+- `--edge-type TYPES` — walk only edges of these types (comma-separated). A node is listed only if a path of
+  those edge types reaches it, so `spawned,delegated_to` follows a spawn and then a delegation. Valid values:
+  `contains`, `spawned`, `delegated_to`, `replayed_from`, `member_of_session`, `wrote_memory`, `read_memory`.
+  Omit for all edge types; an unknown type exits 1. (Fixed 2026-10-22: before this, any `--edge-type`
+  returned an empty result.)
 - `--with-facets` — print column-level lineage facets carried by traversed edges (experimental, ADR-0090): table, column names (never values), read/write access, extraction confidence. Also available on `blast-radius`.
 
 ```bash
@@ -2629,7 +2633,7 @@ nova lineage blast-radius <ref> [--depth N] [--kind run|asset|artifact] [--edge-
 Show what depends on the given node (backward traversal).
 
 Options:
-- `--edge-type TYPES` — comma-separated edge types to include. Same valid values as `provenance`. Invalid types exit 1.
+- `--edge-type TYPES` — walk only edges of these types (comma-separated). Same semantics and valid values as `provenance`. Invalid types exit 1.
 
 ```bash
 nova lineage blast-radius my-model --edge-type contains,replayed_from
@@ -6038,9 +6042,16 @@ Reads the additive `dataset_provenance` facets stored under the capsule's
 [`schemas/dataset-provenance-v1.schema.json`](../schemas/dataset-provenance-v1.schema.json)) — each carrying
 `name`, `version`, `dataset_hash`, `split_hash`, and `status` ∈ `current|superseded|contaminated|unknown`. The
 `--registry` JSON (`{"contaminated": [...], "superseded": [...]}` of `sha256:` hashes) upgrades a facet's status
-when a dataset/split hash matches; the registry never downgrades a facet's recorded severity. **Exit codes:**
-`4` when any dataset is contaminated or superseded (CI-gateable), `0` when all are current/unknown, `2` on a
-usage error.
+when a dataset/split hash matches; the registry never downgrades a facet's recorded severity.
+
+The check **fails closed**: a facet file that cannot be read, is not JSON, or does not validate against the
+schema (for example a missing `name` or a `status` outside the four values), and a facet namespace that is a
+file rather than a directory, each produce an `invalid` row with a `reason` (a *Reason* column in the table, a
+`reason` field in `--json`). No registry can clear it. (Fixed 2026-10-22: a malformed facet used to be skipped
+silently, so a capsule whose only facet was unreadable reported no facets and exited `0`.)
+
+**Exit codes:** `4` when any dataset is contaminated, superseded, or `invalid` (CI-gateable), `0` when all are
+current/unknown, `2` on a usage error.
 
 ### nova eval import-inspect / export-inspect (experimental)
 
@@ -9104,7 +9115,8 @@ happened.
 
 ### nova policy capture-level get
 
-Print the current capture level (reads `NOVA_CAPTURE_LEVEL` env var, default `standard`).
+**Status: experimental** (cap-004, ADR-0066). Print the capture level this process resolves: the
+`NOVA_CAPTURE_LEVEL` environment variable, or `standard` when it is unset or not a known level.
 
 ```bash
 nova policy capture-level get
@@ -9113,21 +9125,32 @@ nova policy capture-level get
 
 ### nova policy capture-level set
 
-Print instructions for setting a new capture level (restart required).
+**Status: experimental.** Validate a level and print the variable to export. It **persists nothing** —
+there is no policy store, and the level comes only from the environment of the process that captures.
+An unknown level exits `1`.
 
 ```bash
 nova policy capture-level set --level forensic
-# Set NOVA_CAPTURE_LEVEL=forensic (restart required)
+# Valid level 'forensic'. Nothing was saved; to use it, export it:
+#   export NOVA_CAPTURE_LEVEL=forensic
+# then re-run `nova capture` (or restart `nova serve`).
 ```
 
-Valid levels: `minimal`, `standard`, `forensic`, `air_gapped`.
+Valid levels: `minimal`, `standard` (default), `forensic`, `air_gapped`.
 
-| Level | Description |
-|---|---|
-| `minimal` | Run metadata only; no model IDs, tool names, or any PII-adjacent fields |
-| `standard` | Run + model call metadata; redacted PII (default) |
-| `forensic` | Full capture including prompts and responses |
-| `air_gapped` | Full capture; no external network calls permitted |
+**What a level changes today** (verified 2026-10-22 against the code and a capture of
+`examples/blackbox_demo` at each level):
+
+| Level | Works today | Not implemented |
+|---|---|---|
+| `minimal` | Same behaviour as `standard`. | **Planned:** a metadata-only capture with no model IDs or tool names. The field allowlist exists in `policies/capture_level.py` but no capture path applies it. |
+| `standard` | Adapter, tool-hook and record-façade paths keep digests, not payloads. | **Planned:** redacted model-call content. Wire-level model-call capture (`model-calls.jsonl`) stores full prompts and responses at this level, as at every level. |
+| `forensic` | Adapter, tool-hook and record-façade paths also keep payloads (tool arguments and results, state dicts, document text), which mocked replay of those calls needs. | — |
+| `air_gapped` | Same as `forensic`. | **Planned:** blocking external network calls. Nothing blocks them today. |
+
+The level does **not** reduce what `nova capture` records from model calls: at every level a default
+capture stores the full request messages and response text in `model-calls.jsonl`. Do not rely on a lower
+capture level to keep prompts out of a capsule.
 
 **Reference:** `src/novafabric/runners/_pbs.py`, `src/novafabric/runners/_lsf.py`.
 
