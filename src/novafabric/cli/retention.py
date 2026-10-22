@@ -22,7 +22,9 @@ the identical due-computation code path and touches nothing.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -43,14 +45,19 @@ from novafabric.retention.models import (
     RetentionActionRecord,
     RetentionBinding,
     SweepItem,
+    SweepOptions,
     SweepOutcome,
 )
 from novafabric.retention.sweep import (
+    MANIFEST_YAML,
     HoldContext,
+    capture_exclusion_notice,
     enumerate_capsules,
     load_bindings,
+    load_sweep_options,
     matches,
     plan_sweep,
+    split_by_scope,
 )
 from novafabric.retention.windows import compute_due_at
 from novafabric.storage._retention import RetentionPolicy
@@ -84,6 +91,12 @@ def _default_capsule_dir() -> Path:
 
 def _nova_home() -> Path:
     return _nf_paths.nova_home()
+
+
+def _pii_pepper() -> bytes | None:
+    """``NOVA_PII_PEPPER`` (ADR-0314): resolves a capsule's subject HMAC to its DEK."""
+    raw = os.environ.get("NOVA_PII_PEPPER", "")
+    return raw.encode("utf-8") if raw else None
 
 
 def _read_active_hold_ids(registry: str, capsule_dir: Path) -> list[str]:
@@ -133,7 +146,7 @@ def _apply_time_hold_check(
 
 
 def _read_deletion_mode(registry: str) -> str:
-    path = _registry_dir(registry) / "retention-policy.yaml"
+    path = _policy_path(registry)
     if not path.exists():
         return "defensible"
     return RetentionPolicy.from_yaml(path).deletion_mode
@@ -149,13 +162,50 @@ def _read_worm_locks(registry: str, worm_db: Optional[Path]) -> dict[str, dateti
     return {e.capsule_id: e.locked_until for e in adapter.list()}
 
 
+def _policy_path(registry: str) -> Path:
+    return _registry_dir(registry) / "retention-policy.yaml"
+
+
 def _load_bindings_or_exit(registry: str) -> list[RetentionBinding]:
-    policy_path = _registry_dir(registry) / "retention-policy.yaml"
     try:
-        return load_bindings(policy_path)
+        return load_bindings(_policy_path(registry))
     except ValueError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc
+
+
+def _load_options_or_exit(registry: str) -> SweepOptions:
+    try:
+        return load_sweep_options(_policy_path(registry))
+    except ValueError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+
+@dataclass(frozen=True)
+class _Sweep:
+    """One sweep's ground truth, split by what ``apply`` may act on."""
+
+    plan: list[PlannedDecision]
+    bindings: list[RetentionBinding]
+    items: list[SweepItem]
+    options: SweepOptions
+    acted: list[PlannedDecision]
+    excluded: list[PlannedDecision]
+
+    @property
+    def capture_capsules(self) -> int:
+        return sum(1 for i in self.items if i.manifest == MANIFEST_YAML)
+
+    def in_scope(self, item: SweepItem) -> bool:
+        return self.options.include_capture_capsules or item.manifest != MANIFEST_YAML
+
+    def notice(self, registry: str) -> str | None:
+        if self.options.include_capture_capsules:
+            return None
+        return capture_exclusion_notice(
+            self.capture_capsules, len(self.excluded), _policy_path(registry)
+        )
 
 
 def _build_plan(
@@ -163,8 +213,9 @@ def _build_plan(
     capsule_dir: Path,
     worm_db: Optional[Path],  # noqa: UP045
     action_filter: Optional[str],  # noqa: UP045
-) -> tuple[list[PlannedDecision], list[RetentionBinding], list[SweepItem]]:
+) -> _Sweep:
     bindings = _load_bindings_or_exit(registry)
+    options = _load_options_or_exit(registry)
     if action_filter is not None:
         try:
             wanted = RetentionAction(action_filter)
@@ -181,7 +232,9 @@ def _build_plan(
         deletion_mode=_read_deletion_mode(registry),  # type: ignore[arg-type]
         worm_locks=_read_worm_locks(registry, worm_db),
     )
-    return plan_sweep(items, bindings, holds), bindings, items
+    plan = plan_sweep(items, bindings, holds)
+    acted, excluded = split_by_scope(plan, options)
+    return _Sweep(plan, bindings, items, options, acted, excluded)
 
 
 # ---------------------------------------------------------------------------
@@ -189,31 +242,8 @@ def _build_plan(
 # ---------------------------------------------------------------------------
 
 
-def _emit_records(
-    records: list[RetentionActionRecord],
-    *,
-    registry: str,
-    mode: str,
-    json_out: bool,
-) -> None:
-    _acted = (SweepOutcome.DRY_RUN, SweepOutcome.APPLIED)
-    due = [r for r in records if r.outcome in _acted]
-    other = [r for r in records if r.outcome not in _acted]
-    if json_out:
-        payload = {
-            "schema_version": _SCHEMA_VERSION,
-            "mode": mode,
-            "swept_at": datetime.now(tz=timezone.utc).isoformat(),
-            "registry": registry,
-            "due": [r.model_dump(mode="json", exclude_none=True) for r in due],
-            "held": [r.model_dump(mode="json", exclude_none=True) for r in other],
-        }
-        typer.echo(json.dumps(payload, indent=2))
-        return
-    if not records:
-        console.print("[green]Nothing due:[/green] no binding matches a due item.")
-        return
-    table = Table(title=f"Retention sweep ({mode}) — registry '{registry}'")
+def _records_table(records: list[RetentionActionRecord], title: str) -> Table:
+    table = Table(title=title)
     table.add_column("item")
     table.add_column("binding")
     table.add_column("action")
@@ -229,7 +259,60 @@ def _emit_records(
             r.outcome.value,
             r.reason or "",
         )
-    console.print(table)
+    return table
+
+
+def _emit_records(
+    records: list[RetentionActionRecord],
+    *,
+    registry: str,
+    mode: str,
+    json_out: bool,
+    sweep: _Sweep,
+    excluded: list[RetentionActionRecord],
+) -> None:
+    """Print the sweep result; *excluded* are capture capsules apply does not act on.
+
+    *excluded* are previewed (never applied) so the operator sees what opting in
+    with ``include_capture_capsules: true`` would do to them.
+    """
+    _acted = (SweepOutcome.DRY_RUN, SweepOutcome.APPLIED)
+    due = [r for r in records if r.outcome in _acted]
+    other = [r for r in records if r.outcome not in _acted]
+    notice = sweep.notice(registry)
+    if json_out:
+        payload = {
+            "schema_version": _SCHEMA_VERSION,
+            "mode": mode,
+            "swept_at": datetime.now(tz=timezone.utc).isoformat(),
+            "registry": registry,
+            "due": [r.model_dump(mode="json", exclude_none=True) for r in due],
+            "held": [r.model_dump(mode="json", exclude_none=True) for r in other],
+            "capture_capsules": {
+                "included": sweep.options.include_capture_capsules,
+                "enumerated": sweep.capture_capsules,
+                "excluded": [r.model_dump(mode="json", exclude_none=True) for r in excluded],
+                "notice": notice,
+            },
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    if not records:
+        console.print("[green]Nothing due:[/green] no binding matches a due item.")
+    else:
+        console.print(
+            _records_table(records, f"Retention sweep ({mode}) — registry '{registry}'")
+        )
+    if excluded:
+        console.print(
+            _records_table(
+                excluded,
+                "Capture capsules (capsule.yaml) NOT acted on by apply — "
+                "shown as they would be swept with include_capture_capsules: true",
+            )
+        )
+    if notice is not None:
+        console.print(f"[yellow]Note:[/yellow] {notice}")
 
 
 # ---------------------------------------------------------------------------
@@ -268,10 +351,14 @@ def plan_cmd(
       nova retention plan --registry my-registry --json
     """
     resolved_dir = capsule_dir if capsule_dir is not None else _default_capsule_dir()
-    plan, _, _ = _build_plan(registry, resolved_dir, worm_db, action)
+    sweep = _build_plan(registry, resolved_dir, worm_db, action)
     executor = SweepExecutor(registry=registry, principal="dry-run", audit_log=None)
-    records = executor.execute(plan, dry_run=True)
-    _emit_records(records, registry=registry, mode="dry-run", json_out=json_out)
+    records = executor.execute(sweep.acted, dry_run=True)
+    excluded = executor.execute(sweep.excluded, dry_run=True)
+    _emit_records(
+        records, registry=registry, mode="dry-run", json_out=json_out,
+        sweep=sweep, excluded=excluded,
+    )
 
 
 @app.command("apply")
@@ -319,11 +406,15 @@ def apply_cmd(
     item. Idempotent and fail-safe: re-runs are no-ops; a per-item failure is
     recorded `error` and the sweep continues.
 
-    Limitations (experimental): only `<capsule-dir>/<run>/capsule.json`
-    manifests are swept (`nova capture` writes capsule.yaml), and crypto-shred
-    destroys the DEK named by `metadata.pii_subject_id`, which nothing writes
-    today, so it records `no_dek` and destroys no key. Use `nova pii erase`
-    to crypto-shred a data subject.
+    Capture capsules (capsule.yaml, written by `nova capture` and the adapters)
+    are acted on only when retention-policy.yaml sets
+    `include_capture_capsules: true`; otherwise they are listed and excluded.
+
+    crypto-shred (experimental) destroys the data subject's DEK: for a capsule
+    captured with `nova capture --pii-subject`, the subject is resolved from its
+    redaction_manifest.json with NOVA_PII_PEPPER, and the subject's PII becomes
+    unreadable in every capsule captured for that subject. Without the pepper
+    the item is skipped; a capsule with no subject records `no_dek`.
 
     Scope: one registry's bindings over one capsule directory.
 
@@ -334,7 +425,8 @@ def apply_cmd(
       nova retention apply -r my-registry --action crypto-shred --limit 100 --yes
     """
     resolved_dir = capsule_dir if capsule_dir is not None else _default_capsule_dir()
-    plan, _, _ = _build_plan(registry, resolved_dir, worm_db, action)
+    sweep = _build_plan(registry, resolved_dir, worm_db, action)
+    plan = sweep.acted  # capture capsules only when the policy opts in
     due_count = sum(1 for d in plan if d.decision is Decision.DUE)
 
     if not dry_run and due_count > 0 and not yes:
@@ -364,14 +456,21 @@ def apply_cmd(
             retention_months=retention_months,
             hold_check=_apply_time_hold_check(registry, resolved_dir, worm_db),
             hold_roots=(capsule_base_holds_root(resolved_dir),),
+            pepper=_pii_pepper(),
         )
         records = executor.execute(plan, dry_run=dry_run, limit=limit)
     finally:
         if dek_store is not None:
             dek_store.close()
 
+    excluded = SweepExecutor(
+        registry=registry, principal="dry-run", audit_log=None
+    ).execute(sweep.excluded, dry_run=True)
     mode = "dry-run" if dry_run else "apply"
-    _emit_records(records, registry=registry, mode=mode, json_out=json_out)
+    _emit_records(
+        records, registry=registry, mode=mode, json_out=json_out,
+        sweep=sweep, excluded=excluded,
+    )
     if not dry_run and not json_out:
         applied = sum(1 for r in records if r.outcome is SweepOutcome.APPLIED)
         console.print(
@@ -404,27 +503,21 @@ def status_cmd(
       nova retention status --registry my-registry --json
     """
     resolved_dir = capsule_dir if capsule_dir is not None else _default_capsule_dir()
-    plan, bindings, items = _build_plan(registry, resolved_dir, worm_db, None)
+    sweep = _build_plan(registry, resolved_dir, worm_db, None)
     now = datetime.now(tz=timezone.utc)
 
     rows: list[dict[str, object]] = []
-    for binding in bindings:
+    for binding in sweep.bindings:
         if not binding.enabled:
             continue
-        due = sum(
-            1
-            for d in plan
-            if d.decision is Decision.DUE and binding.id in d.matched_binding_ids
-        )
-        held = sum(
-            1
-            for d in plan
-            if d.decision is not Decision.DUE and binding.id in d.matched_binding_ids
-        )
+        mine = [d for d in sweep.acted if binding.id in d.matched_binding_ids]
+        due = sum(1 for d in mine if d.decision is Decision.DUE)
+        excluded = sum(1 for d in sweep.excluded if binding.id in d.matched_binding_ids)
         pending = [
             compute_due_at(binding.window, i.created_at)
-            for i in items
-            if matches(binding, i, now)
+            for i in sweep.items
+            if sweep.in_scope(i)
+            and matches(binding, i, now)
             and now < compute_due_at(binding.window, i.created_at)
         ]
         rows.append(
@@ -432,32 +525,42 @@ def status_cmd(
                 "binding_id": binding.id,
                 "action": binding.action.value,
                 "due_now": due,
-                "held": held,
+                "held": len(mine) - due,
+                "excluded_capture_capsules": excluded,
                 "next_due_at": min(pending).isoformat() if pending else None,
             }
         )
+    notice = sweep.notice(registry)
     if json_out:
-        payload = {"schema_version": _SCHEMA_VERSION, "registry": registry, "bindings": rows}
+        payload = {
+            "schema_version": _SCHEMA_VERSION,
+            "registry": registry,
+            "include_capture_capsules": sweep.options.include_capture_capsules,
+            "capture_capsules_enumerated": sweep.capture_capsules,
+            "bindings": rows,
+        }
         typer.echo(json.dumps(payload, indent=2))
         return
     if not rows:
         console.print(f"No enabled retention bindings for registry '{registry}'.")
         return
+    show_excluded = notice is not None
     table = Table(title=f"Retention status — registry '{registry}'")
     table.add_column("binding")
     table.add_column("action")
     table.add_column("due now")
     table.add_column("held")
+    if show_excluded:
+        table.add_column("excluded")  # capture capsules apply does not act on
     table.add_column("next due")
     for row in rows:
-        table.add_row(
-            str(row["binding_id"]),
-            str(row["action"]),
-            str(row["due_now"]),
-            str(row["held"]),
-            str(row["next_due_at"] or "-"),
-        )
+        cells = [str(row["binding_id"]), str(row["action"]), str(row["due_now"]), str(row["held"])]
+        if show_excluded:
+            cells.append(str(row["excluded_capture_capsules"]))
+        table.add_row(*cells, str(row["next_due_at"] or "-"))
     console.print(table)
+    if notice is not None:
+        console.print(f"[yellow]Note:[/yellow] {notice}")
 
 
 @app.command("explain")
@@ -484,6 +587,7 @@ def explain_cmd(
     """
     resolved_dir = capsule_dir if capsule_dir is not None else _default_capsule_dir()
     bindings = _load_bindings_or_exit(registry)
+    options = _load_options_or_exit(registry)
     items = enumerate_capsules(resolved_dir)
     item = next((i for i in items if i.item_id == capsule_id), None)
     if item is None:
@@ -508,6 +612,8 @@ def explain_cmd(
         "registry": registry,
         "item_id": capsule_id,
         "created_at": item.created_at.isoformat(),
+        "manifest": item.manifest,
+        "swept_by_apply": options.include_capture_capsules or item.manifest != MANIFEST_YAML,
         "expired": item.expired,
         "active_legal_holds": hold_ids,
         "worm_locked_until": locked_until.isoformat() if locked_until else None,
@@ -517,6 +623,11 @@ def explain_cmd(
         typer.echo(json.dumps(payload, indent=2))
         return
     console.print(f"Capsule [bold]{capsule_id}[/bold] (created {item.created_at.isoformat()})")
+    if not payload["swept_by_apply"]:
+        console.print(
+            "  [yellow]Not acted on by `nova retention apply`:[/yellow] capture capsule "
+            f"(capsule.yaml); set `include_capture_capsules: true` in {_policy_path(registry)}."
+        )
     if hold_ids:
         console.print(f"  [yellow]Active legal holds:[/yellow] {hold_ids} — deletion blocked")
     if locked_until is not None:

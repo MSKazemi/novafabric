@@ -152,15 +152,17 @@ export NOVAFABRIC_METADATA_DSN="postgresql+asyncpg://novafabric_app:<pw>@pgbounc
 > command exists (the real command group is `nova lineage-store`, hyphenated).
 
 The lineage migration command that exists today is `nova lineage-store migrate`, which
-loads edges into a **SQLite** lineage store (the only target) from a Parquet export or an
-Object Capsule Store:
+loads edges into a **SQLite** lineage store (the only target) from a Parquet export.
+Its `--from-ocs` source is **planned**, not implemented: it refuses with exit 1 and
+writes nothing (it used to report an empty migration as a success). To rebuild lineage
+from capsule directories, use `nova lineage import`:
 
 ```bash
 # Dry-run (default) then commit; target is a SQLite store via --db.
-nova lineage-store migrate --from-ocs --ocs-tenant org \
-  --ocs-run-ids run-001,run-002 --db "$NOVA_HOME/novafabric.db"
-nova lineage-store migrate --from-ocs --ocs-tenant org \
-  --ocs-run-ids run-001,run-002 --db "$NOVA_HOME/novafabric.db" --commit
+nova lineage-store migrate edges.parquet --db "$NOVA_HOME/novafabric.db"
+nova lineage-store migrate edges.parquet --db "$NOVA_HOME/novafabric.db" --commit
+# Re-index lineage from local capsules instead:
+nova lineage import "$NOVA_HOME/capsules/"
 ```
 
 **The actual production path into KuzuDB today is not this bulk-migrate command —

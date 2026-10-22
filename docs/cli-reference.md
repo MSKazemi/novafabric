@@ -2892,8 +2892,8 @@ profiles for cluster-scale lineage infrastructure.
 
 ### nova lineage-store migrate
 
-Migrate lineage edges from a Parquet file or an ObjectCapsuleStore to a SQLite
-store.  Runs dry-run by default; pass `--commit` to actually persist.
+Migrate lineage edges from a Parquet file into a SQLite lineage store (the only target).
+Runs dry-run by default; pass `--commit` to actually persist.
 
 ```
 nova lineage-store migrate [PARQUET] [--db PATH] [--commit|--dry-run]
@@ -2903,27 +2903,26 @@ nova lineage-store migrate [PARQUET] [--db PATH] [--commit|--dry-run]
 
 | Flag | Default | Description |
 |---|---|---|
-| `PARQUET` | _(optional)_ | Source Parquet file (deprecated; use `--from-ocs` for the ADR-0022 canonical path) |
+| `PARQUET` | _(optional)_ | Source Parquet file (deprecated path; the only working source) |
 | `--db` | `lineage.db` | Target SQLite database path |
 | `--commit` / `--dry-run` | dry-run | Commit to target store (default is dry run) |
 | `--no-validate` | off | Skip post-load divergence check |
-| `--from-ocs` | off | Migrate from ObjectCapsuleStore (ADR-0022 canonical path) |
-| `--ocs-tenant` | `""` | OCS tenant identifier (required with `--from-ocs`) |
-| `--ocs-run-ids` | `""` | Comma-separated run IDs to migrate (required with `--from-ocs`) |
-| `--ocs-data-dir` | `.` | Local OCS data directory for the fallback adapter |
+| `--from-ocs` | off | **Not implemented (planned, ADR-0022):** refuses with exit 1 and writes nothing |
+| `--ocs-tenant` | `""` | Kept for compatibility; unused while `--from-ocs` is not implemented |
+| `--ocs-run-ids` | `""` | Kept for compatibility; unused while `--from-ocs` is not implemented |
+| `--ocs-data-dir` | `.` | Not read: no on-disk ObjectCapsuleStore backend exists for this command |
 
 ```bash
 # Parquet migration (deprecated)
 nova lineage-store migrate edges.parquet --db lineage.db --commit
-
-# OCS-backed migration (ADR-0022 canonical)
-nova lineage-store migrate --from-ocs \
-    --ocs-tenant acme \
-    --ocs-run-ids run-001,run-002 \
-    --db lineage.db --commit
 ```
 
-Exit codes: 0 = success, 1 = argument error, 2 = divergence detected.
+`--from-ocs` used to print `ok loaded=0 … committed=yes` and exit 0 without reading
+anything; it now refuses. To rebuild lineage from capsule directories use
+[`nova lineage import`](#nova-lineage-import).
+
+Exit codes: 0 = success, 1 = argument error or `--from-ocs` (not implemented),
+2 = divergence detected.
 
 ### nova lineage-store profile
 
@@ -8332,29 +8331,60 @@ or wire `nova retention apply --yes` into `cron`/`systemd`.
 
 ```yaml
 # retention-policy.yaml (ADR-0031 fields unchanged; bindings are additive)
+include_capture_capsules: true   # optional, default false — see "Which capsules are swept"
 bindings:
   - id: mifid-trade-5y
     match: {tag: trade-record, deployment_environment: production}
     window: P1825D          # ISO-8601 duration from capsule created_at, or YYYY-MM-DD
     action: purge           # expire-metadata | purge | crypto-shred
   - id: gdpr-subject-pii
-    match: {tag: contains-pii}
+    match: {age: P180D}
     window: P180D
-    action: crypto-shred    # experimental — see the limitation below
+    action: crypto-shred    # experimental — see below
 ```
 
-> **Limitations (verified 2026-10-22):** the sweep reads `<capsule-dir>/<run>/capsule.json`
-> manifests only, and `nova capture` and the framework adapters write `capsule.yaml` — so
-> their capsules are not swept by any action today. The `crypto-shred` action is
-> **experimental**: it destroys the DEK named by `metadata.pii_subject_id`, and nothing in
-> NovaFabric writes that field (not `nova capture --pii-subject` either), so a matched capsule
-> records `applied` with reason `no_dek` and **no key is destroyed**. To crypto-shred a data
-> subject's PII today, use [`nova pii erase`](#nova-pii-erase-subject_id).
+**Which capsules are swept.** The sweep enumerates both manifest formats under the capsule
+directory: `<run>/capsule.json` (the legacy `CapsuleWriter` format) and `<run>/capsule.yaml`
+(what `nova capture` and the framework adapters write; a directory holding both is treated as
+`capsule.json`). `plan`, `apply --dry-run`, `status` and `explain` always show the
+`capsule.yaml` ("capture") capsules and what would happen to them. **`apply` acts on capture
+capsules only when the policy sets `include_capture_capsules: true`** (optional, default
+`false`). Earlier versions never enumerated `capsule.yaml`, so this opt-in keeps an existing
+`cron` sweep from suddenly deleting capsules it never touched before. Without it, `plan` and
+`apply` print how many capture capsules are excluded and how to include them, and `--json`
+output carries a `capture_capsules` block (`included`, `enumerated`, `excluded` — previewed as
+they would be swept — and `notice`). Excluded capsules are not swept, so they leave no audit
+entry. Holds, WORM locks and the apply-time re-check apply to capture capsules exactly as to
+`capsule.json` capsules. Any other value than `true`/`false` is refused (exit 1).
+
+**`crypto-shred` (experimental).** It destroys the data subject's DEK (ADR-0069). The subject
+comes from `metadata.pii_subject_id` when a manifest names it, otherwise from the capsule's
+`redaction_manifest.json`: `nova capture --pii-subject <id>` records the subject's HMAC
+there (never the raw id) for every span it encrypted, and `apply` resolves that HMAC to a live
+DEK in `$NOVAFABRIC_HOME/dek.db` with `NOVA_PII_PEPPER`. So for capsules captured with
+`--pii-subject` the action is a **real crypto-shred** (verified end to end by
+`tests/retention/test_crypto_shred_current_limits.py`): the key is destroyed, an
+`ErasureReceipt` is written to `$NOVAFABRIC_HOME/evidence/erasure/<run>.receipt.json`, and
+readers show `[erased]`. Know before you enable it:
+
+- The DEK is **per subject, not per capsule**: when one capsule is due, the subject's PII
+  becomes unreadable in *every* capsule captured with that `--pii-subject`, including newer
+  ones.
+- `apply` needs `NOVA_PII_PEPPER` in its environment (for example in the cron job). Without
+  it the item is recorded `skipped` (`pii_pepper_unavailable`) and no key is touched. If no
+  live DEK matches — a different pepper or `dek.db`, or a subject already erased with
+  `nova pii erase` — it is `skipped` (`pii_subject_unresolved`); a capsule this sweep already
+  shredded records `applied` (`already_shredded`).
+- A capsule captured without `--pii-subject` has no subject: it records `applied` with
+  reason `no_dek` and no key is destroyed. Only PII captured with `--pii-subject` is
+  ciphertext (ADR-0314); see [`nova pii erase`](#nova-pii-erase-subject_id) for the
+  subject-driven path.
 
 Matching reads capsule manifests under the capsule directory:
-`metadata.tags` (comma-separated), `metadata.deployment_environment`,
-`metadata.pii_subject_id` (crypto-shred subject), and `alias` (matched by the
-`asset` predicate, glob allowed).
+`metadata.tags` (comma-separated), `deployment_environment` (`metadata.deployment_environment`
+in `capsule.json`; the top-level field `nova capture` writes in `capsule.yaml`), and `alias`
+(matched by the `asset` predicate, glob allowed). `nova capture` writes no tags, so bind
+capture capsules by `age`, `deployment_environment` or `asset`.
 
 Safety invariants (fixed, not configurable): a **WORM/legal hold always wins**
 — a WORM-retained capsule is never purged or shredded before its `locked_until`
@@ -8370,7 +8400,8 @@ deletion is itself evidence.
 
 Dry-run (the default posture): list what WOULD be affected. Touches nothing,
 writes no audit records, and uses the identical due-computation code path as
-`apply`.
+`apply`. Capture capsules (`capsule.yaml`) that `apply` will not act on are listed in a
+separate table (and under `capture_capsules.excluded` with `--json`).
 
 ```bash
 nova retention plan --registry my-registry
@@ -8381,7 +8412,9 @@ nova retention plan --registry my-registry --json
 
 Apply due retention actions. Confirm-gated: prompts unless `--yes` (or
 `--dry-run`). Idempotent and fail-safe — re-runs are no-ops; a per-item
-failure is recorded `error` and the sweep continues.
+failure is recorded `error` and the sweep continues. Acts on capture capsules
+(`capsule.yaml`) only with `include_capture_capsules: true` in the policy; otherwise it
+prints how many it excluded.
 
 Holds are re-read **immediately before every action**, not only while planning: a legal
 hold or WORM lock placed while the confirmation prompt waits, or during the sweep, still wins
@@ -8411,7 +8444,10 @@ Options:
 ### nova retention status
 
 Read-only: per binding, how many items are due now, how many are held
-(WORM/legal), and the next due date.
+(WORM/legal), and the next due date — counting only what `apply` acts on. Without
+`include_capture_capsules: true`, an `excluded` column (`excluded_capture_capsules` in
+`--json`, plus top-level `include_capture_capsules` and `capture_capsules_enumerated`) counts
+the capture capsules each binding matches that `apply` will not touch.
 
 ```bash
 nova retention status --registry my-registry --json
@@ -8420,7 +8456,8 @@ nova retention status --registry my-registry --json
 ### nova retention explain \<capsule-id\>
 
 Read-only: which bindings match this capsule, its computed due date, and its
-current hold state.
+current hold state. `--json` adds `manifest` (`capsule.json` or `capsule.yaml`) and
+`swept_by_apply` (false for a capture capsule without the opt-in).
 
 ```bash
 nova retention explain cap-01JXXXXX --registry my-registry
@@ -8870,9 +8907,13 @@ nova classify from-capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX --data-dir ~/novafabric-da
 
 ## Compliance audit commands (v0.16)
 
-All five commands work over the capsules under `--data-dir` / `-d` (default
-`~/novafabric-data`) and take `--profile` / `-p` (default `nist-ai-rmf`; a profile ID
-or the path to a custom profile YAML) — except `nova audit verify`, which checks one report file.
+All five commands work over a set of capsules and take `--profile` / `-p` (default
+`nist-ai-rmf`; a profile ID or the path to a custom profile YAML) — except
+`nova audit verify`, which checks one report file. Without `--data-dir` they read the
+capsules `nova capture` writes: `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules`.
+`--data-dir` / `-d ROOT` reads `ROOT/capsules/` instead. (Earlier versions defaulted to
+`~/novafabric-data`, a directory capture never writes, so a default audit scanned no
+capsules.)
 
 **Available profiles:** `nist-ai-rmf`, `eu-ai-act-high-risk`, `gdpr`, `soc2-type2`, `iso42001`, `scientific-reproducibility`.
 

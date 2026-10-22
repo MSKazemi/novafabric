@@ -121,10 +121,11 @@ software keystore). Two rules this runbook enforces:
    ([ADR-0134](../decisions.md)),
    restoring an older key escrow must not resurrect shredded data — check the
    retention decision log before re-importing any archived key material.
-   (Retention `crypto-shred` is **experimental** and today destroys no key — it
-   records `no_dek`, see [Retention scheduler](../cli-reference.md#retention-scheduler-adr-0134);
-   keys destroyed by `nova pii erase` — which exist only for capsules captured with
-   `nova capture --pii-subject` — are what this rule protects.)
+   (Retention `crypto-shred` is **experimental**. It destroys a key only for capsules
+   captured with `nova capture --pii-subject`, when the policy sets
+   `include_capture_capsules: true` and `NOVA_PII_PEPPER` is set; otherwise it records
+   `no_dek` or `skipped` — see [Retention scheduler](../cli-reference.md#retention-scheduler-adr-0134).
+   Keys destroyed that way or by `nova pii erase` are what this rule protects.)
 
 ### 1.5 Verify after restore — restore is not done until this passes
 

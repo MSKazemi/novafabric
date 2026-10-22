@@ -86,6 +86,7 @@ class SweepExecutor:
         retention_months: int = 6,
         hold_check: HoldCheck | None = None,
         hold_roots: Iterable[Path] = (),
+        pepper: bytes | None = None,
     ) -> None:
         self._registry = registry
         self._principal = principal
@@ -95,6 +96,7 @@ class SweepExecutor:
         self._retention_months = retention_months
         self._hold_roots = tuple(hold_roots)
         self._hold_check: HoldCheck = hold_check or self._registry_hold_check
+        self._pepper = pepper
 
     def _registry_hold_check(self, decision: PlannedDecision) -> str | None:
         """Default re-check: active holds on this registry, read fresh."""
@@ -256,19 +258,67 @@ class SweepExecutor:
         return self._record(decision, SweepOutcome.APPLIED)
 
     def _apply_crypto_shred(self, decision: PlannedDecision) -> RetentionActionRecord:
-        """Destroy the DEK of the manifest's ``metadata.pii_subject_id`` (experimental).
+        """Destroy the DEK of the capsule's data subject (ADR-0069/ADR-0314, experimental).
 
-        Honest limit (pinned by ``tests/retention/test_crypto_shred_current_limits.py``):
-        nothing in NovaFabric writes ``metadata.pii_subject_id`` today — ``nova capture
-        --pii-subject`` records only an HMAC ``subject_ref`` — so this records ``no_dek``
-        and destroys no key. ``nova pii erase`` is the working crypto-shred.
+        The subject is ``metadata.pii_subject_id`` when a manifest names it, else
+        the subject whose HMAC ``nova capture --pii-subject`` recorded in the
+        capsule's ``redaction_manifest.json``, resolved against the DEK store with
+        ``NOVA_PII_PEPPER`` (*pepper*). The DEK is per subject: destroying it makes
+        that subject's PII unreadable in every capsule captured with the same
+        ``--pii-subject``. A capsule that names no subject records ``no_dek``;
+        one whose subject cannot be resolved is ``skipped``, never ``applied``.
         """
-        subject_id = decision.item.pii_subject_id
-        if subject_id is None or self._dek_store is None:
+        item = decision.item
+        store = self._dek_store
+        if store is None or (item.pii_subject_id is None and not item.pii_subject_refs):
             # No PII subject / no DEK store: no-op erasure (spec edge case).
             return self._record(decision, SweepOutcome.APPLIED, reason="no_dek")
+        if item.pii_subject_id is not None:
+            subject_ids = [item.pii_subject_id]
+        elif self._pepper is None:
+            return self._record(decision, SweepOutcome.SKIPPED, reason="pii_pepper_unavailable")
+        else:
+            subject_ids = self._resolve_subject_refs(store, item.pii_subject_refs, self._pepper)
+            if not subject_ids:
+                # The store cannot tell "erased" from "wrong pepper / other dek.db":
+                # only this sweep's own receipt proves the shred already happened.
+                receipt = self._receipt_path(item.item_id)
+                if receipt.is_file():
+                    # Carry the receipt so a restore can still re-shred this subject.
+                    return self._record(
+                        decision,
+                        SweepOutcome.APPLIED,
+                        reason="already_shredded",
+                        erasure_receipt_ref=str(receipt),
+                    )
+                return self._record(
+                    decision, SweepOutcome.SKIPPED, reason="pii_subject_unresolved"
+                )
+        records = [self._shred_one(decision, store, subject_id) for subject_id in subject_ids]
+        # The least final outcome speaks for the item: held > error > deferred > applied.
+        for outcome in (SweepOutcome.SKIPPED, SweepOutcome.ERROR, SweepOutcome.DEFERRED):
+            for record in records:
+                if record.outcome is outcome:
+                    return record
+        return records[0]
+
+    @staticmethod
+    def _resolve_subject_refs(store: DEKStore, refs: list[str], pepper: bytes) -> list[str]:
+        """Subjects with a live DEK whose ``HMAC(pepper, subject_id)`` is in *refs*."""
+        from novafabric.pii.envelope import subject_ref  # noqa: PLC0415
+
+        wanted = set(refs)
+        return sorted(
+            record.subject_id
+            for record in store.list_subjects()
+            if subject_ref(pepper, record.subject_id) in wanted
+        )
+
+    def _shred_one(
+        self, decision: PlannedDecision, store: DEKStore, subject_id: str
+    ) -> RetentionActionRecord:
         try:
-            result = self._dek_store.erase_subject(
+            result = store.erase_subject(
                 subject_id=subject_id,
                 capsule_ids=[decision.item.item_id],
                 retention_months=self._retention_months,
@@ -297,6 +347,10 @@ class SweepExecutor:
             decision, SweepOutcome.APPLIED, erasure_receipt_ref=receipt_ref
         )
 
+    def _receipt_path(self, item_id: str, suffix: str = "receipt.json") -> Path:
+        base = self._receipt_dir if self._receipt_dir is not None else Path(".")
+        return base / f"{item_id}.{suffix}"
+
     def _write_receipt(
         self,
         item_id: str,
@@ -311,6 +365,6 @@ class SweepExecutor:
             suffix = "deferred.receipt.json"
         else:
             suffix = "receipt.json"
-        path = self._receipt_dir / f"{item_id}.{suffix}"
+        path = self._receipt_path(item_id, suffix)
         path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
         return str(path)

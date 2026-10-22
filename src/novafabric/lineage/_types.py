@@ -12,6 +12,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def default_emitter() -> dict[str, str]:
+    """The emitter block for edges this NovaFabric writes: the installed version (L7)."""
+    from novafabric import __version__  # noqa: PLC0415 — package root, no cycle at call time
+
+    return {"name": "novafabric", "version": __version__}
+
+
 def node_id_for(kind: str, ref: str) -> str:
     return hashlib.sha256(f"{kind}:{ref}".encode()).hexdigest()[:26]
 
@@ -89,9 +96,7 @@ class LineageEdge:
     edge_id: str = field(default_factory=new_ulid)
     direction: str = "source_to_target"
     created_at: str = field(default_factory=_now)
-    emitter: dict[str, Any] = field(
-        default_factory=lambda: {"name": "novafabric", "version": "0.4.0"}
-    )
+    emitter: dict[str, Any] = field(default_factory=lambda: default_emitter())
     facets: dict[str, Any] | None = None
     evidence_refs: list[str] | None = None
 

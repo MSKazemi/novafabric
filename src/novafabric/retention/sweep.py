@@ -35,13 +35,20 @@ from typing import Literal, Mapping
 import yaml
 from pydantic import BaseModel, Field, ValidationError
 
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    read_capsule_member_or_none,
+    read_capsule_text,
+)
 from novafabric.retention.models import (
     ACTION_SEVERITY,
     Decision,
+    ManifestName,
     PlannedDecision,
     RetentionAction,
     RetentionBinding,
     SweepItem,
+    SweepOptions,
 )
 from novafabric.retention.windows import compute_due_at
 
@@ -49,6 +56,14 @@ log = logging.getLogger(__name__)
 
 #: Marker file written into a capsule directory by the ``expire-metadata`` action.
 EXPIRED_MARKER = "retention-expired.json"
+#: Legacy manifest (``CapsuleWriter``); always acted on by ``apply``.
+MANIFEST_JSON: ManifestName = "capsule.json"
+#: Manifest ``nova capture`` and the adapters write; acted on only on opt-in.
+MANIFEST_YAML: ManifestName = "capsule.yaml"
+#: ADR-0314 per-capsule PII bookkeeping (``nova capture --pii-subject``).
+REDACTION_MANIFEST = "redaction_manifest.json"
+#: Upper bound on any one capsule file the sweep reads (manifest, bookkeeping).
+MAX_SWEEP_FILE_BYTES = 32 * 1024 * 1024
 
 
 class HoldContext(BaseModel):
@@ -86,46 +101,183 @@ def load_bindings(policy_path: Path) -> list[RetentionBinding]:
     return bindings
 
 
+def load_sweep_options(policy_path: Path) -> SweepOptions:
+    """Load the optional top-level sweep switches from ``retention-policy.yaml``.
+
+    A missing file or absent key yields the defaults (``include_capture_capsules:
+    false``).
+
+    Raises:
+        ValueError: if the file sets a switch to a value of the wrong type.
+    """
+    if not policy_path.exists():
+        return SweepOptions()
+    data = yaml.safe_load(policy_path.read_text())
+    if not isinstance(data, dict):
+        return SweepOptions()
+    try:
+        return SweepOptions.model_validate(data)
+    except ValidationError as exc:
+        raise ValueError(f"malformed retention sweep option in {policy_path}: {exc}") from exc
+
+
+def _parse_created_at(raw: object) -> datetime:
+    """``created_at`` as an aware UTC datetime (YAML may already have parsed it)."""
+    if isinstance(raw, datetime):
+        created = raw
+    elif isinstance(raw, str):
+        created = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    else:
+        raise TypeError(f"created_at is {type(raw).__name__}, not a timestamp")
+    return created if created.tzinfo is not None else created.replace(tzinfo=timezone.utc)
+
+
+def _read_manifest(manifest_path: Path) -> dict[str, object]:
+    # No link, FIFO or device is followed, and the read is bounded (R6 helpers).
+    text = read_capsule_text(
+        manifest_path.parent,
+        manifest_path.name,
+        operation="a retention sweep",
+        max_bytes=MAX_SWEEP_FILE_BYTES,
+    )
+    data = json.loads(text) if manifest_path.name == MANIFEST_JSON else yaml.safe_load(text)
+    if not isinstance(data, dict):
+        raise TypeError("manifest is not a mapping")
+    return data
+
+
+def _envelope_subject_refs(capsule_dir: Path) -> list[str]:
+    """Subject HMACs whose PII ``nova capture --pii-subject`` encrypted in this capsule.
+
+    Read from ``redaction_manifest.json`` entries with ``protection: envelope``
+    (ADR-0314 D5; only capsules captured with ``--pii-subject`` have them). The
+    raw subject id is never in the capsule; it is resolved against ``dek.db``
+    with ``NOVA_PII_PEPPER`` at apply time. Unreadable or absent bookkeeping
+    yields ``[]``.
+    """
+    path = capsule_dir / REDACTION_MANIFEST
+    text = read_capsule_member_or_none(
+        path, operation="a retention sweep", max_bytes=MAX_SWEEP_FILE_BYTES
+    )
+    if text is None:
+        return []
+    try:
+        entries = json.loads(text).get("entries") or []
+    except (ValueError, AttributeError) as exc:
+        log.warning("retention: unreadable %s: %s", path, exc)
+        return []
+    refs = {
+        str(e["subject_id_hmac"])
+        for e in entries
+        if isinstance(e, dict) and e.get("protection") == "envelope" and e.get("subject_id_hmac")
+    }
+    return sorted(refs)
+
+
+def _manifest_paths(capsule_dir: Path) -> list[Path]:
+    """One manifest per capsule directory; ``capsule.json`` wins when both exist.
+
+    Preferring ``capsule.json`` keeps a directory that has both manifests swept
+    exactly as before ``capsule.yaml`` was enumerated.
+    """
+    found: dict[Path, Path] = {}
+    for name in (MANIFEST_YAML, MANIFEST_JSON):  # JSON last, so it overrides
+        for manifest_path in capsule_dir.glob(f"*/{name}"):
+            if manifest_path.parent.is_symlink():
+                # A linked run directory is not a capsule this sweep owns: never
+                # expire, purge or shred through a link.
+                log.warning("retention: skipping linked capsule dir %s", manifest_path.parent)
+                continue
+            found[manifest_path.parent] = manifest_path
+    return [found[d] for d in sorted(found)]
+
+
 def enumerate_capsules(capsule_dir: Path) -> list[SweepItem]:
-    """Enumerate sweepable capsules: ``<capsule_dir>/<run_id>/capsule.json``.
+    """Enumerate sweepable capsules: ``<capsule_dir>/<run_id>/capsule.{json,yaml}``.
 
     Matching attributes are read from the capsule manifest:
-    ``metadata.deployment_environment``, ``metadata.tags`` (comma-separated),
-    ``metadata.pii_subject_id`` (crypto-shred subject), and ``alias`` (matched
-    by the ``asset`` predicate). Unreadable manifests are skipped with a
-    warning — a broken capsule is never deleted by accident.
+    ``deployment_environment`` (``metadata.deployment_environment`` in
+    ``capsule.json``; top-level, as ``nova capture`` writes it, in
+    ``capsule.yaml``), ``metadata.tags`` (comma-separated),
+    ``metadata.pii_subject_id`` (crypto-shred subject), the envelope subject
+    refs in ``redaction_manifest.json``, and ``alias`` (matched by the ``asset``
+    predicate). Each item records which manifest it came from: whether ``apply``
+    may act on a ``capsule.yaml`` capsule is decided by the policy
+    (:func:`split_by_scope`). Unreadable manifests are skipped with a warning —
+    a broken capsule is never deleted by accident.
     """
     items: list[SweepItem] = []
     if not capsule_dir.is_dir():
         return items
-    for manifest_path in sorted(capsule_dir.glob("*/capsule.json")):
+    for manifest_path in _manifest_paths(capsule_dir):
         try:
-            data = json.loads(manifest_path.read_text(encoding="utf-8"))
-            created_raw = data["created_at"]
-            created_at = datetime.fromisoformat(str(created_raw).replace("Z", "+00:00"))
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+            data = _read_manifest(manifest_path)
+            created_at = _parse_created_at(data["created_at"])
+        except (
+            OSError, ValueError, KeyError, TypeError, yaml.YAMLError, CapsuleEntryError
+        ) as exc:
             log.warning("retention: skipping unreadable capsule %s: %s", manifest_path, exc)
             continue
+        manifest: ManifestName = (
+            MANIFEST_JSON if manifest_path.name == MANIFEST_JSON else MANIFEST_YAML
+        )
         metadata = data.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
+        env = metadata.get("deployment_environment")
+        if manifest == MANIFEST_YAML and env is None:
+            env = data.get("deployment_environment")
         tags_raw = str(metadata.get("tags", ""))
         tags = {t.strip() for t in tags_raw.split(",") if t.strip()}
         alias = data.get("alias")
         item_dir = manifest_path.parent
+        subject = metadata.get("pii_subject_id")
         items.append(
             SweepItem(
                 item_id=str(data.get("run_id", item_dir.name)),
                 created_at=created_at,
                 path=item_dir,
-                deployment_environment=metadata.get("deployment_environment"),
+                manifest=manifest,
+                deployment_environment=str(env) if env is not None else None,
                 tags=tags,
-                asset_ids=[alias] if alias else [],
-                pii_subject_id=metadata.get("pii_subject_id"),
+                asset_ids=[str(alias)] if alias else [],
+                pii_subject_id=str(subject) if subject is not None else None,
+                pii_subject_refs=_envelope_subject_refs(item_dir),
                 expired=(item_dir / EXPIRED_MARKER).exists(),
             )
         )
     return items
+
+
+def split_by_scope(
+    plan: list[PlannedDecision], options: SweepOptions
+) -> tuple[list[PlannedDecision], list[PlannedDecision]]:
+    """Split *plan* into ``(acted_on, excluded)`` by the policy's sweep options.
+
+    Without ``include_capture_capsules: true`` every ``capsule.yaml`` decision is
+    excluded: ``apply`` never acts on it and records nothing for it, while
+    ``plan``/``status`` still report it. Holds were already resolved by
+    :func:`plan_sweep` identically for both manifests.
+    """
+    if options.include_capture_capsules:
+        return list(plan), []
+    acted = [d for d in plan if d.item.manifest != MANIFEST_YAML]
+    excluded = [d for d in plan if d.item.manifest == MANIFEST_YAML]
+    return acted, excluded
+
+
+def capture_exclusion_notice(
+    enumerated: int, excluded_decisions: int, policy_path: Path
+) -> str | None:
+    """Operator notice for capture capsules ``apply`` will not act on, or ``None``."""
+    if enumerated == 0:
+        return None
+    return (
+        f"{enumerated} capture capsule(s) (capsule.yaml, written by `nova capture` and "
+        f"the framework adapters) are excluded from `nova retention apply`; "
+        f"{excluded_decisions} of them match a binding now. To let apply act on them, "
+        f"add `include_capture_capsules: true` to {policy_path}."
+    )
 
 
 def _as_list(value: str | list[str] | None) -> list[str]:

@@ -12,7 +12,10 @@ console = Console()
 
 lineage_store_app = typer.Typer(
     name="lineage-store",
-    help="Lineage store migration and deployment (SQLite → Postgres, KuzuDB).",
+    help=(
+        "Lineage store migration (into a SQLite lineage store) and deployment "
+        "profiles (KuzuDB, JanusGraph)."
+    ),
     no_args_is_help=True,
 )
 
@@ -48,8 +51,8 @@ def migrate_cmd(
         typer.Option(
             "--from-ocs",
             help=(
-                "Migrate from ObjectCapsuleStore (ADR-0022 canonical path). "
-                "Requires --ocs-tenant and --ocs-run-ids."
+                "Not implemented: refuses with exit 1. NovaFabric has no on-disk "
+                "ObjectCapsuleStore reader for this command (ADR-0022 path planned)."
             ),
         ),
     ] = False,
@@ -68,133 +71,80 @@ def migrate_cmd(
         Path,
         typer.Option(
             "--ocs-data-dir",
-            help=(
-                "Local OCS data directory for the InMemoryWormAdapter fallback "
-                "(used with --from-ocs)"
-            ),
+            help="Not read: --from-ocs is not implemented (kept for compatibility).",
         ),
     ] = Path("."),
 ) -> None:
-    """Migrate lineage edges from a Parquet file or ObjectCapsuleStore to a SQLite store.
+    """Migrate lineage edges from a Parquet file into a SQLite lineage store.
 
     Defaults to dry-run mode; pass --commit to write to the target store.
     Post-migration divergence check runs automatically unless --no-validate is set.
+
+    --from-ocs is not implemented: NovaFabric has no reader for an on-disk
+    ObjectCapsuleStore here, so it refuses (exit 1) and writes nothing rather
+    than report an empty migration as a success.
 
     Scope: lineage store (SQLite target).
 
     \b
     Examples:
-      # Migrate from Parquet (deprecated)
+      # Dry-run first, then commit (Parquet source; deprecated path)
+      nova lineage-store migrate edges.parquet --db lineage.db
       nova lineage-store migrate edges.parquet --db lineage.db --commit
-
-      # Migrate from ObjectCapsuleStore (ADR-0022 canonical)
-      nova lineage-store migrate --from-ocs --ocs-tenant org \\
-          --ocs-run-ids run-001,run-002 --db lineage.db --commit
-
-      # Dry-run first, then commit
-      nova lineage-store migrate --from-ocs --ocs-tenant org --ocs-run-ids run-001
-      nova lineage-store migrate --from-ocs --ocs-tenant org --ocs-run-ids run-001 --commit
     """
-    from novafabric.lineage.backends.sqlite import SqliteLineageStore
     from novafabric.lineage.migration.kit import MigrationDivergenceError
+
+    if from_ocs:
+        # H5: this built an empty in-memory store, never read --ocs-data-dir, and
+        # printed "ok loaded=0 … committed=yes" with exit 0. There is no on-disk
+        # ObjectCapsuleStore backend to read (backend_router's "local" is in-memory
+        # and test-only), so refuse before creating the target store.
+        console.print(
+            "[red]x[/red] not implemented: `--from-ocs` cannot read an "
+            f"ObjectCapsuleStore. --ocs-data-dir ({ocs_data_dir}) was not read and "
+            "nothing was migrated; no target store was created. NovaFabric has no "
+            "on-disk ObjectCapsuleStore backend for this command (planned, ADR-0022). "
+            "Re-index local capsules with `nova lineage import <capsule-dir>` instead."
+        )
+        raise typer.Exit(code=1)
+
+    # Legacy Parquet-backed path (deprecated).
+    from novafabric.lineage.backends.sqlite import SqliteLineageStore
+    from novafabric.lineage.migration.kit import migrate
+
+    if parquet is None:
+        console.print("[red]x[/red] Provide a Parquet source file.")
+        raise typer.Exit(code=1)
+
+    if not parquet.exists():
+        console.print(f"[red]x[/red] Parquet file not found: {parquet}")
+        raise typer.Exit(code=1)
 
     target = SqliteLineageStore(db_path=db)
 
-    if from_ocs:
-        # ADR-0022 canonical path: derive lineage from the OCS manifest chain.
-        from novafabric.lineage.migration.kit import migrate_from_ocs
-        from novafabric.object_capsule_store.backend_router import InMemoryWormAdapter
-        from novafabric.object_capsule_store.client import ObjectCapsuleStore
-        from novafabric.object_capsule_store.local_wal import LocalWal
-        from novafabric.object_capsule_store.novaseal_client import NovaSealDisabledClient
+    console.print("[bold]Migration plan (Parquet — deprecated)[/bold]")
+    console.print(f"  Source: {parquet}")
+    console.print(f"  Target: {db}")
+    console.print(f"  Mode:   {'commit' if commit else 'dry-run'}")
+    console.print(f"  Validate: {not no_validate}")
 
-        if not ocs_tenant:
-            console.print("[red]x[/red] --ocs-tenant is required with --from-ocs")
-            raise typer.Exit(code=1)
-        if not ocs_run_ids:
-            console.print("[red]x[/red] --ocs-run-ids is required with --from-ocs")
-            raise typer.Exit(code=1)
-
-        run_ids_list = [r.strip() for r in ocs_run_ids.split(",") if r.strip()]
-
-        # Build a minimal OCS instance backed by the local InMemoryWormAdapter.
-        # In a production deployment this would connect to the configured WORM
-        # backend (S3/MinIO/Azure) via environment variables — that wiring is
-        # out of scope for the CLI stub.
-        adapter = InMemoryWormAdapter()
-        wal = LocalWal(":memory:")
-        ocs = ObjectCapsuleStore(
-            adapter=adapter,
-            novaseal_client=NovaSealDisabledClient(),  # type: ignore[arg-type]
-            wal=wal,
+    try:
+        result = migrate(
+            source_parquet=parquet,
+            target=target,
+            validate=not no_validate,
+            commit=commit,
         )
+    except MigrationDivergenceError as exc:
+        console.print(f"[red]x[/red] Divergence detected: {exc}")
+        raise typer.Exit(code=2) from exc
 
-        console.print("[bold]Migration plan (OCS)[/bold]")
-        console.print(f"  Source:   ObjectCapsuleStore (tenant={ocs_tenant!r})")
-        console.print(f"  Run IDs:  {run_ids_list}")
-        console.print(f"  Target:   {db}")
-        console.print(f"  Mode:     {'commit' if commit else 'dry-run'}")
-        console.print(f"  Validate: {not no_validate}")
-
-        try:
-            result = migrate_from_ocs(
-                ocs=ocs,
-                tenant=ocs_tenant,
-                dest_store=target,
-                run_ids=run_ids_list,
-                validate=not no_validate,
-                commit=commit,
-            )
-        except MigrationDivergenceError as exc:
-            console.print(f"[red]x[/red] Divergence detected: {exc}")
-            raise typer.Exit(code=2) from exc
-
-        committed = result["committed"]
-        console.print(
-            f"[green]ok[/green] loaded={result['loaded']} "
-            f"diverged={result['diverged']} "
-            f"capsules_scanned={result['capsules_scanned']} "
-            f"committed={'yes' if committed else 'no (dry-run)'}"
-        )
-
-    else:
-        # Legacy Parquet-backed path (deprecated).
-        from novafabric.lineage.migration.kit import migrate
-
-        if parquet is None:
-            console.print(
-                "[red]x[/red] Provide a Parquet source file or use --from-ocs for the "
-                "ADR-0022 canonical migration path."
-            )
-            raise typer.Exit(code=1)
-
-        if not parquet.exists():
-            console.print(f"[red]x[/red] Parquet file not found: {parquet}")
-            raise typer.Exit(code=1)
-
-        console.print("[bold]Migration plan (Parquet — deprecated)[/bold]")
-        console.print(f"  Source: {parquet}")
-        console.print(f"  Target: {db}")
-        console.print(f"  Mode:   {'commit' if commit else 'dry-run'}")
-        console.print(f"  Validate: {not no_validate}")
-
-        try:
-            result = migrate(
-                source_parquet=parquet,
-                target=target,
-                validate=not no_validate,
-                commit=commit,
-            )
-        except MigrationDivergenceError as exc:
-            console.print(f"[red]x[/red] Divergence detected: {exc}")
-            raise typer.Exit(code=2) from exc
-
-        committed = result["committed"]
-        console.print(
-            f"[green]ok[/green] loaded={result['loaded']} "
-            f"diverged={result['diverged']} "
-            f"committed={'yes' if committed else 'no (dry-run)'}"
-        )
+    committed = result["committed"]
+    console.print(
+        f"[green]ok[/green] loaded={result['loaded']} "
+        f"diverged={result['diverged']} "
+        f"committed={'yes' if committed else 'no (dry-run)'}"
+    )
 
 
 @lineage_store_app.command("profile")

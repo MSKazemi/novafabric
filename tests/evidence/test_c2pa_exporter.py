@@ -148,3 +148,20 @@ class TestExportC2PACli:
         result = runner.invoke(app, ["export-c2pa", str(capsule_dir)])
         assert result.exit_code == 0
         assert "TSP" in result.output or "Trust Service" in result.output
+
+
+def test_claim_generator_is_the_installed_novafabric_version(capsule_dir: Path) -> None:
+    """L6: the generator is the NovaFabric that built the manifest, not a stale constant.
+
+    The capsule's own ``novafabric_version`` (the capturing release) stays in the
+    ``novafabric.capsule`` assertion; ``claim_generator`` names the exporter.
+    """
+    import novafabric
+
+    doc = C2PAManifestExporter().build_manifest(capsule_dir)
+    entry = doc["manifests"][doc["active_manifest"]]
+    assert entry["claim_generator"] == f"NovaFabric/{novafabric.__version__}"
+    assert entry["claim_generator_info"] == [
+        {"name": "NovaFabric", "version": novafabric.__version__}
+    ]
+    assert "0.32.0" not in entry["claim_generator"]

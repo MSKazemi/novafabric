@@ -127,11 +127,21 @@ class AuditEngine:
     Args:
         data_dir: Root data directory (contains a ``capsules/`` sub-directory).
         profile: :class:`ControlProfile` loaded from a YAML file.
+        capsules_dir: Where the capsules are, when not ``<data_dir>/capsules``
+            (e.g. ``$NOVAFABRIC_CAPSULE_DIR``). Optional; additive.
     """
 
-    def __init__(self, data_dir: Path, profile: ControlProfile) -> None:
+    def __init__(
+        self, data_dir: Path, profile: ControlProfile, capsules_dir: Path | None = None
+    ) -> None:
         self._data_dir = data_dir
         self._profile = profile
+        self._capsules_dir = capsules_dir if capsules_dir is not None else data_dir / "capsules"
+
+    @property
+    def capsules_dir(self) -> Path:
+        """The directory whose sub-directories are scanned as capsules."""
+        return self._capsules_dir
 
     # ------------------------------------------------------------------
     # Public API
@@ -189,8 +199,8 @@ class AuditEngine:
     # ------------------------------------------------------------------
 
     def _find_capsules(self) -> list[Path]:
-        """Return sorted list of capsule directories under ``data_dir/capsules/``."""
-        capsules_root = self._data_dir / "capsules"
+        """Return sorted list of capsule directories under :attr:`capsules_dir`."""
+        capsules_root = self._capsules_dir
         if not capsules_root.is_dir():
             return []
         dirs = sorted(
