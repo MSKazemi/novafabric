@@ -273,7 +273,7 @@ def unavailable_receipt(
     """Build the honest no-measurement receipt.
 
     The common case on hardware that cannot attribute per-process energy
-    (true on n1, true on the GB10 SoC per arXiv 2605.27599). ``counters_available``
+    (true on the lab server, true on the GB10 SoC per arXiv 2605.27599). ``counters_available``
     records what the node *could* read, so an auditor can tell "hardware cannot"
     from "NovaFabric failed to read it".
     """

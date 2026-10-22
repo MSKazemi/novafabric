@@ -1,6 +1,6 @@
 """Slice A2 — capture sacct ConsumedEnergyRaw into receipts (ADR-0093 §A2).
 
-The live ``sacct`` call needs a real Slurm cluster (n1); this is the pure,
+The live ``sacct`` call needs a real Slurm cluster; this is the pure,
 testable step: given a captured ``sacct -P --format=ConsumedEnergyRaw,...``
 string, parse it and append a measured ``sacct_energy`` receipt to the
 capsule's ``energy-receipts.jsonl``. No subprocess, no Slurm.

@@ -7131,7 +7131,7 @@ dependabot diff** — only from running the suite against the upgraded set.
 
 ## [0.98.2] — 2026-07-31
 
-Found by running the dashboard against the live n1 store and deploying the
+Found by running the dashboard against the live lab-server store and deploying the
 image — five defects that only surface when you look at the thing.
 
 ### Fixed
@@ -10936,7 +10936,7 @@ big-data reliability, end to end (experimental surface per ADR-0027 unchanged).
     producing `confidence=apportioned` time-share receipts when samples exist (the honest
     `unavailable` fallback is unchanged); `runners/_slurm_energy.py` + `runners/_slurm.py`
     capture `sacct ConsumedEnergyRaw` into a measured `sacct_energy` receipt (fail-open).
-    37 tests. The live n1 Slurm `sacct` round-trip remains hardware-gated.
+    37 tests. The live Slurm `sacct` round-trip remains hardware-gated.
   - **Energy attestation + court-admissibility in Evidence Bundles (ADR-0093 A3 / ADR-0095 C2).**
     `evidence/bundle.py` adds a signed `PREDICATE_ENERGY` attestation when the capsule has
     `energy-receipts.jsonl`, and `with_custody=True` embeds the FRE-902(14)
@@ -10958,7 +10958,7 @@ big-data reliability, end to end (experimental surface per ADR-0027 unchanged).
     (compiled CAE tree). 4 tests.
 
   Still deferred: the React EnergyTab / SafetyCaseTab panels and static-bundle rebuild
-  (frontend follow-up), and the live n1 Slurm `sacct` query end-to-end.
+  (frontend follow-up), and the live Slurm `sacct` query end-to-end.
   - **Dashboard — Accountability Spine tab + serve API (ADR-0093/0094/0095).** Token-gated read-only serve endpoints `GET /api/runs/{id}/energy|ledger|safety-case`, plus a new web `SpineTab` (energy receipts + conservation, ledger verify status, on-demand safety-case build with color-coded backing states; measured/declared/unavailable shown distinctly, UNSUPPORTED never laundered).
 - **`nova evidence bind-custody` / `check-admissibility` — court-admissible evidence binding
   (experimental, ADR-0095).** New `src/novafabric/evidence/admissibility.py` builds the additive
@@ -11059,7 +11059,7 @@ big-data reliability, end to end (experimental surface per ADR-0027 unchanged).
   restart-based no-loss on publish failure (the drain loop exits on error so a fresh process
   re-reads the in-flight batch from the persisted spool checkpoint). New Go deps: `nats.go`
   + `nats-server` (Apache-2.0, Tier A per ADR-0024). Live round-trip verified byte-identical
-  on the n1 NATS JetStream cluster. This is the edge-write + forward path only; hub-sign +
+  on the lab-server NATS JetStream cluster. This is the edge-write + forward path only; hub-sign +
   offline verify (C1), the OTel-Arrow gateway hop (C2), and Slurm/K8s rollout artifacts (C3)
   remain design intent.
 
@@ -11157,15 +11157,15 @@ SPK-COL spike gate closed) + the spike record itself.
   empty states + TTL-cache branch, 8 report types, capsule-compare
   validation) — 43 campaign tests total.
 - `benchmarks/spk_col2_hotpath.py` — SPK-COL-2 per-event hot-path harness
-  (warm-process A/B, mock-LLM endpoint, real wire hooks). **Resolved on n1:
+  (warm-process A/B, mock-LLM endpoint, real wire hooks). **Resolved on the lab server:
   +0.366 ms / +0.36 % per 100 ms call — PASS** (≤ 2 % target).
 - `benchmarks/spk_col1_offset_replay.py` — SPK-COL-1 offset-replay rebuild
-  harness (JetStream file storage, run_id-keyed subjects). **Resolved on n1:
+  harness (JetStream file storage, run_id-keyed subjects). **Resolved on the lab server:
   PASS 3/3** — byte-equal rebuild from offset 0, per-run order preserved,
   RF1 broker restart with zero loss (10K events / 50 runs).
 - `benchmarks/spk_col3/` — SPK-COL-3 OTel-Arrow vs OTLP+zstd wire A/B kit
   (otelcol-contrib pipelines + byte-counting proxy + burst/RSS leg).
-  **Resolved on n1: 31.5 % egress reduction, bounded burst RSS — PASS.**
+  **Resolved on the lab server: 31.5 % egress reduction, bounded burst RSS — PASS.**
 - **ADR-0020 promoted to Accepted** — all three SPK-COL spikes PASS;
   Phase-2 collector production code is unblocked.
 - **ADR-0086…0090 + ADR-0041 v0.2 promoted to Accepted** — Wave-2 first
@@ -11234,7 +11234,7 @@ the 2026 landscape sweep, each behind a freshly committed ADR
 - `design/architecture/implementation-status.md` gains the SOTA gap-closure
   arc table (incl. retroactive Wave-1 rows ADR-0080…0085).
 - gap-002 (collector) remains spike-gated per ADR-0020 — SPK-COL-1/3 require
-  n1 infra; no collector code shipped.
+  lab-server infra; no collector code shipped.
 
 ## [0.49.0] — 2026-06-12
 
@@ -11553,14 +11553,14 @@ See [`docs/releases/v0.48.0.md`](docs/releases/v0.48.0.md).
   calls even though `model-calls.jsonl` was populated. New
   `safe_response_size()` isolates the size read (returns `None` when the body is
   unread) so the event is always recorded. Applied to the `httpx` and `requests`
-  hooks. Found via the v0.45.0 capture-fidelity n1 experiment.
+  hooks. Found via the v0.45.0 capture-fidelity lab-server experiment.
 
 ### Tests
 - DSSE envelope branch coverage: pubkey-field (Ed25519 + ECDSA), Ed25519 X.509
   cert path, unsupported-key and missing-field errors (`tests/seal/test_envelope.py`).
 
 ### Verified
-- Post-fix capture-fidelity re-measurement on n1 (qwen3:8b): `network_events.jsonl`
+- Post-fix capture-fidelity re-measurement on the lab server (qwen3:8b): `network_events.jsonl`
   populated in 10/10 scenarios (was 0/10); mean capture completeness 0.53 → 0.563.
 
 ## [0.45.0] — 2026-06-05
@@ -11593,7 +11593,7 @@ See [`docs/releases/v0.48.0.md`](docs/releases/v0.48.0.md).
   `gen_ai.response.model` / `gen_ai.system`) with a legacy `model`/`provider`
   fallback.
 - **OQ-016 parent/child timeout** (`nova-testbench`) — worker subprocess timeout
-  raised from 180 s to 600 s to accommodate kapa LLM calls averaging 37–98 s each.
+  raised from 180 s to 600 s to accommodate local LLM-server calls averaging 37–98 s each.
 
 ### Added
 - **`nova capture --mark-provenance`** (EU AI Act Art.50, ADR-0074) — writes a
@@ -11647,7 +11647,7 @@ See [`docs/releases/v0.48.0.md`](docs/releases/v0.48.0.md).
   chain up to `max_depth=4`, detects cycles, soft-checks EKU. `CertChainResult` dataclass
   returned or raised as `TimestampError` when `verify_chain=True`. (ADR-0070)
 - **Postgres partition benchmark harness** — `bench/rls_partition_pruning/run_benchmark.py`;
-  ran 10K×1M on n1 (24 vCPU / 62 GiB / PG 16.13); p99 worst-case 16 ms, 12× below
+  ran 10K×1M on a lab server (24 vCPU / 62 GiB / PG 16.13); p99 worst-case 16 ms, 12× below
   200 ms FR-17 gate. Strategy A confirmed; ADR-0051 benchmark requirement fulfilled.
 - **`novafabric[sigstore]`** optional extra — `sigstore>=4.2.0` (Apache-2.0, Tier A).
 

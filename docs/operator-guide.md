@@ -1477,7 +1477,7 @@ that automates the SSH tunnel + token fetch in one command:
 ```bash
 # From ~/scratch/lpt/ on your laptop:
 make nova-dashboard
-# → ensures postgres + nova are up on n1
+# → ensures postgres + nova are up on the server
 # → fetches the live token
 # → opens an SSH tunnel on localhost:4321
 # → prints the dashboard URL

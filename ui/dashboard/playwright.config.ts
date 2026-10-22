@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 // PW_PORT lets a run use a free port when 4321 is occupied by something that
-// is NOT the local preview build (e.g. on n1 the deployed `nova serve`
+// is NOT the local preview build (e.g. on a lab server the deployed `nova serve`
 // container listens on 4321 and `reuseExistingServer` would silently test the
 // deployed bundle instead of the working tree). Default behavior unchanged.
 const PORT = Number(process.env.PW_PORT ?? 4321);

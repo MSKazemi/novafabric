@@ -16,7 +16,7 @@ Acceptance (spike record):
   2. partition order per run_id preserved (event seq strictly increasing);
   3. RF1 survives a broker restart + replay (no data loss).
 
-Usage (on n1, NATS at localhost:4222, prod docker profile)::
+Usage (on the lab server, NATS at localhost:4222, prod docker profile)::
 
     .venv/bin/python benchmarks/spk_col1_offset_replay.py \
         --runs 50 --events-per-run 200 [--restart-cmd "docker restart novafabric-nats"]

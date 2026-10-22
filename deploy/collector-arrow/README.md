@@ -5,7 +5,7 @@ Config-driven Arrow transport for the spool→central hop, using the official
 exporter/receiver). No NovaFabric code changes — drop these configs into an
 existing collector deployment.
 
-**Measured (SPK-COL-3, n1, 2026-06-12):** 31.5 % egress reduction vs
+**Measured (SPK-COL-3, lab server, 2026-06-12):** 31.5 % egress reduction vs
 OTLP+zstd on the identical corpus and batch settings (`benchmarks/spk_col3/`
 holds the reproducible A/B harness); sender memory bounded under a 10× burst
 (max RSS 237 MiB). Synthetic-corpus caveat: repetitive spans favor row-wise

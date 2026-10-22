@@ -3,7 +3,7 @@
 Slurm's ``sacct ConsumedEnergyRaw`` gives a true per-job joule total (with
 ``AcctGatherEnergyType=acct_gather_energy/rapl|ipmi``). This is the strongest
 receipt class — confidence='measured', source='sacct_energy'. The live sacct
-call needs a Slurm cluster (n1); the parser + builder are tested here with
+call needs a Slurm cluster; the parser + builder are tested here with
 captured output.
 """
 

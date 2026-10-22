@@ -460,7 +460,7 @@ update:
 # deploy-local — build & run novafabric-serve straight from the CURRENT working
 # tree. No `git pull`, no GitHub round-trip: whatever is checked out here is what
 # deploys. The fast dev-iteration path. Prints the working-tree commit (+ -dirty
-# when there are uncommitted changes) so "what's running on n1" stays answerable.
+# when there are uncommitted changes) so "what's running on the server" stays answerable.
 deploy-local:
 	@REV=$$(git rev-parse --short HEAD 2>/dev/null || echo nogit); \
 	git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null || REV="$$REV-dirty"; \

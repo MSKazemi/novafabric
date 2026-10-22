@@ -6,7 +6,7 @@
 # byte-counting TCP proxy on the egress hop. Acceptance: OTel-Arrow egress
 # >= 30 % smaller at equal fidelity; sender memory bounded under a 10x burst.
 #
-# Prereqs (n1): ./otelcol-contrib (v0.154.0) in $WORK, docker (telemetrygen
+# Prereqs (lab server): ./otelcol-contrib (v0.154.0) in $WORK, docker (telemetrygen
 # image pulled), python3.
 set -euo pipefail
 

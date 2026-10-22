@@ -5,7 +5,7 @@ per-job joule total when the cluster runs
 ``AcctGatherEnergyType=acct_gather_energy/rapl`` (or ``/ipmi``). That total is an
 *independent measurement* (the strongest receipt class, and the node total the
 conservation check reconciles against). The live ``sacct`` call belongs to the
-Slurm runner and needs a real cluster (n1); this module is the pure parser +
+Slurm runner and needs a real cluster; this module is the pure parser +
 receipt builder, validated against captured output.
 """
 

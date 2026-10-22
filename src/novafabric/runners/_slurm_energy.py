@@ -4,7 +4,7 @@ The SLURM runner already shells out to ``sacct``; on job completion it can also
 request ``ConsumedEnergyRaw,Elapsed,NNodes`` and record a *measured* per-job
 energy receipt — the strongest receipt class (an independent counter total the
 conservation check reconciles against). The live ``sacct`` call needs a real
-cluster (n1); this module is the **pure, testable step**: given a captured
+cluster; this module is the **pure, testable step**: given a captured
 ``sacct -P`` string, it parses the joules + elapsed and appends an
 ``sacct_energy``/``measured`` receipt to ``energy-receipts.jsonl``.
 

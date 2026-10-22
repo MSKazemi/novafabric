@@ -15,7 +15,7 @@ Two layers:
   :class:`~novafabric.evidence_fabric.nats_consumer.NATSJetStreamConsumer`
   (``NOVA_NATS_URL``, ``NOVA_NATS_STREAM``, ``NOVA_NATS_SUBJECT``).
 
-Experimental (v0.51.0). Spike evidence: SPK-COL-1 PASS 3/3 on n1 2026-06-12
+Experimental (v0.51.0). Spike evidence: SPK-COL-1 PASS 3/3 on the lab server 2026-06-12
 (byte-equal rebuild, per-run order, RF1 broker-restart no-loss).
 """
 

@@ -1,5 +1,5 @@
 # Node-side sender: spool -> central hop over OTel-Arrow (experimental, ADR-0020).
-# Proven in SPK-COL-3 (n1, 2026-06-12): 31.5% egress reduction vs OTLP+zstd
+# Proven in SPK-COL-3 (lab server, 2026-06-12): 31.5% egress reduction vs OTLP+zstd
 # at identical batch settings on the same corpus. Requires otelcol-contrib
 # (otelarrowexporter), v0.154.0+.
 receivers:

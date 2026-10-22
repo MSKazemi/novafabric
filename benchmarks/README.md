@@ -101,12 +101,12 @@ between before and after the change**, not the absolute number.
 
 ```bash
 # SPK-COL-2 — per-event hot-path overhead, warm process, mock-LLM endpoint.
-# RESOLVED on n1 2026-06-12: +0.366 ms (+0.36 %) per 100 ms call — PASS.
+# RESOLVED on the lab server 2026-06-12: +0.366 ms (+0.36 %) per 100 ms call — PASS.
 uv run python benchmarks/spk_col2_hotpath.py --n 200 --latency-ms 100
 
 # SPK-COL-1 — offset-replay rebuild against NATS JetStream (needs a broker;
-# on n1 the prod docker profile provides novafabric-nats on :4222).
-# RESOLVED on n1 2026-06-12: PASS 3/3 (byte-equal rebuild, per-run order,
+# on the lab server the prod docker profile provides novafabric-nats on :4222).
+# RESOLVED on the lab server 2026-06-12: PASS 3/3 (byte-equal rebuild, per-run order,
 # RF1 restart no-loss).
 uv run python benchmarks/spk_col1_offset_replay.py --runs 50 --events-per-run 200 \
     --restart-cmd "docker restart novafabric-nats"
@@ -118,7 +118,7 @@ the private `design/research/novafabric-sota-landscape-2026/_spikes/SPK-COL.md`.
 ```bash
 # SPK-COL-3 — OTel-Arrow vs OTLP+zstd wire A/B (needs otelcol-contrib binary
 # in $WORK and docker for telemetrygen; see spk_col3/run_ab.sh header).
-# RESOLVED on n1 2026-06-12: 31.5 % egress reduction, burst RSS bounded — PASS.
+# RESOLVED on the lab server 2026-06-12: 31.5 % egress reduction, burst RSS bounded — PASS.
 WORK=$HOME/spk-col3 bash benchmarks/spk_col3/run_ab.sh
 ```
 

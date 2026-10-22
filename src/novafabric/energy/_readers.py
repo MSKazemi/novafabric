@@ -5,7 +5,7 @@ ADR-0024). NVML is optional and lazy-imported behind the ``[energy-gpu]`` extra.
 Every reader degrades safely: an unreadable counter yields an empty reading and
 **never raises** into the workload (the "capture never blocks" invariant).
 
-n1 is CPU-only, so the RAPL path is the well-tested default; NVML is validated
+The lab server is CPU-only, so the RAPL path is the well-tested default; NVML is validated
 out-of-band on a GPU box.
 """
 
