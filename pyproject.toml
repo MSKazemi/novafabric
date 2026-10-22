@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novafabric"
-version = "0.106.0"
+version = "0.106.1"
 # readme is dynamic: scripts/pypi_readme_hook.py rewrites relative links to absolute tag URLs for PyPI.
 dynamic = ["readme"]
 description = "Self-hosted replay and evidence infrastructure for AI agents and agentic systems"

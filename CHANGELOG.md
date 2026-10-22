@@ -11,6 +11,22 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+## [0.106.1] - 2026-10-22
+
+**The release image builds again, and the collector clears a new Go advisory.** A release-pipeline patch: no library or CLI change. Full notes:
+[docs/releases/v0.106.1.md](docs/releases/v0.106.1.md).
+
+### Fixed
+
+- **The container image builds.** `deploy/docker/Dockerfile` did not copy
+  `scripts/pypi_readme_hook.py`, the hatch metadata hook that produces the PyPI long
+  description, so the v0.106.0 image build failed with "Build script does not exist" and no
+  v0.106.0 image was published (the PyPI release and the Helm chart were). The packaging guard
+  now checks every hatch hook script as well as every `force-include` source.
+- **Collector CI on Go 1.26.10.** GO-2026-6809 (`crypto/x509`: distrust compromised
+  intermediate certificates) is fixed only in Go 1.26.10 and failed the v0.106.0 tag's
+  `govulncheck` run on 1.26.9.
+
 ## [0.106.0] - 2026-10-22
 
 **Signatures that cover what they claim, verified Evidence Bundles, a trusted maker-checker,
