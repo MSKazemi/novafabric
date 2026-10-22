@@ -179,10 +179,11 @@ rewrites a bare scheme to `postgresql+psycopg://` and leaves an explicitly named
 driver (`+asyncpg`, `+psycopg2`) alone — naming a driver is a deliberate choice.
 
 **If you add another consumer of the Postgres DSN, route it through that
-function** rather than re-deriving the rule. (Today the MetadataStore Postgres
-track's `metadata_store/migrations/postgres/env.py` still carries its own,
-narrower rewrite — it handles only `postgresql://` and also rewrites an explicit
-`+psycopg2`; consolidating it onto `to_sqlalchemy_url` is tracked as a code fix.) The bug survived precisely because
+function** rather than re-deriving the rule. The MetadataStore Postgres track's
+`metadata_store/migrations/postgres/env.py` does (it used to carry its own,
+narrower rewrite that missed `postgres://` and overrode an explicit `+psycopg2`;
+`tests/metadata_store/test_alembic_env_uses_shared_dsn_rule.py` now pins it to
+the shared rule). The bug survived precisely because
 each consumer was individually correct.
 
 ---
