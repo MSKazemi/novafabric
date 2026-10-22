@@ -824,9 +824,9 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     id: 'nova-login',
     name: 'nova login',
     journey: 'infra',
-    description: 'Authenticate with a NovaFabric server instance using Device Authorization Grant (ADR-0018) — prints a URL to open in the browser.',
+    description: "Log in through a server's DEMO device grant (testing only: needs NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1 on the server; the API does not accept the token). Real servers: IdP bearer token, API key or `nova server issue-token`.",
     fields: [
-      { key: 'server-url', label: '--server-url', type: 'text', required: true, hint: 'URL of the NovaFabric server (e.g. https://nova.internal).' },
+      { key: 'server', label: '--server', type: 'text', required: true, hint: 'URL of the NovaFabric server (e.g. http://localhost:7433).' },
     ],
     docsPath: '/docs/cli-reference/',
   },

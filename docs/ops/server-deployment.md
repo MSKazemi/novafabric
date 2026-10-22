@@ -182,6 +182,10 @@ an [offline token](#scenario-4--airgapped--offline-token-mode).
 nova login --server http://nova.example.com:7433   # demo device grant only
 ```
 
+Against a server without the demo grant, `nova login` exits 1 with that
+explanation (not a bare `404`); after a demo login it warns on stderr that the
+stored token is not accepted by the server's API.
+
 Credentials are stored in `~/.config/novafabric/credentials.json` at mode `0600`.
 
 ### Log out

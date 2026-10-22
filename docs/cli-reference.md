@@ -273,7 +273,7 @@ Status: **experimental**.
 | [`nova server list-scim-events`](#nova-server-list-scim-events-experimental-adr-0139-d5) | Read-only SCIM provisioning audit trail (experimental) |
 | [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke, rotate (experimental) |
 | [`nova server usage`](#nova-server-usage-reconcile-experimental-adr-0208) | Usage-ledger drift reconciliation and chargeback CSV/NDJSON export (experimental) |
-| [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
+| [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Log in through a server's demo device grant (testing only) / remove stored credentials |
 | [`nova doctor`](#nova-doctor---check-extras---check-storage---check-scheduler---check-tokens) | Installation, storage, scheduler/env-var, and token-at-rest diagnostics |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
 | [`nova migrate-format`](#nova-migrate-format-experimental-adr-0165-nf-332) | Record a format-migration hop in a preservation facet; verify the chain offline (experimental) |
@@ -7717,18 +7717,23 @@ Exit codes:
 
 ### nova login
 
-Authenticate with a NovaFabric server via Device Authorization Grant (RFC 8628,
-[ADR-0018](./decisions.md)). Credentials are stored in
-`~/.config/novafabric/credentials.json` at mode `0600`.
+**Experimental — demo device grant only.** Logs in through the server's *demo*
+Device Authorization Grant endpoints (`/v0/auth/device/code`), which a server
+mounts only with `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1` (off by default).
+It does **not** contact your identity provider, and the server's API does not
+accept the HS256 token it stores (requests with it get 401). RFC 8628 against
+the IdP ([ADR-0018](./decisions.md)) is **planned**, not implemented.
+Credentials are stored in `~/.config/novafabric/credentials.json` at mode `0600`.
 
 ```bash
-nova login
-nova login --server http://nova.example.com:7433
+nova login --server http://localhost:7433   # a server started with the demo grant on
 ```
 
-The CLI prints a URL and user code. After the user approves in the browser,
-the access token is stored and used automatically on subsequent commands.
-Tokens are auto-refreshed; re-run `nova login` when the refresh token expires.
+Against a server without the demo grant (the production default) the command
+exits 1 and says so, instead of printing a bare `404 Not Found`. After a demo
+login it prints a `warning:` on stderr that the token is not accepted. For a
+real server, send an IdP-issued token as `Authorization: Bearer <token>`, or use
+an API key or an offline token (`nova server issue-token`).
 
 Options:
 - `--server TEXT` — server URL (default: `http://localhost:7433`)
