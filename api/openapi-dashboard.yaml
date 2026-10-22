@@ -10332,12 +10332,13 @@ paths:
       description: "Verify DSSE signature + RFC 3161 timestamp + Merkle log inclusion (nova verify).\n\
         \nReturns:\n  sealed=False  — capsule has no .seal/ directory (was not sealed)\n  configured=False\
         \ — NovaSeal config not found\n  signature_ok, timestamp_ok, log_integrity_ok, valid, errors —\
-        \ full result\n  timestamp_ok is null when no RFC 3161 token is present (ADR-0301)\n  timestamp_trust\
-        \ — anchored | unanchored | absent | invalid: timestamp_ok says a\n    token is intact; only \"\
-        anchored\" (tsa_ca_certs in novaseal.yaml) is trusted time\n  sealer_log, log_inclusion, unanchored_claims\
-        \ — what the logs established\n    (ADR-0297 Amendment 2); unanchored_claims lists what `nova\
-        \ verify --strict`\n    would fail on\n  identity_trust, signer_subject, local_seal_identity —\
-        \ signer trust level (ADR-0301)"
+        \ full result\n  capsule_binding_ok — ADR-0251 binding (capsule.yaml + evidence_digests +\n  \
+        \  log-entry capsule_id); valid is the verdict `nova verify` exits on\n  timestamp_ok is null\
+        \ when no RFC 3161 token is present (ADR-0301)\n  timestamp_trust — anchored | unanchored | absent\
+        \ | invalid: timestamp_ok says a\n    token is intact; only \"anchored\" (tsa_ca_certs in novaseal.yaml)\
+        \ is trusted time\n  sealer_log, log_inclusion, unanchored_claims — what the logs established\n\
+        \    (ADR-0297 Amendment 2); unanchored_claims lists what `nova verify --strict`\n    would fail\
+        \ on\n  identity_trust, signer_subject, local_seal_identity — signer trust level (ADR-0301)"
       parameters:
       - in: path
         name: run_id
