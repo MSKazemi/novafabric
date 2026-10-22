@@ -20,7 +20,17 @@ permissions:
   contents: read
 
 jobs:
+  ci-green:
+    # Nothing in this workflow publishes until CI has passed on this exact
+    # commit (ADR-0316) — v0.106.0 shipped while it was red.
+    if: github.repository == 'MSKazemi/novafabric'
+    uses: ./.github/workflows/require-green-ci.yml
+    permissions:
+      actions: read
+      contents: read
+
   image:
+    needs: ci-green
     name: Build and push image
     runs-on: ubuntu-latest
     timeout-minutes: 30

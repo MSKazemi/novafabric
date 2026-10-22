@@ -16,7 +16,7 @@ COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age
 
 .PHONY: papers papers-check help test lint typecheck coverage benchmark benchmark-capture \
 	test-fast test-par test-container test-changed test-watch \
-	test-direct test-impacted test-index test-gate \
+	test-direct test-impacted test-index test-gate test-shard test-durations \
 	bench-scale bench-lineage \
         check-links check-decisions site \
         bundle serve-local deploy-local \
@@ -60,7 +60,9 @@ help:
 	@echo "  test-watch        test-direct, rerun on every save (pytest-watcher)"
 	@echo "  test-container    The Docker tier only (testcontainers + docker CLI); skips without a daemon"
 	@echo "  test-gate         Run the push gate NOW and stamp it — the next push skips the re-run"
-	@echo "  test-par          Release gate — byte-for-byte what CI's unit job runs (~5 min)"
+	@echo "  test-par          Release gate — the whole suite as CI's unit shards run it (~5 min)"
+	@echo "  test-shard        One CI unit shard locally: make test-shard SHARD=3/6"
+	@echo "  test-durations    Fold CI's test-durations artifact into tests/.test-durations.json"
 	@echo "  benchmark         Run NovaSeal p99 latency gate (100 rounds, < 200 ms)"
 	@echo "  benchmark-capture Run capture-overhead p95 gate (30 captured runs, < 2000 ms)"
 	@echo "  bench-scale       Dashboard p95 gate at 100K rows (~7s; skipped by default)"
@@ -187,10 +189,10 @@ test-changed:
 test-watch:
 	uv run ptw . --runner ./scripts/watch-runner.sh
 
-# The release gate. Byte-for-byte the command CI's `unit` job runs, so passing
-# this locally means passing there — including the scope, the distribution and
-# the coverage floor. `tests/docs/test_makefile_matches_ci_gate.py` fails if the
-# two ever drift apart.
+# The release gate. The whole suite, as CI's `unit` shards run it between them
+# (ADR-0316): same scope, same distribution, and the coverage floor CI's
+# `coverage` job applies to their union. `tests/docs/test_makefile_matches_ci_gate.py`
+# fails if the two ever drift apart.
 #
 # It is written out in full rather than factored into a variable: this recipe is
 # meant to be readable next to .github/workflows/ci.yml and diffed against it by
@@ -199,6 +201,23 @@ test-par:
 	uv run pytest tests/ --ignore=tests/integration --benchmark-disable \
 		-n auto --dist=loadgroup \
 		--cov=novafabric --cov-report=term-missing --cov-fail-under=90
+
+# One CI unit shard, exactly as CI selects it (tests/_shard.py, ADR-0316) — for
+# reproducing a red shard. SHARD is I/N, e.g. `make test-shard SHARD=3/6`.
+test-shard:
+	@test -n "$(SHARD)" || { echo "usage: make test-shard SHARD=I/N (e.g. 3/6)"; exit 2; }
+	uv run pytest tests/ --ignore=tests/integration --benchmark-disable \
+		-n auto --dist=loadgroup --shard=$(SHARD)
+
+# Re-balance the shards from CI's own timings. CI's `coverage` job uploads a
+# `test-durations` artifact — the committed file already merged with that run's
+# JUnit timings — so refreshing is: download it, validate it, copy it, commit.
+#   gh run download <run-id> -R MSKazemi/novafabric -n test-durations
+DURATIONS ?= test-durations.json
+test-durations:
+	@test -f "$(DURATIONS)" || { echo "no $(DURATIONS): gh run download <run-id> -R MSKazemi/novafabric -n test-durations"; exit 2; }
+	PYTHONPATH=tests uv run python -c "from pathlib import Path; from _shard import load_durations; d = load_durations(Path('$(DURATIONS)')); print(f'{len(d)} files, {sum(d.values()):.0f} s of tests')"
+	cp "$(DURATIONS)" tests/.test-durations.json
 
 benchmark:
 	mkdir -p .benchmark-results

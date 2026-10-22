@@ -23,7 +23,17 @@ permissions:
   contents: read
 
 jobs:
+  ci-green:
+    # Nothing in this workflow publishes until CI has passed on this exact
+    # commit (ADR-0316) — v0.106.0 shipped while it was red.
+    if: github.repository == 'MSKazemi/novafabric'
+    uses: ./.github/workflows/require-green-ci.yml
+    permissions:
+      actions: read
+      contents: read
+
   build:
+    needs: ci-green
     name: Build distribution
     runs-on: ubuntu-latest
     # CI and every other action belong to the PUBLIC repository. The private

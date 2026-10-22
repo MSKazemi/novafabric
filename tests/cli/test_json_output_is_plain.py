@@ -266,10 +266,19 @@ def test_json_stdout_parses_with_colour_forced_in_a_narrow_terminal(
     tmp_path: Path, build: Callable[[Path], list[str]]
 ) -> None:
     args = build(tmp_path)
+    # The subprocess models a user's shell, so it must not inherit the test
+    # session's own colour pin (tests/conftest.py) either.
     env = {
         key: value
         for key, value in os.environ.items()
-        if key not in {"NO_COLOR", "COLORTERM", "NOVAFABRIC_CAPSULE_DIR", "GITHUB_ACTIONS"}
+        if key
+        not in {
+            "NO_COLOR",
+            "COLORTERM",
+            "NOVAFABRIC_CAPSULE_DIR",
+            "GITHUB_ACTIONS",
+            "_TYPER_FORCE_DISABLE_TERMINAL",
+        }
     }
     env |= {
         "FORCE_COLOR": "1",

@@ -11,6 +11,32 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Changed
+
+- **CI runs the unit suite as six duration-balanced shards** (ADR-0316). The single `unit`
+  job took 31–57 min; each shard now runs a disjoint set of test files (`pytest --shard=I/N`,
+  `tests/_shard.py`), and a new `coverage` job combines their coverage, enforces the 90%
+  floor over the union, and proves every test ran in exactly one shard. A `lint` job reports
+  lockfile, ruff and CLI-smoke failures in about a minute. New `make test-shard SHARD=I/N`
+  reproduces one shard locally; `make test-durations` re-balances from CI's timings.
+- **A release publishes nothing unless CI passed on the tagged commit** (ADR-0316). The
+  GitHub Release, PyPI, container-image and Helm-chart workflows each wait for `ci.yml` on
+  the tagged SHA and fail closed otherwise. v0.106.0 was published to PyPI and as a GitHub
+  Release while CI was red on that commit.
+
+### Fixed
+
+- **Two promote CLI tests failed only in CI.** Typer forces a colour terminal when
+  `GITHUB_ACTIONS` is set, and Rich then wrote escape codes inside `--identity`. The test
+  session now pins its colour environment (`tests/conftest.py`), closing the whole class
+  (issue #21) rather than the two instances.
+
+### Security
+
+- **pillow ≥ 13.0.0** (18 advisories in 12.3.0, one CRITICAL; via `weasyprint`) and
+  **certifi ≥ 2026.10.19** (PYSEC-2026-4320, CRITICAL), both pinned as transitive floors
+  in `[tool.uv] constraint-dependencies`.
+
 ## [0.106.0] - 2026-10-22
 
 **Signatures that cover what they claim, verified Evidence Bundles, a trusted maker-checker,

@@ -89,6 +89,27 @@ def test_release_gate_matches_ci_semantically() -> None:
     )
 
 
+def test_release_gate_enforces_the_floor_ci_enforces() -> None:
+    """The coverage floor is the same number locally and in CI.
+
+    CI's unit job is sharded (ADR-0316), so the floor moved out of the pytest
+    command into the `coverage` job, which applies it to the union of the
+    shards. `make test-par` runs the whole suite in one process tree and keeps
+    it on the pytest command line. The two must name the same number.
+    """
+    recipe = _makefile_recipe("test-par")
+    workflow = yaml.safe_load(_CI.read_text(encoding="utf-8"))
+    reports = [
+        str(step["run"])
+        for step in workflow["jobs"]["coverage"]["steps"]
+        if "coverage report" in str(step.get("run", ""))
+    ]
+    local = re.search(r"--cov-fail-under=(\d+)", recipe)
+    ci = [m.group(1) for r in reports for m in [re.search(r"--fail-under=(\d+)", r)] if m]
+    assert local and ci, f"floor not found — make: {recipe!r}; CI: {reports!r}"
+    assert ci == [local.group(1)], f"make test-par floor {local.group(1)} vs CI {ci}"
+
+
 def test_release_gate_adds_no_hidden_scope() -> None:
     """…and it does not verify *less* by quietly skipping a tier CI runs.
 

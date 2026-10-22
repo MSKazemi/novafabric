@@ -186,7 +186,7 @@ locally and fails only for the person the docs are written for.
 
 ### How the test tiers work
 
-The suite is **12,280 tests**, so "run the tests" is not one command — it is a ladder, and each
+The suite is **~20,000 tests** (20,199 collected on 2026-10-22), so "run the tests" is not one command — it is a ladder, and each
 rung is defined by what it can prove and what it costs.
 
 | Tier | Command | Scope | Measured |
@@ -196,8 +196,9 @@ rung is defined by what it can prove and what it costs.
 | 1 | `make test-impacted` | full static import closure of your change | seconds–minutes |
 | 2 | `make test-fast` | everything except Docker and `tests/integration` | ~4 min |
 | 2 | `make test-gate` | tier 2 + the push-gate stamp — run it *before* pushing | ~4 min, then pushes are instant |
-| 3 | `make test-par` | the release gate — byte-for-byte CI's `unit` job, coverage ≥ 90% | ~5 min |
+| 3 | `make test-par` | the release gate — the whole suite as CI's `unit` shards run it, coverage ≥ 90% | ~5 min |
 | — | `make test-container` | the Docker tier alone | needs a daemon |
+| — | `make test-shard SHARD=3/6` | exactly one CI `unit` shard — to reproduce a red shard | a sixth of tier 3 |
 
 **Tiers 0 and 2 can run by themselves.** The three hook scripts are public, under
 `scripts/hooks/`: `lint-edited-file.sh` lints each edited file, `stop-scoped-tests.sh` runs tier
@@ -214,7 +215,7 @@ concurrent sessions each doing that has been measured to push this class of mach
 on 20 cores with 11 GiB in swap. `scripts/test-workers.sh` sizes the worker count to the cores and
 memory that are actually free (never below 1, never above `nproc`), and the Makefile exports it as
 `PYTEST_XDIST_AUTO_NUM_WORKERS`, which pytest-xdist reads as the value of `auto` — the pytest
-command lines are untouched, so `test-par` remains byte-for-byte CI's command. Automated runs are
+command lines are untouched, so `test-par` still runs what CI runs. Automated runs are
 additionally `nice`d, the Stop hook skips (without blocking) when the machine is already saturated,
 and concurrent scoped runs serialize on a lock instead of stacking. Force a count with
 `NOVA_TEST_WORKERS=8 make test-fast`. Guard: `tests/docs/test_worker_throttle.py`.
@@ -254,6 +255,32 @@ missing, and takes ~2.5 s):
 ```bash
 make test-index
 ```
+
+### How CI runs the suite (ADR-0316)
+
+CI does not run the suite as one job. The `unit` job is a matrix of **six shards**, each
+running a disjoint set of test *files* with `pytest --shard=I/6`:
+
+- **Balanced by measured time.** `tests/_shard.py` places files largest-first onto the lightest
+  shard, weighted by `tests/.test-durations.json` (per-file seconds from CI's JUnit reports). A
+  file with no recorded time is weighted by its test count, so a stale file costs balance, never
+  correctness.
+- **By file, never by test.** Module fixtures and the `xdist_group` that pins a module's
+  testcontainer to one worker assume the whole module runs in one process tree.
+- **Proven complete.** Each shard writes the node ids it ran (`--shard-manifest`); the
+  `coverage` job compares their union with a fresh `--collect-only` and fails if any test ran in
+  no shard or in two. It also combines the shards' coverage and enforces the 90% floor there.
+- **Readable when red.** The `coverage` job writes a job summary — failures, test seconds per
+  shard, slowest files — and uploads a refreshed `test-durations` artifact. When the shards
+  drift out of balance, `gh run download <run-id> -R MSKazemi/novafabric -n test-durations`
+  then `make test-durations`, and commit `tests/.test-durations.json`.
+
+The test session also pins its own colour environment (`tests/conftest.py`): Typer forces a
+colour terminal when `GITHUB_ACTIONS`, `FORCE_COLOR` or `PY_COLORS` is set, which used to make
+help-text assertions fail in CI only (issue #21). Tests that need colour set it themselves.
+
+Releases are gated on this: every tag-triggered workflow waits for CI on the tagged commit and
+publishes nothing unless it passed (`docs/release-process.md`, step 7).
 
 ### Tests
 

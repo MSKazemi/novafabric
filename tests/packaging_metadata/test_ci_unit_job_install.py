@@ -46,7 +46,8 @@ def unit_job() -> dict:
 
 
 def _run_steps(job: dict) -> list[str]:
-    return [step["run"] for step in job["steps"] if "run" in step]
+    # A job that calls a reusable workflow (`uses:`) has no steps of its own.
+    return [step["run"] for step in job.get("steps", []) if "run" in step]
 
 
 def test_unit_job_installs_all_extras(unit_job: dict) -> None:
@@ -83,10 +84,22 @@ def test_unit_job_shards_xdist_by_group(unit_job: dict) -> None:
 
 
 def test_unit_job_still_enforces_the_coverage_floor(unit_job: dict) -> None:
-    """The 90% floor is the point of running coverage here at all."""
+    """The 90% floor is the point of running coverage here at all.
+
+    Since ADR-0316 the unit job is sharded, so each shard only *collects*
+    coverage and the `coverage` job enforces the floor over their union. Both
+    halves are pinned: a shard that stops collecting would make the combined
+    figure silently cover less of the suite.
+    """
     pytest_steps = [r for r in _run_steps(unit_job) if "pytest" in r]
-    assert any("--cov-fail-under=90" in r for r in pytest_steps), (
-        "the unit job must keep enforcing --cov-fail-under=90"
+    assert any("--cov=novafabric" in r for r in pytest_steps), (
+        "every unit shard must collect coverage for the combined floor"
+    )
+    jobs = yaml.safe_load(_CI_WORKFLOW_PATH.read_text())["jobs"]
+    assert "unit" in jobs["coverage"]["needs"], "the coverage job must combine the unit shards"
+    floor = [r for r in _run_steps(jobs["coverage"]) if "coverage report" in r]
+    assert any("--fail-under=90" in r for r in floor), (
+        "the coverage job must keep enforcing the 90% floor over all shards"
     )
 
 
