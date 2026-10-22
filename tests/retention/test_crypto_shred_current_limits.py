@@ -140,8 +140,13 @@ def test_crypto_shred_destroys_the_subject_dek_of_a_capture_capsule(tmp_path: Pa
     assert store.get_dek("someone-else") is not None, "another subject's DEK was destroyed"
     receipt = json.loads((tmp_path / "receipts" / "01RUN.receipt.json").read_text())
     assert receipt["subject_id"] == SUBJECT
-    # Re-running is an idempotent no-op that still reads as done (ADR-0134 D2).
-    assert _shred(tmp_path, store, PEPPER) == [(SweepOutcome.APPLIED, "already_shredded")]
+    # Re-running is an idempotent no-op that still reads as done (ADR-0134 D2), and
+    # still points at the receipt a restore needs to re-shred the subject.
+    items = enumerate_capsules(tmp_path / "capsules")
+    plan = plan_sweep(items, [_BINDING], HoldContext(), now=NOW)
+    [again] = _executor(tmp_path, store, PEPPER).execute(plan, dry_run=False)
+    assert (again.outcome, again.reason) == (SweepOutcome.APPLIED, "already_shredded")
+    assert again.erasure_receipt_ref == str(tmp_path / "receipts" / "01RUN.receipt.json")
 
 
 def test_without_the_pepper_nothing_is_destroyed_and_it_is_not_applied(tmp_path: Path) -> None:

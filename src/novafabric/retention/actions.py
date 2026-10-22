@@ -282,9 +282,14 @@ class SweepExecutor:
             if not subject_ids:
                 # The store cannot tell "erased" from "wrong pepper / other dek.db":
                 # only this sweep's own receipt proves the shred already happened.
-                if self._receipt_path(item.item_id).exists():
+                receipt = self._receipt_path(item.item_id)
+                if receipt.is_file():
+                    # Carry the receipt so a restore can still re-shred this subject.
                     return self._record(
-                        decision, SweepOutcome.APPLIED, reason="already_shredded"
+                        decision,
+                        SweepOutcome.APPLIED,
+                        reason="already_shredded",
+                        erasure_receipt_ref=str(receipt),
                     )
                 return self._record(
                     decision, SweepOutcome.SKIPPED, reason="pii_subject_unresolved"

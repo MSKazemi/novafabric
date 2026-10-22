@@ -406,11 +406,15 @@ def apply_cmd(
     item. Idempotent and fail-safe: re-runs are no-ops; a per-item failure is
     recorded `error` and the sweep continues.
 
-    Limitations (experimental): only `<capsule-dir>/<run>/capsule.json`
-    manifests are swept (`nova capture` writes capsule.yaml), and crypto-shred
-    destroys the DEK named by `metadata.pii_subject_id`, which nothing writes
-    today, so it records `no_dek` and destroys no key. Use `nova pii erase`
-    to crypto-shred a data subject.
+    Capture capsules (capsule.yaml, written by `nova capture` and the adapters)
+    are acted on only when retention-policy.yaml sets
+    `include_capture_capsules: true`; otherwise they are listed and excluded.
+
+    crypto-shred (experimental) destroys the data subject's DEK: for a capsule
+    captured with `nova capture --pii-subject`, the subject is resolved from its
+    redaction_manifest.json with NOVA_PII_PEPPER, and the subject's PII becomes
+    unreadable in every capsule captured for that subject. Without the pepper
+    the item is skipped; a capsule with no subject records `no_dek`.
 
     Scope: one registry's bindings over one capsule directory.
 

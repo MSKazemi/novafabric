@@ -380,3 +380,17 @@ def test_a_hold_placed_at_the_prompt_still_wins_for_a_capture_capsule(
     assert {r["item_id"]: r["outcome"] for r in payload["held"]} == {
         "cap-json": "skipped", "cap-yaml": "skipped",
     }
+
+
+@pytest.mark.parametrize("opt_in", [True, False])
+def test_plan_shows_a_worm_locked_capture_capsule_as_held(ws: Path, opt_in: bool) -> None:
+    """The planner resolves WORM locks for capsule.yaml exactly as for capsule.json."""
+    _policy(ws / "cwd", opt_in=opt_in)
+    worm = ws / "worm.db"
+    LocalWormAdapter(worm).put("cap-yaml", b"x", retention_days=3650)
+    result = _invoke("plan", "--registry", REGISTRY, "--json", "--worm-db", str(worm))
+    payload = json.loads(result.stdout)
+    rows = payload["held"] if opt_in else payload["capture_capsules"]["excluded"]
+    assert [(r["item_id"], r["outcome"], r["reason"]) for r in rows] == [
+        ("cap-yaml", "skipped", "worm_hold")
+    ]
