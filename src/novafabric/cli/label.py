@@ -29,9 +29,17 @@ list binds to the identity (``proposer`` / ``approver`` roles); no key is ever
 created on this path, and self-approval is refused by bound identity and key
 fingerprint.
 
-Exit codes for propose-move / approve-move, consistent with ``nova promote``:
-1 = usage / state error, missing keyring key, or self-approval; 3 = maker-side
-trust-list or signature failure; 4 = checker-side trust-list or signature failure.
+**Relaxing a protection is maker-checker too (ADR-0114 Amendment 2):**
+``--unprotect``, fewer ``--required-approvals`` or a different ``--policy-ref`` on
+a protected label does not apply; ``nova label protect`` records a signed pending
+*protection change* instead, which ``approve-move`` applies once as many distinct
+checkers approve as the protection in force requires. Raising protection is
+single-actor.
+
+Exit codes for propose-move / approve-move / a relaxing protect, consistent with
+``nova promote``: 1 = usage / state error, missing keyring key, or self-approval;
+3 = maker-side trust-list or signature failure; 4 = checker-side trust-list or
+signature failure.
 """
 
 from __future__ import annotations
@@ -107,6 +115,19 @@ def _pointer_line(record: dict[str, Any]) -> str:
         f"{record['label']} → {record['target_version']}  "
         f"({_short_hash(record['content_hash'])}){suffix}"
     )
+
+
+def _describe_change(change: dict[str, Any]) -> str:
+    if not change["protected"]:
+        return "unprotect"
+    text = f"required approvals {change['base_required_approvals']} → " + str(
+        change["required_approvals"]
+    )
+    if change.get("policy_ref"):
+        text += f", policy {change['policy_ref']}"
+    else:
+        text += ", built-in default policy"
+    return text
 
 
 @label_app.command("set")
@@ -346,9 +367,24 @@ def label_protect_cmd(
     unprotect: Annotated[
         bool,
         typer.Option(
-            "--unprotect", help="Revert the label to free ADR-0113 behaviour."
+            "--unprotect",
+            help=(
+                "Revert the label to free ADR-0113 behaviour. On a protected label "
+                "this is proposed, not applied: it needs maker-checker approval."
+            ),
         ),
     ] = False,
+    identity: Annotated[
+        str,
+        typer.Option(
+            "--identity",
+            help=(
+                "Maker identity for a relaxation (--unprotect, fewer approvals, or a "
+                "different --policy-ref on a protected label). "
+                + _SIGNER_IDENTITY_HELP.format(role="Proposer", trust_role="proposer")
+            ),
+        ),
+    ] = "",
     json_output: Annotated[
         bool, typer.Option("--json", help="Print the protection config as JSON.")
     ] = False,
@@ -356,7 +392,15 @@ def label_protect_cmd(
     """Mark a label protected — its moves then require maker-checker approval.
 
     Protecting an already-assigned label does not move it; it only governs
-    future moves (experimental, ADR-0114). --unprotect reverts to free.
+    future moves (experimental, ADR-0114). Protecting, raising
+    --required-approvals or adding a --policy-ref applies at once.
+
+    Relaxing an active protection (--unprotect, fewer approvals, or a different
+    or removed --policy-ref) is maker-checker, like a move: this command records
+    a signed pending protection change (the --identity key must be bound with the
+    'proposer' role in the signer trust list; exit 3 otherwise) and nothing
+    changes until as many distinct checkers as the protection requires approve it
+    with 'nova label approve-move <asset> <label> <change-id>'.
 
     Scope: one label on one asset.
 
@@ -364,10 +408,16 @@ def label_protect_cmd(
     Examples:
       nova label protect prompt:triage production
       nova label protect prompt:triage production --required-approvals 2
-      nova label protect prompt:triage production --unprotect
+      nova label protect prompt:triage production --unprotect --identity alice
     """
     from novafabric.registry.labels import LabelError
-    from novafabric.registry.protected_labels import protect_label
+    from novafabric.registry.protected_labels import (
+        ProtectionRelaxationRequiresApprovalError,
+        propose_protection_change,
+        protect_label,
+    )
+    from novafabric.registry.signers import SignerVerificationError
+    from novafabric.trust.keyring import KeyNotFoundError
 
     asset_type, asset_name = _parse_asset(asset)
     del asset_type  # protection is keyed by asset_name
@@ -380,6 +430,41 @@ def label_protect_cmd(
             policy_ref=policy_ref,
             note=note,
         )
+    except ProtectionRelaxationRequiresApprovalError:
+        try:
+            change = propose_protection_change(
+                asset_name,
+                label,
+                protected=not unprotect,
+                required_approvals=required_approvals,
+                policy_ref=policy_ref,
+                note=note,
+                identity=identity or getpass.getuser(),
+            )
+        except (LabelError, ValueError) as exc:
+            console.print(f"[red]{exc}[/red]", soft_wrap=True)
+            raise typer.Exit(code=1) from None
+        except (SignerVerificationError, KeyNotFoundError) as exc:
+            console.print(
+                f"[red]'{label}' on '{asset_name}' is protected: removing or weakening "
+                "the protection is maker-checker (ADR-0114), and the proposal could not "
+                "be signed by a trusted maker.[/red]",
+                soft_wrap=True,
+            )
+            raise _exit_for_signer_error(exc) from None
+        if json_output:
+            typer.echo(json.dumps(change, indent=2, ensure_ascii=False))
+            return
+        console.print(
+            f"[yellow]…[/yellow] proposed protection change {change['change_id']} on "
+            f"'{label}' ({_describe_change(change)}); proposed_by={change['proposed_by']}.\n"
+            f"  The label stays protected until {change['base_required_approvals']} "
+            "distinct checker(s) approve (maker-checker, ADR-0114): run "
+            f"[bold]nova label approve-move {asset} {label} {change['change_id']}[/bold] "
+            "as a different identity.",
+            soft_wrap=True,
+        )
+        return
     except (LabelError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
@@ -479,7 +564,10 @@ def label_approve_move_cmd(
         str, typer.Argument(help="Asset as [<asset_type>:]<asset_name>.")
     ],
     label: Annotated[str, typer.Argument(help="Protected label being moved.")],
-    move_id: Annotated[str, typer.Argument(help="Pending move id (ULID).")],
+    move_id: Annotated[
+        str,
+        typer.Argument(help="Pending move id, or pending protection-change id (ULID)."),
+    ],
     reject: Annotated[
         bool,
         typer.Option("--reject", help="Reject the move instead (terminal)."),
@@ -511,7 +599,13 @@ def label_approve_move_cmd(
     label is reassigned atomically with an ADR-0113 audit row that reuses
     this move's id (experimental, ADR-0114).
 
-    Scope: one pending move.
+    The id may instead name a pending protection change (a relaxation proposed
+    by 'nova label protect'). It applies, under the same signer and SoD rules,
+    once as many distinct checkers approve as the protection in force when it
+    was proposed requires; if that protection changed meanwhile, the change is
+    superseded and never applies.
+
+    Scope: one pending move or protection change.
 
     \b
     Examples:
@@ -519,12 +613,23 @@ def label_approve_move_cmd(
       nova label approve-move prompt:triage production 01J2Q8ZK7M4YZ2K7N9DPBYK2WX --reject
     """
     from novafabric.registry.labels import LabelError
-    from novafabric.registry.protected_labels import approve_move
+    from novafabric.registry.protected_labels import approve_move, find_protection_change
     from novafabric.registry.signers import SignerVerificationError
     from novafabric.trust.keyring import KeyNotFoundError
 
     asset_type, asset_name = _parse_asset(asset)
     del asset_type  # moves are keyed by asset_name
+    try:
+        if find_protection_change(asset_name, move_id) is not None:
+            _approve_protection_change(
+                asset_name, label, move_id, identity, reject, note, json_output
+            )
+            return
+    except (LabelError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise typer.Exit(code=1) from None
+    except (SignerVerificationError, KeyNotFoundError) as exc:
+        raise _exit_for_signer_error(exc) from None
     try:
         record, detail = approve_move(
             asset_name,
@@ -556,6 +661,44 @@ def label_approve_move_cmd(
         console.print(f"[yellow]…[/yellow] move {move_id}: {detail}")
 
 
+def _approve_protection_change(
+    asset_name: str,
+    label: str,
+    change_id: str,
+    identity: str,
+    reject: bool,
+    note: Optional[str],
+    json_output: bool,
+) -> None:
+    """Checker step for a protection change (errors propagate to the caller)."""
+    from novafabric.registry.protected_labels import approve_protection_change
+
+    record, detail = approve_protection_change(
+        asset_name,
+        label,
+        change_id,
+        identity=identity or getpass.getuser(),
+        reject=reject,
+        note=note,
+    )
+    if json_output:
+        typer.echo(json.dumps(record, indent=2, ensure_ascii=False))
+        return
+    if record["state"] == "applied":
+        console.print(
+            f"[green]✓[/green] applied protection change {change_id} on '{label}' "
+            f"({_describe_change(record)}; approvals: "
+            f"{len([a for a in record['approvals'] if a['decision'] == 'approve'])})"
+        )
+    elif record["state"] == "rejected":
+        console.print(
+            f"[yellow]✗[/yellow] rejected protection change {change_id} — "
+            "protection unchanged."
+        )
+    else:
+        console.print(f"[yellow]…[/yellow] protection change {change_id}: {detail}")
+
+
 @label_app.command("status")
 def label_status_cmd(
     asset: Annotated[
@@ -569,7 +712,7 @@ def label_status_cmd(
         bool, typer.Option("--json", help="Print the full status record as JSON.")
     ] = False,
 ) -> None:
-    """Label protection config, current targets, and pending moves.
+    """Label protection config, current targets, pending moves and protection changes.
 
     Scope: one asset (optionally one label) — experimental, ADR-0114.
 
@@ -594,7 +737,12 @@ def label_status_cmd(
         return
 
     protected = {p["label"]: p for p in status["protections"] if p["protected"]}
-    if not status["pointers"] and not protected and not status["pending_moves"]:
+    if (
+        not status["pointers"]
+        and not protected
+        and not status["pending_moves"]
+        and not status["protection_changes"]
+    ):
         console.print(f"No labels, protection, or pending moves for '{asset_name}'.")
         return
 
@@ -638,3 +786,23 @@ def label_status_cmd(
                 m["proposed_by"],
             )
         console.print(moves)
+
+    if status["protection_changes"]:
+        changes = Table(title="Protection changes (maker-checker)")
+        changes.add_column("Change id")
+        changes.add_column("Label", style="cyan")
+        changes.add_column("Change")
+        changes.add_column("State")
+        changes.add_column("Approvals", justify="right")
+        changes.add_column("Proposed by")
+        for c in status["protection_changes"]:
+            approvals = len([a for a in c["approvals"] if a["decision"] == "approve"])
+            changes.add_row(
+                c["change_id"],
+                c["label"],
+                _describe_change(c),
+                c["state"],
+                f"{approvals}/{c['base_required_approvals']}",
+                c["proposed_by"],
+            )
+        console.print(changes)
