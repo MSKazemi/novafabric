@@ -131,6 +131,34 @@ entries below change behaviour** — read *Changed — BREAKING* before upgradin
   size the network event, so `stream=True` returned only when the stream ended — never, for SSE.
   `response_size_bytes` is now an already-read body's size, else `Content-Length`, else `null`.
 
+- **Registration never places an asset in a gated status.** A spec declaring `status:
+  production` was registered straight into production — no gate, no history, no promotion audit —
+  by `nova register`, `nova serve` `POST /api/assets` and `nova server` `POST /v0/assets`. Any
+  declared status other than `development` is now refused (exit 1; HTTP 422
+  `registration_status_not_allowed`). Rollback evidence is bound to the asset id and spec SHA-256,
+  and a version that was ever in production can never be registered again, so unregistering and
+  re-registering the same version with new content no longer inherits "previously production".
+- **Releasing a legal hold needs `admin`**, as ADR-0031 always required; `nova serve` granted it
+  to `operate`, so one `operate` credential could lift a hold an `admin` delete then acted on.
+  Placing a hold stays `operate`.
+- **Every capsule reader and multi-capsule scan refuses links and special files.**
+  `/api/cost/report`, `/api/runs/suggest-register` and `/api/runs/{id}/run-lineage` read a linked
+  file in a sibling capsule; a capsule-directory entry linked outside it was served by 9 routes;
+  `nova export --html` copied a linked stream into the page and hung on a FIFO; the KG consumer
+  ingested linked streams; `nova diff` read any file named by a capsule's `blob_ref`. Scans no
+  longer list linked entries, and `nova serve` refuses (403) a capsule root that resolves outside
+  its read roots.
+- **A streamed SDK call is recorded only into the capture that opened it.** A `stream=True` call
+  (OpenAI, Anthropic; sync and async) ended after its capture — for example garbage-collected
+  while a second capture ran — wrote the first capture's prompt and answer into the second capsule;
+  concurrent task-scoped captures could cross-file the same way. Such a late record is now dropped
+  and counted (`capture.stream_record_dropped`).
+- **Restore's crypto-shred replay acts only on verified evidence**: a decision log whose audit
+  chain verifies, the receipt named for the record, and never while a legal hold is active (the
+  restore step fails instead).
+- **Re-validating a stored capsule never reads an arbitrary local file**: an absolute
+  `schema_ref` is honoured at capture only; afterwards only the packaged schemas resolve.
+
 ### Fixed
 
 - **Capture hooks are fail-open.** A recorder failure — an SDK object passed back in `messages`,
@@ -163,6 +191,15 @@ entries below change behaviour** — read *Changed — BREAKING* before upgradin
   catch-all and closed every connection with 1011.
 - **The collector's local mode refuses `Via` / `X-Forwarded-*` requests** and warns at startup to
   set `NOVA_COLLECTOR_TOKEN` whenever anything proxies to it.
+- **`nova eval contamination-check` cannot be made to pass or hang.** Hashes are compared in
+  canonical form (`sha256:<lowercase hex>`); duplicate JSON keys, subdirectories and linked, FIFO,
+  device or over-1-MiB facets are `invalid` (exit 4); `*.json` is matched case-insensitively.
+- **`POST /api/compliance/pii/erase` validates `retention_months`** (an integer 0–1200, else 422);
+  a negative value set the retention window in the past, a string caused a 500.
+- **The RLS static guards cannot be dodged by spelling.** They are a default-deny AST scan with an
+  allowlist of reviewed call sites plus a behavioural guard over every statement the Postgres
+  metadata store executes; 11 session-scoped tenant-setting spellings the regex guard missed are
+  caught. The shipped store was already correct.
 - **`nova replay --help` states that a timeout exits 124** (`ReplayTimeout`), not 1, and the CLI
   prints why it stopped.
 
@@ -201,6 +238,10 @@ entries below change behaviour** — read *Changed — BREAKING* before upgradin
 - A capsule containing any symbolic link can no longer be exported, packed, migrated, backed up or
   served (`pack_capsule` followed links by design before).
 - `response_size_bytes` for a streamed response is the `Content-Length` or `null`.
+- A spec declaring any `status:` other than `development` is refused at registration; a version
+  that was ever in production cannot be registered again.
+- `POST /api/holds/{hold_id}/release` needs the `admin` scope.
+- `nova export --html` refuses a capsule whose `capsule.yaml` is a link (exit 2).
 
 ### Documentation
 

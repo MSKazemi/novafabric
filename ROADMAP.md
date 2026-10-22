@@ -117,6 +117,10 @@ These are known limits left after the defect batch in CHANGELOG `[Unreleased]`. 
 | Workload-process capture drops in `capture-health.json` | Drops counted in the workload's child process never reach the capsule's health file | planned |
 | `openai.DefaultAioHttpClient` double network events | httpx2 over aiohttp is recorded by both hooks (one logical call) | planned |
 | Hard links inside a capsule | Not detected by exporters (mitigated by `fs.protected_hardlinks`) | documented limit |
+| Opt-in dual-approval hold release | ADR-0031 §3 promises "dual-approval if configured"; nothing implements it (release is `admin` now) | planned |
+| Erasure replay on restore | `nova pii erase` / the erasure queue write no `RETENTION_ACTION`, so a restore never replays those erasures; receipt paths are absolute | planned |
+| Rollback evidence survives a SQLite→Postgres migration | `storage/_migration.py` does not copy `asset_status_history` | planned |
+| Writers never write through a link | `registry/service.py` (`assets.jsonl`) and `energy/_attribution.py` open a capsule path for writing | planned |
 | Collector 500 on an event without `event_type` | The DuckDB accumulator raises instead of returning 422 | planned |
 
 ### Next — specified, unclaimed, ready to build

@@ -146,6 +146,15 @@ STRIDE analysis in the project's internal threat model:
   when no `NOVA_COLLECTOR_TOKEN` was set (it now serves only loopback,
   non-proxied requests — set a token whenever anything proxies to it).
 
+  Also fixed in the next release: a spec could register an asset directly into
+  `production` (CLI, `nova serve` `operate` scope, `nova server` writer role),
+  bypassing every promotion gate; reusing a version number after `unregister`
+  let new content inherit rollback evidence; a read-scope `nova serve` caller
+  could read files outside capsules through a link in a sibling capsule or a
+  linked capsule root; and an `operate` credential could release a legal hold.
+  If you run `nova serve` or `nova server` with non-admin credentials, review the
+  registry for assets in `production` with no promotion history.
+
 If you find a way to make any disabled-by-default surface reachable without
 explicit opt-in, that is a vulnerability — please report it.
 
