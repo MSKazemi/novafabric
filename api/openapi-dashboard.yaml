@@ -3886,7 +3886,7 @@ paths:
       x-nova-contract: pending
   /api/compliance/pii/erase:
     post:
-      description: Destroy a data subject's DEK (GDPR Art.17 crypto-shredding) — nova pii erase.
+      description: Destroy a data subject's DEK — nova pii erase (experimental, --pii-subject PII).
       parameters:
       - in: query
         name: token

@@ -1034,6 +1034,9 @@
     "tab": "registry",
     "api": "/promote"
   },
+  "nova promote keygen": {
+    "status": "builder-only"
+  },
   "nova promote propose": {
     "status": "real-panel",
     "tab": "registry",
