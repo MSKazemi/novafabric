@@ -778,75 +778,8 @@ class TestServe:
 
 
 class TestLineageMigrate:
-    def test_from_ocs_missing_tenant_exits_1(self, tmp_path):
-        result = runner.invoke(
-            app,
-            [
-                "lineage-store",
-                "migrate",
-                "--from-ocs",
-                "--ocs-run-ids",
-                "run-1",
-                "--db",
-                str(tmp_path / "l.db"),
-            ],
-        )
-        assert result.exit_code == 1
-        assert "--ocs-tenant is required" in result.output
-
-    def test_from_ocs_missing_run_ids_exits_1(self, tmp_path):
-        result = runner.invoke(
-            app,
-            [
-                "lineage-store",
-                "migrate",
-                "--from-ocs",
-                "--ocs-tenant",
-                "org",
-                "--db",
-                str(tmp_path / "l.db"),
-            ],
-        )
-        assert result.exit_code == 1
-        assert "--ocs-run-ids is required" in result.output
-
-    def test_from_ocs_success_dry_run(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "novafabric.lineage.migration.kit.migrate_from_ocs",
-            lambda **kw: {
-                "loaded": 5,
-                "diverged": 0,
-                "capsules_scanned": 2,
-                "committed": False,
-            },
-        )
-        result = runner.invoke(
-            app,
-            [
-                "lineage-store",
-                "migrate",
-                "--from-ocs",
-                "--ocs-tenant",
-                "org",
-                "--ocs-run-ids",
-                "run-1,run-2",
-                "--db",
-                str(tmp_path / "l.db"),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        assert "loaded=5" in result.output
-        assert "no (dry-run)" in result.output
-
-    def test_from_ocs_divergence_exits_2(self, tmp_path, monkeypatch):
-        from novafabric.lineage.migration.kit import MigrationDivergenceError
-
-        def _boom(**kw):
-            raise MigrationDivergenceError("mismatch")
-
-        monkeypatch.setattr(
-            "novafabric.lineage.migration.kit.migrate_from_ocs", _boom
-        )
+    def test_from_ocs_is_refused_not_reported_as_success(self, tmp_path):
+        """H5: see tests/lineage/test_migrate_from_ocs_refuses.py for the full pin."""
         result = runner.invoke(
             app,
             [
@@ -862,8 +795,9 @@ class TestLineageMigrate:
                 str(tmp_path / "l.db"),
             ],
         )
-        assert result.exit_code == 2
-        assert "Divergence detected" in result.output
+        assert result.exit_code == 1
+        assert "not implemented" in result.output
+        assert "committed=yes" not in result.output
 
     def test_parquet_missing_arg_exits_1(self, tmp_path):
         result = runner.invoke(
@@ -871,6 +805,7 @@ class TestLineageMigrate:
         )
         assert result.exit_code == 1
         assert "Provide a Parquet source" in result.output
+        assert not (tmp_path / "l.db").exists()
 
     def test_parquet_file_not_found_exits_1(self, tmp_path):
         missing = tmp_path / "edges.parquet"
