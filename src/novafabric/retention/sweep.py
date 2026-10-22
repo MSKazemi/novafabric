@@ -40,7 +40,6 @@ from novafabric._capsule_fs import (
     read_capsule_member_or_none,
     read_capsule_text,
 )
-
 from novafabric.retention.models import (
     ACTION_SEVERITY,
     Decision,
