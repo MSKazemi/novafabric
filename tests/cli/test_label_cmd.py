@@ -15,10 +15,13 @@ Covers:
 """
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
 import pytest
+import yaml
+from cryptography.hazmat.primitives import serialization
 from typer.testing import CliRunner
 
 import novafabric.trust.keyring as kr
@@ -27,11 +30,32 @@ from novafabric.cli.main import app
 runner = CliRunner()
 
 
+def _bind_signers(trust_path: Path, identities: tuple[str, ...]) -> None:
+    """ADR-0312 trust list: each identity's (explicitly created) key, both roles."""
+    rows = []
+    for ident in identities:
+        key, _ = kr.ensure_keypair(ident, create=True)
+        raw = key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        rows.append(
+            {
+                "identity": ident,
+                "public_key": base64.b64encode(raw).decode(),
+                "roles": ["proposer", "approver"],
+            }
+        )
+    trust_path.write_text(yaml.safe_dump({"signers": rows}), encoding="utf-8")
+
+
 @pytest.fixture(autouse=True)
 def _isolated_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / "nova-home"))
     monkeypatch.setenv("NOVAFABRIC_DB_PATH", str(tmp_path / "registry.db"))
     monkeypatch.setattr(kr, "_KEYRING_DIR", tmp_path / "keyring")
+    trust = tmp_path / "promote-signers.yaml"
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_SIGNERS", str(trust))
+    _bind_signers(trust, ("alice", "bob", "carol"))
 
 
 def _register(body: str = "You triage {ticket}.") -> None:

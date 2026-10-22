@@ -4404,7 +4404,7 @@ Exit codes: `0` (rendered, including `missing` fields), `2` (unreadable registry
 
 **Experimental** (ADR-0159 D5 / NF-277). Attests the retention *posture* over one
 or more Evidence Bundles — the registry `retention-policy.yaml` window and deletion
-mode, the `holds.jsonl` legal-hold state, each run's WORM lock (local adapter
+mode, the legal-hold state from the shared hold store (`nova hold` / `/api/holds`), each run's WORM lock (local adapter
 `worm.db`, reported `partial` because it is dev/test only, or an S3 / Azure / GCS
 `WormReceipt` supplied via `--worm-receipts`), the **RFC 3161 trusted timestamp as
 actually recorded in each bundle** by `nova export-evidence --timestamp` (reported
@@ -4421,7 +4421,8 @@ nova export-retention --bundle a.zip --bundle b.zip --regime mifid --json
 
 - `--bundle` — Evidence Bundle ZIP (repeatable, required)
 - `--regime` — `17a-4` (default; `17 CFR 240.17a-4 (2022 amendment)`) or `mifid` — a version-pinned tag, not a determination
-- `--registry` — read `.novafabric/registries/<name>/{retention-policy.yaml,holds.jsonl,worm.db}`
+- `--registry` — read `.novafabric/registries/<name>/{retention-policy.yaml,worm.db}` and the
+  registry's legal holds from the shared hold store (every hold location; see `nova hold create`)
 - `--worm-db`, `--worm-receipts`, `--audit-log` — override the WORM DB, supply cloud WORM receipts, override the audit log
 
 Exit codes: `0` (rendered, including `missing` rows), `2` (unreadable/corrupt bundle, policy, hold ledger, WORM DB or receipts).
@@ -6551,8 +6552,16 @@ nova label history prompt:triage production --json
 A **protected label** is a deployment label whose reassignment requires two distinct
 principals: a *maker* proposes the move, a *checker* approves it. Direct `nova label set`
 on a protected label is refused with guidance. Both steps are Ed25519-signed with the
-per-identity keyring (ADR-0058: `~/.config/novafabric/keyring/`); self-approval is refused
-at the crypto level (matching key fingerprint **or** identity). The applied move lands in
+per-identity keyring (ADR-0058: `~/.config/novafabric/keyring/`) and **verified against the
+same signer trust list `nova promote` uses** (ADR-0312: `NOVAFABRIC_PROMOTE_SIGNERS`, default
+`$NOVAFABRIC_HOME/promote-signers.yaml`): the maker's key must be bound to `--identity` with
+the `proposer` role, the checker's with the `approver` role. **No key is ever created on
+this path** — naming a new `--identity` cannot mint a second key; create keys explicitly with
+`nova promote keygen --identity NAME` and have an operator add the printed entry to the
+trust list. Self-approval is refused by **bound** identity and key fingerprint, the stored
+maker signature is re-verified at approve time (an edited move, or a maker removed from the
+list, is refused), and only approvals that verify against the current list count toward
+`required_approvals`. A missing trust list refuses both steps (fail closed). The applied move lands in
 the same append-only `asset_label_history` audit table, reusing the pending move's ULID as
 its `move_id`. Free (unprotected) labels are completely unchanged. Fully offline; the
 optional `--policy-ref` Rego gate (ADR-0019) fails closed if the policy file is unreadable.
@@ -6572,8 +6581,10 @@ nova label protect prompt:triage production --unprotect
 ### nova label propose-move \<asset\> \<label\> --to \<version\> [--reason TEXT] [--identity NAME] [--json]
 
 Maker step: create an Ed25519-signed pending move. The label does **not** move. Fail-closed:
-the target version must exist, the label must be protected (free labels use `set`), and at
-most one pending move per `(asset, label)` may exist at a time.
+the signer trust list must exist, `--identity` must name an existing keyring key bound to it
+with the `proposer` role, the target version must exist, the label must be protected (free
+labels use `set`), and at most one pending move per `(asset, label)` may exist at a time.
+`--identity` defaults to the OS user.
 
 ```bash
 nova label propose-move prompt:triage production --to 8 --reason "v8 passed the eval gate"
@@ -6581,11 +6592,19 @@ nova label propose-move prompt:triage production --to 8 --reason "v8 passed the 
 
 ### nova label approve-move \<asset\> \<label\> \<move_id\> [--reject] [--note TEXT] [--identity NAME] [--json]
 
-Checker step: approve (or `--reject`, terminal) a pending move. SoD is enforced before
-anything is recorded — the approver's keyring key fingerprint and identity must both differ
-from the proposer's. When distinct approvals reach `required_approvals` **and** the policy
-gate allows, the label is reassigned atomically with its audit row. A duplicate approver is
-recorded but counts once.
+Checker step: approve (or `--reject`, terminal) a pending move. Before anything is
+recorded, the checker's key must exist and be bound to `--identity` with the `approver` role,
+the maker's stored signature is re-verified (approve only), and SoD compares the **bound**
+identities and key fingerprints. When trust-verified approvals from distinct bound identities
+reach `required_approvals` **and** the policy gate allows, the label is reassigned atomically
+with its audit row. A duplicate approver is recorded but counts once; a stored approval that
+no longer verifies (for example one made before the trust-list binding) is kept but never
+counted. A pending move whose maker no longer verifies cannot be approved — a trusted checker
+can `--reject` it to free the label for a new proposal.
+
+Exit codes (propose-move / approve-move, consistent with `nova promote`): `1` usage or state
+error, missing keyring key, or self-approval; `3` maker-side trust-list or signature failure;
+`4` checker-side trust-list or signature failure.
 
 ```bash
 nova label approve-move prompt:triage production 01J2Q8ZK7M4YZ2K7N9DPBYK2WX --identity bob
@@ -8122,13 +8141,22 @@ Options:
 - `--reason TEXT` — required; reason for the hold (recorded in audit log)
 - `--duration-days N` — hold duration in days; omit for indefinite hold
 
-Holds are stored in `.novafabric/registries/<registry>/holds.jsonl` (append-only).
+Holds are stored in **one store shared with the `/api/holds` routes**:
+`$NOVAFABRIC_HOME/registries/<registry>/holds.jsonl` (append-only; release stamps
+`released_at`). A hold placed here therefore blocks `nova retention`, `nova capsule delete`,
+`nova export-retention` and the server/dashboard delete routes alike, and one placed through
+the dashboard or API blocks this CLI. Holds written before this store existed — at
+`./.novafabric/registries/<registry>/holds.jsonl` under the working directory, or by
+`nova serve` beside its capsule base (`<capsule-dir>/../registries/`) — are still read by
+every deletion gate and can still be listed and released; nothing is moved. The registry
+name must be a single path component (no `/`, `\` or `..`; exit 1 otherwise).
 
 ---
 
 ### nova hold list \<registry\>
 
-List active (unreleased) legal holds on a registry.
+List active (unreleased) legal holds on a registry, from every hold location (CLI- and
+API-placed). An unreadable ledger line is listed as an active `__corrupt__:<registry>` hold.
 
 ```bash
 nova hold list my-registry
@@ -8138,7 +8166,8 @@ nova hold list my-registry
 
 ### nova hold release \<hold-id\>
 
-Release a legal hold by ID. Records the release in the audit log.
+Release a legal hold by ID, wherever it is stored (including holds placed through the API).
+Records the release in the audit log.
 
 ```bash
 nova hold release hold-a1b2c3d4
@@ -8174,7 +8203,7 @@ On success, a signed `capsule.delete` entry is appended to the audit log.
 
 ## Retention scheduler (ADR-0134)
 
-Applies the [ADR-0031](./decisions.md) retention
+**Experimental.** Applies the [ADR-0031](./decisions.md) retention
 windows *over time*: a WORM-aware, crypto-shred-integrated, audited sweep.
 Bindings live in a new **optional** `bindings:` block inside the existing
 `.novafabric/registries/<registry>/retention-policy.yaml`
@@ -8192,8 +8221,16 @@ bindings:
   - id: gdpr-subject-pii
     match: {tag: contains-pii}
     window: P180D
-    action: crypto-shred    # dispatches to the ADR-0069 DEK destruction
+    action: crypto-shred    # experimental — see the limitation below
 ```
+
+> **Limitations (verified 2026-10-22):** the sweep reads `<capsule-dir>/<run>/capsule.json`
+> manifests only, and `nova capture` and the framework adapters write `capsule.yaml` — so
+> their capsules are not swept by any action today. The `crypto-shred` action is
+> **experimental**: it destroys the DEK named by `metadata.pii_subject_id`, and nothing in
+> NovaFabric writes that field (not `nova capture --pii-subject` either), so a matched capsule
+> records `applied` with reason `no_dek` and **no key is destroyed**. To crypto-shred a data
+> subject's PII today, use [`nova pii erase`](#nova-pii-erase-subject_id).
 
 Matching reads capsule manifests under the capsule directory:
 `metadata.tags` (comma-separated), `metadata.deployment_environment`,
@@ -8202,7 +8239,9 @@ Matching reads capsule manifests under the capsule directory:
 
 Safety invariants (fixed, not configurable): a **WORM/legal hold always wins**
 — a WORM-retained capsule is never purged or shredded before its `locked_until`
-(recorded `skipped: worm_hold`); `purge` is refused under
+(recorded `skipped: worm_hold`), and an active legal hold on the registry — placed with
+`nova hold` **or** through `POST /api/holds`, read from the shared hold store — holds every
+item (`legal_hold_active`); `purge` is refused under
 `deletion_mode: prohibited`; a crypto-shred inside the Art.17(3)(b) window is
 `deferred`. Every decision — including every skip — appends one hash-chained
 `retention.action` audit entry (`schemas/retention-action-record.schema.json`):
@@ -8277,9 +8316,9 @@ Start the experimental local dashboard. Read-only browsing of capsules, registry
 | `POST /api/runs/{run_id}/validate` | Capsule schema + required-file check. Returns `{valid, errors[], run_id}`. |
 | `GET /api/runs/{run_id}/redaction-proof` | Returns the full `redaction-proof.json` for a capsule (404 if not yet scanned). |
 | `GET /api/assets/{name}/diff` | Field-by-field diff of two asset spec versions (`?from_version=&to_version=`). Returns `{added, removed, changed, identical}`. |
-| `GET /api/holds` | List all active legal holds across all registries. Returns `{total_active, registries[{name, holds[]}]}`. |
-| `POST /api/holds` | Place a new hold. Body: `{registry, reason, duration_days?}`. Path-traversal guard on registry name. |
-| `POST /api/holds/{hold_id}/release` | Release a hold by ID. Returns `{released, hold_id, registry}`. 404 if unknown or already released. |
+| `GET /api/holds` | List all active legal holds across all registries, from the hold store shared with `nova hold` (plus pre-unification locations). Returns `{total_active, registries[{name, holds[]}]}`. |
+| `POST /api/holds` | Place a new hold in the shared store (`$NOVAFABRIC_HOME/registries/<registry>/holds.jsonl`), so `nova retention` and `nova capsule delete` honour it. Body: `{registry, reason, duration_days?}`. Path-traversal guard on registry name. Audited as `hold.create` (actor `serve-api`). |
+| `POST /api/holds/{hold_id}/release` | Release a hold by ID wherever it is stored (CLI- or API-placed). Returns `{released, hold_id, registry}`. 404 if unknown or already released. Audited as `hold.release`. |
 | `POST /api/runs/{run_id}/replay/semantic` | Semantic similarity analysis: computes pairwise difflib similarity across model call responses. Returns `{similarity_score, matched_run_id, …}`. Read-only. |
 | `POST /api/runs/{run_id}/replay/exact` | Exact replay eligibility check: validates `env.lock.lock_mode=deterministic` and `seed` on all model calls. Returns `{exact_eligible, exact_reasons[], exact_hash_count, …}`. Read-only. |
 | `POST /api/runs/{run_id}/verify` | Full NovaSeal check on a capsule: DSSE signature + RFC 3161 timestamp + Merkle log inclusion (mirrors `nova verify`). Returns `{sealed, configured, signature_ok, timestamp_ok, log_integrity_ok, valid, errors[]}`. Returns `sealed=false` if capsule was not sealed; `configured=false` if NovaSeal profile missing. |

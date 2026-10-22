@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from novafabric._paths import legal_holds_root
 from novafabric.cli.main import app
 
 runner = CliRunner()
@@ -17,9 +18,11 @@ def test_hold_create(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     result = runner.invoke(app, ["hold", "create", "my-registry", "--reason", "SEC exam 2026"])
     assert result.exit_code == 0, result.output
     assert "hold-" in result.output
-    # Verify hold file was written
-    holds_file = tmp_path / ".novafabric" / "registries" / "my-registry" / "holds.jsonl"
+    # Written to the one hold store shared with /api/holds ($NOVAFABRIC_HOME/registries),
+    # not to ./.novafabric under the working directory.
+    holds_file = legal_holds_root() / "my-registry" / "holds.jsonl"
     assert holds_file.exists()
+    assert not (tmp_path / ".novafabric" / "registries" / "my-registry").exists()
     record = json.loads(holds_file.read_text().strip())
     assert record["reason"] == "SEC exam 2026"
     assert record["released_at"] is None

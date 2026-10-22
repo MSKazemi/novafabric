@@ -656,7 +656,7 @@ components:
       title: HoldCreatedResponse
       type: object
     HoldRecord:
-      description: One legal hold as stored in ``holds.jsonl``.
+      description: One legal hold as stored in ``holds.jsonl`` (the shared hold store).
       properties:
         created_at:
           title: Created At

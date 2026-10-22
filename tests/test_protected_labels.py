@@ -16,6 +16,7 @@ Covers:
 """
 from __future__ import annotations
 
+import base64
 import json
 import shutil
 import sqlite3
@@ -23,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
+from cryptography.hazmat.primitives import serialization
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
@@ -75,9 +78,32 @@ def _fixture(name: str) -> dict[str, Any]:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
+def _bind_signers(trust_path: Path, identities: tuple[str, ...]) -> None:
+    """ADR-0312 trust list: each identity's (explicitly created) key, both roles."""
+    rows = []
+    for ident in identities:
+        key, _ = kr.ensure_keypair(ident, create=True)
+        raw = key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        rows.append(
+            {
+                "identity": ident,
+                "public_key": base64.b64encode(raw).decode(),
+                "roles": ["proposer", "approver"],
+            }
+        )
+    trust_path.write_text(yaml.safe_dump({"signers": rows}), encoding="utf-8")
+
+
 @pytest.fixture(autouse=True)
 def _isolated_keyring(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(kr, "_KEYRING_DIR", tmp_path / "keyring")
+    # Maker-checker signers must be bound in the ADR-0312 trust list; attacks on
+    # that binding live in tests/test_protected_label_signer_trust.py.
+    trust = tmp_path / "promote-signers.yaml"
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_SIGNERS", str(trust))
+    _bind_signers(trust, ("alice", "bob", "carol"))
 
 
 @pytest.fixture()

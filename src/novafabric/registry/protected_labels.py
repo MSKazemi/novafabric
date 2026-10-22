@@ -25,10 +25,15 @@ Extends the ADR-0113 deployment-label layer with three **additive** tables:
 
 Invariants (ADR-0114 D1–D3; spec ``the private design/spec/protected-labels-v0.md``):
 
-* **Two-principal rule, crypto-level** — an approval is refused when the
-  approver's key fingerprint equals the proposer's key fingerprint *or* the
-  identities match (mirrors :func:`novafabric.registry.service.approve_promotion`).
-  A duplicate approver is recorded but counted once.
+* **Two-principal rule, bound to the signer trust list** — the maker and every
+  checker sign with an **existing** keyring key (never minted on this path) that
+  the ADR-0312 signer trust list (``NOVAFABRIC_PROMOTE_SIGNERS`` →
+  ``$NOVAFABRIC_HOME/promote-signers.yaml``) binds to the claimed identity, with
+  the ``proposer`` role for the maker and ``approver`` for a checker. An approval
+  is refused when the checker's **bound** identity or key fingerprint equals the
+  maker's (mirrors :func:`novafabric.registry.service.approve_promotion`). The
+  stored maker signature is re-verified at approve time, and only approvals that
+  verify against the trust list count — once per bound identity.
 * **Policy gate** — ``pending → applied`` additionally requires the
   snapshotted ``policy_ref`` Rego policy (ADR-0019) to allow; ``policy_ref``
   absent means the built-in default policy (exactly the distinctness
@@ -43,6 +48,7 @@ Invariants (ADR-0114 D1–D3; spec ``the private design/spec/protected-labels-v0
 from __future__ import annotations
 
 import getpass
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,6 +61,12 @@ from novafabric.registry.labels import (
     LabelTargetNotFoundError,
     ReservedLabelError,
 )
+from novafabric.registry.signers import (
+    SignerTrustList,
+    SignerVerificationError,
+    TrustedSigner,
+    load_signer_trust_list,
+)
 from novafabric.spec.asset_labels import (
     RESERVED_LABEL_LATEST,
     validate_label_name,
@@ -65,6 +77,8 @@ from novafabric.spec.protected_labels import (
     PendingLabelMove,
 )
 from novafabric.trust.keyring import ensure_keypair, sign_payload
+
+logger = logging.getLogger(__name__)
 
 
 class NotProtectedError(LabelError):
@@ -400,19 +414,30 @@ def propose_move(
     identity: str | None = None,
     expires_at: str | None = None,
     db_path: Path | None = None,
+    trust_list: SignerTrustList | None = None,
 ) -> dict[str, Any]:
     """Propose a protected-label move (maker step) — the label does NOT move.
 
     Fail-closed: the target version must exist; the label must actually be
     protected (free labels use :func:`~novafabric.registry.labels.set_label`);
     at most one non-terminal pending move per ``(asset_name, label)``. The
-    proposal is Ed25519-signed with the maker's keyring key (ADR-0058).
+    proposal is Ed25519-signed with the maker's **existing** keyring key and the
+    signature must verify against the signer trust list for the ``proposer`` role
+    (ADR-0312); the bound identity and fingerprint are what get stored.
+
+    Raises:
+        KeyNotFoundError: no keyring key exists for *identity* (none is created —
+            ``nova promote keygen`` is the only creation route).
+        SignerVerificationError: trust list missing/malformed, key unlisted or bound
+            to another identity, ``proposer`` role missing (``party="proposer"``).
     """
     validate_label_name(label)
     if label == RESERVED_LABEL_LATEST:
         raise ReservedLabelError(
             "'latest' is auto-maintained by the registry and cannot be moved."
         )
+    # Fail closed before touching the registry: no trust list, no maker-checker.
+    trust = trust_list or load_signer_trust_list()
     conn = _open(db_path)
     try:
         config_row = _protection_row(conn, asset_name, label)
@@ -450,14 +475,20 @@ def propose_move(
             )
 
         proposer = identity or getpass.getuser()
-        private_key, key_fp = ensure_keypair(proposer)
+        private_key, key_fp = ensure_keypair(proposer, create=False)
         move_id = new_ulid()
         proposed_at = _now()
-        sig = sign_payload(
-            private_key,
-            proposal_payload(
-                move_id, asset_name, label, from_version, proposed_version, proposed_at
-            ),
+        payload = proposal_payload(
+            move_id, asset_name, label, from_version, proposed_version, proposed_at
+        )
+        sig = sign_payload(private_key, payload)
+        maker = trust.verify(
+            claimed_identity=proposer,
+            key_fp=key_fp,
+            role="proposer",
+            payload=payload,
+            signature=sig,
+            party="proposer",
         )
         conn.execute(
             """
@@ -475,8 +506,8 @@ def propose_move(
                 label,
                 from_version,
                 proposed_version,
-                proposer,
-                key_fp,
+                maker.identity,
+                maker.fingerprint,
                 sig,
                 proposed_at,
                 reason,
@@ -565,6 +596,68 @@ def _policy_gate(record: dict[str, Any], approver: str) -> tuple[bool, str]:
     )
 
 
+def _verify_maker(trust: SignerTrustList, row: sqlite3.Row) -> TrustedSigner:
+    """Re-verify the stored maker signature against the trust list (``proposer`` role).
+
+    Refuses a move whose row was edited after proposing, whose maker has since
+    been removed from the list, or that was proposed before the trust-list
+    binding (an unlisted, possibly auto-minted key).
+    """
+    return trust.verify(
+        claimed_identity=str(row["proposed_by"]),
+        key_fp=str(row["proposer_key_fp"]),
+        role="proposer",
+        payload=proposal_payload(
+            row["move_id"],
+            row["asset_name"],
+            row["label"],
+            row["from_version"],
+            row["proposed_version"],
+            row["proposed_at"],
+        ),
+        signature=str(row["proposer_sig"]),
+        party="proposer",
+    )
+
+
+def _verified_approvers(
+    conn: sqlite3.Connection, trust: SignerTrustList, move_id: str, maker: TrustedSigner
+) -> set[str]:
+    """Bound identities of the stored ``approve`` decisions that verify today.
+
+    An approval that does not verify against the current trust list (written
+    before the binding, signed by a key since removed, or edited) is kept in the
+    append-only table but never counted; neither is one that resolves to the maker.
+    """
+    identities: set[str] = set()
+    for a in conn.execute(
+        "SELECT approver, approver_key_fp, approver_sig, approved_at "
+        "FROM asset_label_move_approvals WHERE move_id = ? AND decision = 'approve'",
+        (move_id,),
+    ):
+        try:
+            signer = trust.verify(
+                claimed_identity=str(a["approver"]),
+                key_fp=str(a["approver_key_fp"]),
+                role="approver",
+                payload=approval_payload(
+                    move_id, "approve", str(a["approver"]), str(a["approved_at"])
+                ),
+                signature=str(a["approver_sig"]),
+                party="approver",
+            )
+        except SignerVerificationError as exc:
+            logger.warning(
+                "protected-label move %s: stored approval by %r not counted: %s",
+                move_id, a["approver"], exc,
+            )
+            continue
+        if signer.identity == maker.identity or signer.fingerprint == maker.fingerprint:
+            continue
+        identities.add(signer.identity)
+    return identities
+
+
 def approve_move(
     asset_name: str,
     label: str,
@@ -574,18 +667,34 @@ def approve_move(
     reject: bool = False,
     note: str | None = None,
     db_path: Path | None = None,
+    trust_list: SignerTrustList | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Record a checker decision; apply the move when the gate is satisfied.
 
     Returns ``(record, detail)`` where ``detail`` is a human-readable outcome
-    ("applied", "rejected", "pending (…)"). SoD is enforced at the crypto
-    level: the checker's Ed25519 key fingerprint and identity must both
-    differ from the maker's (mirrors ADR-0058 ``approve_promotion``). A
-    duplicate approver is recorded but counts once. Apply is atomic: the
-    ADR-0113 ``asset_label_history`` row (reusing this move's ULID) and the
-    state transition commit together.
+    ("applied", "rejected", "pending (…)").
+
+    The checker signs with an **existing** keyring key (none is created here)
+    that the signer trust list binds to *identity* with the ``approver`` role
+    (ADR-0312). For an approval the stored maker signature is re-verified first,
+    so an edited move or a maker removed from the list is refused. SoD compares
+    the **bound** identities and key fingerprints (mirrors ``approve_promotion``).
+    Only approvals that verify against the trust list count toward
+    ``required_approvals``, once per bound identity. A rejection skips the maker
+    re-verification — a trusted checker can always retire an unverifiable
+    (pre-fix) move — but still needs a trusted, distinct checker.
+
+    Apply is atomic: the ADR-0113 ``asset_label_history`` row (reusing this
+    move's ULID) and the state transition commit together.
+
+    Raises:
+        KeyNotFoundError: no keyring key exists for *identity*.
+        SignerVerificationError: trust list missing/malformed, or a signature or
+            binding fails (``exc.party`` names the side).
+        SelfApprovalError: maker and checker share an identity or a key.
     """
     validate_label_name(label)
+    trust = trust_list or load_signer_trust_list()
     conn = _open(db_path)
     try:
         row = _get_move_row(conn, asset_name, move_id)
@@ -604,7 +713,7 @@ def approve_move(
             )
 
         approver = identity or getpass.getuser()
-        private_key, key_fp = ensure_keypair(approver)
+        private_key, key_fp = ensure_keypair(approver, create=False)
         if key_fp == row["proposer_key_fp"]:
             raise SelfApprovalError(
                 "Approver key fingerprint matches proposer key fingerprint — "
@@ -617,11 +726,30 @@ def approve_move(
                 "SoD violation: maker and checker must be different identities."
             )
 
+        maker: TrustedSigner | None = None
+        if not reject:
+            maker = _verify_maker(trust, row)
+
         decision = "reject" if reject else "approve"
         approved_at = _now()
-        sig = sign_payload(
-            private_key, approval_payload(move_id, decision, approver, approved_at)
+        payload = approval_payload(move_id, decision, approver, approved_at)
+        sig = sign_payload(private_key, payload)
+        checker = trust.verify(
+            claimed_identity=approver,
+            key_fp=key_fp,
+            role="approver",
+            payload=payload,
+            signature=sig,
+            party="approver",
         )
+        if maker is not None and (
+            checker.identity == maker.identity or checker.fingerprint == maker.fingerprint
+        ):
+            raise SelfApprovalError(
+                f"SoD violation: maker and checker resolve to the same bound identity "
+                f"{maker.identity!r} in the signer trust list — they must be different "
+                "people with distinct keypairs."
+            )
         conn.execute(
             """
             INSERT INTO asset_label_move_approvals
@@ -629,7 +757,10 @@ def approve_move(
                  decision, note, approved_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_ulid(), move_id, approver, key_fp, sig, decision, note, approved_at),
+            (
+                new_ulid(), move_id, checker.identity, checker.fingerprint, sig,
+                decision, note, approved_at,
+            ),
         )
 
         if reject:
@@ -641,21 +772,15 @@ def approve_move(
             conn.commit()
             return _refreshed(conn, asset_name, move_id), "rejected"
 
-        distinct = {
-            a["approver_key_fp"]
-            for a in conn.execute(
-                "SELECT approver_key_fp FROM asset_label_move_approvals "
-                "WHERE move_id = ? AND decision = 'approve'",
-                (move_id,),
-            )
-        }
+        assert maker is not None  # verified above for every non-reject decision
+        distinct = _verified_approvers(conn, trust, move_id, maker)
         required: int = row["required_approvals"]
         if len(distinct) < required:
             conn.commit()
             detail = f"pending ({len(distinct)}/{required} distinct approvals)"
             return _refreshed(conn, asset_name, move_id), detail
 
-        allow, reason = _policy_gate(_move_record(conn, row), approver)
+        allow, reason = _policy_gate(_move_record(conn, row), checker.identity)
         if not allow:
             conn.commit()  # the approval itself is still recorded
             return _refreshed(conn, asset_name, move_id), (

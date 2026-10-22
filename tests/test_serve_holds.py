@@ -7,10 +7,18 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from novafabric._paths import legal_holds_root
 from novafabric.serve.app import create_app
 
 LOCALHOST_HEADERS = {"host": "127.0.0.1:4321"}
 TOKEN = "test-token-holds"
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Hold readers also consult the pre-unification ./.novafabric/registries under
+    # the working directory; keep a stray one in the checkout out of these counts.
+    monkeypatch.chdir(tmp_path)
 
 
 @pytest.fixture()
@@ -47,9 +55,11 @@ def test_create_hold(tmp_path: Path) -> None:
     assert data["registry"] == "reg1"
     assert data["reason"] == "SEC exam 2026"
     assert data["duration_days"] == 90
-    # Verify file was written
-    holds_file = tmp_path / ".novafabric" / "registries" / "reg1" / "holds.jsonl"
+    # Written to the one hold store shared with `nova hold` ($NOVAFABRIC_HOME/registries),
+    # not beside the capsule base.
+    holds_file = legal_holds_root() / "reg1" / "holds.jsonl"
     assert holds_file.exists()
+    assert not (tmp_path / ".novafabric" / "registries" / "reg1").exists()
     record = json.loads(holds_file.read_text().strip())
     assert record["released_at"] is None
 

@@ -23,8 +23,15 @@ version + content hash, so capsules record the resolved pin, never the label.
 **Protected labels (ADR-0114):** ``nova label protect`` marks a label as
 requiring maker-checker approval. A protected label refuses direct ``set``;
 instead ``propose-move`` (maker) creates an Ed25519-signed pending move and
-``approve-move`` (a *distinct* checker principal) applies it — self-approval
-is refused at the crypto level (key fingerprint + identity, ADR-0058).
+``approve-move`` (a *distinct* checker principal) applies it. Both sign with an
+**existing** keyring key (``nova promote keygen``) that the ADR-0312 signer trust
+list binds to the identity (``proposer`` / ``approver`` roles); no key is ever
+created on this path, and self-approval is refused by bound identity and key
+fingerprint.
+
+Exit codes for propose-move / approve-move, consistent with ``nova promote``:
+1 = usage / state error, missing keyring key, or self-approval; 3 = maker-side
+trust-list or signature failure; 4 = checker-side trust-list or signature failure.
 """
 
 from __future__ import annotations
@@ -48,6 +55,31 @@ label_app = typer.Typer(
     ),
     no_args_is_help=True,
 )
+
+
+#: Exit codes shared with ``nova promote`` (ADR-0312): 3 = maker side, 4 = checker side.
+EXIT_PROPOSAL_SIGNATURE = 3
+EXIT_APPROVAL_SIGNATURE = 4
+
+_SIGNER_IDENTITY_HELP = (
+    "{role} identity. It must name an existing keyring key (create one with "
+    "`nova promote keygen --identity NAME`; none is created here) that the signer "
+    "trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default "
+    "$NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the "
+    "'{trust_role}' role. Defaults to the OS user."
+)
+
+
+def _exit_for_signer_error(exc: Exception) -> typer.Exit:
+    """Print a maker-checker trust failure and map it to the ``nova promote`` exit code."""
+    from novafabric.registry.signers import SignerVerificationError  # noqa: PLC0415
+
+    console.print(f"[red]{exc}[/red]", soft_wrap=True)
+    if isinstance(exc, SignerVerificationError) and exc.party == "approver":
+        return typer.Exit(code=EXIT_APPROVAL_SIGNATURE)
+    if isinstance(exc, SignerVerificationError) and exc.party == "proposer":
+        return typer.Exit(code=EXIT_PROPOSAL_SIGNATURE)
+    return typer.Exit(code=1)
 
 
 def _parse_asset(asset: str) -> tuple[Optional[str], str]:
@@ -387,7 +419,7 @@ def label_propose_move_cmd(
         str,
         typer.Option(
             "--identity",
-            help="Proposer identity (Ed25519 keyring key; defaults to OS user).",
+            help=_SIGNER_IDENTITY_HELP.format(role="Proposer", trust_role="proposer"),
         ),
     ] = "",
     json_output: Annotated[
@@ -398,6 +430,8 @@ def label_propose_move_cmd(
 
     Creates an Ed25519-signed pending move. A different principal must
     approve it with 'nova label approve-move' (experimental, ADR-0114).
+    The signing key must already exist and be bound to --identity with the
+    'proposer' role in the signer trust list (ADR-0312); exit 3 otherwise.
 
     Scope: one label on one asset; at most one pending move per label.
 
@@ -407,6 +441,8 @@ def label_propose_move_cmd(
     """
     from novafabric.registry.labels import LabelError
     from novafabric.registry.protected_labels import propose_move
+    from novafabric.registry.signers import SignerVerificationError
+    from novafabric.trust.keyring import KeyNotFoundError
 
     asset_type, asset_name = _parse_asset(asset)
     try:
@@ -421,6 +457,8 @@ def label_propose_move_cmd(
     except (LabelError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
+    except (SignerVerificationError, KeyNotFoundError) as exc:
+        raise _exit_for_signer_error(exc) from None
 
     if json_output:
         typer.echo(json.dumps(record, indent=2, ensure_ascii=False))
@@ -454,7 +492,7 @@ def label_approve_move_cmd(
         str,
         typer.Option(
             "--identity",
-            help="Approver identity (Ed25519 keyring key; defaults to OS user).",
+            help=_SIGNER_IDENTITY_HELP.format(role="Approver", trust_role="approver"),
         ),
     ] = "",
     json_output: Annotated[
@@ -463,8 +501,12 @@ def label_approve_move_cmd(
 ) -> None:
     """Approve (or --reject) a pending protected-label move (checker step).
 
-    Self-approval is refused: the approver's keyring key fingerprint and
-    identity must both differ from the proposer's (SoD, ADR-0003/0058).
+    The checker's key must already exist and be bound to --identity with
+    the 'approver' role in the signer trust list (ADR-0312; exit 4
+    otherwise). The maker's stored signature is re-verified (exit 3 if it no
+    longer verifies). Self-approval is refused by bound identity and key
+    fingerprint (SoD, ADR-0003/0058). A trusted checker can --reject a move
+    whose maker no longer verifies, to free the label for a new proposal.
     When enough distinct approvals exist and the policy gate allows, the
     label is reassigned atomically with an ADR-0113 audit row that reuses
     this move's id (experimental, ADR-0114).
@@ -478,6 +520,8 @@ def label_approve_move_cmd(
     """
     from novafabric.registry.labels import LabelError
     from novafabric.registry.protected_labels import approve_move
+    from novafabric.registry.signers import SignerVerificationError
+    from novafabric.trust.keyring import KeyNotFoundError
 
     asset_type, asset_name = _parse_asset(asset)
     del asset_type  # moves are keyed by asset_name
@@ -493,6 +537,8 @@ def label_approve_move_cmd(
     except (LabelError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
+    except (SignerVerificationError, KeyNotFoundError) as exc:
+        raise _exit_for_signer_error(exc) from None
 
     if json_output:
         typer.echo(json.dumps(record, indent=2, ensure_ascii=False))

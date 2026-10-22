@@ -232,7 +232,9 @@ schema change).
   oversized batches are a 422 before any work. `dry_run: true` returns the
   identical report and deletes nothing.
 - **Legal holds always win:** any unreleased hold in any registry's
-  `holds.jsonl` refuses deletion (409 `legal_hold_active` / per-item
+  `holds.jsonl` — the one hold store `nova hold` and `POST /api/holds` both write
+  (`$NOVAFABRIC_HOME/registries/`), plus the pre-unification locations
+  `<capsule-dir>/../registries/` and `./.novafabric/registries/` — refuses deletion (409 `legal_hold_active` / per-item
   `held`) and there is **no force override**. Honest limit: holds are
   registry-global today — one active hold freezes the whole delete
   surface. Unexpired WORM locks refuse with 409 `worm_hold`. **NovaSeal-sealed
@@ -244,8 +246,8 @@ schema change).
   unparseable line is treated as an *active, blocking* hold (and logged as a
   warning) rather than skipped, because a truncated or damaged line may encode
   the very hold that must block the delete. Symptom: deletion refuses with
-  `legal_hold_active` and no hold is visible in `nova hold list` — repair or
-  remove the damaged line before retrying.
+  `legal_hold_active` and `nova hold list` shows an active
+  `__corrupt__:<registry>` hold — repair or remove the damaged line before retrying.
 - **Order of checks and a runnable probe** (experimental, ADR-0206 P2): hold, then WORM, then
   seal. The same function backs `DELETE /v0/capsules/{id}`, bulk delete and `nova serve`'s
   `DELETE /api/runs/{id}`. Against a throwaway directory (no server needed):

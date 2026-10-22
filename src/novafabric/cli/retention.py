@@ -58,7 +58,7 @@ console = Console()
 app = typer.Typer(
     help=(
         "Apply data-retention policy bindings: plan (dry-run), apply, "
-        "status, explain (ADR-0134)."
+        "status, explain (experimental, ADR-0134)."
     ),
     no_args_is_help=True,
 )
@@ -84,17 +84,28 @@ def _nova_home() -> Path:
     return _nf_paths.nova_home()
 
 
-def _read_active_hold_ids(registry: str) -> list[str]:
-    path = _registry_dir(registry) / "holds.jsonl"
-    if not path.exists():
-        return []
-    holds: list[str] = []
-    for line in path.read_text().splitlines():
-        if line.strip():
-            h = json.loads(line)
-            if h.get("released_at") is None:
-                holds.append(str(h["hold_id"]))
-    return holds
+def _read_active_hold_ids(registry: str, capsule_dir: Path) -> list[str]:
+    """Active holds on *registry* from the one legal-hold store.
+
+    Same store ``nova hold`` and ``POST /api/holds`` write
+    (:mod:`novafabric.retention.holds`), plus the pre-unification locations —
+    ``./.novafabric/registries`` and the swept capsule base's
+    ``<capsule_dir>/../registries`` — so a hold placed on either surface stops
+    the sweep. A damaged ledger line counts as a hold (fail closed).
+    """
+    from novafabric.retention.holds import (
+        InvalidRegistryNameError,
+        active_hold_ids,
+        capsule_base_holds_root,
+    )
+
+    try:
+        return active_hold_ids(
+            registry, extra_roots=(capsule_base_holds_root(capsule_dir),)
+        )
+    except InvalidRegistryNameError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 def _read_deletion_mode(registry: str) -> str:
@@ -142,7 +153,7 @@ def _build_plan(
         bindings = [b for b in bindings if b.action is wanted]
     items = enumerate_capsules(capsule_dir)
     holds = HoldContext(
-        active_hold_ids=_read_active_hold_ids(registry),
+        active_hold_ids=_read_active_hold_ids(registry, capsule_dir),
         deletion_mode=_read_deletion_mode(registry),  # type: ignore[arg-type]
         worm_locks=_read_worm_locks(registry, worm_db),
     )
@@ -279,10 +290,16 @@ def apply_cmd(
     """Apply due retention actions; every decision is appended to the audit log.
 
     WORM/legal holds always win: a WORM-retained capsule is never purged or
-    shredded before its retention date (recorded `skipped: worm_hold`).
-    Crypto-shred dispatches to the existing `nova pii erase` DEK destruction.
-    Idempotent and fail-safe: re-runs are no-ops; a per-item failure is
+    shredded before its retention date (recorded `skipped: worm_hold`), and a
+    legal hold placed with `nova hold` or through `POST /api/holds` holds every
+    item. Idempotent and fail-safe: re-runs are no-ops; a per-item failure is
     recorded `error` and the sweep continues.
+
+    Limitations (experimental): only `<capsule-dir>/<run>/capsule.json`
+    manifests are swept (`nova capture` writes capsule.yaml), and crypto-shred
+    destroys the DEK named by `metadata.pii_subject_id`, which nothing writes
+    today, so it records `no_dek` and destroys no key. Use `nova pii erase`
+    to crypto-shred a data subject.
 
     Scope: one registry's bindings over one capsule directory.
 
@@ -448,7 +465,7 @@ def explain_cmd(
         raise typer.Exit(code=1)
     now = datetime.now(tz=timezone.utc)
     locks = _read_worm_locks(registry, worm_db)
-    hold_ids = _read_active_hold_ids(registry)
+    hold_ids = _read_active_hold_ids(registry, resolved_dir)
     matched = [
         {
             "binding_id": b.id,

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import json
-import os
-import uuid
-from datetime import datetime, timezone
-from pathlib import Path
-
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
-from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
+from novafabric.retention.holds import (
+    HoldNotFoundError,
+    InvalidRegistryNameError,
+    active_holds,
+    place_hold,
+    release_hold,
+)
 
 console = Console()
 app = typer.Typer(
@@ -18,28 +19,11 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-# Holds are stored as append-only JSONL in .novafabric/registries/<registry>/holds.jsonl
-# Each record: {"hold_id": str, "registry": str, "reason": str,
-#               "duration_days": int|null, "created_at": str, "released_at": str|null}
-
-
-def _holds_path(registry: str) -> Path:
-    return Path(f".novafabric/registries/{registry}/holds.jsonl")
-
-
-def _read_active_holds(registry: str) -> list[dict[str, object]]:
-    path = _holds_path(registry)
-    if not path.exists():
-        return []
-    return [
-        h
-        for h in (
-            json.loads(line)
-            for line in path.read_text().splitlines()
-            if line.strip()
-        )
-        if h["released_at"] is None
-    ]
+# Holds live in ONE store shared with the `/api/holds` routes:
+# $NOVAFABRIC_HOME/registries/<registry>/holds.jsonl (novafabric.retention.holds).
+# Holds written before that store existed (./.novafabric/registries/<registry>/ under
+# the working directory, or <capsule_dir>/../registries/ by `nova serve`) are still
+# read by every deletion gate and can still be released here.
 
 
 @app.command("create")
@@ -54,6 +38,9 @@ def hold_create(
 
     A legal hold blocks all capsule deletions in the named registry until
     released. Use for litigation holds, investigations, or compliance audits.
+    The hold is written to $NOVAFABRIC_HOME/registries/<registry>/holds.jsonl,
+    the same store `POST /api/holds` writes, so `nova retention`, `nova capsule
+    delete` and the server delete routes all honour it whichever surface placed it.
 
     Scope: single registry.
 
@@ -62,26 +49,14 @@ def hold_create(
       nova hold create my-registry --reason "Litigation hold for case #42"
       nova hold create my-registry --reason "Audit" --duration-days 90
     """
-    hold_id = f"hold-{uuid.uuid4().hex[:8]}"
-    path = _holds_path(registry)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    record: dict[str, object] = {
-        "hold_id": hold_id,
-        "registry": registry,
-        "reason": reason,
-        "duration_days": duration_days,
-        "created_at": datetime.now(tz=timezone.utc).isoformat(),
-        "released_at": None,
-    }
-    with path.open("a") as f:
-        f.write(json.dumps(record) + "\n")
-    AuditLog(resolve_audit_log_path()).append(
-        event_type=AuditEventType.HOLD_CREATE,
-        actor="cli-user",
-        resource_id=registry,
-        details={"hold_id": hold_id, "reason": reason, "duration_days": duration_days},
+    try:
+        record = place_hold(registry, reason, duration_days, actor="cli-user")
+    except (InvalidRegistryNameError, ValueError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(
+        f"[green]Hold created:[/green] {record.hold_id} on registry '{escape(registry)}'"
     )
-    console.print(f"[green]Hold created:[/green] {hold_id} on registry '{registry}'")
     if duration_days is None:
         console.print("  Duration: indefinite")
     else:
@@ -94,25 +69,28 @@ def hold_list(
 ) -> None:
     """List all active legal holds for a registry.
 
+    Includes holds placed through the API and holds still stored at a
+    pre-unification location. An unreadable ledger line is listed as an active
+    `__corrupt__:<registry>` hold (fail closed).
+
     Scope: single registry.
 
     \b
     Examples:
       nova hold list my-registry
     """
-    holds = _read_active_holds(registry)
+    try:
+        holds = active_holds(registry)
+    except InvalidRegistryNameError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
     if not holds:
         console.print("No active holds.")
         return
     table = Table("Hold ID", "Reason", "Duration", "Created")
     for h in holds:
-        duration = str(h["duration_days"]) + "d" if h["duration_days"] is not None else "indefinite"
-        table.add_row(
-            str(h["hold_id"]),
-            str(h["reason"]),
-            duration,
-            str(h["created_at"])[:19],
-        )
+        duration = f"{h.duration_days}d" if h.duration_days is not None else "indefinite"
+        table.add_row(h.hold_id, escape(h.reason), duration, h.created_at[:19])
     console.print(table)
 
 
@@ -122,42 +100,18 @@ def hold_release(
 ) -> None:
     """Release a legal hold, allowing capsule deletions to resume.
 
+    Finds the hold wherever it is stored — including holds placed through
+    `POST /api/holds` and holds at a pre-unification location.
+
     Scope: single hold (searched across all registries).
 
     \b
     Examples:
       nova hold release <hold-id>
     """
-    base = Path(".novafabric/registries")
-    if not base.exists():
-        console.print(f"[red]Hold not found: {hold_id}[/red]")
-        raise typer.Exit(code=1)
-
-    for holds_file in base.glob("*/holds.jsonl"):
-        lines = holds_file.read_text().splitlines()
-        updated_lines = []
-        registry = holds_file.parent.name
-        released = False
-        for line in lines:
-            if not line.strip():
-                continue
-            h = json.loads(line)
-            if h["hold_id"] == hold_id and h["released_at"] is None:
-                h["released_at"] = datetime.now(tz=timezone.utc).isoformat()
-                released = True
-            updated_lines.append(json.dumps(h))
-        if released:
-            tmp = holds_file.with_suffix(".tmp")
-            tmp.write_text("\n".join(updated_lines) + "\n")
-            os.replace(tmp, holds_file)
-            AuditLog(resolve_audit_log_path()).append(
-                event_type=AuditEventType.HOLD_RELEASE,
-                actor="cli-user",
-                resource_id=registry,
-                details={"hold_id": hold_id},
-            )
-            console.print(f"[green]Released hold:[/green] {hold_id}")
-            return
-
-    console.print(f"[red]Hold not found or already released: {hold_id}[/red]")
-    raise typer.Exit(code=1)
+    try:
+        release_hold(hold_id, actor="cli-user")
+    except (InvalidRegistryNameError, HoldNotFoundError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(f"[green]Released hold:[/green] {hold_id}")
