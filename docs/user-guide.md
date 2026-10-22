@@ -1540,7 +1540,8 @@ nova promote direct fraud-detection-model@1.2.0 --to archived
 production` is refused unless an OPA policy explicitly allows the `promote_direct`
 action, and the shipped default policy denies it. With no OPA installed there is no
 explicit allow, so it is refused. `--force` does not bypass this. Use `propose` +
-`approve` below, or see the CLI reference for loading an allow policy.
+`approve` below, or see the CLI reference for loading an allow policy. The dashboard's
+Promote button and the HTTP promote endpoints go through the same gate and answer 403.
 
 **Eval gate.** Agent assets require a passing `nova eval` result before
 promotion to `staging` or `production`. Use `--force` to override

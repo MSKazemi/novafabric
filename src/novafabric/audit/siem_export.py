@@ -399,8 +399,11 @@ def _ocsf_actor(
     """Render the actor without overstating how well it is known (ADR-0231 D3).
 
     This function exists because the previous mapping put ``actor_token_fp`` —
-    the first 8 characters of the **one shared token** every operator pastes into
-    a browser — directly into ``actor.user.name``. A SIEM renders that in a
+    a fingerprint of the **one shared token** every operator pastes into a
+    browser — directly into ``actor.user.name``. (That fingerprint was once the
+    token's first 8 characters; ``nova serve`` now writes a domain-separated
+    digest, ``serve.auth.token_fingerprint``, so ``uid`` never carries any part
+    of a secret.) A SIEM renders that in a
     column headed *User*, and an analyst reads it as a person. It is not: with a
     shared token every record carries the same fingerprint, so the log proves
     *something happened* and can never prove *who*.

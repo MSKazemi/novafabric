@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from novafabric.serve import token_store
 from novafabric.serve.app import create_app
+from novafabric.serve.auth import token_fingerprint
 
 LOCALHOST_HEADERS = {"host": "127.0.0.1:4321"}
 TOKEN = "test-token-admin-dd8"
@@ -41,7 +42,9 @@ def test_list_tokens_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert r.status_code == 200
     data = r.json()
     assert data["tokens"] == []
-    assert data["session_token_fingerprint"] == TOKEN[:8]
+    # A digest, never a prefix of the secret itself.
+    assert data["session_token_fingerprint"] == token_fingerprint(TOKEN)
+    assert data["session_token_fingerprint"] not in TOKEN
 
 
 def test_list_tokens_requires_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

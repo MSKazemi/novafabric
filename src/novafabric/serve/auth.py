@@ -19,6 +19,32 @@ from novafabric._paths import serve_token_path
 
 TOKEN_ENV: Final[str] = "NOVAFABRIC_SERVE_TOKEN"
 
+#: Domain tag for :func:`token_fingerprint`. It keeps the fingerprint from being
+#: equal to (a prefix of) any plain SHA-256 of the same token that another surface
+#: publishes, such as the ``token_digest`` an issued-token record stores.
+_FINGERPRINT_DOMAIN: Final[bytes] = b"novafabric/serve/token-fingerprint/v1\x00"
+
+#: Hex characters kept from the digest: 48 bits, enough to tell tokens apart in
+#: an audit log and far too few to help reconstruct one.
+FINGERPRINT_HEX_LEN: Final[int] = 12
+
+
+def token_fingerprint(token: str) -> str:
+    """Return a stable, non-reversible identifier for *token*.
+
+    This is what the dashboard audit log, the SIEM export (``user.uid``) and
+    ``GET /api/admin/tokens`` show for the server token. It is a truncated,
+    domain-separated SHA-256 digest, never a slice of the token: a prefix is part
+    of the secret, and for a short pinned ``NOVAFABRIC_SERVE_TOKEN`` it can be most
+    of it. The same token always gives the same fingerprint.
+
+    A digest does not protect a *guessable* token: anyone who can read the
+    fingerprint can test candidate tokens against it offline. Pin only
+    high-entropy tokens (the generated default is 256 bits).
+    """
+    digest = hashlib.sha256(_FINGERPRINT_DOMAIN + token.encode("utf-8")).hexdigest()
+    return digest[:FINGERPRINT_HEX_LEN]
+
 
 def token_matches(candidate: str, expected: str) -> bool:
     """Constant-time token comparison.

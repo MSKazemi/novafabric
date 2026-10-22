@@ -143,8 +143,21 @@ def test_rollback_success(client: TestClient, env: dict[str, Path]) -> None:
     assert "rollback_id" in result
 
 
-def test_rollback_no_previous_version_returns_409(client: TestClient) -> None:
+def test_rollback_no_previous_version_returns_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A single production version with no history yields 409."""
+    from novafabric.policy._models import PolicyDecision, PolicyInput
+
+    class _AllowDirect:
+        """ADR-0312: single-actor promotion into production needs an explicit allow."""
+
+        def evaluate(self, input_: PolicyInput) -> PolicyDecision:
+            return PolicyDecision(allow=True, reason="test allow", decision_id="t-1")
+
+    monkeypatch.setattr(
+        "novafabric.registry.service.get_policy_engine", lambda: _AllowDirect()
+    )
     id_v1 = _register_asset(client, "solo-model", "1.0.0")
     _promote_asset(client, id_v1, "staging")
     _promote_asset(client, id_v1, "production")

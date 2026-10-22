@@ -213,7 +213,11 @@ def test_assign_writes_audit_entry(
         == "nova server assign-role alice@example.com writer"
     )
     assert matching[0]["result"] == "ok"
-    assert matching[0]["actor_token_fp"] == TOKEN[:8]
+    # A digest of the token (serve.auth.token_fingerprint), never a prefix of it.
+    from novafabric.serve.auth import token_fingerprint
+
+    assert matching[0]["actor_token_fp"] == token_fingerprint(TOKEN)
+    assert matching[0]["actor_token_fp"] not in TOKEN
 
 
 # ---------- DELETE /api/admin/roles/{subject}/{role} ----------

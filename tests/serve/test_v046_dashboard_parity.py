@@ -187,6 +187,16 @@ class TestPolicyList:
 
 
 class TestPolicySign:
+    @pytest.fixture(autouse=True)
+    def _operator_path_roots(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The key, cert and DB live outside $NOVAFABRIC_HOME, so -- as an operator
+        would -- list their directories in NOVAFABRIC_SERVE_PATH_ROOTS (serve.paths)."""
+        import os
+
+        monkeypatch.setenv(
+            "NOVAFABRIC_SERVE_PATH_ROOTS", os.pathsep.join([str(FIXTURE_KEYS), str(tmp_path)])
+        )
+
     def test_signs_and_stores_policy(self, client: TestClient, tmp_path: Path) -> None:
         db = tmp_path / "policy-sign.db"
         resp = client.post(

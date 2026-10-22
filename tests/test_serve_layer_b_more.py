@@ -148,11 +148,13 @@ def test_promote_invalid_transition_returns_409(client: TestClient) -> None:
         headers=HEADERS,
         json={"to_status": "archived", "confirmed": True},
     )
-    # Now try to move from archived → production (invalid).
+    # Now try to move from archived → staging (invalid). Not production: a
+    # single-actor move into production is refused by the ADR-0312 gate (403)
+    # before the lifecycle is even consulted, exactly as `nova promote direct`.
     res = client.post(
         f"/api/assets/pytest-promote-model/1.0.0/promote?token={VALID_TOKEN}",
         headers=HEADERS,
-        json={"to_status": "production", "confirmed": True},
+        json={"to_status": "staging", "confirmed": True},
     )
     assert res.status_code == 409
 

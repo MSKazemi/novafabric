@@ -383,10 +383,13 @@ class TestEvidenceRoutes:
         assert resp.status_code == 400
 
     def test_export_with_generated_key(
-        self, stack: tuple[TestClient, Path], tmp_path: Path
+        self, stack: tuple[TestClient, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from novafabric.evidence.signing import generate_keypair
 
+        # The key lives outside $NOVAFABRIC_HOME; an operator allows that
+        # directory explicitly (serve.paths), or the request is refused.
+        monkeypatch.setenv("NOVAFABRIC_SERVE_PATH_ROOTS", str(tmp_path / "keys"))
         client, capsule_dir = stack
         c = _mk_capsule(capsule_dir)
         priv, _ = generate_keypair(tmp_path / "keys")

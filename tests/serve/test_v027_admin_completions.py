@@ -213,8 +213,14 @@ class TestCapsuleMigrateEndpoint:
         )
         assert r.status_code == 422
 
+    @pytest.fixture
+    def operator_root(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Source and output live outside $NOVAFABRIC_HOME; an operator allows them."""
+        monkeypatch.setenv("NOVAFABRIC_SERVE_PATH_ROOTS", str(tmp_path))
+        return tmp_path
+
     def test_migrate_nonexistent_source_404(
-        self, client: TestClient, tmp_path: Path
+        self, client: TestClient, tmp_path: Path, operator_root: Path
     ) -> None:
         """Source path that does not exist should return 404."""
         r = client.post(
@@ -227,7 +233,9 @@ class TestCapsuleMigrateEndpoint:
         )
         assert r.status_code == 404
 
-    def test_migrate_success(self, client: TestClient, tmp_path: Path) -> None:
+    def test_migrate_success(
+        self, client: TestClient, tmp_path: Path, operator_root: Path
+    ) -> None:
         """Valid v0.1.x capsule migrates successfully and returns ok=True."""
         source = _make_v01_capsule(tmp_path / "capsule-v01")
         output = tmp_path / "capsule-v100"
