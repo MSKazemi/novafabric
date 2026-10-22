@@ -730,7 +730,7 @@ class TestMerkleLogSqliteBranches:
     def test_verify_consistency_proof_empty_old_parts_false(self):
         # Covers line 250 (`if not old_parts: return False`).
         proof = {"old_parts": [], "tail_parts": []}
-        assert verify_consistency_proof(proof, "a", "b") is False
+        assert verify_consistency_proof(proof, "a", "b", old_size=1, new_size=1) is False
 
     def test_verify_entry_root_none_returns_false(self, monkeypatch, tmp_path):
         """Covers line 436: verify_entry when current_root() is None."""
@@ -757,7 +757,12 @@ class TestMerkleLogSqliteBranches:
         for i in range(6):
             log.append({"i": i})
         proof = log.consistency_proof(3, 6)
-        assert verify_consistency_proof(proof, proof["old_root"], proof["new_root"]) is True
+        assert (
+            verify_consistency_proof(
+                proof, proof["old_root"], proof["new_root"], old_size=3, new_size=6
+            )
+            is True
+        )
         log.close()
 
     def test_verify_consistency_clean_log(self, tmp_path):
@@ -776,8 +781,8 @@ class TestMerkleLogSqliteBranches:
 
 from novafabric.trust.novaseal.merkle import (  # noqa: E402
     PostgresMerkleLog,
-    _compute_root,
     _leaf_hash,
+    compute_root,
 )
 
 
@@ -805,9 +810,22 @@ class _FakeCursor:
         elif "SELECT leaf_hash FROM nova_seal_leaves ORDER BY leaf_index" in sql_norm:
             self._result = [(row[1],) for row in store["leaves"]]
         elif sql_norm.startswith("INSERT INTO nova_seal_tree_heads"):
-            tree_size, root_hash = params
+            tree_size, root_hash, *version = params
             store["heads"][tree_size] = root_hash
+            store["head_versions"][tree_size] = version[0] if version else None
             self._result = []
+        elif sql_norm.startswith("SELECT value FROM nova_seal_log_meta"):
+            (key,) = params
+            self._result = [(store["meta"][key],)] if key in store["meta"] else []
+        elif sql_norm.startswith("INSERT INTO nova_seal_log_meta"):
+            key, value = params
+            store["meta"].setdefault(key, value)
+            self._result = []
+        elif "FROM nova_seal_tree_heads WHERE COALESCE(root_version, 1)" in sql_norm:
+            (version,) = params
+            self._result = [
+                (sum(1 for v in store["head_versions"].values() if (v or 1) != version),)
+            ]
         elif "SELECT root_hash FROM nova_seal_tree_heads ORDER BY tree_size DESC" in sql_norm:
             if store["heads"]:
                 top = max(store["heads"])
@@ -877,7 +895,7 @@ class _FakeConn:
 @pytest.fixture
 def pg_log(monkeypatch):
     """A PostgresMerkleLog whose _ensure_connected() installs a fake connection."""
-    store = {"leaves": [], "heads": {}}
+    store = {"leaves": [], "heads": {}, "head_versions": {}, "meta": {}}
     log = PostgresMerkleLog("postgresql://fake/db")
 
     def _fake_ensure():
@@ -941,7 +959,12 @@ class TestPostgresMerkleLogMocked:
         for i in range(6):
             log.append({"i": i})
         proof = log.consistency_proof(3, 6)
-        assert verify_consistency_proof(proof, proof["old_root"], proof["new_root"]) is True
+        assert (
+            verify_consistency_proof(
+                proof, proof["old_root"], proof["new_root"], old_size=3, new_size=6
+            )
+            is True
+        )
         # root_at_size hits the stored tree_heads
         assert log.root_at_size(6) is not None
         assert log.root_at_size(999) is None
@@ -1022,7 +1045,7 @@ class TestPostgresMerkleLogEnsureConnected:
 
     def test_ensure_connected_real_psycopg_connect_mocked(self, monkeypatch):
         """_ensure_connected calls psycopg.connect + runs schema (lines 580-583)."""
-        store = {"leaves": [], "heads": {}}
+        store = {"leaves": [], "heads": {}, "head_versions": {}, "meta": {}}
         fake_conn = _FakeConn(store)
         fake_psycopg = SimpleNamespace(connect=lambda dsn, autocommit: fake_conn)
         monkeypatch.setitem(sys.modules, "psycopg", fake_psycopg)
@@ -1047,12 +1070,12 @@ class TestPostgresMerkleLogEnsureConnected:
 
 
 def test_fake_cursor_matches_real_compute_root(pg_log):
-    """Sanity: the fake backend's append produces the same root as _compute_root."""
+    """Sanity: the fake backend's append produces the same root as compute_root."""
     log, store = pg_log
     for i in range(5):
         log.append({"i": i})
     hashes_list = [r[1] for r in store["leaves"]]
-    assert log.current_root() == _compute_root(hashes_list)
+    assert log.current_root() == compute_root(hashes_list, root_version=log.root_version)
     # And the leaf hash matches the canonical hashing.
     import json as _json
 

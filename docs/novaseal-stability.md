@@ -28,7 +28,8 @@ definition, and versioning policy.
 | `KeyWrappingBackend` Protocol (`wrap_key`/`unwrap_key`/`kek_ref`, ADR-0185) | **Experimental** | Separate, additive capability protocol for envelope-encryption KEKs; live cloud backends verified only against SDK-contract fakes |
 | `X509SigningIdentity` / `verify_x509_signature` (ADR-0055) | **Experimental** | Shipped v0.91.0 as a library API; not yet wired to `novaseal.yaml`/CLI, so its call surface may still change before that integration lands |
 | Sigstore bundle output (`nova seal sign --backend sigstore`, ADR-0071) | **Tracks upstream spec** | The bundle is Sigstore's own v0.3 format, not a NovaFabric wire format — its stability follows the `sigstore` SDK's, independent of `NOVASEAL_MAJOR` |
-| Checkpoint / witness cosigning (`trust/novaseal/witness.py`, ADR-0097) | **Experimental** | Library API only (no CLI); note format is a simplified C2SP `tlog-checkpoint` note, explicitly documented as subject to change (e.g. the deferred 4-byte key-hash disambiguation) |
+| Checkpoint / witness cosigning (`trust/novaseal/witness.py`, ADR-0097) | **Experimental** | Library API only (no CLI); note format is a simplified C2SP `tlog-checkpoint` note, explicitly documented as subject to change (e.g. the deferred 4-byte key-hash disambiguation). `Checkpoint.root_version` (ADR-0313) is carried beside the note, not in its body |
+| NovaSeal log root version (`root_version`, ADR-0313) | **Stable** | v1 roots keep verifying for existing data (only with `tree_size`); new logs write v2 (RFC 6962). A new version would be added the same way: additively, absent meaning v1 |
 
 ---
 

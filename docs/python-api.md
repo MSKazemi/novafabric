@@ -874,7 +874,9 @@ bundle = seal.seal(capsule_manifest)
 # bundle.dsse_envelope  → bytes  (DSSE JSON)
 # bundle.tsr            → bytes  (RFC 3161 DER; b"" if TSA skipped/unavailable)
 # bundle.log_entry      → dict   (leaf_index, leaf_hash, root_hash, tree_size,
-#                                  inclusion_proof, entry)
+#                                  root_version, inclusion_proof, entry)
+#                         root_version 2 = RFC 6962 root (new logs); absent or 1 =
+#                         legacy root, meaningful only with tree_size (ADR-0313)
 # bundle.capsule_id     → str    (SHA-256 hex of the signed payload)
 ```
 

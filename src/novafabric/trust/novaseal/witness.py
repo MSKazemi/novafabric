@@ -32,6 +32,15 @@ Note format (a faithful, simplified C2SP note): the body is
 The 4-byte key-hash disambiguation of the full C2SP note is deferred to a later
 slice; here a witness name maps 1:1 to a public key supplied by the verifier.
 
+Root version (ADR-0313): a :class:`Checkpoint` carries the ``root_version`` its
+root is computed under (absent: v1). The note body is unchanged for both versions
+— v2 is the RFC 6962 tree a C2SP checkpoint already assumes, and existing v1 notes
+must keep verifying — so the version is carried beside the note, not inside it.
+Because (origin, size, root) are all signed, a version label cannot make a root
+stand for a different tree of the same size. A witness cosigns an extension only
+when the consistency proof connects exactly the last cosigned size to the new
+size, under the checkpoints' own root version.
+
 Tiles over WORM (§NF-041), the ``nova monitor`` auditor (§NF-044), COSE receipts
 (§NF-045), and the portable bundle profile (§NF-047) are later slices.
 """
@@ -41,7 +50,7 @@ from __future__ import annotations
 import base64
 import binascii
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -49,7 +58,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from novafabric.trust.novaseal.merkle import verify_consistency_proof
+from novafabric.trust.novaseal.merkle import (
+    ROOT_VERSION_V1,
+    MerkleError,
+    root_version_of,
+    verify_consistency_proof,
+)
 
 
 class WitnessError(Exception):
@@ -64,17 +78,40 @@ class WitnessRefusedError(WitnessError):
     """
 
 
+class _LogHead(Protocol):
+    """The part of a NovaSeal Merkle log a checkpoint is taken from."""
+
+    @property
+    def root_version(self) -> int: ...
+
+    def tree_size(self) -> int: ...
+
+    def current_root(self) -> str | None: ...
+
+
 @dataclass(frozen=True)
 class Checkpoint:
     """A signed-tree-head note (C2SP ``tlog-checkpoint``, §NF-042).
 
     ``root_hash`` is the log's Merkle root as a hex string (as produced by
-    :meth:`MerkleLog.current_root`).
+    :meth:`MerkleLog.current_root`). ``root_version`` (ADR-0313, additive) is the
+    version that root is computed under; the default, v1, is the meaning of a
+    checkpoint recorded before the field existed. Use :meth:`from_log` to take a
+    checkpoint of a log with its version.
     """
 
     origin: str
     tree_size: int
     root_hash: str
+    root_version: int = ROOT_VERSION_V1
+
+    @classmethod
+    def from_log(cls, origin: str, log: _LogHead) -> Checkpoint:
+        """Checkpoint of *log*'s current head: size, root and root version together."""
+        root = log.current_root()
+        if root is None:
+            raise WitnessError("an empty log has no checkpoint")
+        return cls(origin, log.tree_size(), root, log.root_version)
 
     def note_body(self) -> str:
         """Return the canonical checkpoint note body (the bytes witnesses sign)."""
@@ -192,6 +229,12 @@ class Witness:
         """
         last = self._last.get(checkpoint.origin)
         if last is not None:
+            if checkpoint.root_version != last.root_version:
+                raise WitnessRefusedError(
+                    f"checkpoint root_version {checkpoint.root_version} differs from the last "
+                    f"cosigned root_version {last.root_version} for origin "
+                    f"{checkpoint.origin!r}; a log keeps one root version (ADR-0313)"
+                )
             if checkpoint.tree_size < last.tree_size:
                 raise WitnessRefusedError(
                     f"checkpoint size {checkpoint.tree_size} is behind the last cosigned "
@@ -224,14 +267,33 @@ class Witness:
         if prev_checkpoint is not None and (
             prev_checkpoint.tree_size != last.tree_size
             or prev_checkpoint.root_hash != last.root_hash
+            or prev_checkpoint.root_version != last.root_version
         ):
             raise WitnessRefusedError(
                 "prev_checkpoint does not match this witness's last cosigned checkpoint"
             )
-        if not verify_consistency_proof(consistency_proof, last.root_hash, new.root_hash):
+        try:
+            proof_version = root_version_of(consistency_proof)
+        except MerkleError as exc:
+            raise WitnessRefusedError(f"consistency proof: {exc}") from exc
+        if proof_version != new.root_version:
+            raise WitnessRefusedError(
+                f"consistency proof is for root_version {proof_version}, the checkpoint "
+                f"declares root_version {new.root_version} (ADR-0313)"
+            )
+        # ADR-0313: the proof must connect exactly these two sizes — a root is never
+        # compared without the size it belongs to.
+        if not verify_consistency_proof(
+            consistency_proof,
+            last.root_hash,
+            new.root_hash,
+            old_size=last.tree_size,
+            new_size=new.tree_size,
+        ):
             raise WitnessRefusedError(
                 "consistency proof does not show an append-only extension from the last "
-                f"cosigned root to the new root (origin {new.origin!r})"
+                f"cosigned root (size {last.tree_size}) to the new root (size "
+                f"{new.tree_size}) (origin {new.origin!r})"
             )
 
 

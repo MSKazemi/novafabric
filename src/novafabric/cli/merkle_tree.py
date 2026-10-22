@@ -30,7 +30,12 @@ _MARK = {"verified": "[green]✓[/green]", "mismatch": "[red]✗[/red]", "unveri
 def merkle_tree_cmd(
     document: Annotated[
         Path,
-        typer.Argument(help="JSON with 'leaf_hashes' (+ optional labels/sealed_root/tsr_hash)."),
+        typer.Argument(
+            help=(
+                "JSON with 'leaf_hashes' (+ optional labels/sealed_root/tsr_hash/"
+                "root_version/tree_size)."
+            )
+        ),
     ],
     capsule_id: Annotated[
         str | None,
@@ -69,6 +74,9 @@ def merkle_tree_cmd(
             sealed_root=doc.get("sealed_root"),
             tsr_hash=doc.get("tsr_hash"),
             capsule_id=capsule_id,
+            # ADR-0313: optional; absent root_version means v1.
+            root_version=doc.get("root_version"),
+            tree_size=doc.get("tree_size"),
         )
     except (ValueError, TypeError) as exc:
         err_console.print(f"[red]Invalid Merkle document:[/red] {exc}")

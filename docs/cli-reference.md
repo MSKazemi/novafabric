@@ -5680,7 +5680,7 @@ Options:
 - `--db URI` — Merkle log path (SQLite file) **or** `postgresql://` DSN for Postgres backend.  Default: `$NOVAFABRIC_SEAL_DB_PATH` or `~/.novafabric/novaseal-merkle.db`.  Postgres requires `pip install novafabric[seal-postgres]`.
 - `--full` — also re-hash every stored entry against its leaf hash (Postgres; the SQLite backend always does this).  Default on Postgres: the entry re-hash is spot-checked on up to 1 000 random leaves.
 - `--verbose` / `-v` — show per-leaf details on failure.
-- `--consistency N` — additionally emit + verify an append-only consistency proof from tree size `N` to the current head (experimental, ADR-0041 v0.2). The proof is an aligned perfect-subtree decomposition (O(log n) verifier) valid for the v0.1 duplicate-padding tree shape.
+- `--consistency N` — additionally emit + verify an append-only consistency proof from tree size `N` to the current head (experimental, ADR-0041 v0.2). The proof follows the log's root version (ADR-0313; printed as `Root version:`): an RFC 9162 consistency path for a v2 log (every log created from ADR-0313 on), an aligned perfect-subtree decomposition for a v1 log (created earlier). Either is verified against both tree sizes, not only both roots.
 
 Returns exit code 0 if the log is consistent, 1 if tampered or inconsistent, 2 if a `--consistency` proof fails.
 

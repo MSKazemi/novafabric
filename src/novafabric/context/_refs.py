@@ -28,7 +28,7 @@ Hash construction — plain SHA-256, no tree
 Digests here are plain ``hashlib.sha256`` over the item's bytes. The repository
 carries two mutually incompatible Merkle constructions —
 ``evidence/merkle.py`` (RFC 6962, domain-separated leaf/inner prefixes) and
-``trust/novaseal/merkle.py`` (pairwise with odd-duplicate padding) — and mixing
+``trust/novaseal/merkle.py`` (v1 root: odd-duplicate padding, ADR-0313) — and mixing
 leaves from one with the other's combiner silently yields a wrong root that
 still looks like a root. P2 needs no tree and builds none: a context manifest is
 *ordered*, so a single digest over the whole ordered manifest already commits to

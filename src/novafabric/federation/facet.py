@@ -77,7 +77,7 @@ Hash construction — no tree
 
 The repository carries two mutually incompatible Merkle constructions —
 ``evidence/merkle.py`` (RFC 6962, domain-separated leaf/inner prefixes) and
-``trust/novaseal/merkle.py`` (pairwise with odd-duplicate padding) — and mixing
+``trust/novaseal/merkle.py`` (v1 root: odd-duplicate padding, ADR-0313) — and mixing
 leaves from one with the other's combiner silently yields a wrong root that
 still looks like a root. P1 binds *single artifacts by identity* and needs no
 inclusion proof over a set, so it needs no tree, which avoids the choice

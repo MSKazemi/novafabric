@@ -1,0 +1,52 @@
+{
+  "leaf_rule": "leaf i = sha256(0x00 || utf8('e-' + str(i)))",
+  "roots": [
+    {
+      "tree_size": 1,
+      "v1": "8b7bf885f548b0e9cc6d9ca4720bf9f5d45b41db830dccd897e9bea46a188382",
+      "v2": "8b7bf885f548b0e9cc6d9ca4720bf9f5d45b41db830dccd897e9bea46a188382"
+    },
+    {
+      "tree_size": 2,
+      "v1": "7936089f9b794fcafbc0f9c03cf6aaa88a701eb3f4cf96e7a3ed39bda29d2bc2",
+      "v2": "7936089f9b794fcafbc0f9c03cf6aaa88a701eb3f4cf96e7a3ed39bda29d2bc2"
+    },
+    {
+      "tree_size": 3,
+      "v1": "556abbebcedacc7660626d96d0c553041e12861b3533d7792b15a67200ee6c84",
+      "v2": "ad95746a7d5eb8cb320651bebe394f1de99f708386aaa6d4cf0a3467e569333d"
+    },
+    {
+      "tree_size": 4,
+      "v1": "94ab3c54601346f9149b0cab8ad669086bbfb0d128312bc82d34ac9acca6f6c5",
+      "v2": "94ab3c54601346f9149b0cab8ad669086bbfb0d128312bc82d34ac9acca6f6c5"
+    },
+    {
+      "tree_size": 5,
+      "v1": "0413633f1e9651c173e96eacfc30cfc3d524c1726b00317a88148cc82f237cb2",
+      "v2": "84ff3bb47eb3bab965ed39a22f7422d8133bfa22f0b18f9befc6999d4cc544cb"
+    },
+    {
+      "tree_size": 6,
+      "v1": "1695a0cb034a50a9d3b213af6faefd1e354e3562571e8568ee7f637a03587473",
+      "v2": "4be2a2ae1e984b1aa265b9471824c11fdcd2247c6d7ac53ce4e52e40b79457b2"
+    },
+    {
+      "tree_size": 7,
+      "v1": "1b07cd24ed1297b0a6aca9388e5c9b8693c6cd516daa544ae4f2eea5c15a3ffd",
+      "v2": "3f32ee7f74182ae88edc37fcbcbcaf504ed9d81dc001e220523b90fdfe537df7"
+    },
+    {
+      "tree_size": 8,
+      "v1": "18190bcdcdd0cc4337e123a6cfd7e56dec96309a6b0cc525a0cc9a1058a0ea0f",
+      "v2": "18190bcdcdd0cc4337e123a6cfd7e56dec96309a6b0cc525a0cc9a1058a0ea0f"
+    }
+  ],
+  "duplicated_last_leaf": {
+    "leaves": "a, b, c = sha256(0x00 || b'a'), (\u2026 b'b'), (\u2026 b'c')",
+    "v1_abc": "e9636069c740c9ff51625b01a0b040396d265a9b920cc6febdfa5ecc9f58ecce",
+    "v1_abcc": "e9636069c740c9ff51625b01a0b040396d265a9b920cc6febdfa5ecc9f58ecce",
+    "v2_abc": "36642e73c2540ab121e3a6bf9545b0a24982cd830eb13d3cd19de3ce6c021ec1",
+    "v2_abcc": "e9636069c740c9ff51625b01a0b040396d265a9b920cc6febdfa5ecc9f58ecce"
+  }
+}

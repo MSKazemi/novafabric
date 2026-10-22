@@ -45,7 +45,7 @@ Four invariants from ADR-0165 shape every choice in this module:
 **No Merkle tree is computed here, deliberately.** The repository carries two
 mutually incompatible Merkle constructions — ``evidence/merkle.py`` (RFC 6962,
 domain-separated leaf/inner prefixes) and ``trust/novaseal/merkle.py``
-(pairwise with odd-duplicate padding) — and mixing leaves from one with the
+(v1 root: odd-duplicate padding, ADR-0313) — and mixing leaves from one with the
 other's combiner silently yields a wrong root. P1 needs no tree, which avoids
 the question entirely: OAIS PDI Fixity is a single digest over a single sealed
 artifact, and the fixity log is a flat chronological list, not a set requiring

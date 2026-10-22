@@ -92,6 +92,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   the exact-replay preconditions in `exact_eligible`. An ineligible (or unassessed) result is
   now refused with `NotAttestableError` and exit 1, and nothing is signed — the same rule
   session replay already applied (ADR-0269 option B, "refuse to attest what was not performed").
+- **A witness no longer cosigns a checkpoint whose size the consistency proof does not
+  establish (ADR-0313).** `Witness.cosign()` checked the proof against the two roots only, so
+  a checkpoint claiming size 6 with a size-4 root and a 3 → 4 proof was cosigned. It now
+  passes both checkpoint sizes to the proof check and refuses a change of root version.
+
+- **`nova verify` with the sealer's log no longer accepts a `log-entry.json` with an altered
+  `tree_size` (ADR-0313).** The local-log check confirmed the leaf's position but ignored the
+  recorded tree head; for a v1 seal, a proof for leaf 2 of 3 is byte-identical to one for
+  leaf 2 of 4, so only the log can refuse the wrong size, and now does.
+
 - **The container eval suites' docs and comments no longer claim a published default image
   or a "host-env" fallback.** GAIA, AgentBench, MMLU, SWE-bench and TruthfulQA run only
   with an image and `sha256:` digest you supply: no eval image is published, the default
@@ -108,6 +118,25 @@ longer forwards the submitting shell's environment (ADR-0270).
   unchanged. See `docs/developer-guide.md`.
 
 ### Changed
+
+- **NovaSeal log roots are versioned, and new logs write a root that commits to the tree
+  size (ADR-0313).** The original root (now *v1*) padded an odd level by duplicating its
+  last node, so a log `[a, b, c]` and a log `[a, b, c, c]` (the same capsule sealed twice)
+  had the same root. A log created from this release on writes *v2*: the RFC 6962 / RFC 9162
+  Merkle Tree Hash, with RFC 9162 inclusion and consistency proofs. The version is recorded
+  additively wherever a root is carried — `log_meta` and a `root_version` column in the log
+  database, `root_version` in `.seal/log-entry.json`, in consistency proofs, on the witness
+  `Checkpoint`, and `tree_size` + `root_version` in the ledger checkpoint `merkle` block
+  (schema extended, optional). An absent `root_version` means v1. Existing logs stay v1 for
+  their whole life and existing seals verify unchanged (pinned by the v0.102 golden capsule
+  and a pre-ADR-0313 log database; new v2 golden fixtures under
+  `tests/fixtures/novaseal/root-v2/`). Verification now compares each root together with
+  its tree size: `verify_consistency_proof()` requires `old_size=` / `new_size=` (it raises
+  `MerkleSizeRequiredError` without them), `nova verify` fails a `log-entry.json` whose
+  `root_hash` has no `tree_size`, and when the sealer's log is present it recomputes the
+  recorded tree head from the log's leaves. *Compatibility:* NovaFabric releases before this
+  one cannot verify the carried inclusion proof of a v2 seal (except at power-of-two tree
+  sizes) and report its log check as failed; verify v2 seals with this release or later.
 
 - **The container eval suites no longer carry a placeholder image, and fail with an
   actionable error (ADR-0308, closes novafabric-private#22).** GAIA, AgentBench, MMLU,

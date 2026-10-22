@@ -134,13 +134,13 @@ class TestMerkleLogIntegration:
         log = MerkleLog(db_path=tmp_path / "log.db")
         for i in range(2):
             log.append({"i": i})
-        cp_old = Checkpoint(ORIGIN, log.tree_size(), log.current_root())
+        cp_old = Checkpoint.from_log(ORIGIN, log)
         w = Witness("W1", _key())
         w.cosign(cp_old, consistency_proof=None, prev_checkpoint=None)
 
         for i in range(2, 5):
             log.append({"i": i})
-        cp_new = Checkpoint(ORIGIN, log.tree_size(), log.current_root())
+        cp_new = Checkpoint.from_log(ORIGIN, log)
         proof = log.consistency_proof(cp_old.tree_size, cp_new.tree_size)
         # A genuine append-only extension must be cosigned.
         cosig = w.cosign(cp_new, consistency_proof=proof, prev_checkpoint=cp_old)

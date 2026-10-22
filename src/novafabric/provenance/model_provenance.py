@@ -52,7 +52,7 @@ and this module computes none.
 
 The repository carries two mutually incompatible Merkle constructions —
 ``evidence/merkle.py`` (RFC 6962, domain-separated leaf/inner prefixes) and
-``trust/novaseal/merkle.py`` (pairwise with odd-duplicate padding) — and mixing
+``trust/novaseal/merkle.py`` (v1 root: odd-duplicate padding, ADR-0313) — and mixing
 leaves from one with the other's combiner silently yields a wrong root that
 still looks like a root. P2 needs no tree, which avoids the question entirely:
 ancestry is *ordered*, so a running head digest commits to the whole prefix by

@@ -223,14 +223,27 @@ def sign_checkpoint(
         leaf_index_obj = leaf["leaf_index"]
         assert isinstance(leaf_index_obj, int)
         leaf_index = leaf_index_obj
+        # The proof returned by append() is to exactly the root and size it
+        # returns; a later get_inclusion_proof() would be to whatever the log
+        # holds by then.
+        proof_obj = leaf.get("inclusion_proof")
+        proof = (
+            [str(h) for h in proof_obj]
+            if isinstance(proof_obj, list)
+            else merkle_log.get_inclusion_proof(leaf_index)
+        )
         record.merkle = {
             "root": "sha256:" + str(leaf["root_hash"]),
             "leaf_hash": "sha256:" + str(leaf["leaf_hash"]),
             "log_index": leaf_index,
-            "inclusion_proof": [
-                "sha256:" + h for h in merkle_log.get_inclusion_proof(leaf_index)
-            ],
+            "inclusion_proof": ["sha256:" + h for h in proof],
         }
+        # ADR-0313 (additive): a root is meaningful only with its tree size and
+        # root version; absent root_version means v1.
+        if isinstance(leaf.get("tree_size"), int):
+            record.merkle["tree_size"] = leaf["tree_size"]
+        if isinstance(leaf.get("root_version"), int):
+            record.merkle["root_version"] = leaf["root_version"]
 
     target_dir = capsule_dir if capsule_dir is not None else record._capsule_dir
     if persist and target_dir is not None:

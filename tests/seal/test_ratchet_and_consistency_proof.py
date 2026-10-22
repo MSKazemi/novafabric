@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from novafabric.cli.seal_propose import seal_app
 from novafabric.trust.novaseal.merkle import (
+    ROOT_VERSION_V1,
     MerkleError,
     MerkleLog,
     _compute_root,
@@ -45,23 +46,34 @@ class TestRootFromParts:
         assert _root_from_parts(parts) == _compute_root(hashes)
 
 
+@pytest.fixture(params=[1, 2], ids=["root-v1", "root-v2"])
+def root_version(request: pytest.FixtureRequest) -> int:
+    """Every consistency-proof property holds for both log root versions (ADR-0313)."""
+    return int(request.param)
+
+
 class TestConsistencyProof:
     @pytest.mark.parametrize(
         ("old", "new"), [(1, 2), (2, 4), (3, 7), (4, 6), (5, 13), (8, 9), (7, 7)]
     )
-    def test_valid_proof_verifies(self, tmp_path: Path, old: int, new: int) -> None:
-        log = MerkleLog(tmp_path / "log.db")
+    def test_valid_proof_verifies(
+        self, tmp_path: Path, old: int, new: int, root_version: int
+    ) -> None:
+        log = MerkleLog(tmp_path / "log.db", root_version=root_version)
         roots = {}
         for i in range(new):
             result = log.append({"i": i})
             roots[int(result["tree_size"])] = result["root_hash"]  # type: ignore[index]
         proof = log.consistency_proof(old)
-        assert verify_consistency_proof(proof, str(roots[old]), str(roots[new]))
+        assert proof["root_version"] == root_version
+        assert verify_consistency_proof(
+            proof, str(roots[old]), str(roots[new]), old_size=old, new_size=new
+        )
         assert log.root_at_size(old) == roots[old]
 
-    def test_forked_log_proof_fails(self, tmp_path: Path) -> None:
-        log_a = MerkleLog(tmp_path / "a.db")
-        log_b = MerkleLog(tmp_path / "b.db")
+    def test_forked_log_proof_fails(self, tmp_path: Path, root_version: int) -> None:
+        log_a = MerkleLog(tmp_path / "a.db", root_version=root_version)
+        log_b = MerkleLog(tmp_path / "b.db", root_version=root_version)
         for i in range(4):
             log_a.append({"i": i})
             log_b.append({"i": i})
@@ -74,11 +86,11 @@ class TestConsistencyProof:
         # (prefix identical), but its new root differs from a's:
         assert root_a4 is not None
         assert not verify_consistency_proof(
-            proof_b, root_a4, str(log_a.current_root())
+            proof_b, root_a4, str(log_a.current_root()), old_size=4, new_size=5
         )
 
-    def test_tampered_prefix_detected(self, tmp_path: Path) -> None:
-        log = MerkleLog(tmp_path / "log.db")
+    def test_tampered_prefix_detected(self, tmp_path: Path, root_version: int) -> None:
+        log = MerkleLog(tmp_path / "log.db", root_version=root_version)
         old_root = ""
         for i in range(6):
             result = log.append({"i": i})
@@ -87,8 +99,11 @@ class TestConsistencyProof:
         proof = log.consistency_proof(3)
         # claim a different old root than the proof's prefix commits to
         wrong_old = _leaf_hash(b"wrong")
-        assert not verify_consistency_proof(proof, wrong_old, str(log.current_root()))
-        assert verify_consistency_proof(proof, old_root, str(log.current_root()))
+        new_root = str(log.current_root())
+        assert not verify_consistency_proof(
+            proof, wrong_old, new_root, old_size=3, new_size=6
+        )
+        assert verify_consistency_proof(proof, old_root, new_root, old_size=3, new_size=6)
 
     def test_invalid_sizes_raise(self, tmp_path: Path) -> None:
         log = MerkleLog(tmp_path / "log.db")
@@ -100,12 +115,15 @@ class TestConsistencyProof:
         with pytest.raises(MerkleError):
             log.consistency_proof(1, 99)
 
-    def test_proof_is_logarithmic(self, tmp_path: Path) -> None:
-        log = MerkleLog(tmp_path / "log.db")
+    def test_proof_is_logarithmic(self, tmp_path: Path, root_version: int) -> None:
+        log = MerkleLog(tmp_path / "log.db", root_version=root_version)
         for i in range(100):
             log.append({"i": i})
         proof = log.consistency_proof(37)
-        total = len(proof["old_parts"]) + len(proof["tail_parts"])
+        if root_version == ROOT_VERSION_V1:
+            total = len(proof["old_parts"]) + len(proof["tail_parts"])
+        else:
+            total = len(proof["path"])
         assert total <= 14  # O(log old + log new), far below 100
 
 

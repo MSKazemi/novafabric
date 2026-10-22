@@ -961,7 +961,10 @@ nova seal log verify --full   # full O(N) re-hash audit
 - `postgresql://` or `postgres://` prefix → `PostgresMerkleLog` (psycopg3)
 
 Tables are self-bootstrapped on first connection (`CREATE TABLE IF NOT EXISTS`).
-No Alembic migration is needed — the schema is stable by design (append-only Merkle log).
+No Alembic migration is needed. The one schema change so far is additive and applied by
+the log itself on open (ADR-0313): a nullable `root_version` column on the tree-head
+table (NULL = v1) and a `log_meta` / `nova_seal_log_meta` table holding the log's root
+version. A log that already has leaves and no recorded version is recorded as v1.
 Tests for the Postgres backend are in `tests/seal/test_postgres_merkle.py`, gated
 behind `NOVA_INTEGRATION=1` + `NOVA_TEST_POSTGRES_DSN`.
 

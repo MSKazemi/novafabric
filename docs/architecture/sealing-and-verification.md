@@ -123,9 +123,30 @@ not a tree over the files of one capsule.
 - `nova seal log verify` checks the log, and `--consistency N` checks a
   consistency proof between tree sizes.
 
+**The root is versioned (works today, ADR-0313).** A log has one root version for
+its whole life, recorded in the log database and next to every root it hands out
+(`root_version` in `log-entry.json`, in consistency proofs and on witness
+checkpoints). An absent `root_version` means v1.
+
+| Version | Written by | Tree | Commits to the tree size? |
+|---|---|---|---|
+| v2 | every log created from ADR-0313 on | RFC 6962 / RFC 9162 Merkle Tree Hash: split at the largest power of two, no duplication; RFC 9162 inclusion and consistency proofs | yes |
+| v1 | every log and seal written before ADR-0313 | an odd level is padded by duplicating its last node | **no** — `[a, b, c]` and `[a, b, c, c]` share a root |
+
+Because a v1 root cannot tell `n` leaves from `n + 1` with the last one
+duplicated (sealing the same capsule twice produces exactly that), every
+verification path compares a root **together with its tree size**, for both
+versions: `verify_consistency_proof()` needs `old_size` and `new_size`,
+`nova verify` fails a `log-entry.json` whose `root_hash` has no `tree_size`, and
+when the sealer's log is present it recomputes the recorded tree head from the
+log's own leaves. A v1 carried proof alone cannot detect a wrong `tree_size`; the
+report notes this. Existing v1 logs stay v1 and keep verifying. NovaFabric
+releases older than ADR-0313 cannot verify a v2 seal's carried proof.
+
 A second Merkle construction belongs to the Evidence Bundle.
 `evidence/merkle.py:capsule_merkle_root` computes an RFC 6962-style root over
-**all files** in a capsule. That root is the subject digest of the bundle's
+**all files** in a capsule (the same tree shape as a v2 log root, over different
+leaves — the two are never mixed). That root is the subject digest of the bundle's
 in-toto statements (see below).
 
 ## Verification: `nova verify <capsule>`
@@ -137,7 +158,7 @@ in turn:
 |---|---|---|
 | 1 | DSSE signature | The envelope signature verifies against the embedded certificate |
 | 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. If no token is present, the output says `NOT PRESENT`, `timestamp_ok` is `None` (absent, not passed) and the seal stays valid, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly is reported as a structural check only, never as OK. |
-| 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root and the entry names this capsule. If a local log is configured, it is checked as well. |
+| 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root at its `tree_size` (under its `root_version`) and the entry names this capsule. If a local log is configured, it is checked as well, including that the log's leaves reproduce the recorded tree head (size and root). |
 | 4 | Manifest binding | `capsule.yaml` on disk equals the signed payload, and `capsule_id` matches |
 | 5 | Per-file digests | Every file listed in `evidence_digests` exists and matches its SHA-256. Extra files are listed but do not fail the check. |
 

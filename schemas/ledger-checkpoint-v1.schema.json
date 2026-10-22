@@ -169,7 +169,17 @@
         "inclusion_proof": {
           "type": "array",
           "items": {"$ref": "#/$defs/Sha256"},
-          "description": "Audit path (sibling hashes) proving leaf_hash is included under root, RFC 6962-style."
+          "description": "Audit path (sibling hashes) proving leaf_hash is included under root at tree_size."
+        },
+        "tree_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Size of the MerkleLog tree that root is the root of (ADR-0313). A root is verified only together with its tree size. Optional for records written before ADR-0313."
+        },
+        "root_version": {
+          "type": "integer",
+          "enum": [1, 2],
+          "description": "NovaSeal log root version (ADR-0313). 2 = RFC 6962/9162 Merkle Tree Hash, which commits to tree_size; 1 = legacy duplicate-padding root, which does not and so is meaningful only with tree_size. Absent means 1."
         }
       },
       "description": "Inclusion of this checkpoint in the NovaSeal MerkleLog (ADR-0041)."

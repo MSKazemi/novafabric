@@ -141,6 +141,7 @@ class TestPostgresMerkleLogIntegration:
         with conn.cursor() as cur:
             cur.execute("DROP TABLE IF EXISTS nova_seal_leaves CASCADE")
             cur.execute("DROP TABLE IF EXISTS nova_seal_tree_heads CASCADE")
+            cur.execute("DROP TABLE IF EXISTS nova_seal_log_meta CASCADE")  # ADR-0313
             cur.execute("DROP SEQUENCE IF EXISTS nova_seal_leaf_seq CASCADE")
         conn.close()
         yield
@@ -226,7 +227,9 @@ class TestPostgresMerkleLogIntegration:
         assert root is not None
         proof = log.get_inclusion_proof(3)
         leaf_hash = log.get_leaf_hash(3)
-        assert verify_inclusion_proof(leaf_hash, 3, proof, root, log.tree_size())
+        assert verify_inclusion_proof(
+            leaf_hash, 3, proof, root, log.tree_size(), root_version=log.root_version
+        )
         log.close()
 
 
@@ -245,6 +248,7 @@ class TestPostgresMerkleLogBenchmark:
         with conn.cursor() as cur:
             cur.execute("DROP TABLE IF EXISTS nova_seal_leaves CASCADE")
             cur.execute("DROP TABLE IF EXISTS nova_seal_tree_heads CASCADE")
+            cur.execute("DROP TABLE IF EXISTS nova_seal_log_meta CASCADE")  # ADR-0313
             cur.execute("DROP SEQUENCE IF EXISTS nova_seal_leaf_seq CASCADE")
         conn.close()
         yield

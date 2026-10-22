@@ -32,7 +32,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 from novafabric.trust.novaseal.envelope import (
     EnvelopeError,
@@ -43,12 +43,15 @@ from novafabric.trust.novaseal.envelope import (
     verify_envelope_encoding,
 )
 from novafabric.trust.novaseal.merkle import (  # noqa: F401
+    ROOT_VERSION_V1,
     MerkleError,
     MerkleLog,
     PostgresMerkleLog,
+    UnsupportedRootVersionError,
     _leaf_hash,
     inclusion_proof_length,
     open_merkle_log,
+    root_version_of,
     verify_inclusion_proof,
 )
 from novafabric.trust.novaseal.nonce_store import NonceStore
@@ -371,7 +374,16 @@ def verify_seal_dir(
       the sealer's log). The capsule still verifies; the caller must say so;
     * ``failed`` — anything inconsistent: the entry does not hash to its
       ``leaf_hash``, names another capsule, carries a proof that does not verify,
-      or sits at a different index in the supplied log.
+      sits at a different index in the supplied log, records a ``root_hash``
+      without its ``tree_size``, or records a tree head (size + root) that the
+      supplied log's leaves do not reproduce.
+
+    Root version (ADR-0313): ``log-entry.json`` may carry ``root_version``
+    (absent: v1, every seal written before it). A v1 root does not commit to the
+    tree size, so a v1 carried proof cannot tell size n from a log whose leaf n
+    duplicates leaf n - 1; ``carried-proof`` notes say so, and only the sealer's
+    log (``local-log``) can refuse a wrong ``tree_size``. A v2 proof is bound to
+    its ``tree_size`` by the RFC 9162 algorithm.
 
     A carried proof binds the entry to the tree head recorded at seal time. That
     head is *not* independently anchored here (it is not signed or witnessed), so
@@ -479,7 +491,7 @@ def _payload_capsule_id(dsse_bytes: bytes) -> str | None:
         return None
 
 
-def _is_int(value: object) -> bool:
+def _is_int(value: object) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
@@ -521,22 +533,38 @@ def _check_log_inclusion(
     status = LOG_INCLUSION_NOT_CHECKED
     notes: list[str] = []
 
+    # ADR-0313: the root version selects the tree construction; absent means v1.
+    try:
+        root_version = root_version_of(record)
+    except UnsupportedRootVersionError as exc:
+        return LOG_INCLUSION_FAILED, [f"log-entry.json: {exc}"]
+    root_hash = record.get("root_hash")
+    tree_size = record.get("tree_size")
+    if root_hash is not None and tree_size is None:
+        return LOG_INCLUSION_FAILED, [
+            "log-entry.json records a root_hash without its tree_size; a Merkle root "
+            "is verified only together with its tree size (ADR-0313)"
+        ]
+    if tree_size is not None and (not _is_int(tree_size) or tree_size <= leaf_index):
+        return LOG_INCLUSION_FAILED, ["log-entry.json has a malformed tree_size"]
+
     proof = record.get("inclusion_proof")
     if proof is not None:
-        root_hash = record.get("root_hash")
-        tree_size = record.get("tree_size")
         if (
             not isinstance(proof, list)
             or not all(isinstance(h, str) for h in proof)
             or not isinstance(root_hash, str)
-            or not isinstance(tree_size, int)
-            or isinstance(tree_size, bool)
-            or tree_size <= leaf_index
-            or len(proof) != inclusion_proof_length(tree_size)
+            or not _is_int(tree_size)
+            or (
+                root_version == ROOT_VERSION_V1
+                and len(proof) != inclusion_proof_length(tree_size)
+            )
         ):
             return LOG_INCLUSION_FAILED, ["log-entry.json carries a malformed inclusion_proof"]
         try:
-            proof_ok = verify_inclusion_proof(leaf_hash, leaf_index, proof, root_hash, tree_size)
+            proof_ok = verify_inclusion_proof(
+                leaf_hash, leaf_index, proof, root_hash, tree_size, root_version=root_version
+            )
         except ValueError:  # a sibling that is not hex
             proof_ok = False
         if not proof_ok:
@@ -547,9 +575,14 @@ def _check_log_inclusion(
         status = LOG_INCLUSION_PROOF
         notes.append(
             "inclusion proof carried in the capsule verifies against the tree head "
-            f"recorded at seal time (size {tree_size}); that head is not independently "
-            "anchored"
+            f"recorded at seal time (size {tree_size}, root v{root_version}); that head "
+            "is not independently anchored"
         )
+        if root_version == ROOT_VERSION_V1:
+            notes.append(
+                "root v1 (sealed before ADR-0313) does not commit to the tree size; the "
+                "size is taken from log-entry.json and only the sealer's log can confirm it"
+            )
 
     if merkle_log is not None:
         try:
@@ -564,6 +597,18 @@ def _check_log_inclusion(
                     return LOG_INCLUSION_FAILED, [
                         f"Merkle inclusion proof failed for leaf_index={leaf_index}"
                     ]
+                # ADR-0313: the recorded tree head (size AND root) must be one the
+                # log's own leaves reproduce — recomputed, never read from a stored head.
+                if isinstance(root_hash, str) and _is_int(tree_size):
+                    reproduced = merkle_log.compute_root_at_size(
+                        tree_size, root_version=root_version
+                    )
+                    if reproduced != root_hash:
+                        return LOG_INCLUSION_FAILED, [
+                            f"log-entry.json records a tree head (size {tree_size}, root "
+                            f"{root_hash[:16]}…, v{root_version}) that the local log's "
+                            "leaves do not reproduce"
+                        ]
                 status = LOG_INCLUSION_LOCAL
                 notes.append("entry found in the local Merkle log and included under its root")
             elif status == LOG_INCLUSION_NOT_CHECKED:

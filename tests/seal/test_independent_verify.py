@@ -241,12 +241,14 @@ def test_new_seal_log_entry_carries_a_verifiable_inclusion_proof(tmp_path: Path)
     capsule = _new_sealed_capsule(tmp_path)
     entry = json.loads((capsule / ".seal" / "log-entry.json").read_text())
     assert entry["leaf_index"] == 4 and entry["tree_size"] == 5
+    assert entry["root_version"] == 2  # ADR-0313: new logs write v2 roots
     assert verify_inclusion_proof(
         entry["leaf_hash"],
         entry["leaf_index"],
         entry["inclusion_proof"],
         entry["root_hash"],
         entry["tree_size"],
+        root_version=entry["root_version"],
     )
 
 

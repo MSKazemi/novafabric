@@ -19,7 +19,7 @@ from enum import Enum
 
 from pydantic import BaseModel
 
-from novafabric.trust.novaseal.merkle import merkle_layers
+from novafabric.trust.novaseal.merkle import ROOT_VERSION_V1, MerkleError, merkle_layers
 
 
 class NodeType(str, Enum):
@@ -50,6 +50,9 @@ class ProofTree(BaseModel):
     sealed: bool
     computed_root: str | None
     nodes: list[ProofNode]
+    # Additive (ADR-0313): the root version the tree was drawn and recomputed under.
+    root_version: int = ROOT_VERSION_V1
+    tree_size: int = 0
 
 
 def _prefix(h: str) -> str:
@@ -63,6 +66,8 @@ def build_proof_tree(
     sealed_root: str | None = None,
     tsr_hash: str | None = None,
     capsule_id: str | None = None,
+    root_version: int | None = None,
+    tree_size: int | None = None,
 ) -> ProofTree:
     """Project a capsule's leaf hashes (+ optional seal root / TSR) into a :class:`ProofTree`.
 
@@ -71,13 +76,30 @@ def build_proof_tree(
     verifies the seal-root node, a mismatch flags it. Without a ``sealed_root`` the tree is
     ``unsealed`` and every node is ``unverified`` (a per-leaf client-side recompute is the
     `ui/dashboard/` view's job, not this projection's).
+
+    ``root_version`` (ADR-0313) selects the tree shape; ``None`` means v1, as for a
+    document that predates the field. ``tree_size``, when given, must equal the
+    number of leaves — a v1 root cannot tell ``n`` leaves from ``n + 1`` with the
+    last one duplicated, so a stated size that disagrees is refused (``ValueError``).
     """
+    version = ROOT_VERSION_V1 if root_version is None else root_version
+    if tree_size is not None and tree_size != len(leaf_hashes):
+        raise ValueError(
+            f"tree_size {tree_size} does not match the {len(leaf_hashes)} leaf hashes given"
+        )
     if not leaf_hashes:
         return ProofTree(
-            capsule_id=capsule_id, sealed=sealed_root is not None, computed_root=None, nodes=[]
+            capsule_id=capsule_id,
+            sealed=sealed_root is not None,
+            computed_root=None,
+            nodes=[],
+            root_version=version,
         )
 
-    layers = merkle_layers(leaf_hashes)
+    try:
+        layers = merkle_layers(leaf_hashes, root_version=version)
+    except MerkleError as exc:
+        raise ValueError(str(exc)) from exc
     computed_root = layers[-1][0]
     sealed = sealed_root is not None
     root_ok = computed_root == sealed_root if sealed else False
@@ -129,5 +151,10 @@ def build_proof_tree(
         )
 
     return ProofTree(
-        capsule_id=capsule_id, sealed=sealed, computed_root=computed_root, nodes=nodes
+        capsule_id=capsule_id,
+        sealed=sealed,
+        computed_root=computed_root,
+        nodes=nodes,
+        root_version=version,
+        tree_size=len(leaf_hashes),
     )

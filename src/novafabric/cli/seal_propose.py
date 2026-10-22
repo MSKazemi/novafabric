@@ -683,6 +683,7 @@ def log_verify_cmd(
 
     console.print(f"Merkle log: {resolved_db}  [backend: {backend}]")
     console.print(f"  Leaves:      {result.leaf_count}")
+    console.print(f"  Root version: v{result.root_version}  (ADR-0313)")
     if result.root_hash:
         console.print(f"  Root hash:   {result.root_hash[:32]}…")
     else:
@@ -710,7 +711,10 @@ def log_verify_cmd(
             raise typer.Exit(code=2) from exc
         old_root = merkle_log.root_at_size(consistency) or str(proof["old_root"])
         new_root = result.root_hash
-        ok = verify_consistency_proof(proof, old_root, new_root)
+        # ADR-0313: each root is compared together with its tree size.
+        ok = verify_consistency_proof(
+            proof, old_root, new_root, old_size=consistency, new_size=result.leaf_count
+        )
         console.print(
             f"\n  Append-only proof {consistency} → {result.leaf_count}: "
             + ("[green]OK[/green]" if ok else "[red]FAILED[/red]")
@@ -719,10 +723,13 @@ def log_verify_cmd(
             f"    scheme:    {proof['scheme']}"
         )
         console.print(f"    old root:  {old_root[:32]}…")
-        console.print(
-            f"    proof size: {len(proof['old_parts'])} + "
-            f"{len(proof['tail_parts'])} subtree hashes"
-        )
+        if "path" in proof:
+            console.print(f"    proof size: {len(proof['path'])} hashes (RFC 9162 path)")
+        else:
+            console.print(
+                f"    proof size: {len(proof['old_parts'])} + "
+                f"{len(proof['tail_parts'])} subtree hashes"
+            )
         if not ok:
             raise typer.Exit(code=2)
 
