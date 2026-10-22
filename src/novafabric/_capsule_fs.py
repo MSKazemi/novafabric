@@ -28,9 +28,17 @@ The rules:
   ``shutil.copytree``, which re-resolves each path between its symlink check and
   the copy. It then checks the copy once more.
 
-The capsule *root* may itself be reached through a link (``runs/latest``). It
-is resolved once, and only links *inside* it are refused, as the evidence export
-has always done.
+The capsule *root* may itself be reached through a link (``runs/latest``) when a
+caller names it explicitly. It is resolved once, and only links *inside* it are
+refused, as the evidence export has always done. A *scan* of many capsules
+(:func:`iter_capsule_dirs`) is different: nobody named the entry, so a linked
+entry is never listed. It is either an alias of a capsule the scan already
+lists, or a way to pull a directory from elsewhere into the scan.
+
+Readers that parse one well-known capsule file (``capsule.yaml``, a JSONL
+stream, a facet) use :func:`read_capsule_text` or, where a missing or refused
+file is simply "no data", :func:`read_capsule_text_or_none`. Both go through
+:func:`open_capsule_file`, so the rules above hold for them too.
 
 **Known limit: hard links.** A hard link is an ordinary directory entry for a
 regular file, so it is copied like any other file. Under Linux's default
@@ -58,14 +66,20 @@ from typing import BinaryIO, Final
 
 __all__ = [
     "CapsuleEntryError",
+    "CapsuleFileTooLargeError",
     "CapsuleLinkError",
     "CapsuleListing",
     "CapsuleSpecialFileError",
     "copy_capsule_tree",
     "find_capsule_links",
+    "is_capsule_regular_file",
+    "iter_capsule_dirs",
     "list_capsule",
     "open_capsule_file",
     "read_capsule_file",
+    "read_capsule_member_or_none",
+    "read_capsule_text",
+    "read_capsule_text_or_none",
     "refuse_capsule_links",
 ]
 
@@ -99,6 +113,10 @@ class CapsuleLinkError(CapsuleEntryError):
 
 class CapsuleSpecialFileError(CapsuleEntryError):
     """A capsule path is not a regular file (a FIFO, socket, device or directory)."""
+
+
+class CapsuleFileTooLargeError(CapsuleEntryError):
+    """A capsule file is larger than the reader's ``max_bytes`` bound."""
 
 
 @dataclass(frozen=True)
@@ -306,12 +324,154 @@ def read_capsule_file(
     rel: str | PurePosixPath,
     *,
     limit: int | None = None,
+    max_bytes: int | None = None,
     operation: str = "this operation",
     error: type[CapsuleLinkError] = CapsuleLinkError,
 ) -> bytes:
-    """Read capsule file *rel* through :func:`open_capsule_file`; at most *limit* bytes."""
+    """Read capsule file *rel* through :func:`open_capsule_file`.
+
+    *limit* truncates the read to that many bytes. *max_bytes* refuses a file
+    larger than that with :class:`CapsuleFileTooLargeError` instead, for a
+    reader whose answer would be wrong on a partial file.
+    """
     with open_capsule_file(root, rel, operation=operation, error=error) as handle:
+        if max_bytes is not None:
+            data = handle.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                raise CapsuleFileTooLargeError(
+                    f"{PurePosixPath(rel).as_posix()} is larger than {max_bytes} bytes"
+                )
+            return data if limit is None else data[:limit]
         return handle.read() if limit is None else handle.read(limit)
+
+
+def read_capsule_text(
+    root: Path,
+    rel: str | PurePosixPath,
+    *,
+    operation: str = "this operation",
+    max_bytes: int | None = None,
+    errors: str = "strict",
+) -> str:
+    """Read capsule file *rel* as UTF-8 text, following no link on the way.
+
+    The drop-in replacement for ``(root / rel).read_text()`` in a capsule
+    reader. Raises what :func:`read_capsule_file` raises: ``FileNotFoundError``
+    for a missing file, :class:`CapsuleLinkError` for a link,
+    :class:`CapsuleSpecialFileError` for a FIFO or device, and
+    :class:`CapsuleFileTooLargeError` above *max_bytes*.
+    """
+    raw = read_capsule_file(root, rel, operation=operation, max_bytes=max_bytes)
+    return raw.decode("utf-8", errors=errors)
+
+
+def read_capsule_text_or_none(
+    root: Path,
+    rel: str | PurePosixPath,
+    *,
+    operation: str = "this operation",
+    max_bytes: int | None = None,
+    errors: str = "replace",
+) -> str | None:
+    """Like :func:`read_capsule_text`, but ``None`` when the file cannot be used.
+
+    For readers where a missing file already means "no data": a missing file,
+    a link, a special file or an over-size file all return ``None``. Every case
+    but the missing file is logged as ``capsule_file_not_followed``, so a
+    refusal is never silent. *root* itself must be a directory; an unreadable
+    root (``OSError`` on open) is also ``None``.
+    """
+    try:
+        return read_capsule_text(
+            root, rel, operation=operation, max_bytes=max_bytes, errors=errors
+        )
+    except FileNotFoundError:
+        return None
+    except CapsuleEntryError as exc:
+        _log.warning(
+            "capsule_file_not_followed",
+            extra={"capsule": str(root), "file": str(rel), "reason": str(exc)[:200]},
+        )
+        return None
+    except (NotADirectoryError, IsADirectoryError, PermissionError) as exc:
+        _log.warning(
+            "capsule_file_unreadable",
+            extra={"capsule": str(root), "file": str(rel), "reason": type(exc).__name__},
+        )
+        return None
+
+
+def read_capsule_member_or_none(
+    path: Path,
+    *,
+    operation: str = "this operation",
+    max_bytes: int | None = None,
+    errors: str = "replace",
+) -> str | None:
+    """:func:`read_capsule_text_or_none` for *path*, a file directly in a capsule root.
+
+    The mechanical replacement for ``path.read_text()`` when *path* is
+    ``<capsule>/<name>``: ``path.name`` is opened with ``O_NOFOLLOW`` relative
+    to ``path.parent``, the capsule root (which, as everywhere, may itself be
+    the link the caller named). For a file deeper in the capsule use
+    :func:`read_capsule_text_or_none` with the root and the relative path, so
+    every intermediate directory is checked too.
+    """
+    return read_capsule_text_or_none(
+        path.parent, path.name, operation=operation, max_bytes=max_bytes, errors=errors
+    )
+
+
+def is_capsule_regular_file(root: Path, rel: str | PurePosixPath) -> bool:
+    """True when *rel* is a regular file under *root* with no link on its path.
+
+    An ``lstat`` per component and nothing is opened, so it never blocks on a
+    FIFO or touches a device. It is a filter, not a guard: read the file
+    through :func:`open_capsule_file`, which checks again at open time.
+    """
+    try:
+        parts = _split_rel(rel)
+    except ValueError:
+        return False
+    path = root
+    for i, part in enumerate(parts):
+        path = path / part
+        try:
+            mode = path.lstat().st_mode
+        except OSError:
+            return False
+        last = i == len(parts) - 1
+        if not (stat.S_ISREG(mode) if last else stat.S_ISDIR(mode)):
+            return False
+    return True
+
+
+def iter_capsule_dirs(
+    base: Path, *, markers: tuple[str, ...] = ("capsule.yaml",)
+) -> list[Path]:
+    """The capsule directories directly under *base*, sorted, for a multi-capsule scan.
+
+    An entry is listed when it is a real directory (``lstat``: a link to a
+    directory is **not** listed) holding at least one of *markers* as a regular
+    file (again no link). A linked entry is either an alias of a capsule this
+    scan already lists (``latest -> 01J...``) or a directory pulled in from
+    elsewhere, and a scan must not reach past *base*. *base* itself may be a
+    link, as it is the directory the caller named.
+    """
+    try:
+        entries = sorted(base.iterdir())
+    except OSError:
+        return []
+    out: list[Path] = []
+    for entry in entries:
+        try:
+            if not stat.S_ISDIR(entry.lstat().st_mode):
+                continue
+        except OSError:
+            continue
+        if any(is_capsule_regular_file(entry, marker) for marker in markers):
+            out.append(entry)
+    return out
 
 
 @contextmanager

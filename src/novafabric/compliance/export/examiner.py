@@ -34,7 +34,11 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_file, refuse_capsule_links
+from novafabric._capsule_fs import (
+    read_capsule_file,
+    read_capsule_member_or_none,
+    refuse_capsule_links,
+)
 from novafabric._hashutil import sha256_file_hex, sha256_hex
 
 _OPERATION = "an examiner BagIt export"
@@ -66,7 +70,7 @@ def _load_manifest(capsule_dir: Path) -> dict[str, Any]:
     path = capsule_dir / "capsule.yaml"
     if not path.exists():
         return {}
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load((read_capsule_member_or_none(path, operation="compliance export") or ""))
     return data if isinstance(data, dict) else {}
 
 
@@ -316,7 +320,10 @@ class PCCPExporter:
             # Try treating data_dir as the capsule dir directly for the given ID
             manifest_path = self.data_dir / "capsule.yaml"
             if manifest_path.exists():
-                data = yaml.safe_load(manifest_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+                )
+                data = yaml.safe_load(capsule_text)
                 return data if isinstance(data, dict) else {}
             return {}
         return _load_manifest(capsule_dir)
@@ -580,12 +587,15 @@ class ISO42001Exporter:
 
         # Collect capsule IDs in the audit period
         for child in sorted(self.data_dir.iterdir()):
-            if not child.is_dir():
-                continue
+            if child.is_symlink() or not child.is_dir():
+                continue  # a scan never lists a linked entry
             manifest_path = child / "capsule.yaml"
             if not manifest_path.exists():
                 continue
-            data = yaml.safe_load(manifest_path.read_text())
+            capsule_text = (
+                read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+            )
+            data = yaml.safe_load(capsule_text)
             if not isinstance(data, dict):
                 continue
             created_at_raw = data.get("created_at", "")
@@ -609,12 +619,15 @@ class ISO42001Exporter:
             return index
 
         for child in sorted(self.data_dir.iterdir()):
-            if not child.is_dir():
-                continue
+            if child.is_symlink() or not child.is_dir():
+                continue  # a scan never lists a linked entry
             manifest_path = child / "capsule.yaml"
             if not manifest_path.exists():
                 continue
-            data = yaml.safe_load(manifest_path.read_text())
+            capsule_text = (
+                read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+            )
+            data = yaml.safe_load(capsule_text)
             if not isinstance(data, dict):
                 continue
             created_at_raw = data.get("created_at", "")

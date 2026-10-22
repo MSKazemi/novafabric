@@ -30,6 +30,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture.record_roles import read_logical_model_calls
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
 from novafabric.evidence.reperformance import ReperformanceAttestation
@@ -193,7 +194,10 @@ def pinned_block_from_capsule(capsule_dir: Path) -> PinnedBlock:
     lock_path = capsule_dir / "env.lock"
     if lock_path.exists():
         try:
-            data = yaml.safe_load(lock_path.read_text()) or {}
+            capsule_text = (
+                read_capsule_member_or_none(lock_path, operation="replay attestation") or ""
+            )
+            data = yaml.safe_load(capsule_text) or {}
         except yaml.YAMLError:
             data = {}
         if isinstance(data, dict):

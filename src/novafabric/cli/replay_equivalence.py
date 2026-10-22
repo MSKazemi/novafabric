@@ -30,6 +30,7 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.cli._output import emit_json
 from novafabric.replay.determinism import Eligibility, assess
@@ -202,9 +203,10 @@ def regime(
         raise typer.Exit(2)
 
     calls: list[dict[str, Any]] = []
-    for lineno, line in enumerate(
-        calls_file.read_text(encoding="utf-8").splitlines(), start=1
-    ):
+    capsule_text = (
+        read_capsule_member_or_none(calls_file, operation="nova replay-equivalence") or ""
+    )
+    for lineno, line in enumerate(capsule_text.splitlines(), start=1):
         if not line.strip():
             continue
         try:

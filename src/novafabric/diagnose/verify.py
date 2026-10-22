@@ -46,6 +46,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.diagnose.attribution import (
     AgentErrorTaxonomy,
@@ -315,7 +316,10 @@ def verify_hypothesis(
             taxonomy=attribution.responsible.taxonomy,
         )
 
-    manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text()) or {}
+    manifest_text = read_capsule_member_or_none(
+        capsule_dir / "capsule.yaml", operation="nova diagnose"
+    )
+    manifest = yaml.safe_load(manifest_text or "") or {}
     model_calls = _load_model_calls(capsule_dir, manifest)
     return _verify_step(
         capsule_dir, attribution.responsible, model_calls, original_outcome, base_dir
@@ -414,7 +418,10 @@ def search_root_cause(
             note="no failing causal-root candidate found; nothing to search",
         )
 
-    manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text()) or {}
+    manifest_text = read_capsule_member_or_none(
+        capsule_dir / "capsule.yaml", operation="nova diagnose"
+    )
+    manifest = yaml.safe_load(manifest_text or "") or {}
     model_calls = _load_model_calls(capsule_dir, manifest)
     base_dir = replays_base_dir or (Path.cwd() / ".novafabric" / "replays")
     original_outcome = {"status": causal.status}

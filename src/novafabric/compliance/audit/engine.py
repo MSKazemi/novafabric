@@ -23,6 +23,8 @@ from pathlib import Path
 
 from ulid import ULID
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 from .models import AuditReport, Control, ControlCoverage, ControlProfile, EvidenceRequirement
 
 log = logging.getLogger(__name__)
@@ -62,7 +64,7 @@ def _check_policy_events(capsule_dir: Path) -> bool:
         return False
     # Check whether any line contains a deny decision (loose check)
     try:
-        text = p.read_text(encoding="utf-8")
+        text = (read_capsule_member_or_none(p, operation="compliance export") or "")
         for line in text.splitlines():
             if not line.strip():
                 continue
@@ -193,7 +195,7 @@ class AuditEngine:
             return []
         dirs = sorted(
             p for p in capsules_root.iterdir()
-            if p.is_dir()
+            if p.is_dir() and not p.is_symlink()  # a scan never lists a linked entry
         )
         return dirs
 

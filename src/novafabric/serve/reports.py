@@ -811,6 +811,7 @@ def report_compliance_posture(
     try:
         from novafabric.compliance.export.annex_iv import AnnexIVExporter
         from novafabric.serve.capsule_loader import (
+            confined_capsule_root,
             discover_capsule_dirs,
             load_capsule_manifest,
         )
@@ -820,7 +821,7 @@ def report_compliance_posture(
     def _find(rid: str) -> Path | None:
         candidate = capsule_dir / rid
         if candidate.is_dir() and (candidate / "capsule.yaml").exists():
-            return candidate
+            return confined_capsule_root(candidate, capsule_dir)
         for d in discover_capsule_dirs(capsule_dir):
             try:
                 m = load_capsule_manifest(d)

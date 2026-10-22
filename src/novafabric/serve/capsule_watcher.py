@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any, Protocol
 
+from novafabric._capsule_fs import is_capsule_regular_file
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,7 +159,9 @@ class WatchdogBackend:
                 p = self._queue.get_nowait()
             except queue.Empty:
                 break
-            if not (p / "capsule.yaml").exists():
+            # A watch event for a link (to a directory anywhere) is not a
+            # capsule this server lists: iter_capsule_dirs' rule, per event.
+            if p.is_symlink() or not is_capsule_regular_file(p, "capsule.yaml"):
                 continue
             try:
                 m = load_capsule_manifest(p)
@@ -242,6 +246,10 @@ class CapsuleWatcher:
         p = Path(run_id_or_path)
         if not p.is_absolute():
             p = self._capsule_dir / str(run_id_or_path)
+            if p.is_symlink():
+                # A bare name is looked up like a scan: a linked entry in the
+                # capsule dir is never indexed (an explicit path may be a link).
+                return False, False
         if not p.exists() or not (p / "capsule.yaml").exists():
             return False, False
         try:

@@ -29,16 +29,38 @@ The check **fails closed**: a facet file that cannot be read, parsed or validate
 or a facet namespace that is not a directory — is reported as an ``invalid`` verdict
 with a reason and is flagged exactly like contamination. Skipping it would let a
 capsule whose only provenance record is unreadable pass a CI contamination gate.
+
+What counts as unreadable, so that a facet cannot be shaped to slip past the gate:
+
+* **Hashes are compared in one canonical form**, ``sha256:<lowercase hex>``. A
+  facet or registry hash may be written with surrounding whitespace, in upper
+  case, or without the ``sha256:`` prefix; it is normalised before the compare.
+  A value that is not 4-64 hex digits after that cannot be normalised: the facet
+  is ``invalid`` (a registry entry like it is a usage error).
+* **A duplicate JSON key** (``{"dataset_hash": "...", "dataset_hash": ""}``)
+  makes the facet ``invalid``: a JSON parser keeps the last value, a human reader
+  sees the first.
+* **Facet files match ``*.json`` case-insensitively** (``m.JSON`` is a facet).
+* **The namespace is flat.** A subdirectory in it is ``invalid``: a facet placed
+  one level down would otherwise never be checked.
+* **No link is followed and nothing blocks** (:mod:`novafabric._capsule_fs`): a
+  facet that is a link, a FIFO, a device or larger than :data:`MAX_FACET_BYTES`
+  is ``invalid``, as is a namespace (or ``extensions``) that is a link.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
-from typing import Any, Literal
+import os
+import re
+import stat
+from pathlib import Path, PurePosixPath
+from typing import Any, Final, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
 
 _log = logging.getLogger(__name__)
 
@@ -54,6 +76,51 @@ FLAGGED_VERDICTS: frozenset[str] = frozenset({"contaminated", "superseded", "inv
 #: additive capsule namespace for the facet (run-capsule-v1 §extensions).
 FACET_DIRNAME = Path("extensions") / "dev.novafabric.dataset-provenance"
 
+#: Largest facet file the check reads. A facet is a few hundred bytes.
+MAX_FACET_BYTES: Final[int] = 1024 * 1024
+
+_HEX_RE: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{4,64}")
+_PREFIX: Final[str] = "sha256:"
+
+
+class DuplicateKeyError(ValueError):
+    """A JSON object names the same key twice."""
+
+
+def canonical_hash(value: str) -> str:
+    """Normalise a dataset hash to ``sha256:<lowercase hex>``; ``""`` stays ``""``.
+
+    Surrounding whitespace, upper case and a missing ``sha256:`` prefix are
+    accepted. Raises ``ValueError`` for anything else, so two spellings of one
+    hash can never compare unequal.
+    """
+    text = value.strip().lower()
+    if not text:
+        return ""
+    if text.startswith(_PREFIX):
+        text = text[len(_PREFIX) :].strip()
+    if not _HEX_RE.fullmatch(text):
+        raise ValueError(
+            f"not a sha256 hash (expected 4-64 hex digits, optional 'sha256:' prefix): "
+            f"{value[:80]!r}"
+        )
+    return _PREFIX + text
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, val in pairs:
+        if key in out:
+            raise DuplicateKeyError(f"duplicate key {key[:80]!r}")
+        out[key] = val
+    return out
+
+
+def _loads_strict(raw: bytes | str) -> Any:
+    """``json.loads`` that refuses a duplicate key (``DuplicateKeyError``)."""
+    return json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
+
+
 # contaminated is the most severe; unknown the least.
 _SEVERITY: dict[str, int] = {"contaminated": 3, "superseded": 2, "current": 1, "unknown": 0}
 
@@ -67,6 +134,11 @@ class DatasetProvenanceFacet(BaseModel):
     split_hash: str = ""
     status: Status = "unknown"
 
+    @field_validator("dataset_hash", "split_hash")
+    @classmethod
+    def _canonical(cls, value: str) -> str:
+        return canonical_hash(value)
+
 
 class ContaminationRegistry(BaseModel):
     """A configurable known-contaminated/superseded hash registry (NF-028 R8).
@@ -78,9 +150,15 @@ class ContaminationRegistry(BaseModel):
     contaminated: list[str] = Field(default_factory=list)
     superseded: list[str] = Field(default_factory=list)
 
+    @field_validator("contaminated", "superseded")
+    @classmethod
+    def _canonical(cls, values: list[str]) -> list[str]:
+        return [h for h in (canonical_hash(v) for v in values) if h]
+
     @classmethod
     def from_path(cls, path: Path) -> ContaminationRegistry:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        """Load a registry file. Raises ``ValueError`` (incl. a duplicate key) on bad input."""
+        data = _loads_strict(path.read_text(encoding="utf-8"))
         return cls.model_validate(data)
 
     def resolve(self, facet: DatasetProvenanceFacet) -> Status:
@@ -128,20 +206,59 @@ def write_facet(capsule_dir: str | Path, facet: DatasetProvenanceFacet) -> Path:
     return out
 
 
-def _load_facet(path: Path) -> DatasetProvenanceFacet | InvalidFacet:
-    """Parse one facet file; never raises — a failure becomes an ``InvalidFacet``."""
+def _load_facet(capsule_dir: Path, name: str) -> DatasetProvenanceFacet | InvalidFacet:
+    """Parse one facet file; never raises — a failure becomes an ``InvalidFacet``.
+
+    Read through :func:`novafabric._capsule_fs.read_capsule_file`: no link on the
+    path is followed, a FIFO or device is refused without blocking, and the read
+    stops at :data:`MAX_FACET_BYTES`.
+    """
+    path = Path(capsule_dir) / FACET_DIRNAME / name
+    rel = PurePosixPath(*FACET_DIRNAME.parts, name)
     try:
-        raw = path.read_bytes()
+        raw = read_capsule_file(
+            Path(capsule_dir), rel, max_bytes=MAX_FACET_BYTES, operation="contamination-check"
+        )
+    except CapsuleEntryError as exc:
+        return InvalidFacet(path=path, reason=f"could not read {name}: {str(exc)[:200]}")
     except OSError as exc:
-        return InvalidFacet(path=path, reason=f"could not read {path.name}: {exc.strerror or exc}")
+        return InvalidFacet(path=path, reason=f"could not read {name}: {exc.strerror or exc}")
     try:
-        return DatasetProvenanceFacet.model_validate_json(raw)
+        data = _loads_strict(raw)
+    except DuplicateKeyError as exc:
+        return InvalidFacet(path=path, reason=f"{name} is not a valid facet: {exc}")
+    except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError
+        return InvalidFacet(path=path, reason=f"{name} is not valid JSON: {str(exc)[:200]}")
+    try:
+        return DatasetProvenanceFacet.model_validate(data)
     except ValidationError as exc:
         problems = "; ".join(
             f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}"
             for err in exc.errors()
         )
-        return InvalidFacet(path=path, reason=f"{path.name} is not a valid facet: {problems}")
+        return InvalidFacet(path=path, reason=f"{name} is not a valid facet: {problems[:400]}")
+
+
+def _namespace_problem(capsule_dir: Path) -> str | None:
+    """Why the facet namespace cannot be scanned, ``""`` if absent, ``None`` if fine.
+
+    Each component (``extensions``, then the namespace) is checked with
+    ``lstat``: a link is never followed into, even to a directory.
+    """
+    path = capsule_dir
+    for part in FACET_DIRNAME.parts:
+        path = path / part
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            return ""
+        except OSError as exc:
+            return f"{path.name} could not be read: {exc.strerror or exc}"
+        if stat.S_ISLNK(mode):
+            return f"{part} is a symlink; the check never follows one"
+        if not stat.S_ISDIR(mode):
+            return f"facet namespace {FACET_DIRNAME} is not a directory"
+    return None
 
 
 def scan_facets(
@@ -152,17 +269,36 @@ def scan_facets(
     Returns ``(valid, invalid)``. A facet namespace that exists but is not a
     directory is itself one ``InvalidFacet``. Never raises.
     """
-    facet_dir = Path(capsule_dir) / FACET_DIRNAME
+    capsule_dir = Path(capsule_dir)
+    facet_dir = capsule_dir / FACET_DIRNAME
     valid: list[DatasetProvenanceFacet] = []
     invalid: list[InvalidFacet] = []
-    if not facet_dir.exists():
+    problem = _namespace_problem(capsule_dir)
+    if problem == "":
         return valid, invalid
-    if not facet_dir.is_dir():
-        reason = f"facet namespace {FACET_DIRNAME} is not a directory"
+    if problem is not None:
+        invalid.append(InvalidFacet(path=facet_dir, reason=problem))
+        return valid, invalid
+    try:
+        with os.scandir(facet_dir) as it:
+            entries = sorted((e.name, e.is_dir(follow_symlinks=False)) for e in it)
+    except OSError as exc:
+        reason = f"facet namespace could not be listed: {exc.strerror or exc}"
         invalid.append(InvalidFacet(path=facet_dir, reason=reason))
         return valid, invalid
-    for path in sorted(facet_dir.glob("*.json")):
-        loaded = _load_facet(path)
+    for name, is_subdir in entries:
+        if is_subdir:
+            # The namespace is flat (write_facet never nests): a facet one level
+            # down would otherwise go unchecked, so the subdirectory fails closed.
+            reason = (
+                f"{name}/ is a subdirectory of the facet namespace; facets are flat "
+                "files and a nested facet is never checked"
+            )
+            invalid.append(InvalidFacet(path=facet_dir / name, reason=reason))
+            continue
+        if not name.lower().endswith(".json"):
+            continue
+        loaded = _load_facet(capsule_dir, name)
         if isinstance(loaded, InvalidFacet):
             _log.warning("dataset-provenance facet rejected: %s", loaded.reason)
             invalid.append(loaded)

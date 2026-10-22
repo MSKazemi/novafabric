@@ -8,6 +8,7 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.cli._output import emit_json
 from novafabric.eval.regression_diff import (
@@ -123,7 +124,9 @@ def _variant_group(capsule: Path) -> str:
     import yaml
 
     try:
-        manifest = yaml.safe_load((capsule / "capsule.yaml").read_text(encoding="utf-8"))
+        manifest = yaml.safe_load(
+            read_capsule_member_or_none(capsule / "capsule.yaml", operation="nova diff") or ""
+        )
     except (OSError, yaml.YAMLError):
         return _NO_VARIANT_GROUP
     block = manifest.get("variant") if isinstance(manifest, dict) else None

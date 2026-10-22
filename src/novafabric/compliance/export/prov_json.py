@@ -39,6 +39,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 # Namespace prefix used for all NovaFabric identifiers
 _NF_PREFIX = "nf"
 _NF_URI = "https://novafabric.io/terms/"
@@ -107,7 +109,10 @@ def _seed_from_manifest(doc: dict[str, Any], capsule_dir: Path) -> None:
     try:
         import yaml
 
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        capsule_text = (
+            read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+        )
+        manifest = yaml.safe_load(capsule_text) or {}
     except Exception:
         return
     if not isinstance(manifest, dict):
@@ -195,7 +200,10 @@ def export_prov_json(capsule_dir: Path) -> dict[str, Any]:
         return doc
 
     edges = []
-    for line in lineage_path.read_text(encoding="utf-8").splitlines():
+    capsule_text = (
+        read_capsule_member_or_none(lineage_path, operation="compliance export") or ""
+    )
+    for line in capsule_text.splitlines():
         line = line.strip()
         if line:
             try:

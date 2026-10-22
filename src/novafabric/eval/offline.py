@@ -39,6 +39,7 @@ import string
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric._jsonschema_offline import SchemaRefUnresolved, offline_validator
 from novafabric.eval.card import EvalCard, card_digest
 from novafabric.eval.scores import Score, ScoreSource, ScoreValueType
@@ -76,7 +77,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in (read_capsule_member_or_none(path, operation="offline eval") or "").splitlines():
         line = line.strip()
         if line:
             records.append(json.loads(line))

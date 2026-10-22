@@ -34,6 +34,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import read_capsule_member_or_none, read_capsule_text
+
 log = logging.getLogger(__name__)
 
 
@@ -47,7 +49,9 @@ def _seal_flags(capsule_dir: Path) -> dict[str, Any]:
     log_file = seal_dir / "log-entry.json"
     if log_file.is_file():
         try:
-            entry = json.loads(log_file.read_text())
+            entry = json.loads(
+                read_capsule_text(capsule_dir, ".seal/log-entry.json", operation="capsule flags")
+            )
             capsule_id = entry.get("entry", {}).get("capsule_id", capsule_id)
         except (OSError, ValueError):
             pass  # fall back to the directory name
@@ -90,7 +94,10 @@ def _redaction_flags(capsule_dir: Path) -> dict[str, Any]:
         return {}  # captured without the masking pipeline → n/a, not fail
 
     try:
-        proof = json.loads(proof_path.read_text())
+        capsule_text = (
+            read_capsule_member_or_none(proof_path, operation="capsule flags") or ""
+        )
+        proof = json.loads(capsule_text)
     except (OSError, ValueError):
         log.warning("unreadable redaction proof at %s", proof_path)
         return {}

@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.lineage._facets import attach_column_facets, facets_from_tool_calls
 from novafabric.lineage._types import LineageEdge
 
@@ -39,7 +40,10 @@ class LineageWriter:
         if not assets_path.exists():
             return []
         edges: list[LineageEdge] = []
-        for line in assets_path.read_text().splitlines():
+        capsule_text = (
+            read_capsule_member_or_none(assets_path, operation="lineage") or ""
+        )
+        for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -82,7 +86,10 @@ class LineageWriter:
         if not manifest_path.exists():
             return []
         try:
-            manifest: dict[str, Any] = yaml.safe_load(manifest_path.read_text()) or {}
+            capsule_text = (
+                read_capsule_member_or_none(manifest_path, operation="lineage") or ""
+            )
+            manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
         except Exception:
             return []
         output_paths: list[str] = manifest.get("outputs", []) or []
@@ -111,7 +118,10 @@ class LineageWriter:
         if not produced_path.exists():
             return []
         edges: list[LineageEdge] = []
-        for line in produced_path.read_text().splitlines():
+        capsule_text = (
+            read_capsule_member_or_none(produced_path, operation="lineage") or ""
+        )
+        for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -144,7 +154,10 @@ class LineageWriter:
         if not manifest_path.exists():
             return None
         try:
-            manifest: dict[str, Any] = yaml.safe_load(manifest_path.read_text()) or {}
+            capsule_text = (
+                read_capsule_member_or_none(manifest_path, operation="lineage") or ""
+            )
+            manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
         except Exception:
             return None
         original_run_id: str = manifest.get("replay_of_run_id", "") or ""

@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture.secrets import SCAN_TARGETS
 
 logger = logging.getLogger(__name__)
@@ -364,7 +365,11 @@ def extract_docs(
             import yaml  # noqa: PLC0415 — heavy import kept off module load
 
             try:
-                manifest = yaml.safe_load(path.read_text()) or {}
+                manifest_text = read_capsule_member_or_none(path, operation="the content index")
+                if manifest_text is None:  # a link or special file: never followed
+                    skipped += 1
+                    continue
+                manifest = yaml.safe_load(manifest_text) or {}
             except (OSError, yaml.YAMLError):
                 skipped += 1
                 continue
@@ -383,11 +388,11 @@ def extract_docs(
             continue
 
         extractor = _JSONL_EXTRACTORS[stream]
-        try:
-            lines = path.read_text(errors="replace").splitlines()
-        except OSError:
+        stream_text = read_capsule_member_or_none(path, operation="the content index")
+        if stream_text is None:  # a link or special file: never followed
             skipped += 1
             continue
+        lines = stream_text.splitlines()
         for line_no, line in enumerate(lines, start=1):
             line = line.strip()
             if not line:

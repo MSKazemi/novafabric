@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.eval.annotation_queue import (
     AnnotationError,
     AnnotationQueue,
@@ -365,7 +366,10 @@ def _capsule_facts(capsule_dir: Path) -> tuple[str, list[str], list[str]]:
     run_id = capsule_dir.name
     tags: list[str] = []
     try:
-        manifest = _yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+        manifest = _yaml.safe_load(
+            read_capsule_member_or_none(capsule_dir / "capsule.yaml", operation="annotations")
+            or ""
+        )
     except (OSError, _yaml.YAMLError):
         manifest = None
     if isinstance(manifest, dict):
@@ -380,7 +384,10 @@ def _capsule_facts(capsule_dir: Path) -> tuple[str, list[str], list[str]]:
     tool_names: list[str] = []
     tool_path = capsule_dir / "tool-calls.jsonl"
     if tool_path.is_file():
-        for line in tool_path.read_text(encoding="utf-8").splitlines():
+        capsule_text = (
+            read_capsule_member_or_none(tool_path, operation="annotations") or ""
+        )
+        for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
                 continue

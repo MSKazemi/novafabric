@@ -42,6 +42,7 @@ from typing import Iterable, Iterator
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_text
 from novafabric.capture._ulid import new_ulid
 
 SCORE_SCHEMA_VERSION = "1.0.0"
@@ -150,17 +151,27 @@ class Score(BaseModel):
         return self
 
 
-def read_scores(path: str | Path) -> list[Score]:
+def read_scores(path: str | Path, *, capsule_member: bool = False) -> list[Score]:
     """Read and validate every ``Score`` from a ``scores.jsonl`` file.
 
     Returns an empty list if the file does not exist (additive-first: a capsule
     without a score log is valid, requirement 3). Blank lines are skipped.
     """
     p = Path(path)
-    if not p.exists():
+    if capsule_member:
+        # A capsule's own scores.jsonl: never through a link, never a FIFO.
+        try:
+            text = read_capsule_text(p.parent, p.name, operation="reading scores")
+        except FileNotFoundError:
+            return []
+        except CapsuleEntryError as exc:
+            raise ValueError(f"{p}: not read: {exc}") from exc
+    elif not p.exists():
         return []
+    else:
+        text = p.read_text(encoding="utf-8")
     scores: list[Score] = []
-    for line_no, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_no, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line:
             continue

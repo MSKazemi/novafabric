@@ -24,6 +24,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 #: namespaced key inside ``LineageEdge.facets``
 COLUMN_FACET_KEY = "columns"
 
@@ -172,7 +174,7 @@ def facets_from_tool_calls(capsule_dir: Path) -> list[ColumnFacet]:
     facets: list[ColumnFacet] = []
     seen: set[tuple[str, str, tuple[str, ...]]] = set()
     try:
-        lines = path.read_text().splitlines()
+        lines = (read_capsule_member_or_none(path, operation="lineage facets") or "").splitlines()
     except OSError:
         return []
     for line in lines:

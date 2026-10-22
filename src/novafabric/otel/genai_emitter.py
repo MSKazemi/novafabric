@@ -52,6 +52,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture.log_level import InvalidLogLevelError, to_otel_severity
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.otel.content_bridge import bridge_messages
@@ -159,7 +160,10 @@ def emit_spans(
     manifest_path = capsule_dir / "capsule.yaml"
     if manifest_path.exists():
         try:
-            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            capsule_text = (
+                read_capsule_member_or_none(manifest_path, operation="GenAI emitter") or ""
+            )
+            manifest = yaml.safe_load(capsule_text) or {}
         except Exception:  # noqa: BLE001 - fail-open
             manifest = {}
 

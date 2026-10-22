@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.assure.models import AssuranceResult, CheckStatus
 from novafabric.capture.record_roles import logical_model_calls
 
@@ -28,7 +29,7 @@ class BaseCheck(ABC):
     def _read_yaml(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
-        raw = yaml.safe_load(path.read_text())
+        raw = yaml.safe_load((read_capsule_member_or_none(path, operation="nova assure") or ""))
         if not isinstance(raw, dict):
             return {}
         return raw
@@ -36,7 +37,10 @@ class BaseCheck(ABC):
     def _read_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
-        raw = json.loads(path.read_text())
+        text = read_capsule_member_or_none(path, operation="nova assure")
+        if not text:  # a link or special file is never followed: treated as absent
+            return {}
+        raw = json.loads(text)
         if not isinstance(raw, dict):
             return {}
         return raw
@@ -45,7 +49,7 @@ class BaseCheck(ABC):
         if not path.exists():
             return []
         lines = []
-        for line in path.read_text().splitlines():
+        for line in (read_capsule_member_or_none(path, operation="nova assure") or "").splitlines():
             line = line.strip()
             if line:
                 try:

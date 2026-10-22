@@ -37,7 +37,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from novafabric._capsule_fs import CapsuleLinkError
+from novafabric._capsule_fs import CapsuleLinkError, read_capsule_member_or_none
 from novafabric.capture.record_roles import logical_model_calls
 
 # ---------------------------------------------------------------------------
@@ -352,7 +352,10 @@ class AIBOMExporter:
             return []
         records: list[dict[str, Any]] = []
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            capsule_text = (
+                read_capsule_member_or_none(path, operation="compliance export") or ""
+            )
+            lines = capsule_text.splitlines()
         except OSError:
             return []
         for line in lines:
@@ -448,8 +451,9 @@ class AIBOMExporter:
             return {}
         import yaml
 
-        with open(manifest_path) as fh:
-            return yaml.safe_load(fh) or {}
+        return yaml.safe_load(
+            read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+        ) or {}
 
     def _build_model_card(
         self, manifest: dict[str, Any], capsule_dir: Path
@@ -461,7 +465,10 @@ class AIBOMExporter:
         eval_path = capsule_dir / "eval_result.json"
         if eval_path.exists():
             try:
-                eval_data = json.loads(eval_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(eval_path, operation="compliance export") or ""
+                )
+                eval_data = json.loads(capsule_text)
                 metrics = eval_data.get("metrics", [])
                 card["quantitativeAnalysis"] = {
                     "performanceMetrics": [

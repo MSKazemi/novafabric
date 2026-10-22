@@ -25,6 +25,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.agent_graph.errors import CapsuleNotFoundError
 from novafabric.agent_graph.model import (
     NODE_STATUS_VALUES,
@@ -76,7 +77,7 @@ def _read_jsonl(path: Path) -> list[tuple[int, dict[str, Any]]]:
     if not path.is_file():
         return []
     try:
-        text = path.read_text(encoding="utf-8")
+        text = (read_capsule_member_or_none(path, operation="agent graph") or "")
     except OSError:
         return []
     return parse_jsonl_text(text)[0]
@@ -89,7 +90,10 @@ def _capsule_id(capsule_dir: Path) -> str:
         if not path.is_file():
             continue
         try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            capsule_text = (
+                read_capsule_member_or_none(path, operation="agent graph") or ""
+            )
+            data = yaml.safe_load(capsule_text)
         except (OSError, yaml.YAMLError):
             continue
         if isinstance(data, dict):

@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import read_capsule_file
 from novafabric.capsule.ulid_util import is_valid_ulid, new_ulid
 from novafabric.eval.significance import wilson_interval
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
@@ -177,7 +178,11 @@ class SafetyCaseCompiler:
 
     def _capsule_hash(self, capsule_dir: Path) -> str:
         manifest = capsule_dir / "capsule.yaml"
-        raw = manifest.read_bytes() if manifest.exists() else b""
+        raw = (
+            read_capsule_file(capsule_dir, "capsule.yaml", operation="safety case")
+            if manifest.exists()
+            else b""
+        )
         return "sha256:" + hashlib.sha256(raw).hexdigest()
 
     # -- tree assembly -------------------------------------------------------

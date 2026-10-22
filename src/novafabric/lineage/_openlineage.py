@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 _log = logging.getLogger(__name__)
 
 _NOVAFABRIC_NS = uuid.UUID("7b3f4e2a-1c0d-5b8e-9f6a-4d2e1a0c3b7f")
@@ -108,7 +110,10 @@ def build_complete_event(
 
     lineage_path = capsule_dir / "lineage.jsonl"
     if lineage_path.exists():
-        for line in lineage_path.read_text().splitlines():
+        capsule_text = (
+            read_capsule_member_or_none(lineage_path, operation="OpenLineage export") or ""
+        )
+        for line in capsule_text.splitlines():
             if not line.strip():
                 continue
             try:
@@ -171,7 +176,10 @@ def build_events_from_capsule(
     if not capsule_yaml.exists():
         return []
     try:
-        manifest: dict[str, Any] = yaml.safe_load(capsule_yaml.read_text()) or {}
+        capsule_text = (
+            read_capsule_member_or_none(capsule_yaml, operation="OpenLineage export") or ""
+        )
+        manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
     except Exception as exc:
         _log.warning("Failed to parse capsule.yaml in %s: %s", capsule_dir, exc)
         return []

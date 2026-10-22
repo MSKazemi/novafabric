@@ -45,6 +45,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from novafabric._capsule_fs import read_capsule_text
 from novafabric.agent_graph import AgentExecutionGraph, GraphNode, build_agent_graph
 from novafabric.agent_graph.builder import parse_jsonl_text
 
@@ -314,10 +315,14 @@ def _skipped_source_lines(capsule: Path) -> dict[str, int]:
     """
     counts: dict[str, int] = {}
     for key, name in SOURCE_FILE_KEYS.items():
-        path = capsule / name
-        counts[key] = (
-            parse_jsonl_text(path.read_text(encoding="utf-8"))[1] if path.is_file() else 0
-        )
+        # Never through a link or into a FIFO: CapsuleEntryError makes the side
+        # unavailable, like any other unreadable source (_build).
+        try:
+            text = read_capsule_text(capsule, name, operation="nova diff --graph-shape")
+        except FileNotFoundError:
+            counts[key] = 0
+            continue
+        counts[key] = parse_jsonl_text(text)[1]
     return counts
 
 

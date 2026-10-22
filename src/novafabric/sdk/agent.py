@@ -12,6 +12,7 @@ from typing import Any, TypeVar
 import yaml
 from opentelemetry import trace
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -160,7 +161,9 @@ def _run_with_capture(
         )
         tool_call_count = sum(
             1
-            for line in (cap_dir / "tool-calls.jsonl").read_text().splitlines()
+            for line in (
+                read_capsule_member_or_none(cap_dir / "tool-calls.jsonl", operation="the SDK") or ""
+            ).splitlines()
             if line.strip()
         )
 

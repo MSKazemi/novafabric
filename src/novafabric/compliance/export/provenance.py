@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_file, read_capsule_member_or_none
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .models import CompletenessSummaryEntry
 
@@ -142,8 +144,12 @@ def build_capsule_ref(
         p = capsule_dir / name
         if p.exists():
             h.update(name.encode())
-            h.update(p.read_bytes())
-    manifest = yaml.safe_load(manifest_path.read_text()) or {}
+            # Never through a link or into a FIFO (novafabric._capsule_fs).
+            h.update(read_capsule_file(capsule_dir, name, operation="compliance export"))
+    capsule_text = (
+        read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+    )
+    manifest = yaml.safe_load(capsule_text) or {}
     capsule_id = (
         manifest.get("capsule_id") or manifest.get("run_id") or capsule_dir.name
     )

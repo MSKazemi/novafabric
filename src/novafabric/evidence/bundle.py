@@ -71,6 +71,13 @@ VERIFIER_INSTRUCTIONS = (
 )
 
 
+def _capsule_text(capsule_dir: Path, name: str) -> str:
+    """A top-level capsule file's text, opened without following a link (CapsuleLinkError)."""
+    return read_capsule_file(
+        capsule_dir, name, operation="the evidence export", error=CapsuleLinkError
+    ).decode("utf-8")
+
+
 class CapsuleValidationError(Exception):
     pass
 
@@ -209,7 +216,7 @@ class EvidenceBundleBuilder:
                 + ", ".join(missing)
             )
 
-        proof_data = json.loads((capsule_dir / "redaction-proof.json").read_text())
+        proof_data = json.loads(_capsule_text(capsule_dir, "redaction-proof.json"))
         skips = proof_data.get("unsafe_skips") or []
         self._unsafe_skip_count += len(skips)
         if skips and not self._allow_unsafe_skips:
@@ -343,10 +350,10 @@ class EvidenceBundleBuilder:
         capsule_dir = capsule_dir or self._capsule_dir
         capsule_hash = capsule_merkle_root(capsule_dir)
 
-        manifest_yaml = yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+        manifest_yaml = yaml.safe_load(_capsule_text(capsule_dir, "capsule.yaml"))
         run_id = manifest_yaml["run_id"]
 
-        proof = json.loads((capsule_dir / "redaction-proof.json").read_text())
+        proof = json.loads(_capsule_text(capsule_dir, "redaction-proof.json"))
 
         lineage_src = staging / lineage_rel / "edges.jsonl"
         lineage_hash = _sha256_bytes(lineage_src.read_bytes())
@@ -475,7 +482,7 @@ class EvidenceBundleBuilder:
         attestations: list[dict[str, Any]],
         signatures: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        manifest_yaml = yaml.safe_load((self._capsule_dir / "capsule.yaml").read_text())
+        manifest_yaml = yaml.safe_load(_capsule_text(self._capsule_dir, "capsule.yaml"))
         run_id = manifest_yaml["run_id"]
         capsule_hash = capsule_merkle_root(self._capsule_dir)
 
@@ -674,7 +681,7 @@ class CapsuleSetBundleBuilder(EvidenceBundleBuilder):
 
             for capsule_dir in self._capsule_dirs:
                 run_id = str(
-                    yaml.safe_load((capsule_dir / "capsule.yaml").read_text())["run_id"]
+                    yaml.safe_load(_capsule_text(capsule_dir, "capsule.yaml"))["run_id"]
                 )
                 capsule_rel = f"run-capsule/{run_id}"
                 lineage_rel = f"lineage-subgraph/{run_id}"

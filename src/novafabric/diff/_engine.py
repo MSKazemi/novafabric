@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import CapsuleEntryError, open_capsule_file, read_capsule_file
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.diff._align import align_model_calls, align_tool_calls
 from novafabric.diff._report import DiffReport
@@ -48,9 +48,16 @@ def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
     """
     records: list[dict[str, Any]] = []
     skipped = 0
-    if not path.exists():
+    try:
+        data = read_capsule_file(path.parent, path.name, operation="nova diff")
+    except FileNotFoundError:
         return records, skipped
-    for raw in path.read_bytes().splitlines():
+    except CapsuleEntryError as exc:
+        # A link or special file is never followed: the side cannot be compared.
+        raise CapsuleFileError(
+            path, f"cannot be read ({exc}); a link is never followed"
+        ) from exc
+    for raw in data.splitlines():
         if not raw.strip():
             continue
         try:
@@ -68,12 +75,14 @@ def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
 def _file_hash(path: Path) -> str:
     if not path.exists():
         return ""
-    # O_NOFOLLOW: a file swapped for a symlink after the walk is refused, not
-    # followed out of the capsule. Streamed, because an output can be large.
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
-    fd = os.open(path, flags)
-    with os.fdopen(fd, "rb") as fh:
-        return "sha256:" + hashlib.file_digest(fh, "sha256").hexdigest()
+    # O_NOFOLLOW + O_NONBLOCK + a regular-file check (novafabric._capsule_fs): a
+    # file swapped for a symlink or a FIFO after the walk is refused, not
+    # followed out of the capsule or blocked on. Streamed: an output can be large.
+    with open_capsule_file(path.parent, path.name, operation="nova diff") as fh:
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+        return "sha256:" + digest.hexdigest()
 
 
 def _output_files(capsule: Path) -> dict[str, Path]:
@@ -106,10 +115,12 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         CapsuleFileError: the file exists but cannot be read, is not UTF-8, is
             not YAML, or its top level is not a mapping.
     """
-    if not path.exists():
+    if not path.exists() and not path.is_symlink():
         return {}
     try:
-        text = path.read_bytes().decode("utf-8")
+        text = read_capsule_file(path.parent, path.name, operation="nova diff").decode("utf-8")
+    except CapsuleEntryError as exc:
+        raise CapsuleFileError(path, f"cannot be read ({exc}); a link is never followed") from exc
     except OSError as exc:
         raise CapsuleFileError(path, f"cannot be read ({exc.strerror or exc})") from exc
     except UnicodeDecodeError as exc:

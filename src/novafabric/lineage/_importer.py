@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.lineage._store import LineageStore
 from novafabric.lineage._types import (
     LineageEdge,
@@ -116,7 +117,10 @@ def index_capsule_lineage(
         edges: list[LineageEdge] = []
         nodes_by_id: dict[str, LineageNode] = {}
 
-        for line in lineage_path.read_text().splitlines():
+        capsule_text = (
+            read_capsule_member_or_none(lineage_path, operation="lineage import") or ""
+        )
+        for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
                 continue

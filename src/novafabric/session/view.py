@@ -16,6 +16,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.session.manifest import (
     MemberRun,
     SessionManifest,
@@ -123,7 +124,8 @@ def _resolve_one(member: MemberRun, session_dir: Path, capsule_base: Path | None
     resolved = ResolvedMember(member=member, status="ok", capsule_dir=str(found))
     try:
         capsule: dict[str, Any] = yaml.safe_load(
-            (found / "capsule.yaml").read_text(encoding="utf-8")
+            read_capsule_member_or_none(found / "capsule.yaml", operation="session view")
+            or ""
         )
     except yaml.YAMLError:  # pragma: no cover - digest already matched
         return resolved

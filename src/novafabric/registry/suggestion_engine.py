@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import iter_capsule_dirs, read_capsule_text_or_none
 from novafabric.capture.record_roles import read_logical_model_calls
 
 _SEMVER_RE = re.compile(
@@ -22,6 +23,12 @@ _SEMVER_RE = re.compile(
 # YAML plain-scalar indicator characters that must be quoted when leading.
 # Includes '@', '`', and the flow/block indicators listed in the YAML 1.2 spec.
 _YAML_LEADING_SPECIAL = set("@`!&*,[]{}#|>?:-")
+
+
+def _read_stream(capsule_dir: Path, name: str) -> str:
+    """A capsule file's text, or ``""`` when it is missing, a link or not a regular file."""
+    text = read_capsule_text_or_none(capsule_dir, name, operation="suggest-register")
+    return text or ""
 
 
 def _yaml_str(value: str) -> str:
@@ -84,13 +91,10 @@ class SuggestionEngine:
         """Aggregate suggestions across the most recent *limit* capsules."""
         if not base_dir.exists():
             return []
+        # Never a linked entry, and no file below is read through a link.
         capsule_dirs = sorted(
-            [
-                d
-                for d in base_dir.iterdir()
-                if d.is_dir() and (d / "capsule.yaml").exists()
-            ],
-            key=lambda d: d.stat().st_mtime,
+            iter_capsule_dirs(base_dir),
+            key=lambda d: d.lstat().st_mtime,
             reverse=True,
         )[:limit]
 
@@ -158,7 +162,7 @@ class SuggestionEngine:
             return []
 
         info: dict[str, dict[str, Any]] = {}
-        for line in path.read_text().splitlines():
+        for line in _read_stream(capsule_dir, "tool-calls.jsonl").splitlines():
             if not line.strip():
                 continue
             try:
@@ -202,7 +206,9 @@ class SuggestionEngine:
         try:
             import yaml
 
-            manifest: dict[str, Any] = yaml.safe_load(manifest_path.read_text()) or {}
+            manifest: dict[str, Any] = (
+                yaml.safe_load(_read_stream(capsule_dir, "capsule.yaml")) or {}
+            )
         except Exception:
             return []
 
@@ -255,7 +261,7 @@ class SuggestionEngine:
         if not path.exists():
             return []
         names: set[str] = set()
-        for line in path.read_text().splitlines():
+        for line in _read_stream(capsule_dir, "tool-calls.jsonl").splitlines():
             if not line.strip():
                 continue
             try:

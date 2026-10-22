@@ -3355,6 +3355,11 @@ Options:
 - `--output, -o PATH` — output HTML file path (default: `<capsule_dir>.html` next to the capsule dir)
 - `--title STR` — optional page title override
 
+A link, FIFO or device inside the capsule is never followed. A section file that is one
+(`model-calls.jsonl`, `tool-calls.jsonl`, `scores.jsonl`, `lineage.jsonl`) is skipped with a
+warning, printed and recorded in the page notes; a `capsule.yaml` that is one refuses the export
+(exit 2, nothing written). The capsule directory you name may itself be a link.
+
 The page shows the capsule header (run id, capture mode, run window, agent
 identity and capsule hash when the capsule carries them), model calls (model,
 tokens, latency, status), tool calls (tool, `mutation_class`, status,
@@ -6112,6 +6117,13 @@ file rather than a directory, each produce an `invalid` row with a `reason` (a *
 `reason` field in `--json`). No registry can clear it. (Fixed 2026-10-22: a malformed facet used to be skipped
 silently, so a capsule whose only facet was unreadable reported no facets and exited `0`.)
 
+Hashes are compared in one canonical form, `sha256:<lowercase hex>`: a facet or registry hash written in upper
+case, without the `sha256:` prefix, or with surrounding whitespace still matches. A value that is not 4–64 hex
+digits after that makes the facet `invalid` (in the registry it is a usage error, exit `2`). Also `invalid`: a
+facet with a duplicate JSON key, a subdirectory in the namespace (the namespace is flat; a facet one level down
+would never be checked), a facet that is a symlink, a FIFO or a device, a facet over 1 MiB, and a namespace or
+`extensions/` directory that is a symlink. Facet files match `*.json` case-insensitively (`m.JSON` is read).
+
 **Exit codes:** `4` when any dataset is contaminated, superseded, or `invalid` (CI-gateable), `0` when all are
 current/unknown, `2` on a usage error.
 
@@ -6731,7 +6743,7 @@ capsule directories only:
 
 | Option | Default | Effect |
 |---|---|---|
-| `--schemas` | off | Also validate each tool call's `arguments`/`result` against its declared `arguments_schema_ref`/`result_schema_ref` JSON Schemas and print a conformance summary. Report-only: exit 0 even on violations. Records with no schema_ref are counted as `null` ("no schema declared" — not a failure); unresolvable refs are reported, never fatal. Schema resolution is **local-only** (relative refs inside the capsule directory or absolute local paths; `http(s)://` refs are never fetched). The same holds for every `$ref`/`$dynamicRef` *inside* a schema, at capture time and here: only refs within the schema document and the bundled JSON Schema meta-schemas resolve; a ref to any other URI (`http(s)://`, `file://`, or relative to a remote `$id`) is never retrieved, and that payload's verdict is `null` with a `schema-unresolved` error — never a crash, never a network request. |
+| `--schemas` | off | Also validate each tool call's `arguments`/`result` against its declared `arguments_schema_ref`/`result_schema_ref` JSON Schemas and print a conformance summary. Report-only: exit 0 even on violations. Records with no schema_ref are counted as `null` ("no schema declared" — not a failure); unresolvable refs are reported, never fatal. Schema resolution is **local-only**: a relative ref resolves inside the capsule directory without following a link (no `..`, no FIFO, at most 1 MiB); an absolute ref resolves only inside NovaFabric's packaged `schemas/` directory, because this re-validates a capsule you may not have written (an absolute path anywhere is honoured at capture time only); `http(s)://` refs are never fetched. The same holds for every `$ref`/`$dynamicRef` *inside* a schema, at capture time and here: only refs within the schema document and the bundled JSON Schema meta-schemas resolve; a ref to any other URI (`http(s)://`, `file://`, or relative to a remote `$id`) is never retrieved, and that payload's verdict is `null` with a `schema-unresolved` error — never a crash, never a network request. |
 | `--fail-on-schema-violation` | off | With `--schemas`: exit non-zero if any checked payload violates its schema (CI gate). |
 | `--write` | off | With `--schemas`: persist the computed `schema_validation` verdict blocks back into `tool-calls.jsonl` (backfill capsules captured before this feature; `checked_at` records the backfill time). |
 
@@ -6743,7 +6755,8 @@ nova validate --schemas --write .novafabric/runs/<run-id>/                    # 
 
 At capture time the same verdict is attached automatically whenever a tool-call record declares a
 schema_ref — record-only, never raised into the workload. At replay time stored tool calls are
-re-validated against their current schemas: drift is recorded as `schema_drift` in
+re-validated against their current schemas, under the same resolution rule as `--schemas` (an
+absolute schema_ref outside the packaged schemas is `schema-unresolved`, never read): drift is recorded as `schema_drift` in
 `replay_result.yaml` in every mode, and blocks eligibility (`exact_eligible: false`) in `exact`
 mode only.
 

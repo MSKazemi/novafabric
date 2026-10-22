@@ -40,6 +40,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_text
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.eval.scores import SCORES_FILENAME, ScoreValueType, read_scores
 from novafabric.query.errors import QueryIndexError
@@ -171,8 +172,10 @@ def _load_manifest(capsule_dir: Path) -> dict[str, Any] | None:
         if not path.is_file():
             continue
         try:
-            text = path.read_text(encoding="utf-8")
+            text = read_capsule_text(capsule_dir, name, operation="nova query")
             data = json.loads(text) if name.endswith(".json") else yaml.safe_load(text)
+        except CapsuleEntryError as exc:
+            raise QueryIndexError(f"{path}: capsule manifest not read: {exc}") from exc
         except (OSError, ValueError, yaml.YAMLError) as exc:
             raise QueryIndexError(f"{path}: unreadable capsule manifest: {exc}") from exc
         if not isinstance(data, dict):
@@ -208,8 +211,12 @@ def _model_call_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[CallRow]:
     path = capsule_dir / MODEL_CALLS_FILENAME
     rows: list[CallRow] = []
     records: list[dict[str, Any]] = []
-    if path.is_file():
-        for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    if path.is_file() or path.is_symlink():
+        try:
+            text = read_capsule_text(capsule_dir, MODEL_CALLS_FILENAME, operation="nova query")
+        except CapsuleEntryError as exc:
+            raise QueryIndexError(f"{path}: not read: {exc}") from exc
+        for line_no, raw in enumerate(text.splitlines(), start=1):
             line = raw.strip()
             if not line:
                 continue
@@ -273,10 +280,10 @@ def _model_call_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[CallRow]:
 
 def _score_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[ScoreRow]:
     path = capsule_dir / SCORES_FILENAME
-    if not path.is_file():
+    if not (path.is_file() or path.is_symlink()):
         return []
     try:
-        scores = read_scores(path)
+        scores = read_scores(path, capsule_member=True)
     except ValueError as exc:
         raise QueryIndexError(f"{path}: invalid scores.jsonl: {exc}") from exc
     rows: list[ScoreRow] = []
@@ -345,8 +352,8 @@ def find_capsule(capsule_dir: str | Path, run_id: str) -> Path | None:
     if not base.is_dir():
         raise QueryIndexError(f"capsule directory not found: {base}")
     for child in sorted(base.iterdir()):
-        if not child.is_dir():
-            continue
+        if child.is_symlink() or not child.is_dir():
+            continue  # a scan never lists a linked entry (novafabric._capsule_fs)
         manifest = _load_manifest(child)
         if manifest is None:
             continue
@@ -371,8 +378,8 @@ def scan_capsule_dir(capsule_dir: str | Path) -> IndexRows:
     score_rows: list[ScoreRow] = []
     capsule_count = 0
     for child in sorted(base.iterdir()):
-        if not child.is_dir():
-            continue
+        if child.is_symlink() or not child.is_dir():
+            continue  # a scan never lists a linked entry (novafabric._capsule_fs)
         scanned = scan_capsule(child)
         if scanned is None:
             continue

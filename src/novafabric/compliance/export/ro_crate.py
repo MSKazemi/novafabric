@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric import _capsule_fs
-from novafabric._capsule_fs import read_capsule_file
+from novafabric._capsule_fs import read_capsule_file, read_capsule_member_or_none
 
 _OPERATION = "an RO-Crate export"
 
@@ -151,7 +151,10 @@ def export_ro_crate(capsule_dir: Path, output_path: Path) -> Path:
         try:
             import yaml
 
-            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            capsule_text = (
+                read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+            )
+            manifest = yaml.safe_load(capsule_text) or {}
             if isinstance(manifest, dict) and manifest.get("run_id"):
                 run_id = str(manifest["run_id"])
         except Exception:  # noqa: BLE001 - a damaged manifest must not fail the export

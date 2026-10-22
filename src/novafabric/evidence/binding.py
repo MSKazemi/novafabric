@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_file
 from novafabric.compliance.audit.loader import load_profile
 from novafabric.compliance.audit.models import ControlProfile
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
@@ -123,7 +124,9 @@ def attest_bindings(
     """Wrap bindings in an in-toto statement and DSSE-sign them."""
     manifest_path = capsule_dir / "capsule.yaml"
     digest = hashlib.sha256(
-        manifest_path.read_bytes() if manifest_path.exists() else b""
+        read_capsule_file(capsule_dir, "capsule.yaml", operation="evidence binding")
+        if manifest_path.exists()
+        else b""
     ).hexdigest()
     statement = make_intoto_statement(
         predicate_type=BINDING_PREDICATE_TYPE,

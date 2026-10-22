@@ -30,6 +30,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -216,8 +218,9 @@ class GDPRRoPAExporter:
             return {}
         import yaml  # already in core deps
 
-        with open(manifest_path) as fh:
-            return yaml.safe_load(fh) or {}
+        return yaml.safe_load(
+            read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+        ) or {}
 
     def _derive_personal_data_categories(self, capsule_dir: Path) -> list[str]:
         """Infer personal data categories from the redaction manifest.
@@ -232,7 +235,10 @@ class GDPRRoPAExporter:
         if not redaction_path.exists():
             return []
         try:
-            data = json.loads(redaction_path.read_text())
+            capsule_text = (
+                read_capsule_member_or_none(redaction_path, operation="compliance export") or ""
+            )
+            data = json.loads(capsule_text)
             types: set[str] = set()
             for entry in data.get("entries", []):
                 rule = entry.get("detection_rule_id", "")
