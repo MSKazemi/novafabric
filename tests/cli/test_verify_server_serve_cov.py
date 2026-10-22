@@ -740,9 +740,13 @@ class TestServe:
         )
 
         fake_app = _FakeApp()
-        monkeypatch.setattr(
-            "novafabric.serve.app.create_app", lambda **kw: fake_app
-        )
+        create_kwargs: dict[str, object] = {}
+
+        def fake_create_app(**kw: object) -> _FakeApp:
+            create_kwargs.update(kw)
+            return fake_app
+
+        monkeypatch.setattr("novafabric.serve.app.create_app", fake_create_app)
 
         import uvicorn
 
@@ -762,8 +766,10 @@ class TestServe:
             ],
         )
         assert result.exit_code == 0, result.output
-        # TV-5 router should have been mounted on the fake app.
-        assert fake_app.included, result.output
+        # The TV-5 router is handed to create_app (extra_routers) so it is
+        # registered before the WebSocket catch-all, never included afterwards.
+        assert create_kwargs.get("extra_routers"), result.output
+        assert not fake_app.included, result.output
 
 
 # ---------------------------------------------------------------------------
