@@ -251,11 +251,12 @@ The command prints the raw JWT to stdout. Store it securely:
 TOKEN=$(nova server issue-token --subject ci-runner --roles writer --expires-in 30d)
 ```
 
-For SLURM jobs, pass the token via a job environment variable:
+For SLURM jobs, pass the token via a job environment variable. `sbatch` copies its own
+environment into the job by default (`--export=ALL`), so submit from a minimal environment
+that carries the token and nothing else from your shell:
 
 ```bash
-#SBATCH --export=ALL
-export NOVA_TOKEN="$TOKEN"
+env -i PATH="$PATH" HOME="$HOME" NOVA_TOKEN="$TOKEN" sbatch job.sh
 ```
 
 The key path can also be provided via `NOVAFABRIC_OFFLINE_KEY_PATH`:
