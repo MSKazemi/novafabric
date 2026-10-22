@@ -18,9 +18,14 @@ from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import get_current_writer
+from novafabric.capture.hooks._fail_open import TOOL_CALLS_STREAM, fail_open
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
+
+
+#: The hook name in fail-open warnings and drop accounting.
+_HOOK = "mcp"
 
 
 def _now() -> str:
@@ -100,11 +105,27 @@ class MCPHook:
                 started = _now()
                 t0 = time.monotonic()
                 request_id = new_ulid()
+                # Only the tool call is inside the try: recording used to be
+                # too, so a failed write turned a successful call into an
+                # exception (and an error record for the recorder's own fault).
                 try:
                     response = await original_call_tool(
                         inner_self, name, arguments, *args, **kwargs
                     )
-                    duration_ms = int((time.monotonic() - t0) * 1000)
+                except Exception as exc:
+                    with fail_open(_HOOK, TOOL_CALLS_STREAM):
+                        hook_self._record_error(
+                            inner_self=inner_self,
+                            name=name,
+                            arguments=arguments,
+                            exc=exc,
+                            request_id=request_id,
+                            started=started,
+                            finished=_now(),
+                            duration_ms=int((time.monotonic() - t0) * 1000),
+                        )
+                    raise
+                with fail_open(_HOOK, TOOL_CALLS_STREAM):
                     hook_self._record_success(
                         inner_self=inner_self,
                         name=name,
@@ -113,22 +134,9 @@ class MCPHook:
                         request_id=request_id,
                         started=started,
                         finished=_now(),
-                        duration_ms=duration_ms,
+                        duration_ms=int((time.monotonic() - t0) * 1000),
                     )
-                    return response
-                except Exception as exc:
-                    duration_ms = int((time.monotonic() - t0) * 1000)
-                    hook_self._record_error(
-                        inner_self=inner_self,
-                        name=name,
-                        arguments=arguments,
-                        exc=exc,
-                        request_id=request_id,
-                        started=started,
-                        finished=_now(),
-                        duration_ms=duration_ms,
-                    )
-                    raise
+                return response
 
             target.call_tool = patched_call_tool
         except (ImportError, AttributeError):

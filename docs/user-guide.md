@@ -145,7 +145,8 @@ capsule is still written even when no AI SDK is present at all:
 |---|---|
 | `openai` SDK | `chat.completions.create` calls → `model-calls.jsonl`; since v0.105.0 also `responses.create`, async and streamed calls |
 | `anthropic` SDK | `messages.create` calls → `model-calls.jsonl`; since v0.105.0 also async and streamed calls |
-| `httpx` | Requests to URL-registry-classified hosts → `model-calls.jsonl` |
+| `httpx` | Requests to URL-registry-classified hosts → `model-calls.jsonl` and `network_events.jsonl` |
+| `httpx2` | Same as `httpx`, for the client `openai` 3.x uses by default; patched only when `httpx2` is installed (works today) |
 | `requests` | Same classification as `httpx`; covers LangChain, LlamaIndex, `boto3` |
 | `aiohttp` | Async wire-level capture; covers async LangChain, FastAPI agents |
 | `urllib3` | Lowest-tier wire-level capture; covers `boto3`/Bedrock |

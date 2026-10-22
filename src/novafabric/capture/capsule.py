@@ -4,8 +4,26 @@ import json
 import threading
 from pathlib import Path
 
+from novafabric.capture._jsonable import json_default, to_jsonable
 from novafabric.capture._tool_scope import mark_nested
 from novafabric.capture.log_level import validate_severity_fields
+
+_SEPARATORS = (",", ":")
+
+
+def _dumps(record: dict) -> str:  # type: ignore[type-arg]
+    """One JSONL line for *record*.
+
+    A record of plain JSON values serialises byte-identically to before. A
+    value the hooks took from the caller (an SDK pydantic object, a datetime)
+    is converted by :func:`json_default` instead of raising ``TypeError``; a
+    shape ``default`` cannot reach (a non-string dict key, a reference cycle)
+    falls back to a full :func:`to_jsonable` copy.
+    """
+    try:
+        return json.dumps(record, separators=_SEPARATORS, default=json_default)
+    except (TypeError, ValueError, RecursionError):
+        return json.dumps(to_jsonable(record), separators=_SEPARATORS)
 
 
 class CapsuleWriter:
@@ -38,9 +56,10 @@ class CapsuleWriter:
         return self._dir
 
     def _append(self, filename: str, record: dict) -> None:  # type: ignore[type-arg]
+        line = _dumps(record)
         with self._lock:
             with open(self.capsule_dir / filename, "a") as f:
-                f.write(json.dumps(record, separators=(",", ":")) + "\n")
+                f.write(line + "\n")
 
     def append_model_call(self, record: dict) -> None:  # type: ignore[type-arg]
         # ADR-0127: reject an out-of-domain severity at write; absent fields

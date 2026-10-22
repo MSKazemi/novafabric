@@ -143,7 +143,8 @@ The same pattern applies across the wire-level surface NovaFabric ships hooks fo
 | `requests` | The most common synchronous HTTP client |
 | `aiohttp` | The async client used by concurrent agents |
 | `urllib3` | The lowest-level library that both `requests` and `boto3` use internally |
-| `httpx` | The client under the OpenAI and Anthropic SDKs v1+ |
+| `httpx` | The client under the Anthropic SDK, `openai` before 3.x, and most other Python LLM clients |
+| `httpx2` | The client `openai` 3.x builds by default (`openai.OpenAI()` sends over `httpx2`, not `httpx`). Patched only when `httpx2` is installed; NovaFabric does not depend on it — **works today** |
 | Bedrock | AWS Bedrock runtime calls |
 
 Alongside these wire-level hooks, NovaFabric also installs per-SDK hooks
@@ -153,6 +154,17 @@ are auto-discovered through the `novafabric.hooks` entry-point group, so an
 agent-framework author can add a hook without patching NovaFabric. If an SDK isn't
 present, its hook is silently skipped — a capsule is still written even when no AI
 SDK is installed at all.
+
+**Capture never fails your call (works today).** Every hook writes its record
+behind one fail-open guard. If a record cannot be built or written — a full disk,
+or an object NovaFabric cannot serialise — your call still returns exactly what
+the SDK returned, or raises exactly the exception the SDK raised. The lost record
+is logged once as a `WARNING` (`nova_event=capture.record_dropped`, with the hook,
+the stream and the exception *type* — never its message, which may quote your
+prompt) and counted in the capsule's `capture-health.json`. SDK objects you pass
+back into the next call — the common
+`messages.append(completion.choices[0].message)` pattern — are recorded the way
+the SDK sends them on the wire (`model_dump(mode="json", exclude_unset=True)`).
 
 ---
 
@@ -283,7 +295,7 @@ stream today, honestly labeled:
 
 | Stream | Filled by | Status |
 |---|---|---|
-| `network_events.jsonl` | wire-level hooks — `requests`, `httpx`, and (since ADR-0209) `aiohttp` + `urllib3`, layering-guarded against double-recording | works today |
+| `network_events.jsonl` | wire-level hooks — `requests`, `httpx`, `httpx2` (the `openai` 3.x default client), and (since ADR-0209) `aiohttp` + `urllib3`, layering-guarded against double-recording | works today |
 | `human_approvals.jsonl` | `nova seal propose` maker-checker flow | works today |
 | `guardrail_events.jsonl` | OpenAI Agents adapter: SDK guardrail spans map to events automatically; or your own `record.guardrail(...)` calls | experimental |
 | `state_transitions.jsonl` | LangGraph adapter: one digest-chained event per `stream()` / `astream()` chunk, a start→end pair per `invoke()` / `ainvoke()`; or `record.state_transition(...)` | experimental |
