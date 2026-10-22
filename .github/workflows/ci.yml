@@ -262,6 +262,9 @@ jobs:
             --expected reports/manifest-all.txt reports/manifest-shard-*.txt
 
       - name: Combined coverage (floor 90%)
+        # Independent of the partition check above: a red partition must not hide
+        # the coverage figure (the first sharded run reported neither).
+        if: (!cancelled())
         run: |
           uv run coverage combine --keep reports/coverage-shard-*.dat
           uv run coverage report -m --skip-covered --fail-under=90

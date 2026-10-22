@@ -33,6 +33,7 @@ from _shard import (
     ShardSpec,
     ShardSpecError,
     assign,
+    canonical_nodeid,
     file_of,
     load_durations,
     select,
@@ -115,6 +116,35 @@ def test_select_keeps_a_file_whole_and_covers_everything_once() -> None:
             assert all(n in s for n in ids if file_of(n) == f), f"{f} split across shards"
 
 
+class _Mark:
+    def __init__(self, *args: str, **kwargs: str) -> None:
+        self.args, self.kwargs = args, kwargs
+
+
+class _Item:
+    def __init__(self, nodeid: str, mark: _Mark | None) -> None:
+        self.nodeid, self._mark = nodeid, mark
+
+    def get_closest_marker(self, name: str) -> _Mark | None:
+        return self._mark if name == "xdist_group" else None
+
+
+@pytest.mark.parametrize(
+    ("nodeid", "mark", "expected"),
+    [
+        ("tests/a.py::t", None, "tests/a.py::t"),
+        ("tests/a.py::t@grp", _Mark("grp"), "tests/a.py::t"),  # loadgroup, positional
+        ("tests/a.py::t@grp", _Mark(name="grp"), "tests/a.py::t"),  # loadgroup, keyword
+        ("tests/a.py::t", _Mark("grp"), "tests/a.py::t"),  # not rewritten (no xdist)
+        ("tests/a.py::t[x@grp]", _Mark("other"), "tests/a.py::t[x@grp]"),  # '@' in a param
+    ],
+)
+def test_canonical_nodeid_drops_only_the_xdist_group_suffix(
+    nodeid: str, mark: _Mark | None, expected: str
+) -> None:
+    assert canonical_nodeid(_Item(nodeid, mark)) == expected  # type: ignore[arg-type]
+
+
 def test_file_of_strips_the_test_path() -> None:
     assert file_of("tests/a/test_b.py::TestC::test_d[x::y]") == "tests/a/test_b.py"
 
@@ -134,6 +164,15 @@ def test_malformed_durations_file_fails_loudly(tmp_path: Path, body: str) -> Non
     path.write_text(body)
     with pytest.raises(ShardSpecError):
         load_durations(path)
+
+
+def test_committed_durations_file_loads_and_names_real_test_files() -> None:
+    durations = load_durations()
+    assert durations, "tests/.test-durations.json is missing or empty"
+    stale = [f for f in durations if not (_REPO / f).is_file()]
+    # A few stale entries are harmless (they are ignored); a mostly-stale file
+    # means the refresh is broken and balancing has quietly degraded.
+    assert len(stale) <= len(durations) // 10, f"{len(stale)} stale entries, e.g. {stale[:5]}"
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +224,24 @@ def test_a_shard_runs_under_xdist_and_writes_one_manifest(tmp_path: Path) -> Non
     ids = out.read_text().splitlines()
     assert ids and len(ids) == len(set(ids))
     assert f"{len(ids)} passed" in res.stdout
+
+
+def test_manifest_ids_under_loadgroup_match_a_plain_collection(tmp_path: Path) -> None:
+    """Regression: the first sharded CI run failed its own partition check.
+
+    ``tests/jobs/test_runner.py`` carries ``xdist_group("jobs-runner")``, so under
+    ``--dist=loadgroup`` xdist renames its tests ``…@jobs-runner`` in the workers.
+    """
+    target = "tests/jobs/test_runner.py"
+    plain, grouped = tmp_path / "plain.txt", tmp_path / "grouped.txt"
+    assert _pytest("--collect-only", "-q", "--shard-manifest", str(plain), target).returncode == 0
+    res = _pytest(
+        "-q", "-n", "2", "--dist=loadgroup", "--shard=1/1", "--shard-manifest", str(grouped), target
+    )
+    assert res.returncode == 0, res.stdout[-3000:] + res.stderr[-2000:]
+    expected = plain.read_text().splitlines()
+    assert expected, "the reference collection is empty"
+    assert sorted(grouped.read_text().splitlines()) == sorted(expected)
 
 
 def test_an_invalid_shard_is_a_usage_error_not_a_crash() -> None:

@@ -53,6 +53,7 @@ __all__ = [
     "ShardSpec",
     "ShardSpecError",
     "assign",
+    "canonical_nodeid",
     "file_of",
     "load_durations",
     "select",
@@ -139,6 +140,23 @@ def select(nodeids: Iterable[str], spec: ShardSpec, durations: Mapping[str, floa
     return {n for n in ids if placement[file_of(n)] == spec.index}
 
 
+def canonical_nodeid(item: pytest.Item) -> str:
+    """*item*'s node id without the ``@<group>`` suffix ``--dist=loadgroup`` adds.
+
+    Inside the workers, pytest-xdist rewrites the id of every test that carries an
+    ``xdist_group`` mark to ``<nodeid>@<group>``. A manifest written there would
+    not match a plain ``--collect-only`` of the same tests: the first sharded CI
+    run reported 280 such tests as both "never ran" and "not in the reference
+    collection". Manifests record the id a user would type.
+    """
+    mark = item.get_closest_marker("xdist_group")
+    if mark is None:
+        return item.nodeid
+    group = mark.args[0] if mark.args else mark.kwargs.get("name", "default")
+    suffix = f"@{group}"
+    return item.nodeid.removesuffix(suffix)
+
+
 class ShardPlugin:
     """Deselect everything outside ``--shard`` and record what this shard ran.
 
@@ -165,5 +183,5 @@ class ShardPlugin:
         if self.manifest is not None and worker in (None, "gw0"):
             self.manifest.parent.mkdir(parents=True, exist_ok=True)
             self.manifest.write_text(
-                "".join(f"{item.nodeid}\n" for item in items), encoding="utf-8"
+                "".join(f"{canonical_nodeid(item)}\n" for item in items), encoding="utf-8"
             )
