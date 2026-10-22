@@ -359,8 +359,12 @@ Options:
     `slurm` and `lsf` hand the job script (with the `export` lines) to `sbatch` / `bsub`
     on **stdin**, never on their command line and never as a file in the capsule
     directory; the scheduler then stores it with the job, readable by you and the
-    scheduler's administrators. `docker` passes `extra_env` as `docker run -e K=V`
-    (argv, and `docker inspect`); `kubernetes` writes it into the Job object. Treat
+    scheduler's administrators. `docker` passes each variable as `docker run -e K`
+    with the value in the `docker` client's own environment, never on its command
+    line (the value is still in `docker inspect`; names the docker client itself
+    reads — `PATH`, `HOME`, `DOCKER_*`, proxies — stay `-e K=V`, see
+    [`operator-guide.md`](operator-guide.md) §3.2); `kubernetes` writes it into the
+    Job object as a literal `value:`. Treat
     `extra_env` as visible to the cluster's operators, and prefer a credential the job
     reads from a file only you can read.
   - `slurm` and `lsf` also run `sbatch` / `bsub` with a minimal environment (the

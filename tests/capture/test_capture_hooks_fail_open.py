@@ -630,6 +630,143 @@ def test_urllib3_record_build_failure_returns_the_response(
     assert recorder.drop_counts.get(MODEL_CALLS, 0) == 1
 
 
+# ── work a hook does BEFORE the call is fail-open too ────────────────────────
+#
+# The wire hooks classified the URL (``str(url)`` + ``registry.is_known``)
+# before calling through, outside any guard: a failure there -- a custom
+# registry, an odd request object, a non-str urllib3 path -- raised in place of
+# the user's request, which was never sent.
+
+
+class _ExplodingRegistry:
+    """A registry whose lookup fails (a user-supplied or broken registry)."""
+
+    def is_known(self, url: str) -> bool:
+        raise _RecorderDown("registry unavailable")
+
+    def gen_ai_system(self, url: str) -> str:
+        raise _RecorderDown("registry unavailable")
+
+
+def test_requests_classification_failure_sends_the_request_unrecorded(
+    writer: CapsuleWriter, recorder: EventRecorder, caplog: pytest.LogCaptureFixture,
+) -> None:
+    from novafabric.capture.hooks import _requests
+
+    hook = _requests.RequestsHook(writer, SPAN, registry=_ExplodingRegistry())  # type: ignore[arg-type]
+    prepared = types.SimpleNamespace(url="https://api.openai.com/v1/x", body=b"{}", method="POST")
+    resp = MagicMock(status_code=200)
+    original = MagicMock(return_value=resp)
+    with caplog.at_level(logging.WARNING):
+        assert hook._wrapped_send(prepared, original=original) is resp
+    original.assert_called_once_with(prepared)
+    _assert_flagged(caplog, recorder, "requests", MODEL_CALLS)
+
+
+def test_aiohttp_classification_failure_sends_the_request_unrecorded(
+    writer: CapsuleWriter, recorder: EventRecorder,
+) -> None:
+    from novafabric.capture.hooks import _aiohttp
+
+    hook = _aiohttp.AiohttpHook(writer, SPAN, registry=_ExplodingRegistry())  # type: ignore[arg-type]
+    resp = MagicMock(status=200)
+    calls: list[tuple[str, Any]] = []
+
+    async def request(method: str, url: Any, **kwargs: Any) -> Any:
+        calls.append((method, url))
+        return resp
+
+    out = asyncio.run(hook._wrapped_request("POST", "https://api.openai.com/v1/x",
+                                            original=request, json={}))
+    assert out is resp
+    assert calls == [("POST", "https://api.openai.com/v1/x")]
+    assert recorder.drop_counts.get(MODEL_CALLS, 0) == 1
+
+
+@pytest.mark.parametrize(
+    ("registry", "path"),
+    [
+        (_ExplodingRegistry(), "/v1/chat/completions"),
+        # A bytes path makes the URL reconstruction itself raise.
+        (None, b"/v1/chat/completions"),
+    ],
+)
+def test_urllib3_classification_failure_sends_the_request_unrecorded(
+    writer: CapsuleWriter, recorder: EventRecorder, registry: Any, path: Any,
+) -> None:
+    from novafabric.capture.hooks import _urllib3
+
+    hook = _urllib3.Urllib3Hook(writer, SPAN, registry=registry)
+    pool = types.SimpleNamespace(scheme="https", host="api.openai.com", port=443)
+    resp = MagicMock(status=200)
+    original = MagicMock(return_value=resp)
+    assert hook._wrapped_urlopen(pool, "POST", path, original=original, body=b"{}") is resp
+    original.assert_called_once_with("POST", path, body=b"{}")
+    assert recorder.drop_counts.get(MODEL_CALLS, 0) == 1
+
+
+def test_httpx_classification_failure_sends_the_request_unrecorded(
+    writer: CapsuleWriter, recorder: EventRecorder,
+) -> None:
+    from novafabric.capture.hooks import _httpx
+
+    hook = _httpx.HttpxHook(writer, SPAN, registry=_ExplodingRegistry())  # type: ignore[arg-type]
+    req = MagicMock()
+    req.url.__str__ = MagicMock(return_value="https://api.openai.com/v1/x")
+    resp = MagicMock(status_code=200)
+    assert hook._wrapped_send(req, original=MagicMock(return_value=resp)) is resp
+    assert recorder.drop_counts.get(MODEL_CALLS, 0) == 1
+
+
+class _CreateKeywordOnly:
+    """An SDK resource whose ``create`` is keyword-only, as openai's and anthropic's are."""
+
+    def create(self, *, model: str) -> str:
+        return f"created {model}"
+
+
+def _patched_create(hook_name: str, writer: CapsuleWriter) -> Any:
+    original = _CreateKeywordOnly.create
+    if hook_name == "openai":
+        from novafabric.capture.hooks._openai import OpenAIHook
+
+        return OpenAIHook(writer, SPAN)._wrap(original, "chat", False)
+    from novafabric.capture.hooks._anthropic import AnthropicHook
+
+    return AnthropicHook(writer, SPAN)._wrap(original, False)
+
+
+@pytest.mark.parametrize("hook_name", ["openai", "anthropic"])
+def test_sdk_hook_positional_arguments_reach_the_sdk_unchanged(
+    writer: CapsuleWriter, hook_name: str,
+) -> None:
+    """The SDK hooks forwarded ``**kwargs`` only and silently DROPPED positional
+    arguments: a call the SDK rejects (``create`` is keyword-only) succeeded
+    under capture. A positional call now reaches the SDK exactly as written."""
+    resource = _CreateKeywordOnly()
+    with pytest.raises(TypeError) as unhooked:
+        resource.create("gpt-4o", model="m")  # type: ignore[misc]
+    patched = _patched_create(hook_name, writer)
+    with pytest.raises(TypeError) as hooked:
+        patched(resource, "gpt-4o", model="m")
+    assert str(hooked.value) == str(unhooked.value)
+    assert patched(resource, model="m") == "created m"
+
+
+class _HostileStream:
+    """A response whose attribute lookup raises something other than AttributeError."""
+
+    def __getattr__(self, name: str) -> Any:
+        raise _RecorderDown("proxy lookup failed")
+
+
+def test_stream_predicates_never_raise() -> None:
+    from novafabric.capture.hooks._sdk_streams import is_async_stream, is_sync_stream
+
+    assert is_sync_stream(_HostileStream()) is False
+    assert is_async_stream(_HostileStream()) is False
+
+
 # ── the capsule writer serialises what the SDKs hand it ──────────────────────
 
 

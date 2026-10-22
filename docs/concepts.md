@@ -194,6 +194,29 @@ logical calls only (ADR-0305, works today). A capsule captured before this marke
 existed is read with the same rule: readers recognise the old wire-plus-SDK duplicate
 shape. See [Model-call record roles](architecture/run-capsule.md#model-call-record-roles).
 
+**A hook never changes what the call does (works today; ADR-0021).** In particular:
+
+- **Streamed responses are never read by capture.** A wire hook records the call when
+  the response object comes back — for `requests.post(..., stream=True)`,
+  `httpx` `client.stream(...)` / `send(..., stream=True)`, an `aiohttp` response or a
+  `urllib3` `preload_content=False` response, that is when the headers arrive, before
+  the body. The hook does not consume, buffer or wait for the body: the caller gets
+  the response at the same moment as without capture, and iterates the same bytes —
+  an endless server-sent-events stream included. The network event's
+  `response_size_bytes` is the exact length of a body the client library had already
+  read, else the declared `Content-Length`, else `null` (unknown — a chunked or
+  endless stream). Before this fix the `requests` hook read `response.content` to size
+  the event, which drained a streamed body inside `Session.send`, so `send` returned
+  only when the stream ended — never, for an endless one.
+- **Work before the call is fail-open too.** Deciding whether a request is a model
+  call (building its URL, the URL-registry lookup) cannot stop the request: if it
+  fails, the request is sent unrecorded and the loss is counted
+  (`nova_event=capture.record_dropped`).
+- **A positional call reaches the SDK as written.** The OpenAI and Anthropic `create`
+  methods are keyword-only; a call with positional arguments is passed through
+  unrecorded, so the SDK rejects it exactly as it would without capture (the hook
+  used to drop the positional arguments and record the call).
+
 Patches are removed after the run. If an SDK is not installed, its hook is
 silently skipped. Capture works even if none of the AI SDKs are present — the
 capsule is still written with environment, stdout/stderr, and timing.

@@ -1599,9 +1599,29 @@ def test_safe_response_size_handles_unread_and_none() -> None:
         def content(self):  # type: ignore[no-untyped-def]
             raise RuntimeError("ResponseNotRead")
 
+    class _Buffered:
+        """A body the library already read (requests/httpx keep it in ``_content``)."""
+
+        def __init__(self) -> None:
+            self._content = b"abc"
+
+    class _Streamed:
+        """A streamed body: reading ``.content`` would drain it -- must never happen."""
+
+        headers = {"Content-Length": "42"}
+
+        @property
+        def content(self):  # type: ignore[no-untyped-def]
+            raise AssertionError("safe_response_size read a streamed body")
+
+    class _Chunked(_Streamed):
+        headers = {"Transfer-Encoding": "chunked"}
+
     assert safe_response_size(None) is None
     assert safe_response_size(_Unread()) is None
-    assert safe_response_size(MagicMock(content=b"abc")) == 3
+    assert safe_response_size(_Buffered()) == 3
+    assert safe_response_size(_Streamed()) == 42  # declared, never read
+    assert safe_response_size(_Chunked()) is None  # unknown, never read
 
 
 # ── ADR-0209 D2.4: aiohttp / urllib3 NetworkEvent parity ─────────────────────

@@ -44,7 +44,11 @@ from urllib.parse import urlparse
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder, get_current_writer
-from novafabric.capture.hooks._fail_open import MODEL_CALLS_STREAM, fail_open
+from novafabric.capture.hooks._fail_open import (
+    MODEL_CALLS_STREAM,
+    fail_open,
+    note_capture_failure,
+)
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
@@ -157,7 +161,7 @@ class HttpxHook:
     def _status_code(response: Any, error_status: int | None) -> int:
         if error_status is not None:
             return error_status
-        if not response:
+        if response is None:
             return 0
         status = getattr(response, "status_code", 200)
         return status if isinstance(status, int) else 200
@@ -229,7 +233,8 @@ class HttpxHook:
             return False
         try:
             return self._registry.is_known(str(request.url))
-        except Exception:  # noqa: BLE001 -- capture must never block the workload
+        except Exception as exc:  # noqa: BLE001 -- capture must never block the workload
+            note_capture_failure(self.library, MODEL_CALLS_STREAM, exc)
             return False
 
     def _wrapped_send(self, request: Any, original: Any = None, **kwargs: Any) -> Any:

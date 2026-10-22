@@ -90,7 +90,13 @@ def test_without_a_token_a_non_localhost_host_header_is_refused() -> None:
     acc.ingest_capsule_events.assert_not_called()
 
 
-@pytest.mark.parametrize("header", ["X-Forwarded-For", "Forwarded", "X-Real-IP"])
+@pytest.mark.parametrize(
+    "header",
+    ["X-Forwarded-For", "Forwarded", "X-Real-IP",
+     # Proxies that add no client-address header still mark the hop: Squid and
+     # Apache add Via / X-Forwarded-Host, Traefik and Envoy X-Forwarded-Proto.
+     "Via", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "X-Forwarded-Server"],
+)
 def test_without_a_token_a_proxied_request_is_refused(header: str) -> None:
     """A reverse proxy on this host makes every remote caller look like loopback."""
     acc = _acc()
@@ -116,6 +122,33 @@ def test_without_a_token_startup_warns_loudly(caplog: pytest.LogCaptureFixture) 
         "NOVA_COLLECTOR_TOKEN" in r.getMessage() and r.levelno >= logging.WARNING
         for r in caplog.records
     ), "an unauthenticated collector must say so at startup"
+
+
+def test_without_a_token_startup_warns_about_header_less_proxies(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Local mode cannot detect a same-host reverse proxy that adds no forwarding
+    header: nginx's ``proxy_pass http://127.0.0.1:8090`` connects from loopback,
+    sends ``Host: 127.0.0.1:8090`` and no ``X-Forwarded-*`` by default, so every
+    remote caller looks local. The operator must be told, where they will see it."""
+    with caplog.at_level(logging.WARNING, logger="novafabric.collector_app.app"):
+        create_collector_app(accumulator=_acc())
+    messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any(
+        "set NOVA_COLLECTOR_TOKEN whenever anything proxies to the collector" in m
+        for m in messages
+    ), messages
+
+
+def test_a_header_less_same_host_proxy_is_indistinguishable_from_a_local_caller() -> None:
+    """Documents the residual the warning exists for: a same-host proxy that adds
+    no header (nginx defaults) reaches the collector as a loopback caller with a
+    localhost Host. Local mode serves it; only a token closes this."""
+    acc = _acc()
+    resp = _client(acc, base_url="http://127.0.0.1:8090").post(
+        "/capsule", json=_payload(), headers={"Connection": "close"}
+    )
+    assert resp.status_code == 200
 
 
 def test_with_a_token_startup_does_not_warn(

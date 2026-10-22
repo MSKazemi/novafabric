@@ -301,7 +301,7 @@ nova capture \
 | `workdir` | no | Container working directory |
 | `user` | no | `--user` value (e.g. `1000:1000`); recommended to avoid root-owned capsule files |
 | `extra_volumes` | no | List of `host:container[:opts]` mount strings |
-| `extra_env` | no | Dict of additional env vars for the container |
+| `extra_env` | no | Dict of additional env vars for the container. Passed as `docker run -e NAME`, never `-e NAME=VALUE` — see below |
 
 **Project-level defaults** in `.novafabric/runners.yaml`:
 
@@ -323,6 +323,30 @@ The runner only forwards `NOVAFABRIC_*` environment variables and any keys
 specified in `extra_env` into the container. It does not pass through the
 full host environment, which would risk leaking credentials into the container
 at runtime.
+
+**Values never go on `docker run`'s command line (works today).** Each variable
+is passed as `-e NAME`, and its value is placed in the environment of the
+`docker` client process, from which Docker copies it into the container. A
+process's argv is readable by every user on the host (`ps`,
+`/proc/<pid>/cmdline`) for as long as the container runs; its environment is
+readable only by the same user and root. Before this change the runner ran
+`docker run -e OPENAI_API_KEY=sk-…`, so an `extra_env` API key was visible to
+every local user. The same applies to eval containers (`run_eval_container`).
+
+What is still visible:
+
+- `docker inspect <container>` shows the container's environment, values
+  included, to anyone who can reach the Docker daemon (on most hosts that is
+  root-equivalent already).
+- `--runner-option extra_env=K=V` on the `nova capture` command line is itself
+  in `nova capture`'s argv; put the value in `.novafabric/runners.yaml` (mode
+  0600) instead.
+- A variable the `docker` client itself reads — `PATH`, `HOME`, `USER`,
+  `TMPDIR`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, the proxy
+  variables, and anything starting with `DOCKER_`, `BUILDKIT_` or `LD_` — cannot
+  be placed in the client's environment without changing which daemon, binary
+  or configuration the client uses, so such a name is still passed as
+  `-e NAME=VALUE`. Never put a credential in one of these names.
 
 ### 3.3 SLURM cluster (SlurmRunner)
 
@@ -1059,6 +1083,25 @@ request.
 | `NOVAFABRIC_SERVER_METRICS_EXEMPT` | `false` | Exempt `/metrics` from auth |
 | `NOVA_BUILD_SHA` | — | Build SHA reported in observability output |
 | `NOVA_COLLECTOR_METRICS_URL` | `http://localhost:9464/metrics` | Where the dashboard scrapes collector metrics |
+
+### Cluster collector receiver (`collector_app`)
+
+Read by `novafabric.collector_app:create_collector_app` (the Python `POST /capsule`
+receiver), not by `nova server`. Full walkthrough:
+[cluster-scale tutorial](tutorials/cluster-scale.md#running-the-python-collector-receiver-securely).
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVA_COLLECTOR_TOKEN` | unset (local mode) | Every `POST /capsule` must send `X-Nova-Token: <token>`, from any address. Unset: only loopback callers with a localhost `Host` and no proxy header are served, everyone else gets `403` |
+| `NOVA_COLLECTOR_TENANT` | `default` | The tenant the caller is authenticated as; every event is stored under it |
+
+> **⚠ Set `NOVA_COLLECTOR_TOKEN` whenever anything proxies to the collector.**
+> Local mode refuses a request carrying `Forwarded`, `X-Forwarded-*`, `X-Real-IP`
+> or `Via`, but it cannot see a same-host reverse proxy that adds none of them —
+> nginx's `proxy_pass http://127.0.0.1:8090;` with its defaults connects from
+> loopback, sends `Host: 127.0.0.1:8090` and no forwarding header. Behind such a
+> proxy **every remote caller looks local** and is served without authentication.
+> No setting other than a token closes this; the startup warning says so too.
 
 ### API shape
 
