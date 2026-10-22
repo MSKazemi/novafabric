@@ -33,6 +33,7 @@ from novafabric.evidence.completeness import (
     compute_completeness,
 )
 from novafabric.evidence.reperformance import (
+    NotAttestableError,
     ReperformanceAttestation,
     build_reperformance_attestation,
     sign_reperformance,
@@ -245,7 +246,11 @@ def evidence_attest_replay_cmd(
     base = output_dir or (Path.cwd() / ".novafabric" / "replays")
     flags = ReplayFlags(mode=mode.value, output_dir=base)
     result = ReplayEngine(capsule_dir=capsule_dir, flags=flags, base_dir=base).run()
-    attestation = build_reperformance_attestation(capsule_dir, result)
+    try:
+        attestation = build_reperformance_attestation(capsule_dir, result)
+    except NotAttestableError as exc:
+        console.print(f"[red]✗[/red] {exc} — nothing was signed.")
+        raise typer.Exit(code=1) from exc
     envelope = sign_reperformance(attestation, signer)
     path = output or Path(f"reperformance-{capsule_dir.name}.intoto.json")
     _write_output(path, json.dumps(envelope, indent=2) + "\n")

@@ -80,7 +80,8 @@ def verify_cmd(
             "--public-key",
             help=(
                 "PEM-encoded ed25519 public key of the export signer "
-                "(required when verifying an export-manifest.json)."
+                "(required when verifying an export-manifest.json; for an Evidence "
+                "Bundle ZIP, the key every attestation must be signed with)."
             ),
         ),
     ] = None,
@@ -246,7 +247,11 @@ def verify_cmd(
             console.print(f"[red]Error:[/red] bundle not found: {capsule_dir}")
             raise typer.Exit(code=1)
         _verify_evidence_bundle(
-            capsule_dir, tsa_ca_bundle=tsa_ca_bundle, crl_dir=crl_dir, crl_strict=crl_strict
+            capsule_dir,
+            tsa_ca_bundle=tsa_ca_bundle,
+            crl_dir=crl_dir,
+            crl_strict=crl_strict,
+            public_key=public_key,
         )
         return
 
@@ -1103,8 +1108,9 @@ def _verify_evidence_bundle(
     tsa_ca_bundle: Path | None = None,
     crl_dir: Path | None = None,
     crl_strict: bool = False,
+    public_key: Path | None = None,
 ) -> None:
-    """Recompute every artifact digest recorded in an Evidence Bundle manifest.
+    """Run the bundle's verification recipe: digests, manifest_hash, signatures, subjects.
 
     With ``tsa_ca_bundle`` (ADR-0070 §1, experimental) the bundle's
     ``manifest.dsse.tsr`` is also verified against that TSA CA — signature, EKU,
@@ -1115,11 +1121,16 @@ def _verify_evidence_bundle(
     manifest itself carries a ``manifest_hash`` over the artifact list. Checking
     both is what turns "we wrote the hashes down" into a verification: a single
     edited byte anywhere in the bundle changes one digest and is reported by
-    name. Exits 1 on any mismatch.
+    name. Every attestation's DSSE signature is verified under the key the bundle
+    ships, and its subject is checked against the manifest
+    (:func:`novafabric.evidence.bundle_verify.verify_bundle_signatures`); with
+    ``public_key`` the signer must also be that key. Exits 1 on any failure.
     """
     import hashlib
     import json
     import zipfile
+
+    from novafabric.evidence.bundle_verify import verify_bundle_signatures
 
     try:
         zf = zipfile.ZipFile(bundle_path)
@@ -1161,6 +1172,12 @@ def _verify_evidence_bundle(
         # Files present in the ZIP that the manifest never accounted for: an
         # addition is a modification too, so it must not pass silently.
         unlisted = sorted(names - {a.get("path", "") for a in artifacts} - {"manifest.json"})
+        signed = verify_bundle_signatures(
+            manifest,
+            zf.read,
+            names,
+            trusted_public_pem=public_key.read_bytes() if public_key is not None else None,
+        )
         tsa_check = (
             _bundle_tsa_check(zf, names, tsa_ca_bundle, crl_dir=crl_dir, crl_strict=crl_strict)
             if tsa_ca_bundle is not None
@@ -1183,8 +1200,30 @@ def _verify_evidence_bundle(
     else:
         _print_check("No unlisted files", True)
 
+    _print_check("manifest_hash matches the manifest", signed.manifest_hash_ok)
+    _print_check(
+        f"Attestation signatures ({signed.attestations_checked} verified)",
+        signed.attestations_checked > 0 and not signed.bad_signatures and not signed.unsigned,
+    )
+    for rel in signed.bad_signatures:
+        console.print(f"    [red]✗ bad signature:[/red] {rel}")
+    for rel in signed.unsigned:
+        console.print(f"    [red]✗ unsigned attestation:[/red] {rel}")
+    _print_check("Attestation subjects match the manifest", not signed.bad_subjects)
+    for rel in signed.bad_subjects:
+        console.print(f"    [red]✗ subject:[/red] {rel}")
+    for err in signed.errors:
+        console.print(f"    [red]✗[/red] {err}")
+    if public_key is not None:
+        _print_check("Signer is the --public-key", not signed.signer_not_trusted)
+    elif signed.signer_fingerprints:
+        console.print(
+            "  [yellow]![/yellow] signer not pinned: signatures verify under the key shipped "
+            f"in the bundle ({', '.join(signed.signer_fingerprints)}); pass --public-key "
+            "to require a known signer"
+        )
     tsa_ok = _print_tsa_check(tsa_check)
-    ok = not mismatched and not missing and not unlisted and tsa_ok
+    ok = not mismatched and not missing and not unlisted and tsa_ok and signed.ok
     console.print(
         f"\nartifacts_ok={not mismatched}, complete={not missing}, no_extras={not unlisted}"
     )

@@ -89,6 +89,9 @@ class _FakeEngine:
             duration_ms=5000,
             policy_flags_used=[],
             env_warnings=[],
+            # The real engine always reports eligibility in exact mode; the
+            # attestation refuses an exact verdict without it.
+            exact_eligible=True if self._mode == "exact" else None,
         )
 
 

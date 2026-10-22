@@ -27,6 +27,10 @@ REPERFORMANCE_PREDICATE_TYPE = "https://novafabric.io/reperformance/v0"
 MatchVerdict = Literal["exact", "semantic-match", "mismatch"]
 
 
+class NotAttestableError(ValueError):
+    """The replay result cannot honestly back a signed verdict; nothing is signed."""
+
+
 class ReperformanceAttestation(BaseModel):
     """Signed claim of a completed replay and its outcome (ADR-0087(c))."""
 
@@ -79,7 +83,21 @@ def build_reperformance_attestation(
     replayer_version: str = "unknown",
     notes: str | None = None,
 ) -> ReperformanceAttestation:
-    """Build the attestation from a completed :class:`ReplayResult`."""
+    """Build the attestation from a completed :class:`ReplayResult`.
+
+    Raises:
+        NotAttestableError: for an ``exact``-mode result whose ``exact_eligible`` is
+            not ``True``. Exact mode re-executes nothing; it only checks the run's
+            preconditions, so an ineligible (or unassessed) result must not become a
+            signed ``match: exact`` (ADR-0269 option B: refuse to attest what was
+            not performed).
+    """
+    if result.mode == "exact" and result.exact_eligible is not True:
+        reasons = "; ".join(result.exact_reasons or []) or "eligibility was not established"
+        raise NotAttestableError(
+            f"exact-mode replay of {result.replay_of_run_id} is not eligible for an "
+            f"exact verdict: {reasons}"
+        )
     manifest_path = capsule_dir / "capsule.yaml"
     capsule_hash = hashlib.sha256(
         manifest_path.read_bytes() if manifest_path.exists() else b""

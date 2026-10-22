@@ -22,6 +22,7 @@ artifact, a missing one, and an unlisted extra.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import zipfile
@@ -30,6 +31,9 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
+from novafabric.evidence.bundle import PREDICATE_RUN, _canonical_manifest_hash
+from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
+from novafabric.evidence.signing import LocalSigner, generate_keypair
 
 runner = CliRunner()
 
@@ -39,13 +43,45 @@ def _digest(data: bytes) -> str:
 
 
 def _make_bundle(path: Path, files: dict[str, bytes]) -> Path:
+    """A minimal schema-shaped bundle: the files, one signed run attestation, manifest_hash.
+
+    ``nova verify`` also checks signatures, subjects and ``manifest_hash``
+    (``test_verify_evidence_bundle_signatures.py``), so a bundle without them is not
+    "intact"; this helper adds exactly what the format requires and nothing else.
+    """
+    capsule_hash = "sha256:" + "cd" * 32
+    priv, _ = generate_keypair(path.parent / f"{path.stem}-keys")
+    signer = LocalSigner(priv)
+    env = dsse_sign(make_intoto_statement(PREDICATE_RUN, "r1", capsule_hash, {}), signer)
+    files = {
+        **files,
+        "attestations/run.intoto.json": json.dumps(env).encode(),
+        "signatures/run.sig": base64.b64decode(env["signatures"][0]["sig"]),
+        "signatures/run.cert": signer.public_pem,
+    }
     manifest = {
         "bundle_id": "bundle-test-001",
         "bundle_format": "novafabric-evidence-bundle",
+        "subject": {"kind": "run-capsule", "run_id": "r1", "capsule_hash": capsule_hash},
         "artifacts": [
             {"path": name, "sha256": _digest(data)} for name, data in files.items()
         ],
+        "attestations": [
+            {
+                "path": "attestations/run.intoto.json",
+                "predicate_type": PREDICATE_RUN,
+                "subject_hashes": [capsule_hash],
+            }
+        ],
+        "signatures": [
+            {
+                "envelope_path": "attestations/run.intoto.json",
+                "signature_path": "signatures/run.sig",
+                "certificate_path": "signatures/run.cert",
+            }
+        ],
     }
+    manifest["manifest_hash"] = _canonical_manifest_hash(manifest)
     with zipfile.ZipFile(path, "w") as zf:
         for name, data in files.items():
             zf.writestr(name, data)
@@ -70,7 +106,7 @@ def test_intact_bundle_passes(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "PASSED" in result.output
-    assert "3 recomputed" in result.output
+    assert "6 recomputed" in result.output  # 3 files + attestation, signature, key
 
 
 def test_a_modified_artifact_is_caught_and_named(tmp_path: Path) -> None:

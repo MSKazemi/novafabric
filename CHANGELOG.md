@@ -62,6 +62,23 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova verify <bundle>.zip` now checks signatures, `manifest_hash` and subjects (security).**
+  It used to recompute artifact digests only, so a bundle whose signed attestation had been
+  edited — with the new digest written back into `manifest.json` — verified as PASSED, even
+  with the DSSE signature broken. The verifier now runs the bundle's whole verification recipe:
+  `manifest_hash` is recomputed, every attestation's DSSE signature is verified under the key
+  in its `signatures[]` entry (and must match the detached `.sig`), and each statement's
+  subject must equal the manifest's `subject_hashes` (a run statement's, the manifest's
+  `capsule_hash`). The key ships inside the bundle, so on its own a pass proves internal
+  consistency, not identity: `--public-key` now pins the signer, and without it the output
+  says the signer is not pinned. Malformed or hostile manifests, envelopes, certificates and
+  signed statements are reported, never raised on (`evidence/bundle_verify.py`). Bundles
+  exported by `nova export-evidence` verify unchanged.
+- **`nova evidence attest-replay --mode exact` no longer signs `match: exact` for an ineligible
+  run (security).** Exact mode re-executes nothing; it reports whether the recorded run meets
+  the exact-replay preconditions in `exact_eligible`. An ineligible (or unassessed) result is
+  now refused with `NotAttestableError` and exit 1, and nothing is signed — the same rule
+  session replay already applied (ADR-0269 option B, "refuse to attest what was not performed").
 - **The container eval suites' docs and comments no longer claim a published default image
   or a "host-env" fallback.** GAIA, AgentBench, MMLU, SWE-bench and TruthfulQA run only
   with an image and `sha256:` digest you supply: no eval image is published, the default

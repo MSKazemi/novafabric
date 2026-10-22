@@ -20,6 +20,7 @@ Acceptance criteria:
 
 from __future__ import annotations
 
+import base64
 import datetime
 import hashlib
 import json
@@ -31,6 +32,9 @@ from cryptography import x509
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
+from novafabric.evidence.bundle import PREDICATE_RUN, _canonical_manifest_hash
+from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
+from novafabric.evidence.signing import LocalSigner, generate_keypair
 from novafabric.trust.novaseal import KeyConfig, NovaSeal
 from novafabric.trust.novaseal.config import SealConfigError, _parse_profile
 
@@ -292,18 +296,69 @@ def test_config_bounds_tsa_ca_certs(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _bundle(tmp_path: Path, tsr: bytes | None, attestation: bytes | None = b"{}") -> Path:
+_CAPSULE_HASH = "sha256:" + "cd" * 32
+_SIGNED_RUN: dict[Path, tuple[bytes, bytes, bytes]] = {}
+
+
+def _signed_run(tmp_path: Path) -> tuple[bytes, bytes, bytes]:
+    """A real signed run attestation for ``tmp_path``: (envelope, detached sig, key PEM).
+
+    ``nova verify`` checks attestation signatures and ``manifest_hash`` as well as the
+    TSA token, so the TSA cases run on a schema-shaped signed bundle.
+    """
+    if tmp_path not in _SIGNED_RUN:
+        priv, _ = generate_keypair(tmp_path / "bundle-keys")
+        signer = LocalSigner(priv)
+        env = dsse_sign(make_intoto_statement(PREDICATE_RUN, "r1", _CAPSULE_HASH, {}), signer)
+        _SIGNED_RUN[tmp_path] = (
+            json.dumps(env).encode(),
+            base64.b64decode(env["signatures"][0]["sig"]),
+            signer.public_pem,
+        )
+    return _SIGNED_RUN[tmp_path]
+
+
+def _bundle(tmp_path: Path, tsr: bytes | None, attestation: bytes | None = None) -> Path:
+    envelope, sig, cert = _signed_run(tmp_path)
+    if attestation is None and tsr is None:
+        attestation = envelope
     files: dict[str, bytes] = {}
     if attestation is not None:
         files["attestations/run.intoto.json"] = attestation
+        files["signatures/run.sig"] = sig
+        files["signatures/run.cert"] = cert
     if tsr is not None:
         files["manifest.dsse.tsr"] = tsr
     artifacts = [
         {"path": p, "sha256": "sha256:" + hashlib.sha256(b).hexdigest()} for p, b in files.items()
     ]
+    manifest: dict[str, object] = {
+        "bundle_id": "b1",
+        "subject": {"kind": "run-capsule", "run_id": "r1", "capsule_hash": _CAPSULE_HASH},
+        "artifacts": artifacts,
+        "attestations": [
+            {
+                "path": "attestations/run.intoto.json",
+                "predicate_type": PREDICATE_RUN,
+                "subject_hashes": [_CAPSULE_HASH],
+            }
+        ]
+        if attestation is not None
+        else [],
+        "signatures": [
+            {
+                "envelope_path": "attestations/run.intoto.json",
+                "signature_path": "signatures/run.sig",
+                "certificate_path": "signatures/run.cert",
+            }
+        ]
+        if attestation is not None
+        else [],
+    }
+    manifest["manifest_hash"] = _canonical_manifest_hash(manifest)
     path = tmp_path / "evidence.zip"
     with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr("manifest.json", json.dumps({"bundle_id": "b1", "artifacts": artifacts}))
+        zf.writestr("manifest.json", json.dumps(manifest))
         for name, data in files.items():
             zf.writestr(name, data)
     return path
@@ -315,7 +370,7 @@ def _zip_invoke(path: Path, *extra: str) -> tuple[int, str]:
 
 
 def test_evidence_bundle_tsa_check(tmp_path: Path, tsa: TsaNode, tsa_ca: Node) -> None:
-    attestation = b'{"payload": "x"}'
+    attestation = _signed_run(tmp_path)[0]
     good = make_tsr(tsa, TokenSpec(digest=hashlib.sha256(attestation).digest()))
     bundle = str(_pem(tmp_path, tsa_ca))
     code, out = _zip_invoke(_bundle(tmp_path, good, attestation), "--tsa-ca-bundle", bundle)
