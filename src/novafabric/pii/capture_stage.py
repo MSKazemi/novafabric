@@ -26,7 +26,7 @@ every literal occurrence of the subject id itself) and replaces each span with a
 ``redaction_manifest.json`` (field path, rule, subject HMAC, ``protection``), which is
 what ``nova pii status`` and ``nova pii erase`` read.
 
-Failure posture (CLAUDE.md: never block the workload; never fall back to plaintext):
+Failure posture (never block the workload; never fall back to plaintext):
 
 * the DEK cannot be created or used → every span is **masked** instead
   (``[REDACTED:<subject-hmac>:<rule>]``, data-losing), a structured warning is logged
