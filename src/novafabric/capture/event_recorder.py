@@ -458,6 +458,17 @@ class EventRecorder:
             # the fact that an event was lost, either.
             self._note_drop(filename)
 
+    def note_drop(self, stream: str) -> None:
+        """Count one record that a capture hook failed to persist to *stream*.
+
+        For hooks that write through the capsule writer rather than this
+        recorder (e.g. the MCP hook's ``tool-calls.jsonl`` records): the loss
+        joins :attr:`drop_counts` and is written by :meth:`finalize_health`
+        like the recorder's own drops — when this recorder is the one
+        finalized. Never raises; warns once per stream.
+        """
+        self._note_drop(stream)
+
     @property
     def drop_counts(self) -> dict[str, int]:
         """Events dropped by fail-open handling, keyed by JSONL stream."""

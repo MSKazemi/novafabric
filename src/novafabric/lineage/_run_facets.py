@@ -29,6 +29,8 @@ from typing import Any
 
 import jsonschema  # type: ignore[import-untyped]
 
+from novafabric._jsonschema_offline import offline_validator
+
 _FACET_PRODUCER = "https://novafabric.io"
 _SCHEMA_BASE = "https://novafabric.dev/schemas/ol"
 
@@ -109,7 +111,7 @@ def _validate(key: str, facet: dict[str, Any]) -> dict[str, Any]:
     schema = _FACET_SCHEMAS.get(key)
     if schema is not None:
         try:
-            jsonschema.Draft202012Validator(schema).validate(facet)
+            offline_validator(schema).validate(facet)
         except jsonschema.ValidationError as exc:  # pragma: no cover - message passthrough
             raise FacetValidationError(f"{key} facet invalid: {exc.message}") from exc
     return facet

@@ -6098,6 +6098,13 @@ nova eval offline --capsule ./my-capsule --check metamorphic --spec check-spec.y
 Merkle root (see `nova eval score`). Because the capsule is already on disk, these checks spend **zero
 tokens** — they are pure arithmetic/validation over recorded events.
 
+The `contract` schema is validated **offline**: a `$ref` resolves only inside the `--schema` file
+itself (`#/$defs/...`, anchors, embedded `$id` subschemas) or to the bundled JSON Schema
+meta-schemas. A `$ref` to anything else — `http(s)://`, `file://`, a sibling file, or a URI relative
+to a remote `$id` — is never fetched or read; when a record reaches one, the command exits **2**
+with a `--schema` usage error and emits no score (inline the referenced definitions under `$defs`
+instead).
+
 The `metamorphic` check is driven by a declarative check-spec
 ([`schemas/features/metamorphic-check-v0.schema.json`](../schemas/features/metamorphic-check-v0.schema.json)):
 records whose *input* collapses to the same value under `transform` form metamorphic pairs, and every
@@ -6609,7 +6616,7 @@ capsule directories only:
 
 | Option | Default | Effect |
 |---|---|---|
-| `--schemas` | off | Also validate each tool call's `arguments`/`result` against its declared `arguments_schema_ref`/`result_schema_ref` JSON Schemas and print a conformance summary. Report-only: exit 0 even on violations. Records with no schema_ref are counted as `null` ("no schema declared" — not a failure); unresolvable refs are reported, never fatal. Schema resolution is **local-only** (relative refs inside the capsule directory or absolute local paths; `http(s)://` refs are never fetched). |
+| `--schemas` | off | Also validate each tool call's `arguments`/`result` against its declared `arguments_schema_ref`/`result_schema_ref` JSON Schemas and print a conformance summary. Report-only: exit 0 even on violations. Records with no schema_ref are counted as `null` ("no schema declared" — not a failure); unresolvable refs are reported, never fatal. Schema resolution is **local-only** (relative refs inside the capsule directory or absolute local paths; `http(s)://` refs are never fetched). The same holds for every `$ref`/`$dynamicRef` *inside* a schema, at capture time and here: only refs within the schema document and the bundled JSON Schema meta-schemas resolve; a ref to any other URI (`http(s)://`, `file://`, or relative to a remote `$id`) is never retrieved, and that payload's verdict is `null` with a `schema-unresolved` error — never a crash, never a network request. |
 | `--fail-on-schema-violation` | off | With `--schemas`: exit non-zero if any checked payload violates its schema (CI gate). |
 | `--write` | off | With `--schemas`: persist the computed `schema_validation` verdict blocks back into `tool-calls.jsonl` (backfill capsules captured before this feature; `checked_at` records the backfill time). |
 
