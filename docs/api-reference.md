@@ -238,7 +238,7 @@ always reported as a gap, never fabricated. Each source is capped
 | `GET` | `/api/assets/{asset_id}/eval-history` | eval history endpoint |
 | `POST` | `/api/assets/{asset_id}/promote` | Promote by UUID — resolves name+version from the registry then delegates (same ADR-0312 gate). |
 | `GET` | `/api/assets/{name}/diff` | asset spec diff endpoint |
-| `POST` | `/api/assets/{name}/rollback` | rollback asset endpoint |
+| `POST` | `/api/assets/{name}/rollback` | Roll back to the most recent version the registry's status history shows was in production (ADR-0312 D1); never to a version without production history. 409 when there is none; a gated target without a `promote_direct` allow is 403. |
 | `DELETE` | `/api/assets/{name}/{version}` | Hard-delete an asset from the registry (nova unregister). |
 | `GET` | `/api/assets/{name}/{version}` | get asset endpoint |
 | `POST` | `/api/assets/{name}/{version}/eval` | eval asset endpoint |
@@ -286,7 +286,7 @@ always reported as a gap, never fabricated. Each source is capped
 | `GET` | `/api/compliance/audit/map` | List evidence checkers for a compliance profile. |
 | `POST` | `/api/compliance/audit/report` | Run compliance audit against a capsule and return a coverage report. |
 | `POST` | `/api/compliance/audit/verify` | Validate the structure of an audit report JSON-LD (nova audit verify). |
-| `POST` | `/api/compliance/erasure/request` | **Experimental — works today (ADR-0210).** (Makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314.) Execute a GDPR Art.17 erasure request through the real DEK destruction machinery (`DEKStore.erase_subject`, same code path as `nova pii erase`). Safe-mutations gated: body must carry `confirmed: true` (400 otherwise, nothing mutated). Persists the request PENDING in `$NOVAFABRIC_HOME/erasure.db`, executes synchronously, returns the terminal state (`COMPLETED`/`DEFERRED`/`FAILED`) with a receipt + `receipt_sha256`. Gated on crypto-shredding's own prerequisite: when the DEK store cannot be loaded → 409 `{error: "crypto_shred_unavailable", reason}`. `NOVA_CAP003_ENABLED` (cap-003, the dual-object split) does **not** gate it; `cap003_enabled` is reported for information only. |
+| `POST` | `/api/compliance/erasure/request` | **Experimental — works today (ADR-0210).** (Makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314.) Execute a GDPR Art.17 erasure request through the real DEK destruction machinery (`DEKStore.erase_subject`, same code path as `nova pii erase`). Safe-mutations gated: body must carry `confirmed: true` (400 otherwise, nothing mutated). Persists the request PENDING in `$NOVAFABRIC_HOME/erasure.db`, executes synchronously, returns the terminal state (`COMPLETED`/`DEFERRED`/`FAILED`/`HELD`) with a receipt + `receipt_sha256`. **Legal holds win (GDPR Art.17(3)(e)):** while any legal hold is active the DEK is kept and the request ends `HELD` → 409 `{error: "legal_hold_active", erased: false}` with an `ErasureHeldReceipt` naming the holds and held capsules. Gated on crypto-shredding's own prerequisite: when the DEK store cannot be loaded → 409 `{error: "crypto_shred_unavailable", reason}`. `NOVA_CAP003_ENABLED` (cap-003, the dual-object split) does **not** gate it; `cap003_enabled` is reported for information only. |
 | `GET` | `/api/compliance/erasure/status` | **Experimental — works today (ADR-0210).** List persisted GDPR erasure requests from `erasure.db`, newest first (`?subject_id=` exact filter, `?limit=`, default 200). Rows are hash-only at top level (`subject_sha256`); receipts appear verbatim. Empty queue returns `requests: []` honestly. |
 | `POST` | `/api/compliance/euaiact/export` | Export EU AI Act Art.12 structured log records (ADR-0076). |
 | `GET` | `/api/compliance/euaiact/status` | Return EU AI Act Art.12 compliance configuration (ADR-0076). |
@@ -300,7 +300,7 @@ always reported as a gap, never fabricated. Each source is capped
 | `POST` | `/api/compliance/export/ropa` | Export GDPR Art.30 Records of Processing Activities (RoPA) — nova export-ropa. |
 | `POST` | `/api/compliance/export/{kind}` | Run one registry exporter — the same builder its CLI command calls. |
 | `GET` | `/api/compliance/nis2` | Build and return a NIS2 incident report as JSON. |
-| `POST` | `/api/compliance/pii/erase` | Destroy a data subject's DEK — nova pii erase (**experimental**: makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314). |
+| `POST` | `/api/compliance/pii/erase` | Destroy a data subject's DEK — nova pii erase (**experimental**: makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314). While any legal hold is active the DEK is kept: 409 `{error: "legal_hold_active", erased: false, receipt}` (GDPR Art.17(3)(e)). |
 | `GET` | `/api/compliance/subject-proof` | Return GDPR Art. 17 redaction proof for a data subject. |
 | `GET` | `/api/governance/classify` | Classify an AI system risk tier inferred from a Run Capsule. |
 | `POST` | `/api/governance/classify-manual` | Classify a manually described AI system — nova classify run. |

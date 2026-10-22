@@ -278,11 +278,25 @@ def test_protect_json_and_unprotect() -> None:
     assert record["protected"] is True
     assert record["required_approvals"] == 2
 
+    # Un-protecting a protected label is maker-checker (ADR-0114 Amendment 2):
+    # proposed by one identity, applied after `required_approvals` (2) checkers.
     unprotect = runner.invoke(
-        app, ["label", "protect", "prompt:triage", "production", "--unprotect"]
+        app,
+        ["label", "protect", "prompt:triage", "production", "--unprotect",
+         "--identity", "alice", "--json"],
     )
-    assert unprotect.exit_code == 0
-    assert "free again" in unprotect.output
+    assert unprotect.exit_code == 0, unprotect.output
+    change_id = json.loads(unprotect.output)["change_id"]
+    blocked = runner.invoke(app, ["label", "set", "prompt:triage", "production", "2"])
+    assert blocked.exit_code == 1
+    for checker in ("bob", "carol"):
+        approved = runner.invoke(
+            app,
+            ["label", "approve-move", "prompt:triage", "production", change_id,
+             "--identity", checker],
+        )
+        assert approved.exit_code == 0, approved.output
+    assert "applied protection change" in approved.output
     moved = runner.invoke(app, ["label", "set", "prompt:triage", "production", "2"])
     assert moved.exit_code == 0
 

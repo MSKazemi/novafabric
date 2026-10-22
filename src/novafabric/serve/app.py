@@ -3289,17 +3289,40 @@ def create_app(
             )
         from novafabric.registry.service import (
             AssetNotFoundError,
+            DirectPromotionDeniedError,
+            InvalidLifecycleTransitionError,
+            PromotionBlockedError,
             RollbackError,
             rollback_asset,
         )
 
         try:
+            # ADR-0312 D1: only a version with production history is restored
+            # without a policy decision; anything else is gated like a direct
+            # promote, with the authenticated credential as the policy subject.
             result = rollback_asset(
                 name=name,
                 target_version=None,
                 actor=body.actor,
                 db_path=db_path,
+                policy_subject=f"serve:{actor_fp}",
             )
+        except (InvalidLifecycleTransitionError, PromotionBlockedError) as e:
+            audit.append(
+                action="rollback_asset",
+                args={"name": name, "reason": body.reason},
+                cli_equivalent=f"nova rollback {name}",
+                actor_token_fp=actor_fp,
+                result="error",
+                error=str(e),
+            )
+            if isinstance(e, DirectPromotionDeniedError):
+                code = 403
+            elif isinstance(e, InvalidLifecycleTransitionError):
+                code = 409
+            else:
+                code = 412
+            raise HTTPException(status_code=code, detail=str(e)) from e
         except AssetNotFoundError as e:
             audit.append(
                 action="rollback_asset",
@@ -5477,7 +5500,14 @@ def create_app(
                     reason=body.reason,
                     requested_by=actor_fp,
                 )
-            record = eq.execute_request(queue, record, home=home)
+            from novafabric.retention.holds import capsule_base_holds_root
+
+            record = eq.execute_request(
+                queue,
+                record,
+                home=home,
+                hold_roots=(capsule_base_holds_root(capsule_dir),),
+            )
         finally:
             queue.close()
 
@@ -5511,6 +5541,25 @@ def create_app(
             # the queue row is the durable record. Never 500 after a real erase.
             logger.warning("erasure audit-log append failed (non-fatal): %s", exc)
         view = record.api_view()
+        if record.state == eq.STATE_HELD:
+            # GDPR Art.17(3)(e): a legal hold keeps the DEK. Not a success and not
+            # a machinery failure -- a refusal the caller can retry after release.
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "ok": False,
+                    "error": "legal_hold_active",
+                    "erased": False,
+                    "detail": (
+                        f"erasure request {record.request_id} HELD: "
+                        + str((record.receipt or {}).get("reason", "active legal hold"))
+                    ),
+                    "cap003_enabled": _cap003_enabled(),
+                    "crypto_shred_available": True,
+                    "reattached": reattached,
+                    "request": view,
+                },
+            )
         if record.state == eq.STATE_FAILED:
             # A GDPR erasure that did not happen must never read as success.
             # Unknown subject -> 404 (nothing to erase); any other failure of
@@ -7627,7 +7676,7 @@ def create_app(
     @app.post("/api/compliance/pii/erase", dependencies=[Depends(verify_token)])
     async def compliance_pii_erase_endpoint(
         body: dict[str, Any] = Body(...),
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Destroy a data subject's DEK — nova pii erase (experimental, --pii-subject PII)."""
         subject_id: str = body.get("subject_id", "")
         if not subject_id:
@@ -7645,9 +7694,27 @@ def create_app(
                 detail=f"pii.dek.store module not available: {exc}",
             ) from exc
         try:
+            from novafabric.pii.dek.store import ErasureHeldReceipt  # noqa: PLC0415
+            from novafabric.retention.holds import capsule_base_holds_root  # noqa: PLC0415
+
             receipt = open_dek_store().erase_subject(
-                subject_id, capsule_ids, retention_months
+                subject_id,
+                capsule_ids,
+                retention_months,
+                hold_roots=(capsule_base_holds_root(capsule_dir),),
             )
+            if isinstance(receipt, ErasureHeldReceipt):
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "ok": False,
+                        "error": "legal_hold_active",
+                        "subject_id": subject_id,
+                        "erased": False,
+                        "receipt": receipt.model_dump(mode="json"),
+                        "note": receipt.reason,
+                    },
+                )
             erased = isinstance(receipt, ErasureReceipt)
             note = (
                 "DEK destroyed (experimental): PII captured with --pii-subject is now "

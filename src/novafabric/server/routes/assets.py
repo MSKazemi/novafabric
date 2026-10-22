@@ -21,6 +21,7 @@ from novafabric.server.deps import get_config, get_db_path
 from novafabric.server.errors import (
     BadRequestError,
     ConflictError,
+    ForbiddenError,
     NotFoundError,
     PreconditionFailedError,
     ValidationError,
@@ -237,10 +238,11 @@ async def promote_asset(
 
     from novafabric.registry.service import (
         AssetNotFoundError,
+        DirectPromotionDeniedError,
         InvalidLifecycleTransitionError,
         PromotionBlockedError,
+        promote_asset_direct,
     )
-    from novafabric.registry.service import promote_asset as _promote_asset
     from novafabric.registry.store import get_connection, init_schema
     from novafabric.spec.models import AssetStatus
 
@@ -263,19 +265,26 @@ async def promote_asset(
     except ValueError:
         raise BadRequestError(f"invalid to_status: {to_status_raw!r}")
 
+    # ADR-0312 D1: a single-actor promotion, gated exactly like
+    # `nova promote direct`. `production` needs an explicit `promote_direct`
+    # policy allow (403 otherwise); `force` does not bypass it. The policy sees
+    # the authenticated principal, never the caller-chosen `actor` label.
     try:
-        result = _promote_asset(
+        result = promote_asset_direct(
             name=name,
             version=version,
             to_status=target,
             actor=actor,
             force=force,
             db_path=db_path,
+            policy_subject=f"server:{_auth.subject}",
         )
     except AssetNotFoundError as exc:
         raise NotFoundError(str(exc))
     except InvalidLifecycleTransitionError as exc:
         raise ConflictError(str(exc))
+    except DirectPromotionDeniedError as exc:
+        raise ForbiddenError(str(exc), code="promote_direct_denied")
     except PromotionBlockedError as exc:
         raise PreconditionFailedError(str(exc))
 

@@ -1589,8 +1589,9 @@ nova label history prompt:support-reply production # append-only move log, newes
 ### Protect a label — maker-checker moves (ADR-0114)
 
 For a label like `production`, one person should not be able to move it alone.
-Protect it, and every move becomes a two-principal flow (Ed25519-signed; identities
-default to your OS user, and a keyring key is auto-provisioned per `--identity`):
+Protect it, and every move becomes a two-principal flow (Ed25519-signed; each
+`--identity` must name an existing keyring key — `nova promote keygen --identity NAME` —
+that the ADR-0312 signer trust list binds to that identity):
 
 ```bash
 nova label protect prompt:support-reply production
@@ -1621,6 +1622,18 @@ nova label status prompt:support-reply    # protection config + pending/applied 
 an OPA/Rego policy (ADR-0019) on the move. The applied move lands in the ADR-0113
 audit log reusing the move's ULID, so the label history and the maker-checker record
 cross-reference exactly.
+
+Switching the protection off is guarded the same way, so one person cannot unprotect,
+move and re-protect. `--unprotect` (or fewer approvals, or a different `--policy-ref`) on
+a protected label only *proposes* the change; it applies once enough distinct checkers
+approve it:
+
+```bash
+nova label protect prompt:support-reply production --unprotect --identity alice
+# … proposed protection change 01KXN0…; the label stays protected until 1 distinct checker(s) approve
+nova label approve-move prompt:support-reply production 01KXN0… --identity bob
+# ✓ applied protection change 01KXN0… on 'production' (unprotect; approvals: 1)
+```
 
 ---
 

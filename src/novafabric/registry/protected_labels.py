@@ -48,6 +48,8 @@ Invariants (ADR-0114 D1–D3; spec ``the private design/spec/protected-labels-v0
 from __future__ import annotations
 
 import getpass
+import hashlib
+import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -99,6 +101,23 @@ class MoveStateError(LabelError):
 
 class SelfApprovalError(LabelError):
     """SoD violation: the checker matches the maker (identity or keypair)."""
+
+
+class ProtectionRelaxationRequiresApprovalError(LabelError):
+    """Removing or weakening protection on a protected label needs maker-checker.
+
+    Unprotecting, lowering ``required_approvals`` or replacing an existing
+    ``policy_ref`` would let one person switch the two-person rule off, move the
+    label, and switch it back on. Use :func:`propose_protection_change`.
+    """
+
+
+class PendingProtectionChangeExistsError(LabelError):
+    """A pending protection change already exists for this (asset, label)."""
+
+
+class ProtectionChangeNotFoundError(LabelError):
+    """No protection change matches the requested ``change_id``."""
 
 
 _PROTECTED_SCHEMA_SQL = """
@@ -166,6 +185,54 @@ CREATE TRIGGER IF NOT EXISTS trg_asset_label_move_approvals_no_update
 CREATE TRIGGER IF NOT EXISTS trg_asset_label_move_approvals_no_delete
     BEFORE DELETE ON asset_label_move_approvals
     BEGIN SELECT RAISE(ABORT, 'asset_label_move_approvals is append-only'); END;
+
+-- Maker-checker for relaxing a protection (unprotect, fewer approvals, another
+-- policy). base_* snapshot the protection in force when the change was proposed:
+-- its event id (a change applies only on top of exactly that config) and its
+-- required_approvals (the quorum the relaxation needs).
+CREATE TABLE IF NOT EXISTS asset_label_protection_changes (
+    change_id               TEXT PRIMARY KEY,
+    schema_version          TEXT NOT NULL,
+    asset_name              TEXT NOT NULL,
+    label                   TEXT NOT NULL,
+    base_event_id           TEXT NOT NULL,
+    base_required_approvals INTEGER NOT NULL,
+    protected               INTEGER NOT NULL,
+    required_approvals      INTEGER NOT NULL,
+    policy_ref              TEXT,
+    note                    TEXT,
+    proposed_by             TEXT NOT NULL,
+    proposer_key_fp         TEXT NOT NULL,
+    proposer_sig            TEXT NOT NULL,
+    proposed_at             TEXT NOT NULL,
+    state                   TEXT NOT NULL,
+    applied_at              TEXT,
+    applied_event_id        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_asset_label_protection_changes_key
+    ON asset_label_protection_changes(asset_name, label, state);
+CREATE TRIGGER IF NOT EXISTS trg_asset_label_protection_changes_no_delete
+    BEFORE DELETE ON asset_label_protection_changes
+    BEGIN SELECT RAISE(ABORT, 'asset_label_protection_changes rows are never deleted'); END;
+
+CREATE TABLE IF NOT EXISTS asset_label_protection_change_approvals (
+    approval_id     TEXT PRIMARY KEY,
+    change_id       TEXT NOT NULL,
+    approver        TEXT NOT NULL,
+    approver_key_fp TEXT NOT NULL,
+    approver_sig    TEXT NOT NULL,
+    decision        TEXT NOT NULL,
+    note            TEXT,
+    approved_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_asset_label_protection_change_approvals_change
+    ON asset_label_protection_change_approvals(change_id, approved_at);
+CREATE TRIGGER IF NOT EXISTS trg_asset_label_protection_change_approvals_no_update
+    BEFORE UPDATE ON asset_label_protection_change_approvals
+    BEGIN SELECT RAISE(ABORT, 'asset_label_protection_change_approvals is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS trg_asset_label_protection_change_approvals_no_delete
+    BEFORE DELETE ON asset_label_protection_change_approvals
+    BEGIN SELECT RAISE(ABORT, 'asset_label_protection_change_approvals is append-only'); END;
 """
 
 
@@ -315,12 +382,21 @@ def protect_label(
     created_by: str | None = None,
     db_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Mark a label protected (or free again), appending a config event row.
+    """Protect a label, or raise its protection, appending a config event row.
 
     Protecting an already-assigned label does not move it — it only governs
-    future moves. ``protected=False`` reverts to free ADR-0113 behaviour;
-    any in-flight pending move keeps resolving under its propose-time
-    snapshot (spec §Edge cases).
+    future moves. Protecting a free label, raising ``required_approvals`` or
+    adding a ``policy_ref`` is a single-actor action.
+
+    Relaxing an **active** protection — ``protected=False``, fewer
+    ``required_approvals``, or a different or removed ``policy_ref`` — is refused
+    here: it needs the maker-checker of :func:`propose_protection_change` +
+    :func:`approve_protection_change`. Any in-flight pending move keeps resolving
+    under its propose-time snapshot (spec §Edge cases).
+
+    Raises:
+        ProtectionRelaxationRequiresApprovalError: the change would relax an
+            active protection.
     """
     validate_label_name(label)
     if label == RESERVED_LABEL_LATEST:
@@ -331,6 +407,23 @@ def protect_label(
         raise ValueError("required_approvals must be >= 1")
     conn = _open(db_path)
     try:
+        current = _protection_row(conn, asset_name, label)
+        if is_protection_relaxation(
+            current,
+            protected=protected,
+            required_approvals=required_approvals,
+            policy_ref=policy_ref,
+        ):
+            assert current is not None  # a relaxation needs an active protection
+            raise ProtectionRelaxationRequiresApprovalError(
+                f"'{label}' on '{asset_name}' is protected "
+                f"(required approvals: {current['required_approvals']}"
+                + (f", policy: {current['policy_ref']}" if current["policy_ref"] else "")
+                + "). Removing or weakening that protection needs the same maker-checker "
+                "as a move (ADR-0114): propose it with propose_protection_change "
+                "(`nova label protect ... --identity <maker>`) and have distinct "
+                "checkers approve it (`nova label approve-move`)."
+            )
         conn.execute(
             """
             INSERT INTO asset_label_protection
@@ -395,6 +488,510 @@ def list_protections(
             assert row is not None  # DISTINCT guarantees at least one row
             records.append(_config_record(row))
         return records
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Relaxing a protection needs maker-checker (ADR-0114 Amendment 2)
+# ---------------------------------------------------------------------------
+
+PROTECTION_CHANGE_STATES = ("pending", "applied", "rejected", "superseded")
+
+
+def is_protection_relaxation(
+    current: sqlite3.Row | dict[str, Any] | None,
+    *,
+    protected: bool,
+    required_approvals: int,
+    policy_ref: str | None,
+) -> bool:
+    """True when the requested config is weaker than the active protection.
+
+    Weaker means: protection removed, fewer required approvals, or an existing
+    ``policy_ref`` replaced or removed (a different policy cannot be ranked, so it
+    is treated as weaker). No active protection → nothing to relax.
+    """
+    if current is None or not current["protected"]:
+        return False
+    if not protected:
+        return True
+    if required_approvals < int(current["required_approvals"]):
+        return True
+    current_policy = current["policy_ref"]
+    return bool(current_policy) and policy_ref != current_policy
+
+
+def _canonical(obj: dict[str, Any]) -> bytes:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+
+
+def protection_change_payload(
+    change_id: str,
+    asset_name: str,
+    label: str,
+    base_event_id: str,
+    protected: bool,
+    required_approvals: int,
+    policy_ref: str | None,
+    proposed_at: str,
+) -> bytes:
+    """The canonical bytes the maker signs when proposing a protection change."""
+    return _canonical(
+        {
+            "scheme": "nova-label-protection-change/v1",
+            "step": "propose",
+            "change_id": change_id,
+            "asset": asset_name,
+            "label": label,
+            "base_event_id": base_event_id,
+            "protected": bool(protected),
+            "required_approvals": int(required_approvals),
+            "policy_ref": policy_ref,
+            "proposed_at": proposed_at,
+        }
+    )
+
+
+def protection_approval_payload(
+    change_id: str, decision: str, approver: str, approved_at: str, proposer_sig: str
+) -> bytes:
+    """The canonical bytes a checker signs; bound to the exact maker signature."""
+    return _canonical(
+        {
+            "scheme": "nova-label-protection-change/v1",
+            "step": decision,
+            "change_id": change_id,
+            "approver": approver,
+            "approved_at": approved_at,
+            "proposer_sig_sha256": hashlib.sha256(proposer_sig.encode()).hexdigest(),
+        }
+    )
+
+
+def _change_record(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    approvals = [
+        {
+            "approver": a["approver"],
+            "approved_at": a["approved_at"],
+            "decision": a["decision"],
+            "approver_key_fp": a["approver_key_fp"],
+            "approver_signature": a["approver_sig"],
+            "note": a["note"],
+        }
+        for a in conn.execute(
+            "SELECT * FROM asset_label_protection_change_approvals WHERE change_id = ? "
+            "ORDER BY approved_at, rowid",
+            (row["change_id"],),
+        )
+    ]
+    return {
+        "change_id": row["change_id"],
+        "asset_name": row["asset_name"],
+        "label": row["label"],
+        "base_event_id": row["base_event_id"],
+        "base_required_approvals": row["base_required_approvals"],
+        "protected": bool(row["protected"]),
+        "required_approvals": row["required_approvals"],
+        "policy_ref": row["policy_ref"],
+        "note": row["note"],
+        "proposed_by": row["proposed_by"],
+        "proposer_key_fp": row["proposer_key_fp"],
+        "proposer_signature": row["proposer_sig"],
+        "proposed_at": row["proposed_at"],
+        "state": row["state"],
+        "applied_at": row["applied_at"],
+        "applied_event_id": row["applied_event_id"],
+        "approvals": approvals,
+    }
+
+
+def _get_change_row(
+    conn: sqlite3.Connection, asset_name: str, change_id: str
+) -> sqlite3.Row | None:
+    row: sqlite3.Row | None = conn.execute(
+        "SELECT * FROM asset_label_protection_changes WHERE asset_name = ? AND change_id = ?",
+        (asset_name, change_id),
+    ).fetchone()
+    return row
+
+
+def propose_protection_change(
+    asset_name: str,
+    label: str,
+    *,
+    protected: bool = True,
+    required_approvals: int = 1,
+    policy_ref: str | None = None,
+    note: str | None = None,
+    identity: str | None = None,
+    db_path: Path | None = None,
+    trust_list: SignerTrustList | None = None,
+) -> dict[str, Any]:
+    """Propose relaxing an active protection (maker step) — nothing changes yet.
+
+    The requested config must actually be a relaxation (see
+    :func:`is_protection_relaxation`); anything else goes through
+    :func:`protect_label`. The maker signs with an **existing** keyring key the
+    ADR-0312 signer trust list binds to *identity* with the ``proposer`` role. The
+    change records the protection in force (its event id and required approvals):
+    it needs that many distinct trust-listed checkers, and it applies only on top
+    of exactly that config. At most one pending change per ``(asset, label)``.
+
+    Raises:
+        NotProtectedError: the label is not protected (nothing to relax).
+        LabelError: the requested config is not a relaxation.
+        PendingProtectionChangeExistsError: a change is already pending.
+        KeyNotFoundError / SignerVerificationError: as :func:`propose_move`.
+    """
+    validate_label_name(label)
+    if required_approvals < 1:
+        raise ValueError("required_approvals must be >= 1")
+    trust = trust_list or load_signer_trust_list()
+    conn = _open(db_path)
+    try:
+        current = _protection_row(conn, asset_name, label)
+        if current is None or not current["protected"]:
+            raise NotProtectedError(
+                f"Label '{label}' on '{asset_name}' is not protected — there is no "
+                "protection to relax."
+            )
+        if not is_protection_relaxation(
+            current,
+            protected=protected,
+            required_approvals=required_approvals,
+            policy_ref=policy_ref,
+        ):
+            raise LabelError(
+                "The requested protection is not a relaxation of the active one; "
+                "apply it directly with protect_label / `nova label protect`."
+            )
+        existing = conn.execute(
+            "SELECT change_id FROM asset_label_protection_changes "
+            "WHERE asset_name = ? AND label = ? AND state = 'pending'",
+            (asset_name, label),
+        ).fetchone()
+        if existing is not None:
+            raise PendingProtectionChangeExistsError(
+                f"A pending protection change ({existing['change_id']}) already exists "
+                f"for label '{label}' on '{asset_name}'. Approve or reject it first."
+            )
+
+        proposer = identity or getpass.getuser()
+        private_key, key_fp = ensure_keypair(proposer, create=False)
+        change_id = new_ulid()
+        proposed_at = _now()
+        payload = protection_change_payload(
+            change_id,
+            asset_name,
+            label,
+            str(current["event_id"]),
+            protected,
+            required_approvals,
+            policy_ref,
+            proposed_at,
+        )
+        sig = sign_payload(private_key, payload)
+        maker = trust.verify(
+            claimed_identity=proposer,
+            key_fp=key_fp,
+            role="proposer",
+            payload=payload,
+            signature=sig,
+            party="proposer",
+        )
+        conn.execute(
+            """
+            INSERT INTO asset_label_protection_changes
+                (change_id, schema_version, asset_name, label, base_event_id,
+                 base_required_approvals, protected, required_approvals, policy_ref,
+                 note, proposed_by, proposer_key_fp, proposer_sig, proposed_at, state,
+                 applied_at, applied_event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL)
+            """,
+            (
+                change_id,
+                "0.1.0",
+                asset_name,
+                label,
+                current["event_id"],
+                current["required_approvals"],
+                1 if protected else 0,
+                required_approvals,
+                policy_ref,
+                note,
+                maker.identity,
+                maker.fingerprint,
+                sig,
+                proposed_at,
+            ),
+        )
+        conn.commit()
+        row = _get_change_row(conn, asset_name, change_id)
+        assert row is not None  # just inserted
+        return _change_record(conn, row)
+    finally:
+        conn.close()
+
+
+def _verify_change_maker(trust: SignerTrustList, row: sqlite3.Row) -> TrustedSigner:
+    """Re-verify the stored maker signature over the requested config."""
+    return trust.verify(
+        claimed_identity=str(row["proposed_by"]),
+        key_fp=str(row["proposer_key_fp"]),
+        role="proposer",
+        payload=protection_change_payload(
+            row["change_id"],
+            row["asset_name"],
+            row["label"],
+            row["base_event_id"],
+            bool(row["protected"]),
+            int(row["required_approvals"]),
+            row["policy_ref"],
+            row["proposed_at"],
+        ),
+        signature=str(row["proposer_sig"]),
+        party="proposer",
+    )
+
+
+def _verified_change_approvers(
+    conn: sqlite3.Connection, trust: SignerTrustList, row: sqlite3.Row, maker: TrustedSigner
+) -> set[str]:
+    """Bound identities of stored ``approve`` decisions that verify today (not the maker)."""
+    identities: set[str] = set()
+    for a in conn.execute(
+        "SELECT approver, approver_key_fp, approver_sig, approved_at "
+        "FROM asset_label_protection_change_approvals "
+        "WHERE change_id = ? AND decision = 'approve'",
+        (row["change_id"],),
+    ):
+        try:
+            signer = trust.verify(
+                claimed_identity=str(a["approver"]),
+                key_fp=str(a["approver_key_fp"]),
+                role="approver",
+                payload=protection_approval_payload(
+                    row["change_id"],
+                    "approve",
+                    str(a["approver"]),
+                    str(a["approved_at"]),
+                    str(row["proposer_sig"]),
+                ),
+                signature=str(a["approver_sig"]),
+                party="approver",
+            )
+        except SignerVerificationError as exc:
+            logger.warning(
+                "protection change %s: stored approval by %r not counted: %s",
+                row["change_id"], a["approver"], exc,
+            )
+            continue
+        if signer.identity == maker.identity or signer.fingerprint == maker.fingerprint:
+            continue
+        identities.add(signer.identity)
+    return identities
+
+
+def approve_protection_change(
+    asset_name: str,
+    label: str,
+    change_id: str,
+    *,
+    identity: str | None = None,
+    reject: bool = False,
+    note: str | None = None,
+    db_path: Path | None = None,
+    trust_list: SignerTrustList | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Record a checker decision on a protection change; apply it at quorum.
+
+    Same rules as :func:`approve_move`: the checker signs with an existing,
+    trust-listed key (``approver`` role); the maker's stored signature is
+    re-verified (an edited row is refused); separation of duties compares bound
+    identities and fingerprints; only verifying approvals count, once per bound
+    identity. The quorum is the ``required_approvals`` of the protection that was
+    in force when the change was proposed.
+
+    The change applies only on top of exactly that protection: if the config was
+    changed meanwhile, the change becomes ``superseded`` and never applies. Apply
+    is atomic — the new protection event row and the state transition commit
+    together.
+
+    Raises:
+        ProtectionChangeNotFoundError: no such change for this asset and label.
+        MoveStateError: the change is not pending, or was superseded now.
+        KeyNotFoundError / SignerVerificationError / SelfApprovalError: as
+            :func:`approve_move`.
+    """
+    validate_label_name(label)
+    trust = trust_list or load_signer_trust_list()
+    conn = _open(db_path)
+    try:
+        row = _get_change_row(conn, asset_name, change_id)
+        if row is None or row["label"] != label:
+            raise ProtectionChangeNotFoundError(
+                f"No protection change '{change_id}' found for label '{label}' on "
+                f"'{asset_name}'."
+            )
+        if row["state"] != "pending":
+            raise MoveStateError(
+                f"Protection change '{change_id}' is '{row['state']}' (terminal) — "
+                "propose a new change instead."
+            )
+
+        approver = identity or getpass.getuser()
+        private_key, key_fp = ensure_keypair(approver, create=False)
+        if key_fp == row["proposer_key_fp"] or approver == row["proposed_by"]:
+            raise SelfApprovalError(
+                "SoD violation: the checker of a protection change must be a different "
+                "identity with a different keypair than its maker (ADR-0114)."
+            )
+
+        maker: TrustedSigner | None = None
+        if not reject:
+            maker = _verify_change_maker(trust, row)
+
+        decision = "reject" if reject else "approve"
+        approved_at = _now()
+        payload = protection_approval_payload(
+            change_id, decision, approver, approved_at, str(row["proposer_sig"])
+        )
+        sig = sign_payload(private_key, payload)
+        checker = trust.verify(
+            claimed_identity=approver,
+            key_fp=key_fp,
+            role="approver",
+            payload=payload,
+            signature=sig,
+            party="approver",
+        )
+        if maker is not None and (
+            checker.identity == maker.identity or checker.fingerprint == maker.fingerprint
+        ):
+            raise SelfApprovalError(
+                f"SoD violation: maker and checker resolve to the same bound identity "
+                f"{maker.identity!r} in the signer trust list."
+            )
+        current = _protection_row(conn, asset_name, label)
+        if not reject and (current is None or current["event_id"] != row["base_event_id"]):
+            conn.execute(
+                "UPDATE asset_label_protection_changes SET state = 'superseded' "
+                "WHERE change_id = ?",
+                (change_id,),
+            )
+            conn.commit()
+            raise MoveStateError(
+                f"The protection of '{label}' on '{asset_name}' changed after protection "
+                f"change '{change_id}' was proposed; it is now superseded and will never "
+                "apply. Propose a new change against the current protection."
+            )
+        conn.execute(
+            """
+            INSERT INTO asset_label_protection_change_approvals
+                (approval_id, change_id, approver, approver_key_fp, approver_sig,
+                 decision, note, approved_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                new_ulid(), change_id, checker.identity, checker.fingerprint, sig,
+                decision, note, approved_at,
+            ),
+        )
+        if reject:
+            conn.execute(
+                "UPDATE asset_label_protection_changes SET state = 'rejected' "
+                "WHERE change_id = ?",
+                (change_id,),
+            )
+            conn.commit()
+            return _refreshed_change(conn, asset_name, change_id), "rejected"
+
+        assert maker is not None  # verified above for every non-reject decision
+        distinct = _verified_change_approvers(conn, trust, row, maker)
+        required: int = row["base_required_approvals"]
+        if len(distinct) < required:
+            conn.commit()
+            detail = f"pending ({len(distinct)}/{required} distinct approvals)"
+            return _refreshed_change(conn, asset_name, change_id), detail
+
+        # ---- atomic apply: new protection event + state transition, one commit ----
+        applied_at = _now()
+        event_id = new_ulid()
+        approvers = ", ".join(sorted(distinct))
+        applied_note = (
+            f"{row['note'] + ' ' if row['note'] else ''}"
+            f"[maker-checker protection change {change_id}; approved by {approvers}]"
+        )
+        conn.execute(
+            """
+            INSERT INTO asset_label_protection
+                (event_id, schema_version, asset_name, label, protected,
+                 required_approvals, policy_ref, note, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                "0.1.0",
+                asset_name,
+                label,
+                row["protected"],
+                row["required_approvals"],
+                row["policy_ref"],
+                applied_note,
+                row["proposed_by"],
+                applied_at,
+            ),
+        )
+        conn.execute(
+            "UPDATE asset_label_protection_changes "
+            "SET state = 'applied', applied_at = ?, applied_event_id = ? "
+            "WHERE change_id = ?",
+            (applied_at, event_id, change_id),
+        )
+        conn.commit()
+        return _refreshed_change(conn, asset_name, change_id), "applied"
+    finally:
+        conn.close()
+
+
+def _refreshed_change(
+    conn: sqlite3.Connection, asset_name: str, change_id: str
+) -> dict[str, Any]:
+    row = _get_change_row(conn, asset_name, change_id)
+    assert row is not None  # no_delete trigger guarantees the row remains
+    return _change_record(conn, row)
+
+
+def find_protection_change(
+    asset_name: str, change_id: str, *, db_path: Path | None = None
+) -> dict[str, Any] | None:
+    """One protection-change record by id, or ``None`` if there is none."""
+    conn = _open(db_path)
+    try:
+        row = _get_change_row(conn, asset_name, change_id)
+        return None if row is None else _change_record(conn, row)
+    finally:
+        conn.close()
+
+
+def list_protection_changes(
+    asset_name: str,
+    label: str | None = None,
+    *,
+    db_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Protection-change records for an asset (newest first), optionally one label."""
+    conn = _open(db_path)
+    try:
+        query = "SELECT * FROM asset_label_protection_changes WHERE asset_name = ?"
+        params: list[str] = [asset_name]
+        if label is not None:
+            validate_label_name(label)
+            query += " AND label = ?"
+            params.append(label)
+        query += " ORDER BY proposed_at DESC, rowid DESC"
+        return [_change_record(conn, r) for r in conn.execute(query, params).fetchall()]
     finally:
         conn.close()
 
@@ -895,10 +1492,11 @@ def label_status(
     *,
     db_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Protection config, current pointers, and pending moves for an asset."""
+    """Protection config, current pointers, pending moves and protection changes."""
     protections = list_protections(asset_name, db_path=db_path)
     pointers = _labels.list_labels(asset_name, db_path=db_path)
     moves = list_moves(asset_name, label, db_path=db_path)
+    changes = list_protection_changes(asset_name, label, db_path=db_path)
     if label is not None:
         protections = [p for p in protections if p["label"] == label]
         pointers = [p for p in pointers if p["label"] == label]
@@ -907,4 +1505,5 @@ def label_status(
         "protections": protections,
         "pointers": pointers,
         "pending_moves": moves,
+        "protection_changes": changes,
     }

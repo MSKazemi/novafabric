@@ -25,7 +25,7 @@ from novafabric.registry.signers import (
     load_signer_trust_list,
     proposal_payload,
 )
-from novafabric.registry.store import get_connection, init_schema
+from novafabric.registry.store import get_connection, init_schema, record_status_change
 from novafabric.spec.models import AssetStatus, AssetType, BaseAssetSpec
 
 _VALID_TRANSITIONS: dict[AssetStatus, set[AssetStatus]] = {
@@ -538,123 +538,23 @@ def promote_asset(
         if not row:
             raise AssetNotFoundError(f"Asset '{name}@{version}' not found.")
 
-        current_status = AssetStatus(row["status"])
-        if to_status not in _VALID_TRANSITIONS[current_status]:
-            raise InvalidLifecycleTransitionError(
-                f"Cannot transition '{name}@{version}' from "
-                f"{current_status.value} to {to_status.value}."
-            )
-
-        # Policy gate — evaluated before the eval-score gate so that OPA
-        # decisions are always logged regardless of the eval state.
-        engine = get_policy_engine()
-        inp = PolicyInput(
-            action="promote",
-            subject=PolicySubject(user=actor),
-            resource=PolicyResource(
-                kind="asset",
-                ref=f"{name}@{version}",
-                asset_type=row["asset_type"],
-                eval_score=_latest_eval_score(conn, row["id"]),
-                unsafe_skips=0,
-            ),
-        )
-        decision = engine.evaluate(inp)
-        AuditLog(resolve_audit_log_path()).append(
-            event_type=(
-                AuditEventType.POLICY_ALLOW if decision.allow else AuditEventType.POLICY_DENY
-            ),
+        _check_promote_gates(
+            conn,
+            row,
+            to_status,
             actor=actor,
-            resource_id=f"{name}@{version}",
-            details={
-                "decision_id": decision.decision_id,
-                "reason": decision.reason,
-                "action": "promote",
-            },
+            force=force,
+            significance_gate=significance_gate,
+            sig_p0=sig_p0,
+            sig_p1=sig_p1,
+            sig_alpha=sig_alpha,
+            sig_beta=sig_beta,
+            sig_scores_path=sig_scores_path,
+            sig_scores_metric=sig_scores_metric,
         )
-        if not decision.allow:
-            # ADR-0192 wired source. Emitted on the deny itself, not on the
-            # raise, so a --force override is still alerted: an operator
-            # bypassing a gate is precisely what someone should learn about.
-            from novafabric.events.sources import (  # noqa: PLC0415
-                emit_policy_violation_alert,
-            )
-
-            emit_policy_violation_alert(
-                asset_id=f"{name}@{version}",
-                decision_reason=decision.reason,
-                stage="promote" if not force else "promote (forced)",
-                source="nova promote",
-            )
-
-            # ADR-0137 lifecycle event, same placement rationale as the alert
-            # above: emitted on the DENY, so a --force override is still
-            # visible to downstream consumers. `forced` distinguishes them.
-            from novafabric.events.lifecycle_sources import (  # noqa: PLC0415
-                emit_policy_failed,
-            )
-
-            emit_policy_failed(
-                asset_id=f"{name}@{version}",
-                reason=decision.reason,
-                decision_id=decision.decision_id,
-                forced=bool(force),
-            )
-        if not decision.allow and not force:
-            raise PromotionBlockedError(
-                f"Policy denied promotion of '{name}@{version}': "
-                f"{decision.reason} (decision_id={decision.decision_id})"
-            )
-
-        if (
-            row["asset_type"] == AssetType.agent.value
-            and to_status in _AGENT_GATE_STATUSES
-            and not force
-            and not _has_passing_eval(conn, row["id"])
-        ):
-            raise PromotionBlockedError(
-                f"Agent '{name}@{version}' has no passing evaluation. "
-                "Run `novafabric eval` first, or use --force to override."
-            )
-
-        # Opt-in statistical-significance gate (ADR-0080, gap-004). Only blocks on
-        # a *statistically significant* regression over the recent eval sequence;
-        # noise (ACCEPT_H0) and inconclusive evidence (CONTINUE) never block.
-        if (
-            significance_gate
-            and row["asset_type"] == AssetType.agent.value
-            and to_status in _AGENT_GATE_STATUSES
-            and not force
-        ):
-            # Optionally source the sequence from an evidence-grade scores.jsonl
-            # (NF-007). When no path is given the shipped eval_results path is used —
-            # default behavior is byte-for-byte unchanged.
-            observations: list[int] | None = None
-            if sig_scores_path is not None:
-                from novafabric.eval.scores import (  # noqa: PLC0415
-                    boolean_metric_outcomes,
-                    read_scores,
-                )
-
-                observations = boolean_metric_outcomes(
-                    read_scores(sig_scores_path), sig_scores_metric
-                )
-            blocked, sig_reason = _significant_regression(
-                conn,
-                row["id"],
-                p0=sig_p0,
-                p1=sig_p1,
-                alpha=sig_alpha,
-                beta=sig_beta,
-                observations=observations,
-            )
-            if blocked:
-                raise PromotionBlockedError(
-                    f"Agent '{name}@{version}' blocked by significance gate: "
-                    f"{sig_reason}. Use --force to override."
-                )
 
         forced = int(force and row["asset_type"] == AssetType.agent.value)
+        promoted_at = _now()
         conn.execute(
             """
             UPDATE assets
@@ -664,7 +564,17 @@ def promote_asset(
                 forced_promotion = ?
             WHERE name = ? AND version = ?
             """,
-            (to_status.value, _now(), actor, forced, name, version),
+            (to_status.value, promoted_at, actor, forced, name, version),
+        )
+        record_status_change(
+            conn,
+            asset_name=name,
+            version=version,
+            from_status=row["status"],
+            to_status=to_status.value,
+            changed_at=promoted_at,
+            changed_by=actor,
+            via="promote",
         )
         conn.commit()
         updated = conn.execute(
@@ -674,6 +584,149 @@ def promote_asset(
         return _row_to_dict(updated)
     finally:
         conn.close()
+
+
+def _check_promote_gates(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    to_status: AssetStatus,
+    *,
+    actor: str,
+    force: bool,
+    significance_gate: bool = False,
+    sig_p0: float = _SIG_DEFAULT_P0,
+    sig_p1: float = _SIG_DEFAULT_P1,
+    sig_alpha: float = _SIG_DEFAULT_ALPHA,
+    sig_beta: float = _SIG_DEFAULT_BETA,
+    sig_scores_path: Path | None = None,
+    sig_scores_metric: str = "task_pass",
+) -> None:
+    """Every check :func:`promote_asset` runs before it changes a status.
+
+    Lifecycle transition, the ``promote`` policy gate (audited), the agent eval gate
+    and the opt-in significance gate. Shared with :func:`rollback_asset`, which runs
+    the same checks for a target that was never in production. Mutates nothing.
+
+    Raises:
+        InvalidLifecycleTransitionError: *to_status* is not reachable from the row's status.
+        PromotionBlockedError: a gate refused and *force* does not override it.
+    """
+    name, version = row["name"], row["version"]
+    current_status = AssetStatus(row["status"])
+    if to_status not in _VALID_TRANSITIONS[current_status]:
+        raise InvalidLifecycleTransitionError(
+            f"Cannot transition '{name}@{version}' from "
+            f"{current_status.value} to {to_status.value}."
+        )
+
+    # Policy gate — evaluated before the eval-score gate so that OPA
+    # decisions are always logged regardless of the eval state.
+    engine = get_policy_engine()
+    inp = PolicyInput(
+        action="promote",
+        subject=PolicySubject(user=actor),
+        resource=PolicyResource(
+            kind="asset",
+            ref=f"{name}@{version}",
+            asset_type=row["asset_type"],
+            eval_score=_latest_eval_score(conn, row["id"]),
+            unsafe_skips=0,
+        ),
+    )
+    decision = engine.evaluate(inp)
+    AuditLog(resolve_audit_log_path()).append(
+        event_type=(
+            AuditEventType.POLICY_ALLOW if decision.allow else AuditEventType.POLICY_DENY
+        ),
+        actor=actor,
+        resource_id=f"{name}@{version}",
+        details={
+            "decision_id": decision.decision_id,
+            "reason": decision.reason,
+            "action": "promote",
+        },
+    )
+    if not decision.allow:
+        # ADR-0192 wired source. Emitted on the deny itself, not on the
+        # raise, so a --force override is still alerted: an operator
+        # bypassing a gate is precisely what someone should learn about.
+        from novafabric.events.sources import (  # noqa: PLC0415
+            emit_policy_violation_alert,
+        )
+
+        emit_policy_violation_alert(
+            asset_id=f"{name}@{version}",
+            decision_reason=decision.reason,
+            stage="promote" if not force else "promote (forced)",
+            source="nova promote",
+        )
+
+        # ADR-0137 lifecycle event, same placement rationale as the alert
+        # above: emitted on the DENY, so a --force override is still
+        # visible to downstream consumers. `forced` distinguishes them.
+        from novafabric.events.lifecycle_sources import (  # noqa: PLC0415
+            emit_policy_failed,
+        )
+
+        emit_policy_failed(
+            asset_id=f"{name}@{version}",
+            reason=decision.reason,
+            decision_id=decision.decision_id,
+            forced=bool(force),
+        )
+    if not decision.allow and not force:
+        raise PromotionBlockedError(
+            f"Policy denied promotion of '{name}@{version}': "
+            f"{decision.reason} (decision_id={decision.decision_id})"
+        )
+
+    if (
+        row["asset_type"] == AssetType.agent.value
+        and to_status in _AGENT_GATE_STATUSES
+        and not force
+        and not _has_passing_eval(conn, row["id"])
+    ):
+        raise PromotionBlockedError(
+            f"Agent '{name}@{version}' has no passing evaluation. "
+            "Run `novafabric eval` first, or use --force to override."
+        )
+
+    # Opt-in statistical-significance gate (ADR-0080, gap-004). Only blocks on
+    # a *statistically significant* regression over the recent eval sequence;
+    # noise (ACCEPT_H0) and inconclusive evidence (CONTINUE) never block.
+    if (
+        significance_gate
+        and row["asset_type"] == AssetType.agent.value
+        and to_status in _AGENT_GATE_STATUSES
+        and not force
+    ):
+        # Optionally source the sequence from an evidence-grade scores.jsonl
+        # (NF-007). When no path is given the shipped eval_results path is used —
+        # default behavior is byte-for-byte unchanged.
+        observations: list[int] | None = None
+        if sig_scores_path is not None:
+            from novafabric.eval.scores import (  # noqa: PLC0415
+                boolean_metric_outcomes,
+                read_scores,
+            )
+
+            observations = boolean_metric_outcomes(
+                read_scores(sig_scores_path), sig_scores_metric
+            )
+        blocked, sig_reason = _significant_regression(
+            conn,
+            row["id"],
+            p0=sig_p0,
+            p1=sig_p1,
+            alpha=sig_alpha,
+            beta=sig_beta,
+            observations=observations,
+        )
+        if blocked:
+            raise PromotionBlockedError(
+                f"Agent '{name}@{version}' blocked by significance gate: "
+                f"{sig_reason}. Use --force to override."
+            )
 
 
 def promote_asset_direct(
@@ -690,8 +743,10 @@ def promote_asset_direct(
     """Single-actor promotion, gated for protected stages (ADR-0312 D1).
 
     This is the one gate for every single-actor route into a protected stage:
-    ``nova promote direct`` and the ``nova serve`` promote endpoints both call it,
-    so they refuse and allow exactly the same promotions.
+    ``nova promote direct``, ``nova prompt promote``, the ``nova serve`` promote
+    endpoints and the ``nova server`` route ``PUT /v0/assets/{id}/promote`` all call
+    it, so they refuse and allow exactly the same promotions. :func:`rollback_asset`
+    applies the same gate to any target without production history.
 
     For a target in :data:`PROTECTED_STAGES` the ``promote_direct`` policy action must
     return an explicit allow before :func:`promote_asset` runs. ``force`` does not bypass
@@ -713,62 +768,102 @@ def promote_asset_direct(
         init_schema(conn)
         try:
             row = conn.execute(
-                "SELECT asset_type FROM assets WHERE name = ? AND version = ?",
+                "SELECT asset_type, status FROM assets WHERE name = ? AND version = ?",
                 (name, version),
             ).fetchone()
         finally:
             conn.close()
         if not row:
             raise AssetNotFoundError(f"Asset '{name}@{version}' not found.")
-        subject = policy_subject or actor
-        engine = get_policy_engine()
-        decision = engine.evaluate(
-            PolicyInput(
-                action="promote_direct",
-                subject=PolicySubject(user=subject),
-                resource=PolicyResource(
-                    kind="asset",
-                    ref=f"{name}@{version}",
-                    asset_type=row["asset_type"],
-                    to_status=to_status.value,
-                ),
-                context={"protected_stage": True},
+        current_status = AssetStatus(row["status"])
+        if to_status not in _VALID_TRANSITIONS[current_status]:
+            # An impossible move is reported as such, not as a policy refusal.
+            raise InvalidLifecycleTransitionError(
+                f"Cannot transition '{name}@{version}' from "
+                f"{current_status.value} to {to_status.value}."
             )
+        _require_direct_allow(
+            name,
+            version,
+            to_status,
+            asset_type=row["asset_type"],
+            actor=actor,
+            force=force,
+            policy_subject=policy_subject,
         )
-        explicit_allow = decision.allow and not isinstance(engine, NoopEngine)
-        details: dict[str, Any] = {
-            "decision_id": decision.decision_id,
-            "reason": decision.reason,
-            "action": "promote_direct",
-            "to_status": to_status.value,
-            "forced": bool(force),
-        }
-        if policy_subject:
-            details["actor_label"] = actor
-        AuditLog(resolve_audit_log_path()).append(
-            event_type=(
-                AuditEventType.POLICY_ALLOW if explicit_allow else AuditEventType.POLICY_DENY
-            ),
-            actor=subject,
-            resource_id=f"{name}@{version}",
-            details=details,
-        )
-        if not explicit_allow:
-            why = (
-                "no policy engine is configured (opa not on PATH), so there is no "
-                "explicit allow"
-                if isinstance(engine, NoopEngine)
-                else f"policy denied: {decision.reason} (decision_id={decision.decision_id})"
-            )
-            raise DirectPromotionDeniedError(
-                f"Direct (single-actor) promotion of '{name}@{version}' into protected "
-                f"stage '{to_status.value}' refused: {why}. Use `nova promote propose` + "
-                "`nova promote approve` (maker-checker), or load a policy that allows "
-                "action 'promote_direct' (ADR-0312). --force does not bypass this gate."
-            )
     return promote_asset(
         name, version, to_status, actor=actor, force=force, db_path=db_path, **gate_kwargs
     )
+
+
+def _require_direct_allow(
+    name: str,
+    version: str,
+    to_status: AssetStatus,
+    *,
+    asset_type: str,
+    actor: str,
+    force: bool,
+    policy_subject: str | None,
+    via: str = "promote_direct",
+) -> None:
+    """The ADR-0312 D1 gate: an explicit ``promote_direct`` allow, or refuse.
+
+    Evaluated for every single-actor move into a protected stage — ``nova promote
+    direct``, the HTTP promote routes, ``nova prompt promote`` and a rollback whose
+    target was never in production. A :class:`NoopEngine` result is not an allow,
+    and *force* never bypasses it. Every decision is audited.
+
+    Raises:
+        DirectPromotionDeniedError: no explicit allow.
+    """
+    subject = policy_subject or actor
+    engine = get_policy_engine()
+    decision = engine.evaluate(
+        PolicyInput(
+            action="promote_direct",
+            subject=PolicySubject(user=subject),
+            resource=PolicyResource(
+                kind="asset",
+                ref=f"{name}@{version}",
+                asset_type=asset_type,
+                to_status=to_status.value,
+            ),
+            context={"protected_stage": True, "via": via},
+        )
+    )
+    explicit_allow = decision.allow and not isinstance(engine, NoopEngine)
+    details: dict[str, Any] = {
+        "decision_id": decision.decision_id,
+        "reason": decision.reason,
+        "action": "promote_direct",
+        "to_status": to_status.value,
+        "forced": bool(force),
+        "via": via,
+    }
+    if policy_subject:
+        details["actor_label"] = actor
+    AuditLog(resolve_audit_log_path()).append(
+        event_type=(
+            AuditEventType.POLICY_ALLOW if explicit_allow else AuditEventType.POLICY_DENY
+        ),
+        actor=subject,
+        resource_id=f"{name}@{version}",
+        details=details,
+    )
+    if not explicit_allow:
+        why = (
+            "no policy engine is configured (opa not on PATH), so there is no "
+            "explicit allow"
+            if isinstance(engine, NoopEngine)
+            else f"policy denied: {decision.reason} (decision_id={decision.decision_id})"
+        )
+        raise DirectPromotionDeniedError(
+            f"Direct (single-actor) promotion of '{name}@{version}' into protected "
+            f"stage '{to_status.value}' refused: {why}. Use `nova promote propose` + "
+            "`nova promote approve` (maker-checker), or load a policy that allows "
+            "action 'promote_direct' (ADR-0312). --force does not bypass this gate."
+        )
 
 
 def approve_asset(
@@ -837,35 +932,79 @@ def approve_asset(
 # ---------------------------------------------------------------------------
 
 
+def production_history_versions(
+    name: str, db_path: Path | None = None
+) -> list[str]:
+    """Versions of *name* the registry recorded entering ``production``, newest first.
+
+    Read from the append-only ``asset_status_history`` table (each version once).
+    This is the evidence :func:`rollback_asset` needs to restore a version without
+    the ADR-0312 ``promote_direct`` gate.
+    """
+    conn = get_connection(db_path)
+    init_schema(conn)
+    try:
+        return _production_history(conn, name)
+    finally:
+        conn.close()
+
+
+def _production_history(conn: sqlite3.Connection, name: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT version, MAX(id) AS last_id FROM asset_status_history
+        WHERE asset_name = ? AND to_status = ?
+        GROUP BY version ORDER BY last_id DESC
+        """,
+        (name, AssetStatus.production.value),
+    ).fetchall()
+    return [str(r["version"]) for r in rows]
+
+
 def rollback_asset(
     name: str,
     target_version: str | None,
     actor: str,
     db_path: Path | None = None,
+    *,
+    policy_subject: str | None = None,
 ) -> dict[str, Any]:
-    """Roll back an asset to its most recent previous production version.
+    """Roll back an asset to a version that was previously in production.
 
-    Archives the current production version and promotes the target version
-    back to production in a single atomic DB transaction.
+    Archives the current production version and puts the target in production in a
+    single atomic DB transaction.
+
+    **Gate (ADR-0312 D1).** A rollback restores, without a policy decision, only a
+    version the registry's status history (``asset_status_history``) shows was in
+    ``production`` before — that is what a rollback is for. Any other explicit
+    target is a single-actor move into a protected stage: it must pass the same
+    ``promote_direct`` gate as ``nova promote direct`` (an explicit policy allow; a
+    NoopEngine is not one) and every check :func:`promote_asset` runs, including the
+    lifecycle rules. Without this, ``promote --to staging`` followed by a rollback
+    put an unreviewed version into production.
 
     Args:
         name: Asset name.
-        target_version: Explicit version to restore.  If ``None``, the most
-            recent version that was previously in ``production`` (determined
-            from the audit log) is used.
-        actor: Operator identity written to the audit trail.
+        target_version: Explicit version to restore. If ``None``, the most recent
+            version with production history, other than the current one, is used;
+            no other version is ever chosen automatically.
+        actor: Operator identity written to the audit trail and ``promoted_by``.
         db_path: Override the registry DB path.
+        policy_subject: The authenticated identity the policy sees for a gated
+            target (``serve:<fingerprint>`` over HTTP). Defaults to *actor*.
 
     Returns:
         dict with keys: archived_version, restored_version, rollback_id,
-        skipped_archived.
+        skipped_archived, gate (``previously_production`` or ``promote_direct``).
 
     Raises:
-        AssetNotFoundError: No asset with *name* exists, or *target_version*
-            doesn't exist.
+        AssetNotFoundError: *target_version* doesn't exist.
         RollbackError: No current production version; no previous production
-            version found; or the target is already the current production
-            version.
+            version; or the target is already the current production version.
+        DirectPromotionDeniedError: a target with no production history lacks an
+            explicit ``promote_direct`` allow.
+        InvalidLifecycleTransitionError / PromotionBlockedError: a target with no
+            production history fails the lifecycle or promote gates.
     """
     import logging as _logging
     _log = _logging.getLogger(__name__)
@@ -886,14 +1025,12 @@ def rollback_asset(
                 "Use 'nova list --status production' to check the registry."
             )
         current_version = prod_row["version"]
+        previously_production = _production_history(conn, name)
 
         # ------------------------------------------------------------------ #
         # 2. Resolve the target version.                                      #
         # ------------------------------------------------------------------ #
-        skipped_archived = False
-
         if target_version:
-            # Explicit --to flag: verify the target exists.
             target_row = conn.execute(
                 "SELECT * FROM assets WHERE name = ? AND version = ?",
                 (name, target_version),
@@ -907,89 +1044,56 @@ def rollback_asset(
                     f"'{name}@{target_version}' is already the current production version."
                 )
         else:
-            # Auto-detect: inspect audit log for the most recent version that
-            # was previously promoted to any status (proxy for "was in production"),
-            # excluding the current production version.
-            # Strategy:
-            #   1. Walk PROMOTE audit entries in reverse (newest first).
-            #   2. Collect all versions of this asset that appear in the log,
-            #      skipping the current production version.
-            #   3. Take the first unique version found — this is the most
-            #      recent "previous" version, regardless of its current status.
-            #      A rollback can restore an archived version back to production.
-            #   4. Fallback (no audit entries): query the DB directly for any
-            #      other version ordered by promoted_at DESC.
-            audit_log = AuditLog(resolve_audit_log_path())
-            promote_entries = audit_log.query(resource_id=None)
-            # collect unique versions in reverse-chronological order
-            seen: set[str] = set()
-            prev_prod_versions: list[str] = []
-            for entry in reversed(promote_entries):
-                if not entry.resource_id.startswith(f"{name}@"):
-                    continue
-                if entry.event_type != AuditEventType.PROMOTE:
-                    continue
-                v = entry.resource_id.split("@", 1)[1]
+            target_row = None
+            for v in previously_production:
                 if v == current_version:
                     continue
-                if v not in seen:
-                    seen.add(v)
-                    prev_prod_versions.append(v)
-
-            # Fallback: audit log may be empty (new install, log rotated, etc.).
-            # Query the DB for any other version with a promoted_at, ordered by
-            # promoted_at DESC.  This includes archived versions.
-            if not prev_prod_versions:
-                other_rows = conn.execute(
-                    """
-                    SELECT version FROM assets
-                    WHERE name = ? AND version != ?
-                    ORDER BY COALESCE(promoted_at, created_at) DESC
-                    """,
-                    (name, current_version),
-                ).fetchall()
-                for r in other_rows:
-                    prev_prod_versions.append(r["version"])
-
-            if not prev_prod_versions:
-                raise RollbackError(
-                    f"No previous production version found for asset '{name}'. "
-                    "Specify an explicit target with --to <version>."
-                )
-
-            # Pick the most recent candidate that actually exists in the DB.
-            # If it was archived, note that in skipped_archived so the CLI can
-            # display a warning to the operator.
-            target_version = None
-            for v in prev_prod_versions:
                 target_row = conn.execute(
                     "SELECT * FROM assets WHERE name = ? AND version = ?",
                     (name, v),
                 ).fetchone()
-                if not target_row:
-                    continue
-                if target_row["status"] == AssetStatus.archived.value:
-                    skipped_archived = True
-                    _log.info(
-                        "rollback: target version %s@%s is currently archived; "
-                        "it will be promoted back to production",
-                        name, v,
-                    )
-                target_version = v
-                break
-
-            if target_version is None:
+                if target_row is not None:
+                    break
+            if target_row is None:
                 raise RollbackError(
-                    f"No restorable previous version found for asset '{name}'. "
-                    "Use --to <version> to specify an explicit target."
+                    f"No previous production version found for asset '{name}' in the "
+                    "registry's status history. Specify an explicit target with "
+                    "--to <version>; a version that was never in production needs a "
+                    "'promote_direct' policy allow (ADR-0312) or maker-checker."
                 )
-            target_row = conn.execute(
-                "SELECT * FROM assets WHERE name = ? AND version = ?",
-                (name, target_version),
-            ).fetchone()
+            target_version = str(target_row["version"])
+
+        skipped_archived = target_row["status"] == AssetStatus.archived.value
 
         # ------------------------------------------------------------------ #
-        # 3. Atomic transaction: archive current, promote target.             #
+        # 3. Gate: restore ungated only with production history (ADR-0312). #
+        # ------------------------------------------------------------------ #
+        if target_version in previously_production:
+            gate = "previously_production"
+            if skipped_archived:
+                _log.info(
+                    "rollback: target version %s@%s is currently archived; "
+                    "it will be promoted back to production",
+                    name, target_version,
+                )
+        else:
+            gate = "promote_direct"
+            _require_direct_allow(
+                name,
+                target_version,
+                AssetStatus.production,
+                asset_type=target_row["asset_type"],
+                actor=actor,
+                force=False,
+                policy_subject=policy_subject,
+                via="rollback",
+            )
+            _check_promote_gates(
+                conn, target_row, AssetStatus.production, actor=actor, force=False
+            )
+
+        # ------------------------------------------------------------------ #
+        # 4. Atomic transaction: archive current, promote target.             #
         # ------------------------------------------------------------------ #
         rollback_id = str(uuid.uuid4())
         rolled_back_at = _now()
@@ -1029,6 +1133,26 @@ def rollback_asset(
                     target_version,
                 ),
             )
+            record_status_change(
+                conn,
+                asset_name=name,
+                version=current_version,
+                from_status=AssetStatus.production.value,
+                to_status=AssetStatus.archived.value,
+                changed_at=rolled_back_at,
+                changed_by=actor,
+                via="rollback",
+            )
+            record_status_change(
+                conn,
+                asset_name=name,
+                version=target_version,
+                from_status=target_row["status"],
+                to_status=AssetStatus.production.value,
+                changed_at=rolled_back_at,
+                changed_by=actor,
+                via=f"rollback:{gate}",
+            )
             conn.commit()
         except Exception:
             conn.rollback()
@@ -1038,7 +1162,7 @@ def rollback_asset(
         conn.close()
 
     # ------------------------------------------------------------------ #
-    # 4. Audit entry (outside the DB transaction; DB row is authoritative).#
+    # 5. Audit entry (outside the DB transaction; DB row is authoritative).#
     # ------------------------------------------------------------------ #
     AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.ROLLBACK,
@@ -1050,6 +1174,7 @@ def rollback_asset(
             "restored_version": target_version,
             "rollback_reason": "manual-rollback",
             "skipped_archived": skipped_archived,
+            "gate": gate,
         },
     )
 
@@ -1058,6 +1183,7 @@ def rollback_asset(
         "restored_version": target_version,
         "rollback_id": rollback_id,
         "skipped_archived": skipped_archived,
+        "gate": gate,
     }
 
 

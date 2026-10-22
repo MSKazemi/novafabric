@@ -344,10 +344,15 @@ class TestListStaleWithEvalAndLineage:
         names = {a["name"] for a in stale}
         assert "stale-model" not in names
 
-    def test_no_prev_production_only_in_db_fallback(
+    def test_auto_rollback_never_falls_back_to_a_never_promoted_version(
         self, tmp_path: Path, db_path: Path
     ) -> None:
-        """rollback_asset uses DB fallback when audit log has no PROMOTE entries."""
+        """Auto-rollback picks only versions with production history (ADR-0312 D1).
+
+        This test used to pin the opposite: with no audit entries, rollback fell
+        back to "any other version" and put a never-reviewed v1 into production.
+        That fallback was the bypass the adversarial review found.
+        """
         # Set up assets without an audit log (simulate fresh install)
         from novafabric.registry.service import rollback_asset
 
@@ -377,10 +382,14 @@ class TestListStaleWithEvalAndLineage:
             conn.commit()
             conn.close()
 
-            result = rollback_asset(
-                "stale-model", target_version=None, actor="sre", db_path=db_path
+            from novafabric.registry.service import RollbackError, get_asset
+
+            with pytest.raises(RollbackError, match="No previous production version"):
+                rollback_asset(
+                    "stale-model", target_version=None, actor="sre", db_path=db_path
+                )
+            assert get_asset("stale-model", "1.0.0", db_path=db_path)["status"] == (
+                "development"
             )
-            assert result["archived_version"] == "2.0.0"
-            assert result["restored_version"] == "1.0.0"
         finally:
             monkeypatch.undo()

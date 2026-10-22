@@ -168,6 +168,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         """
     )
     _ensure_additive_columns(conn)
+    _ensure_status_history(conn)
     # Scale-S1: runs_cache — indexed capsule summaries (replaces O(N) disk scan)
     from novafabric.registry.runs_cache import ensure_runs_cache  # noqa: PLC0415
     ensure_runs_cache(conn)
@@ -181,6 +182,80 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # signatures were verified (reported as "unverified").
     ("promotion_proposals", "signoff_scheme", "TEXT"),
 )
+
+
+#: Append-only lifecycle history (additive table). ``nova rollback`` restores a
+#: version without the ADR-0312 ``promote_direct`` gate only when this table shows
+#: it was in ``production`` before; any other target is gated like a direct promote.
+_STATUS_HISTORY_SQL = """
+CREATE TABLE IF NOT EXISTS asset_status_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_name   TEXT NOT NULL,
+    version      TEXT NOT NULL,
+    from_status  TEXT,
+    to_status    TEXT NOT NULL,
+    changed_at   TEXT NOT NULL,
+    changed_by   TEXT NOT NULL,
+    via          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_asset_status_history_name
+    ON asset_status_history(asset_name, to_status, changed_at DESC);
+CREATE TRIGGER IF NOT EXISTS trg_asset_status_history_no_update
+    BEFORE UPDATE ON asset_status_history
+    BEGIN SELECT RAISE(ABORT, 'asset_status_history is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS trg_asset_status_history_no_delete
+    BEFORE DELETE ON asset_status_history
+    BEGIN SELECT RAISE(ABORT, 'asset_status_history is append-only'); END;
+"""
+
+
+def _ensure_status_history(conn: sqlite3.Connection) -> None:
+    """Create ``asset_status_history``; on first creation, backfill current production.
+
+    A registry that predates the table has no record of which versions were in
+    production. The versions in ``production`` right now are the one fact it can
+    still state, so they are recorded with ``via='backfill'``. That keeps the usual
+    upgrade path working: today's production version can be rolled back to after a
+    later release replaces it. A version archived *before* the upgrade has no
+    evidence and goes through the ``promote_direct`` gate.
+    """
+    existed = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'asset_status_history'"
+    ).fetchone()
+    conn.executescript(_STATUS_HISTORY_SQL)
+    if not existed:
+        conn.execute(
+            """
+            INSERT INTO asset_status_history
+                (asset_name, version, from_status, to_status, changed_at, changed_by, via)
+            SELECT name, version, NULL, 'production',
+                   COALESCE(promoted_at, created_at), COALESCE(promoted_by, ''), 'backfill'
+            FROM assets WHERE status = 'production'
+            """
+        )
+    conn.commit()
+
+
+def record_status_change(
+    conn: sqlite3.Connection,
+    *,
+    asset_name: str,
+    version: str,
+    from_status: str | None,
+    to_status: str,
+    changed_at: str,
+    changed_by: str,
+    via: str,
+) -> None:
+    """Append one lifecycle transition. The caller commits (same transaction)."""
+    conn.execute(
+        """
+        INSERT INTO asset_status_history
+            (asset_name, version, from_status, to_status, changed_at, changed_by, via)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (asset_name, version, from_status, to_status, changed_at, changed_by, via),
+    )
 
 
 def _ensure_additive_columns(conn: sqlite3.Connection) -> None:
