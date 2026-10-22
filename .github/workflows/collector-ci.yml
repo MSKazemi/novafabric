@@ -25,7 +25,10 @@ env:
   # golang.org/x/net, published 2026-10-08) is fixed only in stdlib 1.26.9 and
   # x/net v0.60.0, and GO-2026-6603..6613 (net/http, crypto/tls, net/textproto)
   # landed in 1.26.8/1.26.9; govulncheck on 1.26.7 reports them as reachable.
-  GO_VERSION: "1.26.9"
+  # 1.26.10 (2026-10-22): GO-2026-6809 (crypto/x509: distrust compromised
+  # intermediate certificates) is fixed only in stdlib 1.26.10; it failed the
+  # v0.106.0 tag's vulnerability scan on 1.26.9.
+  GO_VERSION: "1.26.10"
   GOPATH: ${{ github.workspace }}/.gopath
 
 jobs:

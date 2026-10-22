@@ -73,3 +73,30 @@ def test_every_force_include_source_actually_exists() -> None:
     missing = [s for s in _force_include_sources() if not (_REPO_ROOT / s).exists()]
 
     assert not missing, f"force-include sources missing from the repository: {missing}"
+
+
+def _hatch_hook_scripts() -> list[str]:
+    """``path`` of every hatch metadata and build hook: the backend imports them at build time."""
+    hatch = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8")).get("tool", {}).get("hatch", {})
+    tables = [hatch.get("metadata", {}).get("hooks", {}), hatch.get("build", {}).get("hooks", {})]
+    for target in hatch.get("build", {}).get("targets", {}).values():
+        tables.append(target.get("hooks", {}))
+    return sorted(
+        hook["path"] for table in tables for hook in table.values()
+        if isinstance(hook, dict) and isinstance(hook.get("path"), str)
+    )
+
+
+@pytest.mark.skipif(not _DOCKERFILE.exists(), reason="Dockerfile not present")
+def test_every_hatch_hook_script_is_copied_into_the_build_context() -> None:
+    """Third instance of this class (v0.106.0): the PyPI README metadata hook
+    (``scripts/pypi_readme_hook.py``) landed without a COPY, and the release image
+    failed with 'Build script does not exist' while PyPI published fine."""
+    copied = {c.rstrip("/") for c in _context_paths()}
+    hooks = _hatch_hook_scripts()
+    assert hooks, "non-vacuity: pyproject declares at least one hatch hook"
+    missing = [h for h in hooks if not any(h == c or h.startswith(f"{c}/") for c in copied)]
+    assert not missing, (
+        f"hatch hook scripts not COPYed into the Docker build context: {missing}. "
+        "Add a COPY to deploy/docker/Dockerfile."
+    )

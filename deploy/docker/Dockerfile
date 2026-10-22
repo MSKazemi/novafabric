@@ -35,6 +35,11 @@ COPY alembic/ alembic/
 # asserts every force-include source is present in the build context, so a third
 # instance fails in the test suite rather than at release time.
 COPY schemas/ schemas/
+# Third time (v0.106.0): `readme` is dynamic, produced by a hatch metadata hook that
+# the backend imports at build time; without it: "Build script does not exist:
+# scripts/pypi_readme_hook.py". Guarded by
+# test_every_hatch_hook_script_is_copied_into_the_build_context.
+COPY scripts/pypi_readme_hook.py scripts/pypi_readme_hook.py
 
 RUN uv build --wheel --no-sources
 
