@@ -276,3 +276,17 @@ class TestNoNakedClaims:
         )
         assert ev.eval_context is not None
         assert ev.eval_context.process_evidence_ref
+
+
+def test_created_by_names_the_installed_novafabric_version(tmp_path: Path) -> None:
+    """L6/L7 sweep: a safety case names the NovaFabric that compiled it, not "0.1.0"."""
+    import novafabric
+
+    case = SafetyCaseCompiler().build(_capsule(tmp_path), "clymer-generic-v0")
+    assert case.created_by.name == "novafabric"
+    assert case.created_by.version == novafabric.__version__
+    pinned = tmp_path / "pinned"
+    pinned.mkdir()
+    assert SafetyCaseCompiler(producer_version="9.9.9").build(
+        _capsule(pinned), "clymer-generic-v0"
+    ).created_by.version == "9.9.9"

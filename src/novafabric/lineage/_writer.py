@@ -9,14 +9,44 @@ import yaml
 
 from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.lineage._facets import attach_column_facets, facets_from_tool_calls
-from novafabric.lineage._types import LineageEdge
+from novafabric.lineage._types import LineageEdge, default_emitter
+
+#: Optional Artifact fields carried into ``artifact_ref`` (identity stays ``path``).
+_ARTIFACT_HINTS = ("name", "content_hash", "media_type")
+
+
+def _output_artifact_ref(entry: object, run_id: str) -> dict[str, Any] | None:
+    """``artifact_ref`` for one manifest ``outputs[]`` entry, or ``None`` to skip it.
+
+    The run-capsule schema makes each entry an Artifact object (``name``, ``path``,
+    ``content_hash``, …); older capsules list bare path strings. An inline
+    Artifact has no meaningful ``path`` (the schema says it is ignored), so it is
+    keyed ``inline:<name>``. Anything else carries no usable path and is skipped
+    rather than stringified into a node ref (L14).
+    """
+    if isinstance(entry, str):
+        return {"capsule_run_id": run_id, "path": entry} if entry else None
+    if not isinstance(entry, dict):
+        return None
+    name = entry.get("name")
+    path = entry.get("path")
+    if entry.get("inline") is True:
+        path = f"inline:{name}" if isinstance(name, str) and name else None
+    if not isinstance(path, str) or not path:
+        return None
+    ref: dict[str, Any] = {"capsule_run_id": run_id, "path": path}
+    for key in _ARTIFACT_HINTS:
+        value = entry.get(key)
+        if isinstance(value, str) and value:
+            ref[key] = value
+    return ref
 
 
 class LineageWriter:
-    def __init__(self, capsule_dir: Path, run_id: str, version: str = "0.4.0") -> None:
+    def __init__(self, capsule_dir: Path, run_id: str, version: str | None = None) -> None:
         self._capsule_dir = capsule_dir
         self._run_id = run_id
-        self._version = version
+        self._version = version if version is not None else default_emitter()["version"]
 
     def infer(self) -> list[LineageEdge]:
         edges: list[LineageEdge] = []
@@ -89,20 +119,21 @@ class LineageWriter:
             capsule_text = (
                 read_capsule_member_or_none(manifest_path, operation="lineage") or ""
             )
-            manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
+            manifest: Any = yaml.safe_load(capsule_text) or {}
         except Exception:
             return []
-        output_paths: list[str] = manifest.get("outputs", []) or []
+        outputs = manifest.get("outputs") if isinstance(manifest, dict) else None
+        if not isinstance(outputs, list):
+            return []
         edges: list[LineageEdge] = []
-        for rel_path in output_paths:
+        for entry in outputs:
+            artifact_ref = _output_artifact_ref(entry, self._run_id)
+            if artifact_ref is None:
+                continue
             edges.append(
                 LineageEdge(
                     edge_type="produced_by",
-                    source={"kind": "artifact",
-                            "artifact_ref": {
-                                "capsule_run_id": self._run_id,
-                                "path": rel_path,
-                            }},
+                    source={"kind": "artifact", "artifact_ref": artifact_ref},
                     target={"kind": "run", "run_id": self._run_id},
                     confidence="inferred",
                     capsule_run_id=self._run_id,

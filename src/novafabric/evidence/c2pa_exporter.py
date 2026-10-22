@@ -38,7 +38,13 @@ import yaml
 from novafabric._capsule_fs import read_capsule_member_or_none
 
 _CLAIM_GENERATOR = "NovaFabric"
-_CLAIM_GENERATOR_VERSION = "0.32.0"
+
+
+def _claim_generator_version() -> str:
+    """The installed NovaFabric version: the generator is whoever builds the manifest (L6)."""
+    from novafabric import __version__  # noqa: PLC0415
+
+    return __version__
 
 
 def _load_capsule_manifest(capsule_dir: Path) -> dict[str, Any]:
@@ -187,12 +193,13 @@ class C2PAManifestExporter:
                 "data": {"use": "notAllowed"},
             })
 
+        generator_version = _claim_generator_version()
         manifest_entry: dict[str, Any] = {
-            "claim_generator": f"{_CLAIM_GENERATOR}/{_CLAIM_GENERATOR_VERSION}",
+            "claim_generator": f"{_CLAIM_GENERATOR}/{generator_version}",
             "claim_generator_info": [
                 {
                     "name": _CLAIM_GENERATOR,
-                    "version": _CLAIM_GENERATOR_VERSION,
+                    "version": generator_version,
                 }
             ],
             "title": title,

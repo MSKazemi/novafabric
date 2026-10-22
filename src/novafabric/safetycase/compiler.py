@@ -108,7 +108,11 @@ class _Resolved:
 class SafetyCaseCompiler:
     """Assemble a safety case from a capsule directory and a template."""
 
-    def __init__(self, producer_version: str = "0.1.0") -> None:
+    def __init__(self, producer_version: str | None = None) -> None:
+        if producer_version is None:
+            from novafabric import __version__  # noqa: PLC0415
+
+            producer_version = __version__
         self._producer_version = producer_version
         self._evidence_counter = 0
 
