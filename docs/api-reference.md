@@ -310,7 +310,7 @@ always reported as a gap, never fabricated. Each source is capped
 | `GET` | `/api/evidence/completeness/{run_id}` | Compute the completeness assertion for a capsule. |
 | `GET` | `/api/evidence/{bundle_id}` | get evidence detail endpoint |
 | `GET` | `/api/evidence/{bundle_id}/download` | download evidence endpoint |
-| `POST` | `/api/evidence/{bundle_id}/verify` | Verify the cryptographic integrity of an evidence bundle. |
+| `POST` | `/api/evidence/{bundle_id}/verify` | Verify an evidence bundle with the same verifier as `nova verify <bundle>.zip`: every artifact digest, no missing, extra or duplicate member, `manifest_hash`, every attestation's DSSE signature, and each signed subject recomputed from the bundle's own content, plus the RFC 3161 token and the local NovaSeal log. The verifying key ships inside the bundle, so `valid: true` proves consistency, not origin. `signer_trust` is `anchored` only when every signer is in the operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default `$NOVAFABRIC_HOME/evidence-trusted-keys.pem`); `unanchored` means no trust list is configured; `untrusted` (with `valid: false`) means a signer is not in it. A key in the request is never used. An unusable configured trust list returns 500, a link or non-ZIP 422, a bundle over 1 GiB uncompressed 413. |
 | `POST` | `/api/evidence/{run_id}` | export evidence endpoint |
 | `POST` | `/api/evidence/{run_id}/bind` | Build criterion-evidence bindings for a capsule against a profile. |
 

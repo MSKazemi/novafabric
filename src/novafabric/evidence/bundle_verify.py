@@ -23,6 +23,11 @@ The key that checks the signatures ships *inside* the bundle, so on its own a pa
 proves the bundle is internally consistent and was signed as a whole — not who
 signed it. Passing ``trusted_public_pem`` (``nova verify --public-key``) pins the
 signer; without it the report names the key so the caller can compare it out of band.
+
+:func:`verify_bundle_archive` runs the whole recipe (step 2's digests too) over an open
+ZIP. It is the one verifier behind both ``nova verify <bundle>.zip`` and ``nova serve``'s
+``POST /api/evidence/{bundle_id}/verify``, whose anchor is the operator trust list read by
+:func:`load_trusted_public_keys` — so the CLI and the dashboard cannot disagree.
 """
 
 from __future__ import annotations
@@ -31,12 +36,18 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import Callable
+import os
+import re
+import stat
+import zipfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from novafabric.evidence.bundle import (
     PREDICATE_LINEAGE,
@@ -60,6 +71,8 @@ class BundleSignatureReport:
     signer_fingerprints: list[str] = field(default_factory=list)
     signer_not_trusted: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    #: ``predicate.run_id`` of every run statement whose signature and subject verified.
+    signed_run_ids: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -96,6 +109,36 @@ def _capsule_hashes(manifest: dict[str, Any]) -> set[str]:
     }
 
 
+def _subject_run_ids(manifest: dict[str, Any]) -> dict[str, object]:
+    """Manifest ``subject`` entries' ``run_id`` labels, keyed by bare ``capsule_hash``."""
+    subject = manifest.get("subject")
+    subjects = subject if isinstance(subject, list) else [subject]
+    return {
+        _bare(s["capsule_hash"]): s["run_id"]
+        for s in subjects
+        if isinstance(s, dict) and isinstance(s.get("capsule_hash"), str) and "run_id" in s
+    }
+
+
+def _run_id_problem(statement: object, subject_run_ids: dict[str, object]) -> str:
+    """A manifest subject labelled with a run id other than the one its run statement signs.
+
+    ``manifest.json`` is not signed, so its ``subject.run_id`` is only a label; the run
+    statement's ``predicate.run_id`` is what the signer vouched for. A relabelled subject
+    would show a recipient (and ``nova serve``) the wrong run.
+    """
+    if not isinstance(statement, dict) or statement.get("predicateType") != PREDICATE_RUN:
+        return ""
+    signed = _predicate_run_id(statement)
+    if signed is None:
+        return ""
+    for digest in _statement_digests(statement):
+        label = subject_run_ids.get(digest)
+        if label is not None and label != signed:
+            return "manifest subject.run_id ≠ the run_id the run statement signs"
+    return ""
+
+
 def _as_list(value: object) -> list[Any]:
     return value if isinstance(value, list) else []
 
@@ -105,6 +148,8 @@ def verify_bundle_signatures(
     read: Callable[[str], bytes],
     names: set[str],
     trusted_public_pem: bytes | None = None,
+    *,
+    trusted_public_pems: Sequence[bytes] = (),
 ) -> BundleSignatureReport:
     """Run recipe steps 1, 3 and 4 over a bundle's manifest and members.
 
@@ -118,6 +163,8 @@ def verify_bundle_signatures(
         read: returns the bytes of a bundle member by its path.
         names: every member path present in the bundle.
         trusted_public_pem: optional PEM public key the signer must match.
+        trusted_public_pems: further PEM public keys (an operator trust list); with
+            any key given, every attestation's signer must be one of them.
     """
     report = BundleSignatureReport()
 
@@ -138,8 +185,10 @@ def verify_bundle_signatures(
         for s in _as_list(manifest.get("signatures"))
         if isinstance(s, dict) and isinstance(s.get("envelope_path"), str)
     }
-    trusted_fp = _public_key_fingerprint(trusted_public_pem) if trusted_public_pem else None
+    anchors = ([trusted_public_pem] if trusted_public_pem else []) + list(trusted_public_pems)
+    trusted_fps = {_public_key_fingerprint(pem) for pem in anchors} or None
     capsule_hashes = _capsule_hashes(manifest)
+    subject_run_ids = _subject_run_ids(manifest)
     covered_copies: list[str] = []
 
     for att in raw_attestations:
@@ -179,13 +228,19 @@ def verify_bundle_signatures(
         report.attestations_checked += 1
         if fingerprint not in report.signer_fingerprints:
             report.signer_fingerprints.append(fingerprint)
-        if trusted_fp is not None and fingerprint != trusted_fp:
+        if trusted_fps is not None and fingerprint not in trusted_fps:
             report.signer_not_trusted.append(path)
-        problem = _subject_problem(statement, att, capsule_hashes) or _content_problem(
-            statement, names, read, covered_copies
+        problem = (
+            _subject_problem(statement, att, capsule_hashes)
+            or _content_problem(statement, names, read, covered_copies)
+            or _run_id_problem(statement, subject_run_ids)
         )
         if problem:
             report.bad_subjects.append(f"{path} ({problem})")
+        elif isinstance(statement, dict) and statement.get("predicateType") == PREDICATE_RUN:
+            run_id = _predicate_run_id(statement)
+            if run_id and run_id not in report.signed_run_ids:
+                report.signed_run_ids.append(run_id)
     uncovered = sorted(
         n
         for n in names
@@ -288,3 +343,248 @@ def _subject_problem(statement: object, att: dict[str, Any], capsule_hashes: set
     if statement.get("predicateType") == PREDICATE_RUN and not digests <= capsule_hashes:
         return "run subject ≠ manifest subject.capsule_hash"
     return ""
+
+
+# ── the whole recipe over one archive ──────────────────────────────────────────
+
+#: ``signer_trust`` values. ``anchored``: every attestation verified under a key the
+#: caller trusts (``--public-key`` or an operator trust list). ``unanchored``: no trust
+#: anchor was given, so the signatures verify under the key the bundle itself ships —
+#: proof of consistency, not of origin. ``untrusted``: an anchor was given and a signer
+#: is not in it. ``none``: no attestation signature verified at all.
+SignerTrust = Literal["anchored", "unanchored", "untrusted", "none"]
+
+
+class BundleArchiveError(ValueError):
+    """The archive is not a NovaFabric Evidence Bundle that can be verified."""
+
+
+class BundleTooLargeError(BundleArchiveError):
+    """The archive declares more uncompressed bytes or members than the caller allows."""
+
+
+@dataclass
+class BundleVerification:
+    """Outcome of the whole verification recipe over one Evidence Bundle archive.
+
+    ``nova verify <bundle>.zip`` and ``POST /api/evidence/{bundle_id}/verify`` both
+    build this with :func:`verify_bundle_archive`, so the two cannot disagree.
+    """
+
+    manifest: dict[str, Any]
+    artifact_count: int
+    modified: list[str]
+    missing: list[str]
+    unlisted: list[str]
+    signatures: BundleSignatureReport
+    anchored: bool
+    has_timestamp_token: bool
+    duplicate_members: list[str] = field(default_factory=list)
+
+    @property
+    def digests_ok(self) -> bool:
+        return not self.modified
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing
+
+    @property
+    def no_extras(self) -> bool:
+        return not self.unlisted and not self.duplicate_members
+
+    @property
+    def signature_ok(self) -> bool:
+        """Every listed attestation is signed and its DSSE signature verifies."""
+        s = self.signatures
+        return s.attestations_checked > 0 and not s.bad_signatures and not s.unsigned
+
+    @property
+    def ok(self) -> bool:
+        """Every recipe step passed (and, when anchored, every signer is trusted)."""
+        return self.digests_ok and self.complete and self.no_extras and self.signatures.ok
+
+    @property
+    def signer_trust(self) -> SignerTrust:
+        if self.signatures.attestations_checked == 0:
+            return "none"
+        if not self.anchored:
+            return "unanchored"
+        return "untrusted" if self.signatures.signer_not_trusted else "anchored"
+
+    def problems(self) -> list[str]:
+        """One line per failed check, in recipe order — for an API ``errors`` list."""
+        s = self.signatures
+        out = [f"artifact modified: {p}" for p in self.modified]
+        out += [f"artifact missing: {p}" for p in self.missing]
+        out += [f"file not in manifest: {p}" for p in self.unlisted]
+        out += [f"duplicate archive member: {p}" for p in self.duplicate_members]
+        if not s.manifest_hash_ok:
+            out.append("manifest_hash does not match the manifest")
+        out += [f"bad signature: {p}" for p in s.bad_signatures]
+        out += [f"unsigned attestation: {p}" for p in s.unsigned]
+        out += [f"subject: {p}" for p in s.bad_subjects]
+        out += [f"signer is not a trusted key: {p}" for p in s.signer_not_trusted]
+        out += list(s.errors)
+        return out
+
+
+def _member_digest(zf: zipfile.ZipFile, name: str) -> str:
+    digest = hashlib.sha256()
+    with zf.open(name) as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
+
+
+def _check_declared_size(
+    zf: zipfile.ZipFile, max_uncompressed_bytes: int | None, max_members: int | None
+) -> None:
+    infos = zf.infolist()
+    if max_members is not None and len(infos) > max_members:
+        raise BundleTooLargeError(f"the archive has {len(infos)} members (limit {max_members})")
+    if max_uncompressed_bytes is not None:
+        total = sum(i.file_size for i in infos)
+        if total > max_uncompressed_bytes:
+            raise BundleTooLargeError(
+                f"the archive declares {total} uncompressed bytes "
+                f"(limit {max_uncompressed_bytes})"
+            )
+
+
+def _duplicates(listed: list[str]) -> list[str]:
+    seen: set[str] = set()
+    dupes: set[str] = set()
+    for name in listed:
+        (dupes if name in seen else seen).add(name)
+    return sorted(dupes)
+
+
+def verify_bundle_archive(
+    zf: zipfile.ZipFile,
+    *,
+    trusted_public_pems: Sequence[bytes] = (),
+    max_uncompressed_bytes: int | None = None,
+    max_members: int | None = None,
+) -> BundleVerification:
+    """Run the bundle's whole verification recipe over an open archive.
+
+    Recomputes every listed artifact digest, flags missing, unlisted and duplicate
+    members, and runs :func:`verify_bundle_signatures` (``manifest_hash``, DSSE
+    signatures, subjects recomputed from the bundle's own content). With
+    *trusted_public_pems* every signer must be one of those keys; without them the
+    result's ``signer_trust`` is ``unanchored``.
+
+    A duplicate member name fails: ``zipfile`` reads the last entry of that name and
+    other unzip tools may extract the first, so the bytes verified need not be the
+    bytes a recipient sees.
+
+    Raises:
+        BundleArchiveError: no ``manifest.json``, or it is not a JSON object.
+        BundleTooLargeError: the archive exceeds *max_uncompressed_bytes* (sum of
+            declared member sizes) or *max_members*.
+    """
+    _check_declared_size(zf, max_uncompressed_bytes, max_members)
+    listed = zf.namelist()
+    names = set(listed)
+    if "manifest.json" not in names:
+        raise BundleArchiveError("the archive has no manifest.json — not an Evidence Bundle")
+    try:
+        manifest = json.loads(zf.read("manifest.json"))
+    except ValueError as exc:
+        raise BundleArchiveError(f"manifest.json is not valid JSON: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise BundleArchiveError("manifest.json is not a JSON object")
+
+    raw_artifacts = _as_list(manifest.get("artifacts"))
+    artifacts = [a for a in raw_artifacts if isinstance(a, dict)]
+    modified: list[str] = []
+    missing: list[str] = []
+    for art in artifacts:
+        rel = str(art.get("path", ""))
+        if rel not in names:
+            missing.append(rel)
+        elif _member_digest(zf, rel) != art.get("sha256", ""):
+            modified.append(rel)
+    # An addition is a modification too: a file the manifest never accounted for fails.
+    unlisted = sorted(names - {str(a.get("path", "")) for a in artifacts} - {"manifest.json"})
+    signatures = verify_bundle_signatures(
+        manifest, zf.read, names, trusted_public_pems=trusted_public_pems
+    )
+    has_token = "manifest.dsse.tsr" in names and zf.getinfo("manifest.dsse.tsr").file_size > 0
+    return BundleVerification(
+        manifest=manifest,
+        artifact_count=len(raw_artifacts),
+        modified=modified,
+        missing=missing,
+        unlisted=unlisted,
+        signatures=signatures,
+        anchored=bool(trusted_public_pems),
+        has_timestamp_token=has_token,
+        duplicate_members=_duplicates(listed),
+    )
+
+
+# ── operator trust list ────────────────────────────────────────────────────────
+
+_PEM_BLOCK = re.compile(rb"-----BEGIN PUBLIC KEY-----\r?\n.+?-----END PUBLIC KEY-----", re.DOTALL)
+#: Bounds on the operator trust list: it is configuration, not data.
+MAX_TRUSTED_KEYS_BYTES = 1 << 20
+MAX_TRUSTED_KEYS = 256
+_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+
+
+class TrustedKeysError(Exception):
+    """The configured evidence-signer trust list is missing, unreadable or malformed.
+
+    A configured anchor that cannot be used is an error, never a silent downgrade to
+    "no anchor": that would turn an operator's pinning into ``unanchored``.
+    """
+
+
+def _read_trust_list(path: Path) -> bytes:
+    try:
+        fd = os.open(path, _OPEN_FLAGS)
+    except OSError as exc:
+        raise TrustedKeysError(f"cannot open the evidence trust list {path}: {exc}") from exc
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise TrustedKeysError(f"the evidence trust list {path} is not a regular file")
+        os.set_blocking(fd, True)
+        data = handle.read(MAX_TRUSTED_KEYS_BYTES + 1)
+    if len(data) > MAX_TRUSTED_KEYS_BYTES:
+        raise TrustedKeysError(
+            f"the evidence trust list {path} is larger than {MAX_TRUSTED_KEYS_BYTES} bytes"
+        )
+    return data
+
+
+def load_trusted_public_keys(path: Path) -> list[bytes]:
+    """Parse a PEM file holding one or more Ed25519 ``PUBLIC KEY`` blocks.
+
+    The format is what ``nova verify --public-key`` takes, concatenated. The file is
+    opened non-blocking and must be a regular file, so a FIFO never hangs the caller,
+    and at most :data:`MAX_TRUSTED_KEYS_BYTES` are read. A link is followed: the list
+    is operator configuration, often mounted through one (Kubernetes secrets).
+
+    Raises:
+        TrustedKeysError: missing, not a regular file, too large, holding no key, too
+            many keys, or a block that is not an Ed25519 public key.
+    """
+    blocks: list[bytes] = _PEM_BLOCK.findall(_read_trust_list(path))
+    if not blocks:
+        raise TrustedKeysError(f"the evidence trust list {path} holds no PUBLIC KEY block")
+    if len(blocks) > MAX_TRUSTED_KEYS:
+        raise TrustedKeysError(
+            f"the evidence trust list {path} holds {len(blocks)} keys (limit {MAX_TRUSTED_KEYS})"
+        )
+    for i, block in enumerate(blocks, 1):
+        try:
+            key = serialization.load_pem_public_key(block)
+        except (ValueError, UnsupportedAlgorithm) as exc:
+            raise TrustedKeysError(f"{path}: key {i} is not a valid public key ({exc})") from exc
+        if not isinstance(key, Ed25519PublicKey):
+            raise TrustedKeysError(
+                f"{path}: key {i} is not an Ed25519 key; Evidence Bundles are signed with Ed25519"
+            )
+    return blocks

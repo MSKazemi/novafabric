@@ -3483,7 +3483,10 @@ added after export fails even when every digest and `manifest_hash` has been rew
 ships inside the bundle, so on its own a pass proves the bundle is internally consistent,
 not who signed it: pass `--public-key` to pin the signer. Without it the output says
 `signer not pinned`. Malformed or hostile manifests, envelopes and statements are reported
-as failures, never raised.
+as failures, never raised. A ZIP holding two members with the same name fails: tools disagree
+on which of the two they read. So does a manifest `subject.run_id` that differs from the
+`run_id` the run statement signs (the manifest is only a label). `POST /api/evidence/{bundle_id}/verify` in `nova serve` runs
+this same verifier, with the operator's trust list in place of `--public-key`.
 
 Exit codes: `0` (all checks pass), `1` (any check fails or .seal/ missing).
 
@@ -8438,7 +8441,7 @@ Start the experimental local dashboard. Read-only browsing of capsules, registry
 
 | Endpoint | What it does |
 |---|---|
-| `POST /api/evidence/{bundle_id}/verify` | Full cryptographic verification: Ed25519 DSSE + RFC 3161 TSR + NovaSeal Merkle log inclusion. Returns `{signature_ok, timestamp_ok, log_integrity_ok, seal_available, valid, errors[]}`. |
+| `POST /api/evidence/{bundle_id}/verify` | The same verifier as `nova verify <bundle>.zip` (artifact digests, `manifest_hash`, every DSSE signature, signed subjects recomputed from the bundle) + RFC 3161 TSR + NovaSeal Merkle log inclusion. Returns `{valid, signature_ok, manifest_hash_ok, artifacts_ok, complete, no_extras, subjects_ok, attestations_verified, signer_trust, signer_fingerprints, timestamp_ok, timestamp_trust, log_integrity_ok, seal_available, errors[]}`. `signer_trust` is `anchored` only when every signer is in the operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default `$NOVAFABRIC_HOME/evidence-trusted-keys.pem` — the server-side `--public-key`); without one it is `unanchored`: `valid` then proves consistency, not origin. |
 | `POST /api/runs/{run_id}/validate` | Capsule schema + required-file check. Returns `{valid, errors[], run_id}`. |
 | `GET /api/runs/{run_id}/redaction-proof` | Returns the full `redaction-proof.json` for a capsule (404 if not yet scanned). |
 | `GET /api/assets/{name}/diff` | Field-by-field diff of two asset spec versions (`?from_version=&to_version=`). Returns `{added, removed, changed, identical}`. |

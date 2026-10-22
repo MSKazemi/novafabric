@@ -2321,97 +2321,91 @@ def create_app(
 
     @app.post("/api/evidence/{bundle_id}/verify", dependencies=[Depends(verify_token)])
     async def verify_evidence_endpoint(bundle_id: str) -> dict[str, Any]:
-        """Verify the cryptographic integrity of an evidence bundle.
+        """Verify an evidence bundle with the same verifier as ``nova verify <bundle>.zip``.
 
-        Checks (in order):
-          1. signature_ok   — Ed25519 DSSE signature on attestations/run.intoto.json
-          2. timestamp_ok   — RFC 3161 TSR in manifest.dsse.tsr (null if not present);
-             timestamp_trust says whether its time is trusted: "anchored" only when
-             tsa_ca_certs in novaseal.yaml validate the TSA chain, else "unanchored"
-          3. log_integrity_ok — NovaSeal Merkle inclusion (null if not configured)
+        Runs the bundle's whole recipe (``evidence/bundle_verify.verify_bundle_archive``):
+        every artifact digest, no missing/unlisted/duplicate member, ``manifest_hash``,
+        every attestation's DSSE signature, and each signed subject recomputed from the
+        bundle's own content. ``valid`` is that verdict, plus the RFC 3161 token
+        (``timestamp_ok``/``timestamp_trust``; "anchored" only when ``tsa_ca_certs`` in
+        novaseal.yaml validate the TSA chain) and the local NovaSeal log
+        (``log_integrity_ok``, null when not configured).
+
+        The verifying key ships inside the bundle, so ``valid`` alone proves the bundle
+        is consistent, not who signed it. ``signer_trust`` says which:
+        "anchored" (every signer is in the operator's trust list,
+        ``NOVAFABRIC_EVIDENCE_TRUSTED_KEYS``), "unanchored" (no trust list configured:
+        origin not established), "untrusted" (a signer is not in the list; ``valid`` is
+        false) or "none" (no signature verified).
         """
-        import json as _json
-        import zipfile
+        import zipfile  # noqa: PLC0415
+
+        from novafabric.evidence.bundle_verify import (  # noqa: PLC0415
+            BundleArchiveError,
+            BundleTooLargeError,
+            TrustedKeysError,
+        )
+        from novafabric.serve.evidence_verify import (  # noqa: PLC0415
+            evidence_trust_anchors,
+            verify_bundle_file,
+        )
+        from novafabric.trust.novaseal import timestamp_trust_for  # noqa: PLC0415
 
         _validate_bundle_id(bundle_id)
+        try:
+            anchors = evidence_trust_anchors()
+        except TrustedKeysError as exc:
+            # A configured anchor that cannot be read must never degrade to "no anchor".
+            logger.error("evidence_trust_list_unusable", extra={"reason": str(exc)[:300]})
+            raise HTTPException(
+                status_code=500, detail=f"Evidence signer trust list is unusable: {exc}"
+            ) from exc
+        try:
+            check = await asyncio.to_thread(
+                verify_bundle_file,
+                _nf_paths.evidence_dir(),
+                bundle_id,
+                trusted_public_pems=anchors,
+                tsa_chain_check=_bundle_tsa_chain_ok,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"Evidence bundle '{bundle_id}' not found."
+            ) from exc
+        except BundleTooLargeError as exc:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Bundle '{bundle_id}' is too large to verify here ({exc}); "
+                "run `nova verify` on the bundle instead.",
+            ) from exc
+        except (zipfile.BadZipFile, BundleArchiveError, CapsuleEntryError) as exc:
+            raise HTTPException(
+                status_code=422, detail=f"Bundle '{bundle_id}' is not a valid ZIP: {exc}"
+            ) from exc
 
-        evidence_dir = _nf_paths.evidence_dir()
-        zip_path = evidence_dir / f"{bundle_id}.zip"
-        if not zip_path.exists():
-            raise HTTPException(status_code=404, detail=f"Evidence bundle '{bundle_id}' not found.")
+        errors = check.outcome.problems() + check.timestamp_errors
+        run_id = check.run_id or bundle_id
+        log_integrity_ok, seal_available = _evidence_local_seal(run_id, errors)
+        return {
+            "bundle_id": bundle_id,
+            "run_id": run_id,
+            "valid": check.ok and log_integrity_ok is not False,
+            **check.fields(),
+            "timestamp_trust": timestamp_trust_for(check.timestamp_ok, check.tsa_chain_ok),
+            "log_integrity_ok": log_integrity_ok,
+            "seal_available": seal_available,
+            "errors": errors,
+        }
 
-        errors: list[str] = []
-        signature_ok = False
-        timestamp_ok: bool | None = None
-        tsa_chain_ok: bool | None = None
+    def _evidence_local_seal(run_id: str, errors: list[str]) -> tuple[bool | None, bool]:
+        """NovaSeal Merkle-log check of the *local* capsule with this run id.
+
+        ``(log_integrity_ok, seal_available)``; ``None`` when NovaSeal is not configured
+        or no local sealed capsule exists. This checks the capsule on this host, not the
+        bundle's copy; the bundle's copy is covered by its signed run subject.
+        """
         log_integrity_ok: bool | None = None
         seal_available = False
-        run_id = bundle_id
-
-        try:
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                names = zf.namelist()
-                manifest: dict[str, Any] = {}
-                if "manifest.json" in names:
-                    manifest = _json.loads(zf.read("manifest.json"))
-                    run_id = manifest.get("run_id", bundle_id)
-
-                # --- 1. Ed25519 DSSE signature ---
-                dsse_bytes = b""
-                dsse_path = "attestations/run.intoto.json"
-                _cert_candidates = ("signatures/run.cert", "signatures/run.intoto.json.cert")
-                cert_path_in_zip = next((p for p in _cert_candidates if p in names), None)
-                if dsse_path not in names:
-                    errors.append(f"Missing {dsse_path} in bundle")
-                elif cert_path_in_zip is None:
-                    errors.append("Missing signing certificate in bundle (signatures/run.cert)")
-                else:
-                    dsse_bytes = zf.read(dsse_path)
-                    cert_pem = zf.read(cert_path_in_zip)
-                    try:
-                        from novafabric.evidence.intoto import dsse_verify
-                        from novafabric.evidence.signing import verify_with_pem
-                        envelope = _json.loads(dsse_bytes)
-                        dsse_verify(envelope, lambda pae, sig: verify_with_pem(cert_pem, pae, sig))
-                        signature_ok = True
-                    except Exception as exc:
-                        errors.append(f"DSSE signature verification failed: {exc}")
-
-                # --- 2. RFC 3161 TSR ---
-                tsr_path = "manifest.dsse.tsr"
-                if tsr_path in names:
-                    tsr_bytes = zf.read(tsr_path)
-                    if not tsr_bytes:
-                        pass  # empty TSR = TSA skipped: null (absent), not True (ADR-0301)
-                    elif dsse_bytes:
-                        try:
-                            from novafabric.trust.novaseal.timestamp import verify_timestamp
-                            timestamp_ok = verify_timestamp(tsr_bytes, dsse_bytes)
-                            if not timestamp_ok:
-                                errors.append("RFC 3161 TSR verification failed: hash mismatch")
-                            else:
-                                tsa_chain_ok = _bundle_tsa_chain_ok(tsr_bytes, dsse_bytes)
-                                if tsa_chain_ok is False:
-                                    errors.append(
-                                        "RFC 3161 TSA chain does not reach tsa_ca_certs"
-                                    )
-                        except Exception as exc:
-                            timestamp_ok = False
-                            errors.append(f"TSR verification error: {exc}")
-                    else:
-                        timestamp_ok = False
-                        errors.append("Cannot verify TSR: DSSE envelope missing")
-                else:
-                    ts_status = manifest.get("timestamp_status", "")
-                    if ts_status == "failed":
-                        timestamp_ok = False
-                        errors.append("Timestamp was not obtained during export (TSA error)")
-                    # else: not requested — null = not applicable
-
-        except zipfile.BadZipFile:
-            raise HTTPException(status_code=422, detail=f"Bundle '{bundle_id}' is not a valid ZIP.")
-
-        # --- 3. NovaSeal Merkle log (optional, requires local capsule + config) ---
         try:
             from novafabric.trust.novaseal.config import load_signing_profile
             profile = load_signing_profile()
@@ -2436,7 +2430,7 @@ def create_app(
                         log_file = seal_dir / "log-entry.json"
                         capsule_id = ""
                         if log_file.exists():
-                            entry = _json.loads(
+                            entry = json.loads(
                                 read_capsule_text(
                                     cdir, ".seal/log-entry.json", operation="nova serve"
                                 )
@@ -2446,28 +2440,9 @@ def create_app(
                         log_integrity_ok = seal_result.log_integrity_ok
                         if not seal_result.log_integrity_ok:
                             errors.extend(seal_result.errors)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # NovaSeal not configured or unavailable
-
-        from novafabric.trust.novaseal import timestamp_trust_for  # noqa: PLC0415
-
-        valid = (
-            signature_ok
-            and (timestamp_ok is not False)
-            and (tsa_chain_ok is not False)
-            and (log_integrity_ok is not False)
-        )
-        return {
-            "bundle_id": bundle_id,
-            "run_id": run_id,
-            "valid": valid,
-            "signature_ok": signature_ok,
-            "timestamp_ok": timestamp_ok,
-            "timestamp_trust": timestamp_trust_for(timestamp_ok, tsa_chain_ok),
-            "log_integrity_ok": log_integrity_ok,
-            "seal_available": seal_available,
-            "errors": errors,
-        }
+        return log_integrity_ok, seal_available
 
     @app.get("/api/lineage/provenance/{ref:path}", dependencies=[Depends(verify_token)])
     async def lineage_provenance(

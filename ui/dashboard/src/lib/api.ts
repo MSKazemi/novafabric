@@ -515,6 +515,16 @@ export interface VerifyResult {
   log_integrity_ok: boolean | null;
   seal_available: boolean;
   errors: string[];
+  // M11: the same recipe as `nova verify <bundle>.zip`. `valid` proves consistency;
+  // only signer_trust === 'anchored' proves the signer is an operator-trusted key.
+  manifest_hash_ok?: boolean;
+  artifacts_ok?: boolean;
+  complete?: boolean;
+  no_extras?: boolean;
+  subjects_ok?: boolean;
+  attestations_verified?: number;
+  signer_trust?: 'anchored' | 'unanchored' | 'untrusted' | 'none';
+  signer_fingerprints?: string[];
 }
 
 export interface EvalHistoryResponse {

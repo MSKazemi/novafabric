@@ -302,10 +302,16 @@ def test_verify_evidence_missing_dsse(client: TestClient, sample_bundle: str) ->
     assert data["valid"] is False
 
 
-def test_verify_evidence_valid_signature(
+def test_verify_evidence_a_valid_signature_alone_is_not_a_valid_bundle(
     evidence_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Bundle with a valid Ed25519 DSSE → signature_ok=True, valid=True."""
+    """A verifying DSSE signature over an unbound subject is not a valid bundle (M11).
+
+    This test used to assert ``valid: true`` here — it pinned the defect. The bundle
+    has no ``manifest_hash``, lists no artifact and no attestation, and its signed
+    subject is ``"a" * 64``: ``nova verify`` fails it, and so must the route.
+    Full coverage: ``tests/serve/test_evidence_verify_matches_cli.py``.
+    """
     from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
     from novafabric.evidence.signing import LocalSigner, generate_keypair
 
@@ -340,12 +346,15 @@ def test_verify_evidence_valid_signature(
     )
     assert r.status_code == 200
     data = r.json()
-    assert data["signature_ok"] is True
+    assert data["signature_ok"] is False  # no attestation is listed, so none verified
     assert data["timestamp_ok"] is None   # no TSR file in bundle
     assert data["log_integrity_ok"] is None  # NovaSeal not configured in test env
     assert data["seal_available"] is False
-    assert data["valid"] is True
-    assert data["errors"] == []
+    assert data["manifest_hash_ok"] is False
+    assert data["no_extras"] is False  # the envelope and cert are not in the manifest
+    assert data["signer_trust"] == "none"
+    assert data["valid"] is False
+    assert data["errors"]
 
 
 def test_verify_evidence_tampered_signature(

@@ -1259,11 +1259,9 @@ def _verify_evidence_bundle(
     (:func:`novafabric.evidence.bundle_verify.verify_bundle_signatures`); with
     ``public_key`` the signer must also be that key. Exits 1 on any failure.
     """
-    import hashlib
-    import json
     import zipfile
 
-    from novafabric.evidence.bundle_verify import verify_bundle_signatures
+    from novafabric.evidence.bundle_verify import BundleArchiveError, verify_bundle_archive
 
     try:
         zf = zipfile.ZipFile(bundle_path)
@@ -1271,68 +1269,45 @@ def _verify_evidence_bundle(
         console.print(f"[red]Error:[/red] not a readable ZIP: {bundle_path} ({exc})")
         raise typer.Exit(code=1) from exc
 
+    # One verifier for the CLI and `POST /api/evidence/{bundle_id}/verify`, so the two
+    # can never reach different verdicts on the same bundle.
     with zf:
-        names = set(zf.namelist())
-        has_token = "manifest.dsse.tsr" in names and zf.getinfo("manifest.dsse.tsr").file_size > 0
-        if "manifest.json" not in names:
-            console.print(
-                f"[red]Error:[/red] {bundle_path} has no manifest.json — "
-                "this is not a NovaFabric Evidence Bundle."
-            )
-            raise typer.Exit(code=1)
         try:
-            manifest = json.loads(zf.read("manifest.json"))
-        except ValueError as exc:
-            console.print(f"[red]Error:[/red] manifest.json is not valid JSON: {exc}")
+            outcome = verify_bundle_archive(
+                zf,
+                trusted_public_pems=[public_key.read_bytes()] if public_key is not None else (),
+            )
+        except BundleArchiveError as exc:
+            console.print(f"[red]Error:[/red] {bundle_path}: {exc}")
             raise typer.Exit(code=1) from exc
-
-        artifacts = manifest.get("artifacts") or []
-        console.print(f"\nEvidence Bundle verification: {bundle_path.name}")
-        console.print(f"  bundle_id: {manifest.get('bundle_id', '(none)')}")
-        console.print(f"  artifacts: {len(artifacts)}")
-
-        mismatched: list[str] = []
-        missing: list[str] = []
-        for art in artifacts:
-            rel = art.get("path", "")
-            want = art.get("sha256", "")
-            if rel not in names:
-                missing.append(rel)
-                continue
-            got = "sha256:" + hashlib.sha256(zf.read(rel)).hexdigest()
-            if got != want:
-                mismatched.append(rel)
-
-        # Files present in the ZIP that the manifest never accounted for: an
-        # addition is a modification too, so it must not pass silently.
-        unlisted = sorted(names - {a.get("path", "") for a in artifacts} - {"manifest.json"})
-        signed = verify_bundle_signatures(
-            manifest,
-            zf.read,
-            names,
-            trusted_public_pem=public_key.read_bytes() if public_key is not None else None,
-        )
+        names = set(zf.namelist())
         tsa_check = (
             _bundle_tsa_check(zf, names, tsa_ca_bundle, crl_dir=crl_dir, crl_strict=crl_strict)
             if tsa_ca_bundle is not None
             else None
         )
 
-    _print_check(f"Artifact digests ({len(artifacts)} recomputed)", not mismatched)
-    for rel in mismatched:
+    signed = outcome.signatures
+    console.print(f"\nEvidence Bundle verification: {bundle_path.name}")
+    console.print(f"  bundle_id: {outcome.manifest.get('bundle_id', '(none)')}")
+    console.print(f"  artifacts: {outcome.artifact_count}")
+    _print_check(f"Artifact digests ({outcome.artifact_count} recomputed)", outcome.digests_ok)
+    for rel in outcome.modified:
         console.print(f"    [red]✗ modified:[/red] {rel}")
-    if missing:
-        _print_check(f"All listed artifacts present ({len(missing)} missing)", False)
-        for rel in missing:
+    if outcome.missing:
+        _print_check(f"All listed artifacts present ({len(outcome.missing)} missing)", False)
+        for rel in outcome.missing:
             console.print(f"    [red]✗ missing:[/red] {rel}")
     else:
         _print_check("All listed artifacts present", True)
-    if unlisted:
-        _print_check(f"No unlisted files ({len(unlisted)} extra)", False)
-        for rel in unlisted:
+    if outcome.unlisted:
+        _print_check(f"No unlisted files ({len(outcome.unlisted)} extra)", False)
+        for rel in outcome.unlisted:
             console.print(f"    [red]✗ not in manifest:[/red] {rel}")
     else:
         _print_check("No unlisted files", True)
+    for rel in outcome.duplicate_members:
+        console.print(f"    [red]✗ duplicate archive member:[/red] {rel}")
 
     _print_check("manifest_hash matches the manifest", signed.manifest_hash_ok)
     _print_check(
@@ -1357,7 +1332,7 @@ def _verify_evidence_bundle(
             "to require a known signer"
         )
     tsa_ok = _print_tsa_check(tsa_check)
-    if tsa_check is None and has_token:
+    if tsa_check is None and outcome.has_timestamp_token:
         # Not checked at all without anchors: say so rather than staying silent, so
         # the bundle's token is never read as a verified, trusted time.
         console.print(
@@ -1365,9 +1340,10 @@ def _verify_evidence_bundle(
             "bundle carries manifest.dsse.tsr, but no TSA trust anchor was given; its time "
             "is not trusted (pass --tsa-ca-bundle)"
         )
-    ok = not mismatched and not missing and not unlisted and tsa_ok and signed.ok
+    ok = outcome.ok and tsa_ok
     console.print(
-        f"\nartifacts_ok={not mismatched}, complete={not missing}, no_extras={not unlisted}"
+        f"\nartifacts_ok={outcome.digests_ok}, complete={outcome.complete}, "
+        f"no_extras={outcome.no_extras}"
     )
     if not ok:
         console.print("[red]Evidence Bundle verification FAILED[/red]")
