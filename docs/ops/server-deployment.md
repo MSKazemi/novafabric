@@ -326,7 +326,7 @@ deployment tiers.
 | Values | Effect |
 |---|---|
 | *(stock)* | `nova server start`, no `--insecure`. Terminate TLS at the ingress. |
-| `mode: dashboard` | `nova serve`. ⚠ The chart passes `--host 0.0.0.0`, and `nova serve` refuses a non-loopback bind without `--insecure`, so `mode: dashboard` alone exits 2 at container start today; it currently needs `serve.insecure: true` plus the acknowledgement below. |
+| `mode: dashboard` | `nova serve`. A pod must bind `0.0.0.0` for its Service and probes, and `nova serve` refuses a non-loopback bind without `--insecure` (exit 2), so **`helm template` refuses to render** `mode: dashboard` unless `serve.insecure: true` and the acknowledgement below are also set — rather than rendering a pod that crash-loops. Terminate TLS at the ingress in front of it. |
 | `serve.insecure: true` | **`helm template` fails** unless `serve.acknowledgeInsecureExposure` is set to `i-accept-serving-evidence-over-plain-http`. |
 | upgrading from < v0.102.0 | **fails** until `upgradeAcknowledged: true`; the message carries the exact values that restore the old behaviour. |
 
