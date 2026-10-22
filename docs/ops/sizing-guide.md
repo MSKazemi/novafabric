@@ -169,9 +169,14 @@ server process.** What *is* contractual:
   ([ADR-0179](../decisions.md),
   default **off**) are in-process token buckets with a bounded key map, so
   enabling them adds negligible memory. Quota enforcement, however, derives
-  usage by walking every file in the capsule store (at most once per 5 s, on
-  the request path), so on a large store it stalls ingest while it
-  recounts.
+  usage by walking every file in the capsule store, at most once per 5 s.
+  The walk runs on a worker thread (not the event loop), one at a time —
+  ingest requests that arrive mid-walk use the previous count — and skips the
+  ingest spool (`<capsule_dir>/.ingest-tmp/`), so uploads still in flight do
+  not count toward `max_bytes_*`. It examines at most 1 000 000 directory
+  entries; past that it logs a warning and enforces against a lower bound.
+  Its cost is one worker thread and disk IO proportional to the store's file
+  count, not added request latency.
 - **Observability of your actual usage** (experimental,
   [ADR-0182](../decisions.md)): scrape
   `/metrics` (Prometheus) on either app for HTTP request rates/durations, DB
