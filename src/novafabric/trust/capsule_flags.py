@@ -14,7 +14,10 @@ and this is the one part of the product where a fabricated verdict is worst.
 Derivable from a capsule today:
 
 - ``signature_ok`` / ``timestamp_ok`` / ``log_integrity_ok`` — NovaSeal
-  verification over the capsule's ``.seal`` directory.
+  verification over the capsule's ``.seal`` directory. The timestamp axis is
+  *trusted time*, not token integrity: ``True`` only for an anchored token
+  (``tsa_ca_certs``), ``0.5`` (warn) for an intact but unanchored one — a
+  self-made TSA reaches that state — ``False`` for an invalid one, absent for none.
 - ``redaction_coverage`` / ``secret_scan_clean`` — the capsule's
   ``redaction-proof.json``.
 
@@ -53,7 +56,7 @@ def _seal_flags(capsule_dir: Path) -> dict[str, Any]:
     # the capsule. Without it we CANNOT verify — which is not the same as
     # verifying and failing, so the axes stay n/a rather than reporting fail.
     try:
-        from novafabric.trust.novaseal import KeyConfig, NovaSeal  # noqa: PLC0415
+        from novafabric.trust.novaseal import verify_with_profile  # noqa: PLC0415
         from novafabric.trust.novaseal.config import (  # noqa: PLC0415
             load_signing_profile,
         )
@@ -61,26 +64,23 @@ def _seal_flags(capsule_dir: Path) -> dict[str, Any]:
         profile = load_signing_profile()
         if profile is None:
             return {}
-        seal = NovaSeal(
-            config=KeyConfig(
-                profile=profile.profile,
-                key_path=str(profile.key_path),
-                cert_path=str(profile.cert_path),
-            ),
-            tsa_url=profile.tsa_url,
-            db_path=str(profile.merkle_db),
-        )
-        result = seal.verify(capsule_id=capsule_id, seal_dir=str(seal_dir))
+        result = verify_with_profile(seal_dir, profile)
     except Exception:  # noqa: BLE001 — a verification fault must not crash the view
         log.warning("seal verification unavailable for %s", capsule_dir, exc_info=True)
         return {}
 
     return {
         "signature_ok": bool(result.signature_ok),
-        # ADR-0301: no token is "n/a" (None), not a passed timestamp axis.
-        "timestamp_ok": None if result.timestamp_ok is None else bool(result.timestamp_ok),
+        # ADR-0301: no token is "n/a" (None), not a passed timestamp axis. An
+        # intact token whose TSA no anchor vouches for is not trusted time: warn.
+        "timestamp_ok": _timestamp_axis(result.timestamp_trust),
         "log_integrity_ok": bool(result.log_integrity_ok),
     }
+
+
+def _timestamp_axis(timestamp_trust: str) -> bool | float | None:
+    """Radar value of the timestamp axis for a ``timestamp_trust`` value."""
+    return {"anchored": True, "unanchored": 0.5, "invalid": False}.get(timestamp_trust)
 
 
 def _redaction_flags(capsule_dir: Path) -> dict[str, Any]:

@@ -252,5 +252,8 @@ class TestTimestampPresenceIsReportedHonestly:
         )
         # Scoped to the timestamp line: ADR-0251 added two more NOT PRESENT
         # checks to this output, and a bare substring test would catch those.
-        assert "Timestamp (RFC 3161): OK" in cli.output
+        # No TSA anchor was given, so a verified token is UNANCHORED, never "OK"
+        # (ADR-0297 Amendment 2: an intact token is not a trusted time).
+        assert "Timestamp (RFC 3161): UNANCHORED" in cli.output
+        assert "Timestamp (RFC 3161): OK" not in cli.output
         assert "Timestamp (RFC 3161): NOT PRESENT" not in cli.output

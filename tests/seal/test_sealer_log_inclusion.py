@@ -14,7 +14,9 @@ Two defects, both on the sealer's host:
   records; the sealer's log is the authority on what that sealer sealed. A log that
   holds other seals by the same signer is the sealer's log, and absence from it now
   fails. Another signer's log, a fresh log, or no log keeps the carried-proof result
-  (ADR-0297), and so does a log of the other root version (the ADR-0313 migration).
+  (ADR-0297). The signer's log of a *newer* root version (the ADR-0313 migration) keeps
+  it too, but reports ``sealer_log: unverifiable-other-version`` — see
+  ``test_sealer_log_root_version.py`` (ADR-0297 Amendment 2).
 """
 
 from __future__ import annotations
@@ -308,6 +310,9 @@ def test_v1_capsule_against_the_hosts_new_v2_log_keeps_carried_proof(
     result = new.verify("", str(seal_dir))
     assert result.log_inclusion == LOG_INCLUSION_PROOF, result.errors
     assert result.valid
+    # ...but not silently: without the retired v1 log this cannot be told apart
+    # from a forged v1 record (ADR-0297 Amendment 2).
+    assert result.sealer_log == "unverifiable-other-version"
 
 
 def test_has_entries_for_keyid_matches_only_a_whole_hex_keyid(tmp_path: Path) -> None:

@@ -31,10 +31,23 @@ this checkpoint's signed body, the root is verified only together with its
 ``tree_size`` (ADR-0313 D4) and under its ``root_version``, and the inclusion
 proof must recompute the root. A checkpoint without a ``merkle`` block — the
 ``nova ledger anchor`` local-finalize path never appends to a log — makes no
-inclusion claim, and exit 0 then does not speak to inclusion. The ``merkle``
-block sits outside the checkpoint signature (it is written after signing), so
-this check detects a *wrong* block, not a *removed* one; only an anchor over
-the Merkle root binds its presence.
+inclusion claim, and exit 0 then does not speak to inclusion.
+
+**What that proves without a log — and what it does not.** The block is checked
+only against itself, and it sits outside the checkpoint signature (it is written
+after signing). Anyone can therefore replace it with a self-consistent tree no log
+ever held — a one-leaf tree whose root is the leaf passes — or remove it. Without
+a log, exit 0 means the block is *self-consistent* (``merkle_inclusion:
+"self-consistent"``), not that the checkpoint is in any log.
+
+**With the log** (``merkle_log=`` / ``nova ledger verify --merkle-db``) the block
+is checked against it: the log must hold this checkpoint's leaf at ``log_index``
+and reproduce the recorded ``(tree_size, root)`` from its own leaves under the
+recorded root version — recomputed, never read from a stored head. A checkpoint
+without a block must then be found in the log by its leaf hash, so a removed
+block no longer hides anything. Either failure is exit 8 (``merkle_inclusion:
+"log"`` on success). This proves inclusion in *the log you supplied*; whether that
+log is the one others see is a witness/anchor question (ADR-0097).
 """
 
 from __future__ import annotations
@@ -45,7 +58,7 @@ import json
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Any, Callable, TypeGuard
+from typing import TYPE_CHECKING, Any, Callable, TypeGuard
 
 from novafabric.evidence.intoto import (
     DSSE_PAYLOAD_TYPE,
@@ -69,7 +82,19 @@ from novafabric.trust.novaseal.merkle import (
     verify_inclusion_proof,
 )
 
+if TYPE_CHECKING:  # pragma: no cover — typing only
+    from novafabric.trust.novaseal.merkle import MerkleLog, PostgresMerkleLog
+
 VerifyFn = Callable[[bytes, bytes], bool]
+
+#: ``LedgerVerdict.merkle_inclusion``: the checkpoint's leaf was found in the
+#: supplied log and the recorded tree head was reproduced from that log's leaves.
+MERKLE_INCLUSION_LOG = "log"
+#: The ``merkle`` block verified against itself only — no log was supplied. It is
+#: unsigned, so this is not evidence that any log holds the checkpoint.
+MERKLE_INCLUSION_SELF_CONSISTENT = "self-consistent"
+#: No ``merkle`` block and no log: the checkpoint makes no inclusion claim.
+MERKLE_INCLUSION_NONE = "none"
 
 
 class LedgerExit(IntEnum):
@@ -94,6 +119,9 @@ class LedgerVerdict:
     exit: LedgerExit
     reasons: list[str] = field(default_factory=list)
     stream_verdicts: dict[str, str] = field(default_factory=dict)
+    # What Merkle inclusion was established — one of the ``MERKLE_INCLUSION_*``
+    # values. Meaningful when ``ok``; see the module docstring.
+    merkle_inclusion: str = MERKLE_INCLUSION_NONE
 
 
 def exit_code_for(verdict: LedgerVerdict) -> int:
@@ -277,6 +305,58 @@ def _merkle_failure(checkpoint: dict[str, Any]) -> str | None:
     return None
 
 
+def _body_leaf_hash(checkpoint: dict[str, Any]) -> str:
+    """The log leaf this checkpoint's signed body hashes to (what ``sign_checkpoint`` appends)."""
+    body = json.dumps(_signing_body(checkpoint), sort_keys=True, separators=(",", ":"))
+    return _leaf_hash(body.encode("utf-8"))
+
+
+def _merkle_log_failure(
+    checkpoint: dict[str, Any], merkle_log: "MerkleLog | PostgresMerkleLog"
+) -> str | None:
+    """Why the checkpoint is not included in *merkle_log*, or None when it is.
+
+    Runs after :func:`_merkle_failure`, so a present block is already well formed
+    and self-consistent. A block's tree head must be reproduced from the log's own
+    leaves; a checkpoint without a block must be in the log by its leaf hash.
+    """
+    from novafabric.trust.novaseal.merkle import MerkleError  # noqa: PLC0415
+
+    leaf_hash = _body_leaf_hash(checkpoint)
+    merkle = checkpoint.get("merkle")
+    try:
+        if not isinstance(merkle, dict):
+            if merkle_log.find_leaf_index(leaf_hash) is None:
+                return (
+                    "the checkpoint carries no merkle block and its signed body is not a "
+                    "leaf of the supplied Merkle log"
+                )
+            return None
+        log_index = merkle["log_index"]
+        tree_size = merkle["tree_size"]
+        root = str(merkle["root"])[len(_SHA256_PREFIX) :]
+        root_version = root_version_of(merkle)
+        try:
+            held = merkle_log.get_leaf_hash(log_index)
+        except MerkleError:
+            held = None
+        if held != leaf_hash:
+            return (
+                f"the supplied Merkle log does not hold this checkpoint at "
+                f"log_index={log_index} — the merkle block describes a tree that is not "
+                "this log"
+            )
+        reproduced = merkle_log.compute_root_at_size(tree_size, root_version=root_version)
+    except MerkleError as exc:
+        return f"Merkle log error: {exc}"
+    if reproduced != root:
+        return (
+            f"the supplied Merkle log's leaves do not reproduce the recorded tree head "
+            f"(tree_size={tree_size}, root {root[:16]}…, root v{root_version})"
+        )
+    return None
+
+
 def _verify_anchor(checkpoint: dict[str, Any]) -> bool:
     """Check the external anchor's ``anchored_value`` against the checkpoint.
 
@@ -305,6 +385,7 @@ def verify_ledger(
     verify_fn: VerifyFn | None = None,
     *,
     observed_epoch: int | None = None,
+    merkle_log: "MerkleLog | PostgresMerkleLog | None" = None,
 ) -> LedgerVerdict:
     """Verify the Adversary-Anchored Accountability Ledger for *capsule_dir*.
 
@@ -312,7 +393,10 @@ def verify_ledger(
     returned by :func:`sign_checkpoint`; the verification reads the persisted
     ``.ledger/checkpoint.json`` for the signed body. *verify_fn* (when given)
     performs the cryptographic signature check; without it the verification is
-    structural (chains + epoch + anchor) only.
+    structural (chains + epoch + anchor) only. *merkle_log* (when given) is the
+    log the checkpoint was appended to: inclusion is then checked against it
+    rather than only against the checkpoint's own (unsigned) ``merkle`` block —
+    see the module docstring for what each ``merkle_inclusion`` result proves.
     """
     checkpoint = _load_checkpoint(capsule_dir)
     if checkpoint is None:
@@ -344,12 +428,20 @@ def verify_ledger(
         )
 
     merkle_failure = _merkle_failure(checkpoint)
+    if merkle_failure is None and merkle_log is not None:
+        merkle_failure = _merkle_log_failure(checkpoint, merkle_log)
     if merkle_failure is not None:
         return LedgerVerdict(
             ok=False,
             exit=LedgerExit.MERKLE_FAILURE,
             reasons=[merkle_failure],
         )
+    if merkle_log is not None:
+        merkle_inclusion = MERKLE_INCLUSION_LOG
+    elif isinstance(checkpoint.get("merkle"), dict):
+        merkle_inclusion = MERKLE_INCLUSION_SELF_CONSISTENT
+    else:
+        merkle_inclusion = MERKLE_INCLUSION_NONE
 
     if not _verify_anchor(checkpoint):
         return LedgerVerdict(
@@ -358,4 +450,4 @@ def verify_ledger(
             reasons=["external anchor value does not match checkpoint"],
         )
 
-    return LedgerVerdict(ok=True, exit=LedgerExit.OK)
+    return LedgerVerdict(ok=True, exit=LedgerExit.OK, merkle_inclusion=merkle_inclusion)

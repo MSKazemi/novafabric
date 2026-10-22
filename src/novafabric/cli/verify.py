@@ -158,7 +158,23 @@ def verify_cmd(
             help=(
                 "Print one JSON object instead of the text report (capsule directories, "
                 "local backend). Carries identity_trust and timestamp_ok (null when the "
-                "capsule has no RFC 3161 token) — ADR-0301. Exit code is unchanged."
+                "capsule has no RFC 3161 token) — ADR-0301, timestamp_trust "
+                "(anchored|unanchored|absent|invalid), sealer_log and unanchored_claims. "
+                "Exit code is unchanged."
+            ),
+        ),
+    ] = False,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help=(
+                "Also exit 1 when a passing check rests on something no anchor you "
+                "trust vouches for (capsule directories, local backend): a "
+                "self-asserted signer (no --ca-bundle), a timestamp whose TSA is not "
+                "anchored (no --tsa-ca-bundle / tsa_ca_certs), Merkle inclusion shown "
+                "only by the proof the capsule carries or not checked, or "
+                "sealer_log=unverifiable-other-version. Listed as unanchored_claims."
             ),
         ),
     ] = False,
@@ -179,12 +195,27 @@ def verify_cmd(
     another CA bundle you passed). A capsule without an RFC 3161 token reports the
     timestamp as NOT PRESENT (timestamp_ok=None), which does not fail verification.
 
+    The timestamp line separates integrity from trust: OK means the token is intact,
+    bound to this envelope and its TSA chain reached an anchor you passed
+    (--tsa-ca-bundle or tsa_ca_certs) — timestamp_trust=anchored. Without an anchor a
+    present token prints UNANCHORED (timestamp_trust=unanchored): anyone can mint a
+    TSA certificate and sign any time, so the genTime it shows is a claim, not trusted
+    time. It does not fail verification unless --strict.
+
     Exits 0 if all checks pass, 1 otherwise. Needs only the capsule: no NovaSeal
     config and no Merkle log are required (an independent auditor can verify on a
     fresh machine). With novaseal.yaml (or NOVAFABRIC_SEAL_CONFIG) the entry is also
     checked against the sealer's own Merkle log. A capsule that carries no
     inclusion proof (sealed by <= v0.102.x) and is not in a local log prints
-    "Merkle log inclusion: NOT CHECKED" and does not fail.
+    "Merkle log inclusion: NOT CHECKED" and does not fail. An entry missing from
+    the sealer's log (a local log holding this signer's seals) fails. A v1 capsule
+    on a host whose log is a newer v2 log (ADR-0313 migration) is UNVERIFIED unless
+    the retired v1 log is listed in previous_merkle_dbs
+    (sealer_log=unverifiable-other-version; --strict fails on it).
+
+    --strict exits 1 unless every passing claim is anchored (see unanchored_claims
+    in --json): signer CA-validated, timestamp absent or anchored, entry found in
+    the sealer's log.
 
     Scope: single capsule.
 
@@ -212,6 +243,9 @@ def verify_cmd(
       # Verify the RFC 3161 token's TSA chain against an operator TSA CA (offline)
       nova verify --tsa-ca-bundle /etc/novaseal/tsa-ca.pem path/to/my-capsule/
 
+      # Fail unless signer, timestamp and log inclusion are all anchored
+      nova verify --strict --ca-bundle ca.pem --tsa-ca-bundle tsa-ca.pem path/to/my-capsule/
+
       # Verify a redaction proof report seal independently
       nova verify --check-redaction path/to/report.seal.json path/to/my-capsule/
 
@@ -224,17 +258,18 @@ def verify_cmd(
       # ... and pin the key every attestation must be signed with
       nova verify --public-key signer.pub.pem path/to/evidence-bundle.zip
     """
-    if json_out and (
-        check_redaction is not None
-        or backend != "local"
-        or capsule_dir.suffix == ".zip"
-        or capsule_dir.is_file()
-    ):
-        err_console.print(
-            "[red]Error:[/red] --json is supported for capsule directories with the "
-            "local backend only."
-        )
-        raise typer.Exit(code=2)
+    for flag, given in (("--json", json_out), ("--strict", strict)):
+        if given and (
+            check_redaction is not None
+            or backend != "local"
+            or capsule_dir.suffix == ".zip"
+            or capsule_dir.is_file()
+        ):
+            err_console.print(
+                f"[red]Error:[/red] {flag} is supported for capsule directories with the "
+                "local backend only."
+            )
+            raise typer.Exit(code=2)
 
     # Handle --check-redaction standalone check
     if check_redaction is not None:
@@ -315,6 +350,7 @@ def verify_cmd(
             crl_strict=crl_strict,
             tsa_ca_bundle=tsa_ca_bundle,
             json_out=json_out,
+            strict=strict,
         )
     finally:
         console.quiet = previous_quiet
@@ -337,6 +373,7 @@ def _verify_capsule_dir(
     crl_strict: bool,
     tsa_ca_bundle: Optional[Path],
     json_out: bool,
+    strict: bool = False,
 ) -> None:
     """Verify one sealed capsule directory (local backend) and print the report."""
 
@@ -363,6 +400,7 @@ def _verify_capsule_dir(
     # sealer's Merkle log, when this machine has one, is an extra check — never a
     # prerequisite, or an independent auditor could not verify at all.
     merkle_log = _open_existing_merkle_log(profile)
+    previous_logs = _open_previous_merkle_logs(profile)
     if profile is None:
         console.print(
             "[dim]No NovaSeal config on this machine — verifying from the capsule "
@@ -396,10 +434,11 @@ def _verify_capsule_dir(
     from novafabric.trust.novaseal import verify_seal_dir  # noqa: PLC0415
 
     try:
-        result = verify_seal_dir(seal_dir, merkle_log=merkle_log)
+        result = verify_seal_dir(seal_dir, merkle_log=merkle_log, previous_logs=previous_logs)
     finally:
-        if merkle_log is not None:
-            merkle_log.close()
+        for opened in (merkle_log, *previous_logs):
+            if opened is not None:
+                opened.close()
     binding = _capsule_binding_report(capsule_dir, dsse_bytes)
     chain_bundle = ca_bundle if ca_bundle is not None else getattr(profile, "ca_bundle", None)
     crl_directory = crl_dir if crl_dir is not None else getattr(profile, "crl_dir", None)
@@ -450,6 +489,16 @@ def _verify_capsule_dir(
     result.ca_chain_ok = chain_check is not None and chain_ok
     if result.signature_ok and chain_check is not None and chain_ok:
         result.identity_trust = anchored_identity_trust(chain_anchor)
+    # Only a TSA chain that reached an anchor this verifier passed makes the time
+    # trusted; an intact token without one stays "unanchored".
+    from novafabric.trust.novaseal import (  # noqa: PLC0415
+        timestamp_trust_for,
+        unanchored_claims,
+    )
+
+    result.timestamp_trust = timestamp_trust_for(
+        result.timestamp_ok, tsa_check[0] if tsa_check is not None else None
+    )
 
     # Print results
     console.print(f"\n[bold]NovaSeal verification:[/bold] {capsule_dir.name}")
@@ -473,19 +522,9 @@ def _verify_capsule_dir(
             "— no trusted time"
         )
     else:
-        _print_check("Timestamp (RFC 3161)", result.timestamp_ok)
-        if result.timestamp_ok and not result.timestamp_strict:
-            console.print(
-                "    [yellow]⚠ structural check only:[/yellow] the token could not be "
-                "parsed strictly, so its TSA signature and imprint binding were not fully "
-                "verified"
-            )
-        elif result.timestamp_ok and not tsa_anchor_paths:
-            console.print(
-                "    token intact and bound to this envelope; TSA identity not checked "
-                "(pass --tsa-ca-bundle)"
-            )
+        _print_timestamp(result)
     _print_log_inclusion(result.log_inclusion, result.log_notes)
+    _print_sealer_log(result.sealer_log)
     binding_ok = _print_capsule_binding(binding)
     if chain_check is not None:
         chain_ok, chain_detail, revocation_lines, _ = chain_check
@@ -512,12 +551,21 @@ def _verify_capsule_dir(
     console.print(str(result))
 
     overall_ok = result.valid and binding_ok and capsule_id_ok and chain_ok and tsa_ok
+    claims = unanchored_claims(result)
+    if strict:
+        _print_strict(claims)
     if json_out:
         _emit_json(
             {
                 "capsule": capsule_dir.name,
                 "sealed": True,
                 "valid": overall_ok,
+                "strict": strict,
+                "unanchored_claims": claims,
+                "timestamp_trust": result.timestamp_trust,
+                "timestamp_gen_time": result.timestamp_gen_time,
+                "tsa_subject": result.tsa_subject,
+                "sealer_log": result.sealer_log,
                 "signature_ok": result.signature_ok,
                 "pae_encoding": result.pae_encoding,
                 "timestamp_ok": result.timestamp_ok,
@@ -543,6 +591,10 @@ def _verify_capsule_dir(
             }
         )
 
+    if strict and overall_ok and claims:
+        # Verified, but not to the anchored standard --strict asked for. Not a
+        # seal failure, so no ADR-0192 critical alert.
+        raise typer.Exit(code=1)
     if not overall_ok:
         # ADR-0192 wired source: the evidence guarantee itself failed, so
         # this is `critical` — the run can no longer be proven.
@@ -991,15 +1043,77 @@ def _open_existing_merkle_log(profile: Any) -> Any:
     """
     if profile is None:
         return None
-    from novafabric.trust.novaseal.merkle import open_merkle_log  # noqa: PLC0415
+    from novafabric.trust.novaseal.merkle import open_existing_merkle_log  # noqa: PLC0415
 
-    location = str(profile.merkle_db)
-    if location.startswith(("postgres://", "postgresql://", "postgresql:/", "postgres:/")):
-        return open_merkle_log(location)
-    path = Path(location).expanduser()
-    if not path.is_file():
-        return None
-    return open_merkle_log(path)
+    return open_existing_merkle_log(profile.merkle_db)
+
+
+def _open_previous_merkle_logs(profile: Any) -> list[Any]:
+    """Open this host's earlier logs (``previous_merkle_dbs``, ADR-0297 Amendment 2)."""
+    from novafabric.trust.novaseal.merkle import open_existing_merkle_log  # noqa: PLC0415
+
+    opened = []
+    for location in getattr(profile, "previous_merkle_dbs", None) or []:
+        log = open_existing_merkle_log(location)
+        if log is not None:
+            opened.append(log)
+    return opened
+
+
+def _print_timestamp(result: Any) -> None:
+    """Print a present token's line: integrity, and whether its *time* is trusted."""
+    from novafabric.trust.novaseal import (  # noqa: PLC0415
+        TIMESTAMP_TRUST_ANCHORED,
+        TIMESTAMP_TRUST_UNANCHORED,
+    )
+
+    if result.timestamp_trust == TIMESTAMP_TRUST_ANCHORED:
+        _print_check("Timestamp (RFC 3161)", True)
+        console.print("    TSA chain verified against your TSA trust anchors — trusted time")
+    elif result.timestamp_trust == TIMESTAMP_TRUST_UNANCHORED:
+        console.print(
+            "  [yellow]⚠[/yellow] Timestamp (RFC 3161): [yellow]UNANCHORED[/yellow] — token "
+            "intact and bound to this envelope; its time is NOT trusted"
+        )
+        claimed = result.timestamp_gen_time or "(unknown)"
+        tsa = result.tsa_subject or "(unknown)"
+        console.print(
+            f"    claims genTime {claimed} from TSA {tsa!r} — unverified: anyone can mint a "
+            "TSA certificate and sign any time. Pass --tsa-ca-bundle (or set tsa_ca_certs) "
+            "to anchor it"
+        )
+    else:
+        _print_check("Timestamp (RFC 3161)", bool(result.timestamp_ok))
+    if result.timestamp_ok and not result.timestamp_strict:
+        console.print(
+            "    [yellow]⚠ structural check only:[/yellow] the token could not be "
+            "parsed strictly, so its TSA signature and imprint binding were not fully "
+            "verified"
+        )
+
+
+def _print_sealer_log(sealer_log: str) -> None:
+    """Warn when the sealer's log exists only under a newer root version (ADR-0313)."""
+    from novafabric.trust.novaseal import SEALER_LOG_OTHER_VERSION  # noqa: PLC0415
+
+    if sealer_log == SEALER_LOG_OTHER_VERSION:
+        console.print(
+            "  [yellow]⚠[/yellow] Sealer's log: [yellow]UNVERIFIED[/yellow] "
+            "(sealer_log=unverifiable-other-version) — this host's log is a newer root "
+            "version and cannot confirm or refute this capsule; list the retired log in "
+            "previous_merkle_dbs"
+        )
+
+
+def _print_strict(claims: list[str]) -> None:
+    """Report the --strict verdict: the unanchored claims a pass would rest on."""
+    if not claims:
+        console.print("  [green]✓[/green] Strict: every passing claim is anchored")
+        return
+    console.print(
+        "  [red]✗[/red] Strict: [red]FAIL[/red] — passing checks rest on unanchored "
+        f"claims: {', '.join(claims)}"
+    )
 
 
 def _print_log_inclusion(status: str, notes: list[str]) -> None:
@@ -1149,6 +1263,7 @@ def _verify_evidence_bundle(
 
     with zf:
         names = set(zf.namelist())
+        has_token = "manifest.dsse.tsr" in names and zf.getinfo("manifest.dsse.tsr").file_size > 0
         if "manifest.json" not in names:
             console.print(
                 f"[red]Error:[/red] {bundle_path} has no manifest.json — "
@@ -1232,6 +1347,14 @@ def _verify_evidence_bundle(
             "to require a known signer"
         )
     tsa_ok = _print_tsa_check(tsa_check)
+    if tsa_check is None and has_token:
+        # Not checked at all without anchors: say so rather than staying silent, so
+        # the bundle's token is never read as a verified, trusted time.
+        console.print(
+            "  [yellow]⚠[/yellow] Timestamp (RFC 3161): [yellow]NOT CHECKED[/yellow] — the "
+            "bundle carries manifest.dsse.tsr, but no TSA trust anchor was given; its time "
+            "is not trusted (pass --tsa-ca-bundle)"
+        )
     ok = not mismatched and not missing and not unlisted and tsa_ok and signed.ok
     console.print(
         f"\nartifacts_ok={not mismatched}, complete={not missing}, no_extras={not unlisted}"

@@ -404,7 +404,11 @@ def evidence_bind_custody_cmd(
         bool,
         typer.Option(
             "--timestamp-ok/--no-timestamp-ok",
-            help="Assert an RFC 3161 timestamp verifies for this capsule (FRE-902(14) point 4).",
+            help=(
+                "Assert an RFC 3161 timestamp verifies for this capsule against a TSA trust "
+                "anchor (FRE-902(14) point 4): `nova verify --tsa-ca-bundle` reports "
+                "timestamp_trust=anchored. An unanchored token is not trusted time."
+            ),
         ),
     ] = False,
     key: _KeyOpt = None,
@@ -461,7 +465,10 @@ def evidence_check_admissibility_cmd(
         bool,
         typer.Option(
             "--timestamp-ok/--no-timestamp-ok",
-            help="The checker has independently verified an RFC 3161 timestamp.",
+            help=(
+                "The checker has independently verified an RFC 3161 timestamp against a TSA "
+                "trust anchor (timestamp_trust=anchored, not merely an intact token)."
+            ),
         ),
     ] = False,
 ) -> None:

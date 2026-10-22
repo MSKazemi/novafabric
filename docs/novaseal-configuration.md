@@ -170,6 +170,13 @@ list, a non-list value, or more than 32 entries is a config error. Omit the
 key and verification is unchanged. Details: [NovaSeal Key Management
 §2.5](novaseal-key-management.md#25-rfc-3161-tsa-trust-chain-adr-0070-1--experimental).
 
+Without this key (or `--tsa-ca-bundle`) a timestamp is never trusted time: a
+verified token is reported `UNANCHORED` (`timestamp_trust: unanchored`), because
+anyone can mint a TSA certificate and sign any `genTime`. There is no built-in
+default TSA trust bundle, and `tsa_url` anchors nothing — it only names where seals
+request tokens. With the key set, `POST /api/runs/{id}/verify`, the Evidence
+Bundle verify endpoint and the trust radar anchor the token too.
+
 The ADR's `crl_cache_dir` key is served by the existing `crl_dir` (one
 operator-synced directory for both chains); it has no default path — an
 unset `crl_dir` means no revocation check, never a silently empty one.
@@ -353,6 +360,30 @@ merkle_db: /lustre/project/novafabric/novaseal-merkle.db
 SQLite's WAL mode handles concurrent appends from multiple workers within a
 single job. For large-scale parallelism (>100 concurrent writers), the
 Postgres backend (§3.4) is the appropriate path.
+
+### 3.3a `previous_merkle_dbs` — moving a host to v2 roots (ADR-0313)
+
+**Status:** experimental. A log keeps one root version for life, so moving a host
+from v1 to v2 roots means starting a new `merkle_db` file. List the retired log so
+verification can still check the capsules it sealed:
+
+```yaml
+merkle_db: ~/.novafabric/novaseal-merkle-v2.db
+previous_merkle_dbs:
+  - ~/.novafabric/novaseal-merkle.db      # the retired v1 log
+```
+
+Verification only — nothing is ever appended to a previous log. Entries are SQLite
+paths or Postgres DSNs; a listed SQLite file that does not exist, a non-list value,
+or more than 32 entries is a config error.
+
+Without it, a v1 capsule verified on a host whose log (holding this signer's seals)
+is v2 keeps its carried-proof result but reports `sealer_log:
+unverifiable-other-version`, and `nova verify --strict` fails on it. The
+`root_version` that says "v1" is a field of `log-entry.json`, which whoever wrote
+the capsule controls, so a key holder's forgery claiming v1 looks exactly like a
+genuine pre-migration capsule until the v1 log is consulted. A v2 capsule checked
+against a v1 sealer's log fails: v2 logs came later.
 
 ### 3.4 Postgres backend (experimental, Scale-S4)
 

@@ -50,6 +50,7 @@ Degraded mode:
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import logging
 import secrets
@@ -234,6 +235,12 @@ class TimestampCheck:
     ok: bool
     strict: bool
     reason: str
+    # Additive: what the token *claims* — its genTime and the subject of the
+    # embedded TSA certificate. Unverified claims of the token unless a TSA trust
+    # anchor validated the chain (``verify_tsa_trust_chain``); a self-made TSA can
+    # put any time and any name here. None when the token was not strictly parsed.
+    gen_time: datetime.datetime | None = None
+    tsa_subject: str | None = None
 
 
 def check_timestamp(tsr_bytes: bytes, dsse_bytes: bytes) -> TimestampCheck:
@@ -290,7 +297,13 @@ def check_timestamp(tsr_bytes: bytes, dsse_bytes: bytes) -> TimestampCheck:
             f"token not strictly parseable ({exc}); structural check only "
             f"({legacy.reason})",
         )
-    return TimestampCheck(integrity.valid, True, integrity.reason)
+    return TimestampCheck(
+        integrity.valid,
+        True,
+        integrity.reason,
+        gen_time=integrity.gen_time,
+        tsa_subject=integrity.signer_subject,
+    )
 
 
 @dataclass(frozen=True)
