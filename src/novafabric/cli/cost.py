@@ -197,12 +197,14 @@ def cost_estimate_cmd(
     grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     totals: dict[tuple[str, str], float] = {}
     call_count = 0
-    if calls_path.is_file():
+    if os.path.lexists(calls_path):
         from novafabric.capture.record_roles import read_logical_model_calls
 
         # ADR-0305: one row per logical call -- the wire hook's transport
-        # records under an SDK call are not calls of their own.
-        for record in read_logical_model_calls(calls_path):
+        # records under an SDK call are not calls of their own. A stream that is
+        # present but unusable (a link, FIFO, directory) raises
+        # CapsuleRequiredFileError: never a $0 report for calls nobody read.
+        for record in read_logical_model_calls(calls_path, required=True):
             call_count += 1
             model = record.get("gen_ai.response.model") or record.get(
                 "gen_ai.request.model"

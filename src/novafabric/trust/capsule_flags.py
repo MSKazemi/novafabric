@@ -38,7 +38,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import CapsuleRequiredFileError, read_required_capsule_member
 
 log = logging.getLogger(__name__)
 
@@ -102,15 +102,19 @@ def _timestamp_axis(timestamp_trust: str) -> bool | float | None:
 def _redaction_flags(capsule_dir: Path) -> dict[str, Any]:
     """Redaction coverage + secret-scan cleanliness from ``redaction-proof.json``."""
     proof_path = capsule_dir / "redaction-proof.json"
-    if not proof_path.is_file():
+    try:
+        capsule_text = read_required_capsule_member(proof_path, operation="capsule flags")
+    except CapsuleRequiredFileError:
+        # Present but unusable (a link, FIFO, directory): that is not "captured
+        # without the masking pipeline". Both axes fail; never n/a, never clean.
+        log.warning("redaction proof at %s is present but unusable", proof_path)
+        return {"secret_scan_clean": False, "redaction_coverage": 0.0}
+    if capsule_text is None:
         return {}  # captured without the masking pipeline → n/a, not fail
 
     try:
-        capsule_text = (
-            read_capsule_member_or_none(proof_path, operation="capsule flags") or ""
-        )
         proof = json.loads(capsule_text)
-    except (OSError, ValueError):
+    except ValueError:
         log.warning("unreadable redaction proof at %s", proof_path)
         return {}
     if not isinstance(proof, dict):

@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-from novafabric._capsule_fs import read_capsule_file, read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_file, read_required_capsule_member
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
 
 COMPLETENESS_PREDICATE_TYPE = "https://novafabric.io/completeness/v0"
@@ -73,25 +73,13 @@ class CompletenessAssertion(BaseModel):
     generated_at: str
 
 
-def _count_lines(path: Path) -> int:
-    try:
-        capsule_text = (
-            read_capsule_member_or_none(path, operation="evidence completeness") or ""
-        )
-        return sum(1 for line in capsule_text.splitlines() if line.strip())
-    except OSError:
-        return 0
+def _count_lines(capsule_text: str) -> int:
+    return sum(1 for line in capsule_text.splitlines() if line.strip())
 
 
-def _probe_timestamps(path: Path) -> list[str]:
+def _probe_timestamps(capsule_text: str) -> list[str]:
     stamps: list[str] = []
-    try:
-        capsule_text = (
-            read_capsule_member_or_none(path, operation="evidence completeness") or ""
-        )
-        lines = capsule_text.splitlines()
-    except OSError:
-        return stamps
+    lines = capsule_text.splitlines()
     for line in lines:
         line = line.strip()
         if not line:
@@ -111,16 +99,16 @@ def _probe_timestamps(path: Path) -> list[str]:
 
 
 def _read_manifest(capsule_dir: Path) -> dict[str, Any]:
-    path = capsule_dir / "capsule.yaml"
-    if not path.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="evidence completeness"
+    )
+    if capsule_text is None:
         return {}
     try:
-        capsule_text = (
-            read_capsule_member_or_none(path, operation="evidence completeness") or ""
-        )
         loaded = yaml.safe_load(capsule_text)
         return loaded if isinstance(loaded, dict) else {}
-    except (OSError, yaml.YAMLError):
+    except yaml.YAMLError:
         return {}
 
 
@@ -129,10 +117,15 @@ def compute_completeness(capsule_dir: Path, run_id: str) -> CompletenessAssertio
     counts: dict[str, int] = {}
     stamps: list[str] = []
     for stream in _EVENT_STREAMS:
-        path = capsule_dir / stream
-        if path.exists():
-            counts[stream] = _count_lines(path)
-            stamps.extend(_probe_timestamps(path))
+        # Absent: not counted. Present but unusable (a link, FIFO, directory):
+        # CapsuleRequiredFileError -- a signed completeness assertion never
+        # reports 0 events for a stream nobody could read.
+        capsule_text = read_required_capsule_member(
+            capsule_dir / stream, operation="evidence completeness"
+        )
+        if capsule_text is not None:
+            counts[stream] = _count_lines(capsule_text)
+            stamps.extend(_probe_timestamps(capsule_text))
 
     manifest = _read_manifest(capsule_dir)
     capture = manifest.get("capture", {}) if isinstance(manifest, dict) else {}
@@ -172,11 +165,11 @@ def attest_completeness(
     Subject is the capsule manifest (``capsule.yaml``) digest, matching the
     existing run-statement subject convention.
     """
-    manifest_path = capsule_dir / "capsule.yaml"
     digest = hashlib.sha256(
-        read_capsule_file(capsule_dir, "capsule.yaml", operation="evidence completeness")
-        if manifest_path.exists()
-        else b""
+        read_required_capsule_file(
+            capsule_dir, "capsule.yaml", operation="evidence completeness"
+        )
+        or b""
     ).hexdigest()
     statement = make_intoto_statement(
         predicate_type=COMPLETENESS_PREDICATE_TYPE,

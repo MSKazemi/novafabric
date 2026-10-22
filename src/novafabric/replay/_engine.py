@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._tool_codec import MUTATION_CLASSES
 from novafabric.capture._ulid import new_ulid
@@ -89,8 +89,10 @@ def _now() -> str:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    # Absent = no recorded calls. Present but unusable (a link, FIFO, directory)
+    # raises CapsuleRequiredFileError: a replay never runs on a partial record.
     records = []
-    text = read_capsule_member_or_none(path, operation="nova replay")
+    text = read_required_capsule_member(path, operation="nova replay")
     if text is not None:
         for line in text.splitlines():
             line = line.strip()
@@ -127,21 +129,23 @@ def _contract_fields(report: ReplayContractReport) -> dict[str, Any]:
 
 
 def _load_capsule(capsule_dir: Path) -> dict[str, Any]:
-    text = read_capsule_member_or_none(capsule_dir / "capsule.yaml", operation="nova replay")
-    if text is None:  # missing, or a link/FIFO that is never followed
-        raise ValueError(f"capsule.yaml not found or not a regular file in {capsule_dir}")
+    # Present but unusable (a link, FIFO, directory) raises CapsuleRequiredFileError.
+    text = read_required_capsule_member(capsule_dir / "capsule.yaml", operation="nova replay")
+    if text is None:
+        raise ValueError(f"capsule.yaml not found in {capsule_dir}")
     return yaml.safe_load(text) or {}
 
 
 def _load_replay_policy(capsule_dir: Path) -> dict[str, Any]:
-    text = read_capsule_member_or_none(capsule_dir / "replay.yaml", operation="nova replay")
+    # A replay policy that is present but unusable is an error, never the default.
+    text = read_required_capsule_member(capsule_dir / "replay.yaml", operation="nova replay")
     if text is None:
         return {"schema_version": "0.1.0"}
     return yaml.safe_load(text) or {}
 
 
 def _load_env_lock(capsule_dir: Path) -> dict[str, Any]:
-    text = read_capsule_member_or_none(capsule_dir / "env.lock", operation="nova replay")
+    text = read_required_capsule_member(capsule_dir / "env.lock", operation="nova replay")
     if text is None:
         return {}
     return yaml.safe_load(text) or {}

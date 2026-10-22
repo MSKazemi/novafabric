@@ -27,7 +27,11 @@ from fastapi import APIRouter, Depends, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import (
+    CapsuleRequiredFileError,
+    read_capsule_member_or_none,
+    read_required_capsule_member,
+)
 
 # Imported eagerly, unlike the rest of this module's novafabric.eval imports:
 # the route decorator needs the model at import time to describe the request
@@ -960,10 +964,18 @@ def _check_parent_exists(manifest: dict[str, Any], capsule_dir: Path) -> None:
 
 
 def _load_manifest(cdir: Path) -> dict[str, Any]:
-    path = cdir / "capsule.yaml"
-    if not path.exists():
+    # Present but unusable (a link, FIFO, directory): 409, never a 200 detail
+    # built from an empty manifest.
+    try:
+        text = read_required_capsule_member(cdir / "capsule.yaml", operation="nova server")
+    except CapsuleRequiredFileError as exc:
+        raise ConflictError(
+            f"capsule.yaml of {cdir.name} is present but cannot be used ({exc.reason})",
+            code="capsule_file_unusable",
+        ) from exc
+    if text is None:
         raise NotFoundError(f"capsule.yaml not found in {cdir}")
-    raw = yaml.safe_load((read_capsule_member_or_none(path, operation="nova server") or ""))
+    raw = yaml.safe_load(text)
     return dict(raw) if raw else {}
 
 

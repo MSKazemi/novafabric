@@ -42,11 +42,13 @@ from pydantic import BaseModel
 from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import (
     CapsuleEntryError,
+    CapsuleRequiredFileError,
     is_capsule_regular_file,
     iter_capsule_dirs,
     open_capsule_file,
     read_capsule_text,
     read_capsule_text_or_none,
+    read_required_capsule_text,
 )
 from novafabric.registry.runs_cache import (
     count_cached_runs,
@@ -804,6 +806,22 @@ def create_app(
         allow_headers=["*"],
         allow_credentials=False,
     )
+
+    # A required capsule file (capsule.yaml, a primary stream) that is present
+    # but unusable (a link, FIFO, directory) fails the request: 422, never an
+    # empty answer reported as success. The detail names the capsule-relative
+    # file only, not the server path.
+    @app.exception_handler(CapsuleRequiredFileError)
+    async def capsule_file_unusable(
+        request: Request, exc: CapsuleRequiredFileError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": f"capsule file {exc.rel} is present but cannot be used "
+                "(a link, FIFO, directory or unreadable file); refused",
+            },
+        )
 
     # ---------- middleware ----------
 
@@ -4519,12 +4537,14 @@ def create_app(
             )
 
         capsule_path = _resolve_capsule(run_id, capsule_dir)
+        # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError
+        # -> 422, never a risk tier inferred from an empty manifest.
+        manifest_text = read_required_capsule_text(
+            capsule_path, "capsule.yaml", operation="nova serve"
+        )
         try:
             import yaml as _yaml
             manifest: dict[str, Any] = {}
-            manifest_text = read_capsule_text_or_none(
-                capsule_path, "capsule.yaml", operation="nova serve"
-            )
             if manifest_text is not None:
                 raw = _yaml.safe_load(manifest_text)
                 if isinstance(raw, dict):
@@ -5311,7 +5331,12 @@ def create_app(
             events_text = read_capsule_text_or_none(
                 events_file.parent, events_file.name, operation="nova serve"
             )
-            for raw in (events_text or "").splitlines():
+            if events_text is None:
+                # Present (listed above) but a link, FIFO or directory: counted as
+                # skipped, never as an empty stream that ingested cleanly.
+                skipped += 1
+                continue
+            for raw in events_text.splitlines():
                 raw = raw.strip()
                 if not raw:
                     continue
@@ -6215,7 +6240,16 @@ def create_app(
             events_text = read_capsule_text_or_none(
                 events_file.parent, events_file.name, operation="nova serve"
             )
-            for raw in (events_text or "").splitlines():
+            if events_text is None:
+                # Present (found above) but a link, FIFO or directory: an error,
+                # never an empty stream that ingested cleanly.
+                return {
+                    "ok": False, "ingested": 0, "written": 0,
+                    "error": f"{events_file.name} is unreadable (a link, FIFO or "
+                    "directory); nothing was ingested",
+                    "note": "",
+                }
+            for raw in events_text.splitlines():
                 raw = raw.strip()
                 if not raw:
                     continue

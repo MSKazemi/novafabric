@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import sys
 from importlib.metadata import PackageNotFoundError, version
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
+from typer.core import TyperGroup
 
+from novafabric._capsule_fs import CapsuleRequiredFileError
 from novafabric.capsule.cli import capsule_phase3_app
 from novafabric.cli._community import VERSION_INVITE, hint_enabled
 from novafabric.cli.a2a_card import app as a2a_card_app
@@ -180,10 +182,38 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+#: Exit code of any command stopped by a capsule file that is present but unusable.
+EXIT_CAPSULE_FILE_UNUSABLE = 2
+
+
+class _NovaGroup(TyperGroup):
+    """The root ``nova`` group: one fail-closed rule for every sub-command.
+
+    A required capsule file (``capsule.yaml``, ``capsule.json``, a primary
+    stream) that is present but unusable raises
+    :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`. A command that
+    does not catch it ends here: one ``error:`` line on stderr and exit code
+    :data:`EXIT_CAPSULE_FILE_UNUSABLE`, never a traceback and never exit 0.
+    """
+
+    def invoke(self, ctx: Any) -> Any:  # typer's vendored click Context
+        try:
+            return super().invoke(ctx)
+        except CapsuleRequiredFileError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=EXIT_CAPSULE_FILE_UNUSABLE) from exc
+
+
 app = typer.Typer(
     name="novafabric",
     help="Capture, replay, audit, and govern AI agent runs.",
     no_args_is_help=True,
+    cls=_NovaGroup,
+    epilog=(
+        "A command whose output depends on a capsule file (capsule.yaml, a call "
+        "stream) that is present but unusable (a link, FIFO or directory) prints "
+        "one 'error:' line, writes nothing and exits 2."
+    ),
 )
 
 

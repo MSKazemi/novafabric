@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.assure.checks import ALL_CHECKS, BaseCheck
 from novafabric.assure.models import AssuranceReport
 
@@ -14,12 +14,12 @@ class AssuranceChecker:
         self._checks = checks if checks is not None else ALL_CHECKS
 
     def check_all(self, capsule_dir: Path) -> AssuranceReport:
-        manifest_path = capsule_dir / "capsule.yaml"
         run_id = "unknown"
-        if manifest_path.exists():
-            capsule_text = (
-                read_capsule_member_or_none(manifest_path, operation="nova assure") or ""
-            )
+        # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+        capsule_text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="nova assure"
+        )
+        if capsule_text is not None:
             m = yaml.safe_load(capsule_text) or {}
             run_id = m.get("run_id", "unknown")
 

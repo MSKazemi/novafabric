@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.lineage._types import node_id_for
 
 from . import ontology
@@ -159,11 +159,14 @@ def read_lineage_edges(capsule_dir: str | Path) -> list[dict[str, Any]]:
     ``lineage.jsonl`` yields an empty list (an unlineaged capsule is valid).
     """
     capsule_dir = Path(capsule_dir)
-    lineage_path = capsule_dir / "lineage.jsonl"
     edges: list[dict[str, Any]] = []
-    if not lineage_path.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    lineage_text = read_required_capsule_member(
+        capsule_dir / "lineage.jsonl", operation="PROV-O"
+    )
+    if lineage_text is None:
         return edges
-    for line in (read_capsule_member_or_none(lineage_path, operation="PROV-O") or "").splitlines():
+    for line in lineage_text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -215,15 +218,16 @@ def capsule_manifest_to_provo(capsule_dir: str | Path) -> Graph:
     g.bind("prov", PROV)
     g.bind("nf", NFNS)
 
-    manifest_path = Path(capsule_dir) / "capsule.yaml"
-    if not manifest_path.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
+    # never an empty PROV-O graph.
+    capsule_text = read_required_capsule_member(
+        Path(capsule_dir) / "capsule.yaml", operation="PROV-O"
+    )
+    if capsule_text is None:
         return g
     try:
         import yaml
 
-        capsule_text = (
-            read_capsule_member_or_none(manifest_path, operation="PROV-O") or ""
-        )
         manifest = yaml.safe_load(capsule_text) or {}
     except Exception:
         return g

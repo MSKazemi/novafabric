@@ -192,7 +192,8 @@ def _run_value(run: ItemRun, metric: str) -> tuple[float | None, ScoreValueType 
         return None, None
     scores_path = Path(run.capsule_ref) / SCORES_FILENAME
     wanted = set(run.score_ids)
-    for score in read_scores(scores_path):
+    # A capsule's own score log: never through a link, never a FIFO.
+    for score in read_scores(scores_path, capsule_member=True):
         if score.score_id not in wanted or score.name != metric:
             continue
         if score.value_type is ScoreValueType.BOOLEAN:

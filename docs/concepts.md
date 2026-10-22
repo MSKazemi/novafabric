@@ -132,10 +132,26 @@ follows one. They all share one module (`novafabric._capsule_fs`):
   `nova validate`, `nova verify`, `nova eval contamination-check`, the lineage
   and OpenLineage importers, the knowledge-graph consumer, the content and query
   indexes, and the compliance exporters) opens it the same way. A link, a FIFO
-  or a device is never followed and never blocks: the reader either refuses with
-  a named error or treats the file as absent and logs `capsule_file_not_followed`.
-  `nova export --html` skips such a section with a warning on stderr and in the
-  page; a linked `capsule.yaml` refuses the export (exit 2).
+  or a device is never followed and never blocks.
+- **A required file that is present but unusable is an error, never empty
+  output.** An *absent* file still means "no data". But when `capsule.yaml`,
+  `capsule.json` or a stream a command's output depends on (`model-calls.jsonl`,
+  `tool-calls.jsonl`, `trace.jsonl`, `lineage.jsonl`, `replay.yaml`, `env.lock`,
+  `redaction-proof.json`, ...) is there but is a link, a FIFO, a directory, an
+  unreadable or an over-size file, every command whose output claims to be
+  complete or correct stops. That covers every export and compliance artifact,
+  report, verdict and attestation, replay, migration, lineage write, PROV-O
+  mapping and annotation-queue fill. The CLI prints one `error:` line naming the
+  file and exits 2, unless the command has its own refusal code (`nova validate`
+  reports it as a validation error, exit 1). It writes no output file. `nova
+  serve` answers 422 and server mode answers 409. Such a command never reports
+  0 model calls, an empty Art. 12 log, a "no secrets detected" assurance pass or
+  a best-effort replay pin for a file nobody could read. Only best-effort
+  listings (the dashboard run list, search and content indexes, session view,
+  lineage child listings) still skip such a file. They log
+  `capsule_file_not_followed`, and the knowledge-graph bulk ingest counts it as
+  `skipped`. `nova export --html` skips such a section with a warning on stderr
+  and in the page; a linked `capsule.yaml` refuses the export (exit 2).
 - **`nova restore`** refuses a set whose listed member is a link entry, and
   never writes through a link at a destination path. `nova migrate-schema`
   skips (and reports) a capsule holding a link, and AI-BOM generation never

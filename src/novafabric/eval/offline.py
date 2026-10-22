@@ -39,7 +39,7 @@ import string
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_text
 from novafabric._jsonschema_offline import SchemaRefUnresolved, offline_validator
 from novafabric.eval.card import EvalCard, card_digest
 from novafabric.eval.scores import Score, ScoreSource, ScoreValueType
@@ -73,11 +73,19 @@ def _capsule_subject(capsule_dir: Path) -> str:
     return capsule_merkle_root(capsule_dir)
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
+def _read_jsonl(capsule_dir: Path, rel: str) -> list[dict[str, Any]]:
+    """Records of capsule stream *rel*; ``[]`` only when it is absent.
+
+    *rel* is opened relative to the capsule and refused if it leaves it. A
+    stream that is present but unusable (a link, FIFO, directory) raises
+    :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`: no score is
+    emitted over records nobody read (an empty record set scores 1.0).
+    """
+    text = read_required_capsule_text(capsule_dir, rel, operation="offline eval")
+    if text is None:
         return []
     records: list[dict[str, Any]] = []
-    for line in (read_capsule_member_or_none(path, operation="offline eval") or "").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if line:
             records.append(json.loads(line))
@@ -110,7 +118,7 @@ def run_coverage(
     capsule_dir = Path(capsule_dir)
     exercised = {
         rec.get("tool_name")
-        for rec in _read_jsonl(capsule_dir / "tool-calls.jsonl")
+        for rec in _read_jsonl(capsule_dir, "tool-calls.jsonl")
         if rec.get("tool_name") is not None
     }
     declared = list(declared_tools)
@@ -137,7 +145,7 @@ def run_contract(
     dangling local pointer) raises :class:`ContractSchemaError` instead of emitting a score.
     """
     capsule_dir = Path(capsule_dir)
-    records = _read_jsonl(capsule_dir / records_file)
+    records = _read_jsonl(capsule_dir, records_file)
     if not records:
         return _numeric_score(capsule_dir, CONTRACT_CARD, name, 1.0)
     validator = offline_validator(schema)
@@ -281,7 +289,7 @@ def run_metamorphic_spec(
     output_field = str(spec.get("output_field", "output"))
     records_file = str(spec.get("records_file", "tool-calls.jsonl"))
 
-    records = _read_jsonl(capsule_dir / records_file)
+    records = _read_jsonl(capsule_dir, records_file)
     groups: dict[str, list[Any]] = {}
     for rec in records:
         if input_field not in rec or output_field not in rec:

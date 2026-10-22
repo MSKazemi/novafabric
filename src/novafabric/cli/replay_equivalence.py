@@ -30,7 +30,7 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.cli._output import emit_json
 from novafabric.replay.determinism import Eligibility, assess
@@ -203,8 +203,10 @@ def regime(
         raise typer.Exit(2)
 
     calls: list[dict[str, Any]] = []
+    # A link passes is_file() above; it is never followed. Present but
+    # unusable raises CapsuleRequiredFileError (exit 2), never a 0-call report.
     capsule_text = (
-        read_capsule_member_or_none(calls_file, operation="nova replay-equivalence") or ""
+        read_required_capsule_member(calls_file, operation="nova replay-equivalence") or ""
     )
     for lineno, line in enumerate(capsule_text.splitlines(), start=1):
         if not line.strip():

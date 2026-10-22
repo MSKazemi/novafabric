@@ -19,7 +19,7 @@ from pathlib import Path
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.capsule.ulid_util import new_ulid
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.energy._readers import _RAPL_BASE, probe_counters, rapl_delta_joules
@@ -52,14 +52,12 @@ RECEIPTS_FILE = "energy-receipts.jsonl"
 
 
 def _iter_jsonl(path: Path) -> Iterator[dict[str, object]]:
-    try:
-        capsule_text = (
-            read_capsule_member_or_none(path, operation="energy attribution") or ""
-        )
-        lines = capsule_text.splitlines()
-    except OSError:
+    # Absent: no records. Present but unusable (a link, FIFO, directory):
+    # CapsuleRequiredFileError -- energy is never apportioned over a stand-in.
+    capsule_text = read_required_capsule_member(path, operation="energy attribution")
+    if capsule_text is None:
         return
-    for line in lines:
+    for line in capsule_text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -80,13 +78,14 @@ def _first_id(record: dict[str, object]) -> str:
 
 
 def _read_run_id(capsule_dir: Path) -> str:
-    path = capsule_dir / "capsule.yaml"
+    # Present but unusable: CapsuleRequiredFileError, never a fresh random run id
+    # on receipts that belong to the recorded run.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="energy attribution"
+    )
     try:
-        capsule_text = (
-            read_capsule_member_or_none(path, operation="energy attribution") or ""
-        )
-        loaded = yaml.safe_load(capsule_text)
-    except (OSError, yaml.YAMLError):
+        loaded = yaml.safe_load(capsule_text or "")
+    except yaml.YAMLError:
         return new_ulid()
     if isinstance(loaded, dict):
         run_id = loaded.get("run_id")

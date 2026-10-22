@@ -147,7 +147,10 @@ def export_blob_cmd(
     and an interrupted export resumes. The signed ``export-manifest.json`` is
     written LAST: its presence means the batch is complete. Source capsules are
     never modified. A capsule holding a symbolic link refuses the batch
-    (exit 2, nothing written): packing never follows a link.
+    (exit 2, nothing written): packing never follows a link. So does a member
+    whose capsule.yaml or redaction-proof.json is present but unusable (a FIFO,
+    directory); in a --since/--until/--query scan such a capsule refuses the
+    selection (exit 1) instead of silently dropping out of the batch.
 
     Scope: batch (N capsules).
 

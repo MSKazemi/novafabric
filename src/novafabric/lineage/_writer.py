@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.lineage._facets import attach_column_facets, facets_from_tool_calls
 from novafabric.lineage._types import LineageEdge, default_emitter
 
@@ -66,13 +66,14 @@ class LineageWriter:
         return path
 
     def _consumed_edges(self) -> list[LineageEdge]:
-        assets_path = self._capsule_dir / "assets.jsonl"
-        if not assets_path.exists():
+        # Absent: no edges. Present but unusable (a link, FIFO, directory):
+        # CapsuleRequiredFileError -- lineage is never written from a stand-in.
+        capsule_text = read_required_capsule_member(
+            self._capsule_dir / "assets.jsonl", operation="lineage"
+        )
+        if capsule_text is None:
             return []
         edges: list[LineageEdge] = []
-        capsule_text = (
-            read_capsule_member_or_none(assets_path, operation="lineage") or ""
-        )
         for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
@@ -112,13 +113,12 @@ class LineageWriter:
         return edges
 
     def _produced_by_edges_from_manifest(self) -> list[LineageEdge]:
-        manifest_path = self._capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
+        capsule_text = read_required_capsule_member(
+            self._capsule_dir / "capsule.yaml", operation="lineage"
+        )
+        if capsule_text is None:
             return []
         try:
-            capsule_text = (
-                read_capsule_member_or_none(manifest_path, operation="lineage") or ""
-            )
             manifest: Any = yaml.safe_load(capsule_text) or {}
         except Exception:
             return []
@@ -145,13 +145,12 @@ class LineageWriter:
 
     def _produced_by_edges_from_file(self) -> list[LineageEdge]:
         """Read produced.jsonl written by record_produced() and emit produced_by edges."""
-        produced_path = self._capsule_dir / "produced.jsonl"
-        if not produced_path.exists():
+        capsule_text = read_required_capsule_member(
+            self._capsule_dir / "produced.jsonl", operation="lineage"
+        )
+        if capsule_text is None:
             return []
         edges: list[LineageEdge] = []
-        capsule_text = (
-            read_capsule_member_or_none(produced_path, operation="lineage") or ""
-        )
         for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
@@ -181,13 +180,12 @@ class LineageWriter:
         return edges
 
     def _replayed_from_edge(self) -> LineageEdge | None:
-        manifest_path = self._capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
+        capsule_text = read_required_capsule_member(
+            self._capsule_dir / "capsule.yaml", operation="lineage"
+        )
+        if capsule_text is None:
             return None
         try:
-            capsule_text = (
-                read_capsule_member_or_none(manifest_path, operation="lineage") or ""
-            )
             manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
         except Exception:
             return None

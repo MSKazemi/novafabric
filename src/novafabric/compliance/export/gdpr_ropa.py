@@ -24,14 +24,13 @@ an external Data Protection Officer (DPO) registry are operator-declared stubs.
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from novafabric._capsule_fs import read_capsule_member_or_none, read_capsule_text
+from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
 
 # ---------------------------------------------------------------------------
 # Models
@@ -216,14 +215,15 @@ class GDPRRoPAExporter:
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
         # Absent manifest = no data. A manifest that is present but is not a
         # readable regular file (a directory, link, FIFO) is an error, never an
-        # empty export: read_capsule_text raises for it.
-        if not os.path.lexists(capsule_dir / "capsule.yaml"):
+        # empty export: read_required_capsule_member raises for it.
+        text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="compliance export"
+        )
+        if text is None:
             return {}
         import yaml  # already in core deps
 
-        return yaml.safe_load(
-            read_capsule_text(capsule_dir, "capsule.yaml", operation="compliance export")
-        ) or {}
+        return yaml.safe_load(text) or {}
 
     def _derive_personal_data_categories(self, capsule_dir: Path) -> list[str]:
         """Infer personal data categories from the redaction manifest.

@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -34,7 +35,7 @@ from pathlib import Path
 import yaml
 from cryptography.hazmat.primitives import serialization
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import CapsuleRequiredFileError, read_required_capsule_member
 from novafabric.capture._ulid import new_ulid
 from novafabric.evidence.intoto import dsse_pae, dsse_sign_payload
 from novafabric.evidence.signing import verify_with_pem
@@ -111,12 +112,11 @@ def _parse_ts(value: str) -> datetime | None:
 
 
 def _capsule_created_at(capsule_dir: Path) -> datetime | None:
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    text = read_required_capsule_member(capsule_dir / "capsule.yaml", operation="export-blob")
     try:
-        meta = yaml.safe_load(
-            read_capsule_member_or_none(capsule_dir / "capsule.yaml", operation="export-blob")
-            or ""
-        )
-    except (OSError, yaml.YAMLError):
+        meta = yaml.safe_load(text or "")
+    except yaml.YAMLError:
         return None
     if not isinstance(meta, dict):
         return None
@@ -237,12 +237,26 @@ def select_capsules(
     dirs = []
     if resolved_root.is_dir():
         for child in sorted(resolved_root.iterdir()):
-            if not (child.is_dir() and (child / "capsule.yaml").is_file()):
+            # A scan never lists a linked entry (novafabric._capsule_fs). A
+            # capsule.yaml that is present but not a regular file refuses the
+            # selection: a batch snapshot never silently omits a capsule.
+            if child.is_symlink() or not child.is_dir():
                 continue
+            if not os.path.lexists(child / "capsule.yaml"):
+                continue
+            if not (child / "capsule.yaml").is_file() or (child / "capsule.yaml").is_symlink():
+                raise ExportSelectionError(
+                    f"capsule {child.name} has a capsule.yaml that is not a regular "
+                    "file (a link, FIFO or directory); the batch would silently omit "
+                    "it. Repair or remove it, then try again."
+                )
             if matching_run_ids is not None and child.name not in matching_run_ids:
                 continue
             if since_ts or until_ts:
-                created = _capsule_created_at(child)
+                try:
+                    created = _capsule_created_at(child)
+                except CapsuleRequiredFileError as exc:
+                    raise ExportSelectionError(str(exc)) from exc
                 if created is None:
                     log.warning(
                         "capsule %s has no parseable created_at; "
@@ -287,14 +301,16 @@ class ExportResult:
 
 def _check_unsafe_skips(capsule_dir: Path) -> int:
     """Count ``unsafe_skips`` entries in the capsule's redaction proof (0 if absent)."""
-    proof = capsule_dir / "redaction-proof.json"
-    if not proof.is_file():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
+    # never "0 unsafe skips" -- that would wave the batch through the gate.
+    text = read_required_capsule_member(
+        capsule_dir / "redaction-proof.json", operation="export-blob"
+    )
+    if text is None:
         return 0
     try:
-        data = json.loads(
-            read_capsule_member_or_none(proof, operation="export-blob") or "{}"
-        )
-    except (OSError, ValueError):
+        data = json.loads(text)
+    except ValueError:
         return 0
     return len(data.get("unsafe_skips") or [])
 

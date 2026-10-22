@@ -36,9 +36,20 @@ entry is never listed. It is either an alias of a capsule the scan already
 lists, or a way to pull a directory from elsewhere into the scan.
 
 Readers that parse one well-known capsule file (``capsule.yaml``, a JSONL
-stream, a facet) use :func:`read_capsule_text` or, where a missing or refused
-file is simply "no data", :func:`read_capsule_text_or_none`. Both go through
-:func:`open_capsule_file`, so the rules above hold for them too.
+stream, a facet) use one of three readers, all through
+:func:`open_capsule_file`, so the rules above hold for them too:
+
+* :func:`read_capsule_text` when the file must exist;
+* :func:`read_required_capsule_text` (and :func:`read_required_capsule_member`)
+  when an *absent* file means "no data" but a file that is **present and
+  unusable** (a link, FIFO, device, directory, unreadable or over-size file)
+  must stop the command. Every reader whose output claims to be complete or
+  correct (an export, report, verdict, attestation, migration, lineage write)
+  uses it for ``capsule.yaml``, ``capsule.json`` and the primary streams: such
+  a file raises :class:`CapsuleRequiredFileError`, never an empty or partial
+  result reported as success;
+* :func:`read_capsule_text_or_none` only for best-effort listings (dashboards,
+  search indexes), where an unusable file is logged and skipped.
 
 **Known limit: hard links.** A hard link is an ordinary directory entry for a
 regular file, so it is copied like any other file. Under Linux's default
@@ -69,6 +80,7 @@ __all__ = [
     "CapsuleFileTooLargeError",
     "CapsuleLinkError",
     "CapsuleListing",
+    "CapsuleRequiredFileError",
     "CapsuleSpecialFileError",
     "copy_capsule_tree",
     "find_capsule_links",
@@ -80,6 +92,9 @@ __all__ = [
     "read_capsule_member_or_none",
     "read_capsule_text",
     "read_capsule_text_or_none",
+    "read_required_capsule_file",
+    "read_required_capsule_member",
+    "read_required_capsule_text",
     "refuse_capsule_links",
 ]
 
@@ -117,6 +132,21 @@ class CapsuleSpecialFileError(CapsuleEntryError):
 
 class CapsuleFileTooLargeError(CapsuleEntryError):
     """A capsule file is larger than the reader's ``max_bytes`` bound."""
+
+
+class CapsuleRequiredFileError(CapsuleEntryError):
+    """A capsule file the command needs is present but cannot be used.
+
+    Raised by :func:`read_required_capsule_text` for a link, FIFO, device,
+    directory, unreadable or over-size file, or a path that leaves the capsule.
+    The command stops instead of producing an empty or partial result. ``rel``
+    is the capsule-relative path and ``reason`` the underlying refusal.
+    """
+
+    def __init__(self, message: str, *, rel: str, reason: str) -> None:
+        super().__init__(message)
+        self.rel = rel
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -375,8 +405,10 @@ def read_capsule_text_or_none(
 ) -> str | None:
     """Like :func:`read_capsule_text`, but ``None`` when the file cannot be used.
 
-    For readers where a missing file already means "no data": a missing file,
-    a link, a special file or an over-size file all return ``None``. Every case
+    For best-effort listings only (dashboards, indexes), where a missing file
+    already means "no data": a missing file, a link, a special file or an
+    over-size file all return ``None``. A reader whose output claims to be
+    complete or correct uses :func:`read_required_capsule_text` instead. Every case
     but the missing file is logged as ``capsule_file_not_followed``, so a
     refusal is never silent. *root* itself must be a directory; an unreadable
     root (``OSError`` on open) is also ``None``.
@@ -418,6 +450,88 @@ def read_capsule_member_or_none(
     every intermediate directory is checked too.
     """
     return read_capsule_text_or_none(
+        path.parent, path.name, operation=operation, max_bytes=max_bytes, errors=errors
+    )
+
+
+def _required_file_error(
+    root: Path, rel_s: str, operation: str, exc: BaseException
+) -> CapsuleRequiredFileError:
+    reason = str(exc) or type(exc).__name__
+    _log.warning(
+        "capsule_required_file_unusable",
+        extra={"capsule": str(root), "file": rel_s, "reason": reason[:200]},
+    )
+    return CapsuleRequiredFileError(
+        f"{rel_s} in capsule {root} is present but cannot be used ({reason}); "
+        f"{operation} refuses to produce a result without it. Replace it with "
+        "a regular file or remove it, then try again.",
+        rel=rel_s,
+        reason=reason,
+    )
+
+
+def read_required_capsule_file(
+    root: Path,
+    rel: str | PurePosixPath,
+    *,
+    operation: str,
+    max_bytes: int | None = None,
+) -> bytes | None:
+    """Capsule file *rel* as bytes; ``None`` only when it is **absent**.
+
+    For a reader whose output claims to be complete or correct. An absent file
+    (or capsule root) is "no data" and returns ``None``. A file that is present
+    but cannot be used raises :class:`CapsuleRequiredFileError` naming it: a
+    symbolic link (dangling or not), a FIFO, socket, device or directory, a
+    file the process may not read, a file above *max_bytes*, or a *rel* that is
+    absolute or holds ``..``. Such a file is never followed, read past or
+    silently treated as empty.
+    """
+    rel_s = PurePosixPath(rel).as_posix()
+    try:
+        return read_capsule_file(root, rel, operation=operation, max_bytes=max_bytes)
+    except FileNotFoundError:
+        return None
+    except (CapsuleEntryError, OSError, ValueError) as exc:
+        raise _required_file_error(root, rel_s, operation, exc) from exc
+
+
+def read_required_capsule_text(
+    root: Path,
+    rel: str | PurePosixPath,
+    *,
+    operation: str,
+    max_bytes: int | None = None,
+    errors: str = "replace",
+) -> str | None:
+    """:func:`read_required_capsule_file` decoded as UTF-8 (``errors`` as for ``bytes.decode``).
+
+    ``None`` only when the file is absent; present but unusable raises
+    :class:`CapsuleRequiredFileError`.
+    """
+    raw = read_required_capsule_file(root, rel, operation=operation, max_bytes=max_bytes)
+    if raw is None:
+        return None
+    try:
+        return raw.decode("utf-8", errors=errors)
+    except UnicodeDecodeError as exc:
+        raise _required_file_error(root, PurePosixPath(rel).as_posix(), operation, exc) from exc
+
+
+def read_required_capsule_member(
+    path: Path,
+    *,
+    operation: str,
+    max_bytes: int | None = None,
+    errors: str = "replace",
+) -> str | None:
+    """:func:`read_required_capsule_text` for *path*, a file directly in a capsule root.
+
+    The fail-closed counterpart of :func:`read_capsule_member_or_none`:
+    ``path.name`` is opened relative to ``path.parent``.
+    """
+    return read_required_capsule_text(
         path.parent, path.name, operation=operation, max_bytes=max_bytes, errors=errors
     )
 

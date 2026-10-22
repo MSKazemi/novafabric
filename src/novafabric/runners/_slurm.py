@@ -315,6 +315,7 @@ class SlurmRunner:
         written. Factored so the parse/receipt step
         (:func:`capture_slurm_energy`) is unit-tested without a live cluster.
         """
+        from novafabric._capsule_fs import CapsuleEntryError
         from novafabric.runners._slurm_energy import (
             SACCT_ENERGY_FORMAT,
             capture_slurm_energy,
@@ -344,7 +345,9 @@ class SlurmRunner:
                 node_id=node_id,
                 energy_counter_available=self._energy_counter_available(),
             )
-        except OSError as exc:
+        except (OSError, CapsuleEntryError) as exc:
+            # CapsuleEntryError: an existing receipts file is present but unusable
+            # (a link, FIFO). No receipt is written over it; the job result stands.
             logger.warning("could not write energy receipt for job %s: %s", jobid, exc)
             return False
         return receipt is not None

@@ -35,7 +35,7 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 
 _CLAIM_GENERATOR = "NovaFabric"
 
@@ -48,14 +48,13 @@ def _claim_generator_version() -> str:
 
 
 def _load_capsule_manifest(capsule_dir: Path) -> dict[str, Any]:
-    manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    text = read_required_capsule_member(capsule_dir / "capsule.yaml", operation="C2PA export")
+    if text is None:
         raise FileNotFoundError(
             f"capsule.yaml not found in {capsule_dir}. Is this a valid capsule directory?"
         )
-    data = yaml.safe_load(
-        read_capsule_member_or_none(manifest_path, operation="C2PA export") or ""
-    )
+    data = yaml.safe_load(text)
     if not isinstance(data, dict):
         raise ValueError(f"capsule.yaml in {capsule_dir} did not parse as a dict")
     return data
@@ -70,14 +69,15 @@ def _extract_model_identity(capsule_dir: Path) -> tuple[str, str]:
     produced by older versions. Returns ``("unknown", "unknown")`` when no
     model call is present.
     """
-    model_calls_path = capsule_dir / "model-calls.jsonl"
     model_name = "unknown"
     provider = "unknown"
-    if not model_calls_path.exists():
-        return model_name, provider
-    capsule_text = (
-        read_capsule_member_or_none(model_calls_path, operation="C2PA export") or ""
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
+    # never a C2PA claim that names an "unknown" model.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "model-calls.jsonl", operation="C2PA export"
     )
+    if capsule_text is None:
+        return model_name, provider
     for raw in capsule_text.splitlines():
         raw = raw.strip()
         if not raw:

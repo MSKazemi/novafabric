@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 from novafabric._capsule_fs import (
     CapsuleLinkError,
     read_capsule_member_or_none,
-    read_capsule_text,
+    read_required_capsule_member,
 )
 from novafabric.capture.record_roles import logical_model_calls
 
@@ -350,18 +350,16 @@ class AIBOMExporter:
         """Read a capsule JSONL evidence file, skipping unparseable lines.
 
         A damaged evidence line must not fail a compliance export; a partial BOM is
-        worth more than an exception.
+        worth more than an exception. A whole stream that is present but unusable
+        (a link, FIFO, directory) is different: it raises
+        :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`, because a BOM
+        missing every model the run called is not partial but wrong.
         """
-        if not path.exists():
-            return []
         records: list[dict[str, Any]] = []
-        try:
-            capsule_text = (
-                read_capsule_member_or_none(path, operation="compliance export") or ""
-            )
-            lines = capsule_text.splitlines()
-        except OSError:
+        capsule_text = read_required_capsule_member(path, operation="compliance export")
+        if capsule_text is None:
             return []
+        lines = capsule_text.splitlines()
         for line in lines:
             line = line.strip()
             if not line:
@@ -452,14 +450,15 @@ class AIBOMExporter:
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
         # Absent manifest = no data. A manifest that is present but is not a
         # readable regular file (a directory, link, FIFO) is an error, never an
-        # empty export: read_capsule_text raises for it.
-        if not os.path.lexists(capsule_dir / "capsule.yaml"):
+        # empty export: read_required_capsule_member raises for it.
+        text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="compliance export"
+        )
+        if text is None:
             return {}
         import yaml
 
-        return yaml.safe_load(
-            read_capsule_text(capsule_dir, "capsule.yaml", operation="compliance export")
-        ) or {}
+        return yaml.safe_load(text) or {}
 
     def _build_model_card(
         self, manifest: dict[str, Any], capsule_dir: Path
