@@ -8077,6 +8077,7 @@ failed).
 | `NOVAFABRIC_SERVER_BACKEND` | `sqlite` | Storage backend for `nova server start`: `sqlite` or `postgres`. |
 | `NOVAFABRIC_SERVER_DB_PATH` | `$NOVAFABRIC_HOME/registry.db` | SQLite DB path for `nova server start` when `NOVAFABRIC_SERVER_BACKEND=sqlite`. |
 | *(OIDC)* | — | There are **no OIDC environment variables**: configure `oidc.issuer_url` and `oidc.audience` in the server YAML (`--config`). |
+| `NOVA_OIDC_ISSUER`, `NOVA_OIDC_CLIENT_ID` | — | **Not OIDC configuration.** Read only to set the display-only `server_mode` field of `GET /v0/admin/roles` / `GET /api/admin/roles`. They neither enable OIDC nor (since L15) relax the last-admin guard. |
 | `NOVAFABRIC_OFFLINE_KEY_PATH` | `~/.novafabric/keys/offline-key.pem` | Path to the ed25519 private key for offline tokens |
 | `NOVA_ADMIN_TOKEN` | — | Bearer token with admin role, used by `nova server flush-jwks-cache` |
 | `NOVAFABRIC_CLUSTER_ID` | — | Cluster identifier for collector and HPC hub binaries |
