@@ -130,12 +130,14 @@ class TestRevokeRole:
     def test_revoke_last_admin_allowed_with_oidc(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("NOVA_OIDC_ISSUER", "https://issuer.example.com")
+        # The guard reads the server's own OIDC config (passed in by the caller),
+        # never the NOVA_OIDC_ISSUER env var the server does not read (ADR-0060).
+        monkeypatch.delenv("NOVA_OIDC_ISSUER", raising=False)
         db = tmp_path / "registry.db"
         _bootstrap_db(db)
         assign_role("solo@example.com", "admin", "system", db_path=db)
 
-        deleted = revoke_role("solo@example.com", "admin", db_path=db)
+        deleted = revoke_role("solo@example.com", "admin", db_path=db, oidc_configured=True)
         assert deleted is True
 
     def test_revoke_admin_allowed_when_another_admin_remains(

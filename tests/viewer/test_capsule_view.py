@@ -167,7 +167,7 @@ def test_int_or_none_coercions() -> None:
 def test_read_jsonl_skips_blank_lines(tmp_path: Path) -> None:
     p = tmp_path / "x.jsonl"
     p.write_text('{"a": 1}\n\n{"b": 2}\n')
-    assert _read_jsonl(p) == [{"a": 1}, {"b": 2}]
+    assert _read_jsonl(tmp_path, "x.jsonl") == [{"a": 1}, {"b": 2}]
 
 
 # ── failure cases ─────────────────────────────────────────────────────────────

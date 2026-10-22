@@ -480,7 +480,9 @@ def test_audit_bundle_refuses_a_linked_capsule(
         total_controls=1,
     )
     monkeypatch.setattr(
-        audit_cli, "_load_engine", lambda *_: SimpleNamespace(scan=lambda: report)
+        audit_cli,
+        "_load_engine",
+        lambda *_: SimpleNamespace(scan=lambda: report, capsules_dir=data_dir / "capsules"),
     )
     out = tmp_path / "bundle.zip"
     result = CliRunner().invoke(
