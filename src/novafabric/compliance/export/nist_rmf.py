@@ -30,7 +30,19 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from novafabric._capsule_fs import read_capsule_member_or_none, read_capsule_text
+from novafabric._capsule_fs import (
+    is_capsule_regular_file,
+    read_capsule_member_or_none,
+    read_capsule_text,
+)
+from novafabric.compliance.capture_coverage import (
+    NOT_CAPTURED_REASON,
+    TOOL_PERMISSION_EVENTS_FILE,
+    TOOL_PERMISSION_EVENTS_LEGACY_FILE,
+)
+
+#: ``RMFMetric.measurement_method`` for evidence this version does not capture.
+NOT_CAPTURED_METHOD = "not_captured"
 
 # ---------------------------------------------------------------------------
 # Models
@@ -73,6 +85,9 @@ class NISTRMFReport(BaseModel):
     risk_level: Literal["low", "medium", "high", "critical"] = "medium"
     completeness: str = "partial"
     missing_evidence: list[str] = Field(default_factory=list)
+    #: Evidence files this version reads but never writes (L18) — unscored, and
+    #: never counted in ``missing_evidence`` or as a non-compliant metric.
+    not_captured_evidence: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +174,9 @@ class NISTAIRMFReporter:
             risk_level=risk_level,
             completeness=completeness,
             missing_evidence=missing,
+            not_captured_evidence=[
+                m.data_source for m in metrics if m.measurement_method == NOT_CAPTURED_METHOD
+            ],
         )
 
     def export_json(self, report: NISTRMFReport, output_path: Path) -> Path:
@@ -236,25 +254,41 @@ class NISTAIRMFReporter:
         # MP-2.1: Tool permission events captured.
         # The capture pipeline writes the hyphenated name; accept the legacy
         # underscore form too for older capsules.
-        tool_events_path = capsule_dir / "tool-permission-events.jsonl"
-        if not tool_events_path.exists():
-            tool_events_path = capsule_dir / "tool_permission_events.jsonl"
-        has_tool_events = tool_events_path.exists()
-        if not has_tool_events:
-            missing.append("tool-permission-events.jsonl")
-        metrics.append(
-            RMFMetric(
-                metric_id="MP-2.1",
-                name="Tool Permission Observability",
-                rmf_function="MAP",
-                risk_category="safety",
-                value=1.0 if has_tool_events else 0.0,
-                measurement_method="file_presence",
-                data_source="tool-permission-events.jsonl",
-                threshold=0.5,
-                compliant=has_tool_events,
-            )
+        # L18: no NovaFabric producer writes this stream, so its absence is
+        # "not captured by this version" — unscored, never non-compliant.
+        has_tool_events = any(
+            is_capsule_regular_file(capsule_dir, name)
+            for name in (TOOL_PERMISSION_EVENTS_FILE, TOOL_PERMISSION_EVENTS_LEGACY_FILE)
         )
+        if has_tool_events:
+            metrics.append(
+                RMFMetric(
+                    metric_id="MP-2.1",
+                    name="Tool Permission Observability",
+                    rmf_function="MAP",
+                    risk_category="safety",
+                    value=1.0,
+                    measurement_method="file_presence",
+                    data_source=TOOL_PERMISSION_EVENTS_FILE,
+                    threshold=0.5,
+                    compliant=True,
+                )
+            )
+        else:
+            metrics.append(
+                RMFMetric(
+                    metric_id="MP-2.1",
+                    name="Tool Permission Observability",
+                    rmf_function="MAP",
+                    risk_category="safety",
+                    value=None,
+                    measurement_method=NOT_CAPTURED_METHOD,
+                    data_source=TOOL_PERMISSION_EVENTS_FILE,
+                    threshold=0.5,
+                    compliant=None,
+                    notes=NOT_CAPTURED_REASON,
+                )
+            )
 
         # MP-2.2: Capture level adequacy.
         capture_level = manifest.get("capture_level", "standard")

@@ -405,8 +405,9 @@ _ISO42001_CONTROLS: dict[str, dict[str, str]] = {
     "8.1": {
         "title": "Operational planning and control",
         "narrative": (
-            "Runs are captured deterministically. Capsules include tool-permission "
-            "events, redaction proof, and OTel GenAI spans. Replay modes (forensic, "
+            "Runs are captured deterministically. Capsules include redaction "
+            "proof, and OTel GenAI spans when requested; tool-permission events are "
+            "not captured by this version. Replay modes (forensic, "
             "mocked, semantic) allow operational verification."
         ),
     },

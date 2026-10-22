@@ -12,6 +12,7 @@ from typing import Any, Optional  # noqa: UP007
 import typer
 import yaml
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
 from novafabric.evidence.bundle import (
@@ -341,10 +342,15 @@ def export_evidence_cmd(
           --output bundle.zip
     """
     if key is None:
+        # L5: `nova init` is the command that writes the evidence-signing key.
+        default_key = _nf_paths.keys_dir() / "signing_key.pem"
         console.print(
-            "[red]✗[/red] --key is required in v0.4 (local-key signing). "
-            "Generate one with `python -m novafabric.evidence.signing` "
-            "or your preferred ed25519 tool."
+            "[red]✗[/red] --key is required (local Ed25519 signing). Run `nova init` "
+            "to generate one, then pass "
+            f"--key {escape(str(default_key))}",
+            soft_wrap=True,
+            markup=True,
+            highlight=False,
         )
         raise typer.Exit(code=1)
 
@@ -460,7 +466,7 @@ def export_annex_iv_cmd(
         "--pdf/--no-pdf",
         help=(
             "Also render a PDF using WeasyPrint (BSD-2-Clause). "
-            "Requires: pip install 'novafabric[compliance]'"
+            r"Requires: pip install 'novafabric\[compliance]'"
         ),
     ),
 ) -> None:

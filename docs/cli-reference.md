@@ -844,8 +844,10 @@ stdin/stdout/stderr through, so the workload's terminal behaves normally.
 novacap python agent.py
 ```
 
-If no daemon is reachable, `novacap` transparently falls back to
-`nova capture --no-daemon` (it never blocks your workload). For fleet use,
+If no daemon is reachable, or the daemon refuses the run (`busy`, `bad-op`,
+`uid-denied`), `novacap` falls back to `nova capture --no-daemon` with a
+one-line stderr warning — it never blocks your workload. A daemon lost *after*
+accepting a run exits 1 without re-running the workload. For fleet use,
 invoke `novacap` as the per-run entry (e.g. the Slurm `srun` wrapper) — that is
 where the cold-start saving is realized.
 
@@ -4301,7 +4303,13 @@ Options:
 
 Derives scores for all four NIST AI RMF Core functions:
 - **GOVERN** (GV-1.1 policy coverage, GV-1.2 evidence signing)
-- **MAP** (MP-2.1 tool permission observability, MP-2.2 capture level adequacy)
+- **MAP** (MP-2.1 tool permission observability, MP-2.2 capture level adequacy).
+  MP-2.1 reads `tool-permission-events.jsonl`, which **this version does not capture**
+  (no NovaFabric producer writes it). When the file is absent the metric is reported with
+  `value: null`, `compliant: null`, `measurement_method: "not_captured"` and listed under
+  `not_captured_evidence` — it is excluded from the scores and is never counted as a
+  non-compliant metric or as `missing_evidence`. A capsule that does carry the file (written
+  by your own code through `CapsuleWriter.append_tool_permission_event`) is scored as before.
 - **MEASURE** (MS-2.5 eval performance score, MS-2.6 regression detection)
 - **MANAGE** (MG-2.2 PII redaction rate, MG-4.1 lifecycle management score)
 
@@ -5927,6 +5935,10 @@ Options:
 - `<name@version>` (required) — asset reference (e.g. `my-agent@0.3.0`)
 
 Results are stored in `eval_results` table and checked against the Rego gate for promotion eligibility.
+
+Exit codes: `0` when every suite passes; `1` on FAIL — including a suite named in `spec.evals`
+that is not installed — or when the asset is not found. Before this release a FAIL printed `FAIL`
+but exited `0`, so the command could not gate a CI step; it now matches `nova eval run`.
 
 ### nova eval run
 
@@ -8939,6 +8951,13 @@ capsules.)
 Map capsule evidence to a profile's regulatory controls and report coverage gaps. Exits 1
 if any required control has no evidence.
 
+**Not captured by this version.** The `tool_permissions` and `policy_events` evidence types
+read `tool-permission-events.jsonl`, which no NovaFabric producer writes today. When no scanned
+capsule carries that file, those requirements are listed under `evidence_not_captured` instead
+of `evidence_missing`: a control made only of them is reported `not_applicable` and excluded from
+`overall_score` (counted in `not_captured_controls`); a control that also has captured evidence is
+at most `partial`, never `covered`. Once any capsule carries the file, it is evaluated normally.
+
 ```bash
 nova audit map --profile nist-ai-rmf
 nova audit map --profile eu-ai-act-high-risk --capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX
@@ -9410,6 +9429,11 @@ Valid levels: `minimal`, `standard` (default), `forensic`, `air_gapped`.
 The level does **not** reduce what `nova capture` records from model calls: at every level a default
 capture stores the full request messages and response text in `model-calls.jsonl`. Do not rely on a lower
 capture level to keep prompts out of a capsule.
+
+The dashboard API says the same: `GET /api/policy/capture-level` returns the designed per-tier field
+allowlist under `tiers` together with `allowlist_enforced: false` and an `enforcement` map —
+`enforcement.<level>.enforced` is `true` only for `forensic` and `air_gapped`, with a one-line `effect`
+per level. Read `tiers` as intent, not as what is captured.
 
 **Reference:** `src/novafabric/runners/_pbs.py`, `src/novafabric/runners/_lsf.py`.
 
@@ -10511,8 +10535,9 @@ missing/unreadable capsule or a malformed facet.
 **experimental** (ADR-0167 P2, NF-357). Read-only: list the **published** framework indicators
 (RSP/ASL, Preparedness, FSF) that fired on a run, each bound by `commitment_ref` to the NF-353
 commitment it implicates, with the digest of the observing event/eval. `--framework
-anthropic_rsp|openai_preparedness|deepmind_fsf|other` filters; `--json` emits machine-readable
-output. There is no `--fired` filter: a trigger object only exists when an indicator fired
+anthropic_rsp|openai_preparedness|deepmind_fsf|other` filters (exact, case-sensitive; any other
+value exits `2` — before this release a misspelt framework silently filtered every trigger away and
+exited `0`, which read as "nothing fired"); `--json` emits machine-readable output. There is no `--fired` filter: a trigger object only exists when an indicator fired
 (`fired: false` is unrepresentable by design), so the filter would be a no-op.
 
 A fired tripwire is **reported, never acted on**: no safeguard is applied and the command still

@@ -148,7 +148,7 @@ def save_cmd(
     ] = None,
     order_by: Annotated[
         Optional[str],
-        typer.Option("--order-by", help="Sort rows: '<alias> [asc|desc]'."),
+        typer.Option("--order-by", help="Sort rows: '<alias> \\[asc|desc]'."),
     ] = None,
     query_file: Annotated[
         Optional[Path],
@@ -168,7 +168,7 @@ def save_cmd(
     ] = None,
     sort: Annotated[
         Optional[str],
-        typer.Option("--sort", help="Advisory display sort: 'FIELD [asc|desc], ...'."),
+        typer.Option("--sort", help="Advisory display sort: 'FIELD \\[asc|desc], ...'."),
     ] = None,
     display_format: Annotated[
         Optional[str],

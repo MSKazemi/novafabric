@@ -416,9 +416,9 @@ nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem
 ```
 
 > `--output`/`-o` and `--key` are both **required** — `--key` a PEM-encoded ed25519
-> private key (generate one with `python -m novafabric.evidence.signing`). Running
-> the command without them exits non-zero with "`--key` is required in v0.4
-> (local-key signing)."
+> private key (`nova init` writes one to `$NOVAFABRIC_HOME/keys/signing_key.pem`). Running
+> the command without `--key` exits 1 with "`--key` is required (local Ed25519
+> signing). Run `nova init` to generate one, then pass --key <path>".
 
 The ZIP is self-contained: it embeds the capsule, a lineage subgraph, in-toto DSSE
 attestations, ed25519 signatures, and vendored JSON schemas. An auditor can verify it

@@ -52,7 +52,7 @@ from typing import Any, Protocol, TypeVar, overload
 
 from novafabric.capture._tool_codec import MUTATION_CLASSES
 from novafabric.capture.event_recorder import get_current_recorder
-from novafabric.policies.capture_level import CaptureLevel, CaptureLevelPolicy
+from novafabric.policies.capture_level import PAYLOAD_LEVELS, CaptureLevelPolicy
 
 __all__ = [
     "active",
@@ -91,7 +91,7 @@ def _payloads_enabled() -> bool:
         level = CaptureLevelPolicy.from_env().level
     except Exception:  # pragma: no cover — defensive; from_env never raises today
         return False
-    return level in (CaptureLevel.FORENSIC, CaptureLevel.AIR_GAPPED)
+    return level in PAYLOAD_LEVELS
 
 
 def file_event(

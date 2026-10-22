@@ -294,10 +294,10 @@ def migrate_schema_cmd(
     \b
     Examples:
       # Preview changes without applying them
-      nova migrate-schema --dry-run capsules/
+      nova migrate-schema --dry-run --capsule-dir capsules/
 
       # Apply with backup copies preserved
-      nova migrate-schema --backup capsules/
+      nova migrate-schema --backup --capsule-dir capsules/
     """
     if dry_run:
         console.print(

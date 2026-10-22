@@ -32,7 +32,7 @@ _MARK = {
 def export_rai_scorecard_cmd(
     document: Annotated[
         Path,
-        typer.Argument(help="JSON: {evidence:{dimension:[refs]}, not_applicable[], partial[]}."),
+        typer.Argument(help="JSON: {evidence:{dimension:\\[refs]}, not_applicable[], partial[]}."),
     ],
     json_out: Annotated[
         bool,

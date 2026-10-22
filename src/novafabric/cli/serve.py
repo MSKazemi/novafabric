@@ -145,7 +145,7 @@ def serve_cmd(
     """Start the local dashboard.
 
     Binds to 127.0.0.1 only. Requires --experimental and the
-    'novafabric[serve]' extra (`pip install novafabric[serve]`).
+    'novafabric\\[serve]' extra (`pip install 'novafabric\\[serve]'`).
 
     Not read-only: Layer B mutations (register, promote, redact, export)
     ship, and each is confirm-gated and audit-logged. The summary line said

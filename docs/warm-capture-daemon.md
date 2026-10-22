@@ -144,13 +144,20 @@ forces an in-process run, and the daemon worker does not enable fast-emit. See [
 
 ## 5. Safety and security
 
-- **Falls back when the daemon is absent.** Socket missing or unreachable → the
-  client falls back to a direct in-process run. ⚠ **Known gap:** when the daemon
-  *is* reachable but refuses the run (at its concurrency cap, or on a daemon-side
-  error), `novacap` currently exits 1 **without running the workload** — a fix to
-  fall back instead is tracked. There is no protocol-version check. A
-  daemon crash does not kill in-flight runs (they are independent processes); only
-  *new* runs fall back.
+- **Never blocks the workload.** Socket missing or unreachable → the client falls
+  back to a direct `nova capture --no-daemon` run. If the daemon **refuses** the
+  run — at the concurrency cap (`busy`), an unknown request (`bad-op`), or a
+  socket owned by another user (`uid-denied`) — `novacap` prints a one-line
+  `novacap: capture daemon refused the run (<reason>) …` warning on stderr and
+  runs the workload directly the same way. A refusal always arrives *before* the
+  daemon forks a worker, so the fallback never starts a second copy. Likewise,
+  `nova capture` with a reachable daemon but no runnable `novacap` on `PATH` warns
+  and captures in-process. There is no protocol-version check. A daemon crash does not kill in-flight runs (they are
+  independent processes); only *new* runs fall back.
+- **No silent re-runs.** If the daemon or its worker disappears *after* accepting
+  a run, `novacap` exits 1 with a `lost the capture daemon mid-run` warning and
+  does **not** re-run the workload — it may already have had side effects.
+  Re-run it yourself if that is safe.
 - **Cancellation, no orphans.** Each run is its own process group. Ctrl-C on
   `novacap` (or the client disconnecting) terminates the run's whole process group
   (SIGTERM, then SIGKILL after a short grace).
@@ -177,8 +184,12 @@ forces an in-process run, and the daemon worker does not enable fast-emit. See [
 - **`nova daemon status` says "not running" but a socket file exists.** A stale
   socket from a crashed daemon. `nova daemon stop` removes a stale pidfile;
   delete the socket file if needed and `nova daemon start` again.
-- **Permission denied connecting.** The socket is owned by the UID that started
-  the daemon; run `novacap` as the same user.
+- **Permission denied connecting / `refused the run (uid-denied)`.** The socket
+  is owned by the UID that started the daemon; run `novacap` as the same user, or
+  point `NOVAFABRIC_CAPTURE_SOCKET` at your own daemon. The run itself still
+  happens (directly, without the warm-start saving).
+- **`refused the run (busy)`.** The daemon is at `--max-concurrency`; the run
+  went direct. Raise the cap if this is routine.
 
 ## 8. Roadmap (what comes next)
 

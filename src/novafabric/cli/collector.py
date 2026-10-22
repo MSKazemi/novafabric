@@ -64,7 +64,7 @@ def collector_rebuild_cmd(
     SI-1) into per-run JSONL files, reporting per-run sha256 digests and
     seq-order preservation — the SPK-COL-1-proven rebuild path.
 
-    Scope: event buffer → local directory. Requires novafabric[scale].
+    Scope: event buffer → local directory. Requires novafabric\\[scale].
 
     \b
     Examples:

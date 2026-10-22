@@ -94,3 +94,35 @@ def test_nova_help_shows_eval_subcommand() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "eval" in result.output
+
+
+# ── M9: nova eval agent must be able to gate CI ─────────────────────────────
+
+_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+
+
+def test_eval_agent_fail_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A registered agent whose suite is not installed FAILs — and must exit 1,
+    like ``nova eval run`` does on FAIL, so a CI step cannot pass over it."""
+    monkeypatch.setenv("NOVAFABRIC_DB_PATH", str(tmp_path / "reg.db"))
+    reg = runner.invoke(app, ["register", str(_FIXTURES / "valid_agent.yaml")])
+    assert reg.exit_code == 0, reg.output
+    result = runner.invoke(app, ["eval", "agent", "kube-rca-agent@v1.0.0"])
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "FAIL" in result.output
+    assert result.exit_code == 1, result.output
+
+
+@pytest.mark.parametrize(("passed", "code"), [(True, 0), (False, 1)])
+def test_eval_agent_exit_code_follows_the_verdict(
+    monkeypatch: pytest.MonkeyPatch, passed: bool, code: int
+) -> None:
+    from novafabric.cli import eval_run
+
+    def fake_run_evals(name: str, version: str) -> dict[str, object]:
+        return {"passed": passed, "suites": [{"suite_name": "s", "passed": passed}]}
+
+    monkeypatch.setattr(eval_run, "run_evals", fake_run_evals)
+    result = runner.invoke(app, ["eval", "agent", "a@v1"])
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert result.exit_code == code, result.output

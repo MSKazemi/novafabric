@@ -4,6 +4,14 @@ STDLIB ONLY — importing this module must not pull in the ``novafabric`` packag
 (that would re-introduce the ~3 s cold-start this daemon exists to avoid). It
 carries its own copies of the frame helpers. Console-script entry point:
 ``novacap``.
+
+Never-block contract (ADR-0092): whenever the daemon cannot take a run — no
+socket, unreachable, or it *refuses* the run (``busy``, ``bad-op``,
+``uid-denied``) — the client runs the workload directly via
+``nova capture --no-daemon``. A refusal always arrives before the daemon forks a
+worker, so the fallback can never start a second copy of the workload. A daemon
+that disappears *after* accepting a run is reported as a failure (exit 1) and the
+workload is not re-run, because it may already have side effects.
 """
 
 from __future__ import annotations
@@ -18,6 +26,14 @@ from typing import Any
 
 PROTO_VERSION = 1
 _HEADER = struct.Struct(">I")
+
+
+class DaemonRefused(Exception):
+    """The daemon declined the run before forking a worker (workload not started)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def resolve_socket_path() -> str:
@@ -74,7 +90,28 @@ def _read_frame(sock: socket.socket) -> dict[str, Any] | None:
     return result
 
 
-def _run_via_daemon(sock: socket.socket, command: list[str]) -> int:
+def _warn(message: str) -> None:
+    try:
+        sys.stderr.write(f"novacap: {message}\n")
+        sys.stderr.flush()
+    except (OSError, ValueError):  # pragma: no cover - stderr closed
+        pass
+
+
+def _refusal_message(reason: str) -> str:
+    message = (
+        f"capture daemon refused the run ({reason}); "
+        "running it directly via `nova capture --no-daemon`"
+    )
+    if reason == "uid-denied":
+        message += (
+            f". The socket {resolve_socket_path()} belongs to another user — "
+            "check NOVAFABRIC_CAPTURE_SOCKET / NOVAFABRIC_HOME"
+        )
+    return message
+
+
+def _send_request(sock: socket.socket, command: list[str]) -> None:
     request = {
         "op": "capture",
         "proto": PROTO_VERSION,
@@ -85,23 +122,53 @@ def _run_via_daemon(sock: socket.socket, command: list[str]) -> int:
     _write_frame(sock, request)
     socket.send_fds(sock, [b"\x00"], [0, 1, 2])  # stdin/stdout/stderr
 
+
+def _await_exit(sock: socket.socket) -> int:
+    """Read frames until the run ends and return its exit code.
+
+    Raises :class:`DaemonRefused` when the daemon declined the run. Returns 1
+    (and never re-runs) when the daemon goes away after accepting it.
+    """
+
     def _forward(signum: int, _frame: object) -> None:
         try:
             _write_frame(sock, {"op": "signal", "signum": signum})
         except OSError:
             pass
 
-    signal.signal(signal.SIGINT, _forward)
-    signal.signal(signal.SIGTERM, _forward)
+    previous = {
+        signal.SIGINT: signal.signal(signal.SIGINT, _forward),
+        signal.SIGTERM: signal.signal(signal.SIGTERM, _forward),
+    }
+    try:
+        while True:
+            try:
+                msg = _read_frame(sock)
+            except (OSError, ValueError) as exc:
+                _warn(f"lost the capture daemon mid-run ({exc}); not re-running the workload")
+                return 1
+            if msg is None:
+                _warn("capture daemon closed the connection mid-run; not re-running the workload")
+                return 1
+            if msg.get("event") == "error":
+                raise DaemonRefused(str(msg.get("reason") or "unspecified"))
+            if msg.get("event") == "exit":
+                return int(msg.get("code", 1))
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
-    while True:
-        msg = _read_frame(sock)
-        if msg is None:
-            return 1  # daemon/worker vanished → surface failure
-        if msg.get("event") == "error":
-            return 1
-        if msg.get("event") == "exit":
-            return int(msg.get("code", 1))
+
+def _run_via_daemon(sock: socket.socket, command: list[str]) -> int:
+    _send_request(sock, command)
+    return _await_exit(sock)
+
+
+def _close_quietly(sock: socket.socket) -> None:
+    try:
+        sock.close()
+    except OSError:  # pragma: no cover
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -113,13 +180,17 @@ def main(argv: list[str] | None = None) -> int:
     if sock is None:
         os.execvp("nova", build_fallback_argv(command))  # pragma: no cover
     try:
-        return _run_via_daemon(sock, command)
-    except (OSError, ValueError):  # pragma: no cover
-        try:
-            sock.close()
-        except OSError:
-            pass
+        _send_request(sock, command)
+    except (OSError, ValueError):  # pragma: no cover - request never delivered
+        _close_quietly(sock)
         os.execvp("nova", build_fallback_argv(command))
+    try:
+        return _await_exit(sock)
+    except DaemonRefused as refused:
+        _warn(_refusal_message(refused.reason))
+        _close_quietly(sock)
+        os.execvp("nova", build_fallback_argv(command))
+    raise AssertionError("unreachable: os.execvp never returns")  # pragma: no cover
 
 
 if __name__ == "__main__":

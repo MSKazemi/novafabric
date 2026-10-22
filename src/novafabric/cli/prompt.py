@@ -630,7 +630,7 @@ def prompt_tree_cmd(
     """Print a prompt's composition DAG as an indented tree (ADR-0115).
 
     Each node shows the reference as written, the version it resolved to,
-    its content hash, and a ``[label]`` flag when the reference was pinned
+    its content hash, and a ``\\[label]`` flag when the reference was pinned
     through a deployment label. Read-only.
 
     Scope: one prompt version and its whole composition tree.

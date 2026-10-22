@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { clsx } from 'clsx';
-import { api, type PolicyInput, type PolicyDecision } from '../../../lib/api';
+import { api, type CaptureLevelInfo, type PolicyInput, type PolicyDecision } from '../../../lib/api';
 import { SuggestInput } from '../../ui/SuggestInput';
 import CopyButton from '../../ui/CopyButton';
 
 // DB-CAP-1 — Capture-level policy panel (v0.18.0, cap-004)
 function CaptureLevelPanel() {
-  const [data, setData] = useState<{ current_level: string; env_var: string; tiers: Record<string, string[]>; note: string } | null>(null);
+  const [data, setData] = useState<CaptureLevelInfo | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
@@ -45,7 +45,7 @@ function CaptureLevelPanel() {
         <div>
           <h3 className="text-xs font-semibold text-[var(--color-text)]">Capture Level Policy</h3>
           <p className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
-            cap-004 · controls which fields the capture pipeline records
+            cap-004 · only forensic / air_gapped change capture today
           </p>
         </div>
         <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">
@@ -80,7 +80,16 @@ function CaptureLevelPanel() {
           </div>
 
           <div className="space-y-1">
-            <p className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Fields captured at <span className={levelColor[selected]}>{selected}</span></p>
+            <p className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">
+              Designed field allowlist for <span className={levelColor[selected]}>{selected}</span>
+              {data.allowlist_enforced === false && <span> (not enforced)</span>}
+            </p>
+            {data.enforcement?.[selected] && (
+              <p className="text-[10px] text-[var(--color-text-muted)]">
+                <span className="font-mono">{data.enforcement[selected].enforced ? 'changes capture' : 'no effect today'}</span>
+                {' · '}{data.enforcement[selected].effect}
+              </p>
+            )}
             <pre className="text-[10px] font-mono bg-[var(--color-bg-sunken)] rounded border border-[var(--color-border)] p-2.5 whitespace-pre-wrap text-[var(--color-text-muted)] max-h-24 overflow-auto">
               {(data.tiers[selected] ?? []).join(', ')}
             </pre>

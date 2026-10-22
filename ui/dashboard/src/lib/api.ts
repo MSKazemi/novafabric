@@ -1061,6 +1061,15 @@ export interface SafetyCaseResponse {
   case_hash: string;
 }
 
+export interface CaptureLevelInfo {
+  current_level: string;
+  env_var: string;
+  tiers: Record<string, string[]>;
+  allowlist_enforced?: boolean;
+  enforcement?: Record<string, { enforced: boolean; effect: string }>;
+  note: string;
+}
+
 export const api = {
   listRuns: (q: { limit?: number; offset?: number; since?: string; until?: string; status?: string; q?: string } = {}) =>
     request<{ count: number; total: number; has_more: boolean; limit: number; offset: number; capsule_dir: string; runs: RunSummary[] }>('/api/runs', q as Record<string, unknown>),
@@ -1493,7 +1502,10 @@ export const api = {
 
   // ---------- DB-CAP-1: Capture-level policy (v0.18.0 — cap-004) ----------
   captureLevelGet: () =>
-    request<{ current_level: string; env_var: string; tiers: Record<string, string[]>; note: string }>(
+    // `tiers` is the designed field allowlist — NOT applied by any capture path
+    // (`allowlist_enforced: false`); `enforcement[level].enforced` says whether choosing
+    // the level changes capture today (only forensic / air_gapped do — ADR-0066 Am.1).
+    request<CaptureLevelInfo>(
       '/api/policy/capture-level'
     ),
   captureLevelSet: (level: string) =>

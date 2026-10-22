@@ -785,7 +785,7 @@ def _check_promote_gates(
     ):
         raise PromotionBlockedError(
             f"Agent '{name}@{version}' has no passing evaluation. "
-            "Run `novafabric eval` first, or use --force to override."
+            f"Run `nova eval agent {name}@{version}` first, or use --force to override."
         )
 
     # Opt-in statistical-significance gate (ADR-0080, gap-004). Only blocks on

@@ -5299,7 +5299,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "dest",
         "label": "--dest",
         "type": "text",
-        "hint": "Destination: a local directory (always works) or s3://bucket\\[/prefix] (any S3-compatible endpoint; set NOVA_S3_ENDPOINT_URL for a private one). azure:// and gcs:// are planned (ADR-0141 P2).",
+        "hint": "Destination: a local directory (always works) or s3://bucket[/prefix] (any S3-compatible endpoint; set NOVA_S3_ENDPOINT_URL for a private one). azure:// and gcs:// are planned (ADR-0141 P2).",
         "flag": "--dest",
         "required": true
       },
@@ -11917,7 +11917,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "framework",
         "label": "--framework",
         "type": "text",
-        "hint": "Only triggers for this framework (anthropic_rsp, openai_preparedness, deepmind_fsf, other).",
+        "hint": "Only triggers for this framework. An unknown name exits 2.",
         "flag": "--framework"
       },
       {
@@ -14655,7 +14655,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "backend",
         "label": "--backend",
         "type": "text",
-        "hint": "Verification backend: 'local' (ECDSA P-256 DSSE, default) or 'sigstore' (Sigstore bundle verification). Requires pip install \"novafabric\\[sigstore]\" for the sigstore backend.",
+        "hint": "Verification backend: 'local' (ECDSA P-256 DSSE, default) or 'sigstore' (Sigstore bundle verification). Requires pip install \"novafabric[sigstore]\" for the sigstore backend.",
         "flag": "--backend",
         "defaultValue": "local"
       },

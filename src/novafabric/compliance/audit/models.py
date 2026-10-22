@@ -78,6 +78,14 @@ class ControlCoverage(BaseModel):
         default_factory=list,
         description="Descriptions of evidence missing for this control",
     )
+    evidence_not_captured: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Evidence this NovaFabric version does not capture (no producer writes "
+            "it) and no scanned capsule carries. Not scored as missing; a control "
+            "made only of such evidence is 'not_applicable'."
+        ),
+    )
     capsule_ids: list[str] = Field(
         default_factory=list,
         description="Capsule IDs contributing evidence for this control",
@@ -98,6 +106,14 @@ class AuditReport(BaseModel):
     covered_controls: int = Field(..., ge=0, description="Controls with full coverage")
     partial_controls: int = Field(..., ge=0, description="Controls with partial coverage")
     missing_controls: int = Field(..., ge=0, description="Controls with no coverage")
+    not_captured_controls: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Controls reported 'not_applicable' because all their evidence is not "
+            "captured by this version; excluded from overall_score"
+        ),
+    )
     overall_score: float = Field(
         ..., ge=0.0, le=1.0, description="Weighted overall coverage score"
     )

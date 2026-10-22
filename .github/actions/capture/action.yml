@@ -24,7 +24,7 @@ inputs:
     required: false
     default: "test"
   timeout:
-    description: "Wall-clock deadline in seconds. Empty means no NovaFabric-imposed limit."
+    description: "Wall-clock deadline in seconds for the captured command. Empty uses `nova capture`'s default of 600 seconds; the workload is killed (exit 124) when it is exceeded. Set a larger value for long jobs."
     required: false
     default: ""
   validate:

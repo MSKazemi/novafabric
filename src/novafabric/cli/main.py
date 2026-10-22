@@ -625,7 +625,7 @@ app.add_typer(
 app.add_typer(
     kg_app,
     name="kg",
-    help="Capsule Knowledge Graph: ingest, query, and inspect (requires novafabric[scale-kg]).",
+    help="Capsule Knowledge Graph: ingest, query, and inspect (requires novafabric\\[scale-kg]).",
 )
 
 # Top-level `nova new-run-id` shortcut (FR-27)
