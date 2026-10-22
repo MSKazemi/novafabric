@@ -343,7 +343,9 @@ def _collect_merkle(
         )
         if uri is None:
             return _absent(name)
-        if uri.startswith(("postgresql://", "postgres://")):
+        from novafabric.trust.novaseal.log_location import is_postgres_dsn  # noqa: PLC0415
+
+        if is_postgres_dsn(uri):
             return CollectedComponent(
                 members=[],
                 coverage=CoverageEntry(

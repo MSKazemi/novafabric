@@ -7,7 +7,12 @@ import logging
 import uuid
 from pathlib import Path
 
-from novafabric.promote.bypass_notify import BypassEvent, BypassNotifier, NullBypassNotifier
+from novafabric.promote.bypass_notify import (
+    BypassEvent,
+    BypassNotifier,
+    build_notifier_from_env,
+    dispatch_bypass_event,
+)
 from novafabric.promote.exceptions import BundleNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -24,7 +29,11 @@ class PromoteBundleStore:
 
     def __init__(self, base_dir: Path, notifier: BypassNotifier | None = None) -> None:
         self._base = base_dir
-        self._notifier: BypassNotifier = notifier if notifier is not None else NullBypassNotifier()
+        # Default: the channels NOVA_BYPASS_NOTIFY_FILE / _WEBHOOK configure (audit
+        # H3 — the default was a no-op, so no bypass ever notified anyone).
+        self._notifier: BypassNotifier = (
+            notifier if notifier is not None else build_notifier_from_env()
+        )
 
     def _proposal_path(self, capsule_id: str, proposal_uuid: str) -> Path:
         return self._base / "promote" / capsule_id / "proposal" / f"{proposal_uuid}.json"
@@ -113,19 +122,17 @@ class PromoteBundleStore:
             "valid_until": valid_until,
         }
         path.write_text(json.dumps(doc), encoding="utf-8")
-        try:
-            self._notifier.notify(
-                BypassEvent(
-                    event_type="bypass_created",
-                    capsule_id=capsule_id,
-                    bypass_uuid=bypass_uuid,
-                    valid_until=valid_until,
-                )
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "bypass notify failed capsule=%r uuid=%r: %s", capsule_id, bypass_uuid, exc
-            )
+        # Stored first, then notified: a failing channel is logged and audited
+        # (seal.bypass.notify) but never blocks the bypass.
+        dispatch_bypass_event(
+            self._notifier,
+            BypassEvent(
+                event_type="bypass_created",
+                capsule_id=capsule_id,
+                bypass_uuid=bypass_uuid,
+                valid_until=valid_until,
+            ),
+        )
         return bypass_uuid
 
     def get_bypass(self, capsule_id: str, bypass_uuid: str) -> bytes:

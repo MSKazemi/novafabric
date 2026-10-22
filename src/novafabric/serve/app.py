@@ -1863,6 +1863,8 @@ def create_app(
           sealed=False  — capsule has no .seal/ directory (was not sealed)
           configured=False — NovaSeal config not found
           signature_ok, timestamp_ok, log_integrity_ok, valid, errors — full result
+          capsule_binding_ok — ADR-0251 binding (capsule.yaml + evidence_digests +
+            log-entry capsule_id); valid is the verdict `nova verify` exits on
           timestamp_ok is null when no RFC 3161 token is present (ADR-0301)
           timestamp_trust — anchored | unanchored | absent | invalid: timestamp_ok says a
             token is intact; only "anchored" (tsa_ca_certs in novaseal.yaml) is trusted time
@@ -1895,7 +1897,8 @@ def create_app(
                 "message": "NovaSeal not configured — set NOVAFABRIC_SEAL_CONFIG or novaseal.yaml.",
             }
 
-        from novafabric.trust.novaseal import unanchored_claims, verify_with_profile
+        from novafabric.trust.novaseal import unanchored_claims
+        from novafabric.trust.novaseal.capsule_verify import verify_capsule
 
         log_file = seal_dir / "log-entry.json"
         capsule_id = ""
@@ -1909,10 +1912,10 @@ def create_app(
                 pass
 
         try:
-            # Opens the configured logs only if they exist (verification never
-            # creates one), checks previous_merkle_dbs and anchors the timestamp
-            # with tsa_ca_certs — the same inputs `nova verify` uses.
-            result = verify_with_profile(seal_dir, profile)
+            # The same function `nova verify <capsule-dir>` reports from (audit
+            # H1): NovaSeal checks plus the ADR-0251 capsule binding, with the
+            # profile's logs, previous_merkle_dbs, ca_bundle and tsa_ca_certs.
+            report = verify_capsule(cdir, profile)
         except Exception as exc:
             return {
                 "sealed": True,
@@ -1922,10 +1925,12 @@ def create_app(
                 "timestamp_ok": False,
                 "timestamp_trust": "invalid",
                 "log_integrity_ok": False,
+                "capsule_binding_ok": False,
                 "valid": False,
                 "errors": [str(exc)],
             }
 
+        result = report.result
         return {
             "sealed": True,
             "configured": True,
@@ -1941,9 +1946,12 @@ def create_app(
             "log_inclusion": result.log_inclusion,
             "sealer_log": result.sealer_log,
             "unanchored_claims": unanchored_claims(result),
-            "valid": result.valid,
-            "errors": list(result.errors),
-            # ADR-0301: no CA bundle is consulted here, so at most "self-asserted".
+            # ADR-0251: capsule.yaml and every evidence file match the signed
+            # payload, and the log entry names it. False fails `valid`.
+            "capsule_binding_ok": report.binding.ok and report.capsule_id_ok,
+            "valid": report.valid,
+            "errors": report.all_errors(),
+            # ADR-0301: at most "self-asserted" unless novaseal.yaml sets ca_bundle.
             "identity_trust": result.identity_trust,
             "signer_subject": result.signer_subject,
             "local_seal_identity": result.local_seal_identity,
@@ -4749,6 +4757,27 @@ def create_app(
         from novafabric.trust.novaseal.config import resolve_merkle_db_path
         return resolve_merkle_db_path()
 
+    def _novaseal_db_check() -> dict[str, Any]:
+        """The /api/doctor ``novaseal_db`` row: the log capture seals into (audit M2).
+
+        A Postgres log is reported, never connected to here, and its DSN is shown
+        with the password redacted (audit H2).
+        """
+        from novafabric.trust.novaseal.config import SealConfigError, resolve_merkle_db_uri
+        from novafabric.trust.novaseal.log_location import is_postgres_dsn, redact_location
+
+        try:
+            location = resolve_merkle_db_uri()
+        except SealConfigError as exc:
+            return {"name": "novaseal_db", "ok": False, "detail": str(exc)}
+        if is_postgres_dsn(location):
+            return {
+                "name": "novaseal_db",
+                "ok": True,
+                "detail": f"{redact_location(location)} (Postgres; not connected by this check)",
+            }
+        return {"name": "novaseal_db", "ok": Path(location).exists(), "detail": location}
+
     @app.get("/api/seal/policy", dependencies=[Depends(verify_token)])
     async def seal_policy_endpoint() -> dict[str, Any]:
         """Return the latest promotion policy predicate.
@@ -6941,8 +6970,7 @@ def create_app(
             "name": "opa_binary", "ok": opa_bin is not None, "detail": opa_bin or "not found",
         })
 
-        seal_db = _seal_db_path()
-        checks.append({"name": "novaseal_db", "ok": seal_db.exists(), "detail": str(seal_db)})
+        checks.append(_novaseal_db_check())
 
         kg_path = _kg_db_path()
         if not kg_path.exists():

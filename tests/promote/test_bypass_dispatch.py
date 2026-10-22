@@ -5,14 +5,18 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from novafabric.promote.bundle_store import PromoteBundleStore
 from novafabric.promote.bypass_notify import (
     BypassEvent,
+    BypassNotifyError,
     FileBypassNotifier,
     MultiBypassNotifier,
     NullBypassNotifier,
     WebhookBypassNotifier,
     build_notifier_from_env,
+    dispatch_bypass_event,
 )
 
 # ---------------------------------------------------------------------------
@@ -110,20 +114,22 @@ class TestFileBypassNotifier:
 
 
 class TestWebhookBypassNotifier:
-    def test_swallows_connection_error(self):
-        """WebhookBypassNotifier does not propagate network errors."""
-        notifier = WebhookBypassNotifier("http://127.0.0.1:0/nonexistent", timeout_s=0.1)
-        # Must not raise even if the endpoint is unreachable
-        notifier.notify(_event())
-
-    def test_swallows_url_error_silently(self, caplog):
-        """Network failure logs a warning but does not raise."""
-        import logging
-        notifier = WebhookBypassNotifier("http://0.0.0.0:1/sink", timeout_s=0.1)
-        with caplog.at_level(logging.WARNING, logger="novafabric.promote.bypass_notify"):
+    def test_connection_error_raises_a_named_error_without_the_url_path(self):
+        """Audit H3: the notifier reports its failure (it used to swallow it where
+        nobody saw it); only scheme://host:port is named, never the path."""
+        notifier = WebhookBypassNotifier("http://127.0.0.1:1/secret-path?k=v", timeout_s=0.5)
+        with pytest.raises(BypassNotifyError) as excinfo:
             notifier.notify(_event())
-        # Should have logged a warning (best-effort check — some OS may fail differently)
-        # The important thing is no exception propagated (verified above)
+        assert excinfo.value.failed_channels == ["webhook:http://127.0.0.1:1"]
+        assert "secret-path" not in str(excinfo.value)
+
+    def test_dispatch_never_raises_and_logs_the_failure(self, caplog):
+        """The bypass path calls dispatch_bypass_event, which contains the error."""
+        import logging
+        notifier = WebhookBypassNotifier("http://127.0.0.1:1/sink", timeout_s=0.5)
+        with caplog.at_level(logging.WARNING, logger="novafabric.promote.bypass_notify"):
+            assert dispatch_bypass_event(notifier, _event()) == "failed"
+        assert any("bypass notification failed" in r.getMessage() for r in caplog.records)
 
     def test_posts_json_body(self, tmp_path):
         """WebhookBypassNotifier POSTs JSON with correct Content-Type when server reachable."""

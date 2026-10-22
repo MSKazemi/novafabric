@@ -1660,12 +1660,16 @@ from novafabric.promote.bypass_notify import BypassEvent, BypassNotifier
 
 class SlackBypassNotifier:
     def notify(self, event: BypassEvent) -> None:
-        # post to Slack; never raise
+        # post to Slack; raise BypassNotifyError (or any exception) on failure
         ...
 ```
 
-Wire it via `PromoteBundleStore(notifier=SlackBypassNotifier())` or set
-`NOVA_BYPASS_NOTIFY_FILE` / `NOVA_BYPASS_NOTIFY_WEBHOOK` for the built-in backends.
+Wire it via `PromoteBundleStore(notifier=SlackBypassNotifier())`. Without a
+`notifier`, the store uses `build_notifier_from_env()`: `NOVA_BYPASS_NOTIFY_FILE` /
+`NOVA_BYPASS_NOTIFY_WEBHOOK` for the built-in backends. A notifier may raise: the
+store calls it through `dispatch_bypass_event()`, which never lets a failure block
+the bypass, logs it, and records a `seal.bypass.notify` audit entry
+([novaseal-configuration §4.1](novaseal-configuration.md#41-maker-checker-bypass-notifications)).
 
 ### SigningBackend — Cloud KMS signing
 

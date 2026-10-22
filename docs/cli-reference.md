@@ -3679,7 +3679,7 @@ never `fail`:
 
 | Guarantee | Source | When unavailable |
 |---|---|---|
-| `signature_ok` / `timestamp_ok` / `log_integrity_ok` | NovaSeal verification over `.seal/` | Unsealed capsule, or no NovaSeal profile configured → `n/a`. **Unverified is not failed**, and "could not verify" is not "verification failed". |
+| `signature_ok` / `timestamp_ok` / `log_integrity_ok` | the same verification `nova verify <capsule-dir>` runs — `signature_ok` is true only when the signature also binds this directory (ADR-0251: `capsule.yaml`, `evidence_digests`, log-entry `capsule_id`) | Unsealed capsule, or a `novaseal.yaml` that does not load → `n/a`. **Unverified is not failed**, and "could not verify" is not "verification failed". With no `novaseal.yaml` at all the capsule is verified from its own files, as `nova verify` does. |
 | `redaction_coverage` / `secret_scan_clean` | the capsule's `redaction-proof.json` | Captured without the masking pipeline → `n/a` |
 | `policy_pass` / `eval_gate_pass` | **never derived from a capsule** | Always `n/a`. These are registry/promotion facts; a capsule records that a run happened, not whether an asset later cleared a gate. Inferring them would attach a promotion verdict to the wrong artifact. |
 
@@ -8091,8 +8091,8 @@ failed).
 | `NOVAFABRIC_SPOOL_DIR` | `$NOVAFABRIC_HOME/spool` | Local event spool drained by `novafabric-spool-forwarder`; written by `nova capture --emit-spool` (ADR-0092 slice C, experimental) |
 | `NOVAFABRIC_SPOOL_STREAM` | `NOVA_EVIDENCE` | JetStream stream the spool forwarder publishes to (`novafabric-spool-forwarder --stream`) |
 | `NOVAFABRIC_SPOOL_SUBJECT` | `nova.evidence` | JetStream subject prefix for the spool forwarder; per-run subject is `<prefix>.<run_id>` |
-| `NOVA_BYPASS_NOTIFY_FILE` | — | Path to JSONL file for bypass event notifications (v0.24.0) |
-| `NOVA_BYPASS_NOTIFY_WEBHOOK` | — | HTTP(S) URL for bypass event webhook notifications (v0.24.0) |
+| `NOVA_BYPASS_NOTIFY_FILE` | — | Path to JSONL file for maker-checker bypass notifications; a failure is logged and audited (`seal.bypass.notify`), never blocking |
+| `NOVA_BYPASS_NOTIFY_WEBHOOK` | — | HTTP(S) URL for maker-checker bypass webhook notifications; a failure is logged and audited (`seal.bypass.notify`), never blocking |
 | `NOVA_EVENTS_LOG` | — | Path of the local append-only lifecycle-event log (`events.jsonl`); enables the file sink (ADR-0137, experimental) |
 | `NOVA_EVENTS_WEBHOOK` | — | Lifecycle-event webhook URL(s), comma-separated; user-configured only, no default destination (ADR-0137, experimental) |
 | `NOVA_EVENTS_MAX_RETRIES` | `2` | Bounded webhook retry count for lifecycle-event delivery (ADR-0137) |

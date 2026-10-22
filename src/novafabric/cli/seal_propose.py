@@ -627,7 +627,8 @@ def log_verify_cmd(
         help=(
             "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires the "
             "seal-postgres extra). Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then "
-            "merkle_db in novaseal.yaml, then ~/.novafabric/novaseal-merkle.db."
+            "merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db — "
+            "the same log capture seals into."
         ),
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all leaf details"),
@@ -667,6 +668,7 @@ def log_verify_cmd(
       2 — consistency proof failed (--consistency)
     """
     from novafabric.trust.novaseal.config import resolve_merkle_db_uri
+    from novafabric.trust.novaseal.log_location import redact_location
     from novafabric.trust.novaseal.merkle import (
         PostgresMerkleLog,
         open_merkle_log,
@@ -681,7 +683,8 @@ def log_verify_cmd(
     else:
         result = merkle_log.verify_consistency()
 
-    console.print(f"Merkle log: {resolved_db}  [backend: {backend}]")
+    # Never print a DSN's password (audit H2).
+    console.print(f"Merkle log: {redact_location(resolved_db)}  [backend: {backend}]")
     console.print(f"  Leaves:      {result.leaf_count}")
     console.print(f"  Root version: v{result.root_version}  (ADR-0313)")
     if result.root_hash:

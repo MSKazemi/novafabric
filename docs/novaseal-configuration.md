@@ -310,34 +310,37 @@ The `merkle_db` field in `novaseal.yaml` controls where this file lives.
 
 ### 3.1 Path resolution order
 
-⚠ **Two resolution rules exist today, and they disagree when
-`NOVAFABRIC_SEAL_DB_PATH` is set.**
-
-- **Sealing and verification** — `nova capture` sealing, adapter / `@agent` /
-  OTLP sealing in `nova serve`, `nova verify`, and the trust radar — always use
-  `merkle_db` from `novaseal.yaml` (or its default). They **ignore**
-  `NOVAFABRIC_SEAL_DB_PATH`.
-- **Diagnostics and the policy store** — `nova doctor`, the `nova serve` SealTab
-  endpoints, `server/routes/seal.py`, and `nova seal log verify` — resolve through
-  `novafabric.trust.novaseal.config.resolve_merkle_db_path()`, which honours the
-  env var first, with the precedence below.
-- `nova seal propose` / `approve` / `bypass` use their own `--db` option
-  (default `~/.local/share/novafabric/merkle.db`) for the promotion policy store.
-
-So if you set `NOVAFABRIC_SEAL_DB_PATH`, set `merkle_db` in `novaseal.yaml` to the
-same value — otherwise the log you verify is not the log you seal into (a code
-fix to unify this is tracked).
+**Works today.** Every NovaSeal caller resolves the Merkle log through one rule
+(`novafabric.trust.novaseal.config.resolve_merkle_db_uri()`; the loaded profile's
+`merkle_db` is computed by the same rule). That covers capture sealing,
+`nova serve` sealing, `nova verify`, the trust radar and dashboard Seal tab,
+`POST /api/runs/{id}/verify`, the dashboard `/api/doctor` `novaseal_db` row, the
+SealTab and `nova server` policy-store endpoints, `nova seal log verify`, and the
+`key_rotation` entry `nova seal init --force` appends. So the log a capsule is sealed
+into is the log every verifier reads.
 
 **Precedence (highest to lowest):**
 
 | Priority | Source | When to use |
 |---|---|---|
-| 1 | `NOVAFABRIC_SEAL_DB_PATH` env var | Explicit override; CI/test environments; Postgres URL (`postgres://...`, experimental — see §3.4) |
+| 1 | `NOVAFABRIC_SEAL_DB_PATH` env var | Process-wide override: CI/test environments, or a job that must seal into a specific log. A path or a Postgres DSN (§3.4) |
 | 2 | `merkle_db:` field in `novaseal.yaml` | **Production config** — set this for non-default paths |
 | 3 | `$NOVAFABRIC_HOME/novaseal-merkle.db` (default `~/.novafabric/novaseal-merkle.db`) | Default for local laptop use |
 
-If `novaseal.yaml` is not found or cannot be parsed, priority 2 is skipped and
-priority 3 applies.
+If `novaseal.yaml` is not found, or is not valid YAML, priority 2 is skipped and
+priority 3 applies. A `merkle_db` (or `NOVAFABRIC_SEAL_DB_PATH`) that is neither a
+file path nor a supported DSN is a config error (§3.4); it is never used as a file
+name. Loading the config creates nothing on disk. The SQLite file and its directory
+are created the first time something appends to the log.
+
+`nova seal init` writes `merkle_db: $NOVAFABRIC_HOME/novaseal-merkle.db`.
+`nova seal init --force` keeps a `merkle_db` you set in the managed file, and
+records the rotation in the log this rule resolves.
+
+Before 2026-10-22 capture sealing, `nova verify` and the radar ignored
+`NOVAFABRIC_SEAL_DB_PATH`, while the SealTab and `nova seal log verify` honoured it.
+With the variable set, capsules were sealed into one log and checked against
+another.
 
 ### 3.2 Docker and container deployments
 
@@ -369,10 +372,8 @@ where the container's home directory or `NOVAFABRIC_HOME` is.
 ### 3.3 SLURM and shared-filesystem deployments
 
 ⚠ **Do not put the SQLite Merkle log on a shared network filesystem** (Lustre,
-GPFS, NFS) or share one log between concurrent jobs. The SQLite log supports one
-writer at a time on a local filesystem — `MerkleLog` requires an external lock
-for concurrent appends — and SQLite's WAL mode does not work over a network
-filesystem. Use one log per node (a node-local `merkle_db`), for example:
+GPFS, NFS) or share one log between concurrent jobs. SQLite's locking and WAL mode do
+not work reliably over a network filesystem. Use one log per node (a node-local `merkle_db`), for example:
 
 ```yaml
 # /home/$USER/.novafabric/novaseal.yaml
@@ -382,8 +383,13 @@ cert_path: /lustre/project/novafabric/keys/seal.crt
 merkle_db: /tmp/$USER/novafabric/novaseal-merkle.db   # node-local, one writer
 ```
 
-Shared, concurrent appends are what the experimental Postgres backend (§3.4) is
-for — with the caveat stated there.
+Several processes on **one host** may append to one local SQLite log: each
+append takes the write lock before it picks its leaf index, and waiters queue
+on SQLite's busy timeout. Before 2026-10-22 two captures sealing at the same
+moment could pick the same index, and one capsule was left unsealed with only a
+warning (measured: 10 of 200 appends from 8 processes). That does not make a
+network filesystem safe. Shared, concurrent appends across nodes are what the
+experimental Postgres backend (§3.4) is for.
 
 ### 3.3a `previous_merkle_dbs` — moving a host to v2 roots (ADR-0313)
 
@@ -412,20 +418,32 @@ against a v1 sealer's log fails: v2 logs came later.
 ### 3.4 Postgres backend (experimental, Scale-S4)
 
 **Experimental** — implemented (ROADMAP Scale-S4). SQLite remains the default;
-the Postgres backend is opt-in via a Postgres DSN. The merkle-log factory
-(`open_merkle_log`) routes `postgresql://` / `postgres://` URIs to the
-`PostgresMerkleLog` backend.
+the Postgres backend is opt-in via a Postgres DSN. It needs the `seal-postgres`
+extra (psycopg 3).
 
-⚠ **Do not put a DSN in `merkle_db` today.** The field is parsed as a filesystem
-path, so `postgres://user:pass@pghost/db` collapses to the relative path
-`postgres:/user:pass@pghost/db` — capture then silently opens a *SQLite* log
-there, and the DSN (password included) becomes a directory name under the
-working directory (known defect, tracked as a code fix).
+```yaml
+merkle_db: postgres://user:pass@pghost/novafabric_seal
+```
 
-The Postgres backend is reachable today only through `NOVAFABRIC_SEAL_DB_PATH`
-(`postgresql://…`) — which, per §3.1, `nova seal log verify` and `nova doctor`
-honour but `nova capture` sealing does not. Treat it as a verification-side
-experiment until the sealing path is unified.
+Accepted schemes: `postgres://`, `postgresql://`, and the SQLAlchemy spelling
+`postgresql+psycopg://` (rewritten to `postgresql://`, the form psycopg connects
+with). A DSN stays a string from the config to the connection. Any other
+`scheme://` value — `postgresql+psycopg2://` (a driver NovaFabric does not ship),
+`mysql://`, or a DSN missing a slash (`postgres:/…`) — is a `SealConfigError`, never
+a file path. The `NOVAFABRIC_SEAL_DB_PATH` env var accepts the same values.
+
+**Secrets.** NovaFabric never writes the DSN to disk (no directory or file is
+created from it) and never prints its password: error messages,
+`nova seal log verify` and the `/api/doctor` row show `user:***@host`. Prefer
+keeping the password out of the URL altogether, in `~/.pgpass` or the `PGPASSWORD`
+environment variable, which libpq reads.
+
+Before 2026-10-22, a DSN in `merkle_db` was wrapped in a file path, which turned
+`//` into `/`. Loading the config then created a directory tree named after the
+DSN, password included, in the current directory. Capture sealing silently wrote
+to a SQLite file in that tree instead of Postgres. If you configured a DSN before
+that, look for and delete a `postgres:` or `postgresql:` directory in the
+directories you ran `nova` from.
 
 **What Postgres does and does not buy you.** It removes SQLite's single-writer
 limit and its sequential table scan, which is the reason to switch at high write
@@ -457,9 +475,10 @@ trusted signer, so it is not planned.
 | Variable | Default | Description |
 |---|---|---|
 | `NOVAFABRIC_SEAL_CONFIG` | `$NOVAFABRIC_HOME/novaseal.yaml` | Path to `novaseal.yaml`. Takes precedence over the default location. Set this in Docker/K8s to point to the config on the mounted volume. |
-| `NOVAFABRIC_SEAL_DB_PATH` | — | Explicit Merkle DB path (or a `postgresql://` DSN for the experimental Postgres backend, §3.4). Honoured by `nova doctor`, the serve SealTab/policy store and `nova seal log verify` only — **not** by capture sealing or `nova verify` (§3.1). Intended for CI/test environments. |
+| `NOVAFABRIC_SEAL_DB_PATH` | — | Explicit Merkle log path (or a Postgres DSN for the experimental Postgres backend, §3.4). Overrides `merkle_db` in `novaseal.yaml` for **every** caller — sealing, verification, the dashboard and `nova seal log verify` (§3.1). Intended for CI/test environments. |
 | `NOVAFABRIC_HOME` | `~/.novafabric` | Base directory for the default `novaseal.yaml` and `novaseal-merkle.db`. |
-| `NOVA_BYPASS_NOTIFY_WEBHOOK` / `NOVA_BYPASS_NOTIFY_FILE` | — | **Planned:** bypass-event notification (webhook POST / JSON-lines file). Defined in `promote/bypass_notify.py` but not yet wired into `nova seal bypass` — setting them has no effect today. |
+| `NOVA_BYPASS_NOTIFY_FILE` | — | Append one JSON line per maker-checker bypass to this file (§4.1). |
+| `NOVA_BYPASS_NOTIFY_WEBHOOK` | — | POST one JSON event per maker-checker bypass to this `http(s)://` URL (§4.1). |
 | `NOVAFABRIC_PROMOTE_CA_BUNDLE` | — | CA bundle that `nova seal verify` trusts for maker-checker signers; without it every signer is refused. |
 | `NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED` | — | Dev-only: accept self-signed maker-checker certificates. Never in production. |
 | `NOVA_REKOR_URL` | — | When set, approval and export envelopes are also published to this Rekor transparency log (network call). |
@@ -467,10 +486,36 @@ trusted signer, so it is not planned.
 
 **Interaction between `NOVAFABRIC_SEAL_CONFIG` and `NOVAFABRIC_SEAL_DB_PATH`:**
 
-For the commands that use `resolve_merkle_db_path()` (§3.1), `NOVAFABRIC_SEAL_DB_PATH`
-wins over the YAML `merkle_db`. Capture sealing and `nova verify` always use the YAML
-value. Note also that `nova seal init` always writes `$NOVAFABRIC_HOME/novaseal.yaml`
-and `$NOVAFABRIC_HOME/novaseal-merkle.db`, ignoring both variables.
+`NOVAFABRIC_SEAL_DB_PATH` wins over the YAML `merkle_db` for every caller (§3.1).
+`nova seal init` writes `$NOVAFABRIC_HOME/novaseal.yaml` (it warns when
+`NOVAFABRIC_SEAL_CONFIG` points elsewhere, ADR-0301); `nova seal init --force`
+records the key rotation in the log §3.1 resolves, including the variable.
+
+### 4.1 Maker-checker bypass notifications
+
+**Works today.** Every maker-checker bypass — `nova seal bypass` and the dashboard's
+`POST /api/seal/{capsule_id}/bypass` — is announced on the channels these variables
+configure, read when the bypass is created:
+
+| Variable | Channel |
+|---|---|
+| `NOVA_BYPASS_NOTIFY_FILE` | appends one JSON line (`event_type: bypass_created`, `capsule_id`, `bypass_uuid`, `valid_until`, `timestamp`) |
+| `NOVA_BYPASS_NOTIFY_WEBHOOK` | POSTs the same JSON object (`Content-Type: application/json`, 5 s timeout, no retry) |
+
+Set both to use both. The bypass is stored first and notified after, and **a
+failing channel never blocks the bypass**. A failure is logged as a warning
+(`bypass notification failed`). Every bypass is also recorded in the hash-chained
+audit log as a `seal.bypass.notify` entry, with `outcome` set to `delivered`,
+`failed` (with `failed_channels`) or `not_configured`. So a bypass that nobody was
+told about is still on the record. A webhook is recorded as `scheme://host:port`
+only, because its path or query may carry a token.
+
+Not done: email delivery. `nova seal bypass --notify <email>` records the addresses
+in the signed bypass predicate, but NovaFabric sends no email. Use the webhook to
+reach a mail or chat relay.
+
+Before 2026-10-22 neither variable had any effect: nothing read them, and no
+bypass notified anyone.
 
 ---
 
@@ -493,10 +538,12 @@ enable NovaSeal transparently.
 
 ## 6. Troubleshooting
 
-### `nova doctor` shows `novaseal_db FAIL`
+### The dashboard doctor (`/api/doctor`) shows `novaseal_db FAIL`
 
-The diagnostic check calls `resolve_merkle_db_path()` and tests whether the
-returned path exists. Common causes:
+The diagnostic check resolves the log with the §3.1 rule and tests whether the
+file exists. A Postgres log is reported with its password redacted and is not
+connected to by this check. (`nova doctor` on the command line has no NovaSeal
+check.) Common causes:
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -525,12 +572,15 @@ Your `novaseal.yaml` points `key_path` at the `nova init` Ed25519 key. Rotating 
 key would orphan the certificate, so `nova init --force` stops. Rotate the sealing key
 with `nova seal init --force`, or point `key_path` at a different key first.
 
-### Merkle DB path differs between `nova seal` and `nova doctor`
+### Merkle log differs between two shells or jobs
 
-Expected today when `NOVAFABRIC_SEAL_DB_PATH` is set: `nova doctor` honours it,
-sealing does not (§3.1). Unset it, or set `merkle_db` in `novaseal.yaml` to the same
-value. `nova seal propose/approve/bypass` use their own `--db` default
-(`~/.local/share/novafabric/merkle.db`).
+Every code path uses the §3.1 rule, so within one process sealing and
+verification agree. Two processes disagree only when their environment differs:
+check for a stale `NOVAFABRIC_SEAL_DB_PATH` or `NOVAFABRIC_SEAL_CONFIG` exported
+in one shell or job script but not another.
+`nova seal propose` / `approve` / `bypass` keep the promotion policy store at
+their own `--db` default (`~/.local/share/novafabric/merkle.db`), which is not
+the Merkle log.
 
 ### TSA timeout or `tsa_url` errors
 

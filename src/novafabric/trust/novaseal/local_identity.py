@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import os
 import shutil
 import stat
@@ -273,6 +274,9 @@ def _rotate(
     except (OSError, ValueError):
         old_keyid = None  # a broken managed config may have lost its leaf
 
+    # Keep an operator-chosen merkle_db across the rotation (a shared-filesystem
+    # or Postgres log): resetting it to the default would split the log.
+    configured_merkle_db = _configured_merkle_db(paths.config)
     movable = [paths.signing_key, paths.signing_cert, paths.config]
     if new_ca:
         movable += [paths.ca_key, paths.ca_cert]
@@ -286,10 +290,10 @@ def _rotate(
     _write_private_key(paths.signing_key, signing_key)
     leaf = _issue_leaf(signing_key, ca_key, ca_cert, when)
     _write_public(paths.signing_cert, leaf.public_bytes(serialization.Encoding.PEM))
-    _write_config(paths)
+    _write_config(paths, merkle_db=configured_merkle_db)
     new_keyid = keyid_of_cert_file(paths.signing_cert)
 
-    logged, log_error = _log_rotation(paths.merkle_db, old_keyid, new_keyid, new_ca=new_ca)
+    logged, log_error = _log_rotation(paths, old_keyid, new_keyid, new_ca=new_ca)
     return LocalIdentityResult(
         status="rotated",
         paths=paths,
@@ -346,10 +350,26 @@ def _archive(paths: LocalIdentityPaths, when: datetime.datetime, movable: list[P
 
 
 def _log_rotation(
-    merkle_db: Path, old_keyid: Optional[str], new_keyid: str, *, new_ca: bool
+    paths: LocalIdentityPaths, old_keyid: Optional[str], new_keyid: str, *, new_ca: bool
 ) -> tuple[bool, Optional[str]]:
-    """Append a ``key_rotation`` entry; a log fault is reported, never raised."""
+    """Append a ``key_rotation`` entry; a log fault is reported, never raised.
+
+    The entry goes to the log capture will seal into — the location
+    ``resolve_merkle_db_uri`` gives for the config just written, so
+    ``NOVAFABRIC_SEAL_DB_PATH`` is honoured exactly as at seal time (audit M2).
+    """
+    from novafabric.trust.novaseal.config import SealConfigError, resolve_merkle_db_uri
+    from novafabric.trust.novaseal.log_location import redact_location
     from novafabric.trust.novaseal.merkle import MerkleError, open_merkle_log
+
+    try:
+        merkle_db = resolve_merkle_db_uri(config_path=paths.config)
+    except SealConfigError as exc:
+        return False, str(exc)
+
+    def _scrubbed(exc: BaseException) -> str:
+        # A driver error may quote the DSN; never surface its password.
+        return str(exc).replace(merkle_db, redact_location(merkle_db))
 
     entry: dict[str, object] = {
         "event": "key_rotation",
@@ -365,10 +385,22 @@ def _log_rotation(
         finally:
             log.close()
     except (MerkleError, OSError) as exc:
-        return False, str(exc)
+        return False, _scrubbed(exc)
     except Exception as exc:  # noqa: BLE001 — sqlite3 errors; rotation itself succeeded
-        return False, str(exc)
+        return False, _scrubbed(exc)
     return True, None
+
+
+def _configured_merkle_db(config: Path) -> Optional[str]:
+    """``merkle_db`` as written in *config*, or None (absent, unreadable, not YAML)."""
+    import yaml  # noqa: PLC0415
+
+    try:
+        raw = yaml.safe_load(config.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    value = raw.get("merkle_db") if isinstance(raw, dict) else None
+    return str(value) if value is not None and str(value).strip() else None
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +584,7 @@ def _tighten_key_mode(path: Path) -> None:
         path.chmod(_KEY_MODE)
 
 
-def _write_config(paths: LocalIdentityPaths) -> None:
+def _write_config(paths: LocalIdentityPaths, *, merkle_db: Optional[str] = None) -> None:
     text = (
         f"{MANAGED_MARKER}\n"
         "# Local sealing identity (ADR-0301). SELF-ASSERTED: a seal made with this key\n"
@@ -563,7 +595,8 @@ def _write_config(paths: LocalIdentityPaths) -> None:
         "profile: local\n"
         f"key_path: {paths.signing_key}\n"
         f"cert_path: {paths.signing_cert}\n"
-        f"merkle_db: {paths.merkle_db}\n"
+        # json.dumps: a YAML double-quoted scalar, safe for any path or DSN.
+        f"merkle_db: {json.dumps(merkle_db) if merkle_db else paths.merkle_db}\n"
     )
     _atomic_write(paths.config, text.encode("utf-8"), _PUBLIC_MODE)
 

@@ -175,6 +175,9 @@ OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     # ADR-0184 D3: the server started with authentication disabled
     # (anonymous admin) — an application-lifecycle event, not an API call.
     "server.insecure_no_auth": (_APP_LIFECYCLE, "Application Lifecycle", _ACTIVITY_OTHER),
+    # Audit H3: one entry per maker-checker bypass notification attempt (an
+    # outbound delivery through the product surface — mirror alert.delivery).
+    "seal.bypass.notify": (_API_ACTIVITY, "API Activity", 1),
 }
 
 #: Conservative fallback for event types not (yet) in the map: API Activity,
