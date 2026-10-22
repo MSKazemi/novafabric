@@ -916,10 +916,12 @@ def create_app(
         import shutil
 
         # Extended system health — each check is wrapped so one failure never breaks the response.
-        try:
-            backend_type = "postgres" if os.environ.get("NOVAFABRIC_DB_URL") else "sqlite"
-        except Exception:  # noqa: BLE001
-            backend_type = "sqlite"
+        # The backend this process actually reads: `nova serve` opens its registry
+        # with registry.store.get_connection, which is always SQLite (`db_path`
+        # below). It used to read NOVAFABRIC_DB_URL just to print "postgres" — a
+        # URL this process never connects to. Server mode (`nova server`) reports
+        # its own Postgres backend on its health route.
+        backend_type = "sqlite"
 
         try:
             from novafabric.registry.store import get_db_path as _resolved_registry_db
@@ -3161,7 +3163,8 @@ def create_app(
                     generate_keypair,
                 )
                 priv_path, pub_path = generate_keypair(key_path.parent)
-                # generate_keypair emits ed25519.pem; alias to local-key.pem so the default works.
+                # generate_keypair emits ed25519.pem; alias it to the default name
+                # (signing_key.pem, the key `nova init` writes) so the default works.
                 if priv_path != key_path:
                     key_path.write_bytes(priv_path.read_bytes())
                     try:
@@ -9323,8 +9326,11 @@ def create_app(
             from novafabric.object_capsule_store.rebuild import (
                 rebuild_metadata_db as _rebuild,
             )
+            from novafabric.object_capsule_store.rebuild import require_durable_source
 
             adapter = make_adapter(backend=backend)
+            # The in-memory `local` adapter is empty here: refuse, never "ok" with 0.
+            require_durable_source(adapter)
             report = _rebuild(adapter=adapter, prefix=prefix, target_db=target_db)
             return {
                 "ok": True,

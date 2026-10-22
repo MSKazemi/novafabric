@@ -36,6 +36,30 @@ from novafabric.object_capsule_store.worm.base import WormAdapter
 log = logging.getLogger(__name__)
 
 
+class RebuildSourceError(Exception):
+    """The adapter cannot be the source of a disaster-recovery rebuild.
+
+    The ``local`` backend is :class:`~novafabric.object_capsule_store.backend_router.
+    InMemoryWormAdapter`: a dict that starts empty in every process. A rebuild from it
+    always finds 0 capsules, and reporting that as "done" is a false success on the
+    path an operator runs after losing the metadata DB.
+    """
+
+
+def require_durable_source(adapter: WormAdapter) -> None:
+    """Refuse to rebuild from the in-memory test adapter (also behind a wrapper)."""
+    from novafabric.object_capsule_store.backend_router import InMemoryWormAdapter
+
+    candidates = [adapter, getattr(adapter, "_inner", None), getattr(adapter, "inner", None)]
+    if any(isinstance(c, InMemoryWormAdapter) for c in candidates):
+        raise RebuildSourceError(
+            "the 'local' backend is an in-memory test adapter that is empty in a new "
+            "process, so a rebuild from it can only find 0 capsules. Rebuild from the "
+            "WORM store that holds the chain log: --backend s3|minio|ceph_rgw|"
+            "azure_blob|gcs (configured through that backend's environment)."
+        )
+
+
 # ---------------------------------------------------------------------------
 # rebuild_metadata_db (FR-04)
 # ---------------------------------------------------------------------------

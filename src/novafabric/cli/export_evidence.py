@@ -343,7 +343,7 @@ def export_evidence_cmd(
     """
     if key is None:
         # L5: `nova init` is the command that writes the evidence-signing key.
-        default_key = _nf_paths.keys_dir() / "signing_key.pem"
+        default_key = _nf_paths.local_key_path()
         console.print(
             "[red]✗[/red] --key is required (local Ed25519 signing). Run `nova init` "
             "to generate one, then pass "

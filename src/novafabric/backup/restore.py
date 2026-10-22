@@ -51,6 +51,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from novafabric.object_capsule_store.worm.base import WormAdapter
 
 from novafabric.backup.coverage import (
+    CAPSULE_DIR_ARC,
+    CAPSULE_DIR_ORIGIN,
     default_audit_log_path,
     resolve_origin_root,
     strip_external_prefix,
@@ -122,6 +124,7 @@ def restore_backup(
     adapter: Optional[object] = None,
     backend: Optional[str] = None,
     sample: int = 0,
+    capsule_dir: Optional[Path] = None,
 ) -> RestoreResult:
     """Restore the local-profile backup set at *set_path* into *home*.
 
@@ -144,6 +147,9 @@ def restore_backup(
         keyring_dir: Keyring destination override (tests).
         seal_config_dir: ``novaseal.yaml``/PEM destination override; defaults
             to the target home.
+        capsule_dir: Destination of ``capsule-dir`` members (a capsule store that
+            lived outside the home when the set was taken). Default: the capture
+            rule on the target, ``NOVAFABRIC_CAPSULE_DIR`` else ``<home>/capsules``.
 
     Returns:
         A :class:`RestoreResult`; ``ok`` is True only when every step —
@@ -222,6 +228,7 @@ def restore_backup(
         "audit_log_path": audit_log_path,
         "keyring_dir": keyring_dir,
         "seal_config_dir": seal_config_dir if seal_config_dir is not None else home,
+        "capsule_dir": capsule_dir,
     }
     restorable = [
         m for m in manifest.members
@@ -412,6 +419,7 @@ def _dest_for(
         audit_log_path=roots.get("audit_log_path"),
         keyring_dir=roots.get("keyring_dir"),
         seal_config_dir=roots.get("seal_config_dir"),
+        capsule_dir=roots.get("capsule_dir"),
     )
     return root / strip_external_prefix(member.path)
 
@@ -502,6 +510,8 @@ def _extract_members(
                 home_resolved
             ):
                 raise RestoreError(f"Member {member.path!r} escapes the target home")
+            if member.origin == CAPSULE_DIR_ORIGIN:
+                _check_capsule_dir_member(member, dst, home, roots)
             dst.parent.mkdir(parents=True, exist_ok=True)
             with fh:
                 _write_member_bytes(fh, dst)
@@ -512,6 +522,22 @@ def _extract_members(
     if ratchet_dir.is_dir():
         os.chmod(ratchet_dir, 0o700)
     return count
+
+
+def _check_capsule_dir_member(
+    member: BackupMember, dst: Path, home: Path, roots: dict[str, Optional[Path]]
+) -> None:
+    """A ``capsule-dir`` member lives under ``external/capsule-dir/`` and lands in that store."""
+    if not member.path.startswith(f"{CAPSULE_DIR_ARC}/"):
+        raise RestoreError(
+            f"Member {member.path!r} claims origin {CAPSULE_DIR_ORIGIN!r} but is not "
+            f"under {CAPSULE_DIR_ARC}/"
+        )
+    root = resolve_origin_root(
+        CAPSULE_DIR_ORIGIN, home, capsule_dir=roots.get("capsule_dir")
+    )
+    if not dst.resolve().is_relative_to(root.resolve()):
+        raise RestoreError(f"Member {member.path!r} escapes the capsule store {root}")
 
 
 def _run_migrations(home: Path) -> RestoreStepResult:

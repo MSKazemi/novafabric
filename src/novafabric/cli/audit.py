@@ -28,6 +28,7 @@ from novafabric import _paths as _nf_paths
 from novafabric.compliance.audit import (
     BUILT_IN_PROFILES,
     AuditEngine,
+    ProfileValidationError,
     load_profile,
 )
 from novafabric.compliance.audit.models import AuditReport
@@ -80,6 +81,10 @@ def _load_engine(data_dir: Optional[Path], profile: str) -> AuditEngine:  # noqa
     """Resolve profile and return an :class:`AuditEngine`."""
     try:
         ctrl_profile = load_profile(profile)
+    except ProfileValidationError as exc:
+        # L25: a malformed custom profile is a usage error (exit 2), not a traceback.
+        console.print(f"[red]x[/red] {exc}", markup=True, highlight=False)
+        raise typer.Exit(code=2) from exc
     except ValueError as exc:
         console.print(f"[red]x[/red] {exc}")
         raise typer.Exit(code=1) from exc

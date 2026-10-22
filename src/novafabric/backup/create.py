@@ -5,7 +5,8 @@ NovaFabric deployment:
 
 - ``registry.db`` — snapshotted via the SQLite **online-backup API**, which is
   safe against a live writer (never a live-file copy, per ADR-0181 D5);
-- the capsule directories (``capsules/`` and/or ``runs/`` under the home);
+- the capsule directories (``capsules/`` and/or ``runs/`` under the home, plus
+  the store named by ``NOVAFABRIC_CAPSULE_DIR`` when it lives elsewhere);
 - a **secret-redacted** copy of ``config.yaml`` when present.
 
 NORMATIVE exclusions (ADR-0181 D3 / spec "Contents and exclusions") are
@@ -44,7 +45,10 @@ from urllib.parse import urlsplit
 
 from novafabric import __version__ as _nova_version
 from novafabric._capsule_fs import CapsuleLinkError
+from novafabric._paths import capsule_dir_for_home
 from novafabric.backup.coverage import (
+    CAPSULE_DIR_ARC,
+    CAPSULE_DIR_ORIGIN,
     CoverageError,
     collect_extended_components,
     copy_tree_files,
@@ -166,6 +170,7 @@ def create_backup(
     allow_pending_wal: bool = False,
     deep: bool = False,
     wal_db_path: Optional[Path] = None,
+    capsule_dir: Optional[Path] = None,
 ) -> BackupCreateResult:
     """Build a backup set of the deployment under *home*.
 
@@ -187,6 +192,11 @@ def create_backup(
         keyring_dir: Signing-keyring directory override (tests).
         seal_config_path: ``novaseal.yaml`` path override (tests); default is
             ``<home>/novaseal.yaml``.
+        capsule_dir: The capsule store capture writes to. Default: the capture
+            rule, ``NOVAFABRIC_CAPSULE_DIR`` else ``<home>/capsules``
+            (:func:`novafabric._paths.capsule_dir_for_home`). A store outside
+            ``<home>/capsules`` and ``<home>/runs`` is archived under
+            ``external/capsule-dir/`` with origin ``capsule-dir``.
 
     Raises:
         BackupCreateError: when there is nothing to back up, the archive cannot
@@ -281,6 +291,31 @@ def create_backup(
                 rel = PurePosixPath(dirname) / rel_in_dir
                 members.append(_member(stage / rel, str(rel), kind="blob", role="capsules"))
                 capsule_members += 1
+        capsule_detail: Optional[str] = None
+        external_capsules = (
+            _external_capsule_dir(home, capsule_dir)
+            if manifest_profile != PROFILE_MANIFEST_ONLY
+            else None
+        )
+        if external_capsules is not None:
+            # M12: the store capture writes to (NOVAFABRIC_CAPSULE_DIR) lives outside
+            # the home — the Docker layout. Archived under external/capsule-dir/ and
+            # restored by the same rule on the target (resolve_origin_root).
+            for rel_in_dir in copy_tree_files(
+                external_capsules,
+                stage / CAPSULE_DIR_ARC,
+                skip=_skip_denied(CAPSULE_DIR_ARC),
+                error=BackupLinkError,
+            ):
+                rel = PurePosixPath(CAPSULE_DIR_ARC) / rel_in_dir
+                members.append(
+                    _member(
+                        stage / rel, str(rel), kind="blob", role="capsules",
+                        origin=CAPSULE_DIR_ORIGIN,
+                    )
+                )
+                capsule_members += 1
+            capsule_detail = f"capsule store {external_capsules} (NOVAFABRIC_CAPSULE_DIR)"
         if manifest_profile == PROFILE_MANIFEST_ONLY:
             coverage.append(
                 CoverageEntry(
@@ -294,10 +329,12 @@ def create_backup(
             )
         else:
             coverage.append(
-                CoverageEntry(component="capsules", status="included")
+                CoverageEntry(component="capsules", status="included", detail=capsule_detail)
                 if capsule_members
                 else CoverageEntry(
-                    component="capsules", status="absent", detail="no capsule directories"
+                    component="capsules",
+                    status="absent",
+                    detail=capsule_detail or "no capsule directories",
                 )
             )
 
@@ -419,6 +456,21 @@ def create_backup(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+def _external_capsule_dir(home: Path, capsule_dir: Optional[Path]) -> Optional[Path]:
+    """The capsule store to archive as ``capsule-dir``, or None when the home covers it.
+
+    ``None`` when the resolved store is ``<home>/capsules`` or ``<home>/runs`` (already
+    archived as home members, the 0.1.x layout) or does not exist.
+    """
+    resolved = (capsule_dir or capsule_dir_for_home(home)).expanduser()
+    if not resolved.is_dir():
+        return None
+    target = resolved.resolve()
+    if any(target == (home / name).resolve() for name in _CAPSULE_DIRS):
+        return None
+    return resolved
+
 
 def _sqlite_snapshot(src_db: Path, dst_db: Path) -> None:
     """Consistent SQLite snapshot via the online-backup API (ADR-0181 D5)."""

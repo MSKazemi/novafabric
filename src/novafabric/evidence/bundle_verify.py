@@ -1,7 +1,7 @@
 """Signature, manifest-hash and subject checks for an Evidence Bundle.
 
 Every bundle carries a verification recipe (``VERIFIER_INSTRUCTIONS`` in
-:mod:`novafabric.evidence.bundle`) with four steps. ``nova verify <bundle>.zip``
+:mod:`novafabric.evidence.bundle`) with five steps. ``nova verify <bundle>.zip``
 used to perform only step 2 — recompute each artifact digest — so a bundle whose
 signed attestation had been edited, with the edited file's digest written back into
 ``manifest.json``, verified as PASSED. This module performs steps 1, 3 and 4:

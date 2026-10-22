@@ -113,7 +113,7 @@ def test_full_coverage_create(full_home: Path, audit_log: Path, tmp_path: Path) 
         tmp_path / "set.tar.gz", home=full_home, audit_log_path=audit_log
     )
     manifest = result.manifest
-    assert manifest.manifest_schema_version == MANIFEST_SCHEMA_VERSION == "0.2.0"
+    assert manifest.manifest_schema_version == MANIFEST_SCHEMA_VERSION == "0.2.1"
 
     by_path = {m.path: m for m in manifest.members}
     for expected in (

@@ -85,8 +85,8 @@ def _registry_dir(registry: str) -> Path:
 
 
 def _default_capsule_dir() -> Path:
-    home = _nf_paths.nova_home()
-    return home / "capsules"
+    """Where ``nova capture`` writes: ``$NOVAFABRIC_CAPSULE_DIR``, else ``<home>/capsules``."""
+    return _nf_paths.default_capsule_dir()
 
 
 def _nova_home() -> Path:
@@ -326,7 +326,8 @@ def plan_cmd(
     capsule_dir: Optional[Path] = typer.Option(  # noqa: UP045
         None,
         "--capsule-dir",
-        help="Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        help="Capsule directory to sweep (default: where `nova capture` writes — "
+        "$NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
     ),
     worm_db: Optional[Path] = typer.Option(  # noqa: UP045
         None,
@@ -367,7 +368,8 @@ def apply_cmd(
     capsule_dir: Optional[Path] = typer.Option(  # noqa: UP045
         None,
         "--capsule-dir",
-        help="Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        help="Capsule directory to sweep (default: where `nova capture` writes — "
+        "$NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
     ),
     worm_db: Optional[Path] = typer.Option(  # noqa: UP045
         None,
@@ -486,7 +488,8 @@ def status_cmd(
     capsule_dir: Optional[Path] = typer.Option(  # noqa: UP045
         None,
         "--capsule-dir",
-        help="Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        help="Capsule directory to sweep (default: where `nova capture` writes — "
+        "$NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
     ),
     worm_db: Optional[Path] = typer.Option(  # noqa: UP045
         None, "--worm-db", help="Local WORM adapter DB consulted for locked_until."
@@ -570,7 +573,8 @@ def explain_cmd(
     capsule_dir: Optional[Path] = typer.Option(  # noqa: UP045
         None,
         "--capsule-dir",
-        help="Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        help="Capsule directory to sweep (default: where `nova capture` writes — "
+        "$NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
     ),
     worm_db: Optional[Path] = typer.Option(  # noqa: UP045
         None, "--worm-db", help="Local WORM adapter DB consulted for locked_until."

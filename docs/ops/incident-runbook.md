@@ -91,7 +91,7 @@ Buckets are in process memory: they reset on restart, and a restart is a
 | Captures failing, SQLite errors, server 5xx | Disk full under `~/.novafabric` (capsules, `registry.db`, Merkle log) | Free space first. Apply retention policies rather than hand-deleting capsule directories — capsules are the evidence; deletion should itself be recorded ([ADR-0134](../decisions.md)). Then run the §5 drift checks |
 | WORM writes rejected | Bucket unreachable, credentials expired, or Object Lock/immutability policy blocking a non-compliant write | Check endpoint config and credentials (`/readyz` has no object-store check today — it always reports `skipped`). Remember WORM is *supposed* to reject overwrites/deletes of locked objects — verify you are not trying to mutate immutable evidence |
 | "Cleanup" of the WORM bucket fails | Object Lock / legal hold doing its job | Working as designed. Retention on WORM data is policy-driven, not `rm`-driven |
-| Metadata DB lost or corrupted, WORM bucket intact | Derived state lost; evidence safe | The metadata DB is rebuildable from the object store's manifest chain: `nova rebuild-metadata-db --backend <s3\|minio\|ceph_rgw\|azure_blob\|gcs\|local> --target-db <path>`; then `nova doctor --check-storage`. Losing the app node loses no evidence (ADR-0180 D2) |
+| Metadata DB lost or corrupted, WORM bucket intact | Derived state lost; evidence safe | The metadata DB is rebuildable from the object store's manifest chain: `nova rebuild-metadata-db --backend <s3\|minio\|ceph_rgw\|azure_blob\|gcs> --target-db <path>` (the in-memory `local` backend is refused — it holds nothing to rebuild from); then `nova doctor --check-storage`. Losing the app node loses no evidence (ADR-0180 D2) |
 
 ---
 

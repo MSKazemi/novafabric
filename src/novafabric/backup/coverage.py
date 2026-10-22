@@ -24,6 +24,7 @@ from typing import Callable, Optional
 
 from novafabric import _capsule_fs
 from novafabric._capsule_fs import CapsuleLinkError, open_capsule_file
+from novafabric._paths import capsule_dir_for_home
 from novafabric.audit import resolve_audit_log_path
 from novafabric.backup.models import BackupMember, CoverageEntry, MemberOrigin
 
@@ -60,6 +61,10 @@ RATCHET_REL = PurePosixPath("seal/ratchet")
 DASHBOARD_DUCKDB = "dashboard.duckdb"
 MERKLE_DB = "novaseal-merkle.db"
 AUDIT_ARC = f"{EXTERNAL_PREFIX}/audit/audit.jsonl"
+
+#: Origin of a capsule store that lives outside the home (``NOVAFABRIC_CAPSULE_DIR``).
+CAPSULE_DIR_ORIGIN: MemberOrigin = "capsule-dir"
+CAPSULE_DIR_ARC = f"{EXTERNAL_PREFIX}/{CAPSULE_DIR_ORIGIN}"
 
 #: Every component name a local-full coverage list reports on, in order.
 ALL_COMPONENTS: tuple[str, ...] = (
@@ -129,10 +134,16 @@ def resolve_origin_root(
     audit_log_path: Optional[Path] = None,
     keyring_dir: Optional[Path] = None,
     seal_config_dir: Optional[Path] = None,
+    capsule_dir: Optional[Path] = None,
 ) -> Path:
     """Filesystem root a member origin maps to (create and restore share this)."""
     if origin == "home":
         return home
+    if origin == CAPSULE_DIR_ORIGIN:
+        # The capture rule, evaluated on the target: NOVAFABRIC_CAPSULE_DIR, else
+        # <home>/capsules (M12) — a set taken in the Docker layout restores into
+        # that layout's capsule store, and into the home on a plain local host.
+        return capsule_dir if capsule_dir is not None else capsule_dir_for_home(home)
     if origin == "audit":
         return (audit_log_path or default_audit_log_path()).parent
     if origin == "keyring":

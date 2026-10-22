@@ -28,7 +28,7 @@ inputs:
     required: false
     default: ""
   validate:
-    description: "Run `nova validate` on the capsule and fail the step if it is invalid."
+    description: "Run `nova validate` on the capsule. An invalid capsule is still uploaded, and the action then fails (exit 1, or the captured command's own exit code if that failed too)."
     required: false
     default: "true"
   upload-artifact:
@@ -77,6 +77,12 @@ outputs:
   exit-code:
     description: "The captured command's exit code."
     value: ${{ steps.capture.outputs.exit-code }}
+  valid:
+    description: >-
+      `true` or `false` — whether `nova validate` accepted the capsule. Empty when
+      `validate: false`, and (like every output) empty when the action fails; use
+      `$NOVAFABRIC_VALID`, which is also exported and survives.
+    value: ${{ steps.validate.outputs.valid }}
 
 runs:
   using: "composite"
@@ -176,9 +182,25 @@ runs:
         exit 0
 
     - name: Validate the capsule
+      id: validate
       if: ${{ inputs.validate == 'true' }}
       shell: bash
-      run: nova validate "${{ steps.capture.outputs.capsule-path }}"
+      run: |
+        # Records the verdict and exits 0 on purpose, for the same reason as the
+        # capture step: a failing step here would abandon the upload below, and an
+        # invalid capsule is still evidence. The last step fails the job instead.
+        set +e
+        nova validate "${{ steps.capture.outputs.capsule-path }}"
+        rc=$?
+        if [ "${rc}" -eq 0 ]; then valid=true; else valid=false; fi
+        {
+          echo "valid=${valid}"
+          echo "validate-exit-code=${rc}"
+        } >> "${GITHUB_OUTPUT}"
+        # Declared outputs are empty to the caller when the action fails; GITHUB_ENV survives.
+        echo "NOVAFABRIC_VALID=${valid}" >> "${GITHUB_ENV}"
+        echo "| Valid | \`${valid}\` |" >> "${GITHUB_STEP_SUMMARY}"
+        exit 0
 
     - name: Upload the capsule
       if: ${{ inputs.upload-artifact == 'true' }}
@@ -191,11 +213,23 @@ runs:
 
     - name: Propagate the captured command's exit code
       # Last, so the capsule is validated and uploaded before the step fails.
-      # The calling workflow still sees the command's own exit code.
+      # The calling workflow still sees the command's own exit code; when the
+      # command succeeded but the capsule is invalid, the job fails with exit 1.
       shell: bash
       run: |
         rc="${{ steps.capture.outputs.exit-code }}"
+        valid="${{ steps.validate.outputs.valid }}"
+        validate_rc="${{ steps.validate.outputs.validate-exit-code }}"
+        run_id="${{ steps.capture.outputs.run-id }}"
+        invalid_note=""
+        if [ "${valid}" = "false" ]; then
+          invalid_note="; nova validate rejected the capsule (exit ${validate_rc})"
+        fi
         if [ "${rc}" != "0" ]; then
-          echo "::error title=Captured command failed::exited ${rc}; capsule ${{ steps.capture.outputs.run-id }} was still captured and uploaded"
+          echo "::error title=Captured command failed::exited ${rc}; capsule ${run_id} was still captured and uploaded${invalid_note}"
           exit "${rc}"
+        fi
+        if [ "${valid}" = "false" ]; then
+          echo "::error title=Invalid capsule::nova validate rejected capsule ${run_id} (exit ${validate_rc}); it was still uploaded as artifact ${{ inputs.artifact-name }}"
+          exit 1
         fi

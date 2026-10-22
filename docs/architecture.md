@@ -131,7 +131,7 @@ the database:
 
 | Universe | Versions | Applies to | Command |
 |---|---|---|---|
-| **MetadataStore** (default) | `src/novafabric/metadata_store/migrations/{sqlite,postgres}/` | The run metadata tier — SQLite at `NOVAFABRIC_DB_PATH` (default `$NOVAFABRIC_HOME/metadata.db`), Postgres at `NOVAFABRIC_METADATA_DSN` | `nova db upgrade [--backend postgres]` |
+| **MetadataStore** (default) | `src/novafabric/metadata_store/migrations/{sqlite,postgres}/` | The run metadata tier — SQLite at `NOVAFABRIC_METADATA_DB_PATH` (default `$NOVAFABRIC_HOME/metadata.db`), Postgres at `NOVAFABRIC_METADATA_DSN` | `nova db upgrade [--backend postgres]` |
 | **Registry** (experimental) | `alembic/sqlite/versions/` (`alembic.ini`), `alembic/postgres/versions/` (`alembic-postgres.ini`) | The registry/server database (`assets`, `eval_results`, `lineage_*`) — SQLite at `$NOVAFABRIC_HOME/registry.db`, Postgres at `NOVAFABRIC_POSTGRES_DSN` | `nova db upgrade --track registry [--backend postgres]` |
 
 From a repository checkout the registry track can also be driven with Alembic directly:

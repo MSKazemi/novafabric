@@ -4,7 +4,7 @@ import re
 from enum import Enum
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AssetType(str, Enum):
@@ -26,12 +26,24 @@ class AssetStatus(str, Enum):
     archived = "archived"
 
 
+class _StrictSpecModel(BaseModel):
+    """Every asset-spec model rejects keys it does not define (L33).
+
+    A typo (``suite_name:`` for ``suite:``) used to validate and be dropped, so a
+    spec registered without the field its author believed it set. Vendor or
+    user data belongs in the declared ``extensions`` block (``BaseAssetSpec``) or
+    ``tags`` / ``external_refs`` — the one escape hatch, explicit by name.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
 _SEMVER_RE = re.compile(
     r"^v?[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?\Z"
 )
 
 
-class BaseAssetSpec(BaseModel):
+class BaseAssetSpec(_StrictSpecModel):
     novafabric_spec_version: str
     asset_type: AssetType
     name: str = Field(min_length=1, max_length=255)
@@ -47,6 +59,19 @@ class BaseAssetSpec(BaseModel):
             "Recorded as DEPENDS_ON lineage edges when the asset is registered."
         ),
     )
+    extensions: dict[str, Any] = Field(
+        default_factory=dict,
+        # Left out of model_dump/model_dump_json when empty, so the stored spec_json
+        # (and its spec_sha256) of a spec without extensions is byte-identical to
+        # what earlier versions wrote.
+        exclude_if=lambda value: not value,
+        description=(
+            "Free-form vendor/user extension data, kept verbatim. Keys should be "
+            "reverse-DNS-prefixed (e.g. 'com.example.owner'). The only place a spec "
+            "may carry fields NovaFabric does not define; every other unknown key "
+            "is a validation error."
+        ),
+    )
 
     @field_validator("version")
     @classmethod
@@ -56,7 +81,7 @@ class BaseAssetSpec(BaseModel):
         return str(v)
 
 
-class ModelSpecFields(BaseModel):
+class ModelSpecFields(_StrictSpecModel):
     framework: str
     artifact_path: str
 
@@ -66,13 +91,13 @@ class ModelSpec(BaseAssetSpec):
     spec: ModelSpecFields
 
 
-class AgentModelRef(BaseModel):
+class AgentModelRef(_StrictSpecModel):
     provider: str
     name: str
     temperature: float | None = None
 
 
-class AgentSpecFields(BaseModel):
+class AgentSpecFields(_StrictSpecModel):
     model: AgentModelRef
     tools: list[str]
     prompts: dict[str, Any]
@@ -86,7 +111,7 @@ class AgentSpec(BaseAssetSpec):
     spec: AgentSpecFields
 
 
-class PromptSpecFields(BaseModel):
+class PromptSpecFields(_StrictSpecModel):
     template: str | None = None
 
 
@@ -95,7 +120,7 @@ class PromptSpec(BaseAssetSpec):
     spec: PromptSpecFields | None = None
 
 
-class ToolSpecFields(BaseModel):
+class ToolSpecFields(_StrictSpecModel):
     entrypoint: str | None = None
 
 
@@ -104,7 +129,7 @@ class ToolSpec(BaseAssetSpec):
     spec: ToolSpecFields | None = None
 
 
-class DatasetSpecFields(BaseModel):
+class DatasetSpecFields(_StrictSpecModel):
     path: str | None = None
 
 
@@ -113,7 +138,7 @@ class DatasetSpec(BaseAssetSpec):
     spec: DatasetSpecFields | None = None
 
 
-class EvaluationSpecFields(BaseModel):
+class EvaluationSpecFields(_StrictSpecModel):
     suite: str | None = None
 
 
@@ -122,7 +147,7 @@ class EvaluationSpec(BaseAssetSpec):
     spec: EvaluationSpecFields | None = None
 
 
-class DeploymentSpecFields(BaseModel):
+class DeploymentSpecFields(_StrictSpecModel):
     endpoint: str | None = None
 
 

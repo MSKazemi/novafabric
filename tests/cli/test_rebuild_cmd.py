@@ -77,21 +77,17 @@ def test_rebuild_backend_error_exits_1() -> None:
     assert result.exit_code != 0
 
 
-def test_rebuild_with_prefix_and_data_dir(tmp_path: Path) -> None:
+def test_rebuild_with_prefix(tmp_path: Path) -> None:
     report = _make_report()
     with (
         patch(_MAKE_ADAPTER, return_value=MagicMock()) as mock_adapter,
-        patch(_REBUILD_FN, return_value=report),
+        patch(_REBUILD_FN, return_value=report) as rebuild,
     ):
         result = runner.invoke(
             app,
-            [
-                "rebuild-metadata-db",
-                "--prefix", "tenant-a/",
-                "--data-dir", str(tmp_path),
-                "--backend", "local",
-            ],
+            ["rebuild-metadata-db", "--prefix", "tenant-a/", "--backend", "s3"],
         )
-    assert result.exit_code == 0
-    call_kwargs = mock_adapter.call_args[1]
-    assert "data_dir" in call_kwargs
+    assert result.exit_code == 0, result.output
+    # --data-dir is no longer forwarded (no adapter takes it): see test_rebuild_no_local_store.
+    assert mock_adapter.call_args[1] == {"backend": "s3"}
+    assert rebuild.call_args[1]["prefix"] == "tenant-a/"

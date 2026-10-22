@@ -126,7 +126,7 @@ NovaFabric maintains **two separate Alembic universes** — and they migrate
 | Track (`nova db upgrade --track …`) | Database | Env vars | Version scripts |
 |---|---|---|---|
 | `registry` | registry/server DB (`~/.novafabric/registry.db` / `NOVAFABRIC_POSTGRES_DSN`) — the DB the server lifespan opens and `nova backup create --profile pg` dumps | `NOVAFABRIC_HOME`, `NOVAFABRIC_POSTGRES_DSN` | `alembic/{sqlite,postgres}/versions/` (packaged into wheels as `novafabric/migrations/registry/`) |
-| `metadata` (default) | MetadataStore tier (`metadata.db` / `NOVAFABRIC_METADATA_DSN`) | `NOVAFABRIC_DB_PATH`, `NOVAFABRIC_METADATA_DSN` | `novafabric/metadata_store/migrations/` |
+| `metadata` (default) | MetadataStore tier (`metadata.db` / `NOVAFABRIC_METADATA_DSN`) | `NOVAFABRIC_METADATA_DB_PATH`, `NOVAFABRIC_METADATA_DSN` (not `NOVAFABRIC_DB_PATH`, which names the registry DB) | `novafabric/metadata_store/migrations/` |
 
 Each registry backend also keeps its raw invocation:
 `alembic upgrade head` (SQLite, `alembic.ini`) or

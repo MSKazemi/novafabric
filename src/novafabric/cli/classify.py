@@ -29,6 +29,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.governance import AISystemRecord, ClassificationResult, RiskTierClassifier
 from novafabric.governance.classifier import _DEFAULT_VOCAB_DIR
@@ -231,13 +232,35 @@ def list_vocabularies() -> None:
     console.print(table)
 
 
+def _resolve_capsule(capsule_id: str, data_dir: Optional[Path]) -> Path:  # noqa: UP045
+    """The capsule directory for *capsule_id* (an id, or a path to a capsule).
+
+    With ``--data-dir`` the id is looked up under ``<data-dir>/capsules/`` (unchanged).
+    Without it, under the store ``nova capture`` writes
+    (:func:`novafabric._paths.default_capsule_dir`) — the old ``~/novafabric-data``
+    default is a directory capture never writes. An existing directory holding a
+    ``capsule.yaml`` is used as given.
+    """
+    as_path = Path(capsule_id).expanduser()
+    if data_dir is None and (as_path / "capsule.yaml").is_file():
+        return as_path
+    root = data_dir / "capsules" if data_dir is not None else _nf_paths.default_capsule_dir()
+    return root / capsule_id
+
+
 @app.command("from-capsule")
 def from_capsule(
-    capsule_id: str = typer.Argument(..., help="Run capsule ID to classify from"),
-    data_dir: Path = typer.Option(
-        Path.home() / "novafabric-data",
+    capsule_id: str = typer.Argument(
+        ..., help="Run capsule ID to classify from, or the path to a capsule directory"
+    ),
+    data_dir: Optional[Path] = typer.Option(  # noqa: UP045
+        None,
         "--data-dir",
-        help="Root novafabric-data directory",
+        help=(
+            "Data root holding a capsules/ directory. Default: the capsules "
+            "`nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else "
+            "$NOVAFABRIC_HOME/capsules)."
+        ),
     ),
     output_json: bool = typer.Option(False, "--json", help="Output raw JSON"),
 ) -> None:
@@ -250,9 +273,10 @@ def from_capsule(
 
     \b
     Examples:
+      nova classify from-capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX
       nova classify from-capsule path/to/my-capsule/
     """
-    capsule_dir = data_dir / "capsules" / capsule_id
+    capsule_dir = _resolve_capsule(capsule_id, data_dir)
     if not capsule_dir.exists():
         console.print(f"[red]x[/red] Capsule directory not found: {capsule_dir}")
         raise typer.Exit(code=2)
@@ -272,7 +296,7 @@ def from_capsule(
 
     # Extract what we can from the capsule manifest
     asset_meta: dict[str, Any] = manifest.get("asset", {}) or {}
-    run_id: str = str(manifest.get("run_id", capsule_id))
+    run_id: str = str(manifest.get("run_id", capsule_dir.name))
     sys_name: str = str(asset_meta.get("name", run_id))
     sys_desc: str = str(asset_meta.get("description", f"AI system from capsule {run_id}"))
     domain: str = str(asset_meta.get("domain", "general"))
@@ -287,7 +311,7 @@ def from_capsule(
 
     classifier = RiskTierClassifier()
     result = classifier.classify(record)
-    result = result.model_copy(update={"classification_capsule_id": capsule_id})
+    result = result.model_copy(update={"classification_capsule_id": capsule_dir.name})
 
     if output_json:
         typer.echo(result.model_dump_json(indent=2))

@@ -2637,10 +2637,16 @@ Show what the given node depends on (forward traversal).
 
 Options:
 - `--edge-type TYPES` — walk only edges of these types (comma-separated). A node is listed only if a path of
-  those edge types reaches it, so `spawned,delegated_to` follows a spawn and then a delegation. Valid values:
-  `contains`, `spawned`, `delegated_to`, `replayed_from`, `member_of_session`, `wrote_memory`, `read_memory`.
-  Omit for all edge types; an unknown type exits 1. (Fixed 2026-10-22: before this, any `--edge-type`
-  returned an empty result.)
+  those edge types reaches it, so `spawned,delegated_to` follows a spawn and then a delegation. Valid values
+  are every edge type the lineage store holds: the edges `nova capture` writes — `consumed` (run → asset),
+  `produced_by` (artifact → run), `replayed_from` — plus `attested_by`, `depends_on`, `derived_from`,
+  `evaluated_by`, and the typed vocabulary `contains`, `spawned`, `delegated_to`, `member_of_session`,
+  `wrote_memory`, `read_memory`. Omit for all edge types; an unknown type exits 1 and lists the valid ones.
+  (Fixed 2026-10-22: before this, any `--edge-type` returned an empty result; and `consumed`/`produced_by`
+  were rejected as unknown although capture writes them.)
+- `<ref>` — a run id, an artifact ref, or an asset ref. Asset nodes are stored as `<registry>:<name>@<version>`;
+  a bare `name@version` resolves to `local:name@version`. An unknown bare asset ref exits 1 and names the
+  `local:` form it tried.
 - `--with-facets` — print column-level lineage facets carried by traversed edges (experimental, ADR-0090): table, column names (never values), read/write access, extraction confidence. Also available on `blast-radius`.
 
 ```bash
@@ -2660,6 +2666,7 @@ Options:
 - `--edge-type TYPES` — walk only edges of these types (comma-separated). Same semantics and valid values as `provenance`. Invalid types exit 1.
 
 ```bash
+nova lineage blast-radius my-model@v1.0 --edge-type consumed   # runs that consumed this asset version
 nova lineage blast-radius my-model --edge-type contains,replayed_from
 ```
 
@@ -2964,19 +2971,24 @@ completes in minutes regardless of chain length (AC-1, BQ-013).
 
 ```
 nova rebuild-metadata-db [--prefix TEXT] [--target-db PATH]
-    [--backend local|s3|minio|ceph_rgw|azure_blob|gcs] [--data-dir PATH]
+    [--backend s3|minio|ceph_rgw|azure_blob|gcs]
 ```
 
 | Flag | Default | Env var | Description |
 |---|---|---|---|
 | `--prefix` | `""` (all tenants) | — | Tenant or `tenant/run_id` prefix to scan |
 | `--target-db` | `nova-metadata-rebuild.db` | — | Path to the output SQLite database |
-| `--backend` | `local` | `NOVA_OCS_BACKEND` | Storage backend: `local`, `s3`, `minio`, `ceph_rgw`, `azure_blob`, `gcs` (`worm-gcs` extra) |
-| `--data-dir` | _(optional)_ | — | Local backend: path to the object store root directory |
+| `--backend` | `local` | `NOVA_OCS_BACKEND` | Storage backend holding the chain log: `s3`, `minio`, `ceph_rgw`, `azure_blob`, `gcs` (`worm-gcs` extra). `local` is the in-memory test adapter — empty in a new process — and is refused (exit 2) |
+
+`--data-dir` is not supported and exits 2: no object-store backend reads a local directory.
+(Before 2026-10-23 it was forwarded to the adapter — the in-memory `local` backend ignored it
+and the command printed "Done" with 0 capsules, a false success on a disaster-recovery path,
+while every real backend failed with a `TypeError`.) `POST /api/admin/rebuild-metadata-db`
+applies the same rule and answers `ok: false` for the `local` backend.
 
 ```bash
-# Rebuild from local storage (all tenants)
-nova rebuild-metadata-db --target-db recovered.db
+# Rebuild every tenant from an S3 Object Lock bucket
+NOVA_OCS_BACKEND=s3 nova rebuild-metadata-db --target-db recovered.db
 
 # Rebuild a single tenant from an S3 backend
 NOVA_OCS_BACKEND=s3 nova rebuild-metadata-db \
@@ -5127,14 +5139,18 @@ Options (`nova aibom validate <bom.json>`) — **NF-056**: structural CycloneDX 
 
 ```bash
 nova dataset provenance-card dataset:gaia@2026-05 \
-    --source oci://reg/gaia:2026-05 --version 2026-05 --hash b17a... \
-    --license CC-BY-4.0 --tlp TLP:CLEAR --registry-digest b17a... --sign
+    --source oci://reg/gaia:2026-05 --version 2026-05 --hash sha256:<64-hex-digest> \
+    --license CC-BY-4.0 --tlp TLP:CLEAR --registry-digest sha256:<64-hex-digest> --sign
 # pull the transform history from a capsule's lineage derivation edges:
 nova dataset provenance-card dataset:x@1 --source oci://x --version 1 --hash <sha256> \
     --from-capsule ./my-capsule --sign --out card.json
 ```
 
-- `--source`, `--version`, `--hash` (required) — the dataset's source URI, version label, and content sha256.
+- `--source`, `--version`, `--hash` (required) — the dataset's source URI, version label, and content SHA-256.
+  `--hash` (and `--registry-digest`) must be the **full** digest — 64 hex digits, bare or prefixed
+  `sha256:` (case-insensitive; stored lowercase). Anything else — a truncated `b17a`, another algorithm —
+  exits 2 and nothing is built or signed. (Before the L32 fix, 2026-10-23, a truncated hash was signed
+  into the card.)
 - `--from-capsule <dir>` — derive `transformHistory[]` from the capsule's `lineage.jsonl` derivation edges (each `signedOpDigest` is the content hash of the recorded edge).
 - `--license`, `--tlp`, `--registry-digest`, `--retrieved-at` — optional card fields.
 - `--sign [--identity <id>]` — Ed25519-sign the card with the keyring key (reuses the NovaSeal/Evidence-Bundle path). The signature is taken over the canonical-JSON body excluding the signature block. **An unsigned card is schema-invalid** — a signed card is evidence.
@@ -6402,6 +6418,9 @@ novafabric_spec_version: "1"
 asset_type: model
 name: my-model
 version: 1.0.0
+spec:
+  framework: pytorch
+  artifact_path: s3://models/my-model/1.0.0
 dependencies:
   - base-prompt@2.0.0
   - eval-dataset@3.1.0
@@ -7264,8 +7283,8 @@ startup schema-skew guard names this track). `--track registry` is
 **experimental**.
 
 ```bash
-# MetadataStore tier (default; reads NOVAFABRIC_DB_PATH,
-# defaults to ~/.novafabric/metadata.db)
+# MetadataStore tier (default; reads NOVAFABRIC_METADATA_DB_PATH,
+# defaults to $NOVAFABRIC_HOME/metadata.db)
 nova db upgrade
 
 # MetadataStore tier on Postgres (reads NOVAFABRIC_METADATA_DSN)
@@ -7287,7 +7306,12 @@ Options:
 - `--revision TEXT` — alembic revision target (default `head`)
 
 Environment variables consumed:
-- `NOVAFABRIC_DB_PATH` — SQLite database path (metadata track)
+- `NOVAFABRIC_METADATA_DB_PATH` — SQLite database path (metadata track; default
+  `$NOVAFABRIC_HOME/metadata.db`). The same path the runtime MetadataStore opens.
+- `NOVAFABRIC_DB_PATH` — **not** read by the metadata track: it names the registry DB.
+  Before the L20 fix (2026-10-23) it was, so exporting it for the registry made
+  `nova db upgrade` run the MetadataStore migrations against `registry.db`; when it is
+  set and `NOVAFABRIC_METADATA_DB_PATH` is not, the command prints a note.
 - `NOVAFABRIC_METADATA_DSN` — Postgres DSN (metadata track)
 - `NOVAFABRIC_HOME` — registry DB location (registry track, sqlite)
 - `NOVAFABRIC_POSTGRES_DSN` — Postgres DSN (registry track; never printed)
@@ -7374,7 +7398,7 @@ Options:
 - `--subject TEXT` (required) — token subject (email or identifier)
 - `--roles TEXT` — comma-separated roles: `reader`, `writer`, `admin`, `auditor` (default: `reader`)
 - `--expires-in TEXT` — token lifetime, e.g. `90d` or `30d` (default: `90d`)
-- `--key-path PATH` — ed25519 private key PEM; defaults to `NOVAFABRIC_OFFLINE_KEY_PATH` or `~/.novafabric/keys/offline-key.pem`
+- `--key-path PATH` — ed25519 private key PEM, or its `.pub` sibling (the private key next to it signs); defaults to `NOVAFABRIC_OFFLINE_KEY_PATH` or `$NOVAFABRIC_HOME/keys/offline-key.pem`. A `.pub` with no private key beside it exits 2 (never regenerated over)
 
 ---
 
@@ -8050,7 +8074,8 @@ failed).
 | Variable | Default | Description |
 | --- | --- | --- |
 | `NOVAFABRIC_HOME` | `~/.novafabric` | Root directory for all NovaFabric data. Controls the default locations of the capsule spool, registry DB, audit log, and token file. Set this for Docker (`/data/nova`), multi-user, or non-default-home deployments. |
-| `NOVAFABRIC_DB_PATH` | `~/.novafabric/registry.db` | Path to the SQLite registry database |
+| `NOVAFABRIC_DB_PATH` | `~/.novafabric/registry.db` | Path to the SQLite registry database (registry and lineage index only) |
+| `NOVAFABRIC_METADATA_DB_PATH` | `$NOVAFABRIC_HOME/metadata.db` | Path to the SQLite MetadataStore database — the runtime store and `nova db upgrade` (metadata track) |
 | `OPENLINEAGE_URL` | — | HTTP endpoint for `nova lineage emit-openlineage` (and auto-emit at capture) |
 | `OPENLINEAGE_FILE` | — | File path for `nova lineage emit-openlineage` (fallback if URL not set) |
 | `NOVAFABRIC_CAPSULE_DIR` | `$NOVAFABRIC_HOME/capsules` | Capsule storage root; overrides the `NOVAFABRIC_HOME`-derived default for all commands |
@@ -8092,7 +8117,7 @@ failed).
 | `NOVAFABRIC_SERVER_DB_PATH` | `$NOVAFABRIC_HOME/registry.db` | SQLite DB path for `nova server start` when `NOVAFABRIC_SERVER_BACKEND=sqlite`. |
 | *(OIDC)* | — | There are **no OIDC environment variables**: configure `oidc.issuer_url` and `oidc.audience` in the server YAML (`--config`). |
 | `NOVA_OIDC_ISSUER`, `NOVA_OIDC_CLIENT_ID` | — | **Not OIDC configuration.** Read only to set the display-only `server_mode` field of `GET /v0/admin/roles` / `GET /api/admin/roles`. They neither enable OIDC nor (since L15) relax the last-admin guard. |
-| `NOVAFABRIC_OFFLINE_KEY_PATH` | `~/.novafabric/keys/offline-key.pem` | Path to the ed25519 private key for offline tokens |
+| `NOVAFABRIC_OFFLINE_KEY_PATH` | `~/.novafabric/keys/offline-key.pem` | The offline-token keypair, named by either file: the private key (`issue-token`, service accounts) or its `.pub` (enough for the server to verify). A `.pub` path signs with its private sibling |
 | `NOVA_ADMIN_TOKEN` | — | Bearer token with admin role, used by `nova server flush-jwks-cache` |
 | `NOVAFABRIC_CLUSTER_ID` | — | Cluster identifier for collector and HPC hub binaries |
 | `NOVAFABRIC_HUB_ADDRESS` | — | NATS hub address (e.g. `nats://hub:4222`) for HPC hub binary |
@@ -8461,7 +8486,7 @@ nova retention apply -r my-registry --action crypto-shred --limit 100 --yes
 Options:
 - `--dry-run` — preview only (identical planner, no action, no audit entries)
 - `--yes / -y` — skip the confirmation prompt (for cron/CI)
-- `--capsule-dir PATH` — capsule directory to sweep (default: `$NOVAFABRIC_HOME/capsules`)
+- `--capsule-dir PATH` — capsule directory to sweep (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules`; before 2026-10-23 the env var was ignored, so a Docker-layout sweep scanned an empty directory)
 - `--worm-db PATH` — local WORM adapter DB consulted for `locked_until`
   (default: `.novafabric/registries/<registry>/worm.db`)
 - `--action NAME` — only consider bindings with this action
@@ -8923,11 +8948,15 @@ nova classify list-vocabularies
 ### nova classify from-capsule
 
 Infer an AI system record from a captured run capsule's metadata and classify it. Reads
-`<data-dir>/capsules/<capsule-id>/capsule.yaml`.
+`<capsule-id>/capsule.yaml` from the store `nova capture` writes (`$NOVAFABRIC_CAPSULE_DIR`,
+else `$NOVAFABRIC_HOME/capsules`), or from `<data-dir>/capsules/` with `--data-dir`. A path
+to a capsule directory works too. (Before 2026-10-23 the default was `~/novafabric-data`, a
+directory capture never writes, so a default run exited 2 "Capsule directory not found".)
 
 ```bash
 nova classify from-capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX
-nova classify from-capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX --data-dir ~/novafabric-data --json
+nova classify from-capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX --data-dir /srv/nova-data --json
+nova classify from-capsule ./path/to/capsule/
 ```
 
 **Reference:** `src/novafabric/governance/`, `src/novafabric/cli/classify.py`, ADR-0056.
@@ -8945,6 +8974,12 @@ capsules `nova capture` writes: `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOM
 capsules.)
 
 **Available profiles:** `nist-ai-rmf`, `eu-ai-act-high-risk`, `gdpr`, `soc2-type2`, `iso42001`, `scientific-reproducibility`.
+
+An unknown profile ID (and no such file) exits 1. A custom profile file that is not valid
+YAML, or lacks a required field (`id`, `name`, `framework`, `version`; per control `id`,
+`title`, `description`; per evidence requirement `evidence_type`, `description`), exits 2
+with one line naming the file and the field — before the L25 fix it raised a bare
+`KeyError` traceback, and `nova serve`'s audit endpoints answered 500 instead of 422.
 
 ### nova audit map
 

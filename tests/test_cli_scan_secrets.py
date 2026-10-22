@@ -86,3 +86,20 @@ def test_missing_proof_errors(tmp_path: Path) -> None:
     result = runner.invoke(app, ["scan-secrets", str(capsule_dir)])
     assert result.exit_code == 1
     assert "redaction-proof.json" in result.output
+
+
+def test_fail_on_help_states_the_exit_code_the_gate_returns(tmp_path: Path) -> None:
+    """L31: the help said "Exit 1"; the gate exits 2 (docs and CI examples rely on 2)."""
+    import re
+
+    help_result = runner.invoke(app, ["scan-secrets", "--help"], env={"COLUMNS": "300"})
+    assert help_result.exit_code == 0
+    match = re.search(r"--fail-on\s.*?Exit (\d)", help_result.output, re.DOTALL)
+    assert match, help_result.output
+    documented = int(match.group(1))
+
+    capsule_dir = _make_capsule(tmp_path)
+    _inject_finding(capsule_dir, severity="high")
+    result = runner.invoke(app, ["scan-secrets", str(capsule_dir), "--fail-on", "high"])
+    assert isinstance(result.exception, SystemExit)
+    assert result.exit_code == documented == 2
