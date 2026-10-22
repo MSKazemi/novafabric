@@ -1394,7 +1394,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "backend",
         "label": "--backend",
         "type": "text",
-        "hint": "Object-store backend for --profile manifest: local | s3 | minio | ceph_rgw | azure_blob.",
+        "hint": "Object-store backend for --profile manifest: local | s3 | minio | ceph_rgw | azure_blob | gcs.",
         "flag": "--backend"
       },
       {
@@ -9009,7 +9009,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-login",
     "name": "nova login",
     "journey": "infra",
-    "description": "Authenticate with a NovaFabric server via Device Authorization Grant.",
+    "description": "Log in through a server's DEMO device grant (local testing only).",
     "fields": [
       {
         "key": "server",
@@ -11449,7 +11449,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "backend",
         "label": "--backend",
         "type": "text",
-        "hint": "Object-store backend when restoring a manifest-only set: local | s3 | minio | ceph_rgw | azure_blob.",
+        "hint": "Object-store backend when restoring a manifest-only set: local | s3 | minio | ceph_rgw | azure_blob | gcs.",
         "flag": "--backend"
       },
       {
@@ -13134,7 +13134,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-server-assign-role",
     "name": "nova server assign-role",
     "journey": "infra",
-    "description": "Assign a role to a user (reader, writer, admin, or auditor).",
+    "description": "Record a role for a user (reader, writer, admin, or auditor).",
     "fields": [
       {
         "key": "user",
@@ -13296,6 +13296,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "text",
         "hint": "SQLite DB path. Defaults to registry default.",
         "flag": "--db-path"
+      },
+      {
+        "key": "config",
+        "label": "--config",
+        "type": "text",
+        "hint": "Server YAML config (as for `nova server start`; default ~/.config/novafabric/server.yaml). Its `oidc:` block decides whether revoking the last admin row is a lockout.",
+        "flag": "--config"
       }
     ],
     "docsPath": "/docs/cli-reference/",
