@@ -601,9 +601,13 @@ Lineage is a directed provenance graph in SQLite — a rebuildable cache derived
 from each capsule's `lineage.jsonl`. Use `LineageWriter` to infer edges,
 `import_capsule_dir` to index them, and `LineageStore` to query the graph.
 
-### `LineageWriter(capsule_dir, run_id, version="0.4.0")`
+### `LineageWriter(capsule_dir, run_id, version=None)`
 
-Infers lineage edges from a capsule and writes `lineage.jsonl`.
+Infers lineage edges from a capsule and writes `lineage.jsonl`. Each edge's
+`emitter.version` is `version`, defaulting to the installed `novafabric.__version__`.
+`produced_by` edges are read from the manifest's `outputs` — Artifact objects (keyed by
+their `path`, with `name`/`content_hash`/`media_type` carried into `artifact_ref`; an
+inline Artifact is keyed `inline:<name>`) or legacy path strings — and from `produced.jsonl`.
 
 ```python
 from pathlib import Path
