@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from novafabric.runners import LSFRunner, RunnerJobSpec, RunnerSpec
@@ -40,6 +41,11 @@ def _spec(
 def _bsub_output(job_id: str = "12345", queue: str = "normal") -> bytes:
     """Build a realistic bsub submission line."""
     return f"Job <{job_id}> is submitted to queue <{queue}>.\n".encode()
+
+
+def _submitted_script(run: Any) -> str:
+    """The job script bsub read from stdin (the runner never writes it to disk)."""
+    return str(run.call_args_list[0].kwargs["input"].decode())
 
 
 def _bjobs_output(job_id: str, stat: str) -> bytes:
@@ -290,11 +296,9 @@ class TestLSFRunnerSitecustomize:
             [], 0, _bjobs_output("1", "DONE"), b""
         )
         spec = _spec(tmp_path, ["echo"])
-        with patch("subprocess.run", side_effect=[bsub_out, bjobs_done]):
+        with patch("subprocess.run", side_effect=[bsub_out, bjobs_done]) as run:
             LSFRunner().run(spec)
-        script_files = list(spec.capsule_dir.glob("*.lsf"))
-        assert script_files, "No .lsf script found in capsule_dir"
-        script_text = script_files[0].read_text()
+        script_text = _submitted_script(run)
         assert "PYTHONPATH" in script_text
         assert str(spec.capsule_dir) in script_text
 
@@ -307,11 +311,9 @@ class TestLSFRunnerSitecustomize:
             tmp_path, ["echo"],
             runner_options={"resource_requirement": "rusage[mem=4096]"},
         )
-        with patch("subprocess.run", side_effect=[bsub_out, bjobs_done]):
+        with patch("subprocess.run", side_effect=[bsub_out, bjobs_done]) as run:
             LSFRunner().run(spec)
-        script_files = list(spec.capsule_dir.glob("*.lsf"))
-        assert script_files
-        script_text = script_files[0].read_text()
+        script_text = _submitted_script(run)
         assert "rusage[mem=4096]" in script_text
         assert "#BSUB -R" in script_text
 
@@ -345,11 +347,9 @@ class TestLSFWalltimeHelper:
             [], 0, _bjobs_output("1", "DONE"), b""
         )
         spec = _spec(tmp_path, ["echo"], timeout_s=3600.0)
-        with patch("subprocess.run", side_effect=[bsub_out, bjobs_done]):
+        with patch("subprocess.run", side_effect=[bsub_out, bjobs_done]) as run:
             LSFRunner().run(spec)
-        script_files = list(spec.capsule_dir.glob("*.lsf"))
-        assert script_files
-        script_text = script_files[0].read_text()
+        script_text = _submitted_script(run)
         # 3600s = 1:00 in LSF format
         assert "1:00" in script_text
 

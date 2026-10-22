@@ -183,12 +183,16 @@ def replay_cmd(
     Exit codes:
       0  replay succeeded, or a --dry-run the real run would not refuse
       1  replay failed or was aborted (incl. CapsuleNotReplayable, a
-         divergence under the fail-closed default, a launch error/timeout)
+         divergence under the fail-closed default, a replayed command that
+         could not be launched: error.type ReplayLaunchError)
       2  --environment did not match the capsule's recorded environment
       3  mocked: refused to start (also under --dry-run) because a replay.yaml
          `allow: false` override names a tool recorded on a transport replay
          cannot intercept (error.type ToolOverrideUnenforceable); --permissive
          starts anyway and reports override_unenforceable
+      124 mocked/intervention: the replayed command did not finish within 600s
+          and was killed (error.type ReplayTimeout, printed and recorded in the
+          replay result); a command that itself exits 124 has no error.type
       N  mocked/intervention: the replayed command's own non-zero exit code
 
     Scope: single capsule.
@@ -323,7 +327,10 @@ def replay_cmd(
                 + (f" ({where})" if where else "")
                 + " — observed, not blocked"
             )
-    if result.status == "aborted" and result.error:
+    if result.error and (
+        result.status == "aborted"
+        or result.error.get("type") in _STOP_REASONS_THE_EXIT_CODE_CANNOT_SHOW
+    ):
         console.print(
             f"  {result.error.get('type', 'error')}: {result.error.get('message', '')}",
             style="red",
@@ -350,6 +357,11 @@ def replay_cmd(
         if result.status == "aborted" and result.error:
             raise typer.Exit(code=_refusal_exit_code(result.error))
         raise typer.Exit(code=result.exit_code or 1)
+
+
+#: A replay that stopped for one of these exits with a code the replayed command could
+#: also return itself (124 on a timeout, 1 on a launch error), so the reason is printed.
+_STOP_REASONS_THE_EXIT_CODE_CANNOT_SHOW = frozenset({"ReplayTimeout", "ReplayLaunchError"})
 
 
 def _refusal_exit_code(error: dict[str, Any]) -> int:

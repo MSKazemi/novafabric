@@ -310,19 +310,23 @@ nova capture --runner slurm \
 > runs as you, on your machine, and keeps your full environment. Every other
 > runner sends the workload somewhere else, so it receives **only** `NOVAFABRIC_*`
 > variables — plus `PATH` for `slurm`, and anything you name explicitly in
-> `extra_env` for `docker` and `kubernetes`:
+> `extra_env` for `docker`, `kubernetes`, `slurm` and `lsf`:
 >
 > ```bash
 > nova capture --runner kubernetes \
 >   --runner-option image=myorg/agent-runtime:latest \
 >   --runner-option namespace=ml-jobs \
->   --runner-option extra_env='{"LOG_LEVEL":"debug"}' \
+>   --runner-option extra_env=LOG_LEVEL=debug \
 >   python agent.py
 > ```
 >
-> Credentials do not belong in `extra_env` — those values are stored in the
-> Kubernetes `Job` object. Use a `Secret` bound to the pod's `service_account`.
-> See [`operator-guide.md`](operator-guide.md) §3.4 and ADR-0270.
+> Credentials do not belong in `extra_env`. A value typed on the command line is in
+> `nova capture`'s argv, readable with `ps` by every user on the host for the whole
+> run; it is then stored in the Kubernetes `Job` object, in `docker inspect`, or with
+> the SLURM/LSF job script (which `slurm` and `lsf` pipe to the scheduler on stdin,
+> never on a command line). On Kubernetes use a `Secret` bound to the pod's
+> `service_account`. See [`operator-guide.md`](operator-guide.md) §3.3–3.4,
+> ADR-0270 and ADR-0311.
 
 Pass runner-specific options with `--runner-option key=value` (repeatable). All
 runners are non-privileged by design — see the enforcement notes per runner.
