@@ -2892,8 +2892,8 @@ profiles for cluster-scale lineage infrastructure.
 
 ### nova lineage-store migrate
 
-Migrate lineage edges from a Parquet file or an ObjectCapsuleStore to a SQLite
-store.  Runs dry-run by default; pass `--commit` to actually persist.
+Migrate lineage edges from a Parquet file into a SQLite lineage store (the only target).
+Runs dry-run by default; pass `--commit` to actually persist.
 
 ```
 nova lineage-store migrate [PARQUET] [--db PATH] [--commit|--dry-run]
@@ -2903,27 +2903,26 @@ nova lineage-store migrate [PARQUET] [--db PATH] [--commit|--dry-run]
 
 | Flag | Default | Description |
 |---|---|---|
-| `PARQUET` | _(optional)_ | Source Parquet file (deprecated; use `--from-ocs` for the ADR-0022 canonical path) |
+| `PARQUET` | _(optional)_ | Source Parquet file (deprecated path; the only working source) |
 | `--db` | `lineage.db` | Target SQLite database path |
 | `--commit` / `--dry-run` | dry-run | Commit to target store (default is dry run) |
 | `--no-validate` | off | Skip post-load divergence check |
-| `--from-ocs` | off | Migrate from ObjectCapsuleStore (ADR-0022 canonical path) |
-| `--ocs-tenant` | `""` | OCS tenant identifier (required with `--from-ocs`) |
-| `--ocs-run-ids` | `""` | Comma-separated run IDs to migrate (required with `--from-ocs`) |
-| `--ocs-data-dir` | `.` | Local OCS data directory for the fallback adapter |
+| `--from-ocs` | off | **Not implemented (planned, ADR-0022):** refuses with exit 1 and writes nothing |
+| `--ocs-tenant` | `""` | Kept for compatibility; unused while `--from-ocs` is not implemented |
+| `--ocs-run-ids` | `""` | Kept for compatibility; unused while `--from-ocs` is not implemented |
+| `--ocs-data-dir` | `.` | Not read: no on-disk ObjectCapsuleStore backend exists for this command |
 
 ```bash
 # Parquet migration (deprecated)
 nova lineage-store migrate edges.parquet --db lineage.db --commit
-
-# OCS-backed migration (ADR-0022 canonical)
-nova lineage-store migrate --from-ocs \
-    --ocs-tenant acme \
-    --ocs-run-ids run-001,run-002 \
-    --db lineage.db --commit
 ```
 
-Exit codes: 0 = success, 1 = argument error, 2 = divergence detected.
+`--from-ocs` used to print `ok loaded=0 … committed=yes` and exit 0 without reading
+anything; it now refuses. To rebuild lineage from capsule directories use
+[`nova lineage import`](#nova-lineage-import).
+
+Exit codes: 0 = success, 1 = argument error or `--from-ocs` (not implemented),
+2 = divergence detected.
 
 ### nova lineage-store profile
 
