@@ -116,6 +116,28 @@ capsule can never be `attested`, however clean its policy and eval axes).
 Exit codes: `0` for attested/partial/unsealed (informational), `1` only on
 `critical`, `2` on bad input.
 
+**`--capsule <dir>` runs `nova verify`'s own checks** (works today). The radar
+with `--capsule`, `GET /api/runs/{id}/trust-radar`, the dashboard Seal tab and
+`POST /api/runs/{id}/verify` all call the same function that
+`nova verify <capsule-dir>` reports from. A capsule that `nova verify` rejects is
+therefore never `attested`. The three seal axes mean:
+
+| Axis | `ok` only when |
+|---|---|
+| Signature | the DSSE signature verifies, **and** binds this directory (ADR-0251): `capsule.yaml` equals the signed payload, every `evidence_digests` file still hashes to its signed digest, and `log-entry.json` names this payload. A signer chain configured in `novaseal.yaml` (`ca_bundle`) must also validate. A capsule edited after sealing, or carrying another capsule's `.seal/`, fails this axis and the verdict is `critical`. |
+| Timestamp | an RFC 3161 token is present and anchored by `tsa_ca_certs` (an intact but unanchored token is `warn`; no token is `n/a`). |
+| Log integrity | Merkle inclusion was established by the carried proof or the sealer's log. |
+
+Like `nova verify`, the radar verifies from the capsule alone when this machine
+has no `novaseal.yaml`; the profile adds the sealer's log and the operator
+anchors. A `novaseal.yaml` that fails to load leaves the seal axes `n/a`
+(verification could not run), never `ok`. `POST /api/runs/{id}/verify` reports
+the binding as `capsule_binding_ok`, and its `valid` is the verdict `nova verify`
+exits on.
+
+Before 2026-10-22 the radar ran only the signature, timestamp and log checks,
+so a capsule tampered after sealing could show `attested`.
+
 ## nova redaction-xray (ADR-0174)
 
 Projects a capsule's field-protection state — which fields are `clear`,

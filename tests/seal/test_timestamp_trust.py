@@ -320,7 +320,9 @@ def test_serve_capsule_verify_reports_timestamp_trust(
     from novafabric.serve.app import create_app
 
     capsule, config, dsse = sealed
-    (capsule / "capsule.yaml").write_text("run_id: ts-trust-001\n")
+    # The manifest the fixture signed: the endpoint checks the ADR-0251 binding
+    # (audit H1), so a capsule.yaml that disagrees with the payload is invalid.
+    (capsule / "capsule.yaml").write_text("run_id: ts-trust-001\nstatus: success\n")
     monkeypatch.setenv("NOVAFABRIC_SEAL_CONFIG", str(config))
     token = "test-token-1234567890abcdef"
     headers = {"host": "127.0.0.1:4321", "Authorization": f"Bearer {token}"}

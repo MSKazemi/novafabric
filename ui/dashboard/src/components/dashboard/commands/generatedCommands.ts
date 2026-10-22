@@ -12553,7 +12553,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires the seal-postgres extra). Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then merkle_db in novaseal.yaml, then ~/.novafabric/novaseal-merkle.db.",
+        "hint": "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires the seal-postgres extra). Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db — the same log capture seals into.",
         "flag": "--db"
       },
       {

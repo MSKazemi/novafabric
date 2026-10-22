@@ -74,8 +74,9 @@ Scale-S4 — Postgres backend
 
 Factory:
     Use ``open_merkle_log(uri)`` to obtain the right backend automatically:
-    - ``Path`` / ``str`` without ``postgresql://`` prefix → ``MerkleLog`` (SQLite)
-    - ``str`` starting with ``postgresql://`` or ``postgres://`` → ``PostgresMerkleLog``
+    - ``Path`` / ``str`` path → ``MerkleLog`` (SQLite)
+    - ``str`` starting with ``postgresql://``, ``postgres://`` or
+      ``postgresql+psycopg://`` → ``PostgresMerkleLog``
 """
 
 from __future__ import annotations
@@ -84,12 +85,13 @@ import hashlib
 import json
 import re
 import secrets
+import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Union
 
-from novafabric._sqlite_util import connect_sqlite
+from novafabric._sqlite_util import connect_sqlite, ensure_wal
 
 #: Legacy root (through v0.105): odd levels padded by duplicating the last node.
 #: Does not commit to the tree size; verified only with ``tree_size`` (ADR-0313).
@@ -757,13 +759,18 @@ class MerkleLog:
         self._db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = connect_sqlite(str(db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        # Two captures may open a new log at the same moment. An unconditional
+        # ``PRAGMA journal_mode=WAL`` returns SQLITE_BUSY to the loser (the busy
+        # timeout does not apply to it), and the check-then-ALTER below raced
+        # into "duplicate column name". Both are tolerated now.
+        ensure_wal(self._conn, what="NovaSeal Merkle log")
         self._conn.executescript(_SCHEMA)
-        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(tree_heads)")}
-        if "root_version" not in columns:
-            # Additive migration of a pre-ADR-0313 log: NULL means a v1 head.
-            self._conn.execute("ALTER TABLE tree_heads ADD COLUMN root_version INTEGER")
-        self._conn.commit()
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(tree_heads)")}
+            if "root_version" not in columns:
+                # Additive migration of a pre-ADR-0313 log: NULL means a v1 head.
+                self._conn.execute("ALTER TABLE tree_heads ADD COLUMN root_version INTEGER")
         self._root_version = self._init_root_version(root_version)
 
     def _init_root_version(self, requested: int | None) -> int:
@@ -829,29 +836,39 @@ class MerkleLog:
         entry_json = entry_bytes.decode("utf-8")
         version = self._root_version
 
-        with self._conn:
-            # Determine next leaf_index
-            row = self._conn.execute(
-                "SELECT COALESCE(MAX(leaf_index) + 1, 0) FROM leaves"
-            ).fetchone()
-            leaf_index: int = row[0]
+        try:
+            with self._conn:
+                # BEGIN IMMEDIATE takes the write lock *before* reading the next
+                # index. Under the default deferred transaction two processes
+                # could both read MAX + 1 and the second INSERT failed with a
+                # UNIQUE violation, leaving its capsule unsealed (measured: 10 of
+                # 200 appends, 8 processes). The busy timeout queues the waiters.
+                self._conn.execute("BEGIN IMMEDIATE")
+                row = self._conn.execute(
+                    "SELECT COALESCE(MAX(leaf_index) + 1, 0) FROM leaves"
+                ).fetchone()
+                leaf_index: int = row[0]
 
-            self._conn.execute(
-                "INSERT INTO leaves (leaf_index, leaf_hash, entry_json) VALUES (?, ?, ?)",
-                (leaf_index, leaf_hash, entry_json),
-            )
+                self._conn.execute(
+                    "INSERT INTO leaves (leaf_index, leaf_hash, entry_json) VALUES (?, ?, ?)",
+                    (leaf_index, leaf_hash, entry_json),
+                )
 
-            # Recompute root
-            all_hashes = self._all_leaf_hashes()
-            root_hash = compute_root(all_hashes, root_version=version)
-            tree_size = len(all_hashes)
+                # Recompute root
+                all_hashes = self._all_leaf_hashes()
+                root_hash = compute_root(all_hashes, root_version=version)
+                tree_size = len(all_hashes)
 
-            self._conn.execute(
-                "INSERT OR REPLACE INTO tree_heads (tree_size, root_hash, root_version)"
-                " VALUES (?, ?, ?)",
-                (tree_size, root_hash, version),
-            )
-            inclusion_proof = _compute_inclusion_proof(leaf_index, all_hashes, version)
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO tree_heads (tree_size, root_hash, root_version)"
+                    " VALUES (?, ?, ?)",
+                    (tree_size, root_hash, version),
+                )
+                inclusion_proof = _compute_inclusion_proof(leaf_index, all_hashes, version)
+        except sqlite3.Error as exc:
+            # The documented contract: database faults are MerkleError, which the
+            # seal path handles; a raw sqlite3 error escaped it.
+            raise MerkleError(f"Merkle log append failed: {type(exc).__name__}: {exc}") from exc
 
         return {
             "leaf_index": leaf_index,
@@ -1503,18 +1520,20 @@ class PostgresMerkleLog:
 def open_merkle_log(uri: Union[str, Path]) -> "MerkleLog | PostgresMerkleLog":
     """Return the appropriate Merkle log backend for *uri*.
 
-    - ``Path`` or non-DSN string → ``MerkleLog`` (SQLite, default)
-    - String starting with ``postgresql://`` or ``postgres://`` → ``PostgresMerkleLog``
+    - ``Path`` or a plain path string → ``MerkleLog`` (SQLite, default)
+    - ``postgres://``, ``postgresql://`` or ``postgresql+psycopg://`` →
+      ``PostgresMerkleLog`` (connects lazily)
+    - any other ``scheme:/…`` string → ``MerkleLocationError`` (a ``ValueError``):
+      it is never opened, or created, as a file (audit H2)
 
     Install Postgres support: ``pip install novafabric[seal-postgres]``
     """
-    uri_str = str(uri)
-    if uri_str.startswith(("postgresql://", "postgres://")):
-        return PostgresMerkleLog(uri_str)
-    return MerkleLog(Path(uri_str))
+    from novafabric.trust.novaseal.log_location import normalize_location  # noqa: PLC0415
 
-
-_PG_PREFIXES = ("postgres://", "postgresql://", "postgresql:/", "postgres:/")
+    location = normalize_location(uri)
+    if isinstance(location, str):
+        return PostgresMerkleLog(location)
+    return MerkleLog(location)
 
 
 def open_existing_merkle_log(
@@ -1526,14 +1545,13 @@ def open_existing_merkle_log(
     would litter an auditor's machine (ADR-0297 S2). A Postgres DSN is opened as
     given; a SQLite path only when the file already exists.
     """
-    if location is None:
+    from novafabric.trust.novaseal.log_location import normalize_location  # noqa: PLC0415
+
+    if location is None or not str(location):
         return None
-    text = str(location)
-    if not text:
+    resolved = normalize_location(location)
+    if isinstance(resolved, str):
+        return PostgresMerkleLog(resolved)
+    if not resolved.is_file():
         return None
-    if text.startswith(_PG_PREFIXES):
-        return open_merkle_log(text)
-    path = Path(text).expanduser()
-    if not path.is_file():
-        return None
-    return open_merkle_log(path)
+    return MerkleLog(resolved)

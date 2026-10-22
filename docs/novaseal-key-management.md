@@ -126,7 +126,12 @@ result = verify_x509_signature(
 ```
 
 Key generation is the same `openssl ecparam`/`openssl req -x509` procedure as
-§2.2 (or an RSA-2048+ equivalent). Rotation and compromise recovery follow
+§2.2 (or an RSA-2048+ equivalent). `from_pem` refuses any other key — an EC key on
+another curve (P-384, P-521, secp256k1), RSA below 2048 bits, Ed25519 — and a
+certificate whose public key is not the private key's, with `X509IdentityError`.
+`verify_x509_signature` likewise fails a signature whose certificate key is not
+P-256 or RSA-2048+. Before 2026-10-22 a P-384 key was accepted and its signatures
+were labelled `ecdsa-p256-sha256`. Rotation and compromise recovery follow
 the same procedures as §3/§4 — the trust anchor to update is your
 `pinned_fingerprints` set, not a CA.
 

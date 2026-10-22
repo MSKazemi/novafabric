@@ -74,6 +74,8 @@ from novafabric.trust.novaseal.crl import CrlStore, RevocationCheckResult, check
 
 _ALG_ECDSA_P256 = "ecdsa-p256-sha256"
 _ALG_RSA_PSS = "rsa-pss-sha256"
+#: Smallest RSA modulus accepted for signing and verification (ADR-0055: RSA-2048+).
+_MIN_RSA_BITS = 2048
 
 #: Default and hard upper bound on the number of intermediate certificates a chain may
 #: traverse (bounded path building; matches ``cryptography``'s own default of 8).
@@ -187,6 +189,16 @@ class X509SigningIdentity:
             raise X509IdentityError(f"could not load certificate: {exc}") from exc
         if not isinstance(key, (ec.EllipticCurvePrivateKey, rsa.RSAPrivateKey)):
             raise X509IdentityError("unsupported key type; expected ECDSA P-256 or RSA (2048+)")
+        # Audit L16: sign() labels every EC signature ``ecdsa-p256-sha256``, so a key
+        # on another curve would publish a false algorithm. Refuse it here instead.
+        problem = _unsupported_key_reason(key.public_key())
+        if problem is not None:
+            raise X509IdentityError(f"unsupported signing key: {problem}")
+        if _public_der(key.public_key()) != _public_der(cert.public_key()):
+            raise X509IdentityError(
+                "the certificate's public key does not match the private key; every "
+                "signature would fail verification"
+            )
         return cls(key, cert)
 
     @property
@@ -195,7 +207,11 @@ class X509SigningIdentity:
         return _fingerprint(self._cert)
 
     def sign(self, payload: bytes) -> X509Signature:
-        """Sign ``payload`` with the long-lived key and embed the certificate."""
+        """Sign ``payload`` with the long-lived key and embed the certificate.
+
+        The key is ECDSA P-256 or RSA-2048+ (enforced by :meth:`from_pem`), so the
+        recorded ``algorithm`` is exact.
+        """
         cert_pem = self._cert.public_bytes(serialization.Encoding.PEM).decode("utf-8")
         if isinstance(self._key, ec.EllipticCurvePrivateKey):
             signature = self._key.sign(payload, ECDSA(hashes.SHA256()))
@@ -582,11 +598,38 @@ def verify_dsse_signer_chain(
     )
 
 
+def _unsupported_key_reason(public_key: object) -> str | None:
+    """Why *public_key* is not an ECDSA P-256 or RSA-2048+ key, else None."""
+    if isinstance(public_key, ec.EllipticCurvePublicKey):
+        if not isinstance(public_key.curve, ec.SECP256R1):
+            return f"EC curve {public_key.curve.name} (only secp256r1 / P-256 is supported)"
+        return None
+    if isinstance(public_key, rsa.RSAPublicKey):
+        if public_key.key_size < _MIN_RSA_BITS:
+            return f"RSA-{public_key.key_size} (at least RSA-{_MIN_RSA_BITS} is required)"
+        return None
+    return f"{type(public_key).__name__} (expected ECDSA P-256 or RSA-{_MIN_RSA_BITS}+)"
+
+
+def _public_der(public_key: object) -> bytes:
+    return public_key.public_bytes(  # type: ignore[attr-defined, no-any-return]
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+
 def _verify_signature_bytes(
     payload: bytes, signature: X509Signature, cert: Certificate
 ) -> str | None:
-    """Verify the raw signature under ``cert``'s key; return a failure reason or None."""
+    """Verify the raw signature under ``cert``'s key; return a failure reason or None.
+
+    The algorithm label must describe the certificate's key: an ``ecdsa-p256-sha256``
+    signature under a P-384 certificate, or any signature under an RSA key below
+    2048 bits, fails (audit L16) rather than verifying under a false label.
+    """
     public_key = cert.public_key()
+    problem = _unsupported_key_reason(public_key)
+    if problem is not None:
+        return f"unsupported certificate key: {problem}"
     try:
         if signature.algorithm == _ALG_ECDSA_P256 and isinstance(
             public_key, ec.EllipticCurvePublicKey
