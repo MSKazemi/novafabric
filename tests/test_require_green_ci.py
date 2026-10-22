@@ -80,6 +80,14 @@ def test_no_run_waits_out_the_grace_then_fails() -> None:
     v = gate.verdict([], waited=60, grace=60)
     assert v.state == "fail"
     assert "no CI run" in v.message
+    assert "gh workflow run ci.yml --ref" in v.message
+
+
+def test_ci_can_be_run_on_a_tag_that_was_not_a_pushed_head() -> None:
+    """The gate's own remedy for "no CI run" must exist: push CI covers only the head."""
+    doc = yaml.safe_load((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
+    on = doc.get("on", doc.get(True))
+    assert "workflow_dispatch" in on
 
 
 def test_the_newest_run_decides() -> None:

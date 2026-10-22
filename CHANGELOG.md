@@ -27,7 +27,8 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **A release publishes nothing unless CI passed on the tagged commit** (ADR-0316). The
   GitHub Release, PyPI, container-image and Helm-chart workflows each wait for `ci.yml` on
   the tagged SHA and fail closed otherwise. v0.106.0 was published to PyPI and as a GitHub
-  Release while CI was red on that commit.
+  Release while CI was red on that commit. CI can also be started by hand
+  (`gh workflow run ci.yml --ref <tag>`) for a tagged commit that was not the head of a push.
 
 ### Fixed
 

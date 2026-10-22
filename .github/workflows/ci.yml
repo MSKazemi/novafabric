@@ -15,6 +15,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # GitHub runs push CI only on the pushed head. A tag on any other commit gets
+  # its CI run here (`gh workflow run ci.yml --ref <tag>`), which is what the
+  # release gate (require-green-ci.yml) waits for.
+  workflow_dispatch:
 
 # Cancel in-flight runs of the same ref when new commits land. Saves CI
 # minutes on rapid-fire pushes.

@@ -62,8 +62,8 @@ def verdict(runs: list[dict[str, Any]], *, waited: float, grace: float) -> Verdi
             return Verdict("wait", "no CI run for this commit yet")
         return Verdict(
             "fail",
-            "no CI run exists for this commit. Release only a commit that was pushed "
-            "to main and went through CI.",
+            "no CI run exists for this commit (push CI runs only on the pushed head). "
+            "Run it with `gh workflow run ci.yml --ref <tag>`, then re-run this workflow.",
         )
     # The newest attempt is the one that counts: a re-run supersedes a failure.
     latest = max(runs, key=lambda r: (r.get("created_at") or "", r.get("id") or 0))
