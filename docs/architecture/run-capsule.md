@@ -6,9 +6,12 @@ A Run Capsule is a plain directory named by a ULID. It holds every observable
 fact about one execution. You can copy it, archive it, attach it to a ticket or
 verify it without a server, an account or a database.
 
-**Maturity:** works today. The on-disk format is validated against
-`schemas/run-capsule.schema.json`. It is not frozen until the v1.0 schema
-freeze, but changes are additive and optional, so older capsules stay valid.
+**Maturity:** works today. `nova validate` checks `capsule.yaml` against the
+packaged schema `src/novafabric/schemas/run-capsule.schema.json`
+(`schema_version` 0.1.0). The repo-root `schemas/run-capsule.schema.json` is the
+v1.0 *target* schema and is not yet in force (ADR-0223). The format is not frozen
+until that v1.0 freeze, but changes are additive and optional, so older capsules
+stay valid.
 
 ![How a Run Capsule is assembled, file by file](../assets/architecture/capsule-assembly.svg)
 
@@ -32,12 +35,12 @@ order. A failed run gets the same set of files.
 
 | # | Path | Holds | Written by |
 |---|---|---|---|
-| 1 | `inputs/`, `outputs/` | Inputs, and the workload's outputs | `capture/capsule.py:CapsuleWriter.open` |
+| 1 | `inputs/`, `outputs/` | `inputs/` is created empty (capture does not populate it today; the manifest's `inputs` list is `[]`). `outputs/` holds process output and media blobs — the workload's own output files are **not** copied in | `capture/capsule.py:CapsuleWriter.open` |
 | 1 | `model-calls.jsonl` | LLM call records, keyed with OTel GenAI attributes (`gen_ai.request.*`, `gen_ai.response.*`); a call made through the OpenAI/Anthropic SDK also leaves one `transport` record per HTTP attempt (see [Model-call record roles](#model-call-record-roles)) | hooks, through `CapsuleWriter` |
 | 1 | `tool-calls.jsonl` | One record per tool invocation | hooks, through `CapsuleWriter` |
 | 1 | `trace.jsonl` | Execution spans, including the root span | hooks and orchestrator |
 | 1 | `assets.jsonl` | References to registry assets the run consumed | hooks, through `CapsuleWriter` |
-| 2 | `outputs/stdout.txt`, `outputs/stderr.txt` | Process output | orchestrator |
+| 2 | `outputs/stdout.txt`, `outputs/stderr.txt` | Process output — each file is written only when its stream is non-empty | orchestrator |
 | 2 | `outputs/<sha>.<ext>` | Media blobs, content-addressed | `capture/media.py` |
 | 3 | `env.lock` | Environment snapshot: `mode` (`deterministic` or `best-effort`), host, Python interpreter, installed packages | `capture/env.py:capture_environment` |
 | 4 | `replay.yaml` | Replay policy (`schemas/replay-policy.schema.json`); capture writes a minimal policy, which you can extend | `capture/replay.py:minimal_replay_policy` |
@@ -52,7 +55,7 @@ These files appear only in some runs:
 
 | Path | When |
 |---|---|
-| `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`) |
+| `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`). `nova capture` then also adds `network_events_ref` / `file_events_ref` / `human_approvals_ref` to `capsule.yaml` (`capture/orchestrator.py:_event_stream_refs`) — note these keys are not yet in the packaged schema, so `nova validate` rejects such a capsule today (known defect, being fixed) |
 | `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass (since v0.105.0; v0.104.0 wrote it after sealing, unbound), so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. |
 | `c2pa-manifest.json` | `nova capture --mark-provenance` |
 | `otel-genai-spans.json` | `nova capture --emit-otel-genai` |
@@ -103,7 +106,7 @@ a measured host field.
 | `arch` | `capture/env.py:host_arch`, which `env.lock` and the OTLP importer also use: `platform.machine()` normalised (`aarch64` → `arm64`, `amd64` → `x86_64`) | an unmapped machine string is recorded as reported, never guessed |
 | `os` | `platform.system()`, lower-cased | the schema allows only `linux`, `darwin` and `windows`; any other OS is recorded as `linux` |
 | `cpu_count` | `os.cpu_count()` | `1` if it cannot be read |
-| `memory_bytes` | `MemTotal` from `/proc/meminfo` | `0` where there is no `/proc/meminfo` (macOS, Windows): read `0` as "not measured" |
+| `memory_bytes` | `MemTotal` from `/proc/meminfo` on Linux, `sysctl hw.memsize` on macOS, `GlobalMemoryStatusEx` on Windows (`capture/env.py`) | `0` when the reader fails: read `0` as "not measured" |
 | `python` | `platform.python_version()` | |
 | `gpu` | — | always `[]` today: no GPU inventory is collected (`env.lock:hardware.gpus` is empty too) |
 | `hostname_redacted` | — | always `true`; the hostname is never written to the manifest (`env.lock` keeps a SHA-256 of it). Slurm node names follow the same rule: `slurm.node_list_hash` |

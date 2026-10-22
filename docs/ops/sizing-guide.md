@@ -79,7 +79,7 @@ collector tier instead.
 ### Index cost per run
 
 - **`runs_cache`**: one row (12 columns: status, timestamps, call counts,
-  command JSON, paths) plus three indexes — order of a few hundred bytes per
+  command JSON, paths) plus four indexes — order of a few hundred bytes per
   run (*estimate from the DDL in
   `src/novafabric/registry/runs_cache.py`*).
 - **Lineage**: a handful of nodes/edges per run at a few hundred bytes each
@@ -168,9 +168,10 @@ server process.** What *is* contractual:
   lifting. Rate limiting and quotas
   ([ADR-0179](../decisions.md),
   default **off**) are in-process token buckets with a bounded key map, so
-  enabling them adds negligible memory. Quota enforcement derives usage from
-  capsule-store counts with a TTL cache, adding a bounded query cost to
-  ingest.
+  enabling them adds negligible memory. Quota enforcement, however, derives
+  usage by walking every file in the capsule store (at most once per 5 s, on
+  the request path), so on a large store it stalls ingest while it
+  recounts.
 - **Observability of your actual usage** (experimental,
   [ADR-0182](../decisions.md)): scrape
   `/metrics` (Prometheus) on either app for HTTP request rates/durations, DB

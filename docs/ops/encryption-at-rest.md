@@ -80,7 +80,7 @@ export NOVA_OBJECT_STORE_KEK_PATH=/secure/nova-kek.bin
 ```
 
 With both set, `make_adapter` wraps whichever WORM backend you configured
-(`s3`, `minio`, `ceph_rgw`, `azure_blob`, `local`) in the encrypting adapter,
+(`s3`, `minio`, `ceph_rgw`, `azure_blob`, or `local` — an in-memory test adapter, not WORM) in the encrypting adapter,
 and every capsule payload is envelope-encrypted before the WORM write. Absent
 that configuration, behavior is **byte-for-byte unchanged**.
 
@@ -180,11 +180,11 @@ maker-checker `tenant-keys shred` command are later ADR-0243 slices —
 
 ## 3. Crypto-shred
 
-Deleting the one wrapped DEK erases an object cryptographically while the
-ciphertext stays untouched inside its WORM retention window — and still
-verifies via `content_sha256`. This is the single-key-deletion semantic that
-composes with the retention scheduler (ADR-0134): "deletion is evidence"
-holds even for content that WORM will not let you physically remove.
+`shred()` models single-key deletion: it returns a copy of an envelope with its
+wrapped DEK removed, so the ciphertext stays intact and still verifies via
+`content_sha256` but can no longer be decrypted. It is **not** called by the
+retention scheduler (ADR-0134), and — see the limitation below — it cannot erase
+an object that is already stored.
 
 A shredded envelope is permanently unrecoverable; reads raise the named
 `ShreddedBlobError` rather than returning garbage. Shredding is idempotent.
@@ -212,7 +212,8 @@ it yet.
   `KeyWrappingBackend` capability this module calls, gated behind the
   `novafabric[seal-aws]` / `novafabric[seal-azure]` / `novafabric[seal-gcp]`
   extras. What works today, in order of maturity: the local 256-bit KEK file
-  (production-ready), the test-only `MockKmsBackend`, and the three cloud
+  (experimental; the backend itself is documented as dev/test parity — a
+  cloud-KMS-held KEK is the production path), the test-only `MockKmsBackend`, and the three cloud
   wrapping backends (unit-tested against in-memory fakes of each SDK — 31
   passing tests across `tests/seal/test_aws_kms_wrapping.py`,
   `test_cloud_kms_backends.py`, `test_cloud_kms_wrapping.py`). Handing a
@@ -252,12 +253,17 @@ it yet.
 - [ ] KEK included in the backup/DR inventory ([backup-restore](backup-restore.md));
       restore drill performed with an encrypted object.
 - [ ] Both env vars set in the service unit / container spec of every process
-      that writes to or reads from the object store (a reader without the KEK
-      gets `NotImplementedError`/unwrap failures, not plaintext).
+      that writes to or reads from the object store. ⚠ A reader process
+      *without* the env vars gets the bare adapter and silently returns the
+      stored envelope JSON (ciphertext) as the object's bytes — no error. A
+      truthy flag without a KEK path refuses to start; a wrong KEK raises
+      `DekUnwrapError`.
 - [ ] `NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS` unset in steady state (set
       only for a documented migration window, see §2.1).
-- [ ] Documented owner for the KEK lifecycle (rotation is manual today —
-      new writes use the new KEK; old envelopes still need the old KEK).
+- [ ] Documented owner for the KEK lifecycle. There is **no KEK rotation
+      support**: the env wiring holds exactly one KEK, so replacing the file
+      makes every earlier envelope unreadable (`DekUnwrapError`). Rotating
+      means re-ingesting every object under the new KEK.
 
 ---
 

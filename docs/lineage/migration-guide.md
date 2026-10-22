@@ -70,12 +70,18 @@ nova lineage-store migrate --from-ocs \
 The dry run (the default, i.e. without `--commit`):
 
 - Enumerates the named capsules in the OCS and reconstructs their `lineage.jsonl` edges.
-- Runs a post-load divergence check (unless `--no-validate` is passed).
-- Reports `loaded`, `diverged`, and `capsules_scanned` counts.
+- Reports `loaded` and `capsules_scanned` counts (`diverged` is always `0` on a dry run).
 - Does **not** write to the target SQLite store.
 
-**works today** — `--from-ocs` requires `--ocs-tenant` and `--ocs-run-ids`; there is no
-global run enumeration (by design, FR-05).
+The post-load divergence check runs only with `--commit` (and can be skipped with
+`--no-validate`).
+
+**Experimental — not yet wired to a real store from the CLI.** `nova lineage migrate
+--from-ocs` currently builds an empty in-memory OCS and never reads `--ocs-data-dir`, so it
+reports `loaded=0` and exits 0 whatever the store holds (known defect, tracked as a code
+fix). Call `migrate_from_ocs()` from Python with your own `ObjectCapsuleStore` for a real
+migration. `--from-ocs` requires `--ocs-tenant` and `--ocs-run-ids`; there is no global run
+enumeration (by design, FR-05).
 
 ---
 
@@ -179,5 +185,5 @@ KuzuDB `node_id` outside the store must be recomputed. `ref` is unchanged.
 | Apache AGE backend | **experimental, testcontainers-verified** (v0.69.0) — `lineage/backends/age.py` is a real openCypher implementation, not a stub |
 | Postgres backend | **experimental, testcontainers-verified** (v0.68.0) — `lineage/backends/postgres.py` uses recursive CTEs, no AGE extension needed |
 | JanusGraph backend | **experimental, testcontainers-verified** (v0.70.0) — requires Docker/Cassandra + Gremlin (GraphSON serializer, not default GraphBinary); not suitable for local-only deployments |
-| `--from-ocs` reads a locally reachable ObjectCapsuleStore; remote stores must be fetched first | **works today** (local OCS only) |
+| `--from-ocs` on the CLI reads a real ObjectCapsuleStore | **experimental — not wired yet**: the CLI scans an empty in-memory store; use `migrate_from_ocs()` from Python |
 | Federation (`/federation/query`) requires OQ-04 legal sign-off for regulated-industry deployments | Open — do not use in regulated multi-site deployments until resolved |

@@ -44,10 +44,13 @@ profile: local
 key_path: ~/.novafabric/seal.key
 cert_path: ~/.novafabric/seal.crt
 EOF
+
+# Also once: the Ed25519 key that signs Evidence Bundles in step 5
+nova init        # writes ~/.novafabric/keys/signing_key.pem
 ```
 
 This is a self-signed key for the walkthrough; [key management](../novaseal-key-management.md)
-covers KMS/HSM keys and certificates issued by your own CA. Without this step the
+covers cloud-KMS keys and certificates issued by your own CA. Without this step the
 capsule below is still written and still verifiable as a folder, but it is **not
 signed**, and `nova verify` will say so.
 
@@ -145,7 +148,7 @@ nova verify 01KZ9VZPFQB95A63AAMD2TC7XD
 
 ```console
   ✓ Signature (DSSE ECDSA P-256): OK
-  ⊘ Timestamp (RFC 3161): NOT PRESENT (TSA skipped or unavailable)
+  ⊘ Timestamp (RFC 3161): NOT PRESENT (no tsa_url configured, or TSA unavailable) — no trusted time
   ✓ Merkle log inclusion: OK
   ✓ Manifest binding (capsule.yaml == signed payload): OK
   ✓ Evidence binding (per-file sha256): OK

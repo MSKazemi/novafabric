@@ -27,7 +27,7 @@ Observability helps you inspect a run. NovaFabric turns the run into a portable 
 **▶ Watch the 7-minute demo:** [*I tried to forge my AI agent's evidence — it caught me*](https://youtu.be/uQatmJIJI68) — recorded live on an Azure VM against Azure OpenAI, with the signing key held in an Azure Key Vault HSM. Capture, seal, `nova verify`, two tamper attempts caught and named, then the same run in the dashboard. English captions included. Narration is a synthetic voice generated locally with Piper (MIT); the terminal output is verbatim from the live run, re-rendered on screen for legibility.
 
 <p align="center">
-  <img src="docs/assets/demo.svg" alt="Terminal demo: nova capture records an agent run into a portable capsule, nova validate checks it, nova replay reads it back in forensic mode with no network or API keys, and nova diff shows what changed between the two runs." width="700">
+  <img src="docs/assets/demo.svg" alt="Terminal demo: nova capture records an agent run into a portable capsule, nova validate checks it, nova replay reads it back in forensic mode with no network or API keys, a second capture runs the agent again, and nova diff shows what changed between the two capsules." width="700">
 </p>
 
 The same sequence as text, if you would rather copy it:
@@ -46,14 +46,21 @@ $ nova replay 01HXAY7M5JZ8R7K4P9DPBYK2WX --mode forensic
 ✓ Replay written: .novafabric/replays/01HXB2Q9WKPN6M3T8VZCJDR4YE
   (replay_id=01HXB2Q9WKPN6M3T8VZCJDR4YE  mode=forensic)
 
-$ nova diff 01HXAY7M5JZ8R7K4P9DPBYK2WX 01HXB2Q9WKPN6M3T8VZCJDR4YE
-Diff: 01HXAY7M5JZ8R7K4P9DPBYK2WX → 01HXB2Q9WKPN6M3T8VZCJDR4YE
-  changed=2  added=0  removed=0
+$ nova capture python my_agent.py          # run it again
+✓ Capsule written: ~/.novafabric/capsules/01HXB3K2T7QW9F0M4ZRC8DNV6P
+  (run_id=01HXB3K2T7QW9F0M4ZRC8DNV6P)
+
+$ nova diff 01HXAY7M5JZ8R7K4P9DPBYK2WX 01HXB3K2T7QW9F0M4ZRC8DNV6P
+Diff: 01HXAY7M5JZ8R7K4P9DPBYK2WX → 01HXB3K2T7QW9F0M4ZRC8DNV6P
+  changed=1  added=0  removed=0
 
 Outputs:
   ~ outputs/stdout.txt
-  ~ outputs/stderr.txt
 ```
+
+`nova diff` compares two **capsules**. A replay writes a replay result
+(`replay_result.yaml`), not a capsule, so to see what changed between runs you
+capture the run again and diff the two.
 
 Every captured run produces a `~/.novafabric/capsules/<ulid>/` directory: a schema-valid,
 secret-scanned, portable evidence folder. Works with any command. No application
@@ -193,13 +200,16 @@ This produces a ULID-named capsule directory:
   trace.jsonl           ← execution spans
   model-calls.jsonl     ← LLM API calls (OTel GenAI semconv)
   tool-calls.jsonl      ← tool invocations
+  assets.jsonl          ← registry assets the run consumed
+  lineage.jsonl         ← lineage edges emitted by this run
   env.lock              ← full environment snapshot
   redaction-proof.json  ← record of what the secret scan checked and redacted
   replay.yaml           ← replay policy
-  inputs/
+  inputs/               ← created empty (not populated by capture today)
   outputs/
-    stdout.txt
+    stdout.txt          ← only when the stream is non-empty
     stderr.txt
+  .seal/                ← only when NovaSeal is configured (opt-in)
 ```
 
 Capsules are written on **both success and failure**. A failed run produces a
@@ -218,7 +228,10 @@ a recorded secret scan is a precondition for evidence, not an afterthought.
 
 ### 3. Replay a capsule
 
-Replay re-executes or inspects a capsule. A replay is itself a new capsule you can diff.
+Replay re-executes or inspects a capsule and writes a replay result
+(`replay_result.yaml`) under `./.novafabric/replays/<replay-id>/` in the current
+directory. A replay result is not a capsule: to compare behaviour, capture a second
+run and `nova diff` the two capsules.
 
 ```bash
 # Forensic: read-only inspection, no network, no subprocess — for audit / post-incident
@@ -778,7 +791,7 @@ capsules you own, with run-to-run structural diff and cryptographic provenance. 
 [How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
-It is **beta** (v0.105.0). Local capture, replay, diff, lineage, the trust layer,
+It is **beta** (v0.106.1). Local capture, replay, diff, lineage, the trust layer,
 policy gates, eval suites, and the asset registry are usable; server mode, the
 cluster-scale collector, the dashboard, the at-scale lineage backends, and every
 cohort shipped since v0.59 (observability parity, enterprise readiness, cloud KMS,
@@ -880,7 +893,7 @@ Full details, including what to do next, are in [CONTRIBUTING.md](CONTRIBUTING.m
 
 ## Status
 
-**Beta — actively developed (v0.105.0).** Stable and usable today: local capture,
+**Beta — actively developed (v0.106.1).** Stable and usable today: local capture,
 replay, diff, lineage (SQLite default), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,

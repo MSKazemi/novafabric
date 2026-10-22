@@ -97,9 +97,9 @@ CLI runs, offline.
 
 | Mode | Use when |
 |---|---|
-| `exact` | The run was deterministic and you want a byte-comparable re-run |
-| `mocked` | You want the original recorded responses replayed back, with no network |
-| `semantic` | You accept a different-but-equivalent model response |
+| `exact` | You want to know whether the run is *eligible* for a byte-exact re-run — it checks and reports reasons; it does not re-execute |
+| `mocked` | You want to re-run the command with the recorded OpenAI/Anthropic replies and MCP tool results served from the capsule; other tools run live, and network use is observed, not blocked |
+| `semantic` | You want a similarity score over the capsule's recorded responses — it does not re-execute and makes no model call |
 | `forensic` | You want to inspect without executing anything — read-only, no network, no subprocess |
 
 NovaFabric does **not** claim exact replay of remote LLM calls. A remote model is not
@@ -125,7 +125,7 @@ ignore warnings.
 
 ### The test suite hangs
 
-There is a 300-second `pytest-timeout` cap so a hang fails by name rather than
+There is a 900-second `pytest-timeout` cap so a hang fails by name rather than
 running forever. Read which test the timeout names; do not restart blindly.
 
 ### A command printed `pip install 'novafabric'` with no extra in it

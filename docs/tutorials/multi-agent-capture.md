@@ -60,10 +60,10 @@ are invisible. You only see the boundary, not what happened inside B.
 
 ```bash
 # Terminal 1 — Agent B (the sub-agent / service)
-nova capture python agent_b.py --output-dir capsules/
+nova capture --output-dir capsules/ python agent_b.py
 
 # Terminal 2 — Agent A (the orchestrator)
-nova capture python agent_a.py --output-dir capsules/
+nova capture --output-dir capsules/ python agent_a.py
 ```
 
 Each gets its own capsule with its own full trace. You now have visibility inside
@@ -87,8 +87,10 @@ OLLAMA_HOST=http://localhost:9900 nova capture python agent_b.py
 OLLAMA_HOST=http://localhost:9900 nova capture python agent_a.py
 ```
 
-Both agents' LLM calls flow through the same proxy. Both are captured. You get
-two capsules, fully traced.
+Both agents' LLM calls flow through the same proxy, which records them into **its
+own** capsule (`--capsule-dir`, else `$NOVAFABRIC_CAPSULE_DIR`, else an
+auto-allocated `./.novafabric/runs/<ulid>`). Each `nova capture` also writes its
+own capsule for its process — so you get three capsules in all.
 
 ---
 
@@ -143,16 +145,25 @@ on real multi-agent workloads.
 When the orchestrator calls sub-agents as MCP tools (served over stdio), use
 `nova mcp-proxy` to capture the tool layer:
 
-```bash
-# Wrap the MCP server — captures every tool call and response
-nova mcp-proxy -- python mcp_agent_server.py
+Configure the orchestrator to launch its MCP server **through the proxy** — i.e. set
+the server command in the orchestrator's MCP client config to:
 
-# The orchestrator calls the proxy thinking it's the real MCP server
+```bash
+nova mcp-proxy -- python mcp_agent_server.py
+```
+
+Then capture the orchestrator:
+
+```bash
 nova capture python orchestrator.py
 ```
 
-Every tool call (agent-to-agent message) is recorded in `tool-calls.jsonl` inside
-the orchestrator's capsule, alongside the orchestrator's own LLM calls.
+Because the orchestrator spawns the proxy, the proxy inherits the capture's
+`NOVAFABRIC_CAPSULE_DIR`, so every tool call (agent-to-agent message) lands in
+`tool-calls.jsonl` inside the orchestrator's capsule, alongside its own LLM calls.
+(A stdio proxy started separately in another terminal cannot be reached by the
+orchestrator, and would record into its own capsule.) MCP SDK `call_tool` calls are
+also captured by the built-in MCP hook.
 
 ---
 

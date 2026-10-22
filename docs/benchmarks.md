@@ -70,7 +70,7 @@ p99 ≥ 200 ms tail alarm** (see [`slo.md`](slo.md)). The p99 used to be the gat
 shared CI runners it is decided by scheduler stalls (3 of 55 runs carried a >200 ms
 sample while their medians stayed under 10 ms), so it now warns instead of failing.
 
-This is Ed25519 over a Merkle root, so it is dominated by hashing the capsule
+This is an ECDSA P-256 DSSE signature over a Merkle root, so it is dominated by hashing the capsule
 rather than by the signature itself — expect it to scale with capsule size, not
 with the number of files.
 
@@ -92,6 +92,12 @@ to ~1.1 µs/row, and a build at n=5,000 from 5.14 s to 0.0125 s (411×). **The
 default still did not change**, because the directory scan is 86–89% of total
 time and the index build was never the bottleneck. Making the wrong thing 411×
 faster changed nothing that a user can feel.
+
+> **Reproducibility caveat.** Unlike the rest of this page, the query-engine
+> figures in this section have no command you can re-run from the public
+> repository: the crossover benchmark script is not published. They are
+> recorded in the CHANGELOG entries that shipped each change. By this page's own
+> rule, weigh them accordingly.
 
 That is the whole reason this page exists.
 

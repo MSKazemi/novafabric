@@ -67,12 +67,11 @@ The compiled-in checks today:
 
 - **`db`** — a cheap `SELECT 1` against the configured backend (SQLite file
   or Postgres DSN, 2 s timeout).
-- **`migrations`** — compares the SQLite `alembic_version` stamp against the
-  in-repo migration head. Reports `unknown` when the DB is not
-  alembic-managed or the migration scripts aren't available (installed
-  package). On the Postgres backend this check is always `unknown` today —
-  the head comparison needs a live connection plus the postgres migration
-  tree and is deliberately not done in the probe path.
+- **`migrations`** — compares the database's `alembic_version` stamp (SQLite
+  or Postgres) against the head of the packaged **registry** migration track.
+  `behind` or `ahead`/foreign ⇒ `fail`; an unstamped or unreadable database ⇒
+  `unknown` (never a fake `ok`). Fix a `fail` with
+  `nova db upgrade --track registry --backend <sqlite|postgres>`.
 - **`object_store`** — `skipped` on both apps: neither has an object-store
   configuration surface wired into the probe yet; the spec mandates checking
   it only when configured.
@@ -115,7 +114,7 @@ verify against a running server:
 | `nova_http_requests_total` | counter | `app`, `route`, `method`, `status` | every handled request |
 | `nova_http_request_duration_seconds` | histogram | `app`, `route`, `method` | request latency |
 | `nova_ingest_events_total` | counter | `app`, `encoding`, `outcome` | ingest write routes; `outcome` is `accepted` (2xx/3xx) or `rejected`. On the server app the classified routes are the capsule ZIP upload (`encoding=zip`) and the external score submission (`encoding=json`) |
-| `nova_readyz_check_status` | gauge | `app`, `check` | 1 = passing (`ok`/`skipped`/`unknown`), 0 = failing; updated on each `/readyz` probe |
+| `nova_readyz_check_status` | gauge | `app`, `check` | 1 = passing (`ok`/`skipped`/`unknown`), 0 = failing; updated on each `/readyz` probe of the **server** app (not wired on `nova serve` today, so `app="serve"` series never appear) |
 | `nova_db_pool_in_use`, `nova_db_pool_size` | gauge | `app`, `pool` | **Sampled since v0.98.0 — but only when a pool exists.** Set `NOVAFABRIC_METADATA_DB_POOL=1` (ADR-0221, experimental, opt-in, Postgres only) and the metadata store's pool is read **at `/metrics` scrape time** (pull-based, no background sampler) into `pool="metadata"`. Without the opt-in — and always on SQLite, which has no pool — the store exposes no stats and the gauges stay unsampled rather than reporting a fabricated zero |
 
 The spec also names a `nova_queue_depth` gauge; it is **planned** and not
@@ -135,7 +134,7 @@ registered yet.
 
 - **`nova server`:** `/metrics` requires the `reader` role by default
   (ADR-0182 D1). To scrape without credentials, set the operator exemption —
-  `observability.metrics_exempt: true` in `nova-server.yaml`, or
+  `observability.metrics_exempt: true` in `server.yaml`, or
   `NOVAFABRIC_SERVER_METRICS_EXEMPT=1`.
 - **`nova serve`:** `/metrics` sits behind the existing dashboard token.
 
@@ -178,7 +177,7 @@ trace ingest — by default the local serve app's `POST /api/otlp/v1/traces`
 endpoint on `http://127.0.0.1:4321`. NovaFabric monitors itself with its own
 flight recorder; spans never leave the deployment.
 
-Enable via `nova-server.yaml`:
+Enable via `server.yaml` (`~/.config/novafabric/server.yaml` or `--config`):
 
 ```yaml
 observability:

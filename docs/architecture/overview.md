@@ -33,7 +33,7 @@ Three consequences of this invariant are visible in the code:
 | # | Primitive | As built | Lives in | Maturity |
 |---|---|---|---|---|
 | 1 | **Asset Registry** | A SQLite registry of versioned assets (`name@version`) with a six-state lifecycle: `development`, `validated`, `pending_approval`, `staging`, `production`, `archived` | `registry/service.py`, `registry/store.py`, `spec/models.py:AssetStatus` | works today |
-| 2 | **Run Capsule** | A directory named by a 26-character ULID, holding the manifest, call streams, environment, outputs and the redaction proof of one execution. Written by `nova capture`, or from inside the process by a framework adapter or the `@agent` decorator (`novafabric.sdk.agent`; [same finalization, no maskers](run-capsule.md#capsules-written-inside-a-framework-call)) | `capture/orchestrator.py:CaptureOrchestrator`, `capture/capsule.py:CapsuleWriter`, `schemas/run-capsule.schema.json` | works today (on-disk format not frozen before v1.0) |
+| 2 | **Run Capsule** | A directory named by a 26-character ULID, holding the manifest, call streams, environment, outputs and the redaction proof of one execution. Written by `nova capture`, or from inside the process by a framework adapter or the `@agent` decorator (`novafabric.sdk.agent`; [same finalization, no maskers](run-capsule.md#capsules-written-inside-a-framework-call)) | `capture/orchestrator.py:CaptureOrchestrator`, `capture/capsule.py:CapsuleWriter`, `src/novafabric/schemas/run-capsule.schema.json` (in force; the repo-root `schemas/run-capsule.schema.json` is the v1.0 target) | works today (on-disk format not frozen before v1.0) |
 | 3 | **Replay** | Re-runs a capsule's command with recorded model responses (and recorded SDK errors) and recorded MCP tool results, while other tools run live; or analyses the capsule without executing anything. Five modes. `mocked` refuses a capsule that records no command to re-run. | `replay/_engine.py:ReplayEngine`, `cli/replay.py` | works today; `intervention` mode is experimental |
 | 4 | **Lineage** | A directed graph of runs, assets and artifacts, written per capsule and indexed into SQLite | `lineage/_writer.py`, `lineage/_store.py`, `lineage/backends/` | works today (SQLite); other backends experimental |
 | 5 | **Evidence Bundle** | A ZIP holding the capsule, a lineage subgraph, Ed25519-signed in-toto DSSE attestations and vendored schemas | `evidence/bundle.py:EvidenceBundleBuilder`, `cli/export_evidence.py` | works today |
@@ -83,8 +83,9 @@ flowchart TB
   (`runners/_sitecustomize.py`). The hooks record calls in-process. No daemon or
   server is involved.
 - **Everything after capture is a CLI command over a capsule directory.**
-  `nova verify`, `nova replay`, `nova diff`, `nova export-evidence` and
-  `nova audit` all take a capsule path or a run ID.
+  `nova verify`, `nova replay`, `nova diff` and `nova export-evidence` take a
+  capsule path or a run ID; `nova audit` works over a data directory
+  (`--data-dir`, with `nova audit map --capsule <id>` for a single capsule).
 - **Servers are optional.** See [Deployment topologies](deployment-topologies.md)
   for `nova serve` (local dashboard, experimental) and `nova server` (team server,
   experimental).

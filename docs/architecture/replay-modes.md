@@ -56,7 +56,9 @@ Before it branches, `ReplayEngine.run`:
   `env_warnings`;
 - re-validates each recorded tool call against its **current** declared schema
   (`capture/schema_validation.py:revalidate_tool_calls`, ADR-0128) and records
-  any drift. Only `exact` mode refuses on drift.
+  any drift on the result in `forensic`, `semantic`, `exact` and `mocked` (the
+  `intervention` path and `--dry-run` compute it but do not report it). Only
+  `exact` mode refuses on drift.
 - if any write-permitting ladder flag is passed (`--allow-mutating`,
   `--allow-external-side-effects`, `--allow-unknown-mutation`;
   `replay/_flags.py:ReplayFlags.permits_writes`), evaluates the

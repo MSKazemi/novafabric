@@ -77,7 +77,7 @@ Known limit: counters are keyed by workspace slug, and slugs are unique only
 within an org, so two orgs that share a workspace slug share one counter.
 
 Code: `server/quotas.py:enforce_storage_quota`, `OrgQuotaChecker`;
-`server/routes/capsules.py:_record_usage_capsule_upload`; `server/usage.py`.
+`server/routes/capsules.py:_record_usage_capsule_created`; `server/usage.py`.
 See [quotas and rate limits](../ops/quotas-and-rate-limits.md).
 
 ## Listing: keyset pagination

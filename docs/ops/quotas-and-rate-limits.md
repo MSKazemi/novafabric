@@ -67,7 +67,7 @@ headers too, so well-behaved clients can pace themselves before hitting 429.
 
 ### Enabling and tuning
 
-In `nova-server.yaml`:
+In `~/.config/novafabric/server.yaml` (or the `--config` file), as a **top-level** `rate_limits:` block:
 
 ```yaml
 rate_limits:

@@ -13,12 +13,13 @@ current, maps it onto named standards as *receipts*, and records challenges
 **continuous-assurance loop is proposed design direction, not a shipped,
 running system** — see [What remains future design](#7-what-remains-future-design).
 
-Two commands share the `assure` prefix; they are different things:
+Several commands share the `assure` prefix; they are different things:
 
 | Command | What it is |
 |---|---|
 | `nova assure <capsule>` | OWASP LLM Top 10 (2025) evidence checks against a **single capsule** — an older, separate surface (exits 1 if any check fails) |
 | `nova assure-case <document>` / `nova assure-coverage <document>` | The ADR-0166 assurance-case surface documented on this page |
+| `nova assure-baseline` / `assure-run` / `assure-impact` / `assure-alarm` / `assure-canary` | ADR-0147 continuous-assurance slices (NF-153/154/156/159/160), **experimental**, each run by hand — see `nova <command> --help` |
 
 ---
 
@@ -85,9 +86,10 @@ Each `solution` node's evidence has a validity window (`last_refreshed` +
 `evidence_window`). At the supplied `--as-of` instant, each node is
 `current`, `due` (inside the due-lead before expiry — refresh soon), or
 `overdue` (no longer current). Overdue nodes yield `stale` drift records
-(reason `evidence_expired`) — the same drift-record shape the
-[drift detection subsystem](drift-gate.md) uses, so staleness is recorded
-evidence, not a silent re-decision.
+(reason `evidence_expired`) — an assurance-case drift record defined in
+`assure/currency.py` (its own shape, not the [drift detection
+subsystem](drift-gate.md)'s records), so staleness is recorded evidence, not a
+silent re-decision.
 
 ## 4. Conformance receipts — never verdicts (D3)
 
@@ -141,9 +143,10 @@ Per the ADR-0166 status record, be precise about what you can rely on:
   - sealing the assessor package through the Evidence-Bundle DSSE+timestamp
     path, and the `nova assure-case package` / `renewal` CLI surface;
   - the **continuous-assurance loop** itself — the ADR's vision of drift
-    detection continuously feeding argument currency (NF-151..160,
-    ADR-0147) is *proposed*, not shipped or running; today you re-run
-    `assure-case` yourself against sealed timestamps;
+    detection continuously feeding argument currency (ADR-0147) — is
+    **future design**: no standing loop runs. Individual pieces (NF-153/154/
+    156/159/160) ship as the experimental `assure-*` commands above, which you
+    run yourself; today you re-run `assure-case` against sealed timestamps;
   - any automated evidence collection — evidence digests, currency
     timestamps, and defeaters are all supplied in the document by you.
 

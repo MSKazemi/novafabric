@@ -71,7 +71,7 @@ Every row matches `action.yml` exactly.
 |---|---|---|---|
 | `run` | **yes** | — | The command to capture. Runs under `nova capture`. |
 | `environment` | no | `test` | Deployment environment recorded on the capsule (ADR-0126). See the note below — the default is deliberate. |
-| `timeout` | no | `""` | Wall-clock deadline in seconds. Empty means no NovaFabric-imposed limit. |
+| `timeout` | no | `""` | Wall-clock deadline in seconds. Empty uses `nova capture`'s default deadline of 600 s. |
 | `validate` | no | `true` | Run `nova validate` and fail the step if the capsule is invalid. |
 | `upload-artifact` | no | `true` | Upload the capsule as a workflow artifact. |
 | `artifact-name` | no | `novafabric-capsule` | Name for the uploaded artifact. |

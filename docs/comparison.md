@@ -25,7 +25,7 @@ reasonable to need both.
 | Works fully offline / air-gapped | **✓** | self-host only | ✗ | partial |
 | Real-time dashboards & alerting | ✗ **weak** | ✓ strong | ✓ strong | partial |
 | Hosted multi-user convenience | ✗ **none** | partial | ✓ strong | ✓ |
-| Prompt playground / A-B testing | ✗ **none** | ✓ | ✓ | ✗ |
+| Prompt playground / A-B testing | ✗ no playground; local, record-only A/B attribution (`nova experiment`, `--variant`; experimental) | ✓ | ✓ | ✗ |
 | Maturity | **beta, pre-1.0, small** | mature | mature | very mature |
 
 ---
@@ -38,7 +38,7 @@ Use something else if:
   try to be. Langfuse, Phoenix, LangSmith, and Helicone all do this properly.
 - **You want a hosted service with a team UI and zero operations.** There is no
   SaaS, no account system, and no plan to build one.
-- **You want a prompt playground or A/B testing workflow.** Not built, not planned.
+- **You want a prompt playground or a hosted A/B testing platform.** Not built, not planned. (Local, record-only variant attribution and dataset-experiment comparison exist — `nova capture --experiment/--variant`, `nova experiment run/compare`, `nova diff --group-by variant` — experimental.)
 - **You need a mature, battle-tested tool right now.** NovaFabric is pre-1.0. The
   capsule format is not frozen and will change before v1.0.
 - **Your workload is a classic ML training sweep and you want metric comparison.**
@@ -134,7 +134,7 @@ server is optional and exists for teams sharing capsules.
 **Does it capture my prompts and responses?** Yes, inside the capsule. When a Python
 workload's model calls are captured, the request messages and response text are written
 to `model-calls.jsonl` in your capsule, on your machine, after the built-in secret scan
-(14 API-key/token rules; PII masking is a separate opt-in). What is opt-in is sending
+(18 API-key/token rules; PII masking is a separate opt-in). What is opt-in is sending
 content anywhere else: `--emit-otel-genai` exports spans without content unless you
 also pass `--capture-content`.
 

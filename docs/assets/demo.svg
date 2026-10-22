@@ -1,28 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="699" height="552" viewBox="0 0 699 552" role="img" aria-label="NovaFabric terminal demo: capture, validate, replay and diff an agent run">
+<svg xmlns="http://www.w3.org/2000/svg" width="699" height="596" viewBox="0 0 699 596" role="img" aria-label="NovaFabric terminal demo: capture, validate, replay and diff an agent run">
 <title>NovaFabric — capture, validate, replay, diff</title>
 <style>
 text{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',monospace;font-size:13px;white-space:pre;dominant-baseline:middle}
-.l0{opacity:0;animation:r0 14.60s infinite}@keyframes r0{0%,2.740%{opacity:0}3.140%,100%{opacity:1}}
-.l1{opacity:0;animation:r1 14.60s infinite}@keyframes r1{0%,6.849%{opacity:0}7.249%,100%{opacity:1}}
-.l3{opacity:0;animation:r3 14.60s infinite}@keyframes r3{0%,14.384%{opacity:0}14.784%,100%{opacity:1}}
-.l4{opacity:0;animation:r4 14.60s infinite}@keyframes r4{0%,21.233%{opacity:0}21.633%,100%{opacity:1}}
-.l5{opacity:0;animation:r5 14.60s infinite}@keyframes r5{0%,22.945%{opacity:0}23.345%,100%{opacity:1}}
-.l6{opacity:0;animation:r6 14.60s infinite}@keyframes r6{0%,24.658%{opacity:0}25.058%,100%{opacity:1}}
-.l7{opacity:0;animation:r7 14.60s infinite}@keyframes r7{0%,27.397%{opacity:0}27.797%,100%{opacity:1}}
-.l9{opacity:0;animation:r9 14.60s infinite}@keyframes r9{0%,34.932%{opacity:0}35.332%,100%{opacity:1}}
-.l10{opacity:0;animation:r10 14.60s infinite}@keyframes r10{0%,41.096%{opacity:0}41.496%,100%{opacity:1}}
-.l12{opacity:0;animation:r12 14.60s infinite}@keyframes r12{0%,48.630%{opacity:0}49.030%,100%{opacity:1}}
-.l13{opacity:0;animation:r13 14.60s infinite}@keyframes r13{0%,55.479%{opacity:0}55.879%,100%{opacity:1}}
-.l14{opacity:0;animation:r14 14.60s infinite}@keyframes r14{0%,57.877%{opacity:0}58.277%,100%{opacity:1}}
-.l16{opacity:0;animation:r16 14.60s infinite}@keyframes r16{0%,65.411%{opacity:0}65.811%,100%{opacity:1}}
-.l17{opacity:0;animation:r17 14.60s infinite}@keyframes r17{0%,72.260%{opacity:0}72.660%,100%{opacity:1}}
-.l18{opacity:0;animation:r18 14.60s infinite}@keyframes r18{0%,73.973%{opacity:0}74.373%,100%{opacity:1}}
-.l19{opacity:0;animation:r19 14.60s infinite}@keyframes r19{0%,76.370%{opacity:0}76.770%,100%{opacity:1}}
-.l20{opacity:0;animation:r20 14.60s infinite}@keyframes r20{0%,77.740%{opacity:0}78.140%,100%{opacity:1}}
-.l21{opacity:0;animation:r21 14.60s infinite}@keyframes r21{0%,78.767%{opacity:0}79.167%,100%{opacity:1}}
+.l0{opacity:0;animation:r0 16.55s infinite}@keyframes r0{0%,2.417%{opacity:0}2.817%,100%{opacity:1}}
+.l1{opacity:0;animation:r1 16.55s infinite}@keyframes r1{0%,6.042%{opacity:0}6.442%,100%{opacity:1}}
+.l3{opacity:0;animation:r3 16.55s infinite}@keyframes r3{0%,12.689%{opacity:0}13.089%,100%{opacity:1}}
+.l4{opacity:0;animation:r4 16.55s infinite}@keyframes r4{0%,18.731%{opacity:0}19.131%,100%{opacity:1}}
+.l5{opacity:0;animation:r5 16.55s infinite}@keyframes r5{0%,20.242%{opacity:0}20.642%,100%{opacity:1}}
+.l6{opacity:0;animation:r6 16.55s infinite}@keyframes r6{0%,21.752%{opacity:0}22.152%,100%{opacity:1}}
+.l7{opacity:0;animation:r7 16.55s infinite}@keyframes r7{0%,24.169%{opacity:0}24.569%,100%{opacity:1}}
+.l9{opacity:0;animation:r9 16.55s infinite}@keyframes r9{0%,30.816%{opacity:0}31.216%,100%{opacity:1}}
+.l10{opacity:0;animation:r10 16.55s infinite}@keyframes r10{0%,36.254%{opacity:0}36.654%,100%{opacity:1}}
+.l12{opacity:0;animation:r12 16.55s infinite}@keyframes r12{0%,42.900%{opacity:0}43.300%,100%{opacity:1}}
+.l13{opacity:0;animation:r13 16.55s infinite}@keyframes r13{0%,48.943%{opacity:0}49.343%,100%{opacity:1}}
+.l14{opacity:0;animation:r14 16.55s infinite}@keyframes r14{0%,51.057%{opacity:0}51.457%,100%{opacity:1}}
+.l16{opacity:0;animation:r16 16.55s infinite}@keyframes r16{0%,57.704%{opacity:0}58.104%,100%{opacity:1}}
+.l17{opacity:0;animation:r17 16.55s infinite}@keyframes r17{0%,63.746%{opacity:0}64.146%,100%{opacity:1}}
+.l19{opacity:0;animation:r19 16.55s infinite}@keyframes r19{0%,70.393%{opacity:0}70.793%,100%{opacity:1}}
+.l20{opacity:0;animation:r20 16.55s infinite}@keyframes r20{0%,76.435%{opacity:0}76.835%,100%{opacity:1}}
+.l21{opacity:0;animation:r21 16.55s infinite}@keyframes r21{0%,77.946%{opacity:0}78.346%,100%{opacity:1}}
+.l22{opacity:0;animation:r22 16.55s infinite}@keyframes r22{0%,80.060%{opacity:0}80.460%,100%{opacity:1}}
+.l23{opacity:0;animation:r23 16.55s infinite}@keyframes r23{0%,81.269%{opacity:0}81.669%,100%{opacity:1}}
 @media (prefers-reduced-motion:reduce){text{opacity:1!important;animation:none!important}}
 </style>
-<rect width="699" height="552" rx="10" fill="#0a0a0c"/>
+<rect width="699" height="596" rx="10" fill="#0a0a0c"/>
 <rect width="699" height="30" rx="10" fill="#26262c"/>
 <rect y="20" width="699" height="10" fill="#26262c"/>
 <circle cx="18" cy="15" r="5" fill="#ff5f57"/><circle cx="36" cy="15" r="5" fill="#febc2e"/><circle cx="54" cy="15" r="5" fill="#28c840"/>
@@ -39,10 +40,11 @@ text{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',monospace;font
 <text class="l12" x="22" y="308" fill="#d8d8dd" font-weight="600"><tspan fill="#7aa2f7">$</tspan> nova replay 01KZ9VZPFQB95A63 --mode forensic</text>
 <text class="l13" x="22" y="330" fill="#c4f0a8">✓ Replay written: .novafabric/replays/01KZ9VZX0A9KAXGD</text>
 <text class="l14" x="22" y="352" fill="#8b8b94">  (mode=forensic — no network, no API keys, no tokens spent)</text>
-<text class="l16" x="22" y="396" fill="#d8d8dd" font-weight="600"><tspan fill="#7aa2f7">$</tspan> nova diff 01KZ9VZPFQB95A63 01KZ9VZX0A9KAXGD</text>
-<text class="l17" x="22" y="418" fill="#d8d8dd">Diff: 01KZ9VZPFQB95A63 → 01KZ9VZX0A9KAXGD</text>
-<text class="l18" x="22" y="440" fill="#d8d8dd">  changed=2  added=0  removed=0</text>
-<text class="l19" x="22" y="462" fill="#d8d8dd">Outputs:</text>
-<text class="l20" x="22" y="484" fill="#8b8b94">  ~ outputs/stdout.txt</text>
-<text class="l21" x="22" y="506" fill="#8b8b94">  ~ outputs/stderr.txt</text>
+<text class="l16" x="22" y="396" fill="#d8d8dd" font-weight="600"><tspan fill="#7aa2f7">$</tspan> nova capture python agent.py</text>
+<text class="l17" x="22" y="418" fill="#c4f0a8">✓ Capsule written: ~/.novafabric/capsules/01KZ9W3B7RT2M8QH</text>
+<text class="l19" x="22" y="462" fill="#d8d8dd" font-weight="600"><tspan fill="#7aa2f7">$</tspan> nova diff 01KZ9VZPFQB95A63 01KZ9W3B7RT2M8QH</text>
+<text class="l20" x="22" y="484" fill="#d8d8dd">Diff: 01KZ9VZPFQB95A63 → 01KZ9W3B7RT2M8QH</text>
+<text class="l21" x="22" y="506" fill="#d8d8dd">  changed=1  added=0  removed=0</text>
+<text class="l22" x="22" y="528" fill="#d8d8dd">Outputs:</text>
+<text class="l23" x="22" y="550" fill="#8b8b94">  ~ outputs/stdout.txt</text>
 </svg>

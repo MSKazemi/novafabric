@@ -33,12 +33,13 @@ The two probes mean different things:
 
 | Symptom | Diagnosis | Action |
 |---|---|---|
-| Process exits at startup, key-file error | Offline key file is world-readable — the server refuses to start | `chmod 600` the `offline_key_path` file; owner must be the server user |
-| Process exits at startup, config error | Bad `nova-server.yaml` / env override | Check resolution order: `--config` flag → `$NOVA_SERVER_CONFIG` → `~/.config/novafabric/nova-server.yaml` → `/etc/novafabric/nova-server.yaml` ([Server Deployment Guide](server-deployment.md)) |
+| Process exits at startup, TLS key error | `tls.key_path` is group/world-accessible — the server refuses to start | `chmod 600` the TLS key file |
+| Offline tokens all return 401 | Server was started without `NOVAFABRIC_OFFLINE_KEY_PATH`, so offline-JWT auth is disabled | Restart with `NOVAFABRIC_OFFLINE_KEY_PATH=<key-dir>/offline-key.pub` (environment only) |
+| Process exits at startup, config error | Bad `server.yaml` / env override | The server reads `--config <path>` if given, else `~/.config/novafabric/server.yaml` — no other search path. Unknown keys are ignored silently, so also check that keys are top-level (no `server:` block) ([Server Deployment Guide](server-deployment.md#config-file-reference)) |
 | Bind error | Port 7433 (server) / 4321 (serve) already in use | `--port`, or find the stale process. Never start a second writer against the same DB ([ADR-0180](../decisions.md) fencing invariant) |
-| `/readyz` → `"db": "fail"` | Postgres unreachable / DSN wrong / pool exhausted | Verify `$NOVA_DSN`, DB up, network path; `nova doctor --check-storage --backend postgres --postgres-dsn "$NOVA_DSN"` |
-| `/readyz` → `"migrations": "fail"` | Schema behind the code (upgrade rolled out without migrating) | `nova db upgrade` (or `alembic -c alembic-postgres.ini upgrade head`), then re-probe. See [Upgrade Guide](upgrade-guide.md) §3 |
-| `/readyz` → `"object_store": "fail"` | Configured WORM store unreachable | Check endpoint/credentials; see §4. (`"skipped"` = not configured — that is normal, not a failure) |
+| `/readyz` → `"db": "fail"` | Postgres unreachable / DSN wrong | Verify `$NOVAFABRIC_POSTGRES_DSN`, DB up, network path; `nova doctor --check-storage --backend postgres --postgres-dsn "$NOVAFABRIC_POSTGRES_DSN"` |
+| `/readyz` → `"migrations": "fail"` | Schema behind the code (upgrade rolled out without migrating) | `nova db upgrade --track registry --backend postgres` (or `--backend sqlite`) — the probe checks the **registry** track, which a bare `nova db upgrade` does not migrate — then re-probe. See [Upgrade Guide](upgrade-guide.md) §3 |
+| `/readyz` → `"object_store"` | Always `"skipped"` today — neither app has an object-store check wired into the probe | Check WORM reachability directly; see §4 |
 | `/livez` OK but `/readyz` red for minutes | Dependency down, process healthy | Fix the named dependency; do **not** restart-loop the pod — liveness is fine |
 | Kubernetes restart-loops the pod | Probes pointed at the wrong endpoint | Liveness must target `/livez`, readiness `/readyz` — a wedged-DB pod is *not-ready*, not *dead* |
 
@@ -67,11 +68,11 @@ The two probes mean different things:
 **Status: experimental**
 ([ADR-0179](../decisions.md)). Both
 mechanisms are **off by default** — if you see 429s, someone enabled
-`server.rate_limits` in the config. Two distinct 429s:
+the top-level `rate_limits:` block in `server.yaml`. Two distinct 429s:
 
 | Signal | Meaning | Action |
 |---|---|---|
-| `429`, `error.code = "rate_limited"`, with `Retry-After` + `X-RateLimit-Limit/-Remaining/-Reset` headers | Token-bucket rate limit hit (per principal → tenant → client-IP; separate `ingest`/`read`/`admin` classes) | Client should honor `Retry-After`. Operator: identify the hot key (sustained limiting emits an audit event per window), raise the class budget in `server.rate_limits`, or fix the runaway client |
+| `429`, `error.code = "rate_limited"`, with `Retry-After` + `X-RateLimit-Limit/-Remaining/-Reset` headers | Token-bucket rate limit hit (per principal → tenant → client-IP; separate `ingest`/`read`/`admin` classes) | Client should honor `Retry-After`. Operator: identify the hot key (sustained limiting emits an audit event per window), raise the class budget in `rate_limits`, or fix the runaway client |
 | `429`, `error.code = "quota_exceeded"`, **no** `Retry-After` | **Hard storage quota** (capsule count or total bytes) — does not decay on a clock | Free space (retention/[ADR-0134](../decisions.md)), raise the quota, or accept the block. Usage is derived from the capsule store with a short TTL cache — recounts lag by seconds |
 | Writes succeed but carry `X-NovaFabric-Quota-Warning: <kind> <usage>/<limit>` | **Soft** quota crossed — warn-then-reject phase | Act now, before the hard limit: this is the early warning, and it also emits one audit event per window |
 | Probes failing under load | Should be impossible | `/health`, `/livez`, `/readyz`, `/metrics` are **never** rate limited by contract — if a probe 429s, that is a bug: file it |
@@ -88,7 +89,7 @@ Buckets are in process memory: they reset on restart, and a restart is a
 | Symptom | Diagnosis | Action |
 |---|---|---|
 | Captures failing, SQLite errors, server 5xx | Disk full under `~/.novafabric` (capsules, `registry.db`, Merkle log) | Free space first. Apply retention policies rather than hand-deleting capsule directories — capsules are the evidence; deletion should itself be recorded ([ADR-0134](../decisions.md)). Then run the §5 drift checks |
-| WORM writes rejected | Bucket unreachable, credentials expired, or Object Lock/immutability policy blocking a non-compliant write | Check `/readyz`'s `object_store` check, endpoint config and credentials. Remember WORM is *supposed* to reject overwrites/deletes of locked objects — verify you are not trying to mutate immutable evidence |
+| WORM writes rejected | Bucket unreachable, credentials expired, or Object Lock/immutability policy blocking a non-compliant write | Check endpoint config and credentials (`/readyz` has no object-store check today — it always reports `skipped`). Remember WORM is *supposed* to reject overwrites/deletes of locked objects — verify you are not trying to mutate immutable evidence |
 | "Cleanup" of the WORM bucket fails | Object Lock / legal hold doing its job | Working as designed. Retention on WORM data is policy-driven, not `rm`-driven |
 | Metadata DB lost or corrupted, WORM bucket intact | Derived state lost; evidence safe | The metadata DB is rebuildable from the object store's manifest chain: `nova rebuild-metadata-db --backend <s3\|minio\|ceph_rgw\|azure_blob\|local> --target-db <path>`; then `nova doctor --check-storage`. Losing the app node loses no evidence (ADR-0180 D2) |
 
@@ -105,7 +106,7 @@ rebuildable from the capsule filesystem
 |---|---|---|
 | Runs on disk but missing in the dashboard | `runs_cache` drifted from the capsule dir (e.g. capsules copied in out-of-band) | Restart `nova serve` — it rebuilds the runs index from capsule files on startup and keeps it current via the background stats-refresh thread. Confirm `--capsule-dir`/`--db-path` point where you think they do |
 | Dashboard **lists runs whose capsule is gone** — every drill-in 404s | The rebuild is **additive** by design (it never deletes a row for a capsule it cannot see), so rows for capsules deleted or moved out-of-band survive restarts forever | **v0.98.0, opt-in:** `POST /api/admin/reindex-runs` with `{"confirmed": true, "prune": true}` drops index rows whose capsule directory no longer exists; the response adds `pruned`. Default is `false` — a rebuild without it stays additive. Capsules are never touched, only the derived row. Reachable from the dashboard's **Infra → Maintenance** card. Rebuild the row later by copying the capsule back and restarting |
-| Lineage queries missing edges for capsules you restored/copied in | Lineage graph is also a derived cache | Re-import: `nova lineage import <capsule-dir>...` (imports lineage edges from capsule directories) |
+| Lineage queries missing edges for capsules you restored/copied in | Lineage graph is also a derived cache | Re-import: `nova lineage import <capsule-or-parent-dir>` (one path: a capsule, or a directory of capsules) |
 | Doubt about DB health itself | — | `nova doctor --check-storage` (schema version, migration state, per-table row counts); server-mode rebuild path: §4 last row |
 
 ---
@@ -115,15 +116,16 @@ rebuildable from the capsule filesystem
 **Status: works today.** `nova verify <capsule-dir>` checks three layers in
 the capsule's `.seal/` directory — DSSE ECDSA P-256 signature, RFC 3161
 timestamp (structural hash), Merkle log inclusion — printing each check and
-**exiting 0 only if all pass, 1 otherwise** (there are no distinct per-cause
-exit codes; read the itemized ✓/✗ output).
+**exiting 0 only if all pass, 1 on a failed check, 2 on a usage error** (there
+are no distinct per-cause exit codes; read the itemized ✓/✗ output).
 
 | Output | Diagnosis | Action |
 |---|---|---|
 | `No .seal/ directory found` (exit 1) | Capsule was never sealed — NovaSeal is opt-in | Not tampering. Configure `~/.novafabric/novaseal.yaml` (or `NOVAFABRIC_SEAL_CONFIG`) so future captures are sealed ([NovaSeal configuration](../novaseal-configuration.md)) |
 | `⊘ Merkle log inclusion: NOT CHECKED — log not available` (exit 0) | The capsule carries no inclusion proof (sealed by ≤ v0.102.x) and this host has no Merkle log holding its entry — e.g. an auditor's machine | Expected on an independent host. To also check inclusion, verify with `--seal-config` pointing at the profile (`merkle_db:`) used at signing time. Since v0.103 there is no `NovaSeal is not configured` failure: verification needs only the capsule |
 | `Signature … FAIL` | Capsule content changed since signing, or wrong key/cert profile | Treat as a potential integrity incident: preserve the capsule, compare against backups, check which profile signed it |
-| `Timestamp … FAIL` | Timestamp token missing/damaged — e.g. capsule sealed with no `tsa_url` (air-gapped installs legitimately skip RFC 3161) | Check whether your seal profile sets `tsa_url`; if it never did, an absent timestamp is expected, not tampering |
+| `Timestamp … FAIL` | A timestamp token is present but does not verify (damaged, or does not cover the signature) | Treat as a potential integrity incident |
+| `⊘ Timestamp (RFC 3161): NOT PRESENT` (exit unaffected) | Capsule sealed without a `tsa_url` — timestamping is opt-in; air-gapped installs legitimately skip RFC 3161 | Expected, not tampering; it means the seal carries no trusted time |
 | `Merkle log inclusion … FAIL` | `log-entry.json` is inconsistent: its entry does not hash to `leaf_hash`, names a different capsule, carries an inclusion proof that does not recompute its root, or the local log holds the entry at a different index — or the local log itself is damaged. (A log that simply lacks the entry is *not checked*, not failed.) | Treat as a potential integrity incident; audit the log itself with `nova seal log verify` (sampled; `--full` for O(N) re-hash) |
 | Sigstore backend errors | `--backend sigstore` needs the `novafabric[sigstore]` extra and a stored bundle; Rekor/Fulcio need network | Use the local backend in air-gapped deployments ([Air-gapped guide](air-gapped-install.md)) |
 
@@ -147,7 +149,7 @@ dashboard **SealTab**.
 
 | Symptom | Diagnosis | Action |
 |---|---|---|
-| `nova promote approve` / `nova seal verify` exits 8 or 9 (`Approval bundle not found` / `Proposal bundle not found`) and the missing party is genuinely unavailable | Normal two-step SoD flow cannot complete in the required window | Do **not** work around this by sharing keys or approving as the proposer — that is exactly what SoD prevents. Use the bypass below instead, so the deviation is recorded rather than hidden. |
+| `nova seal verify` exits 8 or 9 (`Approval bundle not found` / `Proposal bundle not found`; `nova promote approve` uses 1/3/4/6 instead) and the missing party is genuinely unavailable | Normal two-step SoD flow cannot complete in the required window | Do **not** work around this by sharing keys or approving as the proposer — that is exactly what SoD prevents. Use the bypass below instead, so the deviation is recorded rather than hidden. |
 | Need to move a capsule to production right now, no second approver reachable | Emergency bypass is the documented escape hatch | `nova seal bypass <capsule-id> --reason "<≥50-char justification>" --duration 24h --key <your-key.pem> --cert <your-cert.pem> --target-env production --notify oncall@example.com`. `--reason` is enforced at ≥50 characters — write what happened and why, not a placeholder. `--duration` caps at `168h` (7 days); prefer the shortest window that covers the incident. |
 | Need to confirm a bypass is actually in effect before proceeding | `nova seal verify <capsule-id>` (command name corrected 2026-07-30 — the CLI registers it as `verify`, not `verify-sod`) prints `SoD verification passed (bypass active — SoD checks skipped)` when a live bypass covers it, vs. a normal pass/fail otherwise | Treat "bypass active" the same as any other incident action — note it in the incident log, not just in the tool's own audit trail |
 | Bypass created but `--notify` recipients report never hearing about it | **Verified 2026-07-30: nothing you configure will fix this today.** `NOVA_BYPASS_NOTIFY_FILE` / `NOVA_BYPASS_NOTIFY_WEBHOOK` (`promote/bypass_notify.py::build_notifier_from_env`) are implemented and unit-tested, but no production call site wires them up — every `PromoteBundleStore(...)` construction in `cli/seal_propose.py`, `serve/app.py`, and `server/routes/seal.py` uses the default `NullBypassNotifier`. Setting either env var currently has **zero effect**; treat `--notify` as documentation-of-intent recorded in the signed predicate, not a live delivery | Manually notify the listed recipients yourself — this is the actual, currently-required step, not a fallback. Do not rely on the env vars until this wiring gap is closed (flagged as a real code gap, not a doc gap) |
