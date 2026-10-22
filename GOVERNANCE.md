@@ -131,8 +131,10 @@ Release process is documented in [`docs/release-process.md`](docs/release-proces
 
 ## Code of Conduct enforcement
 
-Reports go to [security@novafabric.io](mailto:security@novafabric.io) (or the
-address documented in `CODE_OF_CONDUCT.md`). Initial response within 72 hours.
+Reports go privately to [hello@novafabric.ai](mailto:hello@novafabric.ai), as documented
+in [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Initial response within 72 hours. Security
+vulnerabilities are not conduct reports: use GitHub private vulnerability reporting, as
+described in [`SECURITY.md`](SECURITY.md).
 
 The CoC committee for v0.2-v0.7 is the BDFL plus one steward. All decisions
 are documented privately and summarized publicly at year-end.
