@@ -156,6 +156,10 @@ including signing and the asset registry.
 
 ## How it works
 
+<p align="center">
+  <img src="docs/assets/lifecycle.svg" alt="Animated diagram: your agent is captured with nova capture into a Run Capsule, a secret-scanned folder whose files appear one by one and which is optionally sealed; the capsule then feeds Replay, Diff, Lineage, and Verify and export." width="900">
+</p>
+
 **Capture.** `nova capture` injects a loader into the child process that hooks the
 OpenAI, Anthropic and MCP SDKs and the `httpx`, `requests`, `aiohttp` and `urllib3`
 clients. It classifies provider traffic (including AWS Bedrock) and records each call

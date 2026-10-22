@@ -143,6 +143,17 @@ capsule with `status: failure` for a command that crashed. So the action:
    (set `validate: false` to always upload; a fix is tracked);
 4. and only then, as its **last** step, re-raises your command's exit code.
 
+```mermaid
+flowchart TD
+    A["Set up Python · install NovaFabric"] --> B["Capture: run your command under nova capture<br/>record its exit code, never abort"]
+    B --> C{"validate: true?"}
+    C -- no --> U["Upload the capsule artifact"]
+    C -- yes --> V{"nova validate<br/>passes?"}
+    V -- yes --> U
+    V -- no --> X["step fails, upload skipped<br/>(known gap, fix tracked)"]
+    U --> E["Re-raise your command's exit code"]
+```
+
 The ordering is load-bearing. A composite action abandons its remaining steps
 once one of them fails — `always()` does not rescue them — so failing earlier
 would skip the upload and lose the capsule from exactly the run that needed it.

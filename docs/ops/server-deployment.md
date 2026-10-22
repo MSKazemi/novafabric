@@ -457,6 +457,31 @@ schema-skew. Provide OIDC config as a mounted `server.yaml` (the `oidc:` block) 
 
 ---
 
+## How the server authenticates a request
+
+Every API request carries one bearer credential. The server tries the credential
+types in this order and stops at the first that applies; a credential that applies
+but fails verification is rejected with 401 rather than passed on:
+
+```mermaid
+flowchart TD
+    R["Request with<br/>Authorization: Bearer …"] --> K{"API key<br/>(nvfk_…)?"}
+    K -- valid --> OK["authenticated"]
+    K -- "not an API key" --> O{"OIDC configured?<br/>oidc.issuer_url + audience"}
+    O -- yes --> J["verify JWT against<br/>the IdP's JWKS"]
+    J --> OK
+    O -- no --> F{"JWT-shaped and server started with<br/>NOVAFABRIC_OFFLINE_KEY_PATH?"}
+    F -- yes --> T["verify offline ed25519 token<br/>+ revocation record"]
+    T --> OK
+    F -- no --> L["compare with the local token<br/>$NOVAFABRIC_HOME/.server-token"]
+    L --> OK
+```
+
+`insecure_no_auth: true` (never in production) replaces the last step with anonymous
+admin access. Roles then come from the credential, as described below.
+
+---
+
 ## Role assignment
 
 **Status: experimental.** Roles are enforced on all server API endpoints per

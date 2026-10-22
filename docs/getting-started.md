@@ -30,6 +30,23 @@ By the end of this guide you will have, on your own machine:
 
 Allow about 10–15 minutes.
 
+```mermaid
+flowchart TB
+    subgraph A["Capture"]
+        direction LR
+        S1["1 · Install"] --> S2["2 · Capture a run"] --> S3["3 · Validate it"]
+    end
+    subgraph B["Look inside"]
+        direction LR
+        S4["4 · Capture an LLM call"] --> S5["5 · Inspect the secret scan"] --> S6["6 · Replay, read-only"]
+    end
+    subgraph C["Compare and prove"]
+        direction LR
+        S7["7 · Diff two runs"] --> S8["8 · Query lineage"] --> S9["9 · Export signed evidence"]
+    end
+    A --> B --> C
+```
+
 These nine steps exercise all five NovaFabric primitives — **Asset Registry, Run
 Capsule, Replay, Lineage, and Evidence Bundle** — end to end. For the concepts
 behind each, see [docs/concepts.md](concepts.md).
