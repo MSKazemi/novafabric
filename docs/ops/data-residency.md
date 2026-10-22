@@ -43,6 +43,9 @@ Three rules, enforced not documented:
 - **Cross-border reads deny by default.** `get_object_checked(key, reader)`
   runs the ADR-0077 residency gate: same-jurisdiction always passes,
   cross-jurisdiction needs a directional grant, denial carries the reason.
+  The gate applies only when the router is built with a `residency_policy`
+  and the caller uses `get_object_checked`; without a policy, or through plain
+  `get_object`, reads are not checked.
 
 ## What stays planned
 

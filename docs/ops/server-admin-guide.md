@@ -86,8 +86,16 @@ nova server assign-role alice@example.com writer
 #   GET/POST /v0/admin/roles, DELETE /v0/admin/roles/{subject}/{role}
 ```
 
-**Planned** (`future design`): org/workspace-scoped role bindings and named
-service accounts — [ADR-0178](../decisions.md).
+⚠ A `role_assignments` row is consulted only once the workspace/org model is in
+use (a scoped membership or service account exists). In a stock deployment it
+grants nothing: `assign-role` then warns `this assignment is not in force` on
+stderr and `GET /v0/admin/roles` reports `effective_now: false`. Carry the role
+in the token instead (OIDC `nova_roles`/`roles` claim, or `issue-token --roles`).
+
+**Experimental:** org/workspace-scoped role bindings and named service accounts
+(`/v0/orgs`, `/v0/workspaces`, `/v0/service-accounts`) —
+[ADR-0178](../decisions.md). Creating the first membership or service account is
+what switches `role_assignments` rows on.
 
 ## 4. Tenancy and isolation
 

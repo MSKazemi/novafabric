@@ -20,11 +20,9 @@ flowchart LR
     A["asset<br/>summarizer@v3"]
     R["run A<br/>(capture)"]
     R2["run B<br/>(replay_of A)"]
-    O1["artifact<br/>outputs/report.md"]
-    O2["artifact<br/>outputs/stdout.txt"]
+    O1["artifact<br/>media blob listed in<br/>capsule.yaml outputs"]
     R -- "consumed · observed" --> A
     O1 -- "produced_by · inferred" --> R
-    O2 -- "produced_by · inferred" --> R
     R2 -- "replayed_from · declared" --> R
 ```
 
@@ -37,15 +35,18 @@ flowchart LR
 | Edge | Direction | Source of truth | Confidence |
 |---|---|---|---|
 | `consumed` | run → asset | each record in `assets.jsonl` (with `status_at_consumption` when recorded) | `observed` |
-| `produced_by` | artifact → run | the `outputs` list in `capsule.yaml` | `inferred` |
-| `produced_by` | artifact → run | explicit `record_produced()` calls (`produced.jsonl`) | `declared` |
+| `produced_by` | artifact → run | the `outputs` list in `capsule.yaml` — for `nova capture` that list holds only captured media blobs (not stdout or the workload's own files); adapter and OTLP capsules leave it empty | `inferred` |
+| `produced_by` | artifact → run | a `produced.jsonl` file in the capsule, if present (the reader exists; no NovaFabric API writes this file today) | `declared` |
 | `replayed_from` | run → original run | `replay_of_run_id` in `capsule.yaml` | `declared` |
 
-The lineage-edge schema (`schemas/lineage-edge.schema.json`) also reserves
-`derived_from`, `evaluated_by`, `attested_by` and `depends_on`, and node kinds
-`external` and `attestation`, for producers other than the capture writer. Agent
-memory capture (`lineage/memory.py`) adds `memory` nodes with `wrote_memory` /
-`read_memory` edges.
+The packaged lineage-edge schema (`src/novafabric/schemas/lineage-edge.schema.json`,
+which `nova lineage import` validates against) also allows `derived_from`,
+`evaluated_by`, `attested_by` and `depends_on`, and node kinds `external` and
+`attestation`, for producers other than the capture writer. (The repo-root
+`schemas/lineage-edge.schema.json` is the v1.0 target and is not yet in force.)
+`nova memory` derives `wrote_memory` / `read_memory` edges between runs and
+memory keys **on demand** (`lineage/memory.py`); they are not stored in
+`lineage.jsonl` or the lineage index.
 
 **Node identity.** A node ID is the first 26 hex characters of
 `SHA-256("kind:ref")` (`lineage/_types.py:node_id_for`). The same asset seen by
@@ -62,15 +63,16 @@ WAL mode). `nova lineage import` re-indexes capsules after the fact.
 
 ## Traversals
 
-All four are recursive CTEs in `lineage/_store.py`, bounded by depth and guarded
-against cycles.
+`provenance`, `blast_radius` and `replay_chain` are recursive CTEs in
+`lineage/_store.py`, bounded by depth and guarded against cycles; `time_travel`
+is a single-hop query.
 
 | Query | CLI | Walks | Answers |
 |---|---|---|---|
 | `provenance` | `nova lineage provenance <ref>` | edges forward, source → target (artifact → run → asset) | What did this depend on? |
 | `blast_radius` | `nova lineage blast-radius <ref>` | edges backward, target → source (asset ← run ← artifact) | What depends on this? |
 | `replay_chain` | `nova lineage replay-chain <run>` | `replayed_from` edges, at most 100 hops | Which original run does this replay trace back to? |
-| `time_travel` | `nova lineage time-travel <ref> --asof T` | edges recorded up to time T | What did the graph look like at time T? |
+| `time_travel` | `nova lineage time-travel <ref> --asof T` | the edges directly incident to the node that were recorded up to time T (one hop, at most 5000) | Which edges touched this node as of time T? |
 
 Other `nova lineage` subcommands:
 

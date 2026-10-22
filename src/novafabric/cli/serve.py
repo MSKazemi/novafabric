@@ -29,11 +29,26 @@ This dashboard:
   • is opt-in (you ran `--experimental` to enable it),
   • binds to 127.0.0.1 only (localhost),
   • requires a session token on /api/* routes (reused across restarts),
-  • is read-only (Layer A); mutations are not yet supported.
+  • is NOT read-only: that token (scope `admin`, ADR-0228) can delete runs,
+    erase PII, bypass a seal and assign roles — guard it like a root password.
 
 Schemas, endpoints, and behaviour may change. The CLI remains canonical —
 every dashboard view surfaces the equivalent `nova` command.
 """
+
+#: Hosts ``nova serve`` binds without ``--insecure``. Anything else exposes the
+#: shared admin-scope token beyond this machine (ADR-0230), so it is refused.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def non_loopback_bind_refused(host: str, *, insecure: bool) -> bool:
+    """True when ``nova serve`` refuses to start on *host* (exit 2).
+
+    The single source of the bind policy: the command below applies it, and the
+    Helm chart's render-time guard is tested against it (M4), so a chart value
+    can never render a dashboard pod that this policy refuses to start.
+    """
+    return host not in LOOPBACK_HOSTS and not insecure
 
 
 def serve_cmd(
@@ -186,7 +201,7 @@ def serve_cmd(
 
     # Bind safety — checked before any import so this security gate is always
     # reachable even when the [serve] extra is not installed.
-    if host not in {"127.0.0.1", "localhost", "::1"} and not insecure:
+    if non_loopback_bind_refused(host, insecure=insecure):
         console.print(Panel(
             f"[bold red]Refusing to bind to {host} without --insecure.[/bold red]\n\n"
             "The dashboard authenticates with a token but is designed for "

@@ -17,6 +17,26 @@ class ObjectLockNotSupportedError(Exception):
     """Raised when the S3 backend does not support Object Lock COMPLIANCE mode."""
 
 
+class ObjectLockModeError(ObjectLockNotSupportedError):
+    """Object Lock is enabled, but the default retention is not COMPLIANCE (M8).
+
+    GOVERNANCE retention can be bypassed by any principal holding
+    ``s3:BypassGovernanceRetention``; no default retention means objects written
+    without a per-object lock (as :meth:`NovaObjectStore.put_object` writes
+    them) are not locked at all. Neither is WORM. ``info`` carries the truthful
+    :meth:`NovaObjectStore.inspect_object_lock` result.
+    """
+
+    def __init__(self, message: str, info: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.info = info
+
+
+#: ``object_lock`` value when Object Lock is enabled but no default retention rule
+#: exists (``Rule.DefaultRetention`` absent).
+NO_DEFAULT_RETENTION = "none"
+
+
 class NovaObjectStore:
     """S3-compatible object store abstraction.
 
@@ -57,29 +77,18 @@ class NovaObjectStore:
             self._client = boto3.client(**kwargs)
         return self._client
 
-    def validate(self) -> dict[str, Any]:
-        """Verify the bucket supports Object Lock COMPLIANCE mode.
+    def inspect_object_lock(self) -> dict[str, Any]:
+        """Report the bucket's Object Lock posture as S3 states it (M8).
 
-        Returns info dict on success; raises ObjectLockNotSupportedError otherwise.
+        ``object_lock`` is the default-retention mode read from
+        ``ObjectLockConfiguration.Rule.DefaultRetention.Mode`` --
+        ``"COMPLIANCE"``, ``"GOVERNANCE"``, or ``"none"`` when Object Lock is
+        enabled without a default retention rule. Raises
+        :class:`ObjectLockNotSupportedError` when Object Lock is not enabled.
         """
         client = self._get_client()
         try:
             resp = client.get_bucket_object_lock_configuration(Bucket=self.bucket)
-            enabled = (
-                resp.get("ObjectLockConfiguration", {}).get("ObjectLockEnabled")
-                == "Enabled"
-            )
-            if not enabled:
-                raise ObjectLockNotSupportedError(
-                    f"Bucket {self.bucket!r} does not have Object Lock enabled"
-                )
-            return {
-                "bucket": self.bucket,
-                "object_lock": "COMPLIANCE",
-                "endpoint": self.endpoint_url,
-            }
-        except ObjectLockNotSupportedError:
-            raise
         except Exception as exc:
             # Surface boto3 error about missing config as our domain error.
             exc_name = type(exc).__name__
@@ -92,6 +101,50 @@ class NovaObjectStore:
                     f"Bucket {self.bucket!r} has no Object Lock configuration"
                 ) from exc
             raise
+        config = resp.get("ObjectLockConfiguration") or {}
+        if config.get("ObjectLockEnabled") != "Enabled":
+            raise ObjectLockNotSupportedError(
+                f"Bucket {self.bucket!r} does not have Object Lock enabled"
+            )
+        retention = (config.get("Rule") or {}).get("DefaultRetention") or {}
+        mode = retention.get("Mode") or NO_DEFAULT_RETENTION
+        return {
+            "bucket": self.bucket,
+            "object_lock": str(mode),
+            "default_retention": (
+                {"days": retention.get("Days"), "years": retention.get("Years")}
+                if retention
+                else None
+            ),
+            "endpoint": self.endpoint_url,
+        }
+
+    def validate(self) -> dict[str, Any]:
+        """Verify the bucket's default retention is Object Lock COMPLIANCE mode.
+
+        Returns the :meth:`inspect_object_lock` info on success. Raises
+        :class:`ObjectLockNotSupportedError` when Object Lock is off, and its
+        subclass :class:`ObjectLockModeError` -- naming the mode actually found --
+        when the default retention is GOVERNANCE or absent (M8: this used to
+        report ``COMPLIANCE`` for any bucket with Object Lock enabled).
+        """
+        info = self.inspect_object_lock()
+        mode = info["object_lock"]
+        if mode == "COMPLIANCE":
+            return info
+        found = (
+            "no default retention"
+            if mode == NO_DEFAULT_RETENTION
+            else f"default retention mode {mode}"
+        )
+        raise ObjectLockModeError(
+            f"Bucket {self.bucket!r} has Object Lock enabled but {found}, not "
+            "COMPLIANCE: GOVERNANCE retention is bypassable "
+            "(s3:BypassGovernanceRetention), and without a default retention "
+            "objects written without a per-object lock are not locked. Set a "
+            "COMPLIANCE default retention rule on the bucket.",
+            info,
+        )
 
     def put_object(
         self,

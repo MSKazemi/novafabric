@@ -326,8 +326,14 @@ def _launch_workers(
         os.environ["NOVAFABRIC_SERVER_I_KNOW_THIS_IS_PUBLIC"] = "1"
     if cfg.i_accept_shared_capsule_store:  # type: ignore[attr-defined]
         os.environ["NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE"] = "1"
+    # L17: hand workers exactly the file the parent resolved. Without --config
+    # the parent used the default path, so an inherited CONFIG_ENV (internal,
+    # never user-facing) must be cleared -- otherwise every worker would load a
+    # different file than the one the parent validated.
     if config_path is not None:
         os.environ[CONFIG_ENV] = str(config_path)
+    else:
+        os.environ.pop(CONFIG_ENV, None)
 
     uvicorn.run(  # type: ignore[attr-defined]
         FACTORY_TARGET,
@@ -413,9 +419,14 @@ def issue_token_cmd(
         from novafabric.server.offline_tokens import generate_keypair, issue_token
 
         if not resolved_key.exists():
-            typer.echo(f"Key not found at {resolved_key}. Generating new keypair …")
+            # L3: status lines go to stderr -- `TOKEN=$(nova server issue-token ...)`
+            # captures stdout, which must hold the token and nothing else.
+            typer.echo(f"Key not found at {resolved_key}. Generating new keypair …", err=True)
             generate_keypair(resolved_key)
-            typer.echo(f"Keypair written to {resolved_key} / {resolved_key.with_suffix('.pub')}")
+            typer.echo(
+                f"Keypair written to {resolved_key} / {resolved_key.with_suffix('.pub')}",
+                err=True,
+            )
 
         token = issue_token(
             subject=subject,
@@ -512,9 +523,13 @@ def assign_role_cmd(
         typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
     ] = None,
 ) -> None:
-    """Assign a role to a user (reader, writer, admin, or auditor).
+    """Record a role for a user (reader, writer, admin, or auditor).
 
     Scope: single server.
+
+    The row takes effect only once the workspace/org model is in use (a scoped
+    membership or service account exists, ADR-0178); until then a principal's
+    roles come from its token, and the command says so on stderr.
 
     \b
     Examples:
@@ -535,7 +550,18 @@ def assign_role_cmd(
         typer.echo(f"Failed to assign role: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(f"Role '{role}' assigned to '{user}'.")
+    from novafabric.server.rbac import NOT_IN_FORCE_EXPLANATION, role_assignments_in_force
+
+    if role_assignments_in_force(db_path=db_path):
+        typer.echo(f"Role '{role}' assigned to '{user}'.")
+        return
+    # H6: the row is written (the ADR-0060 last-admin guard counts it, and it
+    # takes effect the moment the workspace/org model is in use), but it grants
+    # nothing today — never print "assigned" for an assignment with no effect.
+    typer.echo(f"Role '{role}' recorded for '{user}' in role_assignments.")
+    typer.echo(
+        f"warning: this assignment is not in force: {NOT_IN_FORCE_EXPLANATION}", err=True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -720,21 +746,40 @@ def revoke_role_cmd(
         Optional[Path],  # noqa: UP007
         typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
     ] = None,
+    config: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option(
+            "--config",
+            "-c",
+            help=(
+                "Server YAML config (as for `nova server start`; default "
+                "~/.config/novafabric/server.yaml). Its `oidc:` block decides "
+                "whether revoking the last admin row is a lockout."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Revoke a user's role on the NovaFabric server.
 
-    The last admin cannot be removed (lockout invariant enforced).
+    The last admin cannot be removed (lockout invariant enforced) unless the
+    server config has OIDC configured, so JWT-claim admins can still log in
+    (ADR-0060).
 
     Scope: single server.
 
     \b
     Examples:
       nova server revoke-role alice@example.com admin
+      nova server revoke-role alice@example.com admin --config /etc/nova/server.yaml
     """
     try:
+        from novafabric.server.config import load_config
         from novafabric.server.rbac_store import LastAdminError, revoke_role
 
-        deleted = revoke_role(user, role, db_path=db_path)
+        # L15: the guard's OIDC input is the server's own config (YAML oidc:),
+        # never an env var the server does not read.
+        oidc_configured = load_config(config).oidc.enabled
+        deleted = revoke_role(user, role, db_path=db_path, oidc_configured=oidc_configured)
     except LastAdminError as exc:
         typer.echo(f"Refused: {exc}", err=True)
         raise typer.Exit(code=2) from exc

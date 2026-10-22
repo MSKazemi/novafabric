@@ -38,7 +38,7 @@ older version, the supported action is: upgrade to latest.
 | Python | ≥ 3.12 (matches `requires-python` in `pyproject.toml`; guarded by test) |
 | PostgreSQL (server mode) | 16 (the version CI and the nightly scale tier run) |
 | SQLite (local mode) | the version bundled with supported Pythons |
-| OS | Linux x86_64/aarch64 (CI-verified); macOS best-effort |
+| OS | Linux x86_64 (CI-verified); the container image is also built for aarch64 but not tested there; macOS best-effort |
 
 Local mode never requires Postgres or a server.
 

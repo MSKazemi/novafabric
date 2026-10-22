@@ -97,7 +97,8 @@ $ nova export-rocrate-science --capsule <run-id> --out ./crates --orcid 0000-000
 ```
 
 `export-rocrate-science` needs a capsule carrying the science-provenance facet (the
-hypothesis→claim lineage, NF-321). It writes a Workflow Run Crate 0.5 profile over the
+hypothesis→claim lineage, NF-321). It writes a Process Run Crate — or a Workflow Run Crate 0.5 when the receipt declares a
+`workflow_digest` (override with `--profile`) — as `<run-id>.science.rocrate.zip`, over the
 RO-Crate 1.1 carrier `nova export-rocrate` already produces, plus a `<run-id>.fair-binding.json`
 record with the crate's metadata digest. The same capsule always produces the same bytes.
 
@@ -153,7 +154,7 @@ is the honest part.
 | **Available** | Artifact is archived with a DOI | Not its job — use Zenodo/figshare. Capsules are ordinary directories and archive cleanly. |
 | **Functional** | Documented, consistent, complete, exercisable | Strong. A capsule *is* the documented execution, and `nova validate` makes "complete" checkable rather than asserted. |
 | **Reusable** | Others can repurpose it | Helps. The environment lock and registered assets state what a reuser must reproduce. |
-| **Results Reproduced** | An independent party obtains the results | Partial, and this is the honest limit. `mocked` replay reproduces *your recorded run* exactly, which demonstrates the pipeline is deterministic given those responses. It does **not** demonstrate that a fresh call to the live model would produce them again — see below. |
+| **Results Reproduced** | An independent party obtains the results | Partial, and this is the honest limit. `mocked` replay re-runs the pipeline against the recorded model and MCP responses; anything not served from the capsule (other tools, the clock, the filesystem) runs live, so it shows the pipeline is consistent given those responses, not that it is deterministic. It does **not** demonstrate that a fresh call to the live model would produce them again — see below. |
 
 ## What this does not solve
 

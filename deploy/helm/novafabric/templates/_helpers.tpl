@@ -128,13 +128,23 @@ A render-time failure is the only feedback that arrives before the risk does.
 
 The acknowledgement is a fixed awkward string rather than a boolean: the unsafe
 path stays possible but effortful, and `true` is far too easy to set by reflex.
+
+M4 — `mode: dashboard` WITHOUT `serve.insecure` is refused here too. A pod must
+bind beyond loopback for its Service and the kubelet probes to reach it, and
+`nova serve` refuses any non-loopback bind without `--insecure` (exit 2,
+`cli/serve.py:non_loopback_bind_refused`). That pair used to render cleanly and
+then crash-loop; the bind policy is deliberate, so the chart — not the CLI —
+gives way, and it does so before anything is deployed.
 */}}
 {{- define "novafabric.assertSecurePosture" -}}
 {{- $ack := default "" .Values.serve.acknowledgeInsecureExposure -}}
 {{- $expected := "i-accept-serving-evidence-over-plain-http" -}}
+{{- if and (eq .Values.mode "dashboard") (not .Values.serve.insecure) -}}
+{{- fail (printf "\n\nRefusing to render: mode: dashboard with serve.insecure=false would crash-loop.\n\nA pod must bind beyond loopback (--host 0.0.0.0) for its Service and the kubelet's\nprobes to reach it, and `nova serve` refuses any non-loopback bind without --insecure\n(exit 2). That refusal is deliberate (ADR-0230): the dashboard's shared token holds\n`admin` scope (ADR-0228) -- full, irreversible power over signed evidence.\n\nTwo ways to proceed:\n\n  1. RECOMMENDED -- use mode: server (the default; `nova server start`), the multi-user\n     REST API with OIDC/RBAC, which needs no such flag.\n\n  2. Run the dashboard anyway: terminate TLS at the ingress in front of it, and accept\n     the plain-HTTP hop inside the cluster explicitly in your own values file:\n\n       mode: dashboard\n       serve:\n         insecure: true\n         acknowledgeInsecureExposure: %s\n\nSee ADR-0230 and deploy/helm/novafabric/README.md." $expected) -}}
+{{- end -}}
 {{- if .Values.serve.insecure -}}
 {{- if ne $ack $expected -}}
-{{- fail (printf "\n\nRefusing to render: serve.insecure=true exposes the NovaFabric dashboard over plain HTTP,\nguarded only by a shared token that carries `admin` scope (ADR-0228) and therefore full,\nirreversible power over signed evidence -- DELETE /api/runs/{id}, POST /api/compliance/pii/erase,\nPOST /api/seal/{id}/bypass, POST /api/admin/roles.\n\nThis combination matches none of ADR-0042's four named, tested and supported deployment tiers.\n\nTwo ways to proceed:\n\n  1. RECOMMENDED -- terminate TLS at the ingress and leave serve.insecure=false.\n     Or use the default mode: server (`nova server start`), which has OIDC/RBAC.\n\n  2. Accept the exposure explicitly, recording the choice in your own values file:\n\n       serve:\n         insecure: true\n         acknowledgeInsecureExposure: %s\n\nSee ADR-0230 and deploy/helm/novafabric/README.md." $expected) -}}
+{{- fail (printf "\n\nRefusing to render: serve.insecure=true exposes the NovaFabric dashboard over plain HTTP,\nguarded only by a shared token that carries `admin` scope (ADR-0228) and therefore full,\nirreversible power over signed evidence -- DELETE /api/runs/{id}, POST /api/compliance/pii/erase,\nPOST /api/seal/{id}/bypass, POST /api/admin/roles.\n\nThis combination matches none of ADR-0042's four named, tested and supported deployment tiers.\n\nTwo ways to proceed:\n\n  1. RECOMMENDED -- use the default mode: server (`nova server start`), which has\n     OIDC/RBAC. (serve.insecure=false is not an option for mode: dashboard: inside\n     a pod the dashboard cannot start without it.)\n\n  2. Accept the exposure explicitly -- and terminate TLS at the ingress in front of\n     it -- recording the choice in your own values file:\n\n       serve:\n         insecure: true\n         acknowledgeInsecureExposure: %s\n\nSee ADR-0230 and deploy/helm/novafabric/README.md." $expected) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

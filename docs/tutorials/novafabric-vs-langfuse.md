@@ -161,7 +161,7 @@ When a dataset is found to be corrupt or wrong, a blast-radius query tells you
 exactly which runs to re-validate:
 
 ```bash
-nova lineage blast-radius slurm-logs/job-42819-oom@v1
+nova lineage blast-radius local:slurm-logs/job-42819-oom@v1   # asset refs carry their registry prefix
 # → run:01KR9Q2AD…  run:01KRB4F7…  run:01KRC3X9…
 ```
 

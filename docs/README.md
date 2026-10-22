@@ -219,9 +219,10 @@ Not sure where to start? Follow the path that matches your goal.
   the **Evidence Bundle**. Event envelopes, lineage edges, env locks, redaction
   proofs, and attestations all live *inside* those two formats.
 - **Default storage paths.** The CLI `nova capture` writes capsules under
-  `~/.novafabric/capsules/`. The Python `CaptureOrchestrator`, the `nova api-proxy`
-  / `nova mcp-proxy` commands, and `nova serve --capsule-dir` default to a
-  project-local `./.novafabric/runs/`; the framework adapters write the same
+  `~/.novafabric/capsules/`, and `nova serve` browses that same directory
+  (`$NOVAFABRIC_CAPSULE_DIR` / `$NOVAFABRIC_HOME/capsules`) unless `--capsule-dir`
+  is given. The Python `CaptureOrchestrator` and the `nova api-proxy` /
+  `nova mcp-proxy` commands default to a project-local `./.novafabric/runs/`; the framework adapters write the same
   directory, or `$NOVAFABRIC_HOME/runs/` when `NOVAFABRIC_HOME` is set. Both are
   correct in their respective contexts. A capsule path works with every command; since
   v0.105.0 a bare run id is also found in the adapter/SDK directories (see

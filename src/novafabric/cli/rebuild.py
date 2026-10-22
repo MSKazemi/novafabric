@@ -47,7 +47,7 @@ def rebuild_metadata_db(
     backend: Annotated[
         str,
         typer.Option(
-            help="Storage backend: local | s3 | minio | ceph_rgw | azure_blob.",
+            help="Storage backend: local | s3 | minio | ceph_rgw | azure_blob | gcs.",
             envvar="NOVA_OCS_BACKEND",
         ),
     ] = "local",

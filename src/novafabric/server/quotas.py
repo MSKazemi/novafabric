@@ -23,6 +23,11 @@ Second slice of the contract in ``the private design/spec/rate-limiting-quotas-v
 - the derivation query is cached with a short **monotonic TTL**
   (:data:`DEFAULT_CACHE_TTL_SECONDS`) so hot ingest paths don't re-count the
   store on every request (spec: cacheable count with bounded staleness);
+- the recount runs on a **worker thread**, never the event loop, is
+  **single-flight** (requests arriving during a recount use the last value),
+  **excludes the ingest spool** (``.ingest-tmp/``: uploads still in flight are
+  not stored capsules) and is **bounded** by :data:`DEFAULT_MAX_WALK_ENTRIES`
+  -- a truncated walk is a lower bound, logged, never an over-count (M6);
 - audit events (``quota_soft_exceeded`` / ``quota_hard_exceeded``) reuse the
   rate-limit throttle pattern — at most one per kind per
   ``audit_window_seconds`` — and go to the same append-only audit log.
@@ -35,6 +40,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import threading
 import time
 from dataclasses import dataclass
@@ -42,8 +48,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+import anyio.to_thread
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+
+from novafabric.server.ingest import SPOOL_DIR_NAME
 
 if TYPE_CHECKING:
     from novafabric.server.config import QuotaConfig, ServerConfig
@@ -67,6 +76,11 @@ EVENT_HARD = "quota_hard_exceeded"
 #: cost at ingest must be bounded; a cacheable count is acceptable).
 DEFAULT_CACHE_TTL_SECONDS = 5.0
 
+#: Upper bound on directory entries one recount examines (M6). Past it the walk
+#: stops and reports what it saw as a lower bound (``QuotaUsage.truncated``), so
+#: a pathological store cannot pin a worker thread indefinitely.
+DEFAULT_MAX_WALK_ENTRIES = 1_000_000
+
 Outcome = Literal["ok", "warn", "reject"]
 Severity = Literal["soft", "hard"]
 
@@ -83,10 +97,15 @@ _QUOTA_EXCEEDED_MESSAGE = (
 
 @dataclass(frozen=True)
 class QuotaUsage:
-    """Derived storage usage: capsule count + total stored bytes."""
+    """Derived storage usage: capsule count + total stored bytes.
+
+    ``truncated`` (M6, additive): the walk hit its entry budget, so both counts
+    are lower bounds. A lower bound already over a limit is still a violation.
+    """
 
     capsules: int
     total_bytes: int
+    truncated: bool = False
 
 
 UsageProvider = Callable[[], QuotaUsage]
@@ -94,30 +113,72 @@ AuditHook = Callable[[dict[str, Any]], None]
 AlertHook = Callable[["QuotaViolation"], None]
 
 
-def measure_capsule_store(capsule_dir: Path) -> QuotaUsage:
+def measure_capsule_store(
+    capsule_dir: Path, *, max_entries: int = DEFAULT_MAX_WALK_ENTRIES
+) -> QuotaUsage:
     """Derive usage from the existing capsule store (no new ledger).
 
     Capsule count = immediate subdirectories holding a ``capsule.yaml``
     (the same definition the list route uses); total bytes = every file
-    under the store. Unreadable entries are skipped, never fatal.
+    under the store, sized with ``lstat`` (a symlink counts as the link, never
+    its target, and symlinked directories are not followed). The ingest spool
+    (``<capsule_dir>/.ingest-tmp/``) is skipped: it holds uploads still being
+    received, which are not stored capsules (M6). At most *max_entries*
+    directory entries are examined; past that the result is a lower bound with
+    ``truncated=True``. Unreadable entries are skipped, never fatal.
     """
     if not capsule_dir.is_dir():
         return QuotaUsage(capsules=0, total_bytes=0)
     capsules = 0
-    total_bytes = 0
     try:
         for entry in capsule_dir.iterdir():
+            if entry.name == SPOOL_DIR_NAME:
+                continue
             if entry.is_dir() and (entry / "capsule.yaml").exists():
                 capsules += 1
     except OSError:  # pragma: no cover — store vanished mid-scan
         return QuotaUsage(capsules=0, total_bytes=0)
-    for root, _dirs, files in os.walk(capsule_dir):
-        for name in files:
-            try:
-                total_bytes += os.path.getsize(os.path.join(root, name))
-            except OSError:  # pragma: no cover — file vanished mid-scan
-                continue
-    return QuotaUsage(capsules=capsules, total_bytes=total_bytes)
+    total_bytes, truncated = _sum_file_bytes(capsule_dir, max_entries)
+    if truncated:
+        logger.warning(
+            "quota recount stopped after %d entries; usage is a lower bound "
+            "(raise DEFAULT_MAX_WALK_ENTRIES or archive capsules)",
+            max_entries,
+        )
+    return QuotaUsage(capsules=capsules, total_bytes=total_bytes, truncated=truncated)
+
+
+def _sum_file_bytes(capsule_dir: Path, max_entries: int) -> tuple[int, bool]:
+    """Sum ``lstat`` sizes below *capsule_dir*, skipping the top-level spool.
+
+    Iterative (explicit stack, no recursion) and capped at *max_entries*.
+    Returns ``(bytes, truncated)``.
+    """
+    total = 0
+    seen = 0
+    top = str(capsule_dir)
+    stack: list[str] = [top]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    seen += 1
+                    if seen > max_entries:
+                        return total, True
+                    if current == top and entry.name == SPOOL_DIR_NAME:
+                        continue
+                    try:
+                        st = entry.stat(follow_symlinks=False)
+                    except OSError:  # pragma: no cover — vanished mid-scan
+                        continue
+                    if stat.S_ISDIR(st.st_mode):
+                        stack.append(entry.path)
+                    else:
+                        total += st.st_size
+        except OSError:  # pragma: no cover — directory vanished/unreadable
+            continue
+    return total, False
 
 
 def _default_usage_provider() -> QuotaUsage:
@@ -224,6 +285,10 @@ class QuotaChecker:
         # (event, kind) -> (window_start_monotonic, window_start_utc)
         self._audit_windows: dict[tuple[str, str], tuple[float, str]] = {}
         self._lock = threading.Lock()
+        # M6 single-flight: one recount at a time; the provider runs OUTSIDE
+        # the lock so other requests never queue behind a store walk.
+        self._refresh_done = threading.Condition(self._lock)
+        self._refreshing = False
 
     @property
     def enabled(self) -> bool:
@@ -245,18 +310,39 @@ class QuotaChecker:
             self._cached_at = None
 
     def _usage(self) -> QuotaUsage:
+        """Cached usage; at most one recount in flight (stale-while-revalidate).
+
+        Fresh cache => returned. Stale cache while another thread recounts =>
+        the stale value is returned at once (staleness stays bounded by one
+        walk). No value at all => wait for the in-flight recount, or run one.
+        """
         now = self._clock()
-        with self._lock:
-            if (
-                self._cached is not None
-                and self._cached_at is not None
-                and (now - self._cached_at) < self.cache_ttl
-            ):
-                return self._cached
+        with self._refresh_done:
+            while True:
+                cached = self._cached
+                if (
+                    cached is not None
+                    and self._cached_at is not None
+                    and (now - self._cached_at) < self.cache_ttl
+                ):
+                    return cached
+                if not self._refreshing:
+                    self._refreshing = True
+                    break
+                if cached is not None:
+                    return cached
+                self._refresh_done.wait()
+        usage: QuotaUsage | None = None
+        try:
             usage = self._usage_provider()
-            self._cached = usage
-            self._cached_at = now
             return usage
+        finally:
+            with self._refresh_done:
+                if usage is not None:
+                    self._cached = usage
+                    self._cached_at = now
+                self._refreshing = False
+                self._refresh_done.notify_all()
 
     def check(self) -> QuotaDecision:
         """Compare current usage against the limits (``0`` = unlimited).
@@ -654,6 +740,33 @@ async def enforce_storage_quota(request: Request, response: Response) -> None:
     org_checker: OrgQuotaChecker | None = getattr(
         request.app.state, "org_quota_checker", None
     )
+    if checker is None and ws_checker is None and org_checker is None:
+        return
+    # M6: the checks walk the capsule store / query SQLite -- blocking IO that
+    # must never run on the event loop (it would stall every request on this
+    # worker for the length of a full-store walk).
+    decisions = await anyio.to_thread.run_sync(
+        _collect_decisions, request, checker, ws_checker, org_checker
+    )
+    for decision in decisions:
+        if decision.outcome == "reject":
+            hard = decision.hard
+            if hard is not None:
+                raise QuotaExceededError(hard)
+    warning = ", ".join(
+        d.warning_header for d in decisions if d.outcome == "warn"
+    )
+    if warning:
+        response.headers[QUOTA_WARNING_HEADER] = warning
+
+
+def _collect_decisions(
+    request: Request,
+    checker: QuotaChecker | None,
+    ws_checker: WorkspaceQuotaChecker | None,
+    org_checker: OrgQuotaChecker | None,
+) -> list[QuotaDecision]:
+    """Run every installed check (blocking; called on a worker thread)."""
     decisions: list[QuotaDecision] = []
     if checker is not None:
         decisions.append(checker.check())
@@ -671,18 +784,7 @@ async def enforce_storage_quota(request: Request, response: Response) -> None:
             decisions.append(ws_checker.check(attribution.workspace))
         if org_checker is not None:
             decisions.append(org_checker.check(attribution.org))
-    if not decisions:
-        return
-    for decision in decisions:
-        if decision.outcome == "reject":
-            hard = decision.hard
-            if hard is not None:
-                raise QuotaExceededError(hard)
-    warning = ", ".join(
-        d.warning_header for d in decisions if d.outcome == "warn"
-    )
-    if warning:
-        response.headers[QUOTA_WARNING_HEADER] = warning
+    return decisions
 
 
 def install_quota_enforcement(app: FastAPI, config: ServerConfig) -> None:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import enum
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
@@ -88,6 +89,35 @@ def _as_role(value: str) -> Role | None:
 # ---------------------------------------------------------------------------
 # Dependency factory
 # ---------------------------------------------------------------------------
+
+
+#: Operator-facing explanation of when a ``role_assignments`` row is consulted.
+#: Shared by ``nova server assign-role`` and ``GET /v0/admin/roles`` so the two
+#: surfaces never disagree about whether an assignment grants anything (H6).
+NOT_IN_FORCE_EXPLANATION = (
+    "role_assignments rows are consulted only once the workspace/org model is in "
+    "use (at least one scoped membership or service account exists; ADR-0178). "
+    "Until then a principal's roles come from its token alone: carry the role in "
+    "the OIDC 'nova_roles' (or 'roles') claim, or issue an offline token with "
+    "'nova server issue-token --roles ...'."
+)
+
+
+def role_assignments_in_force(*, db_path: Path | None = None) -> bool:
+    """True when ``require_role`` would consult ``role_assignments`` rows today.
+
+    Mirrors the gate in :func:`_scoped_satisfies` exactly — the fallback runs only
+    when ``workspace_store.feature_in_use()``. A store error answers ``False``:
+    the authorization path fails closed on the same error, so "not in force" is
+    the truthful report.
+    """
+    try:
+        from novafabric.server import workspace_store
+
+        return workspace_store.feature_in_use(db_path=db_path)
+    except Exception:  # noqa: BLE001 — a status probe must not crash its caller
+        logger.warning("could not determine whether role assignments are in force")
+        return False
 
 
 def _scoped_satisfies(auth: AuthContext, minimum: Role) -> bool:

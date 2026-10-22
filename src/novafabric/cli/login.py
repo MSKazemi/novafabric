@@ -1,7 +1,12 @@
 """CLI commands: ``nova login`` and ``nova logout``.
 
-ADR-0018: Device Authorization Grant (RFC 8628) for authenticating against a
-running NovaFabric server.
+ADR-0018 names the Device Authorization Grant (RFC 8628) against the IdP as the
+target. **What exists today is only the server's DEMO grant** (M5): ``nova login``
+posts to ``/v0/auth/device/code``, mounted only with
+``NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT`` (off by default), whose HS256 tokens the
+real verifier never accepts. It does not contact an identity provider. A real
+deployment authenticates with an IdP-issued bearer token, an API key, or an
+offline token (``nova server issue-token``).
 
 Credentials are stored in ``~/.config/novafabric/credentials.json`` (mode 0600).
 The file is a JSON object keyed by server URL:
@@ -32,6 +37,16 @@ import typer
 
 _CRED_DIR = Path.home() / ".config" / "novafabric"
 _CRED_FILE = _CRED_DIR / "credentials.json"
+
+_DEVICE_CODE_PATH = "/v0/auth/device/code"
+
+#: How to authenticate against a real server — shared by every message that
+#: tells the user ``nova login`` cannot (M5).
+_REAL_AUTH_HINT = (
+    "For a real server, obtain an access token from your identity provider and send "
+    "it as 'Authorization: Bearer <token>', or use an API key or an offline token "
+    "('nova server issue-token')."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -146,10 +161,13 @@ def login_cmd(
         ),
     ] = "http://localhost:7433",
 ) -> None:
-    """Authenticate with a NovaFabric server via Device Authorization Grant.
+    """Log in through a server's DEMO device grant (local testing only).
 
-    Opens a browser to complete the login flow. Stores an offline token
-    in the local credential store for subsequent CLI requests.
+    Talks only to the server's demo RFC 8628 endpoints, which exist only when
+    the server runs with NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1 (off by
+    default). It does not contact your identity provider, and the server's API
+    does not accept the token it stores. Against a real server, use an
+    IdP-issued bearer token, an API key, or `nova server issue-token`.
 
     Scope: single server.
 
@@ -166,10 +184,24 @@ def login_cmd(
     # Step 1: request device code
     try:
         resp = httpx.post(
-            f"{server_url}/v0/auth/device/code",
+            f"{server_url}{_DEVICE_CODE_PATH}",
             json={"server_url": server_url},
             timeout=15,
         )
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Failed to contact server: {exc}", err=True)
+        raise typer.Exit(code=1)
+    if resp.status_code == 404:
+        # M5: the production default. Say why, instead of a bare "404 Not Found".
+        typer.echo(
+            f"{server_url} does not expose the demo device grant ({_DEVICE_CODE_PATH}). "
+            "`nova login` speaks only to that demo flow, which a server mounts only "
+            "with NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1 (off by default); it does not "
+            f"contact your identity provider. {_REAL_AUTH_HINT}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    try:
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:  # noqa: BLE001
@@ -230,6 +262,11 @@ def login_cmd(
 
     typer.echo(f"Logged in to {server_url} as {poll_data.get('subject', 'unknown')}.")
     typer.echo(f"Credentials stored in {_CRED_FILE}")
+    typer.echo(
+        "warning: this is a demo device-grant token, not accepted by the server's API "
+        f"verifier (requests with it get 401). {_REAL_AUTH_HINT}",
+        err=True,
+    )
 
 
 # ---------------------------------------------------------------------------

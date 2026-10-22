@@ -1,5 +1,6 @@
 # Default values for the novafabric chart.
-# Deploys `nova serve` (dashboard + REST API). See deploy/helm/novafabric/README.md.
+# Deploys `nova server start` (default, `mode: server`) or the `nova serve`
+# dashboard (`mode: dashboard`). See deploy/helm/novafabric/README.md.
 
 image:
   repository: ghcr.io/mskazemi/novafabric
@@ -54,6 +55,11 @@ securityContext:
 # combination matched none of ADR-0042's four named, tested and supported
 # deployment tiers — it was an unsupported configuration, not merely a risky
 # one. To keep it, set `mode: dashboard` and the acknowledgement below.
+#
+# `mode: dashboard` REQUIRES `serve.insecure: true` + the acknowledgement: a pod
+# binds 0.0.0.0 and `nova serve` refuses a non-loopback bind without
+# `--insecure` (exit 2). Without them `helm template` refuses to render rather
+# than produce a pod that crash-loops.
 mode: server
 
 # Alembic revision the migration initContainer upgrades to. Default "head":
@@ -81,8 +87,9 @@ serve:
   # Extra args appended verbatim to the `nova serve` command, e.g. ["--no-browser"].
   extraArgs: []
 
-# server-mode settings (mode: server). OIDC is configured via env
-# (NOVAFABRIC_SERVER_* — see extraEnv / secret); without it the server runs in
+# server-mode settings (mode: server). OIDC is configured only through the
+# `oidc:` block of a server.yaml mounted at ~/.config/novafabric/server.yaml of
+# the container user — there are no OIDC env vars; without it the server runs in
 # local-token mode (auth still ON). Do not disable auth here.
 server:
   port: 7433

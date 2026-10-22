@@ -119,8 +119,8 @@ Details: [Run Capsule anatomy](run-capsule.md).
 
 `capture/finalize.py:seal_capsule` runs as the last step of capture (`nova
 capture`, a framework adapter, the `@agent` decorator or OTLP trace ingest), but
-only if a NovaSeal configuration exists (`NOVAFABRIC_SEAL_CONFIG` or
-`~/.novafabric/novaseal.yaml`). Without one, sealing is skipped. A sealing
+only if a NovaSeal configuration exists (`NOVAFABRIC_SEAL_CONFIG`, else
+`$NOVAFABRIC_HOME/novaseal.yaml`, default `~/.novafabric/novaseal.yaml`). Without one, sealing is skipped. A sealing
 failure prints a warning and never fails the capture. A seal produces three
 files in `.seal/`:
 

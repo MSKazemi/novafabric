@@ -273,7 +273,7 @@ Status: **experimental**.
 | [`nova server list-scim-events`](#nova-server-list-scim-events-experimental-adr-0139-d5) | Read-only SCIM provisioning audit trail (experimental) |
 | [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke, rotate (experimental) |
 | [`nova server usage`](#nova-server-usage-reconcile-experimental-adr-0208) | Usage-ledger drift reconciliation and chargeback CSV/NDJSON export (experimental) |
-| [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
+| [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Log in through a server's demo device grant (testing only) / remove stored credentials |
 | [`nova doctor`](#nova-doctor---check-extras---check-storage---check-scheduler---check-tokens) | Installation, storage, scheduler/env-var, and token-at-rest diagnostics |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
 | [`nova migrate-format`](#nova-migrate-format-experimental-adr-0165-nf-332) | Record a format-migration hop in a preservation facet; verify the chain offline (experimental) |
@@ -2962,14 +2962,14 @@ completes in minutes regardless of chain length (AC-1, BQ-013).
 
 ```
 nova rebuild-metadata-db [--prefix TEXT] [--target-db PATH]
-    [--backend local|s3|minio|ceph_rgw|azure_blob] [--data-dir PATH]
+    [--backend local|s3|minio|ceph_rgw|azure_blob|gcs] [--data-dir PATH]
 ```
 
 | Flag | Default | Env var | Description |
 |---|---|---|---|
 | `--prefix` | `""` (all tenants) | — | Tenant or `tenant/run_id` prefix to scan |
 | `--target-db` | `nova-metadata-rebuild.db` | — | Path to the output SQLite database |
-| `--backend` | `local` | `NOVA_OCS_BACKEND` | Storage backend: `local`, `s3`, `minio`, `ceph_rgw`, `azure_blob` |
+| `--backend` | `local` | `NOVA_OCS_BACKEND` | Storage backend: `local`, `s3`, `minio`, `ceph_rgw`, `azure_blob`, `gcs` (`worm-gcs` extra) |
 | `--data-dir` | _(optional)_ | — | Local backend: path to the object store root directory |
 
 ```bash
@@ -7382,8 +7382,15 @@ Options:
 
 ### nova server assign-role \<user\> \<role\>
 
-Assign a local role to a user. Writes to the `role_assignments` table on the
+Record a local role for a user. Writes to the `role_assignments` table on the
 active backend. Per [ADR-0018](./decisions.md).
+
+⚠ A row is consulted only once the workspace/org model is in use (at least one
+scoped membership or service account, ADR-0178). Until then it grants nothing,
+and the command prints `Role '<role>' recorded for '<user>'` plus a
+`warning: this assignment is not in force` on stderr (exit 0) instead of
+`assigned to`. Grant a role in a stock deployment through the token itself (OIDC
+`nova_roles`/`roles` claim, or `nova server issue-token --roles`).
 
 ```bash
 nova server assign-role user@example.com writer
@@ -7413,8 +7420,11 @@ curl -X POST http://localhost:7433/v0/admin/roles \
 
 Revoke a role from a user. Per [ADR-0060](./decisions.md);
 enforces the **last-admin lockout invariant** at the store layer — if revoking
-would leave `role_assignments` with no `admin` row AND no `NOVA_OIDC_ISSUER`
-configured, the command refuses with exit code 2.
+would leave `role_assignments` with no `admin` row AND the server config has no
+OIDC (`oidc.issuer_url` + `oidc.audience` in the YAML read via `--config`, default
+`~/.config/novafabric/server.yaml`), the command refuses with exit code 2. With
+OIDC configured, JWT-claim admins can still log in, so the revoke is allowed. (The
+guard used to key on a `NOVA_OIDC_ISSUER` env var that the server never reads.)
 
 ```bash
 nova server revoke-role user@example.com writer
@@ -7427,6 +7437,8 @@ Arguments:
 
 Options:
 - `--db-path PATH` — SQLite database path (overrides default)
+- `--config PATH` / `-c` — server YAML config whose `oidc:` block decides the
+  lockout guard (default `~/.config/novafabric/server.yaml`)
 
 Exit codes:
 - `0` — success (role revoked)
@@ -7709,18 +7721,23 @@ Exit codes:
 
 ### nova login
 
-Authenticate with a NovaFabric server via Device Authorization Grant (RFC 8628,
-[ADR-0018](./decisions.md)). Credentials are stored in
-`~/.config/novafabric/credentials.json` at mode `0600`.
+**Experimental — demo device grant only.** Logs in through the server's *demo*
+Device Authorization Grant endpoints (`/v0/auth/device/code`), which a server
+mounts only with `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1` (off by default).
+It does **not** contact your identity provider, and the server's API does not
+accept the HS256 token it stores (requests with it get 401). RFC 8628 against
+the IdP ([ADR-0018](./decisions.md)) is **planned**, not implemented.
+Credentials are stored in `~/.config/novafabric/credentials.json` at mode `0600`.
 
 ```bash
-nova login
-nova login --server http://nova.example.com:7433
+nova login --server http://localhost:7433   # a server started with the demo grant on
 ```
 
-The CLI prints a URL and user code. After the user approves in the browser,
-the access token is stored and used automatically on subsequent commands.
-Tokens are auto-refreshed; re-run `nova login` when the refresh token expires.
+Against a server without the demo grant (the production default) the command
+exits 1 and says so, instead of printing a bare `404 Not Found`. After a demo
+login it prints a `warning:` on stderr that the token is not accepted. For a
+real server, send an IdP-issued token as `Authorization: Bearer <token>`, or use
+an API key or an offline token (`nova server issue-token`).
 
 Options:
 - `--server TEXT` — server URL (default: `http://localhost:7433`)
@@ -7787,7 +7804,7 @@ Options:
 - `--profile TEXT` — backup profile: `local` (SQLite deployment), `pg` (adds a `pg_dump --format=custom` member), or `manifest` (chain heads + checkpoints against a WORM object store, no blobs). Default: `local`
 - `--dsn TEXT` — Postgres DSN for `--profile pg` (default: `NOVA_DSN` or `NOVAFABRIC_POSTGRES_DSN`). Never logged; the manifest stores only the redacted host/dbname
 - `--include-keys` — ALSO pack the signing keyring and `novaseal.yaml` + its key/cert PEMs (ADR-0216 D4). Default off; a set created with this flag requires key-custody care
-- `--backend TEXT` — object-store backend for `--profile manifest`: `local | s3 | minio | ceph_rgw | azure_blob` (env: `NOVA_OCS_BACKEND`)
+- `--backend TEXT` — object-store backend for `--profile manifest`: `local | s3 | minio | ceph_rgw | azure_blob | gcs` (env: `NOVA_OCS_BACKEND`)
 - `--tenant TEXT` — scope the manifest listing to these tenant(s) (repeatable)
 - `--allow-pending-wal` — proceed with `--profile manifest` even when the local WAL has pending un-chained uploads (the gap is recorded in the listing); default: refuse
 - `--deep` — `--profile manifest`: fully verify every chain at create time, not just pin the heads
@@ -8054,15 +8071,12 @@ failed).
 | `NOVAFABRIC_INFERENCE_DETERMINISTIC` | — | Inference-determinism contract: `1`/`true`/`yes`/`on` if the engine ran in a documented deterministic mode. |
 | `NOVAFABRIC_POSTGRES_DSN` | — | Postgres DSN for `nova doctor --check-storage` and `nova migrate-to-postgres` |
 | `NOVA_DSN` | — | Postgres DSN for `nova server start` (ADR-0029 resolution order) |
-| `NOVA_BACKEND` | `sqlite` | Storage backend for `nova server start` |
-| `NOVA_SERVER_CONFIG` | — | Absolute path to `nova-server.yaml` (overrides default search paths) |
 | `NOVAFABRIC_SERVER_HOST` | `127.0.0.1` | Bind address for `nova server start`. |
 | `NOVAFABRIC_SERVER_PORT` | `8000` | TCP port for `nova server start`. |
 | `NOVAFABRIC_SERVER_BACKEND` | `sqlite` | Storage backend for `nova server start`: `sqlite` or `postgres`. |
 | `NOVAFABRIC_SERVER_DB_PATH` | `$NOVAFABRIC_HOME/registry.db` | SQLite DB path for `nova server start` when `NOVAFABRIC_SERVER_BACKEND=sqlite`. |
-| `NOVA_OIDC_ENABLED` | `false` | Enable OIDC authentication on the server |
-| `NOVA_OIDC_ISSUER_URL` | — | OIDC issuer URL (e.g. `https://keycloak.example.com/realms/nova`) |
-| `NOVA_OIDC_CLIENT_ID` | — | OIDC client ID registered at the provider |
+| *(OIDC)* | — | There are **no OIDC environment variables**: configure `oidc.issuer_url` and `oidc.audience` in the server YAML (`--config`). |
+| `NOVA_OIDC_ISSUER`, `NOVA_OIDC_CLIENT_ID` | — | **Not OIDC configuration.** Read only to set the display-only `server_mode` field of `GET /v0/admin/roles` / `GET /api/admin/roles`. They neither enable OIDC nor (since L15) relax the last-admin guard. |
 | `NOVAFABRIC_OFFLINE_KEY_PATH` | `~/.novafabric/keys/offline-key.pem` | Path to the ed25519 private key for offline tokens |
 | `NOVA_ADMIN_TOKEN` | — | Bearer token with admin role, used by `nova server flush-jwks-cache` |
 | `NOVAFABRIC_CLUSTER_ID` | — | Cluster identifier for collector and HPC hub binaries |
@@ -9321,7 +9335,13 @@ nova storage validate --endpoint http://minio:9000 --bucket nova-capsules
 NOVA_S3_ENDPOINT_URL=http://minio:9000 nova storage validate
 ```
 
-Exits 0 on success, 1 if Object Lock is absent or disabled.
+Exits 0 only when the bucket's **default retention** mode
+(`ObjectLockConfiguration.Rule.DefaultRetention.Mode`) is `COMPLIANCE`, and
+prints `object_lock: COMPLIANCE` with the retention period. Exits 1 — naming the
+mode it found — if Object Lock is absent or disabled, if the default retention is
+`GOVERNANCE` (bypassable with `s3:BypassGovernanceRetention`), or if Object Lock
+is enabled with no default retention rule (`object_lock: none`). Before this fix
+any bucket with Object Lock enabled was reported as `COMPLIANCE`.
 
 ### nova erasure request — NOT IMPLEMENTED
 

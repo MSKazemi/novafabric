@@ -2692,6 +2692,7 @@ def create_app(
         unsealed and is reported in ``finalization_error`` (still a 200: the data
         was written).
         """
+        from novafabric.otel import genai_ingest  # noqa: PLC0415
         from novafabric.otel.genai_ingest import (  # noqa: PLC0415
             CAPTURE_LEVEL,
             OTLPIngestError,
@@ -2699,16 +2700,19 @@ def create_app(
             ingest_otlp_protobuf,
             write_ingest_capsule_finalized,
         )
+        from novafabric.serve.body_limits import read_body_capped  # noqa: PLC0415
 
+        # Same 16 MiB bound as /api/otlp/v1/logs; read bounded, 413 past it.
+        body = await read_body_capped(request, genai_ingest.MAX_OTLP_TRACES_BYTES)
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         try:
             if content_type == "application/x-protobuf":
-                result = ingest_otlp_protobuf(await request.body())
+                result = ingest_otlp_protobuf(body)
             else:
-                result = ingest_otlp_json(await request.json())
+                result = ingest_otlp_json(json.loads(body))
         except OTLPIngestError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=400, detail=f"invalid JSON body: {exc}") from exc
 
         if result.genai_spans == 0:
@@ -4309,7 +4313,9 @@ def create_app(
 
         prior_roles = sorted(rbac_store.get_roles(subject))
         try:
-            deleted = rbac_store.revoke_role(subject, role)
+            # L15: `nova serve` has no OIDC, so the ADR-0060 guard always applies
+            # here (a stray NOVA_OIDC_ISSUER env var used to switch it off).
+            deleted = rbac_store.revoke_role(subject, role, oidc_configured=False)
         except LastAdminError as e:
             audit.append(
                 action="revoke_role",

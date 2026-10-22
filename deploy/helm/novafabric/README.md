@@ -1,12 +1,12 @@
 # NovaFabric Helm chart
 
 Deploys NovaFabric backed by a Postgres metadata store, in one of two modes:
-`nova server start` — the multi-user REST API (default) — or `nova serve`, the
-multi-user OIDC/RBAC REST API (`mode: server`, see below).
+`nova server start` — the multi-user OIDC/RBAC REST API (`mode: server`, the
+default since v0.102.0) — or `nova serve`, the experimental dashboard
+(`mode: dashboard`, see below).
 
-> Status: **experimental.** The default `nova serve` dashboard is the
-> experimental Layer-A view; harden the access model (TLS, auth) before exposing
-> it publicly. Server mode (`mode: server`) runs the authenticated REST API.
+> Status: **experimental.** Server mode runs the authenticated REST API; harden
+> the access model (TLS at the ingress, OIDC) before exposing it publicly.
 
 ## Install
 
@@ -22,11 +22,13 @@ From a checkout of the repo:
 helm install nova deploy/helm/novafabric
 ```
 
-Then port-forward and open the dashboard:
+Then port-forward and call the API. In a container the local bearer token is
+not printed to the logs (only a fingerprint); read it from the pod:
 
 ```bash
 kubectl port-forward svc/nova-novafabric 4321:4321
-# open http://localhost:4321/dashboard  (token printed in `kubectl logs`)
+TOKEN=$(kubectl exec deploy/nova-novafabric -- sh -c 'cat "$NOVAFABRIC_HOME/.server-token"')
+curl -H "Authorization: Bearer $TOKEN" http://localhost:4321/v0/version
 ```
 
 ## Production: external Postgres
@@ -50,9 +52,15 @@ By default the chart runs `nova server start` — the multi-user REST API with
 OIDC/RBAC (ADR-0230). `mode: dashboard` runs `nova serve` instead; that dashboard
 is **not** read-only and has not been since v0.8 — it exposes irreversible
 operations including `DELETE /api/runs/{id}` and `POST /api/compliance/pii/erase`.
-Set `mode: server` to run `nova server start` instead: the multi-user REST API
-with OIDC/RBAC over Postgres. Auth is on by default (configure OIDC via env, or
-a local token is generated); probes use `/readyz` and `/livez`.
+A dashboard pod must bind `0.0.0.0` for its Service and probes to reach it, and
+`nova serve` deliberately refuses a non-loopback bind without `--insecure`
+(exit 2). So `mode: dashboard` needs `serve.insecure: true` plus
+`serve.acknowledgeInsecureExposure: i-accept-serving-evidence-over-plain-http`
+(and TLS terminated at the ingress); without them **`helm template` refuses to
+render** instead of producing a pod that would crash-loop. In server mode auth is on by default:
+configure OIDC with an `oidc:` block in a mounted `server.yaml` (there are no
+OIDC environment variables), or a local token is generated; probes use `/readyz`
+and `/livez`.
 
 ```bash
 helm install nova deploy/helm/novafabric \
@@ -73,10 +81,10 @@ processes). Provide OIDC settings through `extraEnv`.
 |---|---|---|
 | `image.repository` | `ghcr.io/mskazemi/novafabric` | Container image |
 | `image.tag` | `""` (chart appVersion) | Image tag |
-| `mode` | `dashboard` | `dashboard` (`nova serve`) or `server` (`nova server start`) |
+| `mode` | `server` | `server` (`nova server start`) or `dashboard` (`nova serve`) |
 | `dbRevision` | `head` | Alembic revision the init container migrates to |
 | `serve.port` | `4321` | Dashboard/API port (dashboard mode) |
-| `serve.insecure` | `true` | Serve over HTTP with a printed token; front with TLS |
+| `serve.insecure` | `false` | Serve over HTTP with a shared token; requires `serve.acknowledgeInsecureExposure` |
 | `serve.topology` / `serve.tv5` | `true` | Enable topology view / TV5 |
 | `server.port` | `7433` | REST API port (server mode) |
 | `server.workers` | `1` | uvicorn workers (server mode; `>1` needs Postgres) |

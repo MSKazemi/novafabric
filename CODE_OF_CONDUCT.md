@@ -35,6 +35,9 @@ Community leaders are responsible for clarifying and enforcing our standards of
 acceptable behavior and will take appropriate and fair corrective action in response
 to any behavior that they deem inappropriate, threatening, offensive, or harmful.
 
+Report incidents privately to [hello@novafabric.ai](mailto:hello@novafabric.ai). Reports are
+handled confidentially, and the initial response comes within 72 hours.
+
 ## Attribution
 
 This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 2.1.

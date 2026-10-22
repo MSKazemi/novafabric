@@ -22,7 +22,8 @@ An RFC is **required** for any change that:
 - Adds, removes, or non-additively changes a public schema (Run Capsule, Run
   Capsule subtypes, Evidence Bundle, Asset Spec)
 - Adds, removes, or changes the behavior of a CLI command or a default flag
-- Introduces a new runtime dependency
+- Introduces a new **Tier B** runtime dependency (a Tier A dependency needs only a PR with a
+  one-line license note; Tier C needs an ADR — see [CONTRIBUTING](../../CONTRIBUTING.md))
 - Changes a storage format or backend
 - Affects the security posture or the supply-chain trust model
 - Changes governance, maintainer criteria, or this process itself

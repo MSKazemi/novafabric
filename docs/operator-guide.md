@@ -1342,7 +1342,9 @@ ADR-0018/ADR-0058 roles (`reader,writer,admin,auditor,promoter,approver`), and
 `clock_skew_seconds > 300` are rejected at load time. Unmapped attribute values
 fail closed to `default_roles` (default `[]`) — never to `admin`. If
 `attribute_role_map` is absent, roles come from the existing local
-role-assignment table (`nova server assign-role`), same as the OIDC fallback.
+role-assignment table (`nova server assign-role`), same as the OIDC fallback —
+which is consulted only once the workspace/org model is in use (ADR-0178);
+`assign-role` warns when a row is not in force.
 
 ### Registering NovaFabric with the IdP
 
@@ -1578,7 +1580,11 @@ the Compose healthcheck probes.
 | `NOVA_DB_REVISION` | `head` | Alembic revision to upgrade to. The server refuses to start when stamped behind head, so pinning below head breaks a server-mode deploy |
 
 The Helm chart exposes the same switch as `mode: dashboard | server` with
-`server.workers` (see `deploy/helm/novafabric/values.yaml`).
+`server.workers` (see `deploy/helm/novafabric/values.yaml`). Unlike the Compose
+entrypoint, the chart never adds `--insecure` on its own: `mode: dashboard`
+renders only with `serve.insecure: true` plus
+`serve.acknowledgeInsecureExposure` (ADR-0230), and `helm template` refuses
+otherwise rather than produce a pod that `nova serve` would refuse to start.
 
 ---
 

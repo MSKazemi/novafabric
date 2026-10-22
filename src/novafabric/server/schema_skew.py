@@ -195,8 +195,10 @@ def empty_backend_message(backend: str) -> str:
         "no tables — its migration has not run. The capsule store would still "
         "accept uploads and return 201 while writing no metadata at all, so the "
         "server refuses rather than report success it cannot deliver. "
-        "Run `nova db upgrade --backend postgres` (see `nova doctor "
-        "--check-storage`). "
+        # L2: name the track the guard checks. A bare `nova db upgrade` defaults
+        # to --track metadata, which migrates a different schema.
+        f"Run `nova db upgrade --track registry --backend {backend}` (see "
+        "`nova doctor --check-storage`). "
         f"Override: {ALLOW_SCHEMA_SKEW_ENV}=1."
     )
 

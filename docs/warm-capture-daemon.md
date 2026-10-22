@@ -97,9 +97,11 @@ nova capture python agent.py          # delegates to the daemon if one is runnin
 nova capture --no-daemon python agent.py   # always in-process
 ```
 
-A **plain** capture delegates; any capture that uses `--runner`,
-`--runner-option`, `--timeout`, `--asset`, `--mark-provenance`, or `--output-dir`
-runs **in-process** so those flags are honored (the thin client only forwards
+A **plain** capture delegates; a capture that passes **any** option beyond the
+command (`--runner`, `--timeout`, `--asset`, `--require-asset-status`,
+`--environment`, `--experiment`/`--variant*`, `--session*`, `--fast-emit`,
+`--emit-spool`, `--emit-otel-genai`, `--capture-media`, `--pipeline`,
+`--mark-provenance`, `--output-dir`, …) runs **in-process** so those flags are honored (the thin client only forwards
 argv/cwd/env). Note that invoking `nova capture` already pays its own import, so
 the full cold-start win comes from invoking `novacap` directly.
 
@@ -137,14 +139,16 @@ never imported by capture:
 | `import openai` (one SDK, used) | ~2223 ms | ~1509 ms | **−32 %** |
 
 The saving scales inversely with how many SDKs the workload uses; fidelity is
-unchanged. `--fast-emit` and the daemon are complementary — `--fast-emit` runs
-in-process (it is not delegated to the daemon), but a daemon-run orchestrator
-with `fast_emit=True` gets both wins. See [§3](#3-using-it) below for usage.
+unchanged. `--fast-emit` and the daemon cannot currently be combined: `--fast-emit`
+forces an in-process run, and the daemon worker does not enable fast-emit. See [§3](#3-using-it) below for usage.
 
 ## 5. Safety and security
 
-- **Never blocks the workload.** Socket missing, unreachable, version-mismatched,
-  or at the concurrency cap → the client falls back to a direct in-process run. A
+- **Falls back when the daemon is absent.** Socket missing or unreachable → the
+  client falls back to a direct in-process run. ⚠ **Known gap:** when the daemon
+  *is* reachable but refuses the run (at its concurrency cap, or on a daemon-side
+  error), `novacap` currently exits 1 **without running the workload** — a fix to
+  fall back instead is tracked. There is no protocol-version check. A
   daemon crash does not kill in-flight runs (they are independent processes); only
   *new* runs fall back.
 - **Cancellation, no orphans.** Each run is its own process group. Ctrl-C on

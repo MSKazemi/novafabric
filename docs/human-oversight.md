@@ -16,7 +16,7 @@ human-agent conversation ([ADR-0150](./decisions.md)).
 | Decision-context receipt (`facets.conversation.decision_context`) | NF-182 | **experimental** — library + `nova hitl context show` / `verify` |
 | Human-override record (`facets.conversation.override`) | NF-187 | **experimental** — library + `nova hitl override list` |
 | Agent rationale surfaced to the human (`facets.conversation.rationale`) | NF-188 | **experimental** — library + `nova hitl rationale show` |
-| Consent receipt, ISO/IEC TS 27560-shaped (`facets.conversation.consent`) | NF-183 | **experimental** — library + `nova consent record` / `show` / `verify` |
+| Consent receipt, ISO/IEC TS 27560-shaped (`facets.conversation.consent`) | NF-183 | **experimental** — library + `nova consent record` / `withdraw` / `show` / `verify` / `attest` / `verify-attestation` |
 | Accountability handoff receipt (`facets.conversation.handoff`) | NF-189 | **experimental** — library + `nova hitl handoff list` (offline signature check) |
 | Acted-on-behalf binding to an NF-084 delegation hop (`facets.conversation.acted_on_behalf`) | NF-186 | **experimental** — library + `nova hitl acted-as` (by reference; NF-084 state surfaced, never re-derived) |
 | Feedback labels | NF-184 | **future design** |
@@ -24,7 +24,8 @@ human-agent conversation ([ADR-0150](./decisions.md)).
 | Linking a receipt to an NF-086 approval record | NF-182 | **planned** — the `nf086_approval_ref` field is carried as an opaque digest; NF-086 itself is not built |
 
 Nothing captures these records automatically yet: your review UI or agent harness calls the library
-to record them (`nova consent record` is the one CLI writer).
+to record them (`nova consent record` and `nova consent withdraw` are the CLI writers; `nova consent attest`
+writes a separate signed in-toto envelope and never modifies the capsule).
 
 ## The boundary — record-only
 
@@ -104,8 +105,10 @@ nova consent record --capsule <dir|run-id> --subject human:fp:9f2c4a1b7e0d5638 \
 nova consent verify --capsule <dir|run-id>      # 0 intact · 1 defective · 2 nothing to check
 ```
 
-`consent record` rewrites `capsule.yaml` atomically, which changes the capsule Merkle root: re-issue
-any seal or signature made over the capsule before it.
+`consent record` (and `withdraw`) rewrite `capsule.yaml` atomically, which changes the capsule
+Merkle root. On a NovaSeal-sealed capsule (`.seal/` present) they **refuse** unless you pass
+`--force-unseal`; forcing breaks the existing seal, which you must then re-issue, together with
+any other signature made over the capsule.
 
 **Handoff receipt (NF-189).** Records that responsibility for a `scope` (short codes) passed from
 `from_party` to `to_party` at a turn. The two parties must differ, compared after Unicode
@@ -135,7 +138,7 @@ re-verified".
   a key move, not a format change.
 - "Re-performable" means the root re-derives from the stored digests. Re-checking that a digest
   matches what was actually on screen needs the rendered content, which NovaFabric does not keep.
-- Only consent has a CLI writer; the other records are written by the library.
+- Only consent has CLI writers (`record`, `withdraw`); the other records are written by the library.
 - A handoff signature proves which key signed the record. It binds that key to a party only when
   the party's ref is a key fingerprint; for a DID or SPIFFE ref the binding is reported `unbound`.
   A `sha256:` sig is a reference and is not verified here.

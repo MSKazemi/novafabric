@@ -67,7 +67,7 @@ headers too, so well-behaved clients can pace themselves before hitting 429.
 
 ### Enabling and tuning
 
-In `nova-server.yaml`:
+In `~/.config/novafabric/server.yaml` (or the `--config` file), as a **top-level** `rate_limits:` block:
 
 ```yaml
 rate_limits:
@@ -124,9 +124,13 @@ ingest only (the capsule write routes):
   `quota_hard_exceeded`.
 
 Usage is **derived from the existing capsule store** (directories holding a
-`capsule.yaml`, plus every file's size) — no new ledger to reconcile — and
-cached with a short monotonic TTL (5 s) so hot ingest paths don't re-count
-the store per request. Quota audit events carry no key hash: this global
+`capsule.yaml`, plus every file's `lstat` size; the ingest spool
+`.ingest-tmp/` is excluded, so in-flight uploads never count) — no new ledger
+to reconcile — and cached with a short monotonic TTL (5 s) so hot ingest paths
+don't re-count the store per request. The recount runs on a worker thread, one
+at a time (requests arriving mid-recount use the previous value), and examines
+at most 1 000 000 entries, past which it enforces against a logged lower bound.
+Quota audit events carry no key hash: this global
 track is **per-deployment**; per-workspace budgets are a separate additive
 track (ADR-0208, §3 below, **experimental**) that reads metered counters
 instead of the store walk.

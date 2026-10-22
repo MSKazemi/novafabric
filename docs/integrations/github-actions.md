@@ -71,7 +71,7 @@ Every row matches `action.yml` exactly.
 |---|---|---|---|
 | `run` | **yes** | — | The command to capture. Runs under `nova capture`. |
 | `environment` | no | `test` | Deployment environment recorded on the capsule (ADR-0126). See the note below — the default is deliberate. |
-| `timeout` | no | `""` | Wall-clock deadline in seconds. Empty means no NovaFabric-imposed limit. |
+| `timeout` | no | `""` | Wall-clock deadline in seconds. Empty uses `nova capture`'s default deadline of 600 s. |
 | `validate` | no | `true` | Run `nova validate` and fail the step if the capsule is invalid. |
 | `upload-artifact` | no | `true` | Upload the capsule as a workflow artifact. |
 | `artifact-name` | no | `novafabric-capsule` | Name for the uploaded artifact. |
@@ -138,7 +138,9 @@ capsule with `status: failure` for a command that crashed. So the action:
 
 1. runs your command and records its exit code without aborting;
 2. locates the capsule **regardless** of that exit code;
-3. validates it, uploads it, writes the job summary;
+3. validates it, uploads it, writes the job summary — ⚠ if `nova validate` rejects
+   the capsule, that step fails and the upload is skipped, so no artifact is produced
+   (set `validate: false` to always upload; a fix is tracked);
 4. and only then, as its **last** step, re-raises your command's exit code.
 
 The ordering is load-bearing. A composite action abandons its remaining steps

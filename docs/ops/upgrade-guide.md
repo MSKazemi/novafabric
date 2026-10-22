@@ -88,6 +88,7 @@ strictly: back up → migrate schema → roll the one writer.
 
 ```bash
 # 1. Back up (pg_dump; see backup-restore.md §1.2)
+export NOVAFABRIC_POSTGRES_DSN="$NOVA_DSN"   # what nova db upgrade / nova server read
 pg_dump --format=custom --dbname="$NOVA_DSN" --file=pre-upgrade.dump
 
 # 2. Upgrade the package on the server host
@@ -154,7 +155,24 @@ backends:
 - **ahead/foreign** (old code, newer schema) → refuses with `E-SKEW-AHEAD`:
   upgrade the `novafabric` package; do **not** downgrade the schema.
 - **unstamped** (bootstrapped by `init_schema()`, no Alembic stamp — every
-  pre-ADR-0211 deployment) → starts with a structured warning.
+  pre-ADR-0211 deployment) → starts with a structured warning — except an
+  unstamped **Postgres** database with no application tables at all, which
+  refuses to start with `E-SKEW-EMPTY` (same `NOVAFABRIC_ALLOW_SCHEMA_SKEW`
+  override); its fix is `nova db upgrade --track registry --backend postgres`
+  (a bare `nova db upgrade --backend postgres` migrates the MetadataStore track,
+  not the database the guard checks). `nova db upgrade --revision <id>` stops at
+  a given revision when you must hold a gated migration back.
+
+⚠ **Known defect — container/Helm server mode.** The Docker entrypoint and the
+Helm init container run `nova db upgrade --backend postgres` (MetadataStore
+track) against the same Postgres database the server's guard reads, and both
+Alembic tracks keep their stamp in the same `alembic_version` table. The
+database is therefore stamped with a MetadataStore revision (`v005`) that the
+registry track does not know, and `nova server start` can refuse with
+`E-SKEW-AHEAD` — whose "upgrade the package" advice does not apply here.
+Running `--track registry` afterwards does not help (Alembic cannot locate
+`v005` in the registry tree). A fix needs a distinct version table per track
+(tracked; pinned by `tests/server/test_schema_skew_track_names.py`).
 - **unknown** (head unresolvable / DB unreadable) → starts with a warning —
   never a fake `ok`, never a refusal based on ignorance.
 

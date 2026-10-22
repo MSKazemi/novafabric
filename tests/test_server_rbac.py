@@ -421,7 +421,7 @@ class TestAdminRolesRBAC:
         assert body["subject"] == "bob@example.com"
         assert body["role"] == "writer"
 
-    def test_revoke_last_admin_returns_409(
+    def test_revoke_last_admin_row_is_allowed_on_an_oidc_server(
         self,
         oidc_client: TestClient,
         rsa_key: Any,
@@ -429,8 +429,12 @@ class TestAdminRolesRBAC:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Ensure the lockout invariant fires: clear NOVA_OIDC_ISSUER so the
-        # rbac_store guard considers this a no-OIDC environment.
+        # L15 / ADR-0060: the lockout guard refuses only when no admin row
+        # remains AND the server has no OIDC. This server HAS OIDC (YAML
+        # config), so JWT-claim admins can still log in and the revoke is not a
+        # lockout. This test used to expect 409 by unsetting NOVA_OIDC_ISSUER —
+        # an env var the server never reads. The 409 path is pinned on a
+        # non-OIDC server in tests/server/test_last_admin_guard_reads_server_config.py.
         monkeypatch.delenv("NOVA_OIDC_ISSUER", raising=False)
         monkeypatch.setenv(
             "NOVAFABRIC_DASHBOARD_AUDIT_FILE", str(tmp_path / "audit.jsonl")
@@ -450,5 +454,4 @@ class TestAdminRolesRBAC:
                 "/v0/admin/roles/solo@example.com/admin",
                 headers=_hdrs(rsa_key, ["admin"], jwk),
             )
-        assert resp.status_code == 409
-        assert "last admin" in resp.json()["detail"].lower()
+        assert resp.status_code == 200, resp.text

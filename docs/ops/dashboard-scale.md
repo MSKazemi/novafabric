@@ -9,7 +9,7 @@ The dashboard's latency posture is enforced by a seeded benchmark, not by hope:
 `tests/bench/test_dashboard_scale_gate.py` seeds a deterministic **100 000-row
 `runs_cache`** (spread over ~90 days) plus a **100 000-line dashboard audit
 log**, mounts the serve app in-process (TestClient — measures query cost,
-excludes network), and asserts p95 over 30 requests per endpoint.
+excludes network), and asserts p95 over 30 requests per endpoint (10 for the deep-cursor page).
 
 ## Thresholds (p95, 100K rows, in-process)
 

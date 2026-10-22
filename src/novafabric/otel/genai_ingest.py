@@ -89,6 +89,11 @@ if TYPE_CHECKING:
 #: capture-level label recorded on every ingested capsule (ADR-0021 §4).
 CAPTURE_LEVEL = "ingested-otlp"
 
+#: Largest ``POST /api/otlp/v1/traces`` body accepted (bytes) -- the same bound
+#: the logs route applies (``logs_ingest.MAX_REQUEST_BYTES``, ADR-0293). Over it
+#: the route answers 413 before buffering the rest of the body.
+MAX_OTLP_TRACES_BYTES = 16 * 1024 * 1024
+
 
 class OTLPIngestError(ValueError):
     """Raised when a payload is not a decodable OTLP/HTTP JSON trace export."""

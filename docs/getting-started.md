@@ -122,7 +122,7 @@ nova capture python -c "print('hello from nova')"
 You should see:
 
 ```
-✓ Capsule written: .novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
+✓ Capsule written: ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
 ```
 
 The ID in the path is a **ULID** — a time-sortable identifier unique to your run.
@@ -136,7 +136,7 @@ finishes.
 ### What was written
 
 ```
-.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
+~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
   capsule.yaml          ← run manifest: id, status, command, timing
   trace.jsonl           ← execution spans (OpenTelemetry-compatible)
   model-calls.jsonl     ← LLM API calls, one record each (OTel GenAI semconv)
@@ -183,8 +183,8 @@ Capsules are written under `~/.novafabric/capsules/` by default. Set
 here instead.
 
 `env.lock` records the Python version, up to 200 installed packages, safe
-environment variables (secrets excluded), OS / arch / CPU / memory, and GPU
-presence — enough to reason about whether a run is reproducible on another
+environment variables (secrets excluded), and OS / arch / CPU / memory (GPU
+detection is not implemented — the `gpu` fields are always empty) — enough to reason about whether a run is reproducible on another
 machine.
 
 ---
@@ -224,18 +224,19 @@ ready-made example. If you have an Anthropic API key:
 export ANTHROPIC_API_KEY=sk-ant-...
 pip install anthropic
 
-nova capture python examples/minimal-agent-run/agent.py
+python examples/minimal-agent-run/agent.py
 ```
 
-The same example also demonstrates the in-process `@agent` decorator (`novafabric.sdk.agent`)
-if you prefer capturing without wrapping in a subprocess — see the
-[User guide: SDK decorator](user-guide.md#sdk-decorator-in-process-capture).
+This example uses the in-process `@agent` decorator (`novafabric.sdk.agent`), which writes
+its **own** capsule to `examples/minimal-agent-run/capsule/` — no `nova capture` wrapper
+needed (see the [User guide: SDK decorator](user-guide.md#sdk-decorator-in-process-capture)).
+If you do wrap it in `nova capture`, the model calls are filed into the decorator's capsule,
+and the wrapper capsule's `model-calls.jsonl` stays empty.
 
 After the run, look at the model-calls record:
 
 ```bash
-RUN=~/.novafabric/capsules/$(ls -t ~/.novafabric/capsules/ | head -1)
-cat $RUN/model-calls.jsonl | python -m json.tool | head -40
+cat examples/minimal-agent-run/capsule/model-calls.jsonl | python -m json.tool | head -40
 ```
 
 You will see one JSON record per LLM call, following the
@@ -336,8 +337,10 @@ from the capsule directory. **No subprocess is launched and no network calls are
 made** — this is the safe way to inspect a run handed to you by a colleague or
 pulled from a CI artifact store.
 
-Results are written to `.novafabric/replays/<replay-ulid>/replay_result.yaml`. A
-replay is itself a new capsule, so you can diff a replay against the original.
+Results are written to `.novafabric/replays/<replay-ulid>/replay_result.yaml` under
+the **current directory** (not `$NOVAFABRIC_HOME`; pass `--output-dir` to choose). A
+replay result is not a capsule — to diff behaviour, capture the run again and
+`nova diff` the two capsules.
 
 The other modes each answer a different question:
 
@@ -465,8 +468,9 @@ nova export-evidence $RUN --output bundle.zip --key ~/.novafabric/keys/signing_k
 
 `--key` is required (the CLI errors with a clear message if it's omitted) — it
 points at the Ed25519 private key `nova init` already generated for you in
-Step 1. If you skipped `nova init`, generate one with
-`python -m novafabric.evidence.signing` or any ed25519 tool.
+Step 1. If you skipped `nova init`, run it now (it writes
+`~/.novafabric/keys/signing_key.pem`), or generate an Ed25519 PEM with any tool, e.g.
+`openssl genpkey -algorithm ed25519 -out key.pem`.
 
 An Evidence Bundle is a signed, self-contained ZIP: a copy of the capsule, its
 lineage edges, the JSON schemas, **Ed25519**-signed in-toto DSSE attestations, and

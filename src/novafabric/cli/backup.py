@@ -70,7 +70,7 @@ def create(
         typer.Option(
             "--backend",
             help="Object-store backend for --profile manifest: "
-            "local | s3 | minio | ceph_rgw | azure_blob.",
+            "local | s3 | minio | ceph_rgw | azure_blob | gcs.",
             envvar="NOVA_OCS_BACKEND",
             show_default=False,
         ),
@@ -328,7 +328,7 @@ def restore_cmd(
         typer.Option(
             "--backend",
             help="Object-store backend when restoring a manifest-only set: "
-            "local | s3 | minio | ceph_rgw | azure_blob.",
+            "local | s3 | minio | ceph_rgw | azure_blob | gcs.",
             envvar="NOVA_OCS_BACKEND",
             show_default=False,
         ),

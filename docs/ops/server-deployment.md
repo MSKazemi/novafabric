@@ -1,6 +1,6 @@
 # Server Deployment Guide
 
-This guide covers five deployment scenarios for NovaFabric v0.7. Each scenario
+This guide covers six deployment scenarios. Each scenario
 is labelled with its current implementation status per the [docs honesty
 rule](../../CONTRIBUTING.md#documentation-status-labels): **works today**, **experimental**, **planned**, or
 **future design**.
@@ -63,27 +63,28 @@ pip install 'novafabric[server]'
 
 ### Configure the server
 
-Create `~/.config/novafabric/nova-server.yaml` (or use `$NOVA_SERVER_CONFIG`
-to point to any path):
+Create `~/.config/novafabric/server.yaml`, or pass `--config <path>` to
+`nova server start`. There is no other search path: when neither exists, the
+built-in defaults plus the `NOVAFABRIC_SERVER_*` environment overrides apply.
 
 ```yaml
-# nova-server.yaml
+# ~/.config/novafabric/server.yaml — host and port are TOP-LEVEL keys.
+# (A nested `server:` block is silently ignored.)
 backend: postgres
-# Set dsn via $NOVA_DSN env var — do not embed passwords in the config file.
-server:
-  host: "0.0.0.0"
-  port: 7433
+host: "0.0.0.0"
+port: 7433
 ```
 
-Provide the DSN as an environment variable (never inline in the YAML in
-production):
+Provide the DSN as an environment variable. Secrets are **never** read from the
+YAML file — `postgres_dsn`, `offline_key_path`, `scim_token` and `local_token`
+are dropped from it on load:
 
 ```bash
-export NOVA_DSN="postgresql://nova_user:s3cr3t@db.example.com:5432/novafabric"
+export NOVAFABRIC_POSTGRES_DSN="postgresql://nova_user:s3cr3t@db.example.com:5432/novafabric"
 ```
 
-See [ADR-0029](../decisions.md) for the complete config
-schema, env-var override rules, and secrets handling guidance.
+See [ADR-0029](../decisions.md) for the config design and the
+[config file reference](#config-file-reference) below for every key.
 
 ### Start the server
 
@@ -96,7 +97,7 @@ nova server start
 The startup banner prints the resolved backend and port:
 
 ```
-Starting NovaFabric server on 0.0.0.0:7433 [backend=postgres]
+Starting NovaFabric server on 0.0.0.0:7433 [backend=postgres, workers=1]
 API docs: http://0.0.0.0:7433/docs
 Press Ctrl+C to stop.
 ```
@@ -112,7 +113,7 @@ nova migrate-to-postgres --dry-run
 # Full migration
 nova migrate-to-postgres \
   --source ~/.novafabric/registry.db \
-  --target "$NOVA_DSN"             \
+  --target "$NOVAFABRIC_POSTGRES_DSN" \
   --log migration.jsonl
 
 # Verify the result
@@ -130,7 +131,7 @@ Exit codes: `0` = success, `1` = row-count mismatch, `2` = connection error.
 
 ```bash
 nova doctor --check-storage
-nova doctor --check-storage --backend postgres --postgres-dsn "$NOVA_DSN"
+nova doctor --check-storage --backend postgres --postgres-dsn "$NOVAFABRIC_POSTGRES_DSN"
 ```
 
 Output includes backend name, schema version (Alembic), migration status, and
@@ -142,60 +143,50 @@ per-table row counts.
 
 **Status: experimental.** The OIDC integration is implemented and tested
 against mock OIDC servers. It has not been validated in production against
-Keycloak, Auth0, or Okta. The API and config keys are stable (ADR-0029) but
-the behaviour under edge cases (clock skew, key rotation races) may change in
-v0.7.1.
+Keycloak, Auth0, or Okta. The config keys are stable (ADR-0029) but the
+behaviour under edge cases (clock skew, key rotation races) may change.
 
 ### Config
 
-Add the `oidc` block to your `nova-server.yaml`:
+Add the `oidc` block to your `server.yaml`. OIDC has exactly two keys and is
+**on when both are set** — there is no `enabled` flag:
 
 ```yaml
 backend: postgres
-server:
-  host: "0.0.0.0"
-  port: 7433
+host: "0.0.0.0"
+port: 7433
 oidc:
-  enabled: true
   issuer_url: "https://keycloak.example.com/realms/nova"
-  client_id: "nova-server"
   audience: "nova-server"
-  roles_claim: "nova_roles"       # JWT claim that carries the user's role list
-  jwks_refresh_interval: 3600     # seconds between JWKS re-fetches
 ```
 
-All OIDC keys can be overridden via env vars (see [ADR-0029](../decisions.md) §3):
-
-```bash
-export NOVA_OIDC_ENABLED=true
-export NOVA_OIDC_ISSUER_URL="https://keycloak.example.com/realms/nova"
-export NOVA_OIDC_CLIENT_ID="nova-server"
-```
+- Roles are read from the `nova_roles` claim (falling back to `roles`); the claim
+  name is not configurable.
+- The JWKS is cached for 3600 s; the interval is not configurable (flush it on key
+  rotation, below).
+- OIDC is configured **in YAML only** — there are no OIDC environment variables.
 
 ### Login from the CLI
 
-Users authenticate via the Device Authorization Grant (RFC 8628):
+**Not usable against a production server today.** `nova login` speaks only to
+the server's own *demo* device-grant endpoints (`/v0/auth/device/code`), which
+are mounted only when `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1` (off by default).
+That demo flow is local-testing scaffolding: the HS256 tokens it mints are
+**never accepted** by the real verifier, and it does not contact your IdP.
+
+For a real OIDC deployment, obtain an access token from your identity provider
+and pass it as `Authorization: Bearer <token>`; for automation use an API key or
+an [offline token](#scenario-4--airgapped--offline-token-mode).
 
 ```bash
-nova login --server http://nova.example.com:7433
+nova login --server http://nova.example.com:7433   # demo device grant only
 ```
 
-The CLI prints a URL and user code:
+Against a server without the demo grant, `nova login` exits 1 with that
+explanation (not a bare `404`); after a demo login it warns on stderr that the
+stored token is not accepted by the server's API.
 
-```
-  To complete login, visit:
-    https://keycloak.example.com/realms/nova/device
-  Enter code: ABCD-1234
-
-Waiting for approval …
-Logged in to http://nova.example.com:7433 as user@example.com.
-Credentials stored in ~/.config/novafabric/credentials.json
-```
-
-Credentials (access token, refresh token, expiry) are stored in
-`~/.config/novafabric/credentials.json` at mode `0600`. The CLI auto-refreshes
-tokens on subsequent commands. Re-run `nova login` when the refresh token
-expires.
+Credentials are stored in `~/.config/novafabric/credentials.json` at mode `0600`.
 
 ### Log out
 
@@ -206,8 +197,7 @@ nova logout                                           # remove all servers
 
 ### JWKS cache management
 
-The server caches the OIDC provider's JWKS for `jwks_refresh_interval` seconds
-(default 3600). On key rotation, flush the cache without restarting the server:
+The server caches the OIDC provider's JWKS for 3600 seconds (fixed). On key rotation, flush the cache without restarting the server:
 
 ```bash
 nova server flush-jwks-cache \
@@ -231,9 +221,21 @@ reaching an external identity provider is not possible.
 
 ### How it works
 
-`nova server` generates an ed25519 keypair on first start if `offline_key_path`
-points to a file that does not exist yet. The private key signs JWTs locally;
-validation also happens locally without contacting any external endpoint.
+`nova server issue-token` generates an ed25519 keypair on first use when
+`--key-path` (default `~/.novafabric/keys/offline-key.pem`) does not exist yet,
+writing the private key and a `.pub` public key beside it. The private key signs
+JWTs locally; the server verifies them with the public key, without contacting
+any external endpoint.
+
+**The server accepts offline tokens only when it is started with
+`NOVAFABRIC_OFFLINE_KEY_PATH` pointing at the public key** (environment only —
+the YAML key is ignored). Without it, every offline JWT is rejected with 401;
+`issue-token` prints this reminder on stderr.
+
+```bash
+export NOVAFABRIC_OFFLINE_KEY_PATH=/etc/novafabric/keys/offline-key.pub
+nova server start --backend postgres
+```
 
 ### Generate an offline token
 
@@ -245,7 +247,9 @@ nova server issue-token \
   --key-path /etc/novafabric/keys/offline-key.pem
 ```
 
-The command prints the raw JWT to stdout. Store it securely:
+The command prints the raw JWT — and nothing else — on stdout; every status
+line (including the keypair-generation messages on the very first call) goes to
+stderr, so `$(…)` captures only the token. Store it securely:
 
 ```bash
 TOKEN=$(nova server issue-token --subject ci-runner --roles writer --expires-in 30d)
@@ -259,11 +263,12 @@ that carries the token and nothing else from your shell:
 env -i PATH="$PATH" HOME="$HOME" NOVA_TOKEN="$TOKEN" sbatch job.sh
 ```
 
-The key path can also be provided via `NOVAFABRIC_OFFLINE_KEY_PATH`:
+`issue-token` also reads its key path from `NOVAFABRIC_OFFLINE_KEY_PATH` when
+`--key-path` is not given — point it at the private `.pem` there:
 
 ```bash
-export NOVAFABRIC_OFFLINE_KEY_PATH=/etc/novafabric/keys/offline-key.pem
-nova server issue-token --subject user@example.com --roles reader
+NOVAFABRIC_OFFLINE_KEY_PATH=/etc/novafabric/keys/offline-key.pem \
+  nova server issue-token --subject user@example.com --roles reader
 ```
 
 ### Revoke a token
@@ -274,20 +279,17 @@ Each issued token has a `jti` (token ID) claim. Revoke it by ID:
 nova server revoke-token <token-id>
 ```
 
-Revocation is recorded in the token audit table (SQLite or Postgres depending
-on the active backend). Revoked tokens return HTTP 401 on the next API call.
+Revocation is recorded in a SQLite file next to the key,
+`<key-dir>/offline-key-tokens.db`, whatever the server backend. The server sees
+a revocation only if it reads that same file, so revoke on the host whose key
+directory the server uses. Revoked tokens return HTTP 401 on the next API call.
 
 ### Config for offline mode
 
-```yaml
-# nova-server.yaml
-backend: sqlite
-offline_key_path: "/etc/novafabric/keys/offline-key.pem"
-# oidc.enabled defaults to false — no OIDC provider needed
-```
-
-The key file must be owned by the server process user and have mode `0600`.
-`nova server start` refuses to start if the key file is world-readable.
+There is no YAML for the offline key: `offline_key_path` in the config file is
+ignored. Set `NOVAFABRIC_OFFLINE_KEY_PATH` in the server's environment (above).
+Keep the private key owned by the issuing user at mode `0600` (it is generated
+that way); the server does not check the key file's permissions itself.
 
 ### Native listener TLS (ADR-0241, experimental)
 
@@ -328,7 +330,7 @@ deployment tiers.
 | Values | Effect |
 |---|---|
 | *(stock)* | `nova server start`, no `--insecure`. Terminate TLS at the ingress. |
-| `mode: dashboard` | `nova serve`, still loopback-bound. Fully supported. |
+| `mode: dashboard` | `nova serve`. A pod must bind `0.0.0.0` for its Service and probes, and `nova serve` refuses a non-loopback bind without `--insecure` (exit 2), so **`helm template` refuses to render** `mode: dashboard` unless `serve.insecure: true` and the acknowledgement below are also set — rather than rendering a pod that crash-loops. Terminate TLS at the ingress in front of it. |
 | `serve.insecure: true` | **`helm template` fails** unless `serve.acknowledgeInsecureExposure` is set to `i-accept-serving-evidence-over-plain-http`. |
 | upgrading from < v0.102.0 | **fails** until `upgradeAcknowledged: true`; the message carries the exact values that restore the old behaviour. |
 
@@ -377,7 +379,11 @@ gh attestation verify novafabric-<X.Y.Z>-py3-none-any.whl --repo MSKazemi/novafa
 helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z>
 kubectl rollout status deploy/nova-novafabric
 kubectl port-forward svc/nova-novafabric 4321:4321
-# open http://localhost:4321/dashboard  (access token printed in `kubectl logs`)
+# The default mode is `server` (REST API, no /dashboard). The local bearer token
+# is NOT printed to the logs in a container (only a fingerprint); read it from
+# $NOVAFABRIC_HOME/.server-token inside the pod:
+TOKEN=$(kubectl exec deploy/nova-novafabric -- sh -c 'cat "$NOVAFABRIC_HOME/.server-token"')
+curl -H "Authorization: Bearer $TOKEN" http://localhost:4321/v0/version
 ```
 
 ### Production (external managed Postgres)
@@ -396,20 +402,21 @@ dropped) and applies schema migrations via an init container. See
 [`deploy/helm/novafabric/README.md`](../../deploy/helm/novafabric/README.md) for
 the full values reference.
 
-> **Dashboard vs. server mode.** By default both the container and the chart run
-> `nova serve` — the experimental dashboard, which serves over HTTP with a printed
-> token (`--insecure`). **It is not read-only:** it exposes irreversible operations
-> including run deletion, PII erasure, and seal bypass, all behind that single token. For the multi-user REST API with
-> OIDC/RBAC over Postgres, use **server mode** (Scenario 6). The default is
-> unchanged for backward compatibility.
+> **Dashboard vs. server mode.** The **chart** defaults to server mode
+> (`mode: server`, since v0.102.0). The **container image** on its own still
+> defaults to `nova serve` (`NOVA_MODE=dashboard`) — the experimental dashboard.
+> **It is not read-only:** it exposes irreversible operations including run
+> deletion, PII erasure, and seal bypass, all behind a single token. For the
+> multi-user REST API with OIDC/RBAC over Postgres, use **server mode** (Scenario 6).
 
 ---
 
 ## Scenario 6 — Hardened server mode (container / Helm)
 
 Runs the multi-user REST API (`nova server start`, OIDC/RBAC over Postgres)
-instead of the dashboard. Auth is **on** by default: configure OIDC via
-`NOVAFABRIC_SERVER_*` env, or the server generates a local bearer token
+instead of the dashboard. Auth is **on** by default: configure OIDC through the
+`oidc:` block of a mounted `server.yaml` (there are no OIDC environment
+variables), or the server generates a local bearer token
 (`--insecure-no-auth` is never used). Migrations always upgrade to the packaged
 schema **head** — the server refuses to start when stamped behind head, so a
 pinned-below revision breaks the deploy.
@@ -419,15 +426,21 @@ pinned-below revision breaks the deploy.
 Set `NOVA_MODE=server` on the image. It listens on `NOVA_PORT` (default `7433`)
 and, with `NOVA_WORKERS>1`, runs that many uvicorn workers (requires Postgres):
 
+The entrypoint waits for Postgres with `pg_isready` against `PGHOST` (default
+`postgres`) / `PGPORT` / `PGUSER`, then runs `nova db upgrade --backend postgres`,
+which reads `NOVAFABRIC_METADATA_DSN` — so set all of them:
+
 ```bash
 docker run -e NOVA_MODE=server \
+  -e PGHOST=my-pg -e PGUSER=nova \
   -e NOVAFABRIC_POSTGRES_DSN=postgresql://nova:***@my-pg:5432/nova \
+  -e NOVAFABRIC_METADATA_DSN=postgresql://nova:***@my-pg:5432/nova \
   -e NOVA_WORKERS=4 \
   -p 7433:7433 ghcr.io/mskazemi/novafabric:<X.Y.Z>
 ```
 
-Extra env for OIDC: `NOVAFABRIC_SERVER_OIDC_ISSUER_URL`,
-`NOVAFABRIC_SERVER_OIDC_AUDIENCE` (see Scenario 3).
+For OIDC, mount a `server.yaml` with an `oidc:` block at
+`~/.config/novafabric/server.yaml` of the container user (see Scenario 3).
 
 ### Helm
 
@@ -443,7 +456,8 @@ helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z> \
 
 In server mode the chart's readiness/liveness probes hit `/readyz` and `/livez`
 (both modes expose them); `/readyz` gates traffic on database reachability and
-schema-skew. Provide OIDC config through `extraEnv` or a mounted secret.
+schema-skew. Provide OIDC config as a mounted `server.yaml` (the `oidc:` block) —
+`extraEnv` cannot enable OIDC, because no OIDC environment variables exist.
 
 ---
 
@@ -468,10 +482,20 @@ nova server assign-role user@example.com writer
 nova server assign-role ci-runner@cluster admin --assigned-by ops-team
 ```
 
-Roles are stored in the `role_assignments` table of the active backend (SQLite
-or Postgres). When using OIDC, roles can also be carried in the
-`nova_roles` JWT claim (configurable via `oidc.roles_claim`). The local
-assignment table takes precedence over JWT claims for the same subject.
+Roles are stored in the `role_assignments` table. When using OIDC, roles can
+also be carried in the `nova_roles` (or `roles`) JWT claim. **The token's own
+roles are checked first;** `role_assignments` rows are only a fallback, and that
+fallback is consulted only once the workspace/org model is in use (at least one
+scoped membership or service account exists, ADR-0178). ⚠ In a stock deployment
+that has neither, a recorded row has **no effect** on OIDC or offline-token
+principals. `assign-role` still writes the row (the last-admin guard counts it,
+and it takes effect the moment the workspace/org model is in use), but it then
+prints `Role '<role>' recorded for '<subject>'` and a `warning: this assignment is
+not in force` on stderr instead of claiming success. `GET /v0/admin/roles`
+reports the same thing per row as `effective_now`. To grant a role in a stock
+deployment today, carry it in the token: the OIDC `nova_roles`/`roles` claim, or
+`nova server issue-token --roles …`. `promoter` and `approver` also exist for
+separation-of-duties and SCIM group mapping (`nova server scim-map-group`).
 
 ---
 
@@ -529,7 +553,7 @@ the NovaFabric `/v0/` error model.
   `role_assignments` rows immediately — the same table `nova server
   assign-role` writes; the `userName` is the auth subject.
 - The ADR-0060 **last-admin lockout guard** applies: a SCIM deprovision that
-  would remove the last admin (with no OIDC issuer configured) is refused
+  would remove the last admin (with no OIDC configured in the server YAML) is refused
   with a SCIM `409` and *nothing* is mutated — the user stays active and
   keeps its roles.
 - Every mutation appends an event (`user.create` / `user.update` /
@@ -556,30 +580,32 @@ command — provision the SCIM bearer token via `$NOVAFABRIC_SCIM_TOKEN` for now
 
 ## Config file reference
 
-The canonical config file is `nova-server.yaml`. Full key reference:
+The config file is `~/.config/novafabric/server.yaml`, or the file passed with
+`nova server start --config <path>` — there is no other search path.
+(`NOVAFABRIC_SERVER_CONFIG` is set internally to hand the path to `--workers`
+child processes; do not set it yourself — `nova server start` overwrites it, or
+clears an inherited value when `--config` is absent, so every worker loads the
+same file as the parent.) Keys are top-level; the main ones, with
+their defaults:
 
 ```yaml
 backend: sqlite          # "sqlite" (default) or "postgres"
-dsn: ""                  # Postgres DSN — prefer $NOVA_DSN env var
-sqlite_path: ""          # SQLite path (default: ~/.novafabric/nova.db)
+db_path: null            # SQLite path; null = ~/.novafabric/registry.db
+host: "127.0.0.1"
+port: 7433
 
-server:
-  host: "127.0.0.1"
-  port: 7433
-  workers: 1
-  base_url: ""           # External URL for OIDC redirect URIs
-
-oidc:
-  enabled: false
+oidc:                    # on when BOTH are set
   issuer_url: ""
-  client_id: ""
   audience: ""
-  roles_claim: "nova_roles"
-  jwks_refresh_interval: 3600
+
+tls:                     # first-party listener TLS (ADR-0241)
+  enabled: false
+  cert_path: null
+  key_path: null         # must be mode 0600 — the server refuses otherwise
 
 scim:
   enabled: false         # SCIM 2.0 provisioning (ADR-0139, experimental).
-                         # Also requires $NOVAFABRIC_SCIM_TOKEN (env only).
+  group_role_map: {}     # Also requires $NOVAFABRIC_SCIM_TOKEN (env only).
 
 rate_limits:             # API rate limiting + storage quotas (ADR-0179, experimental)
   enabled: false         # disabled by default — limiter is fully inert when false
@@ -597,33 +623,31 @@ rate_limits:             # API rate limiting + storage quotas (ADR-0179, experim
 observability:           # self-observability surface (ADR-0182, experimental)
   metrics_exempt: false  # true serves /metrics without auth (loopback/isolated only)
   self_tracing: false    # opt-in; one OTel span per request, never leaves the deployment
-  self_tracing_endpoint: ""  # OTLP/HTTP traces URL; empty = local serve OTLP ingest
-
-offline_key_path: ""     # Path to ed25519 private key PEM
-
-tls:
-  enabled: false
-  cert_path: ""
-  key_path: ""
-
-log_level: "info"        # debug, info, warning, error
-otel_endpoint: ""        # OTLP gRPC endpoint; empty = disabled
+  self_tracing_endpoint: null  # OTLP/HTTP traces URL; null = local serve OTLP ingest
 ```
 
-Resolution order (highest priority first):
-1. `--config <path>` CLI flag
-2. `$NOVA_SERVER_CONFIG` env var (absolute path)
-3. `~/.config/novafabric/nova-server.yaml`
-4. `/etc/novafabric/nova-server.yaml`
+Further blocks, each documented with its feature: `ingest` (below), `saml`,
+`bulk`, `usage`, `api_keys`, `pagination`, `webhooks`, `step_up`; and the
+acknowledgement flags `insecure_no_auth`, `i_know_this_is_public`,
+`i_accept_shared_capsule_store`, `demo_device_grant`. There are no `workers`,
+`base_url`, `log_level` or `otel_endpoint` keys — worker count is the
+`--workers` flag. Unknown keys are ignored silently, so check spelling.
 
-Every key has a corresponding `NOVA_<UPPERCASE_KEY>` env var that overrides
-the file value. See [ADR-0029](../decisions.md) §3 for the
-complete env-var table.
+**Environment overrides** are a fixed list, not one per key. The main ones:
+`NOVAFABRIC_SERVER_HOST`, `NOVAFABRIC_SERVER_PORT`, `NOVAFABRIC_SERVER_BACKEND`,
+`NOVAFABRIC_SERVER_DB_PATH`, `NOVAFABRIC_SERVER_SCIM_ENABLED`,
+`NOVAFABRIC_SERVER_METRICS_EXEMPT`, `NOVAFABRIC_SERVER_RATE_LIMITS_ENABLED`, the
+`NOVAFABRIC_SERVER_INGEST_*`, `NOVAFABRIC_SERVER_USAGE_*` and
+`NOVAFABRIC_SERVER_WEBHOOKS_*` families, `NOVAFABRIC_SERVER_STEP_UP_ENABLED`,
+`NOVAFABRIC_SERVER_INSECURE_NO_AUTH`, `NOVAFABRIC_SERVER_I_KNOW_THIS_IS_PUBLIC`,
+`NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE`,
+`NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT` (full list: `_apply_env_overrides` in
+`src/novafabric/server/config.py`).
 
-**Security:** never write secrets (Postgres passwords, private key contents)
-directly into the YAML file. Use env vars or key files with restricted
-permissions. The server logs a warning if `dsn` is read from the file when
-`backend=postgres`.
+**Secrets come from the environment only:** `NOVAFABRIC_POSTGRES_DSN`,
+`NOVAFABRIC_OFFLINE_KEY_PATH`, `NOVAFABRIC_SCIM_TOKEN`, `NOVAFABRIC_SERVER_TOKEN`
+(pins the local bearer token). If you put `postgres_dsn` or `offline_key_path` in
+the YAML file it is dropped silently — no warning is logged.
 
 ---
 
@@ -708,9 +732,11 @@ pip install 'novafabric[server]'
 # 2. Provision Postgres and create the novafabric database
 createdb novafabric
 
-# 3. Run migrations (Alembic)
-NOVA_DSN="postgresql://user:pass@localhost/novafabric" \
-  alembic -c alembic-postgres.ini upgrade head
+# 3. Create the schemas (registry track + MetadataStore track)
+export NOVAFABRIC_POSTGRES_DSN="postgresql://user:pass@localhost/novafabric"
+export NOVAFABRIC_METADATA_DSN="$NOVAFABRIC_POSTGRES_DSN"
+nova db upgrade --track registry --backend postgres
+nova db upgrade --backend postgres
 
 # 4. Migrate existing SQLite data (idempotent)
 nova migrate-to-postgres \
@@ -722,8 +748,7 @@ nova migrate-to-postgres \
 nova doctor --check-storage --backend postgres \
   --postgres-dsn "postgresql://user:pass@localhost/novafabric"
 
-# 6. Switch the server to Postgres
-export NOVA_DSN="postgresql://user:pass@localhost/novafabric"
+# 6. Switch the server to Postgres (reads NOVAFABRIC_POSTGRES_DSN from step 3)
 nova server start --backend postgres
 
 # 7. Confirm the server is healthy
