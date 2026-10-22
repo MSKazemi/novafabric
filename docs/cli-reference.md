@@ -2963,14 +2963,14 @@ completes in minutes regardless of chain length (AC-1, BQ-013).
 
 ```
 nova rebuild-metadata-db [--prefix TEXT] [--target-db PATH]
-    [--backend local|s3|minio|ceph_rgw|azure_blob] [--data-dir PATH]
+    [--backend local|s3|minio|ceph_rgw|azure_blob|gcs] [--data-dir PATH]
 ```
 
 | Flag | Default | Env var | Description |
 |---|---|---|---|
 | `--prefix` | `""` (all tenants) | — | Tenant or `tenant/run_id` prefix to scan |
 | `--target-db` | `nova-metadata-rebuild.db` | — | Path to the output SQLite database |
-| `--backend` | `local` | `NOVA_OCS_BACKEND` | Storage backend: `local`, `s3`, `minio`, `ceph_rgw`, `azure_blob` |
+| `--backend` | `local` | `NOVA_OCS_BACKEND` | Storage backend: `local`, `s3`, `minio`, `ceph_rgw`, `azure_blob`, `gcs` (`worm-gcs` extra) |
 | `--data-dir` | _(optional)_ | — | Local backend: path to the object store root directory |
 
 ```bash
@@ -7800,7 +7800,7 @@ Options:
 - `--profile TEXT` — backup profile: `local` (SQLite deployment), `pg` (adds a `pg_dump --format=custom` member), or `manifest` (chain heads + checkpoints against a WORM object store, no blobs). Default: `local`
 - `--dsn TEXT` — Postgres DSN for `--profile pg` (default: `NOVA_DSN` or `NOVAFABRIC_POSTGRES_DSN`). Never logged; the manifest stores only the redacted host/dbname
 - `--include-keys` — ALSO pack the signing keyring and `novaseal.yaml` + its key/cert PEMs (ADR-0216 D4). Default off; a set created with this flag requires key-custody care
-- `--backend TEXT` — object-store backend for `--profile manifest`: `local | s3 | minio | ceph_rgw | azure_blob` (env: `NOVA_OCS_BACKEND`)
+- `--backend TEXT` — object-store backend for `--profile manifest`: `local | s3 | minio | ceph_rgw | azure_blob | gcs` (env: `NOVA_OCS_BACKEND`)
 - `--tenant TEXT` — scope the manifest listing to these tenant(s) (repeatable)
 - `--allow-pending-wal` — proceed with `--profile manifest` even when the local WAL has pending un-chained uploads (the gap is recorded in the listing); default: refuse
 - `--deep` — `--profile manifest`: fully verify every chain at create time, not just pin the heads

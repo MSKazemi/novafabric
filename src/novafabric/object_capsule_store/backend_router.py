@@ -41,7 +41,7 @@ from novafabric.object_capsule_store.worm.base import (
 
 log = logging.getLogger(__name__)
 
-_BACKENDS = ("s3", "minio", "ceph_rgw", "azure_blob", "local")
+_BACKENDS = ("s3", "minio", "ceph_rgw", "azure_blob", "gcs", "local")
 
 # Opt-in envelope-encryption configuration (ADR-0185, experimental).
 ENV_ENCRYPTION = "NOVA_OBJECT_STORE_ENCRYPTION"
@@ -176,6 +176,7 @@ def make_adapter(backend: str, **kwargs: Any) -> WormAdapter:
 
     Args:
         backend: One of ``"s3"``, ``"minio"``, ``"ceph_rgw"``, ``"azure_blob"``,
+                 ``"gcs"`` (per-object retention, ``worm-gcs`` extra),
                  ``"local"`` (in-memory, test-only).
         **kwargs: Forwarded to the adapter constructor.
 
@@ -203,6 +204,11 @@ def make_adapter(backend: str, **kwargs: Any) -> WormAdapter:
         from novafabric.object_capsule_store.worm.azure import AzureWormAdapter
 
         adapter = AzureWormAdapter(**kwargs)
+    elif backend == "gcs":
+        # L13: the adapter shipped (worm/gcs.py + worm-gcs extra) but had no tag.
+        from novafabric.object_capsule_store.worm.gcs import GcsWormAdapter
+
+        adapter = GcsWormAdapter(**kwargs)
     elif backend == "local":
         adapter = InMemoryWormAdapter()
     else:
