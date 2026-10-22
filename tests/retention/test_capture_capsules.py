@@ -394,3 +394,35 @@ def test_plan_shows_a_worm_locked_capture_capsule_as_held(ws: Path, opt_in: bool
     assert [(r["item_id"], r["outcome"], r["reason"]) for r in rows] == [
         ("cap-yaml", "skipped", "worm_hold")
     ]
+
+
+# ---------------------------------------------------------------------------
+# Links are never followed (R6 capsule readers)
+# ---------------------------------------------------------------------------
+
+
+def test_a_linked_capsule_directory_is_never_swept(tmp_path: Path) -> None:
+    outside = _yaml_capsule(tmp_path / "elsewhere", "victim")
+    capsules = tmp_path / "capsules"
+    capsules.mkdir()
+    (capsules / "victim").symlink_to(outside, target_is_directory=True)
+    assert enumerate_capsules(capsules) == []
+
+
+def test_a_linked_manifest_is_skipped(tmp_path: Path) -> None:
+    target = tmp_path / "real.yaml"
+    target.write_text(yaml.dump({"run_id": "x", "created_at": OLD.isoformat()}))
+    run = tmp_path / "capsules" / "x"
+    run.mkdir(parents=True)
+    (run / "capsule.yaml").symlink_to(target)
+    assert enumerate_capsules(tmp_path / "capsules") == []
+
+
+def test_a_linked_redaction_manifest_names_no_subject(tmp_path: Path) -> None:
+    d = _yaml_capsule(tmp_path / "capsules", "01RUN")
+    planted = tmp_path / "planted.json"
+    planted.write_text(json.dumps({"entries": [
+        {"subject_id_hmac": "sha256:" + "0" * 64, "protection": "envelope"}]}))
+    (d / "redaction_manifest.json").symlink_to(planted)
+    [item] = enumerate_capsules(tmp_path / "capsules")
+    assert item.pii_subject_refs == []

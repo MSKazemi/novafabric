@@ -35,6 +35,12 @@ from typing import Literal, Mapping
 import yaml
 from pydantic import BaseModel, Field, ValidationError
 
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    read_capsule_member_or_none,
+    read_capsule_text,
+)
+
 from novafabric.retention.models import (
     ACTION_SEVERITY,
     Decision,
@@ -57,6 +63,8 @@ MANIFEST_JSON: ManifestName = "capsule.json"
 MANIFEST_YAML: ManifestName = "capsule.yaml"
 #: ADR-0314 per-capsule PII bookkeeping (``nova capture --pii-subject``).
 REDACTION_MANIFEST = "redaction_manifest.json"
+#: Upper bound on any one capsule file the sweep reads (manifest, bookkeeping).
+MAX_SWEEP_FILE_BYTES = 32 * 1024 * 1024
 
 
 class HoldContext(BaseModel):
@@ -126,7 +134,13 @@ def _parse_created_at(raw: object) -> datetime:
 
 
 def _read_manifest(manifest_path: Path) -> dict[str, object]:
-    text = manifest_path.read_text(encoding="utf-8")
+    # No link, FIFO or device is followed, and the read is bounded (R6 helpers).
+    text = read_capsule_text(
+        manifest_path.parent,
+        manifest_path.name,
+        operation="a retention sweep",
+        max_bytes=MAX_SWEEP_FILE_BYTES,
+    )
     data = json.loads(text) if manifest_path.name == MANIFEST_JSON else yaml.safe_load(text)
     if not isinstance(data, dict):
         raise TypeError("manifest is not a mapping")
@@ -142,11 +156,14 @@ def _envelope_subject_refs(capsule_dir: Path) -> list[str]:
     absent bookkeeping yields ``[]``.
     """
     path = capsule_dir / REDACTION_MANIFEST
-    if not path.is_file():
+    text = read_capsule_member_or_none(
+        path, operation="a retention sweep", max_bytes=MAX_SWEEP_FILE_BYTES
+    )
+    if text is None:
         return []
     try:
-        entries = json.loads(path.read_text(encoding="utf-8")).get("entries") or []
-    except (OSError, ValueError, AttributeError) as exc:
+        entries = json.loads(text).get("entries") or []
+    except (ValueError, AttributeError) as exc:
         log.warning("retention: unreadable %s: %s", path, exc)
         return []
     refs = {
@@ -166,6 +183,11 @@ def _manifest_paths(capsule_dir: Path) -> list[Path]:
     found: dict[Path, Path] = {}
     for name in (MANIFEST_YAML, MANIFEST_JSON):  # JSON last, so it overrides
         for manifest_path in capsule_dir.glob(f"*/{name}"):
+            if manifest_path.parent.is_symlink():
+                # A linked run directory is not a capsule this sweep owns: never
+                # expire, purge or shred through a link.
+                log.warning("retention: skipping linked capsule dir %s", manifest_path.parent)
+                continue
             found[manifest_path.parent] = manifest_path
     return [found[d] for d in sorted(found)]
 
@@ -191,7 +213,9 @@ def enumerate_capsules(capsule_dir: Path) -> list[SweepItem]:
         try:
             data = _read_manifest(manifest_path)
             created_at = _parse_created_at(data["created_at"])
-        except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
+        except (
+            OSError, ValueError, KeyError, TypeError, yaml.YAMLError, CapsuleEntryError
+        ) as exc:
             log.warning("retention: skipping unreadable capsule %s: %s", manifest_path, exc)
             continue
         manifest: ManifestName = (
