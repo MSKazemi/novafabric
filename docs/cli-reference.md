@@ -9292,7 +9292,13 @@ nova storage validate --endpoint http://minio:9000 --bucket nova-capsules
 NOVA_S3_ENDPOINT_URL=http://minio:9000 nova storage validate
 ```
 
-Exits 0 on success, 1 if Object Lock is absent or disabled.
+Exits 0 only when the bucket's **default retention** mode
+(`ObjectLockConfiguration.Rule.DefaultRetention.Mode`) is `COMPLIANCE`, and
+prints `object_lock: COMPLIANCE` with the retention period. Exits 1 — naming the
+mode it found — if Object Lock is absent or disabled, if the default retention is
+`GOVERNANCE` (bypassable with `s3:BypassGovernanceRetention`), or if Object Lock
+is enabled with no default retention rule (`object_lock: none`). Before this fix
+any bucket with Object Lock enabled was reported as `COMPLIANCE`.
 
 ### nova erasure request — NOT IMPLEMENTED
 

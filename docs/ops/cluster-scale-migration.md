@@ -220,7 +220,8 @@ export AWS_ACCESS_KEY_ID="minio-access-key"
 export AWS_SECRET_ACCESS_KEY="minio-secret"
 
 # Validate WORM readiness first. This checks a single property — that the target
-# bucket has Object Lock in COMPLIANCE mode — and raises otherwise.
+# bucket's default retention (Rule.DefaultRetention.Mode) is COMPLIANCE — and exits
+# 1, naming the mode found, for GOVERNANCE or no default retention.
 nova storage validate
 
 # Migrate capsules from local filesystem to OCS.
