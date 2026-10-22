@@ -123,7 +123,8 @@ software keystore). Two rules this runbook enforces:
    retention decision log before re-importing any archived key material.
    (Retention `crypto-shred` is **experimental** and today destroys no key — it
    records `no_dek`, see [Retention scheduler](../cli-reference.md#retention-scheduler-adr-0134);
-   keys destroyed by `nova pii erase` are what this rule protects.)
+   keys destroyed by `nova pii erase` — which exist only for capsules captured with
+   `nova capture --pii-subject` — are what this rule protects.)
 
 ### 1.5 Verify after restore — restore is not done until this passes
 
