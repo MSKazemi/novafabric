@@ -332,7 +332,7 @@ def test_policy_test_no_opa_binary(tmp_path: Path) -> None:
     assert "opa" in result.output.lower()
 
 
-def test_policy_test_with_opa_mock(tmp_path: Path) -> None:
+def test_policy_test_with_opa_mock(tmp_path: Path, opa_sandbox_stub: object) -> None:
     """policy test command propagates opa exit code."""
     from unittest.mock import MagicMock, patch
 

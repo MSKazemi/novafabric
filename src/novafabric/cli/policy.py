@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -58,16 +57,28 @@ def policy_test(
       # Test with a custom bundle
       nova policy test --bundle path/to/my-bundle/
     """
+    from novafabric.policy._opa_sandbox import (  # noqa: PLC0415
+        OpaNotFoundError,
+        OpaSandboxError,
+        prepare,
+        run_opa,
+    )
+
     bundle_path = bundle or str(_get_bundle_default())
+    # Same sandbox as every other opa NovaFabric starts: no inherited
+    # environment, no opa.runtime/http.send/net.lookup_ip_addr, no network.
     try:
-        result = subprocess.run(
-            ["opa", "test", bundle_path, "--verbose"], capture_output=False
+        result = run_opa(
+            prepare(), "test", [bundle_path, "--verbose"], timeout=None, capture=False
         )
-    except FileNotFoundError:
+    except OpaNotFoundError:
         console.print(
             "[red]opa binary not found on PATH. "
             "Install OPA: https://www.openpolicyagent.org/docs/latest/#running-opa[/red]"
         )
+        raise typer.Exit(code=1)
+    except OpaSandboxError as exc:
+        console.print(f"[red]opa sandbox unavailable, refusing to run: {exc}[/red]")
         raise typer.Exit(code=1)
     raise typer.Exit(code=result.returncode)
 

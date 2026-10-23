@@ -8287,6 +8287,8 @@ Options:
 
 Returns exit code 0 if all tests pass, 1 if any test fails or `opa` is not found.
 
+`opa` runs sandboxed, as everywhere in NovaFabric: it inherits no environment variable except a fixed `PATH`, and the Rego cannot call `opa.runtime`, `http.send` or `net.lookup_ip_addr` (they are removed from the capabilities `opa` runs with, and network access is denied). A test that relies on one of them fails to compile. An `opa` too old to report its capabilities (`opa capabilities --current`) is refused with exit code 1.
+
 The built-in bundle ships reference gates including `promote_gate.rego`,
 `regression_gate.rego` (v0.9), and `budget_gate.rego` — the **cost/energy budget
 gate** ([ADR-0136](./decisions.md), *experimental*).
