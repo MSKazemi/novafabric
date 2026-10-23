@@ -7308,8 +7308,10 @@ def create_app(
                     {"run_id": run_id, "code": exc.code, "details": exc.details}
                 ]},
             )
+            # Lead with the stable refusal code, like delete_inconsistent_pending
+            # above, so a client can branch on it without parsing the prose.
             hold_ids = exc.details.get("hold_ids")
-            detail = str(exc) if not hold_ids else f"{exc} {hold_ids}"
+            detail = f"{exc.code}: {exc}" if not hold_ids else f"{exc.code}: {exc} {hold_ids}"
             raise HTTPException(status_code=409, detail=detail) from exc
 
         conn = capsule_index.open_index(_db_path)

@@ -673,6 +673,26 @@ class TestDeleteCoreEdges:
             worm_locked_until(capsule_dir, "any-run")
         assert ei.value.code == "worm_state_unavailable"
 
+    def test_dangling_worm_db_symlink_refuses_without_creating_a_db(
+        self, capsule_dir: Path, tmp_path: Path
+    ) -> None:
+        from novafabric.server.capsule_delete import DeleteBlockedError, worm_locked_until
+
+        reg = capsule_dir.parent / "registries" / "default"
+        reg.mkdir(parents=True, exist_ok=True)
+        target = tmp_path / "unmounted" / "worm.db"
+        (reg / "worm.db").symlink_to(target)
+        with pytest.raises(DeleteBlockedError) as ei:
+            worm_locked_until(capsule_dir, "any-run")
+        assert ei.value.code == "worm_state_unavailable"
+        assert not target.exists() and not target.parent.exists()
+
+    def test_missing_worm_db_is_no_lock(self, capsule_dir: Path) -> None:
+        from novafabric.server.capsule_delete import worm_locked_until
+
+        (capsule_dir.parent / "registries" / "default").mkdir(parents=True, exist_ok=True)
+        assert worm_locked_until(capsule_dir, "any-run") is None
+
     def test_upload_index_failure_never_blocks_upload(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
