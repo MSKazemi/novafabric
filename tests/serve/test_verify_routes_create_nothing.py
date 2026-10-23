@@ -13,9 +13,7 @@
 from __future__ import annotations
 
 import datetime
-import io
 import json
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -131,10 +129,37 @@ def _profile_with_absent_log(env: dict[str, Path], monkeypatch: pytest.MonkeyPat
 
 
 def _bundle_for_run(evidence: Path, bundle_id: str) -> None:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("manifest.json", json.dumps({"subject": {"run_id": RUN_ID}}))
-    (evidence / f"{bundle_id}.zip").write_bytes(buf.getvalue())
+    """A real signed bundle whose run statement signs ``RUN_ID``.
+
+    The route looks up the local capsule only for a run a verified statement signs
+    (``manifest.json`` is unsigned), so the bundle must carry one.
+    """
+    from novafabric.evidence.bundle import EvidenceBundleBuilder  # noqa: PLC0415
+    from novafabric.evidence.signing import LocalSigner, generate_keypair  # noqa: PLC0415
+
+    work = evidence.parent / f"bundle-src-{bundle_id}"
+    capsule = work / RUN_ID
+    (capsule / "outputs").mkdir(parents=True)
+    (capsule / "inputs").mkdir()
+    (capsule / "outputs" / "stdout.txt").write_text("hello\n")
+    (capsule / "env.lock").write_text("python=3.13\n")
+    (capsule / "capsule.yaml").write_text(
+        yaml.safe_dump({"run_id": RUN_ID, "status": "success", "command": ["true"]})
+    )
+    (capsule / "redaction-proof.json").write_text(
+        json.dumps({
+            "findings": [], "unsafe_skips": [], "proof_id": "p1",
+            "chain_hash": "sha256:" + "a" * 64, "findings_count": {"total": 0},
+            "scanner": {"name": "test"},
+        })
+    )
+    for name in ("trace.jsonl", "model-calls.jsonl", "tool-calls.jsonl", "assets.jsonl"):
+        (capsule / name).write_text("")
+    priv, _ = generate_keypair(work / "keys")
+    EvidenceBundleBuilder(
+        capsule, LocalSigner(priv), evidence / f"{bundle_id}.zip",
+        audit_log_path=work / "audit.jsonl",
+    ).build()
 
 
 # ── evidence verify route ──────────────────────────────────────────────────

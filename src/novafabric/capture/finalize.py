@@ -140,6 +140,20 @@ def _digest_entry(capsule_dir: Path, rel: str) -> dict[str, Any] | None:
     return {"sha256": "sha256:" + digest.hexdigest(), "size_bytes": size}
 
 
+def _naming_manifest_file(manifest: dict[str, Any], name: str) -> dict[str, Any]:
+    """*manifest* with ``_novaseal.manifest = name``: the signed payload names its file.
+
+    ``_novaseal`` is the reserved seal-metadata block (ADR-0309); it is never part
+    of ``capsule.yaml`` and every manifest comparison ignores it.
+    """
+    from novafabric._capsule_manifest import SEAL_MANIFEST_NAME_KEY  # noqa: PLC0415
+    from novafabric.trust.novaseal.envelope import SEAL_METADATA_KEY  # noqa: PLC0415
+
+    meta = manifest.get(SEAL_METADATA_KEY)
+    merged = {**(meta if isinstance(meta, dict) else {}), SEAL_MANIFEST_NAME_KEY: name}
+    return {**manifest, SEAL_METADATA_KEY: merged}
+
+
 def seal_capsule(capsule_dir: Path, manifest: dict[str, Any]) -> str | None:
     """Apply NovaSeal signing to *capsule_dir* if NovaSeal is configured.
 
@@ -177,7 +191,10 @@ def seal_capsule(capsule_dir: Path, manifest: dict[str, Any]) -> str | None:
             db_path=str(profile.merkle_db),
             backend=backend,
         )
-        bundle = seal.seal(manifest)
+        # The signed payload names the manifest file it binds, so a verifier
+        # fails a capsule whose capsule.yaml is gone or substituted instead of
+        # reporting the comparison NOT PRESENT (ADR-0251 amendment, 2026-10-23).
+        bundle = seal.seal(_naming_manifest_file(manifest, "capsule.yaml"))
         _write_seal_files(capsule_dir, bundle)
         return None
 

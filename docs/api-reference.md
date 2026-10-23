@@ -206,7 +206,7 @@ route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
 | `GET` | `/api/runs/suggest-register` | Return asset registration suggestions derived from recent capsules. |
 | `DELETE` | `/api/runs/{run_id}` | Delete a capsule directory, subject to legal holds and retention policy. |
 | `GET` | `/api/runs/{run_id}` | get run |
-| `GET` | `/api/runs/{run_id}/children` | Return parent capsule metadata + list of child capsule summaries. |
+| `GET` | `/api/runs/{run_id}/children` | Return parent capsule metadata + list of child capsule summaries. A sealed capsule's `status` and `exit_code` come from its signed payload (`.seal/manifest.dsse`), never from an unsealed `capsule.yaml`/`capsule.json` beside it. |
 | `GET` | `/api/runs/{run_id}/diagnose` | Attribute a failed run to its most likely responsible step. |
 | `GET` | `/api/runs/{run_id}/energy` | Energy-Anchored Action Receipts + conservation for a run (ADR-0093). |
 | `POST` | `/api/runs/{run_id}/export-system-card` | Generate and SEAL an auto-generated system/audit card. |
@@ -306,11 +306,11 @@ always reported as a gap, never fabricated. Each source is capped
 | Method | Path | Summary |
 |---|---|---|
 | `GET` | `/api/audit` | list audit |
-| `GET` | `/api/evidence` | List Evidence Bundles (`*.zip` in the evidence directory), newest first. Only regular files are listed: a symlink or other special file named `*.zip` is skipped and not counted in `total`. |
+| `GET` | `/api/evidence` | List Evidence Bundles (`*.zip` in the evidence directory), newest first. Only regular files are listed: a symlink or other special file named `*.zip` is skipped and not counted in `total`. `verified` is the verdict of the same verifier as `POST …/verify` under the operator trust list (cached per file identity); `run_ids` are the runs its verified run statements sign, `run_id` the signed run when exactly one verifies (else the bundle id), `signer_trust` as in `…/verify`. `manifest.json` is read with a 64 MiB bound. Before 2026-10-23 `verified` compared a bare hash with the prefixed `manifest_hash` and was always false, and `run_id` was the unsigned manifest label. |
 | `GET` | `/api/evidence/completeness/{run_id}` | Compute the completeness assertion for a capsule. |
-| `GET` | `/api/evidence/{bundle_id}` | Bundle detail: manifest, decoded run statement, member list. The ZIP is opened without following a link; a symlink, FIFO or other non-regular file returns 422, a missing bundle 404. |
+| `GET` | `/api/evidence/{bundle_id}` | Bundle detail: manifest, decoded run statement, member list — the bundle's own, unverified content — plus `verified`, `run_ids`, `run_id` and `signer_trust` from the shared verifier (as in the list). `run_id` is never the manifest's unsigned label. The ZIP is opened without following a link; a symlink, FIFO or other non-regular file returns 422, a missing bundle 404, a `manifest.json` over 64 MiB (or a run envelope/certificate over 16 MiB) 413. |
 | `GET` | `/api/evidence/{bundle_id}/download` | Stream the bundle ZIP (`Content-Length` set). Read from a descriptor opened without following a link; a symlink, FIFO or other non-regular file returns 422 and no bytes, a missing bundle 404. |
-| `POST` | `/api/evidence/{bundle_id}/verify` | Verify an evidence bundle with the same verifier as `nova verify <bundle>.zip`: every artifact digest, no missing, extra or duplicate member, `manifest_hash`, every attestation's DSSE signature, and each signed subject recomputed from the bundle's own content, plus the RFC 3161 token and the local NovaSeal log. The verifying key ships inside the bundle, so `valid: true` proves consistency, not origin. `signer_trust` is `anchored` only when every signer is in the operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default `$NOVAFABRIC_HOME/evidence-trusted-keys.pem`); `unanchored` means no trust list is configured; `untrusted` (with `valid: false`) means a signer is not in it. A key in the request is never used. An unusable configured trust list returns 500, a link or non-ZIP 422, a bundle over 1 GiB uncompressed 413. |
+| `POST` | `/api/evidence/{bundle_id}/verify` | Verify an evidence bundle with the same verifier as `nova verify <bundle>.zip`: every artifact digest, no missing, extra or duplicate member, `manifest_hash`, every attestation's DSSE signature, and each signed subject recomputed from the bundle's own content, plus the RFC 3161 token and the local NovaSeal log. The verifying key ships inside the bundle, so `valid: true` proves consistency, not origin. `signer_trust` is `anchored` only when every signer is in the operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default `$NOVAFABRIC_HOME/evidence-trusted-keys.pem`); `unanchored` means no trust list is configured; `untrusted` (with `valid: false`) means a signer is not in it. A key in the request is never used. `run_ids` lists every run a verified run statement signs and `run_id` is that run when exactly one verified, else `null`; a manifest `subject`, label or top-level `run_id` that no verified statement signs fails the bundle. The local NovaSeal log is checked only for signed runs. An unusable configured trust list returns 500, a link or non-ZIP 422, a bundle over 1 GiB uncompressed (or a `manifest.json` over 64 MiB) 413. |
 | `POST` | `/api/evidence/{run_id}` | export evidence endpoint |
 | `POST` | `/api/evidence/{run_id}/bind` | Build criterion-evidence bindings for a capsule against a profile. |
 
@@ -375,7 +375,7 @@ the generic `{kind}` route is registered last so it never shadows them
 
 | Method | Path | Summary |
 |---|---|---|
-| `GET` | `/api/seal/log/verify` | Verify internal consistency of the local Merkle log (ADR-0041). |
+| `GET` | `/api/seal/log/verify` | Verify internal consistency of the local Merkle log (ADR-0041). The log (`NOVAFABRIC_SEAL_DB_PATH`, `merkle_db`, then `$NOVAFABRIC_HOME/novaseal-merkle.db`) is opened read-only: nothing is created or migrated. 404 when no log exists, 501 for a Postgres log (use `nova seal log verify`; the DSN is shown without its password), 422 for a file that is not a NovaSeal log. `capsule_included` (with `capsule_id`, at most 256 characters) is an exact `capsule_id` match, never a pattern. |
 | `GET` | `/api/seal/policy` | Return the latest promotion policy predicate. |
 | `POST` | `/api/seal/ratchet/init` | Provision epoch-0 ratchet state for a node. |
 | `POST` | `/api/seal/ratchet/rotate` | Advance to the next signing epoch; erase the previous chain key. |

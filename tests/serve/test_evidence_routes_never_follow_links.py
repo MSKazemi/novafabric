@@ -87,7 +87,10 @@ def test_regular_bundle_download_and_detail(client: TestClient, evidence_dir: Pa
     d = _get(client, "/api/evidence/b1")
     assert d.status_code == 200
     body = d.json()
-    assert body["run_id"] == "run-1"
+    # Unsigned: the manifest's label is shown as data, never reported as the run.
+    assert body["manifest"]["run_id"] == "run-1"
+    assert body["run_id"] == "b1"
+    assert body["verified"] is False
     assert body["size_bytes"] == len(data)
     assert {f["path"] for f in body["files"]} == {"manifest.json", "artifacts/secret.txt"}
 

@@ -23,13 +23,18 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from novafabric._capsule_fs import (
     CapsuleEntryError,
     open_capsule_file,
     read_capsule_file,
+)
+from novafabric._capsule_manifest import (
+    MANIFEST_NAMES,
+    parse_manifest_bytes,
+    sealed_manifest_name,
 )
 from novafabric.trust.novaseal import (
     VerificationResult,
@@ -47,6 +52,7 @@ __all__ = [
     "read_capsule_tsr",
     "signer_chain_check",
     "tsa_chain_check",
+    "unsealed_substitutes",
     "verify_capsule",
 ]
 
@@ -70,8 +76,16 @@ class CapsuleBinding:
     """ADR-0251: is the seal bound to *this* directory?
 
     ``manifest_present`` / ``digests_present`` False means the check could not
-    run (no ``capsule.yaml``; sealed before ``evidence_digests``) — reported as
-    NOT PRESENT, never as passed and never as failed (ADR-0251 §4).
+    run (no manifest file and none named by the seal; sealed before
+    ``evidence_digests``) — reported as NOT PRESENT, never as passed and never as
+    failed (ADR-0251 §4).
+
+    ``manifest_name`` is the manifest file the seal was made over (or, when the
+    seal names none, the one compared). ``unsealed_manifests`` are other
+    manifest-named files (``capsule.yaml`` / ``capsule.json``) that disagree with
+    the signed payload, and ``unsealed_refs`` files a signed ``*_ref`` names that
+    the seal does not cover: readers take both as capsule content, so each fails —
+    unlike ``unlisted`` derived artifacts, which are reported only (§5).
     """
 
     manifest_present: bool = False
@@ -83,13 +97,23 @@ class CapsuleBinding:
     missing: tuple[str, ...] = ()
     unlisted: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+    manifest_name: str = "capsule.yaml"
+    unsealed_manifests: tuple[str, ...] = ()
+    unsealed_refs: tuple[str, ...] = ()
+    reasons: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
         """False when any check that ran failed; absent checks do not fail."""
         manifest = self.manifest_ok or not self.manifest_present
         digests = self.digests_ok or not self.digests_present
-        return manifest and digests and not self.errors
+        return (
+            manifest
+            and digests
+            and not self.errors
+            and not self.unsealed_manifests
+            and not self.unsealed_refs
+        )
 
     def failure_reasons(self) -> list[str]:
         """One human-readable line per failed binding check."""
@@ -97,11 +121,12 @@ class CapsuleBinding:
         if self.manifest_present and not self.manifest_ok:
             if self.differing_keys:
                 reasons.append(
-                    "capsule.yaml disagrees with the signed payload: "
+                    f"{self.manifest_name} disagrees with the signed payload: "
                     + ", ".join(self.differing_keys)
                 )
             elif not self.errors:
-                reasons.append("capsule.yaml does not match the signed payload")
+                reasons.append(f"{self.manifest_name} does not match the signed payload")
+        reasons.extend(self.reasons)
         reasons.extend(f"evidence file modified after sealing: {p}" for p in self.mismatched)
         reasons.extend(f"evidence file missing: {p}" for p in self.missing)
         return reasons
@@ -265,33 +290,43 @@ def _signed_manifest(dsse_bytes: bytes) -> tuple[dict[str, Any] | None, str | No
     return signed, None
 
 
-def _manifest_binding(
-    capsule_dir: Path, signed: dict[str, Any]
-) -> tuple[bool, bool, tuple[str, ...], tuple[str, ...]]:
-    """``(present, ok, differing_keys, errors)`` for ``capsule.yaml`` (ADR-0251 §2)."""
-    manifest_file = capsule_dir / "capsule.yaml"
-    if not manifest_file.exists():
-        # Not every sealed directory is a run capsule — the object capsule store
-        # seals a single-field manifest with no capsule.yaml. Absent, not failed.
-        return False, False, (), ()
+@dataclass(frozen=True)
+class _ManifestCheck:
+    """Outcome of comparing one manifest-named file with the signed payload."""
+
+    name: str
+    exists: bool
+    differing: tuple[str, ...] = ()
+    error: str | None = None
+
+    @property
+    def matches(self) -> bool:
+        return self.exists and self.error is None and not self.differing
+
+
+def _compare_manifest_file(capsule_dir: Path, name: str, signed: dict[str, Any]) -> _ManifestCheck:
+    """Compare manifest file *name* structurally with the signed payload (ADR-0251 §2)."""
+    if not _entry_exists(capsule_dir, name):
+        return _ManifestCheck(name, exists=False)
     import yaml  # noqa: PLC0415
 
     try:
-        # No link is followed: a linked capsule.yaml is reported, never compared
-        # with the target's contents (R6).
-        on_disk = yaml.safe_load(
+        # No link is followed: a linked manifest is reported, never compared with
+        # the target's contents (R6).
+        on_disk = parse_manifest_bytes(
+            name,
             read_capsule_file(
-                capsule_dir, "capsule.yaml", operation=_OPERATION, max_bytes=_MAX_MANIFEST_BYTES
-            )
+                capsule_dir, name, operation=_OPERATION, max_bytes=_MAX_MANIFEST_BYTES
+            ),
         )
     except (OSError, ValueError, yaml.YAMLError, CapsuleEntryError) as exc:
-        return True, False, (), (f"Cannot read capsule.yaml: {exc}",)
+        return _ManifestCheck(name, exists=True, error=f"Cannot read {name}: {exc}")
     if not isinstance(on_disk, dict):
         if on_disk is None:
-            return True, False, (), ()
-        return True, False, (), ("capsule.yaml did not parse as a mapping",)
+            return _ManifestCheck(name, exists=True, error=f"{name} is empty")
+        return _ManifestCheck(name, exists=True, error=f"{name} did not parse as a mapping")
     # ``_novaseal`` is seal metadata bound into the signed payload (ADR-0309);
-    # it is never part of capsule.yaml.
+    # it is never part of a manifest file.
     differing = tuple(
         sorted(
             k
@@ -299,7 +334,132 @@ def _manifest_binding(
             if signed.get(k) != on_disk.get(k)
         )
     )
-    return True, not differing, differing, ()
+    return _ManifestCheck(name, exists=True, differing=differing)
+
+
+def _entry_exists(capsule_dir: Path, rel: str) -> bool:
+    path = capsule_dir / rel
+    return path.exists() or path.is_symlink()
+
+
+@dataclass(frozen=True)
+class _ManifestBinding:
+    present: bool = False
+    ok: bool = False
+    name: str = MANIFEST_NAMES[0]
+    differing: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+    unsealed: tuple[str, ...] = ()
+    reasons: tuple[str, ...] = ()
+    #: Manifest-named files the binding accounted for (never "unlisted").
+    handled: frozenset[str] = frozenset()
+
+
+def _manifest_binding(
+    capsule_dir: Path, signed: dict[str, Any], digests: dict[str, Any] | None
+) -> _ManifestBinding:
+    """Bind the capsule's manifest files to the signed payload (ADR-0251 §2).
+
+    The manifest the seal was made over (:func:`sealed_manifest_name`) must exist
+    and equal the payload; missing, it fails. Any *other* manifest-named file must
+    either be an evidence file the digest map covers or equal the payload too:
+    readers accept ``capsule.json`` as a manifest, so an unsealed one that differs
+    is a substituted manifest, never a harmless "unlisted" addition.
+    """
+    carrier = sealed_manifest_name(signed)
+    checks = {name: _compare_manifest_file(capsule_dir, name, signed) for name in MANIFEST_NAMES}
+    covered = set(digests) if digests else set()
+    handled = frozenset(n for n, c in checks.items() if c.exists and n not in covered)
+
+    if carrier is not None and carrier not in MANIFEST_NAMES:
+        return _ManifestBinding(
+            present=True,
+            name=carrier,
+            errors=(f"the seal names an unknown manifest file {carrier!r}",),
+            handled=handled,
+        )
+    primary = carrier or next((n for n in MANIFEST_NAMES if checks[n].exists), None)
+    unsealed: list[str] = []
+    reasons: list[str] = []
+    for name, check in checks.items():
+        if name == primary or not check.exists or name in covered or check.matches:
+            continue
+        unsealed.append(name)
+        detail = check.error or "disagrees with the signed payload: " + ", ".join(check.differing)
+        reasons.append(f"{name} is a manifest file the seal does not cover ({detail})")
+
+    if primary is None:
+        # Not every sealed directory is a run capsule — the object capsule store
+        # seals a single-field manifest with no file. Absent, not failed.
+        return _ManifestBinding(handled=handled)
+    check = checks[primary]
+    if not check.exists:
+        errors: tuple[str, ...] = (f"{primary} is missing: the seal was made over it",)
+    else:
+        errors = (check.error,) if check.error else ()
+    return _ManifestBinding(
+        present=True,
+        ok=check.matches,
+        name=primary,
+        differing=check.differing,
+        errors=errors,
+        unsealed=tuple(unsealed),
+        reasons=tuple(reasons),
+        handled=handled,
+    )
+
+
+def _ref_target(value: object) -> str | None:
+    """A signed ``*_ref`` value as a safe capsule-relative path, or None."""
+    if not isinstance(value, str) or not value or "\\" in value:
+        return None
+    parts = PurePosixPath(value).parts
+    if not parts or PurePosixPath(value).is_absolute() or ".." in parts or parts[0] == ".seal":
+        return None
+    return PurePosixPath(*parts).as_posix()
+
+
+def _unsealed_refs(
+    capsule_dir: Path, signed: dict[str, Any], digests: dict[str, Any]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Files a signed top-level ``*_ref`` names that exist but the seal does not cover.
+
+    The signed manifest says "this capsule's tool calls are ``tool-calls.jsonl``".
+    When no such file existed at seal time, one added later is not the evidence
+    the signer vouched for, yet every reader would take it as that evidence.
+    """
+    unsealed: list[str] = []
+    reasons: list[str] = []
+    for key in sorted(signed):
+        target = _ref_target(signed[key]) if key.endswith("_ref") else None
+        if target is None or target in digests or target in MANIFEST_NAMES:
+            continue
+        if _entry_exists(capsule_dir, target) and target not in unsealed:
+            unsealed.append(target)
+            reasons.append(
+                f"{target} is named by the signed manifest ({key}) but was not covered "
+                "by the seal: it was added after sealing"
+            )
+    return tuple(unsealed), tuple(reasons)
+
+
+def unsealed_substitutes(capsule_dir: Path, dsse_bytes: bytes) -> tuple[str, ...]:
+    """Files a sealed capsule's readers would trust that its seal does not cover.
+
+    The manifest-named files that disagree with the signed payload plus the
+    targets of signed ``*_ref`` fields added after sealing — the two failure
+    classes of :func:`capsule_binding` that substitute capsule content. Cheaper
+    than the full binding: no evidence file is hashed. Empty for an envelope that
+    does not decode (the full verifier reports that).
+    """
+    signed, _error = _signed_manifest(dsse_bytes)
+    if signed is None:
+        return ()
+    raw = signed.get("evidence_digests")
+    digests = raw if isinstance(raw, dict) else None
+    manifests = _manifest_binding(capsule_dir, signed, digests).unsealed
+    refs = _unsealed_refs(capsule_dir, signed, digests)[0] if digests is not None else ()
+    return manifests + refs
 
 
 def capsule_binding(capsule_dir: Path, dsse_bytes: bytes) -> CapsuleBinding:
@@ -314,22 +474,31 @@ def capsule_binding(capsule_dir: Path, dsse_bytes: bytes) -> CapsuleBinding:
     if signed is None:
         return CapsuleBinding(errors=(error or "Cannot decode signed payload",))
 
-    present, manifest_ok, differing, errors = _manifest_binding(capsule_dir, signed)
     digests = signed.get("evidence_digests")
+    manifest = _manifest_binding(
+        capsule_dir, signed, digests if isinstance(digests, dict) else None
+    )
     if not isinstance(digests, dict):  # sealed before ADR-0251 — NOT PRESENT
         return CapsuleBinding(
-            manifest_present=present,
-            manifest_ok=manifest_ok,
-            differing_keys=differing,
-            errors=errors,
+            manifest_present=manifest.present,
+            manifest_ok=manifest.ok,
+            differing_keys=manifest.differing,
+            errors=manifest.errors,
+            manifest_name=manifest.name,
+            unsealed_manifests=manifest.unsealed,
+            reasons=manifest.reasons,
         )
 
+    unsealed_refs, ref_reasons = _unsealed_refs(capsule_dir, signed, digests)
+    not_unlisted = {".seal", *manifest.handled, *unsealed_refs}
     on_disk_files = {
-        path.relative_to(capsule_dir).as_posix()
-        for path in capsule_dir.rglob("*")
-        if path.is_file()
-        and not path.is_symlink()
-        and path.relative_to(capsule_dir).parts[0] not in {".seal", "capsule.yaml"}
+        rel
+        for rel in (
+            path.relative_to(capsule_dir).as_posix()
+            for path in capsule_dir.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        )
+        if rel not in not_unlisted and rel.split("/", 1)[0] != ".seal"
     }
     mismatched: list[str] = []
     missing: list[str] = []
@@ -347,17 +516,22 @@ def capsule_binding(capsule_dir: Path, dsse_bytes: bytes) -> CapsuleBinding:
         if not isinstance(expected, dict) or actual != expected.get("sha256"):
             mismatched.append(rel)
     return CapsuleBinding(
-        manifest_present=present,
-        manifest_ok=manifest_ok,
-        differing_keys=differing,
+        manifest_present=manifest.present,
+        manifest_ok=manifest.ok,
+        differing_keys=manifest.differing,
         digests_present=True,
         digests_ok=not mismatched and not missing,
         mismatched=tuple(mismatched),
         missing=tuple(missing),
-        # Files added after sealing are legitimate (`nova export-c2pa` writes
-        # one): reported, never fatal (ADR-0251 §5).
+        # Derived files added after sealing are legitimate (`nova export-c2pa`
+        # writes one): reported, never fatal (ADR-0251 §5). A manifest-named file
+        # or a signed ref's target is never one of them — those fail above.
         unlisted=tuple(sorted(on_disk_files - set(digests))),
-        errors=errors,
+        errors=manifest.errors,
+        manifest_name=manifest.name,
+        unsealed_manifests=manifest.unsealed,
+        unsealed_refs=unsealed_refs,
+        reasons=manifest.reasons + ref_reasons,
     )
 
 
@@ -488,14 +662,20 @@ def tsa_chain_check(
 
 def _open_logs(profile: Any) -> tuple[Any, list[Any]]:
     """The configured Merkle log and ``previous_merkle_dbs``, only if they exist."""
+    from novafabric.trust.novaseal.log_location import is_postgres_dsn  # noqa: PLC0415
     from novafabric.trust.novaseal.merkle import open_existing_merkle_log  # noqa: PLC0415
+
+    def _open(location: Any) -> Any:
+        # A SQLite log is opened mode=ro: verification never migrates or writes
+        # it (ADR-0297 S2). A Postgres log is opened as before.
+        return open_existing_merkle_log(location, read_only=not is_postgres_dsn(location))
 
     if profile is None:
         return None, []
-    current = open_existing_merkle_log(getattr(profile, "merkle_db", None))
+    current = _open(getattr(profile, "merkle_db", None))
     previous = []
     for location in getattr(profile, "previous_merkle_dbs", None) or []:
-        opened = open_existing_merkle_log(location)
+        opened = _open(location)
         if opened is not None:
             previous.append(opened)
     return current, previous

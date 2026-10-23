@@ -190,6 +190,7 @@ def verify_bundle_signatures(
     capsule_hashes = _capsule_hashes(manifest)
     subject_run_ids = _subject_run_ids(manifest)
     covered_copies: list[str] = []
+    signed_runs: list[_SignedRun] = []
 
     for att in raw_attestations:
         if not isinstance(att, dict):
@@ -239,8 +240,12 @@ def verify_bundle_signatures(
             report.bad_subjects.append(f"{path} ({problem})")
         elif isinstance(statement, dict) and statement.get("predicateType") == PREDICATE_RUN:
             run_id = _predicate_run_id(statement)
+            signed_runs.append(
+                _SignedRun(run_id, frozenset(_statement_digests(statement)), covered_copies[-1])
+            )
             if run_id and run_id not in report.signed_run_ids:
                 report.signed_run_ids.append(run_id)
+    report.bad_subjects.extend(_unsigned_claims(manifest, signed_runs))
     uncovered = sorted(
         n
         for n in names
@@ -257,6 +262,74 @@ def verify_bundle_signatures(
 
 
 _CAPSULE_COPY = "run-capsule/"
+
+
+@dataclass(frozen=True)
+class _SignedRun:
+    """A run statement whose signature, subject and content all verified."""
+
+    run_id: str | None
+    digests: frozenset[str]
+    copy_prefix: str
+
+
+def _subject_label(entry: dict[str, Any]) -> str:
+    label = entry.get("run_id") or entry.get("capsule_hash") or "?"
+    return f"{label!s:.80}"
+
+
+def _subject_claim_problem(entry: object, signed_runs: list[_SignedRun]) -> str:
+    """Why one manifest ``subject`` entry is not a run a verified statement signs."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("capsule_hash"), str):
+        return f"manifest subject entry has no capsule_hash: {entry!r:.80}"
+    label = _subject_label(entry)
+    digest = _bare(entry["capsule_hash"])
+    run = next((r for r in signed_runs if digest in r.digests), None)
+    if run is None:
+        return (
+            f"manifest subject {label} is not covered by a verified signed run "
+            "statement (manifest.json is unsigned; the run is not in the bundle's signatures)"
+        )
+    if "run_id" in entry and entry["run_id"] != run.run_id:
+        return f"manifest subject {label}: run_id ≠ the run_id the run statement signs"
+    path = entry.get("capsule_path_in_bundle")
+    if path is not None and path != run.copy_prefix:
+        return (
+            f"manifest subject {label}: capsule_path_in_bundle {path!r:.80} ≠ the capsule "
+            f"copy its signed run statement covers ({run.copy_prefix})"
+        )
+    return ""
+
+
+def _unsigned_claims(manifest: dict[str, Any], signed_runs: list[_SignedRun]) -> list[str]:
+    """Runs ``manifest.json`` claims that no verified run statement signs.
+
+    The manifest is unsigned, so the set of runs a bundle reports must be exactly
+    the set its verified run statements sign. Every ``subject`` entry must match
+    one (hash, ``run_id``, ``capsule_path_in_bundle``), no entry may repeat, and a
+    legacy top-level ``run_id`` must be one of the signed run ids. (A signed run
+    the manifest omits already fails in :func:`_subject_problem`.)
+    """
+    raw = manifest.get("subject")
+    entries = raw if isinstance(raw, list) else [raw] if raw is not None else []
+    problems = [p for p in (_subject_claim_problem(e, signed_runs) for e in entries) if p]
+    seen: set[str] = set()
+    for entry in entries:
+        if isinstance(entry, dict) and isinstance(entry.get("capsule_hash"), str):
+            digest = _bare(entry["capsule_hash"])
+            if digest in seen:
+                label = _subject_label(entry)
+                problems.append(f"manifest subject {label} is listed more than once")
+            seen.add(digest)
+    if not entries and signed_runs:
+        problems.append("manifest.json has no subject for the signed run statements")
+    if "run_id" in manifest:
+        top = manifest["run_id"]
+        if not any(top == r.run_id for r in signed_runs):
+            problems.append(
+                f"manifest run_id {top!r:.80} is not a run any verified run statement signs"
+            )
+    return problems
 
 
 def _predicate_run_id(statement: dict[str, Any]) -> str | None:
@@ -452,6 +525,44 @@ def _check_declared_size(
             )
 
 
+#: Upper bound on ``manifest.json``, declared and inflated. A ~300 KB archive can
+#: inflate to hundreds of MB of whitespace; nothing reads the manifest whole.
+MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+
+
+def read_bundle_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
+    """``manifest.json`` of an open bundle, parsed, never read past :data:`MAX_MANIFEST_BYTES`.
+
+    The one way the verifier and ``nova serve``'s list/detail routes read it.
+
+    Raises:
+        BundleArchiveError: no ``manifest.json``, or it is not a JSON object.
+        BundleTooLargeError: it declares, or inflates to, more than the bound.
+    """
+    limit = MAX_MANIFEST_BYTES
+    try:
+        info = zf.getinfo("manifest.json")
+    except KeyError:
+        raise BundleArchiveError(
+            "the archive has no manifest.json — not an Evidence Bundle"
+        ) from None
+    if info.file_size > limit:
+        raise BundleTooLargeError(
+            f"manifest.json declares {info.file_size} bytes (limit {limit})"
+        )
+    with zf.open(info) as handle:
+        raw = handle.read(limit + 1)
+    if len(raw) > limit:
+        raise BundleTooLargeError(f"manifest.json is larger than {limit} bytes")
+    try:
+        manifest = json.loads(raw)
+    except ValueError as exc:
+        raise BundleArchiveError(f"manifest.json is not valid JSON: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise BundleArchiveError("manifest.json is not a JSON object")
+    return manifest
+
+
 def _duplicates(listed: list[str]) -> list[str]:
     seen: set[str] = set()
     dupes: set[str] = set()
@@ -482,19 +593,13 @@ def verify_bundle_archive(
     Raises:
         BundleArchiveError: no ``manifest.json``, or it is not a JSON object.
         BundleTooLargeError: the archive exceeds *max_uncompressed_bytes* (sum of
-            declared member sizes) or *max_members*.
+            declared member sizes) or *max_members*, or ``manifest.json`` exceeds
+            :data:`MAX_MANIFEST_BYTES`.
     """
     _check_declared_size(zf, max_uncompressed_bytes, max_members)
     listed = zf.namelist()
     names = set(listed)
-    if "manifest.json" not in names:
-        raise BundleArchiveError("the archive has no manifest.json — not an Evidence Bundle")
-    try:
-        manifest = json.loads(zf.read("manifest.json"))
-    except ValueError as exc:
-        raise BundleArchiveError(f"manifest.json is not valid JSON: {exc}") from exc
-    if not isinstance(manifest, dict):
-        raise BundleArchiveError("manifest.json is not a JSON object")
+    manifest = read_bundle_manifest(zf)
 
     raw_artifacts = _as_list(manifest.get("artifacts"))
     artifacts = [a for a in raw_artifacts if isinstance(a, dict)]

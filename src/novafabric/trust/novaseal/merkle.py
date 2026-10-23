@@ -755,12 +755,17 @@ class MerkleLog:
     one raises :class:`MerkleError`.
     """
 
-    def __init__(self, db_path: Path, *, root_version: int | None = None) -> None:
+    def __init__(
+        self, db_path: Path, *, root_version: int | None = None, read_only: bool = False
+    ) -> None:
         # Expand ``~`` here, at the one place that creates the file: before
         # audit L28 ``MerkleLog(Path("~/x.db"))`` made a literal ``./~``
         # directory in the current working directory.
         db_path = Path(db_path).expanduser()
         self._db_path = db_path
+        if read_only:
+            self._open_read_only(db_path, root_version)
+            return
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = connect_sqlite(str(db_path), check_same_thread=False)
         # Two captures may open a new log at the same moment. An unconditional
@@ -776,6 +781,79 @@ class MerkleLog:
                 # Additive migration of a pre-ADR-0313 log: NULL means a v1 head.
                 self._conn.execute("ALTER TABLE tree_heads ADD COLUMN root_version INTEGER")
         self._root_version = self._init_root_version(root_version)
+
+    def _open_read_only(self, db_path: Path, requested: int | None) -> None:
+        """Open an existing log for verification: no file, schema or migration is written.
+
+        ``mode=ro`` makes SQLite refuse every write, so a legacy log is read as it
+        is — never migrated — and a missing file raises instead of being created
+        (ADR-0297 S2). SQLite may still add its ``-wal``/``-shm`` sidecars beside a
+        WAL-mode log; the log database itself is untouched.
+
+        Raises:
+            FileNotFoundError: *db_path* is not an existing regular file.
+            MerkleError: the file is a database but not a NovaSeal Merkle log.
+            sqlite3.DatabaseError: the file is not a SQLite database.
+        """
+        if not db_path.is_file():
+            raise FileNotFoundError(f"no NovaSeal Merkle log at {db_path}")
+        self._conn = sqlite3.connect(
+            f"{db_path.resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False
+        )
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            tables = {
+                row[0]
+                for row in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            if not {"leaves", "tree_heads"} <= tables:
+                raise MerkleError(f"{db_path} is not a NovaSeal Merkle log (no leaves table)")
+            recorded = None
+            if "log_meta" in tables:
+                row = self._conn.execute(
+                    "SELECT value FROM log_meta WHERE key = ?", (_ROOT_VERSION_KEY,)
+                ).fetchone()
+                recorded = None if row is None else str(row[0])
+            has_leaves = self._conn.execute("SELECT 1 FROM leaves LIMIT 1").fetchone()
+            self._root_version = _resolve_log_root_version(
+                recorded, has_leaves is not None, requested, str(db_path)
+            )
+        except BaseException:
+            self._conn.close()
+            raise
+
+    def _heads_of_other_versions(self, version: int) -> int:
+        """Stored tree heads whose root version is not *version* (NULL = v1)."""
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(tree_heads)")}
+        if "root_version" not in columns:
+            # A pre-ADR-0313 log opened read-only (never migrated): every head is v1.
+            if version == ROOT_VERSION_V1:
+                return 0
+            row = self._conn.execute("SELECT COUNT(*) FROM tree_heads").fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM tree_heads WHERE COALESCE(root_version, 1) != ?",
+                (version,),
+            ).fetchone()
+        return 0 if row is None else int(row[0])
+
+    def has_entry_for_capsule_id(self, capsule_id: str) -> bool:
+        """True when a stored seal entry's ``capsule_id`` equals *capsule_id* exactly.
+
+        Compared as a parsed JSON value, never as a SQL pattern: a ``LIKE`` over
+        ``entry_json`` let ``%``, ``_%`` or a signer's ``keyid`` match (attack A4,
+        2026-10-23). A leaf whose entry is not a JSON object matches nothing.
+        """
+        if not isinstance(capsule_id, str) or not capsule_id:
+            return False
+        for (entry_json,) in self._conn.execute("SELECT entry_json FROM leaves"):
+            try:
+                entry = json.loads(entry_json)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(entry, dict) and entry.get("capsule_id") == capsule_id:
+                return True
+        return False
 
     def _init_root_version(self, requested: int | None) -> int:
         with self._conn:
@@ -1057,13 +1135,10 @@ class MerkleLog:
                 f"computed={computed_root[:16]}…"
             )
 
-        mixed = self._conn.execute(
-            "SELECT COUNT(*) FROM tree_heads WHERE COALESCE(root_version, 1) != ?",
-            (version,),
-        ).fetchone()
-        if mixed is not None and int(mixed[0]) > 0:
+        mixed = self._heads_of_other_versions(version)
+        if mixed > 0:
             errors.append(
-                f"{int(mixed[0])} tree head(s) carry a root_version other than this log's "
+                f"{mixed} tree head(s) carry a root_version other than this log's "
                 f"(v{version}) — written by a NovaFabric release that predates ADR-0313?"
             )
 
@@ -1335,6 +1410,22 @@ class PostgresMerkleLog:
             row = cur.fetchone()
         return row is not None
 
+    def has_entry_for_capsule_id(self, capsule_id: str) -> bool:
+        """Exact ``capsule_id`` match over parsed entries, never a pattern (see MerkleLog)."""
+        if not isinstance(capsule_id, str) or not capsule_id:
+            return False
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT entry_json FROM nova_seal_leaves")
+            for (entry_json,) in cur:
+                try:
+                    entry = json.loads(entry_json)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(entry, dict) and entry.get("capsule_id") == capsule_id:
+                    return True
+        return False
+
     def get_inclusion_proof(self, leaf_index: int) -> list[str]:
         version = self.root_version
         return _compute_inclusion_proof(leaf_index, self._all_leaf_hashes(), version)
@@ -1542,20 +1633,32 @@ def open_merkle_log(uri: Union[str, Path]) -> "MerkleLog | PostgresMerkleLog":
 
 def open_existing_merkle_log(
     location: Union[str, Path, None],
+    *,
+    read_only: bool = False,
 ) -> "MerkleLog | PostgresMerkleLog | None":
     """Open the Merkle log at *location* for verification, or None when it does not exist.
 
     Verification must never *create* a log: an empty one proves nothing and
     would litter an auditor's machine (ADR-0297 S2). A Postgres DSN is opened as
-    given; a SQLite path only when the file already exists.
+    given; a SQLite path only when the file already exists. With *read_only* a
+    SQLite log is opened ``mode=ro`` (no schema, migration or root-version write),
+    and a Postgres DSN raises :class:`MerkleError` — its constructor runs DDL.
     """
-    from novafabric.trust.novaseal.log_location import normalize_location  # noqa: PLC0415
+    from novafabric.trust.novaseal.log_location import (  # noqa: PLC0415
+        normalize_location,
+        redact_location,
+    )
 
     if location is None or not str(location):
         return None
     resolved = normalize_location(location)
     if isinstance(resolved, str):
+        if read_only:
+            raise MerkleError(
+                f"the Postgres Merkle log {redact_location(resolved)} cannot be opened "
+                "read-only here"
+            )
         return PostgresMerkleLog(resolved)
     if not resolved.is_file():
         return None
-    return MerkleLog(resolved)
+    return MerkleLog(resolved, read_only=read_only)

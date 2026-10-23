@@ -537,6 +537,12 @@ def _verify_capsule_dir(
                 "log_inclusion": result.log_inclusion,
                 "log_notes": list(result.log_notes),
                 "capsule_binding_ok": binding_ok,
+                # Additive: which manifest the seal binds, and the unsealed
+                # substitutes (manifest files, signed refs) that failed it.
+                "manifest_file": binding.manifest_name,
+                "unsealed_manifests": list(binding.unsealed_manifests),
+                "unsealed_refs": list(binding.unsealed_refs),
+                "binding_errors": binding.failure_reasons(),
                 "capsule_id_ok": capsule_id_ok,
                 "ca_chain_checked": chain_check is not None,
                 "ca_chain_ok": chain_ok if chain_check is not None else None,
@@ -679,21 +685,28 @@ def _revocation_lines(revocation: Any) -> list[str]:
 
 def _print_capsule_binding(binding: Any) -> bool:
     """Print the ADR-0251 binding checks. Returns False if the capsule is unbound."""
+    name = binding.manifest_name
+    label = f"Manifest binding ({name} == signed payload)"
     if not binding.manifest_present:
         console.print(
             "  [yellow]⊘[/yellow] Manifest binding: "
-            "[yellow]NOT PRESENT[/yellow] (no capsule.yaml to compare)"
+            "[yellow]NOT PRESENT[/yellow] (no manifest file to compare)"
         )
-    elif binding.manifest_ok:
-        _print_check("Manifest binding (capsule.yaml == signed payload)", True)
+    elif binding.manifest_ok and not binding.unsealed_manifests:
+        _print_check(label, True)
     else:
-        _print_check("Manifest binding (capsule.yaml == signed payload)", False)
-        keys = ", ".join(binding.differing_keys[:8])
-        more = len(binding.differing_keys) - 8
-        console.print(
-            f"    [red]capsule.yaml disagrees with the signed payload:[/red] {keys}"
-            + (f" (+{more} more)" if more > 0 else "")
-        )
+        _print_check(label, False)
+        if binding.differing_keys:
+            keys = ", ".join(binding.differing_keys[:8])
+            more = len(binding.differing_keys) - 8
+            console.print(
+                f"    [red]{name} disagrees with the signed payload:[/red] {keys}"
+                + (f" (+{more} more)" if more > 0 else "")
+            )
+    # A manifest-named file or a signed ref's target the seal does not cover is a
+    # substitute every reader would trust: a failure, never "not covered" noise.
+    for reason in binding.reasons:
+        console.print(f"  [red]✗[/red] {reason}")
 
     if not binding.digests_present:
         console.print(

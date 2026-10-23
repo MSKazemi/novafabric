@@ -33,9 +33,18 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from novafabric._capsule_fs import list_capsule, open_capsule_file, read_required_capsule_member
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    CapsuleRequiredFileError,
+    list_capsule,
+    open_capsule_file,
+    read_capsule_file,
+)
+from novafabric._capsule_manifest import (
+    SEALED_ENVELOPE,
+    CapsuleManifestError,
+    read_capsule_manifest,
+)
 from novafabric.evidence.intoto import INTOTO_STATEMENT_TYPE
 
 CAPSULE_PREDICATE_TYPE = "novafabric.dev/capsule/v1"
@@ -45,6 +54,15 @@ PREDICATE_SCHEMA_VERSION = "1.0.0"
 
 class SubjectDigestMismatch(Exception):
     """Raised when a subject's recomputed digest disagrees with an expected one."""
+
+
+class UnsealedManifestError(Exception):
+    """A sealed capsule carries a manifest or signed-ref file its seal does not cover.
+
+    Readers take ``capsule.json`` as a manifest and a signed ``*_ref`` target as
+    the evidence it names, so attesting such a file would vouch for content the
+    capsule's signer never signed (``nova verify`` fails the capsule for it).
+    """
 
 
 #: The ``operation`` named in a ``_capsule_fs`` refusal.
@@ -73,16 +91,48 @@ def _sha256_file(capsule_dir: Path, rel: str) -> str:
     return digest.hexdigest()
 
 
+_MAX_ENVELOPE_BYTES = 16 * 1024 * 1024
+
+
 def _read_run_id(capsule_dir: Path) -> str:
-    # Never through a link or into a FIFO; a manifest that is present but
-    # unusable raises CapsuleRequiredFileError instead of an empty run id.
-    for name in ("capsule.yaml", "capsule.json"):
-        text = read_required_capsule_member(capsule_dir / name, operation="an in-toto statement")
-        if text is not None:
-            data = yaml.safe_load(text) or {}
-            if isinstance(data, dict) and data.get("run_id"):
-                return str(data["run_id"])
-    return ""
+    """The manifest's ``run_id`` — from the signed payload when the capsule is sealed.
+
+    Never through a link or into a FIFO; a manifest that is present but unusable
+    raises :class:`CapsuleRequiredFileError` instead of an empty run id.
+    """
+    try:
+        manifest = read_capsule_manifest(capsule_dir, operation=_OPERATION)
+    except CapsuleManifestError as exc:
+        raise CapsuleRequiredFileError(
+            f"{exc.rel} in {capsule_dir} is present but unusable for {_OPERATION}: {exc}",
+            rel=exc.rel,
+            reason=str(exc),
+        ) from exc
+    run_id = manifest.data.get("run_id") if manifest is not None else None
+    return str(run_id) if run_id else ""
+
+
+def _refuse_unsealed_substitutes(capsule_dir: Path) -> None:
+    """Raise :class:`UnsealedManifestError` when the seal does not cover a trusted file."""
+    from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415
+        unsealed_substitutes,
+    )
+
+    envelope = capsule_dir / SEALED_ENVELOPE
+    if not (envelope.exists() or envelope.is_symlink()):
+        return
+    try:
+        dsse = read_capsule_file(
+            capsule_dir, SEALED_ENVELOPE, operation=_OPERATION, max_bytes=_MAX_ENVELOPE_BYTES
+        )
+    except (OSError, CapsuleEntryError) as exc:
+        raise UnsealedManifestError(f"{SEALED_ENVELOPE} not read: {exc}") from exc
+    found = unsealed_substitutes(capsule_dir, dsse)
+    if found:
+        raise UnsealedManifestError(
+            f"{capsule_dir.name}: not covered by the capsule's seal: {', '.join(found)} "
+            "(nova verify fails this capsule); refusing to attest it"
+        )
 
 
 def capsule_subjects(capsule_dir: str | Path) -> list[dict[str, Any]]:
@@ -92,8 +142,13 @@ def capsule_subjects(capsule_dir: str | Path) -> list[dict[str, Any]]:
     holds a symlink (never followed), and
     :class:`~novafabric._capsule_fs.CapsuleSpecialFileError` when a listed file
     was swapped for a FIFO or device before it was read (never blocked on).
+
+    Raises:
+        UnsealedManifestError: the capsule is sealed and a manifest-named file or a
+            signed ``*_ref`` target is not covered by its seal.
     """
     capsule_dir = Path(capsule_dir)
+    _refuse_unsealed_substitutes(capsule_dir)
     return [
         {"name": rel, "digest": {"sha256": _sha256_file(capsule_dir, rel)}}
         for rel in _capsule_files(capsule_dir)

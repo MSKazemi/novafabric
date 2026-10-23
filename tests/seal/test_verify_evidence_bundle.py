@@ -56,7 +56,7 @@ def _make_bundle(path: Path, files: dict[str, bytes]) -> Path:
     )
     priv, _ = generate_keypair(path.parent / f"{path.stem}-keys")
     signer = LocalSigner(priv)
-    env = dsse_sign(make_intoto_statement(PREDICATE_RUN, "r1", capsule_hash, {}), signer)
+    env = dsse_sign(make_intoto_statement(PREDICATE_RUN, "r1", capsule_hash, {"run_id": "r1"}), signer)
     files = {
         **files,
         "attestations/run.intoto.json": json.dumps(env).encode(),

@@ -315,7 +315,8 @@ def _signed_run(tmp_path: Path) -> tuple[bytes, bytes, bytes]:
     if tmp_path not in _SIGNED_RUN:
         priv, _ = generate_keypair(tmp_path / "bundle-keys")
         signer = LocalSigner(priv)
-        env = dsse_sign(make_intoto_statement(PREDICATE_RUN, "r1", _CAPSULE_HASH, {}), signer)
+        statement = make_intoto_statement(PREDICATE_RUN, "r1", _CAPSULE_HASH, {"run_id": "r1"})
+        env = dsse_sign(statement, signer)
         _SIGNED_RUN[tmp_path] = (
             json.dumps(env).encode(),
             base64.b64decode(env["signatures"][0]["sig"]),
