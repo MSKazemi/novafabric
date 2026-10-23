@@ -282,18 +282,26 @@ def serve_cmd(
             console.print(f"[yellow]warning:[/yellow] TV-5 router failed to mount: {_e}")
 
     # Build the app WITHOUT the static mount (mounted last, below).
-    app = create_app(
-        token=token,
-        capsule_dir=resolved_capsule_dir,
-        # Resolve here so every router sees the file the panel prints; a bare None
-        # makes the runs-index routes report "index does not exist yet" forever.
-        db_path=db_path or _registry_db_path(),
-        static_dir=None,          # mounted last — see below
-        static_mounted_by_caller=static_arg is not None,
-        topology_enabled=topology,
-        topology_louvain_resolution=topology_louvain_resolution,
-        extra_routers=[tv5_router] if tv5_router is not None else [],
-    )
+    from novafabric.serve.capsule_watcher import WatcherConfigError  # noqa: PLC0415
+
+    try:
+        app = create_app(
+            token=token,
+            capsule_dir=resolved_capsule_dir,
+            # Resolve here so every router sees the file the panel prints; a bare None
+            # makes the runs-index routes report "index does not exist yet" forever.
+            db_path=db_path or _registry_db_path(),
+            static_dir=None,          # mounted last — see below
+            static_mounted_by_caller=static_arg is not None,
+            topology_enabled=topology,
+            topology_louvain_resolution=topology_louvain_resolution,
+            extra_routers=[tv5_router] if tv5_router is not None else [],
+        )
+    except WatcherConfigError as exc:
+        # A typo in NOVA_WATCHER_BACKEND/_INTERVAL used to become `auto`
+        # silently (audit L27); refuse before binding the port instead.
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
     if tv5_layout_pipe is not None:
         app.state.tv5_layout_pipe = tv5_layout_pipe  # exposed to seed endpoint
 

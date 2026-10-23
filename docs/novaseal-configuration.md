@@ -315,7 +315,10 @@ The `merkle_db` field in `novaseal.yaml` controls where this file lives.
 `merkle_db` is computed by the same rule). That covers capture sealing,
 `nova serve` sealing, `nova verify`, the trust radar and dashboard Seal tab,
 `POST /api/runs/{id}/verify`, the dashboard `/api/doctor` `novaseal_db` row, the
-SealTab and `nova server` policy-store endpoints, `nova seal log verify`, and the
+SealTab and `nova server` policy-store endpoints, the CLI policy-store defaults
+(`nova policy sign` / `list`, `nova seal propose` / `verify`, `nova
+export-model-independence --policy-db`, `POST /api/policy/sign`; changed 2026-10-23,
+see the troubleshooting note below), `nova seal log verify`, and the
 `key_rotation` entry `nova seal init --force` appends. So the log a capsule is sealed
 into is the log every verifier reads.
 
@@ -578,9 +581,16 @@ Every code path uses the §3.1 rule, so within one process sealing and
 verification agree. Two processes disagree only when their environment differs:
 check for a stale `NOVAFABRIC_SEAL_DB_PATH` or `NOVAFABRIC_SEAL_CONFIG` exported
 in one shell or job script but not another.
-`nova seal propose` / `approve` / `bypass` keep the promotion policy store at
-their own `--db` default (`~/.local/share/novafabric/merkle.db`), which is not
-the Merkle log.
+The promotion policy store follows the same rule. `nova policy sign`, `nova policy
+list`, `nova seal propose` / `verify`, `nova export-model-independence` and
+`POST /api/policy/sign` default to the §3.1 Merkle log file, which is what the
+dashboard SealTab and server mode read; an explicit `--db` still wins. Up to v0.106.0
+the CLI defaulted to `~/.local/share/novafabric/merkle.db`, so a policy signed on the
+command line was invisible to the dashboard. **Default changed:** a policy signed
+before the change stays in that old file — pass `--db ~/.local/share/novafabric/merkle.db`
+or re-sign it without `--db`. `nova seal propose` and `nova policy list` name the old
+file when they find no policy and it exists. A Postgres Merkle log cannot hold the
+policy store (it is SQLite); pass `--db <file>` then.
 
 ### TSA timeout or `tsa_url` errors
 

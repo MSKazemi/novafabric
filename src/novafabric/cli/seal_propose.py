@@ -40,7 +40,15 @@ seal_app = typer.Typer(
     no_args_is_help=True,
 )
 
-_DEFAULT_DB = Path.home() / ".local" / "share" / "novafabric" / "merkle.db"
+_DB_HELP = (
+    "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — "
+    "NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then "
+    "$NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads)."
+)
+_DB_UNUSED_HELP = (
+    "Accepted for compatibility; this command does not read the policy "
+    "(nova seal propose and nova seal verify do)."
+)
 _DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "novafabric"
 
 _CA_BUNDLE_HELP = (
@@ -52,6 +60,36 @@ _INSECURE_HELP = (
     "Accept any self-signed signer certificate (no identity check). Local development "
     "only; same as NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED=1."
 )
+
+
+def _policy_db(db: Path | None) -> Path:
+    """An explicit ``--db``, else the resolved NovaSeal log (exit 2 if it cannot be used)."""
+    if db is not None:
+        return db
+    from novafabric.promote.policy_location import (  # noqa: PLC0415
+        PolicyDbLocationError,
+        default_policy_db,
+    )
+
+    try:
+        return default_policy_db()
+    except PolicyDbLocationError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
+
+
+def _print_legacy_policy_hint(explicit_db: bool) -> None:
+    """Name the pre-2026-10-23 default store when a policy may still be there."""
+    if explicit_db:
+        return
+    from novafabric.promote.policy_location import legacy_policy_db  # noqa: PLC0415
+
+    legacy = legacy_policy_db()
+    if legacy is not None:
+        err_console.print(
+            f"[yellow]Note:[/yellow] a policy store exists at the old default {legacy}. "
+            f"Pass [bold]--db {legacy}[/bold], or re-sign the policy without --db."
+        )
 
 
 def _promote_trust(ca_bundle: Path | None, insecure_self_signed: bool) -> PromoteTrust:
@@ -212,7 +250,7 @@ def seal_propose_cmd(
     key: Path = typer.Option(..., "--key", help="Path to ECDSA P-256 private key PEM"),
     cert: Path = typer.Option(..., "--cert", help="Path to X.509 certificate PEM"),
     target_env: str = typer.Option("staging", "--target-env", help="Target environment"),
-    db_path: Path = typer.Option(_DEFAULT_DB, "--db", help="SQLite DB path"),
+    db_path: Path | None = typer.Option(None, "--db", help=_DB_HELP),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
 ) -> None:
     """Propose a NovaSeal signature for a capsule (maker step).
@@ -240,15 +278,18 @@ def seal_propose_cmd(
         raise typer.Exit(code=1)
 
     # Load policy
+    explicit_db = db_path is not None
+    db_path = _policy_db(db_path)
     try:
         policy_store = PolicyStore(db_path)
         policy_store.get_latest()  # ensure a policy exists
         policy_version = str(policy_store.get_latest_version())
     except PolicyNotFoundError:
         err_console.print(
-            "[red]Error:[/red] No promotion policy found. "
+            f"[red]Error:[/red] No promotion policy found in {db_path}. "
             "Run [bold]nova policy sign[/bold] first."
         )
+        _print_legacy_policy_hint(explicit_db)
         raise typer.Exit(code=1)
 
     # Extract proposer subject from cert
@@ -310,7 +351,7 @@ def seal_approve_cmd(
     capsule_id: str = typer.Option(..., "--capsule-id", help="Capsule ID"),
     key: Path = typer.Option(..., "--key", help="Path to ECDSA P-256 private key PEM"),
     cert: Path = typer.Option(..., "--cert", help="Path to X.509 certificate PEM"),
-    db_path: Path = typer.Option(_DEFAULT_DB, "--db", help="SQLite DB path"),
+    db_path: Path | None = typer.Option(None, "--db", help=_DB_UNUSED_HELP),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
     ca_bundle: Path | None = typer.Option(None, "--ca-bundle", help=_CA_BUNDLE_HELP),
     insecure_self_signed: bool = typer.Option(
@@ -445,7 +486,7 @@ def _parse_duration_hours(duration: str) -> int:
 def seal_verify_cmd(
     capsule_id: str = typer.Argument(..., help="Capsule ID to verify"),
     offline: bool = typer.Option(False, "--offline", help="Skip network checks"),
-    db_path: Path = typer.Option(_DEFAULT_DB, "--db", help="SQLite DB path"),
+    db_path: Path | None = typer.Option(None, "--db", help=_DB_HELP),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
     ca_bundle: Path | None = typer.Option(None, "--ca-bundle", help=_CA_BUNDLE_HELP),
     insecure_self_signed: bool = typer.Option(
@@ -474,7 +515,7 @@ def seal_verify_cmd(
       8  — missing approval bundle
       9  — missing proposal bundle
     """
-    policy_store = PolicyStore(db_path)
+    policy_store = PolicyStore(_policy_db(db_path))
     bundle_store = PromoteBundleStore(data_dir)
 
     trust = _promote_trust(ca_bundle, insecure_self_signed)
@@ -501,7 +542,7 @@ def seal_bypass_cmd(
     cert: Path = typer.Option(..., "--cert", help="X.509 certificate PEM"),
     target_env: str = typer.Option("production", "--target-env"),
     notify: list[str] = typer.Option([], "--notify", help="Email to notify (repeatable)"),
-    db_path: Path = typer.Option(_DEFAULT_DB, "--db"),
+    db_path: Path | None = typer.Option(None, "--db", help=_DB_UNUSED_HELP),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir"),
 ) -> None:
     """Create a time-limited bypass of the maker-checker SoD requirement.

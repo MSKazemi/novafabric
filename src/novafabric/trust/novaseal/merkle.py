@@ -756,6 +756,10 @@ class MerkleLog:
     """
 
     def __init__(self, db_path: Path, *, root_version: int | None = None) -> None:
+        # Expand ``~`` here, at the one place that creates the file: before
+        # audit L28 ``MerkleLog(Path("~/x.db"))`` made a literal ``./~``
+        # directory in the current working directory.
+        db_path = Path(db_path).expanduser()
         self._db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = connect_sqlite(str(db_path), check_same_thread=False)

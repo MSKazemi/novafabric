@@ -495,22 +495,31 @@ def _list_evidence_bundles(limit: int | None = None) -> tuple[list[dict[str, Any
     if not evidence_dir.is_dir():
         return [], 0
 
-    all_paths = sorted(
-        evidence_dir.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
+    # Only regular files directly in the evidence dir: a planted link (to a
+    # bundle or anything else) or a FIFO is neither listed nor opened — the
+    # same rule the detail, download and verify routes apply.
+    regular = [
+        p for p in evidence_dir.glob("*.zip") if is_capsule_regular_file(evidence_dir, p.name)
+    ]
+    all_paths = sorted(regular, key=lambda p: p.lstat().st_mtime, reverse=True)
     total = len(all_paths)
     paths = all_paths if limit is None else all_paths[:limit]
 
     results = []
     for zip_path in paths:
         bundle_id = zip_path.stem  # run_id = filename without .zip
-        size_bytes = zip_path.stat().st_size
+        size_bytes = zip_path.lstat().st_size
         verified = False
         run_id = bundle_id
         timestamp: str | None = None
 
         try:
-            with zipfile.ZipFile(zip_path, "r") as zf:
+            with (
+                open_capsule_file(
+                    evidence_dir, zip_path.name, operation="nova serve evidence list"
+                ) as handle,
+                zipfile.ZipFile(handle, "r") as zf,
+            ):
                 if "manifest.json" in zf.namelist():
                     raw = zf.read("manifest.json")
                     manifest = json.loads(raw)
@@ -1006,12 +1015,17 @@ def create_app(
 
     @app.get("/readyz", include_in_schema=False)
     async def readyz() -> JSONResponse:
-        return readiness_response({
-            "db": lambda: check_sqlite_db(db_path),
-            "migrations": lambda: check_migrations_sqlite(db_path),
-            # serve has no object-store configuration surface — spec: skipped.
-            "object_store": lambda: CHECK_SKIPPED,
-        })
+        # metrics= feeds nova_readyz_check_status{app="serve"} (audit L4); it
+        # is None without prometheus_client, which is the existing no-op.
+        return readiness_response(
+            {
+                "db": lambda: check_sqlite_db(db_path),
+                "migrations": lambda: check_migrations_sqlite(db_path),
+                # serve has no object-store configuration surface — spec: skipped.
+                "object_store": lambda: CHECK_SKIPPED,
+            },
+            metrics=_http_metrics,
+        )
 
     @app.get("/metrics", include_in_schema=False, dependencies=[Depends(verify_token)])
     async def metrics_endpoint() -> Response:
@@ -1116,6 +1130,16 @@ def create_app(
     # This applies it to the watcher.
     _watcher_holder: list[Any] = []
 
+    # Resolved now, not on first use: a bad NOVA_WATCHER_BACKEND/_INTERVAL
+    # raises WatcherConfigError here, at startup, instead of inside the
+    # background refresh loop that swallows every exception (audit L27). This
+    # is pure env parsing — no observer, no IO.
+    from novafabric.serve.capsule_watcher import (  # noqa: PLC0415
+        resolve_watcher_settings as _resolve_watcher_settings,
+    )
+
+    _watcher_settings = _resolve_watcher_settings()
+
     def _get_watcher() -> Any:
         """Construct the CapsuleWatcher on first use, once per app."""
         if not _watcher_holder:
@@ -1123,7 +1147,14 @@ def create_app(
                 CapsuleWatcher as _CapsuleWatcher,
             )
 
-            _watcher_holder.append(_CapsuleWatcher(capsule_dir, db_path=_db_path))
+            _watcher_holder.append(
+                _CapsuleWatcher(
+                    capsule_dir,
+                    db_path=_db_path,
+                    backend=_watcher_settings.backend,
+                    interval=_watcher_settings.interval,
+                )
+            )
         return _watcher_holder[0]
 
     def _close_watcher_if_created() -> None:
@@ -1881,7 +1912,10 @@ def create_app(
 
         Returns:
           sealed=False  — capsule has no .seal/ directory (was not sealed)
-          configured=False — NovaSeal config not found
+          configured — whether a novaseal.yaml was found on this host. False no
+            longer means "not verified": like `nova verify` and the trust radar,
+            the capsule is then verified from its own files (no local log, no
+            operator anchors), and every field below is still returned
           signature_ok, timestamp_ok, log_integrity_ok, valid, errors — full result
           capsule_binding_ok — ADR-0251 binding (capsule.yaml + evidence_digests +
             log-entry capsule_id); valid is the verdict `nova verify` exits on
@@ -1904,18 +1938,26 @@ def create_app(
                 "message": "No .seal/ directory — capsule was not sealed with NovaSeal.",
             }
 
-        try:
-            from novafabric.trust.novaseal.config import load_signing_profile
-            profile = load_signing_profile()
-        except Exception:
-            profile = None
+        from novafabric.trust.novaseal.config import load_signing_profile
 
-        if profile is None:
+        try:
+            profile = load_signing_profile()
+        except Exception as exc:  # noqa: BLE001 — SealConfigError, unreadable or bad YAML
+            # As `nova verify`: a novaseal.yaml that exists but cannot be used is
+            # a failed verification, never "not configured" (which now verifies
+            # from the capsule alone and could pass).
             return {
                 "sealed": True,
-                "configured": False,
-                "message": "NovaSeal not configured — set NOVAFABRIC_SEAL_CONFIG or novaseal.yaml.",
+                "configured": True,
+                "signature_ok": False,
+                "timestamp_ok": False,
+                "timestamp_trust": "invalid",
+                "log_integrity_ok": False,
+                "capsule_binding_ok": False,
+                "valid": False,
+                "errors": [f"NovaSeal config: {exc}"],
             }
+        configured = profile is not None
 
         from novafabric.trust.novaseal import unanchored_claims
         from novafabric.trust.novaseal.capsule_verify import verify_capsule
@@ -1934,12 +1976,14 @@ def create_app(
         try:
             # The same function `nova verify <capsule-dir>` reports from (audit
             # H1): NovaSeal checks plus the ADR-0251 capsule binding, with the
-            # profile's logs, previous_merkle_dbs, ca_bundle and tsa_ca_certs.
-            report = verify_capsule(cdir, profile)
+            # profile's logs, previous_merkle_dbs, ca_bundle and tsa_ca_certs —
+            # or, with no profile, from the capsule alone, as `nova verify` does.
+            # Off the event loop: it reads and hashes every evidence file.
+            report = await asyncio.to_thread(verify_capsule, cdir, profile)
         except Exception as exc:
             return {
                 "sealed": True,
-                "configured": True,
+                "configured": configured,
                 "capsule_id": capsule_id,
                 "signature_ok": False,
                 "timestamp_ok": False,
@@ -1951,9 +1995,16 @@ def create_app(
             }
 
         result = report.result
+        extra: dict[str, Any] = {}
+        if not configured:
+            extra["message"] = (
+                "No novaseal.yaml on this host — verified from the capsule alone "
+                "(no local Merkle log, no operator trust anchors), as `nova verify` does."
+            )
         return {
             "sealed": True,
-            "configured": True,
+            "configured": configured,
+            **extra,
             "capsule_id": capsule_id,
             "signature_ok": result.signature_ok,
             # ADR-0301: null when the capsule carries no RFC 3161 token.
@@ -2262,32 +2313,67 @@ def create_app(
         response_model=None,
     )
     async def download_evidence_endpoint(bundle_id: str) -> Any:
-        from fastapi.responses import FileResponse
+        """Download the Evidence Bundle ZIP.
+
+        The file is opened without following a link and streamed from that
+        descriptor: a symlink, FIFO or other non-regular file is a 422, a missing
+        bundle a 404.
+        """
+        # FileResponse(path) re-opened the path at send time and followed links.
+        from fastapi.responses import StreamingResponse  # noqa: PLC0415
+        from starlette.background import BackgroundTask  # noqa: PLC0415
+
+        from novafabric.serve.evidence_verify import (  # noqa: PLC0415
+            iter_file_chunks,
+        )
 
         _validate_bundle_id(bundle_id)
-        evidence_dir = _nf_paths.evidence_dir()
-        zip_path = evidence_dir / f"{bundle_id}.zip"
-        if not zip_path.exists():
-            raise HTTPException(status_code=404, detail=f"Evidence bundle '{bundle_id}' not found.")
-        return FileResponse(
-            path=str(zip_path),
+        handle = _open_evidence_bundle(bundle_id)
+        size = os.fstat(handle.fileno()).st_size
+        return StreamingResponse(
+            iter_file_chunks(handle),
             media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="evidence-{bundle_id}.zip"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="evidence-{bundle_id}.zip"',
+                "Content-Length": str(size),
+            },
+            # Closes the descriptor even when the client disconnects first.
+            background=BackgroundTask(handle.close),
         )
+
+    def _open_evidence_bundle(bundle_id: str) -> Any:
+        """Open a validated bundle id's ZIP, never through a link; HTTP errors on refusal."""
+        from novafabric.serve.evidence_verify import open_bundle  # noqa: PLC0415
+
+        try:
+            return open_bundle(_nf_paths.evidence_dir(), bundle_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"Evidence bundle '{bundle_id}' not found."
+            ) from exc
+        except CapsuleEntryError as exc:
+            logger.warning(
+                "evidence_bundle_not_followed",
+                extra={"bundle_id": bundle_id, "reason": str(exc)[:200]},
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=f"Evidence bundle '{bundle_id}' cannot be read safely: {exc}",
+            ) from exc
 
     @app.get("/api/evidence/{bundle_id}", dependencies=[Depends(verify_token)])
     async def get_evidence_detail_endpoint(bundle_id: str) -> dict[str, Any]:
+        _validate_bundle_id(bundle_id)
+        handle = _open_evidence_bundle(bundle_id)
+        # Off the event loop: reads and hashes ZIP members.
+        return await asyncio.to_thread(_evidence_detail, bundle_id, handle)
+
+    def _evidence_detail(bundle_id: str, handle: Any) -> dict[str, Any]:
         import hashlib
         import json as _json
         import zipfile
 
-        _validate_bundle_id(bundle_id)
-        evidence_dir = _nf_paths.evidence_dir()
-        zip_path = evidence_dir / f"{bundle_id}.zip"
-        if not zip_path.exists():
-            raise HTTPException(status_code=404, detail=f"Evidence bundle '{bundle_id}' not found.")
-
-        size_bytes = zip_path.stat().st_size
+        size_bytes = os.fstat(handle.fileno()).st_size
         manifest: dict[str, Any] = {}
         dsse_statement: dict[str, Any] = {}
         dsse_envelope: dict[str, Any] = {}
@@ -2295,7 +2381,7 @@ def create_app(
         files: list[dict[str, Any]] = []
 
         try:
-            with zipfile.ZipFile(zip_path, "r") as zf:
+            with handle, zipfile.ZipFile(handle, "r") as zf:
                 names = zf.namelist()
 
                 # Manifest
@@ -2443,31 +2529,19 @@ def create_app(
                     cdir = _resolve_capsule(run_id, capsule_dir)
                 except HTTPException:
                     cdir = None
-                if cdir is not None:
-                    seal_dir = cdir / ".seal"
-                    if seal_dir.is_dir():
-                        from novafabric.trust.novaseal import KeyConfig, NovaSeal  # noqa: PLC0415
-                        config = KeyConfig(
-                            profile=profile.profile,
-                            key_path=str(profile.key_path),
-                            cert_path=str(profile.cert_path),
-                        )
-                        seal = NovaSeal(
-                            config=config, tsa_url=profile.tsa_url, db_path=str(profile.merkle_db)
-                        )
-                        log_file = seal_dir / "log-entry.json"
-                        capsule_id = ""
-                        if log_file.exists():
-                            entry = json.loads(
-                                read_capsule_text(
-                                    cdir, ".seal/log-entry.json", operation="nova serve"
-                                )
-                            )
-                            capsule_id = entry.get("entry", {}).get("capsule_id", "")
-                        seal_result = seal.verify(capsule_id=capsule_id, seal_dir=str(seal_dir))
-                        log_integrity_ok = seal_result.log_integrity_ok
-                        if not seal_result.log_integrity_ok:
-                            errors.extend(seal_result.errors)
+                if cdir is not None and (cdir / ".seal").is_dir():
+                    # verify_capsule opens the configured log only if it already
+                    # exists. NovaSeal(...) opened it for writing and so created
+                    # merkle_db on a verifier's machine (verification must
+                    # create nothing, ADR-0297 S2).
+                    from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415
+                        verify_capsule,
+                    )
+
+                    seal_result = verify_capsule(cdir, profile).result
+                    log_integrity_ok = seal_result.log_integrity_ok
+                    if not seal_result.log_integrity_ok:
+                        errors.extend(seal_result.errors)
         except Exception:  # noqa: BLE001
             pass  # NovaSeal not configured or unavailable
         return log_integrity_ok, seal_available
@@ -4780,6 +4854,18 @@ def create_app(
         from novafabric.trust.novaseal.config import resolve_merkle_db_path
         return resolve_merkle_db_path()
 
+    def _default_policy_db_or_http() -> Path:
+        """The default promotion-policy store (the resolved NovaSeal log), or 422."""
+        from novafabric.promote.policy_location import (  # noqa: PLC0415
+            PolicyDbLocationError,
+            default_policy_db,
+        )
+
+        try:
+            return default_policy_db()
+        except PolicyDbLocationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     def _novaseal_db_check() -> dict[str, Any]:
         """The /api/doctor ``novaseal_db`` row: the log capture seals into (audit M2).
 
@@ -5215,7 +5301,12 @@ def create_app(
 
         nova_data = _nf_paths.nova_home()
         bundle_store = PromoteBundleStore(nova_data)
-        bypass_uuid = bundle_store.put_bypass(capsule_id, envelope, valid_until_str)
+        # Off the event loop: put_bypass notifies synchronously, and a
+        # NOVA_BYPASS_NOTIFY_WEBHOOK POST may block for up to its 5 s timeout.
+        # Inline, that froze every other request on this server meanwhile.
+        bypass_uuid = await asyncio.to_thread(
+            bundle_store.put_bypass, capsule_id, envelope, valid_until_str
+        )
 
         return {
             "bypass_uuid": bypass_uuid,
@@ -8075,7 +8166,6 @@ def create_app(
         namespace: str | None = Query(default=None),
     ) -> dict[str, Any]:
         """List Rego bundle files and signed promotion policies — nova policy list."""
-        from novafabric._paths import nova_home  # noqa: PLC0415
         from novafabric.policy._opa_engine import _get_bundle_default  # noqa: PLC0415
         from novafabric.promote.policy_store import PolicyStore  # noqa: PLC0415
 
@@ -8090,9 +8180,9 @@ def create_app(
                     }
                 )
 
-        home_db = nova_home() / "promote" / "policy.db"
-        legacy_db = Path.home() / ".local" / "share" / "novafabric" / "merkle.db"
-        policy_db = home_db if home_db.exists() else legacy_db
+        # The store `nova policy sign` writes and the SealTab reads: the resolved
+        # NovaSeal log (policy-store split, 2026-10-23).
+        policy_db = _default_policy_db_or_http()
         signed_policies: list[dict[str, Any]] = []
         if policy_db.exists():
             try:
@@ -8138,9 +8228,7 @@ def create_app(
         key_path = _confine_key(key_raw) if key_raw else None
         cert_path = _confine_key(cert_raw) if cert_raw else None
         db_path_policy = (
-            _confine_write(str(db_raw))
-            if db_raw
-            else Path.home() / ".local" / "share" / "novafabric" / "merkle.db"
+            _confine_write(str(db_raw)) if db_raw else _default_policy_db_or_http()
         )
         if key_path is None or cert_path is None:
             raise HTTPException(status_code=422, detail="key_path and cert_path are required")
@@ -8314,7 +8402,12 @@ def create_app(
         all_capsules = bool(body.get("all", False))
         if not all_capsules and not run_id:
             raise HTTPException(status_code=400, detail="provide run_id or all=true")
-        watcher = CapsuleWatcher(capsule_dir, db_path=_db_path)
+        watcher = CapsuleWatcher(
+            capsule_dir,
+            db_path=_db_path,
+            backend=_watcher_settings.backend,
+            interval=_watcher_settings.interval,
+        )
         if all_capsules:
             indexed = watcher.ingest_all()
             return {"ok": True, "indexed": indexed}

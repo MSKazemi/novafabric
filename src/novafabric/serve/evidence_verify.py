@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import logging
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, BinaryIO, Final
 
 from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import open_capsule_file
@@ -37,6 +37,8 @@ __all__ = [
     "MAX_VERIFY_UNCOMPRESSED_BYTES",
     "BundleCheck",
     "evidence_trust_anchors",
+    "iter_file_chunks",
+    "open_bundle",
     "verify_bundle_file",
 ]
 
@@ -119,6 +121,39 @@ def evidence_trust_anchors() -> list[bytes]:
     return load_trusted_public_keys(path)
 
 
+#: Chunk size the ``/download`` route streams a bundle in.
+DOWNLOAD_CHUNK_BYTES: Final[int] = 1024 * 1024
+
+
+def open_bundle(
+    evidence_dir: Path, bundle_id: str, *, operation: str = "nova serve evidence"
+) -> BinaryIO:
+    """Open ``<evidence_dir>/<bundle_id>.zip`` for reading, following no link.
+
+    The one way every Evidence Bundle route (list, detail, ``/download``,
+    ``/verify``) reads a bundle: through
+    :func:`novafabric._capsule_fs.open_capsule_file`, so a planted symlink is
+    refused rather than followed and a FIFO is refused rather than waited on.
+    *bundle_id* must already be a validated single path segment.
+
+    Raises:
+        FileNotFoundError: no such bundle (or no evidence directory).
+        CapsuleEntryError: the bundle path is a link or not a regular file.
+    """
+    return open_capsule_file(evidence_dir, f"{bundle_id}.zip", operation=operation)
+
+
+def iter_file_chunks(
+    handle: BinaryIO, chunk_bytes: int = DOWNLOAD_CHUNK_BYTES
+) -> Iterator[bytes]:
+    """Yield *handle*'s bytes in bounded chunks, closing it when done or abandoned."""
+    try:
+        while chunk := handle.read(chunk_bytes):
+            yield chunk
+    finally:
+        handle.close()
+
+
 def _read_bounded(zf: zipfile.ZipFile, name: str, limit: int) -> bytes:
     with zf.open(name) as handle:
         return handle.read(limit + 1)
@@ -182,9 +217,7 @@ def verify_bundle_file(
             :data:`MAX_VERIFY_MEMBERS`.
     """
     with (
-        open_capsule_file(
-            evidence_dir, f"{bundle_id}.zip", operation="nova serve evidence verify"
-        ) as handle,
+        open_bundle(evidence_dir, bundle_id, operation="nova serve evidence verify") as handle,
         zipfile.ZipFile(handle) as zf,
     ):
         outcome = verify_bundle_archive(

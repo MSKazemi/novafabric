@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -272,7 +273,8 @@ class NovaSeal:
     Args:
         config:    KeyConfig with profile and key/cert paths.
         tsa_url:   RFC 3161 TSA URL; "" disables timestamping (no network call).
-        db_path:   Path to the SQLite Merkle log database.
+        db_path:   Merkle log location: a SQLite path (``~`` is expanded) or a
+                   Postgres DSN (never expanded); see ``log_location``.
         tsa_urls:  Optional ordered fallback list of TSA URLs (REG-ADR-007).
                    When it has more than one entry, each is tried in order
                    until one succeeds. Omit (or pass a single-entry list) for
@@ -297,12 +299,14 @@ class NovaSeal:
         # A cloud profile (aws_kms / azure_kv / gcp_kms) has no local private key.
         # ``config.key_path`` is stringified by callers, so an absent path arrives
         # as the literal "None"; treat that as unset rather than as a filename.
+        # ``~`` is expanded for library callers too (audit L28); the config
+        # loader already expands its own paths.
         self._key_path = (
-            Path(config.key_path)
+            Path(config.key_path).expanduser()
             if config.key_path and config.key_path != "None"
             else Path()
         )
-        self._cert_path = Path(config.cert_path)
+        self._cert_path = Path(config.cert_path).expanduser()
         # ADR-0292: timestamping is opt-in. An empty tsa_url with a non-empty
         # tsa_urls list still opts in (the list names the TSAs explicitly).
         self._tsa_url = tsa_url or (tsa_urls[0] if tsa_urls else "")
@@ -440,6 +444,54 @@ class NovaSeal:
 # ---------------------------------------------------------------------------
 
 
+#: Size bounds for the files ``verify_seal_dir`` reads from ``.seal/``. The
+#: envelope bound matches ``capsule_verify``; a log entry with its inclusion
+#: proof is a few KiB, so 4 MiB is far above any real one.
+_SEAL_ENVELOPE_MAX_BYTES = 16 * 1024 * 1024
+_SEAL_LOG_ENTRY_MAX_BYTES = 4 * 1024 * 1024
+_SEAL_READ_OPERATION = "NovaSeal verification"
+
+
+@dataclass(frozen=True)
+class _SealMember:
+    """One ``.seal/`` file as read for verification.
+
+    ``data`` is None when the file is absent; ``refused`` names why a present
+    entry was not read (a symlink on its path, a special file, over the size
+    bound) — such a file is a verification failure, never followed.
+    """
+
+    path: Path
+    data: bytes | None = None
+    refused: str | None = None
+
+
+def _read_seal_member(seal_path: Path, name: str, *, max_bytes: int) -> _SealMember:
+    """Read ``<seal_path>/<name>`` through ``_capsule_fs``: no link, no FIFO, bounded.
+
+    The seal directory itself is opened relative to its parent, so a ``.seal``
+    that is itself a symlink is refused too.
+    """
+    from novafabric._capsule_fs import (  # noqa: PLC0415
+        CapsuleEntryError,
+        read_capsule_file,
+    )
+
+    path = seal_path / name
+    root, rel = (
+        (seal_path.parent, f"{seal_path.name}/{name}") if seal_path.name else (seal_path, name)
+    )
+    try:
+        data = read_capsule_file(
+            root, rel, operation=_SEAL_READ_OPERATION, max_bytes=max_bytes
+        )
+    except (FileNotFoundError, NotADirectoryError):
+        return _SealMember(path)
+    except CapsuleEntryError as exc:
+        return _SealMember(path, refused=str(exc))
+    return _SealMember(path, data=data)
+
+
 def verify_seal_dir(
     seal_dir: Path | str,
     merkle_log: "MerkleLog | PostgresMerkleLog | None" = None,
@@ -515,8 +567,16 @@ def verify_seal_dir(
     verify --tsa-ca-bundle``: the token is outside the DSSE signature, so a
     deleted one could not otherwise be told apart from one never requested.
     """
-    seal_path = Path(seal_dir)
+    # Lexically absolute (``.`` and ``..`` folded, no link resolved) so the seal
+    # directory has a name to be opened by, relative to its parent.
+    seal_path = Path(os.path.abspath(seal_dir))
     errors: list[str] = []
+
+    # Every ``.seal/`` file is read through ``_capsule_fs``: a symlink on its
+    # path or a special file is a failure, never followed or waited on.
+    envelope = _read_seal_member(
+        seal_path, "manifest.dsse", max_bytes=_SEAL_ENVELOPE_MAX_BYTES
+    )
 
     # --- Signature ---
     signature_ok = False
@@ -524,11 +584,12 @@ def verify_seal_dir(
     signing_intent: SigningIntent | None = None
     signing_intent_status = "absent"
     dsse_bytes = b""
-    dsse_file = seal_path / "manifest.dsse"
-    if not dsse_file.exists():
-        errors.append(f"Missing {dsse_file}")
+    if envelope.refused is not None:
+        errors.append(f"manifest.dsse not read: {envelope.refused}")
+    elif envelope.data is None:
+        errors.append(f"Missing {envelope.path}")
     else:
-        dsse_bytes = dsse_file.read_bytes()
+        dsse_bytes = envelope.data
         try:
             pae_encoding = verify_envelope_encoding(dsse_bytes)
             signature_ok = True
@@ -543,7 +604,11 @@ def verify_seal_dir(
             errors.append(f"Signature verification failed: {exc}")
 
     # --- Timestamp ---
-    ts = _check_seal_timestamp(seal_path / "manifest.dsse.tsr", dsse_bytes, tsa_anchors_pem)
+    ts = _check_seal_timestamp(
+        _read_seal_member(seal_path, "manifest.dsse.tsr", max_bytes=_tsr_max_bytes()),
+        dsse_bytes,
+        tsa_anchors_pem,
+    )
     errors.extend(ts.errors)
 
     # --- Signer identity (ADR-0301) — what the capsule alone can establish ---
@@ -557,7 +622,7 @@ def verify_seal_dir(
     # --- Merkle log inclusion ---
     payload_capsule_id = _payload_capsule_id(dsse_bytes) if signature_ok else None
     inclusion = _check_log_inclusion(
-        seal_path / "log-entry.json",
+        _read_seal_member(seal_path, "log-entry.json", max_bytes=_SEAL_LOG_ENTRY_MAX_BYTES),
         payload_capsule_id,
         merkle_log,
         signer_keyid=signer.fingerprint_sha256 if signer else None,
@@ -646,8 +711,14 @@ class _TimestampOutcome:
     errors: tuple[str, ...] = ()
 
 
+def _tsr_max_bytes() -> int:
+    from novafabric.trust.novaseal.tsa_token import MAX_TOKEN_BYTES  # noqa: PLC0415
+
+    return MAX_TOKEN_BYTES
+
+
 def _check_seal_timestamp(
-    tsr_file: Path, dsse_bytes: bytes, tsa_anchors_pem: bytes | None
+    tsr: _SealMember, dsse_bytes: bytes, tsa_anchors_pem: bytes | None
 ) -> _TimestampOutcome:
     """Check the seal's RFC 3161 token; anchor it when *tsa_anchors_pem* is given.
 
@@ -655,7 +726,16 @@ def _check_seal_timestamp(
     a passed check, and does not invalidate the seal — timestamping is opt-in —
     unless TSA anchors were supplied (then the caller asked for a trusted time).
     """
-    tsr_bytes = tsr_file.read_bytes() if tsr_file.exists() else b""
+    if tsr.refused is not None:
+        # A token entry that is a link or a special file is not an absent token:
+        # something was put where the token belongs, so the check fails.
+        return _TimestampOutcome(
+            ok=False,
+            present=True,
+            trust=TIMESTAMP_TRUST_INVALID,
+            errors=(f"manifest.dsse.tsr not read: {tsr.refused}",),
+        )
+    tsr_bytes = tsr.data or b""
     if not tsr_bytes:
         if tsa_anchors_pem is None:
             return _TimestampOutcome()
@@ -811,7 +891,7 @@ class _LogRecord:
 
 
 def _check_log_inclusion(
-    log_file: Path,
+    log_file: _SealMember,
     payload_capsule_id: str | None,
     merkle_log: "MerkleLog | PostgresMerkleLog | None",
     *,
@@ -872,13 +952,15 @@ def _check_log_inclusion(
 
 
 def _parse_log_record(
-    log_file: Path, payload_capsule_id: str | None, signer_keyid: str | None
+    log_file: _SealMember, payload_capsule_id: str | None, signer_keyid: str | None
 ) -> "tuple[_LogRecord, object] | _Inclusion":
     """Validate ``log-entry.json``; return the record and its raw proof, or a failure."""
-    if not log_file.exists():
-        return _failed(f"Missing {log_file}")
+    if log_file.refused is not None:
+        return _failed(f"log-entry.json not read: {log_file.refused}")
+    if log_file.data is None:
+        return _failed(f"Missing {log_file.path}")
     try:
-        record = json.loads(log_file.read_bytes())
+        record = json.loads(log_file.data)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         return _failed(f"Merkle verification error: {exc}")
     if not isinstance(record, dict):

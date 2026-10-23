@@ -198,7 +198,7 @@ route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
 |---|---|---|
 | `POST` | `/api/capsule-migrate` | Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6). `source` must be under a read root and `output` under a write root (see *Paths in request bodies*). |
 | `POST` | `/api/otlp/v1/traces` | Ingest OTLP OTel GenAI spans into a run capsule (NF-034, experimental). |
-| `POST` | `/api/otlp/v1/logs` | Ingest OTLP log records into the sidecar log store, never into a capsule (ADR-0293, experimental). |
+| `POST` | `/api/otlp/v1/logs` | Ingest OTLP log records into the sidecar log store, never into a capsule (ADR-0293, experimental). The body is read bounded: over 16 MiB is a 413 before it is buffered. |
 | `GET` | `/api/runs` | list runs |
 | `GET` | `/api/runs/cost-summary` | Return per-run token and cost totals from ClickHouse. |
 | `GET` | `/api/runs/search` | Cursor-based run listing. True keyset paging: the cursor seeks the index directly — O(page), no cursor-to-offset conversion (ADR-0199 B2). |
@@ -229,7 +229,7 @@ route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
 | `GET` | `/api/runs/{run_id}/trust-radar` | Trust guarantees for one capsule (ADR-0173). |
 | `POST` | `/api/runs/{run_id}/validate` | Validate a capsule's schema and required files. |
 | `POST` | `/api/runs/{run_id}/validate-distributed` | Validate a distributed parent capsule + its workers (nova run validate-distributed). |
-| `POST` | `/api/runs/{run_id}/verify` | Verify DSSE signature + RFC 3161 timestamp + Merkle log inclusion (nova verify). |
+| `POST` | `/api/runs/{run_id}/verify` | Verify DSSE signature + RFC 3161 timestamp + Merkle log inclusion + the ADR-0251 capsule binding with the same function as `nova verify <capsule-dir>`. Without a `novaseal.yaml` on the host it verifies from the capsule alone, as `nova verify` does, and returns every check with `configured: false` (up to v0.106.0 it returned only `configured: false` and verified nothing). An unusable `novaseal.yaml` is `valid: false`. Opens configured logs read-only; creates nothing. |
 
 ### Content search on `GET /api/runs/search` — `scope` parameter (experimental, ADR-0204)
 
@@ -306,10 +306,10 @@ always reported as a gap, never fabricated. Each source is capped
 | Method | Path | Summary |
 |---|---|---|
 | `GET` | `/api/audit` | list audit |
-| `GET` | `/api/evidence` | list evidence endpoint |
+| `GET` | `/api/evidence` | List Evidence Bundles (`*.zip` in the evidence directory), newest first. Only regular files are listed: a symlink or other special file named `*.zip` is skipped and not counted in `total`. |
 | `GET` | `/api/evidence/completeness/{run_id}` | Compute the completeness assertion for a capsule. |
-| `GET` | `/api/evidence/{bundle_id}` | get evidence detail endpoint |
-| `GET` | `/api/evidence/{bundle_id}/download` | download evidence endpoint |
+| `GET` | `/api/evidence/{bundle_id}` | Bundle detail: manifest, decoded run statement, member list. The ZIP is opened without following a link; a symlink, FIFO or other non-regular file returns 422, a missing bundle 404. |
+| `GET` | `/api/evidence/{bundle_id}/download` | Stream the bundle ZIP (`Content-Length` set). Read from a descriptor opened without following a link; a symlink, FIFO or other non-regular file returns 422 and no bytes, a missing bundle 404. |
 | `POST` | `/api/evidence/{bundle_id}/verify` | Verify an evidence bundle with the same verifier as `nova verify <bundle>.zip`: every artifact digest, no missing, extra or duplicate member, `manifest_hash`, every attestation's DSSE signature, and each signed subject recomputed from the bundle's own content, plus the RFC 3161 token and the local NovaSeal log. The verifying key ships inside the bundle, so `valid: true` proves consistency, not origin. `signer_trust` is `anchored` only when every signer is in the operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default `$NOVAFABRIC_HOME/evidence-trusted-keys.pem`); `unanchored` means no trust list is configured; `untrusted` (with `valid: false`) means a signer is not in it. A key in the request is never used. An unusable configured trust list returns 500, a link or non-ZIP 422, a bundle over 1 GiB uncompressed 413. |
 | `POST` | `/api/evidence/{run_id}` | export evidence endpoint |
 | `POST` | `/api/evidence/{run_id}/bind` | Build criterion-evidence bindings for a capsule against a profile. |

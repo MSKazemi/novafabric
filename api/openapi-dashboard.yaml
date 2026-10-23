@@ -4945,6 +4945,14 @@ paths:
       x-nova-contract: pending
   /api/evidence/{bundle_id}/download:
     get:
+      description: 'Download the Evidence Bundle ZIP.
+
+
+        The file is opened without following a link and streamed from that
+
+        descriptor: a symlink, FIFO or other non-regular file is a 422, a missing
+
+        bundle a 404.'
       parameters:
       - in: path
         name: bundle_id
@@ -10341,15 +10349,18 @@ paths:
   /api/runs/{run_id}/verify:
     post:
       description: "Verify DSSE signature + RFC 3161 timestamp + Merkle log inclusion (nova verify).\n\
-        \nReturns:\n  sealed=False  — capsule has no .seal/ directory (was not sealed)\n  configured=False\
-        \ — NovaSeal config not found\n  signature_ok, timestamp_ok, log_integrity_ok, valid, errors —\
-        \ full result\n  capsule_binding_ok — ADR-0251 binding (capsule.yaml + evidence_digests +\n  \
-        \  log-entry capsule_id); valid is the verdict `nova verify` exits on\n  timestamp_ok is null\
-        \ when no RFC 3161 token is present (ADR-0301)\n  timestamp_trust — anchored | unanchored | absent\
-        \ | invalid: timestamp_ok says a\n    token is intact; only \"anchored\" (tsa_ca_certs in novaseal.yaml)\
-        \ is trusted time\n  sealer_log, log_inclusion, unanchored_claims — what the logs established\n\
-        \    (ADR-0297 Amendment 2); unanchored_claims lists what `nova verify --strict`\n    would fail\
-        \ on\n  identity_trust, signer_subject, local_seal_identity — signer trust level (ADR-0301)"
+        \nReturns:\n  sealed=False  — capsule has no .seal/ directory (was not sealed)\n  configured —\
+        \ whether a novaseal.yaml was found on this host. False no\n    longer means \"not verified\"\
+        : like `nova verify` and the trust radar,\n    the capsule is then verified from its own files\
+        \ (no local log, no\n    operator anchors), and every field below is still returned\n  signature_ok,\
+        \ timestamp_ok, log_integrity_ok, valid, errors — full result\n  capsule_binding_ok — ADR-0251\
+        \ binding (capsule.yaml + evidence_digests +\n    log-entry capsule_id); valid is the verdict\
+        \ `nova verify` exits on\n  timestamp_ok is null when no RFC 3161 token is present (ADR-0301)\n\
+        \  timestamp_trust — anchored | unanchored | absent | invalid: timestamp_ok says a\n    token\
+        \ is intact; only \"anchored\" (tsa_ca_certs in novaseal.yaml) is trusted time\n  sealer_log,\
+        \ log_inclusion, unanchored_claims — what the logs established\n    (ADR-0297 Amendment 2); unanchored_claims\
+        \ lists what `nova verify --strict`\n    would fail on\n  identity_trust, signer_subject, local_seal_identity\
+        \ — signer trust level (ADR-0301)"
       parameters:
       - in: path
         name: run_id

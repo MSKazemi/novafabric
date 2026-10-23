@@ -6010,7 +6010,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "policy-db",
         "label": "--policy-db",
         "type": "text",
-        "hint": "NovaSeal promote-policy SQLite database.",
+        "hint": "NovaSeal promote-policy SQLite database. Default: the NovaSeal Merkle log (NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db), where nova policy sign writes.",
         "flag": "--policy-db"
       },
       {
@@ -7074,17 +7074,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "interval",
         "label": "--interval",
         "type": "number",
-        "hint": "Watcher poll interval in seconds (--watch only)",
-        "flag": "--interval",
-        "defaultValue": "2.0"
+        "hint": "Watcher poll interval in seconds (--watch only). Default: NOVA_WATCHER_INTERVAL, else 2.0.",
+        "flag": "--interval"
       },
       {
         "key": "backend",
         "label": "--backend",
         "type": "text",
-        "hint": "Backend: auto, polling, watchdog",
-        "flag": "--backend",
-        "defaultValue": "auto"
+        "hint": "Backend: auto, polling, watchdog. Default: NOVA_WATCHER_BACKEND, else auto. Unknown values are refused.",
+        "flag": "--backend"
       },
       {
         "key": "capsule-dir",
@@ -9884,7 +9882,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "PolicyStore SQLite DB path (default: NOVAFABRIC_HOME/promote/policy.db or ~/.local/share/novafabric/merkle.db)",
+        "hint": "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads).",
         "flag": "--db"
       },
       {
@@ -9955,7 +9953,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "SQLite DB path",
+        "hint": "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads).",
         "flag": "--db"
       }
     ],
@@ -12405,7 +12403,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "SQLite DB path",
+        "hint": "Accepted for compatibility; this command does not read the policy (nova seal propose and nova seal verify do).",
         "flag": "--db"
       },
       {
@@ -12498,7 +12496,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "Option --db.",
+        "hint": "Accepted for compatibility; this command does not read the policy (nova seal propose and nova seal verify do).",
         "flag": "--db"
       },
       {
@@ -12631,7 +12629,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "SQLite DB path",
+        "hint": "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads).",
         "flag": "--db"
       },
       {
@@ -12766,7 +12764,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "SQLite DB path",
+        "hint": "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads).",
         "flag": "--db"
       },
       {
@@ -14641,7 +14639,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "seal-config",
         "label": "--seal-config",
         "type": "text",
-        "hint": "Path to novaseal.yaml config (default: ~/.novafabric/novaseal.yaml)",
+        "hint": "Path to novaseal.yaml config (default: $NOVAFABRIC_HOME/novaseal.yaml, i.e. ~/.novafabric/novaseal.yaml only when NOVAFABRIC_HOME is unset)",
         "flag": "--seal-config"
       },
       {

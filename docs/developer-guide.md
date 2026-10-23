@@ -1898,7 +1898,11 @@ Built-in backends:
 
 `nova serve` instantiates `CapsuleWatcher` with the backend resolved from
 `NOVA_WATCHER_BACKEND` (default: `auto`).  The poll interval is controlled by
-`NOVA_WATCHER_INTERVAL` (default: `2.0` s).
+`NOVA_WATCHER_INTERVAL` (default: `2.0` s). `resolve_watcher_settings()` applies one
+precedence everywhere: an explicit argument (`--backend` / `--interval`) beats the
+environment, which beats the default. An unknown backend or a non-positive interval raises
+`WatcherConfigError`; `create_app()` resolves the settings eagerly so the error surfaces at
+startup rather than in the background refresh loop.
 
 ## Registering a third-party eval suite adapter
 
@@ -2034,7 +2038,7 @@ the [ADR-0024](./decisions.md) license audit.
 | `get_active_at(timestamp, namespace)` | Return the policy active at a given UTC timestamp |
 | `list_all(namespace=None)` | Return all rows as `list[dict]`; optional namespace filter |
 
-The default DB path searched by `nova policy list` is `NOVAFABRIC_HOME/promote/policy.db`, falling back to `~/.local/share/novafabric/merkle.db` for backwards compatibility with older installations.
+Every default policy-store location — `nova policy sign` / `list`, `nova seal propose` / `verify`, `nova export-model-independence --policy-db`, `POST /api/policy/sign`, `GET /api/policy/list`, the SealTab and server mode — comes from `novafabric.promote.policy_location.default_policy_db()`, which is the NovaSeal Merkle log — `NOVAFABRIC_SEAL_DB_PATH`, then `merkle_db` in `novaseal.yaml`, then `$NOVAFABRIC_HOME/novaseal-merkle.db`. A Postgres log raises `PolicyDbLocationError` (the store is SQLite). `legacy_policy_db()` returns the pre-2026-10-23 default `~/.local/share/novafabric/merkle.db` when it exists, for the hint commands print.
 
 ---
 

@@ -65,6 +65,42 @@ def test_metrics_with_token(client: TestClient) -> None:
     assert 'route="/livez"' in text
 
 
+# --------------------------------------------------------------------------- #
+# L4 — /readyz feeds nova_readyz_check_status{app="serve"} like the server app
+# --------------------------------------------------------------------------- #
+
+
+def test_readyz_sets_serve_gauge(client: TestClient) -> None:
+    pytest.importorskip("prometheus_client")
+    assert client.get("/readyz", headers=LOCALHOST_HEADERS).status_code == 200
+    text = client.get(
+        "/metrics", params={"token": TOKEN}, headers=LOCALHOST_HEADERS
+    ).text
+    assert 'nova_readyz_check_status{app="serve",check="db"} 1.0' in text
+    # skipped never fails readiness, so it reads as passing (1).
+    assert 'nova_readyz_check_status{app="serve",check="object_store"} 1.0' in text
+
+
+def test_readyz_gauge_flips_on_broken_db(tmp_path: Path) -> None:
+    pytest.importorskip("prometheus_client")
+    capsule_dir = tmp_path / "runs"
+    capsule_dir.mkdir()
+    db_path = tmp_path / "registry.db"
+    c = TestClient(
+        create_app(token=TOKEN, capsule_dir=capsule_dir, db_path=db_path),
+        raise_server_exceptions=False,
+    )
+    # Break the DB after startup: a directory where the SQLite file should be.
+    if db_path.exists():
+        db_path.unlink()
+    db_path.mkdir()
+    assert c.get("/readyz", headers=LOCALHOST_HEADERS).status_code == 503
+    text = c.get(
+        "/metrics", params={"token": TOKEN}, headers=LOCALHOST_HEADERS
+    ).text
+    assert 'nova_readyz_check_status{app="serve",check="db"} 0.0' in text
+
+
 def test_api_health_alias_unchanged(client: TestClient) -> None:
     resp = client.get("/api/health", headers=LOCALHOST_HEADERS)
     assert resp.status_code == 200
