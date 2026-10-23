@@ -21,6 +21,23 @@ Full notes: [docs/releases/v0.107.0.md](docs/releases/v0.107.0.md).
 
 ### Security
 
+- **`nova serve`: a `read` token could become `admin` through `POST /api/policy/check` (P0).**
+  Caller-supplied Rego (`policy_source`) was evaluated for any `read` credential by an `opa` that
+  inherited the server's environment, so `opa.runtime().env` returned `NOVAFABRIC_SERVE_TOKEN` and
+  `http.send` reached the network. Caller Rego (`policy_source`, and `bundle_path` on
+  `/api/policy/test`) now needs `admin` (403, audited). Every `opa` NovaFabric starts runs with no
+  inherited environment and with capabilities that remove `opa.runtime`, `http.send` and
+  `net.lookup_ip_addr`; if those cannot be derived, nothing is evaluated. Report exports take the
+  exported report's own scope, and `GET /api/policy/explain` is `audit`-scoped with exact matching
+  (an empty `decision_id` returned the whole dashboard audit log to `read` tokens).
+- **`nova server`: a `writer` could overwrite any file the server could write (P0).** `POST
+  /v0/evidence` accepted a client `output_path` and an absolute or `..` `run_id`. It now refuses
+  `output_path` (400) and writes only `<evidence dir>/<run_id>.zip`. Every id taken from a request,
+  manifest, event or `capsule.yaml` must be one path segment, and a symlinked store entry is refused —
+  across `POST /v0/replays`, `GET /v0/capsules/{run_id}`, capsule upload, `nova import`
+  (`capsule_id`), capsule-set evidence bundles, `nova collector rebuild`, `nova export-rocrate-science`
+  and `nova capture-ui verify`. Auto-generated evidence signing keys are created 0600 atomically
+  (they were 0664).
 - **Schema validation never retrieves a `$ref`.** A nested remote `$ref`, an `$id`-relative ref
   or a `$dynamicRef` inside a tool's argument or result schema made capture send an HTTP GET — at
   every capture level, `air_gapped` included — and a `file://` ref was read from disk. Every
@@ -320,6 +337,9 @@ Full notes: [docs/releases/v0.107.0.md](docs/releases/v0.107.0.md).
 
 ### Changed — BREAKING
 
+- Caller-supplied Rego on `/api/policy/check` and `/api/policy/test` needs `admin`; `POST /v0/evidence`
+  refuses `output_path`; `nova collector rebuild` refuses a target that already holds partitions; a
+  capsule set with a repeated `run_id` is refused.
 - `nova serve` request-body paths are confined (above). A relative path containing `/` resolves
   under `$NOVAFABRIC_HOME` (reads) or `$NOVAFABRIC_HOME/exports` (writes);
   `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` is no longer honoured; metadata rebuild's default target is

@@ -175,7 +175,18 @@ STRIDE analysis in the project's internal threat model:
   (`README.md`, the bundled schemas, `verifier_instructions`) could be rewritten
   without failing verification. **Re-run `nova validate`/`nova verify` on capsules
   captured from untrusted workloads, and treat Evidence Bundles exported before
-  this release as "signed content only".** Known limits: audit-log locking uses
+  this release as "signed content only".**
+
+  **Critical, fixed in v0.107.0.** In `nova server` ≤ v0.106.1 a principal with the
+  `writer` role could overwrite any file the server process could write through
+  `POST /v0/evidence` (`output_path`, or an absolute/`..` `run_id`), and
+  auto-generated evidence signing keys were world-readable (0664). In `nova serve`
+  ≤ v0.106.1 any non-admin issued token could obtain the admin session token by
+  posting Rego that read `opa.runtime().env` to `/api/policy/check` (the default
+  single-token laptop setup is already `admin`). **Upgrade; then rotate the serve
+  token and any non-admin issued tokens, rotate an auto-generated
+  `$NOVAFABRIC_HOME/keys/signing_key.pem`, and check server-writable files if
+  untrusted writers had access.** Known limits: audit-log locking uses
   advisory `flock`, which NFS without lock support and Lustre without `-o flock`
   do not honour; the audit chain is unkeyed.
 
