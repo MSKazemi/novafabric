@@ -232,3 +232,14 @@ def test_worm_db_help_states_the_home_default(command: str) -> None:
     assert result.exit_code == 0, result.output
     text = " ".join(result.output.split())
     assert "$NOVAFABRIC_HOME/registries/<registry>/worm.db" in text, text
+
+
+@pytest.mark.parametrize("command", ["plan", "explain"])
+def test_a_registry_name_that_escapes_the_store_is_refused(ws: Path, command: str) -> None:
+    args = ["retention", command, "--registry", "../escape"]
+    if command == "explain":
+        args.insert(2, "cap-json")
+    result = runner.invoke(app, args)
+    assert isinstance(result.exception, SystemExit), (result.exception, result.output)
+    assert result.exit_code == 1
+    assert "invalid registry name" in result.output
