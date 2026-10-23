@@ -37,7 +37,8 @@ flowchart LR
 ## Turning sealing on
 
 Sealing is **opt-in**. `trust/novaseal/config.py:load_signing_profile` looks for
-`NOVAFABRIC_SEAL_CONFIG` and then for `~/.novafabric/novaseal.yaml`. If neither
+`NOVAFABRIC_SEAL_CONFIG` and then for `$NOVAFABRIC_HOME/novaseal.yaml`
+(`~/.novafabric/novaseal.yaml` when `NOVAFABRIC_HOME` is unset). If neither
 exists, capture skips sealing. Sealing never blocks a capture: on any error,
 `capture/finalize.py:seal_capsule` prints a warning and the capsule is kept,
 without `.seal/`. `create_envelope` refuses to sign with a key that does not match
@@ -139,8 +140,9 @@ not a tree over the files of one capsule.
 - Hashing is SHA-256 with domain separation: `leaf = H(0x00 ‖ entry)` and
   `node = H(0x01 ‖ left ‖ right)`.
 - The tree head is stored in a local SQLite database, by default
-  `~/.novafabric/novaseal-merkle.db` (set with `merkle_db`). A Postgres backend
-  is experimental.
+  `$NOVAFABRIC_HOME/novaseal-merkle.db` (set with `merkle_db`, or override
+  process-wide with `NOVAFABRIC_SEAL_DB_PATH`). A Postgres backend (a
+  `postgresql://` DSN in either place) is experimental.
 - `.seal/log-entry.json` records `leaf_index`, `leaf_hash`, `root_hash`,
   `tree_size` and `entry` for this capsule. New seals also carry the Merkle
   inclusion proof in this file, and the entry is bound to the sealed capsule.
@@ -208,7 +210,8 @@ in turn:
 | 4 | Manifest binding | The manifest the capsule was sealed with (`_novaseal.manifest`; `capsule.yaml` for any seal that carries `evidence_digests`) exists and equals the signed payload, and `capsule_id` matches. A missing sealed manifest **fails**. Any other manifest-named file (`capsule.yaml`, `capsule.json`) that the seal does not cover and that differs from the payload **fails**: readers accept `capsule.json` as a manifest, so it is a substitute, not an extra file. Only a seal that names no file (made before `evidence_digests`) reports a missing manifest as `NOT PRESENT`. |
 | 5 | Per-file digests | Every file listed in `evidence_digests` exists and matches its SHA-256. A file that a signed `*_ref` field names (for example `tool_calls_ref: tool-calls.jsonl`) but that was added after sealing **fails**. Other extra files, such as `c2pa-manifest.json` from `nova export-c2pa`, are listed as "not covered by the seal" and do not fail (ADR-0251 §5). |
 
-The exit code is `0` when every check passes and `1` otherwise. Optional
+The exit code is `0` when every check passes, `1` otherwise, and `2` on a usage
+error (an incompatible flag combination, such as `--crl-dir` with no CA bundle). Optional
 hardening flags are experimental:
 
 - `--ca-bundle` validates the signer certificate chain (and raises the reported
@@ -371,8 +374,13 @@ The recipe needs only a SHA-256 tool and an Ed25519 verifier:
 1. Recompute the manifest hash.
 2. Recompute each artifact's SHA-256.
 3. Verify each DSSE envelope over its pre-authentication encoding.
-4. Check that each statement's subject matches `subject.capsule_hash`, and recompute
-   that root from the files under `run-capsule/`.
+4. Check each statement's subject against what its predicate type covers: the run
+   statement's subject is `subject.capsule_hash`, recomputed as the root of the files
+   under `run-capsule/`; the lineage statement's is the SHA-256 of
+   `lineage-subgraph/edges.jsonl`; the redaction statement's is the `chain_hash` in
+   `run-capsule/redaction-proof.json`; an energy-receipts statement (present only when
+   the run recorded energy) covers `run-capsule/energy-receipts.jsonl`. The bundle's
+   own `README.md` carries the same recipe (`evidence/bundle.py`).
 5. Check the members statement (`attestations/bundle.intoto.json`): every file except
    `manifest.json` and the statement's own three files has the digest it signs, and
    the manifest's fields hash to its `manifest_core_sha256`.
@@ -404,14 +412,15 @@ holding a bundle whose README said "Verified by the EU AI Office" and whose
   statement covers.
 
 Optional additions: `--timestamp` (an RFC 3161 token for the bundle), Rekor
-publication when `NOVA_REKOR_URL` is set, and an outer DSSE envelope.
+publication of the run envelope with `--sigstore` when `NOVA_REKOR_URL` is also set
+(skipped with a warning otherwise), and an outer DSSE envelope.
 
 ## Other trust surfaces
 
 | Surface | Maturity | Where |
 |---|---|---|
 | Sigstore keyless signing, `nova seal sign --backend sigstore` and `nova verify --backend sigstore` | experimental, needs the `[sigstore]` extra | `cli/seal_propose.py`, `cli/verify.py` |
-| Rekor transparency-log publication | opt-in (`NOVA_REKOR_URL`), best effort | `promote/rekor_client.py` |
+| Rekor transparency-log publication | opt-in, best effort: `nova seal approve` / `nova seal bypass` publish when `NOVA_REKOR_URL` is set; an evidence bundle also needs `nova export-evidence --sigstore` | `promote/rekor_client.py` |
 | Witness cosigning of tree heads | experimental, library only | `trust/novaseal/witness.py` |
 | Ledger checkpoint Merkle inclusion, `nova ledger verify --merkle-db` | experimental | `trust/ledger/_verify.py` — without `--merkle-db`, exit 0 only means the checkpoint's (unsigned) `merkle` block is self-consistent; a fabricated one-leaf tree passes. With it, the log must hold the checkpoint and reproduce the recorded tree head |
 | PII redaction manifest (`RedactionManifest`, with its `legal_hold_mode` field; there is no capture flag for it) | experimental, library only | `compliance/pii/manifest.py` |

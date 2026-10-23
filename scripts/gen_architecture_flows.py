@@ -614,7 +614,7 @@ DATA = Flow(
              "<p>Metering never fails the upload: an accounting error is logged and "
              "audited instead. Budgets read cached usage with a short TTL, so the cache is "
              "invalidated after each write.</p>",
-             "server/routes/capsules.py:_record_usage_capsule_upload · server/usage.py",
+             "server/routes/capsules.py:_record_usage_capsule_created · server/usage.py",
              "experimental", "b3", "amb"),
         Step(("c0", "c1"), ("ec1",),
              "List: the cursor is strictly decoded; a bad cursor is 400 invalid_cursor, not "
@@ -1237,11 +1237,13 @@ STORY = Flow(
                                                        "new ULID"),
             "OTLP traces carrying gen_ai.* spans become a brand-new capsule; OTLP logs go to "
             "an append-only sidecar, never into a capsule.",
-            "<p>An ingested capsule is secret-scanned and records <code>capture_mode: "
-            "otel-import</code>; this path does not sign it. A sealed capsule is observed, "
-            "never written. Zoom in: <a href=\"#flow-otlp-ingest-1\">the OTLP ingest "
-            "flow</a>.</p>",
-            "otel/genai_ingest.py:write_ingest_capsule · otel/logs_ingest.py:ingest_otlp_logs",
+            "<p>An ingested capsule records <code>capture_mode: otel-import</code> and "
+            "finalizes through the same path as <code>nova capture</code>: secret scan, "
+            "<code>evidence_digests</code>, and a seal only when a signing profile exists. "
+            "An existing sealed capsule is observed, never written. Zoom in: "
+            "<a href=\"#flow-otlp-ingest-1\">the OTLP ingest flow</a>.</p>",
+            "otel/genai_ingest.py:write_ingest_capsule_finalized · "
+            "otel/logs_ingest.py:ingest_otlp_logs",
             "experimental", "otlp", "rep", "POST /api/otlp/v1/traces → new capsule 01J9…"),
         _ss("server", "Share with nova server", ("server",), (), (),
             "nova server is the team REST API (/v0): API keys with workspace binding, budgets "

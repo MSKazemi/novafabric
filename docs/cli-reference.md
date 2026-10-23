@@ -346,7 +346,7 @@ nova capture --output-dir /mnt/runs python agent.py
 
 Options:
 - `--output-dir, -o PATH` — base directory for capsule storage (default: `$NOVAFABRIC_HOME/capsules/`)
-- `--timeout FLOAT` — wall-clock deadline in seconds for the captured command (default: 600). Increase for long-running agents: `nova capture --timeout 3600 python agent.py`
+- `--timeout FLOAT` — wall-clock deadline in seconds for the captured command. Unset, `local`, `docker` and `kubernetes` use 600 s. For `slurm`, `lsf` and `pbs` the value becomes the job's time limit (`--time` in whole minutes, `-W`, `-l walltime=`; an explicit `time`/`walltime` runner option wins); unset, Slurm uses the partition default, LSF `1:00` and PBS `01:00:00`, and NovaFabric stops polling the job after 3600 s. Increase for long-running agents: `nova capture --timeout 3600 python agent.py`
 - `--runner {local,docker,kubernetes,slurm,lsf,pbs}` — execution backend (default: `local`). Tab-completion available via `nova --install-completion`.
   - Every runner except `local` forwards **only** `NOVAFABRIC_*` environment
     variables into the workload, plus `PATH` for `slurm` and whatever you name in
@@ -405,6 +405,7 @@ Options:
     cluster, node count and a hash of the node list, from an explicit `SLURM_*`
     allow-list. Field list:
     [run-capsule.md](architecture/run-capsule.md#hostrunner-and-hostslurm-experimental-adr-0307).
+- `--runner-option KEY=VALUE` — runner-specific option, repeatable (e.g. `image=myorg/agent:latest` for `docker`, `extra_env=…` for the remote runners, `time=`/`walltime=` for the schedulers). Must contain `=` and a non-empty key, else exit 2. Keys each runner reads are listed in [operator-guide.md](operator-guide.md).
 - `--environment TEXT` — **experimental** ([ADR-0126](./decisions.md)). Deployment-environment tag recorded verbatim on the capsule as the additive optional `deployment_environment` field (with its provenance in `environment_source`): conventionally `production` | `staging` | `development` | `test`, or any custom string (e.g. `prod-eu`, `canary` — a value outside the conventional four warns but is accepted). Precedence: this flag > the `NOVAFABRIC_ENVIRONMENT` env var > the SDK `deployment_environment=` argument; if none is supplied both fields stay absent (read as `unknown`) and the manifest is byte-compatible with earlier capsules. Never inferred from host/branch/namespace. **Distinct from the `env.lock` technical environment** (ADR-0007) — this is a delivery-lifecycle label, not a reproducibility fingerprint. Example: `nova capture --environment production -- python agent.py`
 - `--experiment TEXT`, `--variant TEXT`, `--variant-source TEXT` (+ optional `--variant-label TEXT`, `--variant-assigned-at RFC3339`) — **experimental** ([ADR-0116](./decisions.md)). Record which A/B experiment and variant an **external** allocator had active for this run, as the additive optional `variant` block on the capsule manifest (`experiment_id`, `variant_id`, `assignment_source`, plus optional `variant_label`, `assigned_at`). **Record-only:** every field is copied verbatim from what you supply — NovaFabric never assigns, splits, samples, or analyzes variants (that is LaunchDarkly/Statsig/GrowthBook territory, an explicit non-goal), so `--variant-source` (the external assigner, e.g. `launchdarkly`, `statsig`, `upstream-router`) is required with the other two and is never defaulted, and `--variant-assigned-at` is never substituted with the capture time. Precedence: these flags > the `NOVAFABRIC_VARIANT*` env vars > the SDK `variant=` mapping argument, resolved atomically per source (no cross-source mixing). If nothing supplies a block it stays absent and the manifest is byte-compatible with earlier capsules. An incomplete flag set fails before capture starts; incomplete ambient env vars warn and are ignored (never block the workload). Example: `nova capture --experiment exp1 --variant arm-b --variant-source statsig -- python agent.py`
 - `--session-id ULID`, `--session-sequence INT` — **experimental** ([ADR-0122](./decisions.md)). Tag the run as one ordered turn of a multi-turn *session* (a conversation or workflow of N otherwise-independent runs), recorded as the additive optional `session_id` / `sequence` back-reference fields on the capsule manifest. `--session-id` must be a ULID (create one with `nova session new`); `--session-sequence` is the zero-based turn index and requires `--session-id`. Precedence: these flags > the `NOVAFABRIC_SESSION_ID` / `NOVAFABRIC_SESSION_SEQUENCE` env vars > the SDK `session_id=`/`session_sequence=` arguments, resolved atomically per source. Absent = a standalone run, byte-compatible with earlier capsules. The `session.json` manifest (`nova session`, below) stays the **authoritative** ordered index; the capsule-side fields are advisory. **Not** the parent/child distributed-run hierarchy (ADR-0039) — that groups the workers of *one* job; a session groups *separate* runs over time. Example: `nova capture --session-id 01HZ8S9K3M4YZ2K7N9DPBYK2W0 --session-sequence 2 -- python agent.py`
@@ -429,7 +430,7 @@ all artifacts are finalized and secret-scanned before the process returns.
 
 Output:
 ```
-✓ Capsule written: .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
+✓ Capsule written: ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
 ```
 
 Exit code mirrors the wrapped command's exit code, with two exceptions that
@@ -443,7 +444,7 @@ apart, so the never-started case prints an extra line naming the reason:
 
 ```
 ✗ Workload never started: command not found: my-agnet
-✗ Capsule written: .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
+✗ Capsule written: ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
 ```
 
 The capsule says the same thing: its `error` block carries
@@ -3169,7 +3170,7 @@ emptied by redaction is refused.
 Options (`add`):
 - `--body TEXT` (required) — free text, secret-scanned
 - `--author ID` — defaults to the local username (self-asserted in local mode)
-- `--kind {capsule,span,run,score}` — what the subject digest addresses (default `capsule`)
+- `--kind {capsule,span,run,score,asset}` — what the subject addresses (default `capsule`; use `asset` with an `asset://` subject)
 - `--reply-to COMMENT_ID` — thread a reply / supersede a prior comment
 - `--tag LABEL` — repeatable free labels
 - `--tombstone` — retract the comment named by `--reply-to`
@@ -3295,7 +3296,7 @@ when `--sigstore` and `NOVA_REKOR_URL` are both set. The ZIP holds
 a copy of the capsule, its lineage edges, the JSON schemas, Ed25519-signed in-toto DSSE attestations, and a `manifest.json` with a SHA-256 for every file plus the verification recipe ([full list](architecture/sealing-and-verification.md#what-is-in-the-bundle)).
 
 ```bash
-nova export-evidence <capsule> --key ~/.novafabric/keys/ed25519.pem --output evidence.zip
+nova export-evidence <capsule> --key ~/.novafabric/keys/signing_key.pem --output evidence.zip   # the key `nova init` wrote
 nova export-evidence <capsule> --key key.pem --output e.zip --allow-unsafe-skips
 ```
 
@@ -3306,6 +3307,15 @@ Options:
 - `--sigstore` — after building the bundle, publish the DSSE envelope to the Rekor
   transparency log. Requires `NOVA_REKOR_URL` env var; without it, prints a skip
   warning and exits 0. Network errors are warnings only (fail-open).
+- `--timestamp / --no-timestamp` — request an RFC 3161 trusted timestamp from a TSA
+  after assembling the DSSE envelope ([ADR-0030](./decisions.md)); the TimeStampResp is
+  stored as `manifest.dsse.tsr` inside the bundle. **Opt-in** (default `--no-timestamp`);
+  a TSA failure fails the export unless `--timestamp-optional` is also passed.
+- `--timestamp-url URL` — TSA to use. Precedence: this flag, then `evidence.tsa_url` in
+  `$NOVAFABRIC_HOME/config.yaml`, then `NOVAFABRIC_TSA_URL`, then `https://freetsa.org/tsr`.
+  Only contacted when `--timestamp` is set.
+- `--timestamp-optional` — if the TSA is unreachable or refuses, log a warning and still
+  write the bundle; the reason is recorded in `manifest.json` as `timestamp_failure_reason`.
 - `--with-custody` (experimental, ADR-0095) — embed the FRE-902(14) court-admissibility
   blocks (`chain_of_custody` + `self_authentication`, additive optional `$defs` on
   `evidence-bundle.schema.json`) in the bundle manifest, built from the hash-chained
@@ -3356,7 +3366,7 @@ evidence.zip
 ├── signatures/                         # raw signature + public key per envelope
 │   ├── *.sig    (raw ed25519 signature bytes)
 │   └── *.cert   (PEM public key)
-├── schemas/                            # all 10 JSON schemas vendored
+├── schemas/                            # every packaged *.schema.json vendored (21 today)
 └── README.md                           # human-readable verification recipe
 ```
 
@@ -3500,6 +3510,8 @@ Options:
 `novaseal.yaml` keys used by verification: `merkle_db` (the sealer's log, opened only if it exists), `previous_merkle_dbs` (this host's retired logs, e.g. the v1 log before an ADR-0313 migration; verify-only, a listed file that does not exist is a config error), `ca_bundle`, `crl_dir` / `crl_strict`, `tsa_ca_certs`. There is no built-in default TSA trust bundle; `tsa_url` anchors nothing.
 
 - `--public-key PATH` — PEM-encoded Ed25519 public key. For an Evidence Bundle ZIP, every attestation must be signed with this key; for an `export-manifest.json` (batch export) it is required.
+- `--dest TEXT` — export-manifest verification only: read the exported member blobs from this destination instead of the manifest's recorded one.
+- `--check-redaction FILE` — verify the NovaSeal DSSE envelope of a `redaction_proof_report.seal.json` on its own; the capsule seal checks are **not** run in this mode. Exit `0` valid, `1` missing or invalid. Cannot be combined with `--json`/`--strict` (exit 2).
 
 **Evidence Bundle ZIP.** `nova verify bundle.zip` runs the bundle's whole verification
 recipe (`evidence/bundle_verify.py`): it recomputes `manifest_hash` and every artifact
@@ -3533,7 +3545,7 @@ A bundle exported before the statement existed passes only as
 members (`README.md`, `schemas/`, `manifest.json`): treat them as unverified. `--public-key`
 does not change that; it pins who signed, not what nobody signed.
 
-Exit codes: `0` (all checks pass), `1` (any check fails or .seal/ missing).
+Exit codes: `0` (all checks pass), `1` (any check fails or .seal/ missing), `2` (usage error — e.g. `--json`/`--strict` on a ZIP, a file, `--check-redaction` or the sigstore backend).
 
 Example output (a capsule sealed after `nova seal init` — no TSA configured, so no
 timestamp; abridged):
@@ -4383,7 +4395,7 @@ NOVA_PII_PEPPER="<secret>" nova subject-proof "user@example.com"
 
 NOVA_PII_PEPPER="<secret>" nova subject-proof "user@example.com" \
   --output proof.json \
-  --key ~/.novafabric/keys/ed25519.pem
+  --key ~/.novafabric/keys/signing_key.pem
 ```
 
 Options:
@@ -5802,7 +5814,7 @@ Options:
 - `--cert PATH` — X.509 PEM certificate matching `--key`
 - `--target-env TEXT` — target deployment environment (default: `staging`)
 - `--db PATH` — promotion-policy SQLite DB (default: the NovaSeal Merkle log file — `NOVAFABRIC_SEAL_DB_PATH`, then `merkle_db` in `novaseal.yaml`, then `$NOVAFABRIC_HOME/novaseal-merkle.db`; see [NovaSeal Configuration Reference](novaseal-configuration.md#31-path-resolution-order)). This is the store the dashboard SealTab reads. **Default changed:** up to v0.106.0 the code defaulted to `~/.local/share/novafabric/merkle.db` although this reference already named the resolved log; pass that path with `--db` to use a policy signed there.
-- `--data-dir PATH` — root directory for bundle storage (default: `~/.novafabric`)
+- `--data-dir PATH` — root directory for bundle storage (default: `~/.local/share/novafabric`; bundles live under `<data-dir>/promote/<capsule-id>/…`)
 
 Exit codes: `0` (proposal created), `1` (validation error, signing error, or no policy found).
 
@@ -5834,7 +5846,7 @@ Options:
 - `--key PATH` — ECDSA P-256 PEM private key (approver key)
 - `--cert PATH` — X.509 PEM certificate matching `--key`
 - `--db PATH` — accepted for compatibility and ignored: this command does not read the policy (`nova seal propose` and `nova seal verify` do).
-- `--data-dir PATH` — bundle storage root
+- `--data-dir PATH` — bundle storage root (default: `~/.local/share/novafabric`; bundles live under `<data-dir>/promote/<capsule-id>/…`)
 - `--ca-bundle PATH` — PEM CA bundle the proposer's certificate must chain to before its
   details are shown (default: `$NOVAFABRIC_PROMOTE_CA_BUNDLE`; see *Promote trust root* below)
 - `--insecure-self-signed` — accept any self-signed proposer certificate (development only)
@@ -5891,7 +5903,7 @@ Options:
 
 - `--offline` — skip any network calls (accepted; fully functional in v0.1 since no Rekor calls are made at verify time)
 - `--db PATH` — promotion-policy SQLite DB (default: the NovaSeal Merkle log file — `NOVAFABRIC_SEAL_DB_PATH`, then `merkle_db` in `novaseal.yaml`, then `$NOVAFABRIC_HOME/novaseal-merkle.db`; see [NovaSeal Configuration Reference](novaseal-configuration.md#31-path-resolution-order)). This is the store the dashboard SealTab reads. **Default changed:** up to v0.106.0 the code defaulted to `~/.local/share/novafabric/merkle.db` although this reference already named the resolved log; pass that path with `--db` to use a policy signed there.
-- `--data-dir PATH` — bundle storage root
+- `--data-dir PATH` — bundle storage root (default: `~/.local/share/novafabric`; bundles live under `<data-dir>/promote/<capsule-id>/…`)
 - `--ca-bundle PATH` — PEM CA bundle every promote signer must chain to (default:
   `$NOVAFABRIC_PROMOTE_CA_BUNDLE`)
 - `--insecure-self-signed` — accept any self-signed signer (development only)
@@ -5929,7 +5941,7 @@ Options:
 - `--duration TEXT` — validity window, e.g. `24h`, `7d` (default: `24h`, maximum `168h`)
 - `--target-env TEXT` — target environment (default: `production`)
 - `--notify EMAIL` — address to notify (repeatable). Signed into the bypass as `mailto:<addr>` and passed to the configured channel in the event's `recipients`; NovaFabric itself sends no email, and a warning says so when no channel is configured
-- `--data-dir PATH` — promote-bundle data directory override
+- `--data-dir PATH` — promote-bundle data directory (default: `~/.local/share/novafabric`; bundles live under `<data-dir>/promote/<capsule-id>/…`)
 - `--db PATH` — accepted for compatibility and ignored: this command does not read the policy (`nova seal propose` and `nova seal verify` do).
 
 The bypass is recorded in the NovaSeal bypass log. The dashboard **SealTab** shows all active and expired bypasses with approver identity.
@@ -7412,7 +7424,7 @@ Start the multi-user REST API server. Per [ADR-0017](./decisions.md) and [ADR-00
 ```bash
 nova server start
 nova server start --backend postgres
-nova server start --config /etc/novafabric/nova-server.yaml
+nova server start --config /etc/novafabric/server.yaml
 nova server start --host 0.0.0.0 --port 7433
 
 # Horizontal scaling (v0.98.0, experimental) — requires the postgres backend
@@ -7422,8 +7434,11 @@ nova server start --backend postgres --workers 4
 nova server start --log-format json
 ```
 
-The server reads `~/.config/novafabric/nova-server.yaml` by default. CLI flags
-override the config file. See [`docs/ops/server-deployment.md`](ops/server-deployment.md)
+The server reads `~/.config/novafabric/server.yaml` by default; only `--config` points it
+elsewhere (there is no config-path environment variable). `NOVAFABRIC_SERVER_*` environment
+variables override the file, and CLI flags override both. Secrets (`postgres_dsn`,
+`offline_key_path`, `scim_token`, `local_token`) are ignored in the YAML and come only from the
+environment (`NOVAFABRIC_POSTGRES_DSN`, `NOVAFABRIC_OFFLINE_KEY_PATH`, …). See [`docs/ops/server-deployment.md`](ops/server-deployment.md)
 for config examples.
 
 **Single-tenant scope (ADR-0178).** Capsule storage is **not partitioned per
@@ -7436,7 +7451,7 @@ is pending a security review; until it lands, do not rely on organizations for
 capsule isolation.
 
 Options:
-- `--config, -c FILE` — path to server YAML config (default: `~/.config/novafabric/nova-server.yaml`)
+- `--config, -c FILE` — path to server YAML config (default: `~/.config/novafabric/server.yaml`)
 - `--backend TEXT` — `sqlite` (default) or `postgres`
 - `--host TEXT` — bind address (default from config or `127.0.0.1`)
 - `--port, -p INTEGER` — bind port (default from config or `7433`)
@@ -7689,9 +7704,9 @@ Options:
 - `--created-by TEXT` — actor recorded in the audit log (default: `cli`)
 - `--db-path PATH` — SQLite database path (overrides default)
 
-Honest status: `create`/`list`/`revoke` work today; `rotate` (successor key
-with an overlap window) and `last_used_at` tracking are the next ADR-0193
-slice and are **not implemented yet**.
+Honest status (**experimental**): `create`, `list`, `revoke` and `rotate`
+(successor key with an overlap window) all work today, and the server records a
+coarse `last_used_at` per key (shown by `list --json`).
 
 ---
 
@@ -7764,7 +7779,7 @@ Exit codes:
 
 > The successor key is shown once and cannot be recovered — store it
 > immediately. `last_used_at` (coarse, at most one write per
-> `NOVA_API_KEY_LASTUSED_INTERVAL_S`, default daily) is surfaced by `list`.
+> `NOVA_API_KEY_LASTUSED_INTERVAL_S`, default daily) is surfaced by `list --json`.
 
 The same lifecycle is also available over REST at the admin-gated
 `/v0/api-keys` resource (`POST` create, `GET` list, `DELETE {key_id}` revoke,
@@ -8162,9 +8177,10 @@ failed).
 | `OPENLINEAGE_URL` | — | HTTP endpoint for `nova lineage emit-openlineage` (and auto-emit at capture) |
 | `OPENLINEAGE_FILE` | — | File path for `nova lineage emit-openlineage` (fallback if URL not set) |
 | `NOVAFABRIC_CAPSULE_DIR` | `$NOVAFABRIC_HOME/capsules` | Capsule storage root; overrides the `NOVAFABRIC_HOME`-derived default for all commands |
-| `NOVA_OBJECT_STORE_BACKEND` | `filesystem` | OCS backend: `filesystem`, `s3`, `gcs`, or `azure`. Set to `s3` for production deployments. |
-| `NOVA_OBJECT_STORE_PATH` | `$NOVAFABRIC_HOME/capsules` | Root path for the filesystem OCS backend. Ignored when `NOVA_OBJECT_STORE_BACKEND=s3`. |
-| `NOVA_S3_BUCKET` | — | S3 bucket name for the S3 OCS backend. Required when `NOVA_OBJECT_STORE_BACKEND=s3`. |
+| `NOVA_OBJECT_STORE_BACKEND` | `local-wal` | **Display only:** the `backend_type` label `nova serve` reports in `GET /api/storage/stats`. It selects no backend. The object-store backend for `nova backup`/`nova restore`/`nova rebuild-metadata-db` is `--backend` / `NOVA_OCS_BACKEND`. |
+| `NOVA_OBJECT_STORE_PATH` | — | Display only: when set (or `NOVA_S3_BUCKET` is), `GET /api/storage/stats` reports the store as configured. It moves no data. |
+| `NOVA_OCS_BACKEND` | — | Object-store backend for `nova backup create --profile manifest`, `nova restore` and `nova rebuild-metadata-db`: `s3`, `minio`, `ceph_rgw`, `azure_blob`, `gcs` (`local` is the in-memory test adapter). Same as their `--backend` flag. |
+| `NOVA_S3_BUCKET` | `nova-capsules` | S3 bucket for the `nova storage` commands and the `nova serve` storage views. Setting it, or `NOVA_S3_ENDPOINT_URL`, makes those paths use S3. |
 | `NOVA_S3_ENDPOINT_URL` | — | S3-compatible endpoint URL (e.g. `http://minio:9000` for MinIO). Defaults to AWS S3 when unset. |
 | `NOVAFABRIC_SPAN_ID` | — | Root span id injected into the subprocess |
 | `NOVAFABRIC_SUGGEST` | `1` | Set to `0` to disable the asset registration suggestion prompt after `nova capture`. |
@@ -8181,8 +8197,8 @@ failed).
 | `NOVAFABRIC_RANK` | — | Distributed-run contract: MPI/DDP rank of this worker (integer, 0-based). |
 | `NOVAFABRIC_WORLD_SIZE` | — | Distributed-run contract: total number of workers in this distributed run. |
 | `NOVAFABRIC_DISTRIBUTION_ROLE` | — | Distributed-run contract: `driver` or `worker`. |
-| `NOVAFABRIC_FAIL_MODE` | `warn` | Distributed-run contract: `warn` (log + continue) or `fail` (raise). Controls behaviour when parent capsule is not found. |
-| `NOVAFABRIC_PENDING_PARENT_TIMEOUT` | `30` | Distributed-run contract: seconds to wait for the parent capsule directory to appear before proceeding. |
+| `NOVAFABRIC_FAIL_MODE` | `fail-open` | Distributed-run contract: `fail-open` or `fail-closed`. With `fail-closed` a parent capsule is marked `FAILED` when any child failed. An invalid value warns and falls back to `fail-open`. |
+| `NOVAFABRIC_PENDING_PARENT_TIMEOUT` | `86400` | Distributed-run contract: seconds (float) a child may wait for its parent capsule before the link is treated as orphaned. |
 | `NOVAFABRIC_INFERENCE_ENGINE` | — | Inference-determinism contract (recorded in `env.lock` `hardware.inference`): serving engine, e.g. `vllm`, `tgi`, `sglang`. Best-effort; omitted when unset. |
 | `NOVAFABRIC_INFERENCE_ENGINE_VERSION` | — | Inference-determinism contract: serving-engine version string. |
 | `NOVAFABRIC_INFERENCE_TP_SIZE` | — | Inference-determinism contract: tensor-parallel size (integer ≥ 1). |
@@ -8192,15 +8208,15 @@ failed).
 | `NOVAFABRIC_INFERENCE_ATTENTION_BACKEND` | — | Inference-determinism contract: attention backend identifier. |
 | `NOVAFABRIC_INFERENCE_SEED` | — | Inference-determinism contract: inference RNG seed (integer). |
 | `NOVAFABRIC_INFERENCE_DETERMINISTIC` | — | Inference-determinism contract: `1`/`true`/`yes`/`on` if the engine ran in a documented deterministic mode. |
-| `NOVAFABRIC_POSTGRES_DSN` | — | Postgres DSN for `nova doctor --check-storage` and `nova migrate-to-postgres` |
-| `NOVA_DSN` | — | Postgres DSN for `nova server start` (ADR-0029 resolution order) |
+| `NOVAFABRIC_POSTGRES_DSN` | — | Postgres DSN for `nova server start` (with `--backend postgres`), `nova doctor --check-storage`, `nova migrate-to-postgres`, `nova db upgrade` (postgres) and — as the fallback after `NOVA_DSN` — `nova backup create`/`nova restore`. Environment only: a `postgres_dsn` key in `server.yaml` is ignored. |
+| `NOVA_DSN` | — | Postgres DSN for `nova backup create --profile pg` and `nova restore` only (checked before `NOVAFABRIC_POSTGRES_DSN`). The server does not read it. |
 | `NOVAFABRIC_SERVER_HOST` | `127.0.0.1` | Bind address for `nova server start`. |
-| `NOVAFABRIC_SERVER_PORT` | `8000` | TCP port for `nova server start`. |
+| `NOVAFABRIC_SERVER_PORT` | `7433` | TCP port for `nova server start`. |
 | `NOVAFABRIC_SERVER_BACKEND` | `sqlite` | Storage backend for `nova server start`: `sqlite` or `postgres`. |
 | `NOVAFABRIC_SERVER_DB_PATH` | `$NOVAFABRIC_HOME/registry.db` | SQLite DB path for `nova server start` when `NOVAFABRIC_SERVER_BACKEND=sqlite`. |
 | *(OIDC)* | — | There are **no OIDC environment variables**: configure `oidc.issuer_url` and `oidc.audience` in the server YAML (`--config`). |
 | `NOVA_OIDC_ISSUER`, `NOVA_OIDC_CLIENT_ID` | — | **Not OIDC configuration.** Read only to set the display-only `server_mode` field of `GET /v0/admin/roles` / `GET /api/admin/roles`. They neither enable OIDC nor (since L15) relax the last-admin guard. |
-| `NOVAFABRIC_OFFLINE_KEY_PATH` | `~/.novafabric/keys/offline-key.pem` | The offline-token keypair, named by either file: the private key (`issue-token`, service accounts) or its `.pub` (enough for the server to verify). A `.pub` path signs with its private sibling |
+| `NOVAFABRIC_OFFLINE_KEY_PATH` | server: unset; `issue-token`: `$NOVAFABRIC_HOME/keys/offline-key.pem` | The offline-token keypair, named by either file: the private key (`issue-token`, service accounts) or its `.pub` (enough for the server to verify). A `.pub` path signs with its private sibling. **The server accepts offline tokens only when this is set** — unset, every offline token is rejected. Environment only (ignored in `server.yaml`). |
 | `NOVA_ADMIN_TOKEN` | — | Bearer token with admin role, used by `nova server flush-jwks-cache` |
 | `NOVAFABRIC_CLUSTER_ID` | — | Cluster identifier for collector and HPC hub binaries |
 | `NOVAFABRIC_HUB_ADDRESS` | — | NATS hub address (e.g. `nats://hub:4222`) for HPC hub binary |
@@ -8706,8 +8722,10 @@ Mandatory flag: `--experimental`. Without it the command prints the gate banner 
 | `--port` | `4321` | TCP port. |
 | `--host` | `127.0.0.1` | Bind address. Refuses non-localhost without `--insecure`. |
 | `--capsule-dir` | `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules/` | Where to look for capsules (the store `nova capture` writes to). |
-| `--db-path` | `~/.novafabric/registry.db` | Registry/lineage SQLite path. |
+| `--db-path` | `$NOVAFABRIC_DB_PATH`, else `$NOVAFABRIC_HOME/registry.db` | Registry/lineage SQLite path; the startup panel prints the resolved path. |
 | `--no-browser` | off | Don't auto-open a browser tab. |
+| `--insecure` | off | Hidden flag: allow a non-loopback `--host`. Dangerous — put the server behind your own TLS terminator, or use `--tls-cert`/`--tls-key`. |
+| `--tls-cert PATH` / `--tls-key PATH` | off | Serve HTTPS natively (ADR-0241, **experimental**); see [`nova serve --topology`](#nova-serve---topology) for the details. |
 
 **Authentication.** The server binds `127.0.0.1`, validates the `Host` header, and requires a
 session token on every `/api/*` request (the probes `GET /api/health`, `/livez`, and
@@ -8748,6 +8766,7 @@ make serve-topology-only
 | Flag | Default | Purpose |
 |---|---|---|
 | `--topology` | off | Enable topology endpoints + SPA. Automatically implies `--tv5`. Requires `--experimental`. |
+| `--topology-louvain-resolution FLOAT` | `1.0` (env `NOVA_TOPOLOGY_LOUVAIN_RESOLUTION`) | Louvain clustering resolution for the topology view: lower merges into fewer, larger clusters; higher splits further. |
 | `--tls-cert PATH` / `--tls-key PATH` | off | Serve HTTPS natively (ADR-0241, **experimental**). Both required together; the key must be `chmod 600` — unusable material refuses to start. Env: `NOVA_TLS_CERT_PATH` / `NOVA_TLS_KEY_PATH`. |
 
 **Topology endpoints added when `--topology` is set:**
@@ -10792,7 +10811,7 @@ nova lineage provenance <ulid>
 nova lineage blast-radius <ulid>
 
 # 6. Prove — build a signed Evidence Bundle an auditor can verify offline
-nova export-evidence .novafabric/runs/<ulid>/ --key ~/.novafabric/keys/ed25519.pem \
+nova export-evidence ~/.novafabric/capsules/<ulid>/ --key ~/.novafabric/keys/signing_key.pem \
   --output evidence.zip
 ```
 

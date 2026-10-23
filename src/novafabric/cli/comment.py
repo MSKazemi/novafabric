@@ -128,7 +128,7 @@ def comment_add_cmd(
     kind: SubjectKind = typer.Option(
         SubjectKind.CAPSULE.value,
         "--kind",
-        help="What the subject digest addresses: capsule | span | run | score.",
+        help="What the subject addresses: capsule | span | run | score | asset.",
     ),
     reply_to: str | None = typer.Option(
         None, "--reply-to", help="comment_id this comment replies to (or supersedes)."

@@ -2,7 +2,7 @@
 
 **Status:** works today (v0.98.0). Generated from the live `nova serve` FastAPI route table (`src/novafabric/serve/app.py`).
 
-The `nova serve` dashboard server exposes **207 REST endpoints** in the generated tables below, plus the 14 experimental routes in the next section that the generator has not yet been re-run for (the authorization table classifies 225 routes in all, three of them the conditional TV-5 routes). All require a valid auth token except the unauthenticated probes `GET /api/health`, `GET /livez`, and `GET /readyz`. The multi-tenant `nova server` API is specified separately in `api/openapi.yaml`.
+The `nova serve` dashboard server exposes **208 REST endpoints** in the generated tables below, plus the 14 experimental routes in the next section that the generator has not yet been re-run for — 222 in all, every route `create_app` can mount across its flags (`GET /` and the `/api/topology/*` routes are conditional). The authorization table classifies 225, the other three being the TV-5 routes `nova serve` mounts after the app is built. All require a valid auth token except the seven `public` routes: the probes `GET /api/health`, `GET /livez` and `GET /readyz`, the interactive docs `GET /api/docs`, `GET /api/openapi.json` and `GET /docs/oauth2-redirect`, and `GET /` (the placeholder served when no dashboard is mounted). The multi-tenant `nova server` API is specified separately in `api/openapi.yaml`.
 
 ## Authorization (ADR-0228, experimental)
 
@@ -13,7 +13,7 @@ enforced by a single declarative table (`src/novafabric/serve/authz.py`):
 |---|---|---|
 | `read` | every read-only endpoint, **including the `POST` routes that only compute and return** — `/api/query`, `/api/policy/check`, `/api/mcp/scan`, `/api/kg/blast-radius`, and the whole `/api/compliance/export/*` family | Layer A |
 | `operate` | bounded, reversible mutations — register, promote, score, placing a hold, incident, ingest | Layer B |
-| `admin` | irreversible or privilege-affecting — capsule/run deletion, releasing a legal hold, PII erase, seal bypass, signing, key ratchet, role and token management, replay that spawns user code | Layer C |
+| `admin` | irreversible or privilege-affecting — capsule/run deletion, releasing a legal hold, PII erase, seal bypass, signing, key ratchet, role and token management, and the `forensic`/`semantic`/`exact` replay routes (none of the three re-executes the workload; each writes a replay result beside the capsule) | Layer C |
 | `audit` | everything `read` reaches **plus** `GET /api/audit`, `GET /api/reports/dashboard-audit`, `GET /api/reports/policy-audit`, `GET /api/policy/recent-decisions`, `GET /v1/kg/audit` — and **never** `operate` or `admin` | orthogonal |
 
 `admin` ⊇ `operate` ⊇ `read`, and `admin` also reaches `audit`. Insufficient scope returns
@@ -23,7 +23,8 @@ returns **401**, and writes nothing.
 
 **The default is unchanged:** the `.serve-token` holds `admin`, as does any token issued before
 this landed (a `tokens.jsonl` record with no `scope` field). Mint a narrower one with
-`POST /api/admin/tokens` and a `scope` field. The scope must be exactly `read`, `operate`, `admin`
+`POST /api/admin/tokens` with a `scope` field and `"confirmed": true` (without it the answer is
+**400** and nothing is minted). The scope must be exactly `read`, `operate`, `admin`
 or `audit`; anything else is refused with **422** and nothing is stored. A stored record whose
 `scope` is not one of those (for example a hand-edited typo) holds **no** scope: it is refused with
 403 on every non-public route, and `GET /api/admin/tokens` lists it as `none`.
@@ -93,6 +94,20 @@ an error) and `POST /api/assets/register-from-yaml` answers `ok: false`. A versi
 ever in production cannot be registered again (**409**). A rollback restores, without a
 policy decision, only a version whose *current* registration has production history; see
 [`nova rollback`](cli-reference.md#nova-rollback-name---actor-id).
+
+### Confirmation on state-changing routes
+
+Nineteen `POST` routes refuse to act unless the JSON body carries `"confirmed": true`; without it
+they answer **400** and change nothing:
+`/api/admin/tokens`, `/api/admin/rebuild-metadata-db`, `/api/admin/reindex-runs`, `/api/assets`,
+`/api/assets/{asset_id}/approve`, `/api/assets/{asset_id}/eval`,
+`/api/assets/{asset_id}/promote`, `/api/assets/{name}/rollback`,
+`/api/assets/{name}/{version}/eval`, `/api/assets/{name}/{version}/promote`,
+`/api/compliance/erasure/request`, `/api/evidence/{run_id}`, `/api/evidence/cart/export`,
+`/api/runs/{run_id}/redact`, `/api/seal/ratchet/rotate`, and the four
+`/api/runs/{run_id}/replay/{dry-run,exact,forensic,semantic}` routes. The flag is a guard
+against an accidental click, not an authorization step: the scope check
+runs first.
 
 ## Aggregates and the honest-degradation rule (ADR-0234, experimental)
 
@@ -192,7 +207,7 @@ route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
 | `POST` | `/api/validate-spec` | Validate an asset YAML spec without registering — mirrors `nova validate <spec>`. |
 | `GET` | `/docs/oauth2-redirect` | swagger ui redirect |
 
-## Runs & capsules  (33)
+## Runs & capsules  (34)
 
 | Method | Path | Summary |
 |---|---|---|
@@ -671,8 +686,10 @@ When the server is running, the same route table is browsable interactively:
   parameter is ignored (an absent or non-Bearer header falls back to `?token=`).
   The query form is kept for the SPA and for printed/bookmarked URLs; prefer the header
   for scripts and `curl`, so the secret stays out of shell history, proxy logs, and
-  `Referer`. The unauthenticated probes `GET /api/health`, `GET /livez`, and `GET /readyz`
-  are open (`/metrics` requires the token). The server binds to `127.0.0.1` and rejects
+  `Referer`. The seven `public` routes are open: the probes `GET /api/health`, `GET /livez`
+  and `GET /readyz`, the interactive docs (`GET /api/docs`, `GET /api/openapi.json`,
+  `GET /docs/oauth2-redirect`) and the no-dashboard placeholder `GET /` (`/metrics` requires
+  the token). The server binds to `127.0.0.1` and rejects
   non-localhost `Host` headers.
 - The endpoint tables are **generated** — after any route change a maintainer
   re-runs the generator so this file stays truthful. The generator lives in the

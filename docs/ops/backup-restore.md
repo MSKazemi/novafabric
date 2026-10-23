@@ -16,11 +16,11 @@ What a NovaFabric deployment consists of, and who owns its durability:
 
 | Data | Where | Durability owner |
 |---|---|---|
-| Registry + local capsules | `~/.novafabric/` (SQLite `registry.db`, `runs/`) | this runbook |
+| Registry + local capsules | `$NOVAFABRIC_HOME` (`~/.novafabric/`: SQLite `registry.db`, `capsules/`, legacy `runs/`) and `$NOVAFABRIC_CAPSULE_DIR` when set | this runbook |
 | Server/metadata DB | Postgres (or SQLite in local mode) | Postgres tooling + this runbook |
 | Capsule objects (WORM) | S3/Azure/GCS/local object store | bucket versioning/replication |
-| Signing keys | HSM / KMS / `~/.novafabric/keys/` | [NovaSeal Key Management](../novaseal-key-management.md) — **never** part of a data backup |
-| Config | `nova-server.yaml` + env secrets | this runbook (config yes, secrets via your secret manager) |
+| Signing keys | Cloud KMS (AWS KMS, Azure Key Vault, GCP KMS) / `$NOVAFABRIC_HOME/keys/` | [NovaSeal Key Management](../novaseal-key-management.md) — **never** part of a data backup by default |
+| Config | `~/.config/novafabric/server.yaml` (or the `--config` path) + env secrets | this runbook (config yes, secrets via your secret manager) |
 
 ---
 
@@ -36,8 +36,14 @@ SQLite files must not be copied while a writer is active. Stop `nova serve` /
 ```bash
 tar czf novafabric-local-$(date +%F).tar.gz \
     ~/.novafabric/registry.db \
+    ~/.novafabric/capsules/ \
     ~/.novafabric/runs/
 ```
+
+`capsules/` is where `nova capture` writes; `runs/` is the other capsule directory
+`nova backup` archives (`backup/create.py::_CAPSULE_DIRS`). If `NOVAFABRIC_CAPSULE_DIR` is set, add that directory too: capture writes
+there instead of `~/.novafabric/capsules/`. `nova backup create` (Part 2) covers both
+automatically.
 
 Restore = untar to the same paths, then verify (see §1.5). If you cannot stop
 the writer, use SQLite's online backup (`sqlite3 ~/.novafabric/registry.db
@@ -71,9 +77,10 @@ which first takes a `db.pre-restore.pgdump` safety dump) →
 `pg_restore --clean --if-exists --single-transaction` (failure rolls back —
 target unchanged) → `alembic upgrade head` → verification (row counts vs the
 manifest, RLS re-applied and proven, schema-skew
-comparator `ok`, storage check). Exit codes: `0` success · `1` a step failed
-· `2` usage error · `3` set invalid/wrong profile · `4` tooling
-missing/incompatible · `5` target-state refusal. The DSN is treated as a
+comparator `ok`, storage check). Exit codes: `0` success · `1` any failure (an
+invalid set, missing tooling, a refused non-empty target, or a failed step — the
+message and per-step receipts say which) · `2` a manifest-only set whose bucket is
+unreachable, or a usage error (`cli/backup.py`). The DSN is treated as a
 secret throughout — never logged, scrubbed from any surfaced stderr.
 
 Home members in the set (registry snapshot, capsules) are restored only when
@@ -111,7 +118,7 @@ tier. Two properties matter for restore:
 ### 1.4 Keys — backed up separately, never with data
 
 **Status: works today.** Follow the
-[NovaSeal Key Management Guide](../novaseal-key-management.md) (HSM-backed or
+[NovaSeal Key Management Guide](../novaseal-key-management.md) (cloud KMS or
 software keystore). Two rules this runbook enforces:
 
 1. **No private key ever enters a data backup.** A restored deployment
@@ -135,7 +142,7 @@ is *checkable*:
 ```bash
 nova doctor --check-storage        # backend, schema revision, migration state
 nova seal log verify               # Merkle log integrity
-nova ledger verify                 # accountability ledger chains (ADR-0094)
+nova ledger verify <run-dir>       # accountability ledger chains, per capsule (ADR-0094)
 nova validate <restored-run-dir>   # spot-check capsules
 ```
 

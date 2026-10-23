@@ -10,7 +10,7 @@ The dashboard is an **opt-in local-only HTTP server** (`nova serve --experimenta
 
 ## Dashboard tabs (complete inventory)
 
-The dashboard ships **30 tabs** in **7 balanced workflow groups** (Overview, Runs & Debug, Govern & Promote, Provenance & Trust, Compliance, Platform, Reports & Export). Every tab has a stable two-key navigation shortcut — press `g` then the tab's key (shown on hover and in the `?` overlay). **Since v0.98.3 the sidebar groups start collapsed** (each showing its tab count); the group containing the active tab is always expanded, and manual expand/collapse persists per browser in `novafabric.sidebar-groups`. Below **1024px** the sidebar auto-collapses to the icon rail (v0.97.0); expanding it explicitly wins for the rest of the session. (Source of truth:
+The dashboard ships **30 tabs** in **7 balanced workflow groups** (Overview, Runs & Debug, Govern & Promote, Provenance & Trust, Compliance, Platform, Reports & Export). Every tab has a stable two-key navigation shortcut — press `g` then the tab's key (shown on hover and in the `?` overlay). **Since v0.98.3 the sidebar groups start collapsed** (each showing its tab count); arriving at a tab opens its group, and that group can still be collapsed afterwards (a marker on the collapsed header shows where the active tab is); manual expand/collapse persists per browser in `novafabric.sidebar-groups`. Below **1024px** the sidebar auto-collapses to the icon rail (v0.97.0); expanding it explicitly wins for the rest of the session. (Source of truth:
 `ui/dashboard/src/components/dashboard/Sidebar.tsx`; verified by count against
 `NAV_GROUPS` in that file.)
 
@@ -227,7 +227,7 @@ bars to filter (ADR-0234 D1 navigation) is **planned**.
 | Dashboards | Overview | v0.103.0 (experimental) | Portable ADR-0235 dashboards and widgets from `$NOVAFABRIC_HOME/dashboards`, `ratio()` (ADR-0236), validate-and-save editor; `g 4` (see [Dashboards view](#dashboards-view-experimental--adr-0235--adr-0236)) |
 | Cost | Overview | v0.17.0 | Cost report, pricing, burn analysis (ClickHouse-backed); **v0.64.0:** cost-analytics tools trio — attribution / fairness / usage-breakdown (`/api/cost/{attribute,fairness,usage-breakdown}`, P6) |
 | Schema | Compliance | v0.17.0 | Schema registry (JSON Schema + proto3) |
-| Evidence | Provenance & Trust | v0.9 | Bundle list, DSSE/TSR/Merkle verification, download, in-browser ed25519 verify |
+| Evidence | Provenance & Trust | v0.9 | Bundle list, server-side verification (the `nova verify <bundle>.zip` verifier + TSR + Merkle), download |
 | Audit | Provenance & Trust | v0.7 | Dashboard mutation audit log, action-type filter |
 | Holds | Govern & Promote | v0.11 | Place/release legal holds, sidebar badge count |
 | Policy | Govern & Promote | v0.11 | Interactive OPA/Rego check, ALLOW/DENY badge, explain trace |
@@ -240,7 +240,7 @@ bars to filter (ADR-0234 D1 navigation) is **planned**.
 | Storage | Platform | v0.55.0 | WORM object-store stats/validate/inspect, manifest chain, collector status, gated DB upgrade + rebuild-metadata-db, system-card export |
 | Ops | Platform | v0.55.0 | Installation diagnostics (`doctor`), warm-daemon liveness (read-only), JWKS flush |
 | Admin | Platform | v0.7 | Token management, role management (API v0.14.3; UI partial), JWKS flush, new-run-id, DB ops |
-| Commands | Platform | v0.8 | 13 hand-curated command builders at launch; **v0.60.0:** now mirrors the **complete** CLI (every `nova` command, 289 today) via an auto-generated registry — see the CLI-parity row below |
+| Commands | Platform | v0.8 | 13 hand-curated command builders at launch; **v0.60.0:** now mirrors the **complete** CLI (every `nova` command, 374 today — the `// Commands:` header of `generatedCommands.ts`) via an auto-generated registry — see the CLI-parity row below |
 | Reports | Reports & Export | v0.17.0+ | 9 report templates (see below) |
 | Export | Reports & Export | v0.64.0 | Export Center hub (E1) — the server-catalog-driven registry export panel (`/api/compliance/export/kinds`) plus a jump-link directory to the evidence / lineage / reports / compliance export surfaces |
 
@@ -269,10 +269,13 @@ read-only over HTTP ("safe mutations only"). New cross-cutting UX: app-wide toas
 unified action/confirm pattern, a virtualized data table, per-tab help, deep-linkable tabs
 (`?tab=`), and global entity search (runs/assets/incidents) in the ⌘K palette.
 
-> The dashboard server exposes **203 REST endpoints** (verified by counting
-> `@app.get/post/put/delete` and `@router.get/post` decorators under
-> `src/novafabric/serve/`, excluding WebSocket routes) — the full machine list is in
-> [`api-reference.md`](api-reference.md) (and `GET /openapi.json` at runtime).
+> The dashboard server declares **217 REST route handlers** (counted 2026-10-23 as
+> `@app.*` / `@router.*` `get/post/put/delete/patch` decorators under
+> `src/novafabric/serve/`, excluding WebSocket routes; 3 of them are the TV-5 router
+> that only `nova serve --tv5`/`--topology` mounts). The runtime OpenAPI document lists
+> 210 operations (216 with `--topology`), because a few routes are excluded from the
+> schema — the full machine list is in [`api-reference.md`](api-reference.md) (and
+> `GET /api/openapi.json` at runtime).
 
 ---
 
@@ -295,15 +298,18 @@ Notable flags:
 |---|---|---|
 | `--experimental` | (required) | Acknowledges the experimental gate. |
 | `--port` | `4321` | TCP port. |
-| `--host` | `127.0.0.1` | Bind address. Refuses non-localhost without `--insecure`. |
-| `--capsule-dir` | `./.novafabric/runs/` | Where to look for capsules. |
-| `--db-path` | `~/.novafabric/registry.db` | Registry/lineage SQLite path. |
+| `--host` | `127.0.0.1` | Bind address. Refuses non-localhost without the hidden `--insecure` flag. |
+| `--capsule-dir` | `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules` | Where to look for capsules — the directory `nova capture` writes to. |
+| `--db-path` | `$NOVAFABRIC_DB_PATH`, else `$NOVAFABRIC_HOME/registry.db` | Registry/lineage SQLite path; the startup panel prints the resolved path. |
 | `--no-browser` | off | Don't auto-open a browser tab. |
 | `--topology` | off | Enable the live topology dashboard (`/topology/`). |
 | `--tv5` | off | Enable the experimental 3D topology view (implied by `--topology`). |
 | `--topology-louvain-resolution` | `1.0` (or `NOVA_TOPOLOGY_LOUVAIN_RESOLUTION`) | Louvain clustering resolution. Lower values merge into fewer/larger clusters; higher values split further. |
+| `--tls-cert` / `--tls-key` | off (or `NOVA_TLS_CERT_PATH` / `NOVA_TLS_KEY_PATH`) | Serve HTTPS directly (ADR-0241, first-party TLS). Both are required together; the key file must be mode 600. |
 
-Stop with `Ctrl+C`. The session token is rotated on every start; the previous token is invalidated.
+Stop with `Ctrl+C`. The session token is **not** rotated per start: it persists in
+`$NOVAFABRIC_HOME/.serve-token` (or is pinned with `NOVAFABRIC_SERVE_TOKEN`) so a restart
+keeps open browser sessions. Delete the file to rotate it (`serve/auth.py`).
 
 ### Topology view modes
 
@@ -348,9 +354,9 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Get a single asset | `nova inspect <name@version>` | ✅ Registry tab → click row | Eval results for the selected asset are lazy-fetched. |
 | Lineage queries | `nova lineage provenance / blast-radius / replay-chain` | ✅ Lineage tab | Full DAG render via React Flow + dagre. Click (or double-click) a node to see incoming/outgoing edges. **v0.12.6:** interactive QueryPanel — type a ref, pick mode (provenance / blast-radius / replay-chain), hit Run; results appear as a sortable table; CLI equivalent preview updates live. **v0.12.7:** ref input autocompletes `name@version` (provenance/blast-radius) or `run_id` (replay-chain) from loaded data. **v0.12.9 (DU-3):** when a node is selected, a breadcrumb row above the graph shows the full ancestry chain (root → … → parent → **selected**); each ancestor is clickable. **v0.13.4:** `zoomOnDoubleClick` disabled; double-clicking a node selects it (identical to single-click) instead of triggering zoom-to-fit. |
 | Cluster-scale infrastructure status | *(no single command — consult each Phase 0–6 component separately)* | ✅ Infra tab (v0.12.6) | 10 component cards: NovaSeal, Collector, Object Store, Metadata DB, Lineage at Scale, Parent/Child Capsule, Server Mode, Eval Suites, Policy Gates, Run Capsule — each with a `shipped / partial / placeholder / planned` status badge plus the relevant CLI commands. Lets operators confirm which Phase 0–6 components are active without leaving the dashboard. |
-| CLI command reference with live preview | *(all `nova` sub-commands)* | ✅ Commands tab | **v0.8:** 13 command builders for core capture, registry, and replay. **v0.12.6:** expanded to 35 hand-curated builders across 4 journey tracks. **v0.60.0:** now mirrors the **complete** CLI — every `nova` command (289 today) has a fillable form. Hand-curated builders still provide richer copy for the most-used commands; the rest are auto-generated from the live Typer app (`ui/dashboard/scripts/gen-command-registry.py` → `generatedCommands.ts`), so the tab stays in sync as commands are added/removed (guarded by `tests/serve/test_command_registry_coverage.py`). Fields, choices, defaults and flags come from the CLI's own parameter metadata. Each builder renders a live command preview with a copy button; a filter box and per-group counts navigate the full surface. Copy-only (Layer C, ADR-0027) — the dashboard never executes commands. |
+| CLI command reference with live preview | *(all `nova` sub-commands)* | ✅ Commands tab | **v0.8:** 13 command builders for core capture, registry, and replay. **v0.12.6:** expanded to 35 hand-curated builders across 4 journey tracks. **v0.60.0:** now mirrors the **complete** CLI — every `nova` command (374 today) has a fillable form. Hand-curated builders still provide richer copy for the most-used commands; the rest are auto-generated from the live Typer app (`ui/dashboard/scripts/gen-command-registry.py` → `generatedCommands.ts`), so the tab stays in sync as commands are added/removed (guarded by `tests/serve/test_command_registry_coverage.py`). Fields, choices, defaults and flags come from the CLI's own parameter metadata. Each builder renders a live command preview with a copy button; a filter box and per-group counts navigate the full surface. Copy-only (Layer C, ADR-0027) — the dashboard never executes commands. |
 | Structural diff | `nova diff <run-a> <run-b>` | ✅ Diff tab | Aligned with `diff-report.schema.json`; renders environment / model_calls / tool_calls / outputs sections. **v0.9 additions:** 'Compare against…' in CapsuleInspector, word-level diff for model responses, mutation badge on tool call pairs. **v0.12 addition (C-4):** Multi-select checkboxes in RunsTab — check any 2 rows, click "Compare selected ⊕", jumps directly to Diff tab with both IDs pre-filled and diff auto-triggered; no copy-paste. See [ADR-0036](./decisions.md). **v0.12.7:** both run A and run B inputs autocomplete from the loaded runs list. **v0.12.9 (DU-4):** last comparison (from/to/result) persisted in `sessionStorage` — navigating away and back restores the previous comparison without re-fetching. **v0.13.3 (C-5):** Checkbox cap lifted 2→5; selecting 3–5 runs triggers N-run mode — first run is the baseline, N-1 parallel diffs fire via `runMultiDiff`, results shown as stacked collapsible `MultiDiffCard` panels with change-count badges. URL format migrated from `?run_a=&run_b=` to `?run_ids=a,b,c` (old params still parsed for backward compat). |
-| Read evidence bundle | *(no read-only command — open the ZIP)* | ✅ Evidence tab (v0.9) | Lists all bundles from `~/.novafabric/evidence/`, shows DSSE statement, in-browser ed25519 verify via SubtleCrypto, ZIP download. See [ADR-0037](./decisions.md). |
+| Read evidence bundle | *(no read-only command — open the ZIP)* | ✅ Evidence tab (v0.9) | Lists all bundles from the evidence directory (`$NOVAFABRIC_EVIDENCE_DIR`, else `$NOVAFABRIC_HOME/evidence/`), shows DSSE statement, ZIP download; the Verify button shows the server verifier's verdict (below). See [ADR-0037](./decisions.md). |
 | Verify evidence bundle cryptographic integrity | `nova verify <bundle>.zip` (`--public-key` to pin the signer) | ✅ Evidence tab → Verify button (v0.11) | `POST /api/evidence/{id}/verify` — the same verifier as `nova verify <bundle>.zip` (digests, `manifest_hash`, every DSSE signature, signed subjects) + RFC 3161 TSR + NovaSeal Merkle log inclusion. Inline `valid`/`invalid`, `content`, `signer`, `sig`, `tsr`, `log` badges. `signer unanchored` (neutral) when the server has no evidence trust list; `log –` when NovaSeal is not configured locally. The local log check opens configured logs read-only and never creates a Merkle log. |
 | Validate a capsule's schema and file structure | `nova validate <capsule>` | ✅ Runs tab → Validate button (v0.11) | `POST /api/runs/{id}/validate` — checks required files, YAML parse, JSONL presence. Green `✓ valid` or red expandable error list. |
 | View secret scan results | `nova scan-secrets <capsule>` | ✅ Runs tab → **Secrets** button on card (quick-access, v0.11) or → Secrets tab in detail panel | `GET /api/runs/{id}/redaction-proof` — shows scanner+packs, targets (hash before/after), per-finding severity badges. Includes re-scan trigger. |
@@ -417,8 +423,8 @@ A short list, for completeness — the dashboard is not strictly a subset:
 - **Live filtered runs view.** Search across `run_id` and command, filter by status, sort by time or duration. The CLI prints a single shell-friendly stream; the dashboard makes 200+ capsules navigable.
 - **Interactive lineage DAG.** React Flow + dagre layout, three highlight modes (provenance / blast-radius / replay-chain) without re-querying. CLI returns lineage as JSON; the dashboard visualises the graph.
 - **In-browser schema validation.** The Validate button compiles `run-capsule.schema.json` via Ajv in the browser and reports timing. Useful as a sanity check before sharing a capsule.
-- **In-browser ed25519 verification.** Evidence-bundle Verify button uses `SubtleCrypto.verify('Ed25519', …)` against the bundled public key. Tamper toggle flips a byte and the verification fails — visible cryptographic evidence.
-- **Server-side bundle verification (v0.11).** `POST /api/evidence/{id}/verify` runs the same verifier as `nova verify <bundle>.zip` (artifact digests, `manifest_hash`, every attestation's DSSE signature, signed subjects recomputed from the bundle's content), plus the RFC 3161 TSR and NovaSeal Merkle log inclusion, and returns structured per-check results with `signer_trust`. The in-browser check is convenience-only; the server-side check is authoritative.
+- **In-browser ed25519 verification — showcase page only.** The static `/showcase/evidence` demo checks a bundled fixture with `SubtleCrypto.verify('Ed25519', …)` and has a tamper toggle that flips a byte. The live Evidence tab no longer verifies in the browser: a single DSSE signature check there ignored every member digest, so its Verify button shows the server verifier's verdict instead.
+- **Server-side bundle verification (v0.11).** `POST /api/evidence/{id}/verify` runs the same verifier as `nova verify <bundle>.zip` (artifact digests, `manifest_hash`, every attestation's DSSE signature, signed subjects recomputed from the bundle's content), plus the RFC 3161 TSR and NovaSeal Merkle log inclusion, and returns structured per-check results with `signer_trust`. To pin the signer offline, run `nova verify <bundle>.zip --public-key <pem>`.
 - **Single-pane audit log.** Every dashboard mutation appends to `~/.novafabric/dashboard-audit.jsonl`; the Audit tab shows recent entries newest-first with the equivalent CLI command. The CLI does not have an equivalent unified audit log for its own invocations (each command logs its own outputs). **v0.12.9 (DU-6):** action-type filter dropdown — derived dynamically from loaded entries — narrows the list to a single action type (promote / eval / rollback / approve / register / …).
 - **Context-aware autocomplete on all ref inputs (v0.12.7).** Every text input that accepts a database reference — lineage query ref, diff run A/B, holds registry name, policy resource ref — shows a live-filtered dropdown populated from data already on the page. Focus the field to browse the top eight items; type to filter. The CLI has shell-level completion (Tab) but no live database-backed suggestions.
 - **Staleness indicator on Home tab resume cards (v0.12.9, DU-7).** Resume cards older than 24 hours show an amber border and a "Last updated X — may be stale" tooltip. Useful for detecting runs that started but never completed.
@@ -428,7 +434,7 @@ A short list, for completeness — the dashboard is not strictly a subset:
 
 ## Security model
 
-- **Localhost only** by default. `--host 0.0.0.0` is rejected without `--insecure`. Even with `--insecure`, put TLS in front of it; the dashboard does not terminate TLS.
+- **Localhost only** by default. `--host 0.0.0.0` is rejected without `--insecure`. With `--insecure`, serve over TLS: either first-party (`--tls-cert` / `--tls-key`, or `NOVA_TLS_CERT_PATH` / `NOVA_TLS_KEY_PATH`; ADR-0241) or behind a TLS-terminating reverse proxy.
 - **Token authentication.** A cryptographically random URL-safe token (`secrets.token_urlsafe(32)`) is generated at start-up and written to `$NOVAFABRIC_HOME/.serve-token` (mode 0600); the start-up panel prints the resolved path. It is **not** rotated on every restart — an existing token file is reused so a restart does not invalidate open browser sessions, and the token therefore survives on disk after the server exits until something deletes it. The token must be passed on every `/api/*` request, either as an `Authorization: Bearer …` header or as `?token=…`. When both are present the `Bearer` header is authoritative. (Bearer support was added in v0.97.0; this paragraph previously stated that Bearer headers were rejected, which has not been accurate since.)
 - **Scope-based authorization** *(experimental, v0.102.0, ADR-0228).* Authentication alone used to grant every endpoint: one token, and `DELETE /api/runs/{run_id}`, `POST /api/compliance/pii/erase` and `POST /api/admin/roles` were all reachable with it. Each route now carries one of four scopes and a credential is checked against it:
 
@@ -436,7 +442,7 @@ A short list, for completeness — the dashboard is not strictly a subset:
   |---|---|---|
   | `read` | every read-only endpoint — runs, lineage, evidence, compliance reads, reports, exports, `/metrics` | Layer A |
   | `operate` | bounded, reversible mutations — register, promote, score, placing a hold, incident, ingest | Layer B |
-  | `admin` | irreversible or privilege-affecting — capsule/run deletion, releasing a legal hold, PII erase, seal bypass, signing, key ratchet, role and token management, replay that spawns user code | Layer C |
+  | `admin` | irreversible or privilege-affecting — capsule/run deletion, releasing a legal hold, PII erase, seal bypass, signing, key ratchet, role and token management, and the `forensic` / `semantic` / `exact` replay routes (`POST /api/runs/{run_id}/replay/{mode}`; none of them re-executes the workload — `exact` only checks eligibility — but they are classified `admin`, while `replay/dry-run` is `operate`) | Layer C |
   | `audit` | everything `read` covers **plus** the audit trail and recorded policy decisions — and **never** `operate` or `admin`, at any level | orthogonal |
 
   `admin` ⊇ `operate` ⊇ `read`, and `admin` also reaches `audit` (the same super-role rule `nova server`'s RBAC already applies). `audit` sits **outside** the chain on purpose: the persona must see more evidence than an ordinary reader — including who did what — while being structurally incapable of changing anything.
@@ -482,9 +488,9 @@ A short list, for completeness — the dashboard is not strictly a subset:
 - **Server-side paths are confined** *(works today)*. Several actions take a server-side path in the request body: the evidence export's output and signing key, capsule migration's source and output, policy signing's key, cert and DB, the KG and lineage `capsule_path`, the policy-test bundle, and the metadata rebuild target. Each path is resolved (`~` expanded, symlinks followed) and must land inside an allowlisted root. **Writes** go only to `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence` or `$NOVAFABRIC_EVIDENCE_DIR`. **Reads** may also use `$NOVAFABRIC_HOME` and the server's capsule directory. A `..` segment or a path outside the roots gets 403. Reads never reach the server's own secrets: the token stores, `.env`, `dek.db`, the ratchet state, `config.yaml`, the audit logs, or (for a source path) key material and `*.pem`/`*.key` files; a directory containing one, such as `$NOVAFABRIC_HOME` itself, is refused too (403). A relative path is taken from `$NOVAFABRIC_HOME` (reads) or `$NOVAFABRIC_HOME/exports` (writes). To use another directory, for example a mounted volume, list it in `NOVAFABRIC_SERVE_PATH_ROOTS` (absolute paths, separated by `:` on Linux and macOS) before starting `nova serve`. The former denylist and its `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` opt-out are gone; `nova serve` warns if that variable is still set.
 - **Dashboard promotion follows the CLI gate** *(works today, ADR-0312)*. The Registry tab's Promote button is a single-actor `nova promote direct`, and it is gated the same way: `production` is refused (403) unless an OPA policy explicitly allows the `promote_direct` action, and **force** does not bypass that. Use `nova promote propose` + `nova promote approve` to reach production.
 - **DNS-rebinding defence.** `Host` header must be `127.0.0.1`, `localhost`, or `::1`. Other hosts return 403 even with a valid token.
-- **CORS allowlist.** Only `http://localhost:*` and `http://127.0.0.1:*` origins are accepted. Defence in depth — the token is the authoritative gate.
+- **CORS allowlist.** Only `http://localhost:4321`, `http://127.0.0.1:4321`, `http://localhost:4322` and `http://127.0.0.1:4322` are accepted (methods `GET`, `POST`, `DELETE`). Defence in depth — the token is the authoritative gate.
 - **Constant-time token compare.** `_consteq` compares bytes equally regardless of where the mismatch is.
-- **No persistent server-side state of its own.** Stop the server and the only thing left behind is the audit log JSONL and any artifacts (evidence bundles, redaction proofs) the user explicitly created. The dashboard owns no separate database.
+- **Server-side state is plain files, shared with the CLI.** Stopping the server leaves behind what it persisted: under `$NOVAFABRIC_HOME`, the serve token (`.serve-token`), issued tokens (`tokens.jsonl`), the dashboard audit log (`dashboard-audit.jsonl`), the GDPR erasure queue (`erasure.db`) and dashboards (`dashboards/`, as `nova dashboard`); saved views in `$NOVAFABRIC_VIEWS_DIR`, else `./.novafabric/views` under the server's working directory (as `nova view`); and any artifacts the user created (evidence bundles, exports). Registry and lineage live in the same `registry.db` the CLI uses; the dashboard keeps no database of its own beyond `erasure.db`.
 
 ---
 
@@ -594,9 +600,9 @@ swimlane shows a single root lane.
 
 See [ADR-0037](./decisions.md).
 
-The Evidence Tab is a fully operational view over real bundles on disk. It requires `nova export-evidence` to have been run at least once (bundles live in `~/.novafabric/evidence/`).
+The Evidence Tab is a fully operational view over real bundles on disk. It requires `nova export-evidence` to have been run at least once (bundles live in `$NOVAFABRIC_EVIDENCE_DIR`, else `$NOVAFABRIC_HOME/evidence/`).
 
-**Bundle list view** — table of all bundles found in `~/.novafabric/evidence/`, showing `run_id`, timestamp, file size, and a manifest-hash integrity badge. The badge is a shallow check (SHA-256 of `manifest.json` fields) that runs at list time; use the Verify button for cryptographic assurance.
+**Bundle list view** — table of all bundles found in the evidence directory, showing `run_id`, timestamp, file size, and a manifest-hash integrity badge. The badge is a shallow check (SHA-256 of `manifest.json` fields) that runs at list time; use the Verify button for cryptographic assurance.
 
 **Detail pane** — selecting a bundle opens a detail pane showing the DSSE statement (pretty-printed JSON), attestation hashes for each artifact, and the signing key fingerprint (first 16 hex chars of the SHA-256 of the public key).
 
@@ -637,7 +643,7 @@ The current diff workflow has six friction steps: find run A in the Runs tab, co
 
 ## Infrastructure tab (v0.12.6)
 
-The **Infra** sidebar entry (under the Infrastructure group) shows the operational status of all ten Phase 0–6 cluster-scale components as card tiles:
+The **Infra** sidebar entry (under the Platform group) shows the operational status of all ten Phase 0–6 cluster-scale components as card tiles:
 
 | Component | Status | CLI to verify |
 |---|---|---|
@@ -731,7 +737,7 @@ Badge colours: **shipped** (green), **partial** (accent), **placeholder** (amber
 - **v0.37.0** *(shipped 2026-05-20)* — ComplianceTab gains 4 new panels: **GDPR Art.30 RoPA Export** (optional controller fields, completeness badge), **AI-SBOM Export** (CycloneDX 1.7 component list, v0.39.0), **NIST AI RMF Report** (GOVERN/MAP/MEASURE/MANAGE score bars, risk-level badge), **AI-SBOM Coverage Status** (auto-loads, 3-stat grid, CRA deadline 2026-09-11). Four new `nova serve` endpoints: `POST /api/compliance/export/ropa|aibom|nist-rmf`, `GET /api/aibom/status`.
 - **v1.0** — Graduation review. The `--experimental` flag is removed only when a follow-up ADR explicitly proposes it.
 
-The dashboard is judged on whether it earns its keep. If at any point it becomes maintenance-heavy without commensurate user value, the entire `src/novafabric/serve/` package can be deleted in a single commit and ADR-0027 reverted, leaving no migration debt because the dashboard owns no persistent state of its own.
+The dashboard is judged on whether it earns its keep. If at any point it becomes maintenance-heavy without commensurate user value, the entire `src/novafabric/serve/` package can be deleted in a single commit and ADR-0027 reverted, with little migration debt: what the dashboard persists is plain files (the token stores, its audit log, `erasure.db`, views and dashboards — see the security notes above), not a schema of its own.
 
 ---
 
@@ -818,7 +824,7 @@ See [Storage Architecture](./architecture.md#production-storage-stack-polyglot-p
 |---|---|---|
 | Capsule content | Flat files under `$NOVAFABRIC_HOME/capsules/` — always filesystem | Object Capsule Store (`NOVA_OCS_BACKEND`) |
 | Registry + lineage | `~/.novafabric/registry.db` (SQLite) | `NOVAFABRIC_METADATA_BACKEND=postgres` + `NOVAFABRIC_METADATA_DSN=...` |
-| NovaSeal policy + Merkle log | `~/.novafabric/novaseal-merkle.db` (SQLite) | `NOVAFABRIC_SEAL_DB_PATH=postgresql://…` (`PostgresMerkleLog`, Scale-S4, shipped v0.38.0) |
+| NovaSeal policy + Merkle log | `$NOVAFABRIC_HOME/novaseal-merkle.db` (SQLite; or `merkle_db:` in `novaseal.yaml`) | `NOVAFABRIC_SEAL_DB_PATH=postgresql://…` (`PostgresMerkleLog`, Scale-S4, shipped v0.38.0) |
 
 ---
 
