@@ -294,6 +294,41 @@ so secrets never leave in a shared capsule. The capsule is written on **both suc
 and failure**; a failed run sets `status: failure` and records an `error` block
 rather than producing nothing.
 
+### The workload cannot redirect its own recording
+
+The hooks run inside the workload, so the workload writes into its own capsule
+directory. With `--runner docker` that directory is mounted read-write into the
+container. A workload could therefore swap `model-calls.jsonl` for a symbolic
+link to a file on the host, or for a FIFO, before NovaFabric finishes the
+capsule. Finalisation on the host never follows either (works today):
+
+1. Right after the workload exits, and before anything else touches the capsule,
+   capture checks every path it manages (the streams, `capsule.yaml`, `env.lock`,
+   `replay.yaml`, `redaction-proof.json`, `outputs/stdout.txt`, `.seal/`, ...)
+   without opening it. A link, FIFO or other special file there is removed
+   (never followed; the file a link pointed at is untouched) and the empty
+   stream is recreated.
+2. Every later read opens files without following a link and without blocking,
+   and every later write replaces a file by an atomic rename. So the secret
+   scanner cannot be tricked into rewriting a host file, and capture cannot
+   hang.
+3. The capsule is marked tampered: `metadata.capture_tampered` in `capsule.yaml`,
+   `tampered_entries` in `capture-health.json`, and a `stream_tampered` entry in
+   `redaction-proof.json`. `nova verify` and `nova validate` fail it.
+
+Capture still exits with the workload's own exit code (NovaFabric never fails
+your workload, ADR-0021), and prints a `✗ capture integrity` line on stderr:
+
+```console
+$ nova capture --runner docker --runner-option image=my/agent -- python agent.py
+[novafabric] ✗ capture integrity: the workload replaced 1 capsule path(s) with a
+link or special file: model-calls.jsonl (symlink). None was followed; ...
+$ nova validate .novafabric/runs/<run-id>/
+✗ capsule.yaml: capture recorded tampering by the workload (metadata.capture_tampered: model-calls.jsonl (symlink)); see capture-health.json
+```
+
+Details: [Run Capsule anatomy](../architecture/run-capsule.md#after-the-workload-runs-the-capsule-is-untrusted-input).
+
 ---
 
 ## Extended event streams

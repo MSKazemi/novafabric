@@ -25,6 +25,15 @@ The hand-off is two halves, both fail-open (ADR-0021):
   recorder under the ``workload`` source, and **removes** the file, so the
   hand-off is never left in the capsule as unexplained evidence.
 
+The hand-off is written by the process being recorded, so it is untrusted: a
+workload can write any hand-off file it likes. The orchestrator therefore
+accepts only the capsule's own stream names
+(:data:`~novafabric.capture.streams.CAPSULE_STREAMS`) and counts no larger than
+:data:`MAX_COUNT` (a file that breaks either rule is ignored and logged), caps
+each merged total at :data:`MAX_COUNT`, files the counts under the
+``workload`` source -- labelled unverified in ``capture-health.json`` -- and
+only ever *adds* them: a hand-off can never lower the orchestrator's own counts.
+
 Known limits: a process that ends with ``os._exit`` (or is killed) runs no
 ``atexit`` handler, so its drops are still lost; a process forked without
 ``exec`` inherits the parent's handler and counts, so the handler only writes
@@ -47,6 +56,7 @@ from novafabric._capsule_fs import (
     read_capsule_file,
 )
 from novafabric.capture.event_recorder import EventRecorder, get_process_recorder
+from novafabric.capture.streams import CAPSULE_STREAMS
 
 __all__ = [
     "WORKLOAD_HEALTH_PREFIX",
@@ -66,12 +76,14 @@ _SUFFIX: Final[str] = ".json"
 WORKLOAD_SOURCE: Final[str] = "workload"
 
 #: Bounds on what the orchestrator will read: hand-off files per capsule, bytes
-#: per file, streams per file, characters per stream name, and one count.
+#: per file, streams per file, characters per stream name, and one count. A
+#: count is a number of records one process failed to write; a billion is far
+#: beyond any real run, and the merged total per stream is capped at it too.
 MAX_HANDOFF_FILES: Final[int] = 1024
 MAX_HANDOFF_BYTES: Final[int] = 64 * 1024
-MAX_STREAMS: Final[int] = 64
+MAX_STREAMS: Final[int] = len(CAPSULE_STREAMS)
 MAX_STREAM_NAME: Final[int] = 128
-MAX_COUNT: Final[int] = 2**53
+MAX_COUNT: Final[int] = 10**9
 
 
 class InvalidWorkloadHealthError(ValueError):
@@ -131,6 +143,8 @@ def _validated_counts(raw: bytes) -> dict[str, int]:
     for stream, n in counts.items():
         if not isinstance(stream, str) or not stream or len(stream) > MAX_STREAM_NAME:
             raise InvalidWorkloadHealthError("invalid stream name")
+        if stream not in CAPSULE_STREAMS:
+            raise InvalidWorkloadHealthError("not a capsule stream name")
         # bool is an int subclass; a JSON true is not a count.
         if type(n) is not int or not 0 <= n <= MAX_COUNT:
             raise InvalidWorkloadHealthError(f"invalid count for {stream!r}")
@@ -185,7 +199,7 @@ def merge_workload_drops(capsule_dir: Path, recorder: EventRecorder) -> dict[str
         for index, name in enumerate(names):
             if index < MAX_HANDOFF_FILES:
                 for stream, n in _read_one(capsule_dir, name).items():
-                    merged[stream] = merged.get(stream, 0) + n
+                    merged[stream] = min(MAX_COUNT, merged.get(stream, 0) + n)
             try:
                 os.unlink(capsule_dir / name)  # removes a link itself, never its target
             except OSError:

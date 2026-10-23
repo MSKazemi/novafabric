@@ -139,6 +139,11 @@ class CapsuleVerification:
     # Capsule files that could not be read safely (a linked or special
     # ``.seal/manifest.dsse``): each one fails the verification.
     errors: list[str] = field(default_factory=list)
+    # ``metadata.capture_tampered`` from the *signed* manifest: the recorded
+    # workload replaced capsule paths with links or special files during
+    # capture. The seal still binds the capsule (it signs that record), but the
+    # evidence is incomplete, so the capsule does not verify.
+    capture_tampered: str | None = None
 
     @property
     def capsule_id_ok(self) -> bool:
@@ -180,6 +185,7 @@ class CapsuleVerification:
             and self.chain_ok
             and self.tsa_ok
             and not self.errors
+            and self.capture_tampered is None
         )
 
     def all_errors(self) -> list[str]:
@@ -196,7 +202,27 @@ class CapsuleVerification:
         if self.tsa_check is not None and not self.tsa_check.ok:
             errors.append(f"TSA certificate chain: {self.tsa_check.reason}")
         errors.extend(self.errors)
+        if self.capture_tampered is not None:
+            errors.append(capture_tampered_error(self.capture_tampered))
         return errors
+
+
+def capture_tampered_error(summary: str) -> str:
+    """The verification error for a capsule whose capture recorded tampering."""
+    return (
+        "capture recorded tampering by the workload (metadata.capture_tampered: "
+        f"{summary}); the paths were never followed, but the evidence is incomplete"
+    )
+
+
+def signed_capture_tampered(dsse_bytes: bytes) -> str | None:
+    """``metadata.capture_tampered`` of the signed manifest, or None."""
+    if not dsse_bytes:
+        return None
+    signed, _error = _signed_manifest(dsse_bytes)
+    metadata = signed.get("metadata") if signed is not None else None
+    value = metadata.get("capture_tampered") if isinstance(metadata, dict) else None
+    return str(value) if value else None
 
 
 def derive_capsule_id(dsse_bytes: bytes) -> str:
@@ -567,4 +593,5 @@ def verify_capsule(
         chain_check=chain_check,
         tsa_check=tsa_check,
         errors=read_errors,
+        capture_tampered=signed_capture_tampered(dsse_bytes),
     )

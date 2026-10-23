@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -30,6 +31,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import open_capsule_file, read_capsule_text, replace_capsule_file
 from novafabric.capture import secrets as _secrets
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.secrets import (
@@ -92,12 +94,14 @@ class MaskingPipeline:
                     continue
                 try:
                     mode = _walk_mode(filename)
+                    # Read and rewrite through the no-follow helpers: the capsule
+                    # is untrusted once the workload has run.
                     if mode == "jsonl":
-                        self._mask_jsonl(path, filename, kind, run_id, findings, errors)
+                        self._mask_jsonl(capsule_dir, filename, kind, run_id, findings, errors)
                     elif mode == "yaml":
-                        self._mask_yaml(path, filename, kind, run_id, findings, errors)
+                        self._mask_yaml(capsule_dir, filename, kind, run_id, findings, errors)
                     else:
-                        self._mask_text(path, filename, kind, run_id, findings, errors)
+                        self._mask_text(capsule_dir, filename, kind, run_id, findings, errors)
                 except Exception:  # noqa: BLE001 — must not crash capture
                     logger.exception(
                         "novafabric.masking: pipeline failed on %s; continuing", filename
@@ -118,14 +122,14 @@ class MaskingPipeline:
 
     def _mask_jsonl(
         self,
-        path: Path,
+        root: Path,
         filename: str,
         kind: str,
         run_id: str,
         findings: list[dict[str, Any]],
         errors: list[dict[str, Any]],
     ) -> None:
-        raw = path.read_text(encoding="utf-8")
+        raw = read_capsule_text(root, filename, operation=_FILE_OPERATION)
         out_lines: list[str] = []
         changed_any = False
         byte_pos = 0
@@ -155,18 +159,18 @@ class MaskingPipeline:
             else:
                 out_lines.append(line)
         if changed_any:
-            path.write_text("".join(out_lines), encoding="utf-8")
+            _rewrite(root, filename, "".join(out_lines))
 
     def _mask_yaml(
         self,
-        path: Path,
+        root: Path,
         filename: str,
         kind: str,
         run_id: str,
         findings: list[dict[str, Any]],
         errors: list[dict[str, Any]],
     ) -> None:
-        obj = yaml.safe_load(path.read_text(encoding="utf-8"))
+        obj = yaml.safe_load(read_capsule_text(root, filename, operation=_FILE_OPERATION))
         if not isinstance(obj, (dict, list)):
             return
 
@@ -177,11 +181,11 @@ class MaskingPipeline:
 
         new_obj, changed = _walk(obj, "", apply)
         if changed:
-            path.write_text(yaml.dump(new_obj, allow_unicode=True), encoding="utf-8")
+            _rewrite(root, filename, yaml.dump(new_obj, allow_unicode=True))
 
     def _mask_text(
         self,
-        path: Path,
+        root: Path,
         filename: str,
         kind: str,
         run_id: str,
@@ -194,9 +198,10 @@ class MaskingPipeline:
         binary or oversize artifact is skipped: maskers take strings, never raw
         blobs (ADR-0135 D1), and the built-in scanner already covers both.
         """
-        if path.stat().st_size > _secrets.MAX_ARTIFACT_SCAN_BYTES:
-            return
-        data = path.read_bytes()
+        with open_capsule_file(root, filename, operation=_FILE_OPERATION) as fh:
+            if os.fstat(fh.fileno()).st_size > _secrets.MAX_ARTIFACT_SCAN_BYTES:
+                return
+            data = fh.read()
         if _secrets._is_binary(data):
             return
         out: list[str] = []
@@ -216,7 +221,7 @@ class MaskingPipeline:
             changed = changed or new != body
             out.append(new + line[len(body):])
         if changed:
-            path.write_bytes("".join(out).encode("utf-8"))
+            _rewrite(root, filename, "".join(out))
 
     def mask_mapping(
         self, obj: dict[str, Any], ref: str, kind: str, run_id: str
@@ -373,6 +378,15 @@ _STRUCTURED_JSONL: frozenset[str] = frozenset(
     name for name, _ in SCAN_TARGETS + ARTIFACT_SCAN_TARGETS if name.endswith(".jsonl")
 )
 _TEXT_DIRS: frozenset[str] = frozenset(name for name, _ in ARTIFACT_SCAN_DIRS)
+
+
+#: The ``operation`` named in a ``_capsule_fs`` refusal.
+_FILE_OPERATION = "the masking pipeline"
+
+
+def _rewrite(root: Path, filename: str, text: str) -> None:
+    """Replace capsule file *filename* with *text*, never through a planted link."""
+    replace_capsule_file(root, filename, text.encode("utf-8"), operation=_FILE_OPERATION)
 
 
 def _walk_mode(ref: str) -> str:

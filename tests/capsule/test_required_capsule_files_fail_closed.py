@@ -505,7 +505,9 @@ SITES: dict[str, Site] = {
     "eval-offline-contract": Site(_offline_contract, ("tool-calls.jsonl",)),
     "eval-offline-coverage": Site(_offline_coverage, ("tool-calls.jsonl",)),
     "fair-rocrate-manifest": Site(_fair_manifest, ("capsule.yaml",)),
-    "intoto-statement": Site(_intoto, ("capsule.yaml",)),
+    # The subjects walk refuses any link up front, as the exporters do
+    # (CapsuleLinkError), before the run id is read from capsule.yaml.
+    "intoto-statement": Site(_intoto, ("capsule.yaml",), also=(CapsuleEntryError,)),
     "distributed-validator": Site(_distributed_manifest, ("capsule.json",)),
     "record-roles-required": Site(_logical_calls, ("model-calls.jsonl",)),
 }

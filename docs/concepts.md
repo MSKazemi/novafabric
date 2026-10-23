@@ -164,6 +164,35 @@ follows one. They all share one module (`novafabric._capsule_fs`):
   (`_capsule_fs.open_capsule_file_for_write`). A link, a dangling link or a FIFO
   at that path is refused with a named error (`nova energy attest` exits 2; the
   SLURM receipt is skipped with a warning) and its target is left untouched.
+- **`nova capture` itself, once the workload has run.** The workload writes into
+  its own capsule, and with `--runner docker` the capsule directory is mounted
+  read-write into the container (with `--runner kubernetes` it is copied back by
+  `kubectl cp`). So capture treats the capsule as untrusted input from the moment
+  the runner returns. Following a link the container planted would be a
+  container-to-host write: before this was fixed, a `model-calls.jsonl` link made
+  the secret scanner rewrite the file it pointed at, and a FIFO at
+  `tool-calls.jsonl` hung capture forever. Now, before any host-side read or
+  write, capture checks every capsule-managed path (the JSONL streams,
+  `capsule.yaml`, `env.lock`, `replay.yaml`, `redaction-proof.json`,
+  `capture-health.json`, `lineage.jsonl`, `c2pa-manifest.json`,
+  `outputs/stdout.txt`, `outputs/stderr.txt`, the `inputs/` and `outputs/`
+  directories, and `.seal/`, which cannot exist yet) with `lstat` and never
+  opens it. A link, FIFO, socket or device there, a directory where a file
+  belongs, or any `.seal/` is removed without being followed (removing a link
+  never touches its target), the empty stream or directory is recreated, and
+  the capsule is marked **tampered**: `metadata.capture_tampered` in the signed
+  manifest, `tampered_entries` in `capture-health.json`, and a skipped
+  `<path>#tampered` target (`skip_reason: "stream_tampered: ..."`) in
+  `redaction-proof.json`. Every later write is an atomic rename or an
+  `O_NOFOLLOW` append, and every later read is a no-follow, non-blocking open,
+  so an entry planted *after* that check is refused or replaced, never followed.
+  Capture stays fail-open (ADR-0021): it exits with the workload's own exit code
+  and prints `✗ capture integrity: ...` on stderr. `nova verify` and `nova
+  validate` fail a tampered capsule (exit 1). If the capsule directory itself
+  was moved and replaced (possible only with the local runner), capture writes
+  nothing more and says so. Links the workload leaves elsewhere (for example
+  `outputs/latest -> model.bin`) are not tampering: they are never followed,
+  and the exporters above refuse them as before.
 
 The capsule *path you pass* to a CLI command may itself be a link
 (`runs/latest`); only links inside it are refused. That one link is followed
@@ -335,7 +364,10 @@ Runner details:
 - **`docker`** — pass `--runner-option image=<ref>` (e.g. `pip install novafabric`
   in your Dockerfile). Other options: `network`, `workdir`, `user`,
   `extra_volumes`, `extra_env`. No privileged containers, no docker-socket
-  mounts, no host namespaces by default — see ADR-0025 §Anti-patterns.
+  mounts, no host namespaces by default — see ADR-0025 §Anti-patterns. The
+  capsule directory is mounted read-write, so the container can write anything
+  into it, including links. Host-side finalisation never follows one: see
+  [Links inside a capsule are never followed](#links-inside-a-capsule-are-never-followed-works-today).
 - **`kubernetes`** — optional: `service_account`, `node_selector`, `resources`.
   Anti-patterns are enforced in the Job manifest itself:
   `securityContext.privileged: false`, `hostNetwork: false`, `hostPID: false`,

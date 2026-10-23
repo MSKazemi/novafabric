@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_required_capsule_member
+from novafabric._capsule_fs import read_required_capsule_member, replace_capsule_file
 from novafabric.lineage._facets import attach_column_facets, facets_from_tool_calls
 from novafabric.lineage._types import LineageEdge, default_emitter
 
@@ -62,7 +62,13 @@ class LineageWriter:
     def write(self, edges: list[LineageEdge]) -> Path:
         path = self._capsule_dir / "lineage.jsonl"
         lines = [json.dumps(e.as_dict(), ensure_ascii=False) for e in edges]
-        path.write_text("\n".join(lines) + ("\n" if lines else ""))
+        # An atomic rename: never written through a link planted at the name.
+        replace_capsule_file(
+            self._capsule_dir,
+            "lineage.jsonl",
+            ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"),
+            operation="lineage write",
+        )
         return path
 
     def _consumed_edges(self) -> list[LineageEdge]:
