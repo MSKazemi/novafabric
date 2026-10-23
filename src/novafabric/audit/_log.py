@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -298,6 +298,35 @@ class AuditLog:
                 prev_entry_hash = recomputed
 
         return errors
+
+    def select(self, event_types: Collection[str]) -> list[dict[str, Any]]:
+        """Entries of the given types whose own ``entry_hash`` recomputes, as dicts.
+
+        For callers that must *rely* on an entry (e.g. a bypass needs its
+        ``seal.bypass.create``): corrupt lines and entries whose hash does not
+        recompute are skipped, never raised, so one damaged line cannot hide or
+        forge the rest. This checks each entry's self-consistency, not the chain
+        (that is :meth:`verify`). Streams the file under a shared lock.
+        """
+        wanted = frozenset(event_types)
+        found: list[dict[str, Any]] = []
+        if not self._path.exists():
+            return found
+        with self._locked_for_read(), self._path.open("r", encoding="utf-8") as fh:
+            for raw_line in fh:
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    d = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(d, dict) or d.get("event_type") not in wanted:
+                    continue
+                body = {k: v for k, v in d.items() if k != "entry_hash"}
+                if d.get("entry_hash") == _sha256(_canonical_json(body)):
+                    found.append(d)
+        return found
 
     def query(self, resource_id: str | None = None) -> list[AuditEntry]:
         """Return all entries, optionally filtered by *resource_id*."""
