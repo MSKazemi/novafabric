@@ -17,6 +17,7 @@ import typer
 import yaml
 from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
@@ -156,8 +157,11 @@ def capsule_delete(
         core.check_deletable(store, capsule_id)
     except core.DeleteBlockedError as exc:
         what = "active legal hold(s)" if exc.code == "legal_hold_active" else exc.code
+        # The worm_state_unavailable message already names the file and the reason.
+        extra = "" if exc.code == "worm_state_unavailable" else f" {exc.details}"
         console.print(
-            f"[red]Deletion blocked ({what}):[/red] {exc} {exc.details}", soft_wrap=True
+            f"[red]Deletion blocked ({what}):[/red] {escape(str(exc))}{escape(extra)}",
+            soft_wrap=True,
         )
         core.audit_index_event(
             True,

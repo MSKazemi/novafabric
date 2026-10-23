@@ -206,7 +206,7 @@ def worm_locked_until(capsule_dir: Path, run_id: str) -> datetime | None:
         )
     except WormStateUnavailableError as exc:
         raise DeleteBlockedError(
-            f"Deletion blocked: {exc}",
+            str(exc),
             code=exc.code,
             details={"worm_db": str(exc.path), "reason": exc.reason},
         ) from exc
