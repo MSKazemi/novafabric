@@ -8465,24 +8465,33 @@ def create_app(
         all_capsules = bool(body.get("all", False))
         if not all_capsules and not run_id:
             raise HTTPException(status_code=400, detail="provide run_id or all=true")
-        watcher = CapsuleWatcher(
-            capsule_dir,
-            db_path=_db_path,
-            backend=_watcher_settings.backend,
-            interval=_watcher_settings.interval,
-        )
-        if all_capsules:
-            indexed = watcher.ingest_all()
-            return {"ok": True, "indexed": indexed}
         # A bare id names a capsule under the server's capsule dir; anything with
         # a separator is a path and goes through the read confinement. The
         # watcher used to take an absolute path as-is.
-        target = str(run_id)
-        if "/" in target or "\\" in target:
-            target = str(_confine_read(target))
-        else:
-            target = _require_path_segment(target, "run_id")
-        found, is_new = watcher.ingest_one(target)
+        target = ""
+        if not all_capsules:
+            target = str(run_id)
+            if "/" in target or "\\" in target:
+                target = str(_confine_read(target))
+            else:
+                target = _require_path_segment(target, "run_id")
+        # Index only: ingest_all / ingest_one never read the watch backend, so this
+        # indexer opens no OS watch. With the configured backend (watchdog under
+        # "auto") every request started an inotify instance plus observer threads
+        # that nothing closed — about 128 requests exhausted the user's inotify
+        # instances (review r6). Closed deterministically all the same.
+        watcher = CapsuleWatcher(
+            capsule_dir,
+            db_path=_db_path,
+            backend="polling",
+            interval=_watcher_settings.interval,
+        )
+        try:
+            if all_capsules:
+                return {"ok": True, "indexed": watcher.ingest_all()}
+            found, is_new = watcher.ingest_one(target)
+        finally:
+            watcher.close()
         if not found:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
         return {"ok": True, "found": True, "is_new": is_new}
