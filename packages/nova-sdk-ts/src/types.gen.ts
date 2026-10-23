@@ -332,7 +332,10 @@ export interface paths {
          */
         get: operations["listAssets"];
         put?: never;
-        /** Register an asset from a YAML spec */
+        /**
+         * Register an asset from a YAML spec
+         * @description Registers a new asset version. It always enters as `development`; a spec that declares any other `status` is refused with 422 `registration_status_not_allowed` (move it with the promote route, which runs the promotion gates). A version that was ever in production cannot be registered again (409).
+         */
         post: operations["createAsset"];
         delete?: never;
         options?: never;
@@ -3014,13 +3017,8 @@ export interface operations {
                      */
                     allow_unsafe_skips?: boolean;
                     /**
-                     * Output Path
-                     * @description Optional override for the output ZIP path (server-side path).
-                     */
-                    output_path?: string | null;
-                    /**
                      * Run Id
-                     * @description The capsule run_id to export as evidence.
+                     * @description The capsule run_id to export as evidence: one path segment (no '/', '\', '..', NUL or absolute path), else 400. The server writes the bundle to <evidence dir>/<run_id>.zip and returns that path as bundle_path; a request naming an output_path is refused with 400.
                      */
                     run_id: string;
                 } & {
