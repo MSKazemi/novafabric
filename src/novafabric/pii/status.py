@@ -252,7 +252,9 @@ def build_pii_status(
     Args:
         capsule: Capsule ID or path to a capsule directory.
         capsule_dir: Directory scanned when *capsule* is a bare ID.
-                     Defaults to ``$NOVAFABRIC_HOME/capsules/``.
+                     Defaults to where ``nova capture`` writes:
+                     ``NOVAFABRIC_CAPSULE_DIR``, else ``<nova_home>/capsules/``
+                     (:func:`novafabric._paths.capsule_dir_for_home`).
         nova_home: NovaFabric home override.  Defaults to ``NOVAFABRIC_HOME``
                    env var or ``~/.novafabric``.
         pepper: HMAC pepper bytes.  Defaults to ``NOVA_PII_PEPPER`` env var
@@ -268,7 +270,7 @@ def build_pii_status(
     if nova_home is None:
         nova_home = _nf_paths.nova_home()
     if capsule_dir is None:
-        capsule_dir = nova_home / "capsules"
+        capsule_dir = _nf_paths.capsule_dir_for_home(nova_home)
     if pepper is None:
         raw = os.environ.get("NOVA_PII_PEPPER", "")
         pepper = raw.encode("utf-8") if raw else None

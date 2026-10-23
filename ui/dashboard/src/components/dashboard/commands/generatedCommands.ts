@@ -6899,7 +6899,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Target capsule store root (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Target capsule store root (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
@@ -9637,7 +9637,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Root directory that contains one sub-directory per capsule. Default: ~/.novafabric/capsules/",
+        "hint": "Root directory that contains one sub-directory per capsule. Default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules/ (~/.novafabric/capsules/ when NOVAFABRIC_HOME is unset).",
         "flag": "--capsule-dir"
       },
       {
@@ -9766,7 +9766,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Directory to scan for redaction_manifest.json files associated with the data subject. Defaults to $NOVAFABRIC_HOME/capsules/ or ~/.novafabric/capsules/.",
+        "hint": "Directory to scan for redaction_manifest.json files associated with the data subject. Defaults to where `nova capture` writes: $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules/ (~/.novafabric/capsules/ when NOVAFABRIC_HOME is unset).",
         "flag": "--capsule-dir"
       },
       {
@@ -9806,7 +9806,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Directory scanned for the capsule's redaction_manifest.json when a bare capsule ID is given. Defaults to $NOVAFABRIC_HOME/capsules/ or ~/.novafabric/capsules/.",
+        "hint": "Directory scanned for the capsule's redaction_manifest.json when a bare capsule ID is given. Defaults to where `nova capture` writes: $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules/ (~/.novafabric/capsules/ when NOVAFABRIC_HOME is unset).",
         "flag": "--capsule-dir"
       },
       {
@@ -12913,7 +12913,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Directory of capsules to browse. Defaults to $NOVAFABRIC_HOME/capsules.",
+        "hint": "Directory of capsules to browse. Defaults to where `nova capture` writes: $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules.",
         "flag": "--capsule-dir"
       },
       {
