@@ -60,7 +60,12 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    make_capsule_dir,
+    read_capsule_file,
+    replace_capsule_file,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -195,15 +200,28 @@ class InvalidFacet(BaseModel):
 
 
 def write_facet(capsule_dir: str | Path, facet: DatasetProvenanceFacet) -> Path:
-    """Write a facet into the capsule's dataset-provenance extension namespace (additive)."""
+    """Write a facet into the capsule's dataset-provenance extension namespace (additive).
+
+    Never follows a link inside the capsule: each directory of the namespace is
+    created with ``mkdirat(2)`` under an ``O_NOFOLLOW`` walk (a linked
+    ``extensions/`` is refused with :class:`~novafabric._capsule_fs.CapsuleLinkError`),
+    and the facet file is replaced by an atomic rename, so a link or hard link
+    planted at its name is replaced, never written through.
+    """
     capsule_dir = Path(capsule_dir)
-    facet_dir = capsule_dir / FACET_DIRNAME
-    facet_dir.mkdir(parents=True, exist_ok=True)
+    capsule_dir.mkdir(parents=True, exist_ok=True)
+    parts = FACET_DIRNAME.parts
+    for depth in range(1, len(parts) + 1):
+        make_capsule_dir(capsule_dir, PurePosixPath(*parts[:depth]), operation="write_facet")
     # deterministic filename from the dataset name (slugified).
     slug = "".join(c if c.isalnum() else "-" for c in facet.name.lower()).strip("-") or "dataset"
-    out = facet_dir / f"{slug}.json"
-    out.write_text(facet.model_dump_json(indent=2), encoding="utf-8")
-    return out
+    replace_capsule_file(
+        capsule_dir,
+        PurePosixPath(*parts, f"{slug}.json"),
+        facet.model_dump_json(indent=2).encode("utf-8"),
+        operation="write_facet",
+    )
+    return capsule_dir / FACET_DIRNAME / f"{slug}.json"
 
 
 def _load_facet(capsule_dir: Path, name: str) -> DatasetProvenanceFacet | InvalidFacet:

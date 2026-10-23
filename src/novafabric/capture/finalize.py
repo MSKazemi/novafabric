@@ -26,7 +26,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import shutil
 import sys
 from collections.abc import Callable
@@ -38,7 +37,9 @@ import yaml
 
 from novafabric._capsule_fs import (
     CapsuleEntryError,
+    find_capsule_special_entries,
     is_capsule_regular_file,
+    make_capsule_dir,
     open_capsule_file,
     replace_capsule_file,
 )
@@ -49,6 +50,7 @@ from novafabric.capture.secrets import (
     recompute_chain_hash,
     redact_secrets_in_text,
 )
+from novafabric.capture.tamper import record_planted_entries_in_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +112,8 @@ def evidence_digests(capsule_dir: Path) -> dict[str, Any]:
 
     Every file is opened without following a link and never blocks on a FIFO
     (:func:`novafabric._capsule_fs.open_capsule_file`): a link or special file is
-    not capsule content, so it is left out and logged, never hashed through.
+    not capsule content, so it is left out, never hashed through, and
+    :func:`finalize_capsule` records it as tampering in the manifest.
     """
     digests: dict[str, Any] = {}
     for path in sorted(capsule_dir.rglob("*")):
@@ -215,11 +218,8 @@ def _write_seal_files(capsule_dir: Path, bundle: Any) -> None:
     (the seal then fails, and the capsule is reported unsealed) instead of the
     envelope being written wherever it points.
     """
-    try:
-        os.mkdir(capsule_dir / ".seal")
-    except FileExistsError:
-        pass
     op = "NovaSeal"
+    make_capsule_dir(capsule_dir, ".seal", operation=op)
     replace_capsule_file(capsule_dir, ".seal/manifest.dsse", bundle.dsse_envelope, operation=op)
     replace_capsule_file(capsule_dir, ".seal/manifest.dsse.tsr", bundle.tsr, operation=op)
     replace_capsule_file(
@@ -342,6 +342,10 @@ def finalize_capsule(
     # the manifest *before* it becomes the signed payload, then rewrite
     # capsule.yaml so the file on disk and the signed payload agree.
     manifest["evidence_digests"] = (digests or evidence_digests)(capsule_dir)
+    # A link or special file met here was planted after the post-workload sweep
+    # (a process the workload left running): never followed or hashed, and
+    # recorded as tampering in the signed manifest -- not just logged.
+    record_planted_entries_in_manifest(manifest, find_capsule_special_entries(capsule_dir))
     # Last gate: the final manifest (now carrying the digest map) is checked as
     # it will be written. A hit means an earlier stage missed something, so the
     # capsule is NOT sealed — sealing would sign the leak. Fail closed: the

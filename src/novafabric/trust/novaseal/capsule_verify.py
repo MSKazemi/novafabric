@@ -28,6 +28,7 @@ from typing import Any
 
 from novafabric._capsule_fs import (
     CapsuleEntryError,
+    find_capsule_special_entries,
     open_capsule_file,
     read_capsule_file,
 )
@@ -169,6 +170,11 @@ class CapsuleVerification:
     # capture. The seal still binds the capsule (it signs that record), but the
     # evidence is incomplete, so the capsule does not verify.
     capture_tampered: str | None = None
+    # Symlinks, FIFOs, sockets and devices found anywhere in the directory now,
+    # as ``"<rel> (<kind>)"``. NovaFabric never writes one, so each was planted
+    # (during capture past the sweep, or after sealing). None is followed; each
+    # fails the verification.
+    special_entries: tuple[str, ...] = ()
 
     @property
     def capsule_id_ok(self) -> bool:
@@ -211,6 +217,7 @@ class CapsuleVerification:
             and self.tsa_ok
             and not self.errors
             and self.capture_tampered is None
+            and not self.special_entries
         )
 
     def all_errors(self) -> list[str]:
@@ -229,6 +236,7 @@ class CapsuleVerification:
         errors.extend(self.errors)
         if self.capture_tampered is not None:
             errors.append(capture_tampered_error(self.capture_tampered))
+        errors.extend(special_entry_errors(self.special_entries))
         return errors
 
 
@@ -238,6 +246,30 @@ def capture_tampered_error(summary: str) -> str:
         "capture recorded tampering by the workload (metadata.capture_tampered: "
         f"{summary}); the paths were never followed, but the evidence is incomplete"
     )
+
+
+#: Most planted entries named one by one; the count is always given.
+_MAX_SPECIAL_REPORTED = 20
+
+
+def special_entry_errors(entries: tuple[str, ...]) -> list[str]:
+    """One verification error per planted link or special file (bounded)."""
+    errors = [
+        f"{entry} is inside the capsule: NovaFabric never writes a symlink, FIFO, "
+        "socket or device, so it was planted (never followed)"
+        for entry in entries[:_MAX_SPECIAL_REPORTED]
+    ]
+    if len(entries) > _MAX_SPECIAL_REPORTED:
+        errors.append(
+            f"and {len(entries) - _MAX_SPECIAL_REPORTED} more planted link(s) or "
+            f"special file(s) ({len(entries)} in total)"
+        )
+    return errors
+
+
+def capsule_special_entries(capsule_dir: Path) -> tuple[str, ...]:
+    """Every symlink / FIFO / socket / device under *capsule_dir* as ``"<rel> (<kind>)"``."""
+    return tuple(f"{rel} ({kind})" for rel, kind in find_capsule_special_entries(capsule_dir))
 
 
 def signed_capture_tampered(dsse_bytes: bytes) -> str | None:
@@ -774,4 +806,5 @@ def verify_capsule(
         tsa_check=tsa_check,
         errors=read_errors,
         capture_tampered=signed_capture_tampered(dsse_bytes),
+        special_entries=capsule_special_entries(capsule_dir),
     )

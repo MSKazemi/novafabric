@@ -57,29 +57,45 @@ stream, a facet) use one of three readers, all through
 * :func:`read_capsule_text_or_none` only for best-effort listings (dashboards,
   search indexes), where an unusable file is logged and skipped.
 
-**Known limit: hard links.** A hard link is an ordinary directory entry for a
-regular file, so it is copied like any other file. Under Linux's default
-``fs.protected_hardlinks = 1`` a user can only hard-link a file they own, or one
-they can already read and write. So a planted hard link exposes nothing the
-planter could not read already. NovaFabric itself never creates hard links in a
-capsule. Refusing every file with ``st_nlink > 1`` would break capsule trees
-kept under ``rsync --link-dest`` or ``cp -al`` snapshots, which are routine on
-HPC scratch filesystems. Hard links are therefore allowed, and this limit is
-documented in ``docs/concepts.md`` ("Links inside a capsule are never followed").
+**Hard links are read, never written through.** A hard link is an ordinary
+directory entry for a regular file, so it is read and copied like any other
+file. Under Linux's default ``fs.protected_hardlinks = 1`` a user can only
+hard-link a file they own, or one they can already read and write, so a planted
+hard link exposes nothing the planter could not read already. NovaFabric itself
+never creates hard links in a capsule. Refusing every file with ``st_nlink > 1``
+would break capsule trees kept under ``rsync --link-dest`` or ``cp -al``
+snapshots (routine on HPC scratch filesystems) and workloads that build a
+virtualenv in ``outputs/`` with a hard-linking installer, so hard links are
+allowed and are not tampering. What a hard link must never do is carry a
+*write* out of the capsule: :func:`replace_capsule_file` replaces the entry by a
+rename, and :func:`open_capsule_file_for_write` gives a hard-linked file a
+private copy first (copy-on-write) before it appends to or truncates it. This
+is documented in ``docs/concepts.md`` ("Links inside a capsule are never
+followed").
+
+**Pinned capsule roots.** The root is opened by name, so a link the caller named
+(``runs/latest``) keeps working. During capture finalisation that is not enough:
+a process the workload left running could swap the capsule directory for a link
+after the post-workload sweep. :func:`pin_capsule_root` records the directory's
+``(st_dev, st_ino)`` for the current :func:`capsule_root_pin_scope`; every open
+under a pinned root then opens it ``O_NOFOLLOW`` and raises
+:class:`CapsuleRootChangedError` when it is no longer that directory.
 """
 
 from __future__ import annotations
 
 import errno
+import functools
 import logging
 import os
 import shutil
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Final, Literal
+from typing import BinaryIO, Final, Literal, ParamSpec, TypeVar
 
 __all__ = [
     "CapsuleEntryError",
@@ -87,15 +103,21 @@ __all__ = [
     "CapsuleLinkError",
     "CapsuleListing",
     "CapsuleRequiredFileError",
+    "CapsuleRootChangedError",
     "CapsuleSpecialFileError",
+    "capsule_root_pin_scope",
     "copy_capsule_tree",
+    "entry_kind",
     "find_capsule_links",
+    "find_capsule_special_entries",
     "is_capsule_regular_file",
     "iter_capsule_dirs",
     "list_capsule",
+    "make_capsule_dir",
     "open_capsule_file",
     "open_capsule_file_for_write",
     "open_capsule_member_for_write",
+    "pin_capsule_root",
     "read_capsule_file",
     "read_capsule_member_or_none",
     "read_capsule_text",
@@ -105,6 +127,7 @@ __all__ = [
     "read_required_capsule_text",
     "refuse_capsule_links",
     "replace_capsule_file",
+    "with_capsule_root_pins",
 ]
 
 _log = logging.getLogger(__name__)
@@ -143,6 +166,16 @@ class CapsuleFileTooLargeError(CapsuleEntryError):
     """A capsule file is larger than the reader's ``max_bytes`` bound."""
 
 
+class CapsuleRootChangedError(CapsuleEntryError):
+    """A pinned capsule root is no longer the directory that was pinned.
+
+    Raised by every open under a root registered with :func:`pin_capsule_root`
+    when the entry at that path is now a link, another directory, or gone: a
+    process the workload left running moved the capsule after the sweep.
+    Nothing is read from or written to whatever is there now.
+    """
+
+
 class CapsuleRequiredFileError(CapsuleEntryError):
     """A capsule file the command needs is present but cannot be used.
 
@@ -170,6 +203,146 @@ class CapsuleListing:
     dirs: tuple[str, ...]
     files: tuple[str, ...]
     skipped: tuple[str, ...]
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+#: Capsule roots pinned in the current scope: absolute path -> (st_dev, st_ino).
+#: ``None`` outside :func:`capsule_root_pin_scope`, so nothing is ever pinned
+#: process-wide.
+_ROOT_PINS: ContextVar[dict[str, tuple[int, int]] | None] = ContextVar(
+    "novafabric_capsule_root_pins", default=None
+)
+
+
+@contextmanager
+def capsule_root_pin_scope() -> Iterator[None]:
+    """A scope for :func:`pin_capsule_root`; every pin made inside ends with it."""
+    token = _ROOT_PINS.set({})
+    try:
+        yield
+    finally:
+        _ROOT_PINS.reset(token)
+
+
+def with_capsule_root_pins(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Run *fn* inside its own :func:`capsule_root_pin_scope`."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with capsule_root_pin_scope():
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def pin_capsule_root(root: Path, identity: tuple[int, int]) -> None:
+    """Pin *root* to the directory with *identity* (``(st_dev, st_ino)``).
+
+    Until the enclosing :func:`capsule_root_pin_scope` ends, every helper in this
+    module that is handed *root* (or a directory below it) opens *root* with
+    ``O_NOFOLLOW`` and raises :class:`CapsuleRootChangedError` if it is not that
+    directory any more.
+
+    Raises:
+        RuntimeError: no :func:`capsule_root_pin_scope` is active.
+    """
+    pins = _ROOT_PINS.get()
+    if pins is None:
+        raise RuntimeError("pin_capsule_root() needs an active capsule_root_pin_scope()")
+    pins[os.path.abspath(root)] = identity
+
+
+def _pinned_root_for(root: Path) -> tuple[str, tuple[int, int], tuple[str, ...]] | None:
+    """``(pinned base, identity, components below it)`` when *root* is under a pin."""
+    pins = _ROOT_PINS.get()
+    if not pins:
+        return None
+    key = os.path.abspath(root)
+    for base, identity in pins.items():
+        if key == base:
+            return base, identity, ()
+        prefix = base.rstrip(os.sep) + os.sep
+        if key.startswith(prefix):
+            return base, identity, tuple(p for p in key[len(prefix):].split(os.sep) if p)
+    return None
+
+
+def _open_root_fd(root: Path, operation: str, error: type[CapsuleLinkError]) -> int:
+    """An fd on capsule directory *root*, checked against its pin when it has one."""
+    pinned = _pinned_root_for(root)
+    if pinned is None:
+        return os.open(root, _DIR_FLAGS)
+    base, identity, rest = pinned
+    try:
+        fd = os.open(base, _DIR_FLAGS | _NOFOLLOW)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR, errno.ENOENT):
+            raise CapsuleRootChangedError(
+                f"capsule directory {base} was replaced or removed after it was "
+                f"pinned; {operation} reads and writes nothing there"
+            ) from exc
+        raise
+    try:
+        st = os.fstat(fd)
+        if (st.st_dev, st.st_ino) != identity:
+            raise CapsuleRootChangedError(
+                f"capsule directory {base} is no longer the directory capture "
+                f"created; {operation} reads and writes nothing there"
+            )
+        rel_s = "/".join(rest)
+        for part in rest:
+            next_fd = _open_at(part, _DIR_FLAGS | _NOFOLLOW, fd, rel_s, operation, error)
+            os.close(fd)
+            fd = next_fd
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def entry_kind(mode: int) -> str:
+    """What an ``lstat`` mode is: ``symlink``, ``fifo``, ``socket``, ``char-device``,
+    ``block-device``, ``directory``, ``regular-file`` or ``unknown``."""
+    if stat.S_ISLNK(mode):
+        return "symlink"
+    if stat.S_ISFIFO(mode):
+        return "fifo"
+    if stat.S_ISSOCK(mode):
+        return "socket"
+    if stat.S_ISCHR(mode):
+        return "char-device"
+    if stat.S_ISBLK(mode):
+        return "block-device"
+    if stat.S_ISDIR(mode):
+        return "directory"
+    if stat.S_ISREG(mode):
+        return "regular-file"
+    return "unknown"
+
+
+def find_capsule_special_entries(root: Path) -> list[tuple[str, str]]:
+    """Every symlink, FIFO, socket or device under *root* as sorted ``(rel, kind)``.
+
+    Walks with ``os.walk(followlinks=False)`` and an ``lstat`` per entry; nothing
+    is followed or opened, so it never blocks on a FIFO. NovaFabric never writes
+    any of these into a capsule, so each one was planted. *root* itself may be a
+    link the caller named. Hard links are regular files and are not listed.
+    """
+    found: list[tuple[str, str]] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        here = Path(dirpath)
+        for name in dirnames + filenames:
+            path = here / name
+            try:
+                mode = path.lstat().st_mode
+            except FileNotFoundError:
+                continue
+            if stat.S_ISDIR(mode) or stat.S_ISREG(mode):
+                continue
+            found.append((path.relative_to(root).as_posix(), entry_kind(mode)))
+    return sorted(found)
 
 
 def _describe_link(path: Path, base: Path) -> str:
@@ -303,6 +476,10 @@ def _open_at(
                 f"{rel} goes through a symlink ({name}); {operation} never follows one",
                 links=(rel,),
             ) from exc
+        if exc.errno == errno.ENXIO:
+            # A non-blocking write open of a FIFO with no reader, or any open of
+            # a socket: never a regular file.
+            raise CapsuleSpecialFileError(f"{rel} is not a regular file") from exc
         raise
 
 
@@ -313,12 +490,8 @@ def _open_regular_fd(
     rel_s = "/".join(parts)
     if os.open not in os.supports_dir_fd:  # pragma: no cover - non-POSIX fallback
         return _open_regular_fd_by_path(root, parts, rel_s, operation, error)
-    dir_fd = os.open(root, _DIR_FLAGS)
+    dir_fd = _parent_dir_fd(root, parts, rel_s, operation, error)
     try:
-        for part in parts[:-1]:
-            next_fd = _open_at(part, _DIR_FLAGS | _NOFOLLOW, dir_fd, rel_s, operation, error)
-            os.close(dir_fd)
-            dir_fd = next_fd
         fd = _open_at(parts[-1], _FILE_FLAGS, dir_fd, rel_s, operation, error)
     finally:
         os.close(dir_fd)
@@ -527,19 +700,66 @@ def open_capsule_file_for_write(
                     f"{rel_s} goes through a symlink ({part}); {operation} never follows one",
                     links=(rel_s,),
                 )
-        fd = os.open(path, flags, 0o666)
-    else:
-        dir_fd = os.open(root, _DIR_FLAGS)
+        fd = _require_regular(os.open(path, flags, 0o666), rel_s)
+        return os.fdopen(fd, "ab" if mode == "a" else "wb")
+    dir_fd = _parent_dir_fd(root, parts, rel_s, operation, error)
+    try:
+        # Never O_TRUNC at open time: a hard-linked file gets its private copy
+        # before anything is truncated or appended.
+        fd = _open_at(
+            parts[-1], flags & ~os.O_TRUNC, dir_fd, rel_s, operation, error, perms=0o666
+        )
+        fd = _require_regular(fd, rel_s)
         try:
-            for part in parts[:-1]:
-                next_fd = _open_at(part, _DIR_FLAGS | _NOFOLLOW, dir_fd, rel_s, operation, error)
-                os.close(dir_fd)
-                dir_fd = next_fd
-            fd = _open_at(parts[-1], flags, dir_fd, rel_s, operation, error, perms=0o666)
-        finally:
-            os.close(dir_fd)
-    fd = _require_regular(fd, rel_s)
+            if mode != "x" and os.fstat(fd).st_nlink > 1:
+                fd = _break_hard_link(fd, parts[-1], dir_fd, copy=mode == "a")
+            elif mode == "w":
+                os.ftruncate(fd, 0)
+        except BaseException:
+            os.close(fd)
+            raise
+    finally:
+        os.close(dir_fd)
     return os.fdopen(fd, "ab" if mode == "a" else "wb")
+
+
+def _break_hard_link(fd: int, name: str, dir_fd: int, *, copy: bool) -> int:
+    """Give hard-linked file *name* a private copy; return a write fd on the copy.
+
+    The copy (the old bytes when *copy*, else empty; the same mode bits) is
+    written to a fresh ``O_EXCL | O_NOFOLLOW`` temporary file and renamed over
+    *name*, so the other names of the old inode -- possibly outside the capsule
+    -- never see the write. *fd* is closed on success.
+    """
+    old = os.fstat(fd)
+    tmp = f".{name}.nf-tmp-{os.urandom(6).hex()}"
+    append = os.O_APPEND if copy else 0
+    new_fd = os.open(
+        tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _CLOEXEC | append, 0o666,
+        dir_fd=dir_fd,
+    )
+    try:
+        os.fchmod(new_fd, stat.S_IMODE(old.st_mode))
+        if copy:
+            src = _require_regular(os.open(name, _FILE_FLAGS, dir_fd=dir_fd), name)
+            try:
+                now = os.fstat(src)
+                if (now.st_dev, now.st_ino) != (old.st_dev, old.st_ino):
+                    raise CapsuleSpecialFileError(f"{name} changed while it was being copied")
+                while chunk := os.read(src, _COPY_CHUNK):
+                    os.write(new_fd, chunk)
+            finally:
+                os.close(src)
+        os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except BaseException:
+        os.close(new_fd)
+        try:
+            os.unlink(tmp, dir_fd=dir_fd)
+        except OSError:
+            pass
+        raise
+    os.close(fd)
+    return new_fd
 
 
 def open_capsule_member_for_write(
@@ -563,8 +783,13 @@ def open_capsule_member_for_write(
 def _parent_dir_fd(
     root: Path, parts: tuple[str, ...], rel_s: str, operation: str, error: type[CapsuleLinkError]
 ) -> int:
-    """An fd on the parent directory of *parts*, every component opened ``O_NOFOLLOW``."""
-    dir_fd = os.open(root, _DIR_FLAGS)
+    """An fd on the parent directory of *parts*, every component opened ``O_NOFOLLOW``.
+
+    *root* itself is opened by name (it may be the link the caller named), unless
+    it is pinned (:func:`pin_capsule_root`): then it must still be the pinned
+    directory.
+    """
+    dir_fd = _open_root_fd(root, operation, error)
     try:
         for part in parts[:-1]:
             next_fd = _open_at(part, _DIR_FLAGS | _NOFOLLOW, dir_fd, rel_s, operation, error)
@@ -633,6 +858,38 @@ def replace_capsule_file(
             except OSError:
                 pass
             raise
+    finally:
+        os.close(dir_fd)
+
+
+def make_capsule_dir(
+    root: Path,
+    rel: str | PurePosixPath,
+    *,
+    operation: str = "this operation",
+    error: type[CapsuleLinkError] = CapsuleLinkError,
+) -> None:
+    """Create directory *rel* in the capsule if absent, following no link.
+
+    The parent is walked with ``openat(2)`` + ``O_NOFOLLOW`` (and a pinned root
+    is checked), and ``mkdirat(2)`` never follows a link at *rel*. An existing
+    real directory is accepted; an existing link is refused with *error*; any
+    other existing entry raises ``FileExistsError``.
+    """
+    parts = _split_rel(rel)
+    rel_s = "/".join(parts)
+    dir_fd = _parent_dir_fd(root, parts, rel_s, operation, error)
+    try:
+        try:
+            os.mkdir(parts[-1], dir_fd=dir_fd)
+        except FileExistsError:
+            mode = os.stat(parts[-1], dir_fd=dir_fd, follow_symlinks=False).st_mode
+            if stat.S_ISLNK(mode):
+                raise error(
+                    f"{rel_s} is a symlink; {operation} never follows one", links=(rel_s,)
+                ) from None
+            if not stat.S_ISDIR(mode):
+                raise
     finally:
         os.close(dir_fd)
 

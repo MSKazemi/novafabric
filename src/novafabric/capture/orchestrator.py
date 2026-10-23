@@ -14,9 +14,11 @@ from typing import Any
 import yaml
 
 from novafabric._capsule_fs import (
+    pin_capsule_root,
     read_capsule_file,
     read_capsule_text_or_none,
     replace_capsule_file,
+    with_capsule_root_pins,
 )
 from novafabric.capture._ulid import new_span_id, new_ulid
 from novafabric.capture.capsule import CapsuleWriter
@@ -298,6 +300,7 @@ class CaptureOrchestrator:
         # only (content_hash + byte_size), per ADR-0021 §4 privacy-by-default.
         self._capture_media = capture_media
 
+    @with_capsule_root_pins
     def run(
         self,
         command: list[str],
@@ -503,6 +506,11 @@ class CaptureOrchestrator:
                 runner_status=runner_result.runner_status,
                 runner_error=runner_result.runner_error,
             )
+        # A process the workload left running could still swap the capsule
+        # directory for a link after the sweep: pin it, so every later read or
+        # write raises CapsuleRootChangedError instead of following it.
+        if writer.root_identity is not None:
+            pin_capsule_root(capsule_dir, writer.root_identity)
         _event_recorder.record_tampered(tamper.health_entries())
 
         if stdout_bytes:

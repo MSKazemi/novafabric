@@ -322,11 +322,82 @@ def test_sweep_leaves_a_clean_capsule_alone(capsule: Path) -> None:
     assert sorted(p.relative_to(capsule).as_posix() for p in capsule.rglob("*")) == before
 
 
-def test_sweep_leaves_workload_links_outside_managed_paths(capsule: Path, outside: Path) -> None:
+def test_sweep_removes_links_outside_managed_paths_too(capsule: Path, outside: Path) -> None:
+    # Superseded 2026-10-23: the sweep used to leave links at unmanaged paths. It
+    # now walks the whole tree, since an exporter, a later writer or a reader
+    # could follow any of them; a link that stays inside the capsule is no
+    # exception (no export format can represent one).
+    (capsule / "outputs" / "model.bin").write_bytes(b"weights")
     (capsule / "outputs" / "latest").symlink_to("model.bin")  # not a managed path
     report = inspect_capsule_after_workload(capsule)
+    assert [(f.path, f.kind, f.action) for f in report.findings] == [
+        ("outputs/latest", "symlink", "removed")
+    ]
+    assert report.findings[0].link_target == "model.bin"
+    assert not os.path.lexists(capsule / "outputs" / "latest")
+    assert (capsule / "outputs" / "model.bin").read_bytes() == b"weights"
+
+
+def test_sweep_descends_every_directory_and_never_opens_what_it_finds(
+    capsule: Path, outside: Path, no_hang: None
+) -> None:
+    import socket
+
+    deep = capsule / "extensions" / "a" / "b" / "c"
+    deep.mkdir(parents=True)
+    (deep / "x.json").symlink_to(outside)
+    os.mkfifo(capsule / "inputs" / "pipe")
+    (capsule / "inputs" / "dirlink").symlink_to(outside.parent, target_is_directory=True)
+    expected = {
+        ("extensions/a/b/c/x.json", "symlink"),
+        ("inputs/pipe", "fifo"),
+        ("inputs/dirlink", "symlink"),
+    }
+    sock = socket.socket(socket.AF_UNIX)
+    try:
+        try:
+            sock.bind(str(capsule / "outputs" / "s.sock"))
+            expected.add(("outputs/s.sock", "socket"))
+        except OSError:  # AF_UNIX path too long on this runner: skip the socket
+            pass
+        report = inspect_capsule_after_workload(capsule)
+    finally:
+        sock.close()
+    assert {(f.path, f.kind) for f in report.findings} == expected
+    assert all(f.action == "removed" for f in report.findings)
+    assert (capsule / "extensions" / "a" / "b" / "c").is_dir()  # directories are kept
+    assert outside.read_text() == _SECRET
+    assert list(outside.parent.iterdir())  # the linked directory was not emptied
+
+
+def test_sweep_keeps_a_hard_link_and_records_nothing(capsule: Path, outside: Path) -> None:
+    os.link(outside, capsule / "inputs" / "hard.txt")
+    report = inspect_capsule_after_workload(capsule)
     assert report.findings == ()
-    assert (capsule / "outputs" / "latest").is_symlink()
+    assert (capsule / "inputs" / "hard.txt").stat().st_nlink == 2
+
+
+def test_sweep_does_not_descend_past_the_depth_bound(capsule: Path) -> None:
+    from novafabric.capture.tamper import MAX_SWEEP_DEPTH
+
+    path = capsule / "outputs"
+    for i in range(MAX_SWEEP_DEPTH + 3):
+        path = path / f"d{i}"
+    path.mkdir(parents=True)
+    report = inspect_capsule_after_workload(capsule)
+    assert [(f.kind, f.action) for f in report.findings] == [("directory", "not-swept")]
+    assert report.findings[0].path.count("/") == MAX_SWEEP_DEPTH - 1
+
+
+def test_sweep_records_a_bounded_number_of_findings(capsule: Path, outside: Path) -> None:
+    for i in range(1005):
+        (capsule / "inputs" / f"l{i:04d}").symlink_to(outside)
+    report = inspect_capsule_after_workload(capsule)
+    assert len(report.findings) == 1000 and report.omitted == 5 and report.total == 1005
+    assert not any(os.path.lexists(capsule / "inputs" / f"l{i:04d}") for i in range(1005))
+    summary = report.summary()
+    assert summary.count("(symlink)") == 20
+    assert summary.endswith("and 985 more (1005 in total)")
 
 
 def test_sweep_detects_a_replaced_root(capsule: Path, tmp_path: Path) -> None:
