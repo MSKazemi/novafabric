@@ -421,7 +421,7 @@ class SlurmRunner:
             argv.append(f"--time={mins}")
 
         try:
-            extra_env = shell_safe_env(coerce_str_dict(opts.get("extra_env")))
+            extra_env = shell_safe_env(coerce_str_dict(opts.get("extra_env"), name="extra_env"))
         except ValueError as exc:
             return RunnerJobResult(
                 exit_code=127, runner_status="failed_setup", runner_error=str(exc)

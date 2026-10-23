@@ -60,7 +60,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from novafabric.serve.auth import is_localhost_host, token_matches
 
@@ -88,16 +88,53 @@ _PROXY_HEADERS: Final[tuple[str, ...]] = (
 # ---------------------------------------------------------------------------
 
 
+#: The accumulators' token columns: DuckDB ``INTEGER`` (int32), ClickHouse ``Int64``.
+_INT32_MAX: Final[int] = 2**31 - 1
+_INT64_MAX: Final[int] = 2**63 - 1
+
+
+class CapsuleEvent(BaseModel):
+    """One event in a ``POST /capsule`` batch.
+
+    Only the fields an accumulator writes into a typed column are declared, so a
+    malformed one is refused with ``422`` here instead of raising inside the
+    accumulator (a ``500``). Any other key is kept and passed through unchanged.
+    ``model``/``tokens_in``/``tokens_out`` are the DuckDB columns, ``model_id``/
+    ``tokens_total`` the ClickHouse ones. ``tenant`` is checked against the
+    principal by the route, not here.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    event_type: str = Field(min_length=1)
+    run_id: str | None = None
+    model: str | None = None
+    model_id: str | None = None
+    tool_name: str | None = None
+    tokens_in: int = Field(default=0, ge=0, le=_INT32_MAX)
+    tokens_out: int = Field(default=0, ge=0, le=_INT32_MAX)
+    tokens_total: int | None = Field(default=None, ge=0, le=_INT64_MAX)
+
+    @field_validator("run_id")
+    @classmethod
+    def _run_id_not_null(cls, value: str | None) -> str:
+        # Absent means "use capsule_id"; an explicit null would reach a NOT NULL column.
+        if value is None:
+            raise ValueError("run_id must be a string when present")
+        return value
+
+
 class CapsuleIngestionRequest(BaseModel):
     """Request body for ``POST /capsule``.
 
     ``tenant_id`` is optional and, when present, only an assertion: it must equal
-    the authenticated principal's tenant, which is what is stored.
+    the authenticated principal's tenant, which is what is stored. Each event is a
+    :class:`CapsuleEvent`; one malformed event fails the whole batch with ``422``.
     """
 
     capsule_id: str
     tenant_id: str | None = None
-    events: list[dict[str, Any]]
+    events: list[CapsuleEvent]
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +311,9 @@ def create_collector_app(accumulator: Any = None) -> FastAPI:
         Each event is stamped with the authenticated principal's tenant, and with
         ``run_id = capsule_id`` unless it carries its own. A body ``tenant_id`` or an
         event ``tenant`` naming another tenant fails the whole batch with ``403``;
-        nothing is ingested.
+        nothing is ingested. A malformed event (no ``event_type``, a field of the
+        wrong type, a token count out of range) fails it with ``422`` before this
+        body runs, so nothing is ingested then either.
 
         Returns:
             ``{"ok": True, "ingested": N}``
@@ -282,11 +321,12 @@ def create_collector_app(accumulator: Any = None) -> FastAPI:
         if body.tenant_id is not None and body.tenant_id != principal.tenant:
             raise _tenant_mismatch(principal, body.tenant_id)
         enriched = []
-        for ev in body.events:
-            claimed = ev.get("tenant", principal.tenant)
+        for event in body.events:
+            # exclude_unset: an absent optional field stays absent, as the client sent it.
+            enriched_ev = event.model_dump(exclude_unset=True)
+            claimed = enriched_ev.get("tenant", principal.tenant)
             if claimed != principal.tenant:
                 raise _tenant_mismatch(principal, claimed)
-            enriched_ev = dict(ev)
             enriched_ev.setdefault("run_id", body.capsule_id)
             enriched_ev["tenant"] = principal.tenant
             enriched.append(enriched_ev)

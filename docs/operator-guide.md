@@ -467,7 +467,7 @@ Pass via `--runner-option key=value` on the CLI or via `.novafabric/runners.yaml
 | `constraint` | no | Node feature constraint (`--constraint`) |
 | `poll_interval_s` | no | How often to poll for job state, in seconds. Default 5.0 |
 | `output_dir` | no | Where to write `slurm-<jobid>.out/.err`. Default: capsule directory |
-| `extra_env` | no | Variables to export in the job, e.g. `extra_env=LOG_LEVEL=debug,HF_HOME=/scratch/hf`. The job receives only these, `NOVAFABRIC_*` (minus credentials) and `PATH` (ADR-0270, ADR-0311). Names must be shell identifiers |
+| `extra_env` | no | Variables to export in the job, e.g. `extra_env=LOG_LEVEL=debug,HF_HOME=/scratch/hf`, or as a JSON object of strings, `extra_env='{"LOG_LEVEL":"debug"}'` (needed when a value contains a comma; a malformed one fails setup). The job receives only these, `NOVAFABRIC_*` (minus credentials) and `PATH` (ADR-0270, ADR-0311). Names must be shell identifiers |
 
 #### How the job is submitted
 
@@ -1094,6 +1094,11 @@ receiver), not by `nova server`. Full walkthrough:
 |---|---|---|
 | `NOVA_COLLECTOR_TOKEN` | unset (local mode) | Every `POST /capsule` must send `X-Nova-Token: <token>`, from any address. Unset: only loopback callers with a localhost `Host` and no proxy header are served, everyone else gets `403` |
 | `NOVA_COLLECTOR_TENANT` | `default` | The tenant the caller is authenticated as; every event is stored under it |
+
+Each event in a batch needs a string `event_type`; a malformed event (no `event_type`,
+a field of the wrong type, a token count out of range) refuses the whole batch with
+`422` naming the field. The full event contract is in the
+[cluster-scale tutorial](tutorials/cluster-scale.md#running-the-python-collector-receiver-securely).
 
 > **⚠ Set `NOVA_COLLECTOR_TOKEN` whenever anything proxies to the collector.**
 > Local mode refuses a request carrying `Forwarded`, `X-Forwarded-*`, `X-Real-IP`

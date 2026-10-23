@@ -215,7 +215,7 @@ class LSFRunner:
         # The operator's explicit extra_env is the only way a variable reaches the
         # job beyond the fixed exports above (ADR-0311).
         try:
-            extra_env = shell_safe_env(coerce_str_dict(opts.get("extra_env")))
+            extra_env = shell_safe_env(coerce_str_dict(opts.get("extra_env"), name="extra_env"))
         except ValueError as exc:
             return RunnerJobResult(
                 exit_code=127, runner_status="failed_setup", runner_error=str(exc)

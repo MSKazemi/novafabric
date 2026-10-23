@@ -105,6 +105,12 @@ uvicorn --factory novafabric.collector_app:create_collector_app --host 0.0.0.0 -
   event `tenant` that differs from `NOVA_COLLECTOR_TENANT` is refused with `403` and
   nothing in the batch is ingested. `tenant_id` is optional. Serving several tenants
   means one collector, with its own token, per tenant.
+- **A malformed event is refused with `422`.** Every event needs a non-empty string
+  `event_type`. `run_id`, `model`, `model_id` and `tool_name` must be strings when
+  present; `tokens_in`/`tokens_out` must be integers in 0–2³¹−1 and `tokens_total`
+  in 0–2⁶³−1. One event that breaks this refuses the whole batch; nothing in it is
+  ingested, and the response's `detail` names the event index and the field. Other
+  keys pass through unchanged. (Before, such an event crashed the request with `500`.)
 
 ---
 

@@ -75,7 +75,7 @@ def test_ingest_capsule_duckdb_accumulator(monkeypatch: pytest.MonkeyPatch) -> N
     payload = {
         "capsule_id": "cap-001",
         "tenant_id": "tenant-a",
-        "events": [{"type": "llm_call"}, {"type": "tool_call"}],
+        "events": [{"event_type": "llm_call"}, {"event_type": "tool_call"}],
     }
     resp = client.post("/capsule", json=payload)
     assert resp.status_code == 200
@@ -94,7 +94,7 @@ def test_ingest_capsule_clickhouse_accumulator(monkeypatch: pytest.MonkeyPatch) 
     payload = {
         "capsule_id": "cap-002",
         "tenant_id": "tenant-b",
-        "events": [{"type": "e1"}, {"type": "e2"}, {"type": "e3"}],
+        "events": [{"event_type": "e1"}, {"event_type": "e2"}, {"event_type": "e3"}],
     }
     resp = client.post("/capsule", json=payload)
     assert resp.status_code == 200
@@ -119,7 +119,7 @@ def test_ingest_capsule_existing_run_id_not_overwritten() -> None:
     payload = {
         "capsule_id": "cap-from-body",
         "tenant_id": "t",
-        "events": [{"type": "x", "run_id": "pre-existing-id"}],
+        "events": [{"event_type": "x", "run_id": "pre-existing-id"}],
     }
     resp = client.post("/capsule", json=payload)
     assert resp.status_code == 200
@@ -174,7 +174,7 @@ def test_local_mode_serves_loopback_when_no_token_env(
     monkeypatch.delenv("NOVA_COLLECTOR_TOKEN", raising=False)
     acc = _duckdb_accumulator()
     client = _local(create_collector_app(accumulator=acc))
-    payload = {"capsule_id": "c", "tenant_id": "t", "events": [{"x": 1}]}
+    payload = {"capsule_id": "c", "tenant_id": "t", "events": [{"event_type": "x"}]}
     resp = client.post("/capsule", json=payload)
     assert resp.status_code == 200
 
@@ -188,7 +188,7 @@ def test_capsule_ingestion_request_model() -> None:
     req = CapsuleIngestionRequest(
         capsule_id="abc",
         tenant_id="t",
-        events=[{"a": 1}],
+        events=[{"event_type": "a"}],
     )
     assert req.capsule_id == "abc"
     assert len(req.events) == 1

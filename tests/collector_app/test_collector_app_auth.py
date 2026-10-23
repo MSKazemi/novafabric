@@ -49,7 +49,7 @@ def _client(
 
 
 def _payload(**overrides: Any) -> dict[str, Any]:
-    body: dict[str, Any] = {"capsule_id": "cap-1", "events": [{"type": "llm_call"}]}
+    body: dict[str, Any] = {"capsule_id": "cap-1", "events": [{"event_type": "llm_call"}]}
     body.update(overrides)
     return body
 
@@ -258,7 +258,7 @@ def test_an_event_tenant_other_than_the_principals_is_refused(
     monkeypatch.setenv("NOVA_COLLECTOR_TOKEN", TOKEN)
     monkeypatch.setenv("NOVA_COLLECTOR_TENANT", "acme")
     acc = _acc()
-    body = _payload(tenant_id="acme", events=[{"type": "x"}, {"type": "y", "tenant": "victim"}])
+    body = _payload(tenant_id="acme", events=[{"event_type": "x"}, {"event_type": "y", "tenant": "victim"}])
     resp = _client(acc).post("/capsule", json=body, headers={"X-Nova-Token": TOKEN})
     assert resp.status_code == 403
     acc.ingest_capsule_events.assert_not_called()
