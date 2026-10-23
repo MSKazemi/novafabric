@@ -628,3 +628,24 @@ def test_serve_maps_any_unhandled_capsule_refusal_to_422(
     assert r.status_code == 422, r.text
     assert "inputs/x" in r.json()["detail"]
     assert "/srv/x" not in r.text, "no server path in the detail"
+
+
+def test_serve_maps_a_special_file_refusal_to_422(
+    serve_env: tuple[Any, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from novafabric.serve import authz
+    from novafabric.serve.routers.evidence_cart import _refusal_reason
+
+    client, _, _ = serve_env
+    monkeypatch.setitem(
+        authz.ROUTE_SCOPES, ("GET", "/api/__test_special_refusal"), authz.Scope.read
+    )
+
+    def boom() -> None:
+        raise CapsuleSpecialFileError("/srv/x/inputs/pipe is not a regular file")
+
+    client.app.add_api_route("/api/__test_special_refusal", boom)
+    r = client.get(f"/api/__test_special_refusal?token={SERVER_TOKEN}", headers=HEADERS)
+    assert r.status_code == 422, r.text
+    assert "/srv/x" not in r.text
+    assert "FIFO" in _refusal_reason(CapsuleSpecialFileError("inputs/pipe"))
