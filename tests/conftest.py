@@ -5,6 +5,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
+import _live_audit_guard
 import pytest
 
 # Real shutil.which captured at import, before any test can monkeypatch it (TEST-OPA-1).
@@ -101,6 +102,65 @@ def pytest_collection_modifyitems(
             )
 
 
+def _apply_hermetic_env(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    """Strip every ``NOVAFABRIC_*`` var and point data home + audit log under *home*."""
+    for key in list(os.environ):
+        if key.startswith("NOVAFABRIC_"):
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(home / ".nova-home-hermetic"))
+    monkeypatch.setenv(
+        "NOVAFABRIC_AUDIT_LOG_PATH",
+        str(home / ".nova-home-hermetic" / "audit-hermetic.jsonl"),
+    )
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".xdg-data-hermetic"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _hermetic_session_env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """The hermetic environment for everything that runs *outside* a test function.
+
+    Pytest sets up module- and session-scoped fixtures **before** function-scoped
+    autouse fixtures, so ``_hermetic_novafabric_env`` below never covered them: a
+    module-scoped fixture saw the developer's shell. Two of them ran
+    ``nova export-evidence`` (``tests/seal/test_verify_evidence_bundle_signatures.py``,
+    ``tests/serve/test_evidence_verify_matches_cli.py``), and every full run appended
+    ``actor: cli`` ``policy.allow`` entries to the live
+    ``~/.local/share/novafabric/audit.jsonl`` (review r6, 2026-10-23). This applies the
+    same environment for the whole session; the per-test fixture still gives each test
+    its own directories on top of it. Guarded by
+    ``tests/audit/test_live_audit_log_guard.py``.
+    """
+    mp = pytest.MonkeyPatch()
+    _apply_hermetic_env(mp, tmp_path_factory.mktemp("session-hermetic"))
+    try:
+        yield
+    finally:
+        mp.undo()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _live_audit_log_guard() -> None:
+    """Opening the live audit log raises inside the session (``tests/_live_audit_guard.py``).
+
+    ``_live_audit_guard`` is imported at the top of this file, before any fixture
+    changes the environment, so the paths it protects are the developer's own.
+    """
+    _live_audit_guard.install()
+
+
+@pytest.fixture(autouse=True)
+def _fail_on_live_audit_log_access(_live_audit_log_guard: None) -> Iterator[None]:
+    """Fail the test that opened the live audit log, even if the code swallowed the error.
+
+    Attempts made while module-scoped fixtures were set up for this test are reported
+    here too, because they are recorded before this fixture's teardown runs.
+    """
+    yield
+    violations = _live_audit_guard.take_violations()
+    if violations:
+        pytest.fail("; ".join(violations), pytrace=False)
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_novafabric_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Hermetic ``NOVAFABRIC_*`` environment for every test (suite-health 2026-07-15).
@@ -118,22 +178,14 @@ def _hermetic_novafabric_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     store's ``dashboard.duckdb``), which both touches real user data and makes parallel xdist
     workers fight over one DuckDB file lock.
     """
-    for key in list(os.environ):
-        if key.startswith("NOVAFABRIC_"):
-            monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / ".nova-home-hermetic"))
     # The hash-chained audit log: every layer of its precedence
     # (novafabric.audit.resolve_audit_log_path) is pointed at this test's tmp dir —
-    # the explicit override, NOVAFABRIC_HOME above, and XDG_DATA_HOME below it —
-    # so no test can append to the developer's real
-    # ~/.local/share/novafabric/audit.jsonl (it held `test-user` entries from test
-    # runs before 2026-10-09) or slurp it into a backup set (ADR-0216).
-    # Guarded by tests/audit/test_audit_log_path.py.
-    monkeypatch.setenv(
-        "NOVAFABRIC_AUDIT_LOG_PATH",
-        str(tmp_path / ".nova-home-hermetic" / "audit-hermetic.jsonl"),
-    )
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / ".xdg-data-hermetic"))
+    # the explicit override, NOVAFABRIC_HOME, and XDG_DATA_HOME below it — so no
+    # test can append to the developer's real ~/.local/share/novafabric/audit.jsonl
+    # (it held `test-user` entries from test runs before 2026-10-09) or slurp it into
+    # a backup set (ADR-0216). Guarded by tests/audit/test_audit_log_path.py and
+    # tests/audit/test_live_audit_log_guard.py.
+    _apply_hermetic_env(monkeypatch, tmp_path)
     # The registry-schema DDL memo (init-once-per-db, B4) must not leak across
     # tests: a test that deletes/replaces a db file another test path shared
     # would otherwise skip re-initialisation.
