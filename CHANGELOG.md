@@ -21,6 +21,10 @@ longer forwards the submitting shell's environment (ADR-0270).
   `$NOVAFABRIC_HOME/registries` and the legacy `./.novafabric/registries` location. `--worm-db` must name a file that
   exists. An unreadable `retention-policy.yaml` refuses with `retention_policy_unavailable`. With no `worm.db`
   anywhere, behaviour is unchanged. Recovery: [docs/ops/backup-restore.md](docs/ops/backup-restore.md).
+- **A legal hold can no longer be hidden by an unreadable registry directory.** A `holds.jsonl` in a registry
+  directory that cannot be searched, or a `registries/` directory that cannot be listed, now counts as an active hold.
+  Before, every delete crashed with a `PermissionError` on Python 3.12, and on Python 3.14 the hold was silently
+  ignored and the delete went ahead.
 
 ### Changed
 

@@ -350,21 +350,48 @@ def read_ledger(path: Path, registry: str) -> list[HoldRecord]:
     return [_parse_line(line, registry, path) for line in text.splitlines() if line.strip()]
 
 
+def _readable_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def _ledger_entry(path: Path) -> bool:
+    """True unless *path* is certainly absent; "cannot tell" counts as present.
+
+    ``Path.is_file`` raises ``PermissionError`` on Python 3.12 and answers ``False``
+    on 3.14 when the registry directory cannot be searched, so it either crashes
+    the gate or hides the ledger. :func:`read_ledger` turns an entry it cannot
+    read into an active hold, which is the fail-closed answer on both.
+    """
+    try:
+        return entry_present(path)
+    except RegistryStateUnreadableError:
+        return True
+
+
 def _ledgers(
     registry: str | None, extra_roots: Iterable[Path]
-) -> Iterator[tuple[str, Path]]:
+) -> Iterator[tuple[str, Path, str | None]]:
+    """``(registry, ledger, error)`` for every hold ledger; *error* if unlistable."""
     for root in hold_roots(extra_roots):
         if registry is not None:
             path = root / registry / HOLDS_FILENAME
-            if path.is_file():
-                yield registry, path
+            if _ledger_entry(path):
+                yield registry, path, None
             continue
-        if not root.is_dir():
+        try:
+            if not root.is_dir():
+                continue
+            reg_dirs = sorted(root.iterdir())
+        except OSError as exc:
+            yield "*", root, f"hold location cannot be listed: {exc}"
             continue
-        for reg_dir in sorted(root.iterdir()):
+        for reg_dir in reg_dirs:
             path = reg_dir / HOLDS_FILENAME
-            if reg_dir.is_dir() and path.is_file():
-                yield reg_dir.name, path
+            if reg_dir.is_dir() and _ledger_entry(path):
+                yield reg_dir.name, path, None
 
 
 def read_holds(
@@ -378,8 +405,9 @@ def read_holds(
     if registry is not None:
         validate_registry_name(registry)
     merged: dict[tuple[str, str], HoldRecord] = {}
-    for reg, path in _ledgers(registry, list(extra_roots)):
-        for record in read_ledger(path, reg):
+    for reg, path, error in _ledgers(registry, list(extra_roots)):
+        records = [_corrupt(reg, path, error)] if error else read_ledger(path, reg)
+        for record in records:
             key = (reg, record.hold_id)
             previous = merged.get(key)
             if previous is None or (record.active and not previous.active):
@@ -527,7 +555,10 @@ def release_hold(
         raise InvalidRegistryNameError(f"invalid hold id {hold_id!r}")
     released_at = datetime.now(tz=timezone.utc).isoformat()
     registries: list[str] = []
-    for registry, path in _ledgers(None, list(extra_roots)):
+    for registry, path, error in _ledgers(None, list(extra_roots)):
+        # Only a readable ledger can carry a release; an unreadable one stays a hold.
+        if error or not _readable_file(path):
+            continue
         if _release_in(path, hold_id, released_at) and registry not in registries:
             registries.append(registry)
     if not registries:

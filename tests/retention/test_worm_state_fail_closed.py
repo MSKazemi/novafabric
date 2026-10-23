@@ -224,7 +224,37 @@ def test_unreadable_registry_directory_refuses(ws: WS) -> None:
             capsule_delete.check_deletable(ws.capsules, RUN)
     finally:
         os.chmod(reg, 0o755)
-    assert ei.value.code == "worm_state_unavailable"
+    # The hold gate runs first and cannot read the directory's holds.jsonl either:
+    # it refuses as a hold (fail closed) on every Python, rather than crashing on
+    # 3.12 (``is_file`` raises) or skipping the ledger on 3.14 (``is_file`` is False).
+    assert ei.value.code == "legal_hold_active"
+
+
+def test_hold_in_an_unsearchable_registry_directory_is_still_a_hold(ws: WS) -> None:
+    """A registry directory without search permission must not hide its holds."""
+    reg = ws.registry()
+    (reg / "holds.jsonl").write_text(
+        json.dumps({"hold_id": "H1", "reason": "litigation", "created_at": "2026-10-23T00:00:00Z"})
+        + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(reg, 0)
+    try:
+        ids = capsule_delete.active_hold_ids(ws.capsules)
+    finally:
+        os.chmod(reg, 0o755)
+    assert ids, "an unreadable hold ledger was treated as no hold"
+
+
+def test_an_unlistable_hold_root_is_a_hold(ws: WS) -> None:
+    """A registries/ directory that cannot be listed may hide every ledger: refuse."""
+    root = ws.registry().parent
+    os.chmod(root, 0)
+    try:
+        ids = capsule_delete.active_hold_ids(ws.capsules)
+    finally:
+        os.chmod(root, 0o755)
+    assert ids
 
 
 def test_lock_in_home_registry_blocks_delete_from_another_capsule_dir(ws: WS) -> None:
