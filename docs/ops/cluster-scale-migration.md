@@ -112,7 +112,7 @@ export NOVAFABRIC_METADATA_DSN="$NOVAFABRIC_POSTGRES_DSN"
 nova db upgrade --track registry --backend postgres
 nova db upgrade --backend postgres
 
-# Registry tables (assets, eval_results, lineage_nodes, lineage_edges):
+# Registry tables (assets, eval_results, lineage_nodes, lineage_edges, asset_status_history):
 nova migrate-to-postgres --target "$NOVAFABRIC_POSTGRES_DSN" --log migration.jsonl
 
 # MetadataStore tables (runs and run metadata):
@@ -121,7 +121,10 @@ nova db migrate-to-postgres --source ~/.novafabric/metadata.db \
 ```
 
 `nova migrate-to-postgres` prints a per-table row-count table (`assets`,
-`eval_results`, `lineage_nodes`, `lineage_edges`) followed by
+`eval_results`, `lineage_nodes`, `lineage_edges`, `asset_status_history` — the
+append-only lifecycle history `nova rollback` reads, copied with its row ids and
+its `asset_id`/`spec_sha256` binding, NULL on rows written before the binding
+existed) followed by
 `PASS — row counts verified.`; exit `0` success, `1` row-count mismatch, `2`
 connection error. `nova db migrate-to-postgres` uses the same exit codes.
 

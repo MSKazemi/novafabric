@@ -197,8 +197,8 @@ class TestHappyPath:
         summary = run_migration(db, target_dsn="postgresql://localhost/test")
 
         assert summary.dry_run is False
-        # All four tables processed
-        assert len(summary.table_results) == 4
+        # All five tables processed (incl. asset_status_history)
+        assert len(summary.table_results) == 5
         for result in summary.table_results:
             assert result.status == "ok"
         # Verification: postgres_counts >= sqlite_counts (mock returns 1 for all)
@@ -319,7 +319,7 @@ class TestLog:
 
         assert log_path.exists()
         lines = log_path.read_text().splitlines()
-        assert len(lines) == 4  # one per table
+        assert len(lines) == 5  # one per table
         for line in lines:
             record = json.loads(line)
             assert "table" in record
@@ -344,7 +344,7 @@ class TestLog:
         )
 
         lines = log_path.read_text().splitlines()
-        assert len(lines) == 4
+        assert len(lines) == 5
         for line in lines:
             record = json.loads(line)
             assert record["status"] == "ok"
@@ -361,8 +361,8 @@ class TestLog:
         run_migration(db, target_dsn="", dry_run=True, log_path=log_path)
 
         lines = log_path.read_text().splitlines()
-        # Two runs × 4 tables = 8 lines
-        assert len(lines) == 8
+        # Two runs × 5 tables = 10 lines
+        assert len(lines) == 10
 
 
 class TestTableMigrationResult:
@@ -603,7 +603,7 @@ class TestMigrateToPostgresCLI:
         assert result.exit_code == 0
         assert log_path.exists()
         lines = log_path.read_text().splitlines()
-        assert len(lines) == 4
+        assert len(lines) == 5
 
     def test_dsn_password_redacted_in_output(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -683,7 +683,9 @@ def test_migration_integration_round_trip(tmp_path: Path) -> None:
 
     # Clean up any leftover tables from a previous test run
     with psycopg.connect(dsn) as conn:
-        for tbl in ("lineage_edges", "lineage_nodes", "eval_results", "assets"):
+        for tbl in (
+            "asset_status_history", "lineage_edges", "lineage_nodes", "eval_results", "assets",
+        ):
             try:
                 conn.execute(f"DROP TABLE IF EXISTS {tbl} CASCADE")  # noqa: S608
             except Exception:  # noqa: BLE001
@@ -711,7 +713,9 @@ def test_migration_integration_idempotent(tmp_path: Path) -> None:
 
     # Clean up
     with psycopg.connect(dsn) as conn:
-        for tbl in ("lineage_edges", "lineage_nodes", "eval_results", "assets"):
+        for tbl in (
+            "asset_status_history", "lineage_edges", "lineage_nodes", "eval_results", "assets",
+        ):
             try:
                 conn.execute(f"DROP TABLE IF EXISTS {tbl} CASCADE")  # noqa: S608
             except Exception:  # noqa: BLE001
@@ -727,3 +731,193 @@ def test_migration_integration_idempotent(tmp_path: Path) -> None:
 
     # Row counts in Postgres after second run must equal counts after first run
     assert s2.postgres_counts == s1.postgres_counts
+
+
+# ---------------------------------------------------------------------------
+# asset_status_history — the append-only lifecycle record nova rollback reads
+# ---------------------------------------------------------------------------
+
+_HISTORY_COLUMNS = (
+    "id", "asset_name", "version", "from_status", "to_status",
+    "changed_at", "changed_by", "via", "asset_id", "spec_sha256",
+)
+
+# A registry from before ADR-0312's registration binding: the table existed but
+# asset_id/spec_sha256 did not. The source is opened read-only, so the additive
+# ALTER TABLE never runs on it.
+_LEGACY_HISTORY_DDL = """
+CREATE TABLE asset_status_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, asset_name TEXT NOT NULL,
+    version TEXT NOT NULL, from_status TEXT, to_status TEXT NOT NULL,
+    changed_at TEXT NOT NULL, changed_by TEXT NOT NULL, via TEXT NOT NULL
+);
+"""
+
+
+class _SqliteBackedPgCursor:
+    def __init__(self, cur: sqlite3.Cursor) -> None:
+        self._cur = cur
+        self.rowcount = cur.rowcount
+
+    def fetchone(self) -> Any:
+        return self._cur.fetchone()
+
+
+class _SqliteBackedPgConn:
+    """A psycopg-shaped connection that really stores rows, in a SQLite file.
+
+    The migration's DDL and ``INSERT … ON CONFLICT DO NOTHING`` run for real, so a
+    round trip compares the rows that landed with the rows that were read.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._conn = sqlite3.connect(str(path))
+
+    def execute(self, sql: str, params: Any = None) -> _SqliteBackedPgCursor:
+        cur = self._conn.execute(sql.replace("%s", "?"), params or ())
+        return _SqliteBackedPgCursor(cur)
+
+    def __enter__(self) -> _SqliteBackedPgConn:
+        return self
+
+    def __exit__(self, exc_type: Any, *_: Any) -> bool:
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        return False
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+def _install_sqlite_backed_psycopg(
+    monkeypatch: pytest.MonkeyPatch, target: Path
+) -> None:
+    fake_psycopg = MagicMock(name="psycopg")
+    fake_psycopg.connect.side_effect = lambda _dsn: _SqliteBackedPgConn(target)
+    monkeypatch.setitem(sys.modules, "psycopg", fake_psycopg)
+
+
+def _history_rows(db: Path) -> list[tuple[Any, ...]]:
+    conn = sqlite3.connect(str(db))
+    try:
+        return conn.execute(
+            f"SELECT {', '.join(_HISTORY_COLUMNS)} FROM asset_status_history ORDER BY id"  # noqa: S608
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _make_registry_with_history(path: Path) -> list[tuple[Any, ...]]:
+    """A registry built by the real schema code, with bound and legacy history rows."""
+    from novafabric.registry.store import (  # noqa: PLC0415
+        init_schema,
+        record_status_change,
+        spec_digest,
+    )
+
+    conn = sqlite3.connect(str(path))
+    init_schema(conn, force=True)
+    conn.execute("INSERT INTO assets VALUES (?,?,?,?,?,?,?,?,?,?,?)", _ASSET_ROW)
+    # A row written before the registration binding existed: both columns NULL.
+    conn.execute(
+        "INSERT INTO asset_status_history (asset_name, version, from_status, to_status, "
+        "changed_at, changed_by, via) VALUES (?,?,?,?,?,?,?)",
+        ("model-a", "1.0", None, "production", "2026-01-01T00:00:00Z", "", "backfill"),
+    )
+    for from_status, to_status, at in (
+        ("production", "archived", "2026-01-02T00:00:00Z"),
+        ("archived", "production", "2026-01-03T00:00:00Z"),
+    ):
+        record_status_change(
+            conn,
+            asset_name="model-a",
+            version="1.0",
+            from_status=from_status,
+            to_status=to_status,
+            changed_at=at,
+            changed_by="alice",
+            via="rollback" if to_status == "production" else "promote",
+            asset_id="a1",
+            spec_sha256=spec_digest(_ASSET_ROW[5]),
+        )
+    conn.commit()
+    conn.close()
+    return _history_rows(path)
+
+
+class TestStatusHistory:
+    def test_history_rows_round_trip_with_every_column(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = tmp_path / "registry.db"
+        expected = _make_registry_with_history(source)
+        assert len(expected) == 3
+        assert expected[0][8:] == (None, None)  # the legacy row stays unbound
+        assert expected[1][8] == "a1"
+
+        target = tmp_path / "pg.db"
+        _install_sqlite_backed_psycopg(monkeypatch, target)
+        summary = run_migration(source, target_dsn="postgresql://localhost/test")
+
+        assert _history_rows(target) == expected
+        assert summary.sqlite_counts["asset_status_history"] == 3
+        assert summary.postgres_counts["asset_status_history"] == 3
+        results = {r.table: r for r in summary.table_results}
+        assert results["asset_status_history"].rows_written == 3
+        assert results["asset_status_history"].status == "ok"
+        assert summary.verification_passed is True
+
+    def test_history_migration_is_idempotent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = tmp_path / "registry.db"
+        expected = _make_registry_with_history(source)
+        target = tmp_path / "pg.db"
+        _install_sqlite_backed_psycopg(monkeypatch, target)
+
+        run_migration(source, target_dsn="postgresql://localhost/test")
+        second = run_migration(source, target_dsn="postgresql://localhost/test")
+
+        results = {r.table: r for r in second.table_results}
+        assert results["asset_status_history"].rows_written == 0
+        assert _history_rows(target) == expected
+        assert second.verification_passed is True
+
+    def test_history_from_a_registry_predating_the_binding_columns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = tmp_path / "legacy.db"
+        conn = sqlite3.connect(str(source))
+        conn.executescript(_DDL + _LEGACY_HISTORY_DDL)
+        conn.execute(
+            "INSERT INTO asset_status_history (asset_name, version, from_status, "
+            "to_status, changed_at, changed_by, via) VALUES (?,?,?,?,?,?,?)",
+            ("model-a", "1.0", "staging", "production", "2026-01-01T00:00:00Z", "bob",
+             "promote"),
+        )
+        conn.commit()
+        conn.close()
+
+        target = tmp_path / "pg.db"
+        _install_sqlite_backed_psycopg(monkeypatch, target)
+        summary = run_migration(source, target_dsn="postgresql://localhost/test")
+
+        assert _history_rows(target) == [
+            (1, "model-a", "1.0", "staging", "production", "2026-01-01T00:00:00Z",
+             "bob", "promote", None, None),
+        ]
+        assert summary.verification_passed is True
+
+    def test_dry_run_counts_history_rows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = tmp_path / "registry.db"
+        _make_registry_with_history(source)
+        monkeypatch.setitem(sys.modules, "psycopg", None)  # type: ignore[misc]
+
+        summary = run_migration(source, target_dsn="", dry_run=True)
+
+        assert summary.sqlite_counts["asset_status_history"] == 3
+        assert "asset_status_history" in {r.table for r in summary.table_results}
