@@ -17,9 +17,13 @@ the request is never used. Without one the response says ``signer_trust:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import threading
 import zipfile
-from collections.abc import Callable, Iterator
+from collections import OrderedDict
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, Final
@@ -27,6 +31,7 @@ from typing import Any, BinaryIO, Final
 from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import open_capsule_file
 from novafabric.evidence.bundle_verify import (
+    BundleArchiveError,
     BundleVerification,
     load_trusted_public_keys,
     verify_bundle_archive,
@@ -36,10 +41,13 @@ __all__ = [
     "MAX_VERIFY_MEMBERS",
     "MAX_VERIFY_UNCOMPRESSED_BYTES",
     "BundleCheck",
+    "BundleVerdict",
+    "BundleVerdictCache",
     "evidence_trust_anchors",
     "iter_file_chunks",
     "open_bundle",
     "verify_bundle_file",
+    "verify_bundle_handle",
 ]
 
 _log = logging.getLogger(__name__)
@@ -67,24 +75,20 @@ class BundleCheck:
     timestamp_errors: list[str] = field(default_factory=list)
 
     @property
-    def run_id(self) -> str | None:
-        """The run the bundle's signature vouches for; else the manifest's unsigned label.
+    def run_ids(self) -> list[str]:
+        """Every run a verified run statement signs — the only runs the route reports.
 
-        ``manifest.json`` is not signed, so its ``subject.run_id`` (or a legacy top-level
-        ``run_id``) is used only when no run statement verified. The route checks the
-        local NovaSeal log of the capsule with this id.
+        ``manifest.json`` is unsigned, so its ``subject`` labels and a legacy top-level
+        ``run_id`` are never reported (attack A2, 2026-10-23: a set bundle's route
+        verdict named the unsigned top-level ``run_id``).
         """
-        signed = self.outcome.signatures.signed_run_ids
-        if len(signed) == 1:
-            return signed[0]
-        subject = self.outcome.manifest.get("subject")
-        for label in (
-            subject.get("run_id") if isinstance(subject, dict) else None,
-            self.outcome.manifest.get("run_id"),
-        ):
-            if isinstance(label, str) and label:
-                return label
-        return None
+        return list(self.outcome.signatures.signed_run_ids)
+
+    @property
+    def run_id(self) -> str | None:
+        """The one signed run, or None when no run — or more than one — verified."""
+        signed = self.run_ids
+        return signed[0] if len(signed) == 1 else None
 
     @property
     def ok(self) -> bool:
@@ -94,6 +98,7 @@ class BundleCheck:
         """The additive response fields; ``valid``/``errors`` are assembled by the route."""
         o = self.outcome
         return {
+            "run_ids": self.run_ids,
             "signature_ok": o.signature_ok,
             "manifest_hash_ok": o.signatures.manifest_hash_ok,
             "artifacts_ok": o.digests_ok,
@@ -216,10 +221,30 @@ def verify_bundle_file(
         BundleTooLargeError: above :data:`MAX_VERIFY_UNCOMPRESSED_BYTES` or
             :data:`MAX_VERIFY_MEMBERS`.
     """
-    with (
-        open_bundle(evidence_dir, bundle_id, operation="nova serve evidence verify") as handle,
-        zipfile.ZipFile(handle) as zf,
-    ):
+    with open_bundle(evidence_dir, bundle_id, operation="nova serve evidence verify") as handle:
+        check = verify_bundle_handle(
+            handle, trusted_public_pems=trusted_public_pems, tsa_chain_check=tsa_chain_check
+        )
+    _log.info(
+        "evidence_bundle_verified",
+        extra={
+            "bundle_id": bundle_id,
+            "ok": check.ok,
+            "signer_trust": check.outcome.signer_trust,
+            "problems": len(check.outcome.problems()) + len(check.timestamp_errors),
+        },
+    )
+    return check
+
+
+def verify_bundle_handle(
+    handle: BinaryIO,
+    *,
+    trusted_public_pems: Sequence[bytes],
+    tsa_chain_check: TsaChainCheck,
+) -> BundleCheck:
+    """Verify an already-opened bundle file (see :func:`verify_bundle_file` for errors)."""
+    with zipfile.ZipFile(handle) as zf:
         outcome = verify_bundle_archive(
             zf,
             trusted_public_pems=trusted_public_pems,
@@ -229,14 +254,88 @@ def verify_bundle_file(
         timestamp_ok, tsa_chain_ok, ts_errors = _check_timestamp(
             zf, outcome.manifest, tsa_chain_check
         )
-    check = BundleCheck(outcome, timestamp_ok, tsa_chain_ok, ts_errors)
-    _log.info(
-        "evidence_bundle_verified",
-        extra={
-            "bundle_id": bundle_id,
-            "ok": check.ok,
-            "signer_trust": outcome.signer_trust,
-            "problems": len(outcome.problems()) + len(ts_errors),
-        },
-    )
-    return check
+    return BundleCheck(outcome, timestamp_ok, tsa_chain_ok, ts_errors)
+
+
+@dataclass(frozen=True)
+class BundleVerdict:
+    """The shared verifier's verdict on one bundle, as the list and detail routes show it.
+
+    ``verified`` is :attr:`BundleCheck.ok` — every recipe step, every signer in the
+    operator trust list when one is configured, and the RFC 3161 token. ``reason``
+    says why verification could not run (too large, not a ZIP, …); ``verified`` is
+    then False.
+    """
+
+    verified: bool
+    run_ids: tuple[str, ...] = ()
+    signer_trust: str = "none"
+    reason: str | None = None
+
+    @property
+    def run_id(self) -> str | None:
+        """The one signed run, or None."""
+        return self.run_ids[0] if len(self.run_ids) == 1 else None
+
+
+#: The file identity a cached verdict is valid for. ``st_ctime_ns`` is in it because
+#: anyone who can rewrite a bundle in place can also restore its mtime (``utime``),
+#: but not its ctime.
+_VerdictKey = tuple[str, int, int, int, int, int, str]
+
+
+class BundleVerdictCache:
+    """Real-verifier verdicts for ``GET /api/evidence`` and ``/api/evidence/{id}``.
+
+    Verifying a typical bundle costs a few milliseconds (3.6 ms measured on a
+    75 KB single-capsule bundle), too much to repeat for up to 500 bundles on every
+    list call but cheap once per file state. A verdict is cached under the opened
+    file's identity (device, inode, size, mtime, ctime) and the trust anchors, so a
+    replaced, rewritten or re-anchored bundle is verified again. Bounded (LRU) and
+    thread-safe; one per app, never module-global. ``POST …/verify`` never uses it.
+    """
+
+    def __init__(self, max_entries: int = 2048) -> None:
+        self._max = max_entries
+        self._entries: OrderedDict[_VerdictKey, BundleVerdict] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def verdict(
+        self,
+        handle: BinaryIO,
+        bundle_id: str,
+        *,
+        trusted_public_pems: Sequence[bytes],
+        tsa_chain_check: TsaChainCheck,
+    ) -> BundleVerdict:
+        """The verdict for the bundle open as *handle* (verified on a cache miss)."""
+        st = os.fstat(handle.fileno())
+        anchors = hashlib.sha256(b"\0".join(trusted_public_pems)).hexdigest()
+        key: _VerdictKey = (
+            bundle_id, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns, anchors
+        )
+        with self._lock:
+            cached = self._entries.get(key)
+            if cached is not None:
+                self._entries.move_to_end(key)
+                return cached
+        verdict = _compute_verdict(handle, trusted_public_pems, tsa_chain_check)
+        with self._lock:
+            self._entries[key] = verdict
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max:
+                self._entries.popitem(last=False)
+        return verdict
+
+
+def _compute_verdict(
+    handle: BinaryIO, trusted_public_pems: Sequence[bytes], tsa_chain_check: TsaChainCheck
+) -> BundleVerdict:
+    handle.seek(0)
+    try:
+        check = verify_bundle_handle(
+            handle, trusted_public_pems=trusted_public_pems, tsa_chain_check=tsa_chain_check
+        )
+    except (zipfile.BadZipFile, BundleArchiveError, OSError, EOFError, ValueError) as exc:
+        return BundleVerdict(False, reason=f"{type(exc).__name__}: {exc}"[:300])
+    return BundleVerdict(check.ok, tuple(check.run_ids), check.outcome.signer_trust)

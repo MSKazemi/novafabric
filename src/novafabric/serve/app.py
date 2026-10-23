@@ -13,13 +13,14 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import stat
 import threading
 import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from fastapi import (
     APIRouter,
@@ -93,6 +94,9 @@ from novafabric.serve.routers.query_panel import build_query_panel_router
 from novafabric.serve.routers.report_export import build_report_export_router
 from novafabric.serve.routers.saved_views import build_saved_views_router
 from novafabric.serve.routers.trust_surfaces import build_trust_surfaces_router
+
+if TYPE_CHECKING:
+    from novafabric.serve.evidence_verify import BundleVerdictCache
 
 logger = logging.getLogger(__name__)
 
@@ -470,6 +474,9 @@ def _extract_score(raw: object) -> float | None:
 #: response will materialise, so response cost stays bounded regardless of how
 #: much is on disk. Callers see ``truncated=True`` + a ``total`` when exceeded.
 _EVIDENCE_LIST_MAX = 500
+#: Bound on any one archive member the evidence detail route reads whole (the run
+#: envelope, its certificate); manifest.json has its own bound in bundle_verify.
+_EVIDENCE_MEMBER_MAX_BYTES = 16 * 1024 * 1024
 _INCIDENT_LIST_MAX = 500
 
 #: Hard cap on audit-log lines scanned per policy-endpoint request (ADR-0199):
@@ -478,19 +485,39 @@ _INCIDENT_LIST_MAX = 500
 _POLICY_SCAN_CAP = 10_000
 
 
-def _list_evidence_bundles(limit: int | None = None) -> tuple[list[dict[str, Any]], int]:
+def _list_evidence_bundles(
+    limit: int | None = None, verdicts: "BundleVerdictCache | None" = None
+) -> tuple[list[dict[str, Any]], int]:
     """Scan evidence dir and return ``(EvidenceSummary dicts newest-first, total)``.
 
-    Only the newest *limit* bundles are opened and hash-checked — the per-zip
-    manifest read is the expensive part, so bounding it keeps the response cost
-    independent of how many bundles are on disk. ``total`` is the full count of
-    ``*.zip`` files (a cheap glob), so the caller can report truncation. When
-    *limit* is ``None`` every bundle is opened (legacy unbounded behaviour).
+    Only the newest *limit* bundles are opened and verified — the per-zip work is
+    the expensive part, so bounding it keeps the response cost independent of how
+    many bundles are on disk. ``total`` is the full count of ``*.zip`` files (a
+    cheap glob), so the caller can report truncation. When *limit* is ``None``
+    every bundle is opened (legacy unbounded behaviour).
+
+    ``verified`` is the shared verifier's verdict (``evidence/bundle_verify``, the
+    one behind ``nova verify`` and ``POST /api/evidence/{id}/verify``) under the
+    operator trust list, cached per file identity in *verdicts*. It used to
+    compare a bare hash with the ``sha256:``-prefixed ``manifest_hash`` and so was
+    always false — and a fixed comparison would only have re-checked a self-hash.
+    ``run_id`` is the signed run when exactly one verifies, else the bundle id;
+    ``manifest.json`` is read with a size bound, never whole.
     """
-    import hashlib
-    import json
     import zipfile
 
+    from novafabric.evidence.bundle_verify import (  # noqa: PLC0415
+        BundleArchiveError,
+        TrustedKeysError,
+        read_bundle_manifest,
+    )
+    from novafabric.serve.evidence_verify import (  # noqa: PLC0415
+        BundleVerdict,
+        BundleVerdictCache,
+        evidence_trust_anchors,
+    )
+
+    cache = verdicts if verdicts is not None else BundleVerdictCache()
     evidence_dir = _nf_paths.evidence_dir()
     if not evidence_dir.is_dir():
         return [], 0
@@ -505,42 +532,52 @@ def _list_evidence_bundles(limit: int | None = None) -> tuple[list[dict[str, Any
     total = len(all_paths)
     paths = all_paths if limit is None else all_paths[:limit]
 
+    anchors: list[bytes] | None
+    try:
+        anchors = evidence_trust_anchors()
+    except TrustedKeysError as exc:
+        # A configured anchor that cannot be read never degrades to "no anchor":
+        # nothing is reported verified.
+        logger.error("evidence_trust_list_unusable", extra={"reason": str(exc)[:300]})
+        anchors = None
+
     results = []
     for zip_path in paths:
-        bundle_id = zip_path.stem  # run_id = filename without .zip
+        bundle_id = zip_path.stem
         size_bytes = zip_path.lstat().st_size
-        verified = False
-        run_id = bundle_id
+        verdict = BundleVerdict(False, reason="not verified")
         timestamp: str | None = None
 
         try:
-            with (
-                open_capsule_file(
-                    evidence_dir, zip_path.name, operation="nova serve evidence list"
-                ) as handle,
-                zipfile.ZipFile(handle, "r") as zf,
-            ):
-                if "manifest.json" in zf.namelist():
-                    raw = zf.read("manifest.json")
-                    manifest = json.loads(raw)
-                    run_id = manifest.get("run_id", bundle_id)
-                    timestamp = manifest.get("created_at") or manifest.get("timestamp")
-                    # Shallow integrity check: recompute manifest_hash
-                    stored_hash = manifest.get("manifest_hash", "")
-                    work = {k: v for k, v in manifest.items() if k != "manifest_hash"}
-                    recomputed = hashlib.sha256(
-                        json.dumps(work, sort_keys=True, separators=(",", ":")).encode()
-                    ).hexdigest()
-                    verified = stored_hash == recomputed
-        except Exception:  # noqa: BLE001
-            pass  # leave verified=False, use defaults
+            with open_capsule_file(
+                evidence_dir, zip_path.name, operation="nova serve evidence list"
+            ) as handle:
+                if anchors is not None:
+                    verdict = cache.verdict(
+                        handle,
+                        bundle_id,
+                        trusted_public_pems=anchors,
+                        tsa_chain_check=_bundle_tsa_chain_ok,
+                    )
+                handle.seek(0)
+                with zipfile.ZipFile(handle, "r") as zf:
+                    manifest = read_bundle_manifest(zf)
+                    created = manifest.get("created_at") or manifest.get("timestamp")
+                    timestamp = created if isinstance(created, str) else None
+        except (OSError, CapsuleEntryError, zipfile.BadZipFile, BundleArchiveError) as exc:
+            logger.info(
+                "evidence_bundle_unreadable",
+                extra={"bundle_id": bundle_id, "reason": str(exc)[:200]},
+            )
 
         results.append({
             "bundle_id": bundle_id,
-            "run_id": run_id,
+            "run_id": verdict.run_id or bundle_id,
+            "run_ids": list(verdict.run_ids),
             "timestamp": timestamp or "",
             "size_bytes": size_bytes,
-            "verified": verified,
+            "verified": verdict.verified,
+            "signer_trust": verdict.signer_trust,
         })
 
     return results, total
@@ -1929,7 +1966,7 @@ def create_app(
         """
         import json as _json
 
-        cdir = _resolve_capsule(run_id, capsule_dir)
+        cdir = _resolve_sealed_capsule(run_id, capsule_dir)
         seal_dir = cdir / ".seal"
         if not seal_dir.exists():
             return {
@@ -2289,6 +2326,12 @@ def create_app(
 
     # ---------- Evidence list / detail (GET — read-only) ----------
 
+    from novafabric.serve.evidence_verify import BundleVerdictCache  # noqa: PLC0415
+
+    # One verdict cache per app (never module-global): the list and detail routes
+    # report the shared verifier's verdict without re-verifying an unchanged file.
+    _evidence_verdicts = BundleVerdictCache()
+
     @app.get("/api/evidence", dependencies=[Depends(verify_token)])
     async def list_evidence_endpoint(
         request: Request,
@@ -2298,7 +2341,9 @@ def create_app(
         # directory can't make this endpoint open every archive on every call.
         # Off the event loop: opens + hashes up to `capped` zip archives (B4).
         capped = clamp_limit(limit, _EVIDENCE_LIST_MAX)
-        bundles, total = await asyncio.to_thread(_list_evidence_bundles, limit=capped)
+        bundles, total = await asyncio.to_thread(
+            _list_evidence_bundles, limit=capped, verdicts=_evidence_verdicts
+        )
         payload = {
             "bundles": bundles,
             "count": len(bundles),
@@ -2363,15 +2408,50 @@ def create_app(
 
     @app.get("/api/evidence/{bundle_id}", dependencies=[Depends(verify_token)])
     async def get_evidence_detail_endpoint(bundle_id: str) -> dict[str, Any]:
-        _validate_bundle_id(bundle_id)
-        handle = _open_evidence_bundle(bundle_id)
-        # Off the event loop: reads and hashes ZIP members.
-        return await asyncio.to_thread(_evidence_detail, bundle_id, handle)
+        """Show one bundle: its manifest and run attestation as data, plus the verdict.
 
-    def _evidence_detail(bundle_id: str, handle: Any) -> dict[str, Any]:
+        ``manifest``, ``dsse_statement`` and ``dsse_envelope`` are the bundle's own,
+        unverified content. ``verified``, ``run_id`` and ``run_ids`` come from the
+        shared verifier (as ``POST …/verify``, cached per file): ``run_id`` is the
+        signed run when exactly one verifies, else the bundle id — never the
+        manifest's unsigned label. Every member is read with a size bound; a
+        ``manifest.json`` over the limit is a 413.
+        """
+        from novafabric.evidence.bundle_verify import TrustedKeysError  # noqa: PLC0415
+        from novafabric.serve.evidence_verify import evidence_trust_anchors  # noqa: PLC0415
+
+        _validate_bundle_id(bundle_id)
+        try:
+            anchors = evidence_trust_anchors()
+        except TrustedKeysError as exc:
+            logger.error("evidence_trust_list_unusable", extra={"reason": str(exc)[:300]})
+            raise HTTPException(
+                status_code=500, detail=f"Evidence signer trust list is unusable: {exc}"
+            ) from exc
+        handle = _open_evidence_bundle(bundle_id)
+        # Off the event loop: reads, hashes and verifies ZIP members.
+        return await asyncio.to_thread(_evidence_detail, bundle_id, handle, anchors)
+
+    def _bounded_member(zf: Any, name: str, limit: int) -> bytes:
+        """Read archive member *name*, refusing more than *limit* bytes (413)."""
+        with zf.open(name) as member:
+            data = member.read(limit + 1)
+        if len(data) > limit:
+            raise HTTPException(
+                status_code=413, detail=f"{name} is larger than {limit} bytes"
+            )
+        return bytes(data)
+
+    def _evidence_detail(bundle_id: str, handle: Any, anchors: list[bytes]) -> dict[str, Any]:
         import hashlib
         import json as _json
         import zipfile
+
+        from novafabric.evidence.bundle_verify import (  # noqa: PLC0415
+            BundleArchiveError,
+            BundleTooLargeError,
+            read_bundle_manifest,
+        )
 
         size_bytes = os.fstat(handle.fileno()).st_size
         manifest: dict[str, Any] = {}
@@ -2381,17 +2461,32 @@ def create_app(
         files: list[dict[str, Any]] = []
 
         try:
-            with handle, zipfile.ZipFile(handle, "r") as zf:
+            with handle:
+                verdict = _evidence_verdicts.verdict(
+                    handle,
+                    bundle_id,
+                    trusted_public_pems=anchors,
+                    tsa_chain_check=_bundle_tsa_chain_ok,
+                )
+                handle.seek(0)
+                zf = zipfile.ZipFile(handle, "r")
                 names = zf.namelist()
 
-                # Manifest
+                # Manifest (bounded; absent → {})
                 if "manifest.json" in names:
-                    manifest = _json.loads(zf.read("manifest.json"))
+                    try:
+                        manifest = read_bundle_manifest(zf)
+                    except BundleTooLargeError as exc:
+                        raise HTTPException(status_code=413, detail=str(exc)) from exc
+                    except BundleArchiveError:
+                        manifest = {}
 
                 # DSSE envelope
                 dsse_path = "attestations/run.intoto.json"
                 if dsse_path in names:
-                    envelope_raw = _json.loads(zf.read(dsse_path))
+                    envelope_raw = _json.loads(
+                        _bounded_member(zf, dsse_path, _EVIDENCE_MEMBER_MAX_BYTES)
+                    )
                     dsse_envelope = envelope_raw
                     # Decode payload field (base64)
                     payload_b64 = envelope_raw.get("payload", "")
@@ -2404,7 +2499,7 @@ def create_app(
                 # Signing key fingerprint from cert
                 cert_path = "signatures/run.intoto.json.cert"
                 if cert_path in names:
-                    cert_bytes = zf.read(cert_path)
+                    cert_bytes = _bounded_member(zf, cert_path, _EVIDENCE_MEMBER_MAX_BYTES)
                     signing_key_fingerprint = hashlib.sha256(cert_bytes).hexdigest()[:16]
 
                 # File list
@@ -2418,12 +2513,14 @@ def create_app(
         except zipfile.BadZipFile:
             raise HTTPException(status_code=422, detail=f"Bundle '{bundle_id}' is not a valid ZIP.")
 
-        run_id = manifest.get("run_id", bundle_id)
         timestamp = manifest.get("created_at") or manifest.get("timestamp") or ""
 
         return {
             "bundle_id": bundle_id,
-            "run_id": run_id,
+            "run_id": verdict.run_id or bundle_id,
+            "run_ids": list(verdict.run_ids),
+            "verified": verdict.verified,
+            "signer_trust": verdict.signer_trust,
             "timestamp": timestamp,
             "size_bytes": size_bytes,
             "manifest": manifest,
@@ -2451,6 +2548,11 @@ def create_app(
         ``NOVAFABRIC_EVIDENCE_TRUSTED_KEYS``), "unanchored" (no trust list configured:
         origin not established), "untrusted" (a signer is not in the list; ``valid`` is
         false) or "none" (no signature verified).
+
+        ``run_ids`` lists every run a verified run statement signs; ``run_id`` is that
+        run when exactly one verified, else null. ``manifest.json`` is unsigned, so a
+        subject, label or top-level ``run_id`` no verified statement signs fails the
+        bundle and is never reported; the local log is checked only for signed runs.
         """
         import zipfile  # noqa: PLC0415
 
@@ -2498,11 +2600,12 @@ def create_app(
             ) from exc
 
         errors = check.outcome.problems() + check.timestamp_errors
-        run_id = check.run_id or bundle_id
-        log_integrity_ok, seal_available = _evidence_local_seal(run_id, errors)
+        # Only runs a verified run statement signs are reported or looked up
+        # locally: manifest.json (and the bundle's file name) are unsigned.
+        log_integrity_ok, seal_available = _evidence_local_seal(check.run_ids, errors)
         return {
             "bundle_id": bundle_id,
-            "run_id": run_id,
+            "run_id": check.run_id,
             "valid": check.ok and log_integrity_ok is not False,
             **check.fields(),
             "timestamp_trust": timestamp_trust_for(check.timestamp_ok, check.tsa_chain_ok),
@@ -2511,12 +2614,16 @@ def create_app(
             "errors": errors,
         }
 
-    def _evidence_local_seal(run_id: str, errors: list[str]) -> tuple[bool | None, bool]:
-        """NovaSeal Merkle-log check of the *local* capsule with this run id.
+    def _evidence_local_seal(
+        run_ids: list[str], errors: list[str]
+    ) -> tuple[bool | None, bool]:
+        """NovaSeal Merkle-log check of the *local* capsules of the signed runs.
 
-        ``(log_integrity_ok, seal_available)``; ``None`` when NovaSeal is not configured
-        or no local sealed capsule exists. This checks the capsule on this host, not the
-        bundle's copy; the bundle's copy is covered by its signed run subject.
+        ``(log_integrity_ok, seal_available)``: False when any local sealed capsule
+        of a signed run fails its log check, True when at least one was checked and
+        none failed, ``None`` when NovaSeal is not configured or no local sealed
+        capsule exists. This checks capsules on this host, not the bundle's copies;
+        those are covered by their signed run subjects.
         """
         log_integrity_ok: bool | None = None
         seal_available = False
@@ -2525,26 +2632,33 @@ def create_app(
             profile = load_signing_profile()
             if profile is not None:
                 seal_available = True
-                try:
-                    cdir = _resolve_capsule(run_id, capsule_dir)
-                except HTTPException:
-                    cdir = None
-                if cdir is not None and (cdir / ".seal").is_dir():
-                    # verify_capsule opens the configured log only if it already
-                    # exists. NovaSeal(...) opened it for writing and so created
-                    # merkle_db on a verifier's machine (verification must
-                    # create nothing, ADR-0297 S2).
-                    from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415
-                        verify_capsule,
-                    )
-
-                    seal_result = verify_capsule(cdir, profile).result
-                    log_integrity_ok = seal_result.log_integrity_ok
-                    if not seal_result.log_integrity_ok:
-                        errors.extend(seal_result.errors)
+                for run_id in run_ids:
+                    run_ok = _local_run_log_ok(run_id, profile, errors)
+                    if run_ok is not None:
+                        log_integrity_ok = run_ok and log_integrity_ok is not False
         except Exception:  # noqa: BLE001
             pass  # NovaSeal not configured or unavailable
         return log_integrity_ok, seal_available
+
+    def _local_run_log_ok(run_id: str, profile: Any, errors: list[str]) -> bool | None:
+        """Log check of the local sealed capsule *run_id*; None when there is none."""
+        try:
+            cdir = _resolve_capsule(run_id, capsule_dir)
+        except HTTPException:
+            return None
+        if not (cdir / ".seal").is_dir():
+            return None
+        # verify_capsule opens the configured log only if it already exists.
+        # NovaSeal(...) opened it for writing and so created merkle_db on a
+        # verifier's machine (verification must create nothing, ADR-0297 S2).
+        from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415
+            verify_capsule,
+        )
+
+        seal_result = verify_capsule(cdir, profile).result
+        if not seal_result.log_integrity_ok:
+            errors.extend(seal_result.errors)
+        return bool(seal_result.log_integrity_ok)
 
     @app.get("/api/lineage/provenance/{ref:path}", dependencies=[Depends(verify_token)])
     async def lineage_provenance(
@@ -5381,18 +5495,77 @@ def create_app(
 
     @app.get("/api/seal/log/verify", dependencies=[Depends(verify_token)])
     async def seal_log_verify_endpoint(
-        capsule_id: str | None = None,
+        capsule_id: str | None = Query(default=None, max_length=256),
     ) -> dict[str, Any]:
         """Verify internal consistency of the local Merkle log (ADR-0041).
 
         Recomputes all leaf hashes and checks the stored root hash against the
         recomputed root. Returns consistent=true when the log is intact.
-        """
-        from novafabric.trust.novaseal.merkle import MerkleLog
 
-        db_path = _seal_db_path()
-        log = MerkleLog(db_path)
-        result = log.verify_consistency()
+        The log is the one capture seals into (``NOVAFABRIC_SEAL_DB_PATH``, then
+        ``merkle_db`` in novaseal.yaml, then ``$NOVAFABRIC_HOME/novaseal-merkle.db``)
+        and is opened read-only: verification creates, migrates and writes nothing
+        (ADR-0297 S2). 404 when no log exists there; 501 when it is a Postgres log
+        (verify that with ``nova seal log verify``; the DSN is shown without its
+        password); 422 when the file is not a NovaSeal log.
+
+        ``capsule_included`` (with ``capsule_id``): whether a seal entry's
+        ``capsule_id`` equals the given value exactly — never a pattern match.
+        """
+        return await asyncio.to_thread(_verify_seal_log_read_only, capsule_id)
+
+    def _verify_seal_log_read_only(capsule_id: str | None) -> dict[str, Any]:
+        """The seal-log verify route's work, off the event loop (it reads every leaf)."""
+        from novafabric.trust.novaseal.config import (  # noqa: PLC0415
+            SealConfigError,
+            resolve_merkle_db_uri,
+        )
+        from novafabric.trust.novaseal.log_location import (  # noqa: PLC0415
+            MerkleLocationError,
+            is_postgres_dsn,
+            redact_location,
+        )
+        from novafabric.trust.novaseal.merkle import (  # noqa: PLC0415
+            MerkleError,
+            open_existing_merkle_log,
+        )
+
+        try:
+            location = resolve_merkle_db_uri()
+        except (SealConfigError, MerkleLocationError) as exc:
+            raise HTTPException(status_code=422, detail=f"NovaSeal log location: {exc}") from exc
+        if is_postgres_dsn(location):
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    f"The NovaSeal Merkle log is a Postgres database "
+                    f"({redact_location(location)}); this route verifies a local SQLite "
+                    "log read-only. Run `nova seal log verify` against it instead."
+                ),
+            )
+        try:
+            log = open_existing_merkle_log(location, read_only=True)
+        except (MerkleError, sqlite3.DatabaseError) as exc:
+            raise HTTPException(
+                status_code=422, detail=f"{location} is not a readable NovaSeal Merkle log: {exc}"
+            ) from exc
+        if log is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No NovaSeal Merkle log at {location}; nothing to verify "
+                    "(verification creates no log)."
+                ),
+            )
+        try:
+            result = log.verify_consistency()
+            included = log.has_entry_for_capsule_id(capsule_id) if capsule_id else None
+        except sqlite3.DatabaseError as exc:
+            raise HTTPException(
+                status_code=422, detail=f"{location} is not a readable NovaSeal Merkle log: {exc}"
+            ) from exc
+        finally:
+            log.close()
 
         response: dict[str, Any] = {
             "consistent": result.consistent,
@@ -5402,18 +5575,9 @@ def create_app(
             ),
         }
         if capsule_id:
-            # Check whether this capsule has at least one entry in the log.
-            try:
-                rows = log._conn.execute(  # noqa: SLF001
-                    "SELECT COUNT(*) FROM leaves WHERE entry_json LIKE ?",
-                    (f'%"{capsule_id}"%',),
-                ).fetchone()
-                response["capsule_included"] = bool(rows and rows[0] > 0)
-            except Exception:
-                response["capsule_included"] = None
+            response["capsule_included"] = included
         if result.errors:
             response["errors"] = result.errors
-
         return response
 
     # ---------- DB-KG-1: Capsule Knowledge Graph routes (v0.18.0) ----------
@@ -6934,18 +7098,22 @@ def create_app(
         if not parent_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"Capsule directory not found: {run_id}")
         parent_dir = _refuse_top_level_links(_confine_capsule_root(parent_dir, capsule_dir))
-        manifest_name = "capsule.yaml"
-        if not (parent_dir / manifest_name).exists():
-            manifest_name = "capsule.json"
-        import yaml as _yaml
+        from novafabric._capsule_manifest import (  # noqa: PLC0415
+            CapsuleManifestError,
+            read_capsule_manifest,
+        )
+
+        # A sealed capsule's status is its signed payload's (ADR-0251), never an
+        # unsealed capsule.yaml / capsule.json placed beside the seal.
         try:
-            raw = read_capsule_text(parent_dir, manifest_name, operation="nova serve")
-            manifest = (
-                _yaml.safe_load(raw) if manifest_name.endswith(".yaml")
-                else __import__("json").loads(raw)
-            )
-        except Exception as exc:  # noqa: BLE001
+            parent_manifest = read_capsule_manifest(parent_dir, operation="nova serve")
+        except CapsuleManifestError as exc:
             raise HTTPException(status_code=422, detail=f"Cannot parse manifest: {exc}") from exc
+        if parent_manifest is None:
+            raise HTTPException(
+                status_code=422, detail=f"Cannot parse manifest: no manifest in {run_id}"
+            )
+        manifest = parent_manifest.data
         children: list[dict[str, Any]] = []
         # A sibling is listed only as a real directory, and each file is read
         # without following a link (iter_capsule_dirs / read_capsule_text_or_none).
@@ -6961,31 +7129,24 @@ def create_app(
                     try:
                         rec = _json.loads(line)
                         if rec.get("parent_run_id") == run_id or rec.get("parent_id") == run_id:
-                            child_manifest = "capsule.yaml"
-                            if not (child_dir / child_manifest).exists():
-                                child_manifest = "capsule.json"
-                            _txt = read_capsule_text_or_none(
-                                child_dir, child_manifest, operation="nova serve"
-                            )
-                            if _txt is not None:
-                                try:
-                                    cm = (
-                                        _yaml.safe_load(_txt)
-                                        if child_manifest.endswith(".yaml")
-                                        else __import__("json").loads(_txt)
-                                    )
+                            try:
+                                child = read_capsule_manifest(
+                                    child_dir, operation="nova serve"
+                                )
+                            except CapsuleManifestError:
+                                children.append({
+                                    "run_id": child_dir.name,
+                                    "status": "unknown",
+                                    "edge_type": rec.get("edge_type"),
+                                    "exit_code": None,
+                                })
+                            else:
+                                if child is not None:
                                     children.append({
                                         "run_id": child_dir.name,
-                                        "status": cm.get("status"),
+                                        "status": child.data.get("status"),
                                         "edge_type": rec.get("edge_type"),
-                                        "exit_code": cm.get("exit_code"),
-                                    })
-                                except Exception:  # noqa: BLE001
-                                    children.append({
-                                        "run_id": child_dir.name,
-                                        "status": "unknown",
-                                        "edge_type": rec.get("edge_type"),
-                                        "exit_code": None,
+                                        "exit_code": child.data.get("exit_code"),
                                     })
                             break
                     except Exception:  # noqa: BLE001
@@ -10001,6 +10162,24 @@ def _resolve_capsule(run_id: str, capsule_dir: Path) -> Path:
         if m.get("run_id") == run_id:
             return _refuse_top_level_links(d)
     raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+
+
+def _resolve_sealed_capsule(run_id: str, capsule_dir: Path) -> Path:
+    """:func:`_resolve_capsule`, plus a sealed directory whose ``capsule.yaml`` is gone.
+
+    The verify route must answer for a capsule whose manifest was deleted or
+    renamed after sealing — ``valid: false``, naming the missing manifest — not 404
+    as if the run had never existed.
+    """
+    try:
+        return _resolve_capsule(run_id, capsule_dir)
+    except HTTPException as exc:
+        candidate = capsule_dir / run_id
+        if exc.status_code != 404 or candidate.is_symlink() or not candidate.is_dir():
+            raise
+        if not (candidate / ".seal").is_dir():
+            raise
+        return _refuse_top_level_links(candidate)
 
 
 def _strip_spec(asset_row: dict[str, Any]) -> dict[str, Any]:

@@ -23,9 +23,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_manifest import (
+    MANIFEST_NAMES,
+    CapsuleManifestError,
+    read_capsule_manifest,
+)
 from novafabric.agent_graph.errors import CapsuleNotFoundError
 from novafabric.agent_graph.model import (
     NODE_STATUS_VALUES,
@@ -40,7 +43,7 @@ from novafabric.agent_graph.model import (
 )
 from novafabric.capture.record_roles import logical_model_calls
 
-_MANIFEST_NAMES = ("capsule.yaml", "capsule.json")
+_MANIFEST_NAMES = MANIFEST_NAMES
 _MODEL_CALLS = "model-calls.jsonl"
 _TOOL_CALLS = "tool-calls.jsonl"
 _TRACE = "trace.jsonl"
@@ -84,23 +87,17 @@ def _read_jsonl(path: Path) -> list[tuple[int, dict[str, Any]]]:
 
 
 def _capsule_id(capsule_dir: Path) -> str:
-    """The manifest's ``run_id`` when readable; the directory name otherwise."""
-    for name in _MANIFEST_NAMES:
-        path = capsule_dir / name
-        if not path.is_file():
-            continue
-        try:
-            capsule_text = (
-                read_capsule_member_or_none(path, operation="agent graph") or ""
-            )
-            data = yaml.safe_load(capsule_text)
-        except (OSError, yaml.YAMLError):
-            continue
-        if isinstance(data, dict):
-            run_id = data.get("run_id")
-            if isinstance(run_id, str) and run_id:
-                return run_id
-    return capsule_dir.name
+    """The manifest's ``run_id`` when readable; the directory name otherwise.
+
+    A sealed capsule's manifest is its signed payload (ADR-0251), so an unsealed
+    ``capsule.json`` placed beside the seal cannot rename the run.
+    """
+    try:
+        manifest = read_capsule_manifest(capsule_dir, operation="agent graph")
+    except CapsuleManifestError:
+        return capsule_dir.name
+    run_id = manifest.data.get("run_id") if manifest is not None else None
+    return run_id if isinstance(run_id, str) and run_id else capsule_dir.name
 
 
 def _opt_str(value: Any) -> str | None:

@@ -39,8 +39,9 @@ from novafabric.query import cache, indexer
 
 #: A capsule-relative filename: no spaces, no format placeholders. Deliberately
 #: strict so an error message that merely *mentions* a filename is not mistaken
-#: for a read (``f"{path}: invalid scores.jsonl: {exc}"`` must not match).
-_FILENAME = re.compile(r"[A-Za-z0-9._-]+\.(?:jsonl|yaml|json)")
+#: for a read (``f"{path}: invalid scores.jsonl: {exc}"`` must not match). A path
+#: may nest (``.seal/manifest.dsse``, the sealed manifest the indexer prefers).
+_FILENAME = re.compile(r"[A-Za-z0-9._/-]+\.(?:jsonl|yaml|json|dsse)")
 
 
 def _filenames_in_module_source() -> set[str]:

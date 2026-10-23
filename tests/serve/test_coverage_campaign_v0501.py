@@ -59,8 +59,12 @@ class TestSealLogVerify:
         self, stack: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
+        from novafabric.trust.novaseal.merkle import MerkleLog
+
         client, _ = stack
-        monkeypatch.setenv("NOVAFABRIC_SEAL_DB_PATH", str(tmp_path / "merkle.db"))
+        db = tmp_path / "merkle.db"
+        MerkleLog(db).close()  # the route verifies an existing log; it never creates one
+        monkeypatch.setenv("NOVAFABRIC_SEAL_DB_PATH", str(db))
         resp = client.get("/api/seal/log/verify", params=AUTH, headers=HOST)
         assert resp.status_code == 200
         data = resp.json()

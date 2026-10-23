@@ -4903,6 +4903,20 @@ paths:
       x-nova-contract: pending
   /api/evidence/{bundle_id}:
     get:
+      description: 'Show one bundle: its manifest and run attestation as data, plus the verdict.
+
+
+        ``manifest``, ``dsse_statement`` and ``dsse_envelope`` are the bundle''s own,
+
+        unverified content. ``verified``, ``run_id`` and ``run_ids`` come from the
+
+        shared verifier (as ``POST …/verify``, cached per file): ``run_id`` is the
+
+        signed run when exactly one verifies, else the bundle id — never the
+
+        manifest''s unsigned label. Every member is read with a size bound; a
+
+        ``manifest.json`` over the limit is a 413.'
       parameters:
       - in: path
         name: bundle_id
@@ -5020,7 +5034,16 @@ paths:
 
         origin not established), "untrusted" (a signer is not in the list; ``valid`` is
 
-        false) or "none" (no signature verified).'
+        false) or "none" (no signature verified).
+
+
+        ``run_ids`` lists every run a verified run statement signs; ``run_id`` is that
+
+        run when exactly one verified, else null. ``manifest.json`` is unsigned, so a
+
+        subject, label or top-level ``run_id`` no verified statement signs fails the
+
+        bundle and is never reported; the local log is checked only for signed runs.'
       parameters:
       - in: path
         name: bundle_id
@@ -10447,14 +10470,33 @@ paths:
 
         Recomputes all leaf hashes and checks the stored root hash against the
 
-        recomputed root. Returns consistent=true when the log is intact.'
+        recomputed root. Returns consistent=true when the log is intact.
+
+
+        The log is the one capture seals into (``NOVAFABRIC_SEAL_DB_PATH``, then
+
+        ``merkle_db`` in novaseal.yaml, then ``$NOVAFABRIC_HOME/novaseal-merkle.db``)
+
+        and is opened read-only: verification creates, migrates and writes nothing
+
+        (ADR-0297 S2). 404 when no log exists there; 501 when it is a Postgres log
+
+        (verify that with ``nova seal log verify``; the DSN is shown without its
+
+        password); 422 when the file is not a NovaSeal log.
+
+
+        ``capsule_included`` (with ``capsule_id``): whether a seal entry''s
+
+        ``capsule_id`` equals the given value exactly — never a pattern match.'
       parameters:
       - in: query
         name: capsule_id
         required: false
         schema:
           anyOf:
-          - type: string
+          - maxLength: 256
+            type: string
           - type: 'null'
           title: Capsule Id
       - in: query

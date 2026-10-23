@@ -63,7 +63,12 @@ def test_list_evidence_empty(client: TestClient, evidence_dir: Path) -> None:
 
 
 def test_list_evidence_with_bundle(client: TestClient, sample_bundle: str) -> None:
-    """After adding a valid bundle, list returns it with verified=True."""
+    """A bundle with no signed attestation is listed, and is not ``verified``.
+
+    ``verified`` is the shared verifier's verdict. This fixture's manifest only
+    carries a self-consistent ``manifest_hash`` — a self-hash anyone can recompute —
+    so nothing verifies it (until 2026-10-23 the route reported it verified).
+    """
     r = client.get("/api/evidence", params={"token": TOKEN}, headers=LOCALHOST_HEADERS)
     assert r.status_code == 200
     data = r.json()
@@ -71,7 +76,8 @@ def test_list_evidence_with_bundle(client: TestClient, sample_bundle: str) -> No
     b = data["bundles"][0]
     assert b["bundle_id"] == sample_bundle
     assert b["run_id"] == sample_bundle
-    assert b["verified"] is True
+    assert b["verified"] is False
+    assert b["run_ids"] == []
     assert b["size_bytes"] > 0
     assert b["timestamp"] == "2026-05-12T10:00:00Z"
 

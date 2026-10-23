@@ -826,17 +826,22 @@ def verify_with_profile(seal_dir: Path | str, profile: Any) -> VerificationResul
     config on this machine): the capsule is then verified from its own files.
     Raises ``OSError`` when a configured TSA CA file cannot be read.
     """
+    from novafabric.trust.novaseal.log_location import is_postgres_dsn  # noqa: PLC0415
     from novafabric.trust.novaseal.merkle import open_existing_merkle_log  # noqa: PLC0415
 
     anchors_pem: bytes | None = None
     tsa_ca_certs = list(getattr(profile, "tsa_ca_certs", None) or [])
     if tsa_ca_certs:
         anchors_pem = b"\n".join(Path(p).read_bytes() for p in tsa_ca_certs)
-    current = open_existing_merkle_log(getattr(profile, "merkle_db", None))
+    def _open(location: Any) -> "MerkleLog | PostgresMerkleLog | None":
+        # SQLite mode=ro: verification never migrates or writes a log (ADR-0297 S2).
+        return open_existing_merkle_log(location, read_only=not is_postgres_dsn(location))
+
+    current = _open(getattr(profile, "merkle_db", None))
     previous: list[MerkleLog | PostgresMerkleLog] = []
     try:
         for location in getattr(profile, "previous_merkle_dbs", None) or []:
-            opened = open_existing_merkle_log(location)
+            opened = _open(location)
             if opened is not None:
                 previous.append(opened)
         return verify_seal_dir(

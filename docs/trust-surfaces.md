@@ -89,13 +89,11 @@ Input: a JSON object of the guarantees (`signature_ok`, `timestamp_ok`,
 `log_integrity_ok`, `redaction_coverage`, `secret_scan_clean`, `policy_pass`,
 `eval_gate_pass`), or `--capsule <dir>`.
 
-⚠ **The radar is a projection of those seven keys only — it is not
-verification.** It ignores `nova verify`'s overall `valid`, the ADR-0251
-capsule-binding and capsule-id checks, and the CA/TSA chain results, and its
-`--capsule` / dashboard Seal-tab path runs only the NovaSeal signature, timestamp
-and log checks. A capsule whose content changed after sealing can therefore still
-render `attested`. Always gate on `nova verify`'s exit code; never treat
-`attested` as "verified" (fix tracked).
+⚠ **Given a JSON object, the radar is a projection of those seven keys only —
+it is not verification.** Whoever wrote the JSON chose the values. With
+`--capsule <dir>` (and in the dashboard Seal tab) the seal axes come from
+`nova verify`'s own checks, below. For a release gate, use `nova verify`'s exit
+code; `attested` describes the axes, not `--strict` anchoring.
 
 ```bash
 $ nova trust-radar verify.json --capsule-id run-2041
@@ -124,7 +122,7 @@ therefore never `attested`. The three seal axes mean:
 
 | Axis | `ok` only when |
 |---|---|
-| Signature | the DSSE signature verifies, **and** binds this directory (ADR-0251): `capsule.yaml` equals the signed payload, every `evidence_digests` file still hashes to its signed digest, and `log-entry.json` names this payload. A signer chain configured in `novaseal.yaml` (`ca_bundle`) must also validate. A capsule edited after sealing, or carrying another capsule's `.seal/`, fails this axis and the verdict is `critical`. |
+| Signature | the DSSE signature verifies, **and** binds this directory (ADR-0251): the manifest the capsule was sealed with (`capsule.yaml`) exists and equals the signed payload, no other manifest-named file (`capsule.json`) disagrees with it, every `evidence_digests` file still hashes to its signed digest, no file a signed `*_ref` names was added after sealing, and `log-entry.json` names this payload. A signer chain configured in `novaseal.yaml` (`ca_bundle`) must also validate. A capsule edited after sealing, whose `capsule.yaml` was renamed or replaced by a `capsule.json`, or carrying another capsule's `.seal/`, fails this axis and the verdict is `critical`. |
 | Timestamp | an RFC 3161 token is present and anchored by `tsa_ca_certs` (an intact but unanchored token is `warn`; no token is `n/a`). |
 | Log integrity | Merkle inclusion was established by the carried proof or the sealer's log. |
 
@@ -136,7 +134,12 @@ the binding as `capsule_binding_ok`, and its `valid` is the verdict `nova verify
 exits on.
 
 Before 2026-10-22 the radar ran only the signature, timestamp and log checks,
-so a capsule tampered after sealing could show `attested`.
+so a capsule tampered after sealing could show `attested`. Until 2026-10-23 a
+sealed capsule whose `capsule.yaml` was renamed to `capsule.json` and edited
+still read `attested`, while `nova query` and the runs list served the edited
+status: the missing `capsule.yaml` counted as "not present" and `capsule.json`
+as an extra file. Both now fail the Signature axis, and every reader of a sealed
+capsule's status takes it from the signed payload.
 
 ## nova redaction-xray (ADR-0174)
 
