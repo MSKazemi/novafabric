@@ -345,7 +345,7 @@ against the ZIP.
 | `run-capsule/` | A copy of the whole capsule directory: `capsule.yaml`, the record streams, `env.lock`, `redaction-proof.json` (the secret-scan record), `inputs/`, `outputs/` and, when the capsule was sealed at capture, `.seal/` |
 | `lineage-subgraph/edges.jsonl` | The capsule's lineage edges (empty when it recorded none) |
 | `schemas/` | The JSON Schemas shipped with the exporting `novafabric` version |
-| `attestations/` | Ed25519-signed in-toto Statement v1 DSSE envelopes: `run` (subject: the capsule Merkle root), `redaction` (subject: the redaction proof's chain hash), `lineage`, and `energy` when the capsule has `energy-receipts.jsonl` (experimental, ADR-0093) |
+| `attestations/` | Ed25519-signed in-toto Statement v1 DSSE envelopes: `run` (subject: the capsule Merkle root), `redaction` (subject: the redaction proof's chain hash), `lineage`, `bundle` (the members statement: the SHA-256 of every other file and of the manifest's fields), and `energy` when the capsule has `energy-receipts.jsonl` (experimental, ADR-0093) |
 | `signatures/` | Each envelope's raw signature (`.sig`) and the signer's public key (`.cert`, PEM) |
 | `manifest.json` | SHA-256 and size of every other file, the attestation and signature index, `subject.capsule_hash`, the verification recipe and `manifest_hash`; with `--with-custody`, the chain-of-custody blocks (experimental, ADR-0095) |
 | `README.md` | The verification recipe in plain text; with `--timestamp`, also the OpenSSL steps for the token. Its digest in `manifest.json` is recorded after that section is added |
@@ -360,6 +360,35 @@ The recipe needs only a SHA-256 tool and an Ed25519 verifier:
 3. Verify each DSSE envelope over its pre-authentication encoding.
 4. Check that each statement's subject matches `subject.capsule_hash`, and recompute
    that root from the files under `run-capsule/`.
+5. Check the members statement (`attestations/bundle.intoto.json`): every file except
+   `manifest.json` and the statement's own three files has the digest it signs, and
+   the manifest's fields hash to its `manifest_core_sha256`.
+
+#### Every member is signed (works today; review r8)
+
+Before the members statement, nothing signed `README.md`, the vendored `schemas/` or
+the manifest's own fields (`verifier_instructions`, `schemas[]`). `manifest.json` is
+not signed and its `manifest_hash` is a self-hash anyone can recompute, so a recipient
+holding a bundle whose README said "Verified by the EU AI Office" and whose
+`run-capsule.schema.json` accepted anything got `PASSED` from `nova verify
+--public-key`. Now:
+
+- **Bundles with a members statement** (every bundle `nova export-evidence`, `nova
+  serve` and `nova server` build from this version on): a rewritten, added or removed
+  member, or an edited manifest field, fails verification. The run statement signs a
+  pointer to the members statement (`members_statement`), so removing the statement
+  fails too. `nova export-evidence --timestamp` re-signs the statement after it adds
+  the token and the README section.
+- **Legacy bundles** (exported before this version; no members statement and no
+  pointer) still pass when their signed content verifies, because rejecting every
+  archived bundle would break ADR-0011's promise that an old bundle stays verifiable.
+  They are never reported as fully verified: `nova verify` prints `PASSED — signed
+  content only` and names the members no signature covers; the API reports
+  `members_signed: false` and `unsigned_members`. Treat those members (always
+  `README.md`, `schemas/` and `manifest.json`'s fields) as unverified. An anchored
+  verification (`--public-key`, or the operator trust list) behaves the same way: the
+  anchor pins who signed the run, lineage and redaction statements, not the files no
+  statement covers.
 
 Optional additions: `--timestamp` (an RFC 3161 token for the bundle), Rekor
 publication when `NOVA_REKOR_URL` is set, and an outer DSSE envelope.

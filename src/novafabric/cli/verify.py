@@ -1044,6 +1044,7 @@ def _verify_evidence_bundle(
         console.print(f"    [red]✗ subject:[/red] {rel}")
     for err in signed.errors:
         console.print(f"    [red]✗[/red] {err}")
+    _print_members(outcome)
     if public_key is not None:
         _print_check("Signer is the --public-key", not signed.signer_not_trusted)
     elif signed.signer_fingerprints:
@@ -1069,7 +1070,34 @@ def _verify_evidence_bundle(
     if not ok:
         console.print("[red]Evidence Bundle verification FAILED[/red]")
         raise typer.Exit(code=1)
+    if not outcome.members_signed:
+        # A legacy bundle: its signed content verified, but not every member is
+        # signed. Never reported as a plain PASSED (ADR-0011 Amendment 7).
+        console.print(
+            "[yellow]Evidence Bundle verification PASSED — signed content only[/yellow] "
+            f"({len(outcome.unsigned_members)} member(s) not covered by any signature)"
+        )
+        return
     console.print("[green]Evidence Bundle verification PASSED[/green]")
+
+
+def _print_members(outcome: Any) -> None:
+    """Report the members statement check (ADR-0011 Amendment 7, review r8)."""
+    if outcome.member_problems:
+        _print_check("Every bundle member is covered by the signed members statement", False)
+        for problem in outcome.member_problems:
+            console.print(f"    [red]✗ members:[/red] {problem}")
+        return
+    if outcome.members_signed:
+        _print_check("Every bundle member is covered by the signed members statement", True)
+        return
+    unsigned = outcome.unsigned_members
+    shown = ", ".join(unsigned[:8]) + (f", … (+{len(unsigned) - 8})" if len(unsigned) > 8 else "")
+    console.print(
+        "  [yellow]![/yellow] signed content only: this bundle has no members statement "
+        "(exported before it existed), so these members are not covered by any signature "
+        f"and are not verified: {shown}"
+    )
 
 
 def _bundle_tsa_check(

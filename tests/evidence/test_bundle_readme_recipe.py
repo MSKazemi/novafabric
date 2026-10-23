@@ -21,6 +21,7 @@ from pathlib import Path
 from novafabric.capture.orchestrator import CaptureOrchestrator
 from novafabric.energy._attribution import attest_capsule, write_receipts
 from novafabric.evidence.bundle import (
+    PREDICATE_BUNDLE_MEMBERS,
     PREDICATE_ENERGY,
     PREDICATE_LINEAGE,
     PREDICATE_REDACTION,
@@ -46,8 +47,13 @@ def _bundle(tmp_path: Path) -> Path:
     return out
 
 
-def _expected_subject(zf: zipfile.ZipFile, manifest: dict, predicate_type: str) -> str:
-    """Step 4 of the README, implemented from the bundle's files alone."""
+def _expected_subject(zf: zipfile.ZipFile, manifest: dict, statement: dict) -> str:
+    """Steps 4 and 6 of the README, implemented from the bundle's files alone."""
+    predicate_type = statement["predicateType"]
+    if predicate_type == PREDICATE_BUNDLE_MEMBERS:
+        members = statement["predicate"]["members"]
+        canonical = json.dumps(members, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(canonical).hexdigest()
     if predicate_type == PREDICATE_RUN:
         return _bare(manifest["subject"]["capsule_hash"])
     if predicate_type == PREDICATE_REDACTION:
@@ -71,10 +77,13 @@ def test_every_statement_subject_follows_the_readme_rule(tmp_path: Path) -> None
             statement = json.loads(base64.b64decode(envelope["payload"]))
             predicate_type = statement["predicateType"]
             digests = {_bare(s["digest"]["sha256"]) for s in statement["subject"]}
-            assert digests == {_expected_subject(zf, manifest, predicate_type)}, predicate_type
+            assert digests == {_expected_subject(zf, manifest, statement)}, predicate_type
             assert digests == {_bare(h) for h in att["subject_hashes"]}
             seen.add(predicate_type)
-    assert seen == {PREDICATE_RUN, PREDICATE_REDACTION, PREDICATE_LINEAGE, PREDICATE_ENERGY}
+    assert seen == {
+        PREDICATE_RUN, PREDICATE_REDACTION, PREDICATE_LINEAGE, PREDICATE_ENERGY,
+        PREDICATE_BUNDLE_MEMBERS,
+    }
 
 
 def test_readme_step4_names_each_subject_source() -> None:

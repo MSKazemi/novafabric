@@ -5531,9 +5531,12 @@ def create_app(
         The log is the one capture seals into (``NOVAFABRIC_SEAL_DB_PATH``, then
         ``merkle_db`` in novaseal.yaml, then ``$NOVAFABRIC_HOME/novaseal-merkle.db``)
         and is opened read-only: verification creates, migrates and writes nothing
-        (ADR-0297 S2). 404 when no log exists there; 501 when it is a Postgres log
-        (verify that with ``nova seal log verify``; the DSN is shown without its
-        password); 422 when the file is not a NovaSeal log.
+        (ADR-0297 S2). A cleanly closed log is opened ``immutable=1``, so not even
+        SQLite's ``-wal``/``-shm`` side files appear; while a writer holds them, the
+        open uses normal locking and adds no file (review r8). 404 when no log
+        exists there; 501 when it is a Postgres log (verify that with ``nova seal
+        log verify``; the DSN is shown without its password); 422 when the file is
+        not a NovaSeal log.
 
         ``capsule_included`` (with ``capsule_id``): whether a seal entry's
         ``capsule_id`` equals the given value exactly — never a pattern match.

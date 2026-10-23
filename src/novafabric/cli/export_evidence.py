@@ -20,6 +20,7 @@ from novafabric.evidence.bundle import (
     EvidenceBundleBuilder,
     PolicyAuditUnavailableError,
     UnsafeSkipsError,
+    reseal_bundle_members,
 )
 from novafabric.evidence.signing import LocalSigner
 from novafabric.trust._rfc3161 import DEFAULT_TSA_URL, TimestampError, add_rfc3161_timestamp
@@ -130,6 +131,8 @@ def _add_timestamp_to_bundle(
     bundle_path: Path,
     tsa_url: str,
     timestamp_optional: bool,
+    *,
+    signer: LocalSigner | None = None,
 ) -> None:
     """Post-process an Evidence Bundle ZIP to add an RFC 3161 timestamp.
 
@@ -142,6 +145,9 @@ def _add_timestamp_to_bundle(
        manifest.dsse.tsr in artifacts[], add manifest_dsse_tsr_sha256,
        timestamp_status, timestamp_tsa_url, and recompute manifest_hash — so
        every file is still covered by the bundle's own verification recipe.
+    6. With *signer* (the key that built the bundle), re-sign the members statement
+       (ADR-0011 Amendment 7) so it covers the new README, the token and the new
+       manifest fields; without it a bundle that carries one no longer verifies.
     """
     with zipfile.ZipFile(bundle_path, "r") as zf:
         names = zf.namelist()
@@ -178,6 +184,8 @@ def _add_timestamp_to_bundle(
                 "manifest.json",
                 json.dumps(manifest, indent=2, sort_keys=True).encode(),
             )
+            if signer is not None:
+                reseal_bundle_members(bundle_path, signer)
             return
         raise
 
@@ -226,6 +234,8 @@ def _add_timestamp_to_bundle(
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
+    if signer is not None:
+        reseal_bundle_members(bundle_path, signer)
 
 
 def export_evidence_cmd(
@@ -389,7 +399,7 @@ def export_evidence_cmd(
         tsa_url = _resolve_tsa_url(timestamp_url)
         console.print(f"[dim]Requesting RFC 3161 timestamp from {tsa_url} …[/dim]")
         try:
-            _add_timestamp_to_bundle(out_path, tsa_url, timestamp_optional)
+            _add_timestamp_to_bundle(out_path, tsa_url, timestamp_optional, signer=signer)
         except TimestampError as exc:
             console.print(f"[red]✗[/red] RFC 3161 timestamp failed: {exc}")
             raise typer.Exit(code=1) from exc

@@ -742,6 +742,18 @@ def _resolve_log_root_version(
     return version
 
 
+def _read_only_uri(db_path: Path) -> str:
+    """The SQLite URI a read-only open uses: ``immutable=1`` when no side file exists.
+
+    See :meth:`MerkleLog._open_read_only` for why the side files decide it.
+    """
+    resolved = db_path.resolve()
+    side_files = (Path(f"{resolved}-wal"), Path(f"{resolved}-shm"))
+    if any(p.exists() or p.is_symlink() for p in side_files):
+        return f"{resolved.as_uri()}?mode=ro"
+    return f"{resolved.as_uri()}?mode=ro&immutable=1"
+
+
 class MerkleLog:
     """Append-only Merkle log backed by SQLite.
 
@@ -787,8 +799,25 @@ class MerkleLog:
 
         ``mode=ro`` makes SQLite refuse every write, so a legacy log is read as it
         is — never migrated — and a missing file raises instead of being created
-        (ADR-0297 S2). SQLite may still add its ``-wal``/``-shm`` sidecars beside a
-        WAL-mode log; the log database itself is untouched.
+        (ADR-0297 S2).
+
+        Side files (review r8): the log is in WAL mode, and a plain ``mode=ro``
+        connection to a cleanly closed log makes SQLite create ``-wal`` and ``-shm``
+        beside it, which a read-only connection cannot remove. So:
+
+        * neither side file exists — no writer is connected and every transaction
+          is checkpointed into the main file — the log is opened ``immutable=1``:
+          no locks, no side files, nothing created;
+        * a side file exists — a writer is connected or one exited without
+          checkpointing — the open stays ``mode=ro`` with normal locking.
+          ``immutable=1`` would ignore leaves committed only to the WAL and could
+          read pages a concurrent checkpoint is rewriting. SQLite may create the
+          missing one of the pair; nothing is created when both exist.
+
+        Residual: a writer that connects *after* the check and checkpoints during
+        the read can make an ``immutable`` read see a torn page, reported as an
+        inconsistent log or a database error — a false alarm, never a hidden leaf
+        that was committed before the read began.
 
         Raises:
             FileNotFoundError: *db_path* is not an existing regular file.
@@ -798,7 +827,7 @@ class MerkleLog:
         if not db_path.is_file():
             raise FileNotFoundError(f"no NovaSeal Merkle log at {db_path}")
         self._conn = sqlite3.connect(
-            f"{db_path.resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False
+            _read_only_uri(db_path), uri=True, check_same_thread=False
         )
         self._conn.execute("PRAGMA busy_timeout=5000")
         try:
