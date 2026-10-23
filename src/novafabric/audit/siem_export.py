@@ -181,6 +181,9 @@ OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     # Review r6: a maker-checker bypass was stored (an emergency override of the
     # two-person rule) — API Activity, Create.
     "seal.bypass.create": (_API_ACTIVITY, "API Activity", 1),
+    # Review r8: the stored bypass a seal.bypass.create announced could not be
+    # written, so it is withdrawn (compensating entry) — API Activity, Delete.
+    "seal.bypass.abort": (_API_ACTIVITY, "API Activity", 4),
 }
 
 #: Conservative fallback for event types not (yet) in the map: API Activity,

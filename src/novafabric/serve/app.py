@@ -5354,7 +5354,9 @@ def create_app(
 
         Fail closed (review r6): the bypass is stored only after its
         ``seal.bypass.create`` entry is in the hash-chained audit log; if that
-        entry cannot be written the route answers 503 and stores nothing. Each
+        entry cannot be written the route answers 503 and stores nothing; if the
+        bundle cannot be stored after the entry was written, a ``seal.bypass.abort``
+        entry withdraws it and the route answers 503 (review r8). Each
         attempt that reaches the store is also recorded in the dashboard audit
         log, as the CLI's is in the chained log.
         """
@@ -5365,7 +5367,7 @@ def create_app(
         from cryptography.x509 import NameOID, load_pem_x509_certificate
 
         from novafabric.promote.bundle_store import PromoteBundleStore
-        from novafabric.promote.exceptions import BypassAuditError, PredicateValidationError
+        from novafabric.promote.exceptions import BypassRefusedError, PredicateValidationError
         from novafabric.promote.predicates import (
             BYPASS_PAYLOAD_TYPE,
             build_bypass_predicate,
@@ -5475,7 +5477,10 @@ def create_app(
                 surface="serve",
                 authorized_by=authorized_by,
             )
-        except BypassAuditError as exc:
+        except BypassRefusedError as exc:
+            # Audit log unwritable, or the bundle could not be stored (then a
+            # seal.bypass.abort entry withdraws the create, review r8). Either way
+            # nothing was stored: record the attempt and answer 503.
             _record_bypass_attempt(audit_args, cli_equivalent, actor_fp, error=str(exc))
             raise HTTPException(status_code=503, detail=str(exc)) from None
 

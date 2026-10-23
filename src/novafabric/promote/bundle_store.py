@@ -16,7 +16,11 @@ from novafabric.promote.bypass_notify import (
     channel_names,
     dispatch_bypass_event,
 )
-from novafabric.promote.exceptions import BundleNotFoundError, BypassAuditError
+from novafabric.promote.exceptions import (
+    BundleNotFoundError,
+    BypassAuditError,
+    BypassStoreError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +73,44 @@ def _audit_bypass_created(
             "bypass refused: the audit log could not be written "
             f"({type(exc).__name__}); nothing was stored"
         ) from exc
+
+
+def _audit_bypass_aborted(
+    *, capsule_id: str, bypass_uuid: str, actor: str, surface: str, error: BaseException
+) -> bool:
+    """Append the compensating ``seal.bypass.abort`` entry; ``False`` if it fails.
+
+    Best effort: the bypass is already refused, so a failure here is logged at
+    ERROR and reported to the caller, never raised in place of the refusal.
+    """
+    from novafabric.audit import (  # noqa: PLC0415 — keep the store import-light
+        AuditEventType,
+        AuditLog,
+        resolve_audit_log_path,
+    )
+
+    try:
+        AuditLog(resolve_audit_log_path()).append(
+            event_type=AuditEventType.SEAL_BYPASS_ABORT,
+            actor=actor,
+            resource_id=capsule_id,
+            details={
+                "bypass_uuid": bypass_uuid,
+                "reason": "store_failed",
+                "error": type(error).__name__,
+                "surface": surface,
+            },
+        )
+    except Exception as exc:
+        logger.error(
+            "bypass %s: its seal.bypass.abort entry could not be written (%s); the "
+            "audit log shows a seal.bypass.create for a bypass that was never stored",
+            bypass_uuid,
+            type(exc).__name__,
+            extra={"capsule_id": capsule_id, "bypass_uuid": bypass_uuid},
+        )
+        return False
+    return True
 
 
 class PromoteBundleStore:
@@ -207,9 +249,17 @@ class PromoteBundleStore:
            is raised: a bypass skips the two-person rule, and the audit entry is its
            compensating control, so no entry means no bypass (fail closed). Nothing
            is stored and nothing is announced.
-        3. The file is renamed into place (atomic on one filesystem).
+        3. The file is renamed into place (atomic on one filesystem). If that
+           fails, the staging file is removed, a compensating ``seal.bypass.abort``
+           entry is appended for the same ``bypass_uuid`` and
+           :class:`BypassStoreError` is raised: the log never shows a stored bypass
+           that does not exist without also showing it was withdrawn.
         4. The configured channels are notified. A failing channel is logged and
            audited (``seal.bypass.notify``) but never blocks the bypass.
+
+        A failure to write the staging file raises :class:`BypassStoreError`
+        before anything is audited. Both refusals share the base
+        :class:`~novafabric.promote.exceptions.BypassRefusedError`.
         """
         bypass_uuid = str(uuid.uuid4())
         path = self.bypass_path(capsule_id, bypass_uuid)
@@ -220,7 +270,14 @@ class PromoteBundleStore:
             "valid_until": valid_until,
         }
         staged = path.with_name(f".{bypass_uuid}.json.staged")
-        staged.write_text(json.dumps(doc), encoding="utf-8")
+        try:
+            staged.write_text(json.dumps(doc), encoding="utf-8")
+        except OSError as exc:
+            staged.unlink(missing_ok=True)
+            raise BypassStoreError(
+                f"bypass refused: it could not be staged ({type(exc).__name__}); "
+                "nothing was stored or audited"
+            ) from exc
         try:
             _audit_bypass_created(
                 capsule_id=capsule_id,
@@ -232,10 +289,31 @@ class PromoteBundleStore:
                 authorized_by=authorized_by,
                 channels=self.notification_channels(),
             )
-            os.replace(staged, path)
         except BaseException:
             staged.unlink(missing_ok=True)
             raise
+        try:
+            os.replace(staged, path)
+        except BaseException as exc:
+            staged.unlink(missing_ok=True)
+            aborted = _audit_bypass_aborted(
+                capsule_id=capsule_id,
+                bypass_uuid=bypass_uuid,
+                actor=actor,
+                surface=surface,
+                error=exc,
+            )
+            if not isinstance(exc, Exception):
+                raise
+            note = (
+                "a seal.bypass.abort entry withdraws its seal.bypass.create"
+                if aborted
+                else "its abort entry could not be written either; the audit log "
+                "shows a seal.bypass.create for a bypass that does not exist"
+            )
+            raise BypassStoreError(
+                f"bypass refused: it could not be stored ({type(exc).__name__}); {note}"
+            ) from exc
         dispatch_bypass_event(
             self._notifier,
             BypassEvent(
