@@ -262,6 +262,10 @@ _BUILT_IN_HOOKS: tuple[tuple[str, str, str], ...] = (
     ("agents", "novafabric.adapters._oai_tool_seam", "OaiToolHook"),
     ("requests",   "novafabric.capture.hooks._requests",   "RequestsHook"),
     ("httpx",      "novafabric.capture.hooks._httpx",      "HttpxHook"),
+    # openai 3.x builds its default client on httpx2, not httpx; without this
+    # an OpenAI call left no transport record and no network event. Optional:
+    # installed only when httpx2 is importable (never a NovaFabric dependency).
+    ("httpx2",     "novafabric.capture.hooks._httpx",      "Httpx2Hook"),
     ("aiohttp",    "novafabric.capture.hooks._aiohttp",    "AiohttpHook"),
     ("urllib3",    "novafabric.capture.hooks._urllib3",    "Urllib3Hook"),
 )

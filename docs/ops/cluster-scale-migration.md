@@ -112,7 +112,7 @@ export NOVAFABRIC_METADATA_DSN="$NOVAFABRIC_POSTGRES_DSN"
 nova db upgrade --track registry --backend postgres
 nova db upgrade --backend postgres
 
-# Registry tables (assets, eval_results, lineage_nodes, lineage_edges):
+# Registry tables (assets, eval_results, lineage_nodes, lineage_edges, asset_status_history):
 nova migrate-to-postgres --target "$NOVAFABRIC_POSTGRES_DSN" --log migration.jsonl
 
 # MetadataStore tables (runs and run metadata):
@@ -121,7 +121,10 @@ nova db migrate-to-postgres --source ~/.novafabric/metadata.db \
 ```
 
 `nova migrate-to-postgres` prints a per-table row-count table (`assets`,
-`eval_results`, `lineage_nodes`, `lineage_edges`) followed by
+`eval_results`, `lineage_nodes`, `lineage_edges`, `asset_status_history` — the
+append-only lifecycle history `nova rollback` reads, copied with its row ids and
+its `asset_id`/`spec_sha256` binding, NULL on rows written before the binding
+existed) followed by
 `PASS — row counts verified.`; exit `0` success, `1` row-count mismatch, `2`
 connection error. `nova db migrate-to-postgres` uses the same exit codes.
 
@@ -162,15 +165,17 @@ export NOVAFABRIC_METADATA_DSN="postgresql+asyncpg://novafabric_app:<pw>@pgbounc
 > command exists (the real command group is `nova lineage-store`, hyphenated).
 
 The lineage migration command that exists today is `nova lineage-store migrate`, which
-loads edges into a **SQLite** lineage store (the only target) from a Parquet export or an
-Object Capsule Store:
+loads edges into a **SQLite** lineage store (the only target) from a Parquet export.
+Its `--from-ocs` source is **planned**, not implemented: it refuses with exit 1 and
+writes nothing (it used to report an empty migration as a success). To rebuild lineage
+from capsule directories, use `nova lineage import`:
 
 ```bash
 # Dry-run (default) then commit; target is a SQLite store via --db.
-nova lineage-store migrate --from-ocs --ocs-tenant org \
-  --ocs-run-ids run-001,run-002 --db "$NOVA_HOME/novafabric.db"
-nova lineage-store migrate --from-ocs --ocs-tenant org \
-  --ocs-run-ids run-001,run-002 --db "$NOVA_HOME/novafabric.db" --commit
+nova lineage-store migrate edges.parquet --db "$NOVA_HOME/novafabric.db"
+nova lineage-store migrate edges.parquet --db "$NOVA_HOME/novafabric.db" --commit
+# Re-index lineage from local capsules instead:
+nova lineage import "$NOVA_HOME/capsules/"
 ```
 
 **The actual production path into KuzuDB today is not this bulk-migrate command —
@@ -220,7 +225,8 @@ export AWS_ACCESS_KEY_ID="minio-access-key"
 export AWS_SECRET_ACCESS_KEY="minio-secret"
 
 # Validate WORM readiness first. This checks a single property — that the target
-# bucket has Object Lock in COMPLIANCE mode — and raises otherwise.
+# bucket's default retention (Rule.DefaultRetention.Mode) is COMPLIANCE — and exits
+# 1, naming the mode found, for GOVERNANCE or no default retention.
 nova storage validate
 
 # Migrate capsules from local filesystem to OCS.

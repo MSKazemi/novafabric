@@ -1,8 +1,10 @@
 """SQLite-to-Postgres migration logic for ``nova migrate-to-postgres``.
 
-Reads all rows from the four canonical tables in a source SQLite database and
-writes them into a target Postgres database via psycopg3 using ``INSERT … ON
-CONFLICT DO NOTHING`` (idempotent upsert semantics).
+Reads all rows from the registry tables in a source SQLite database (assets,
+eval results, the lineage index, and the append-only ``asset_status_history``
+that ``nova rollback`` reads) and writes them into a target Postgres database
+via psycopg3 using ``INSERT … ON CONFLICT DO NOTHING`` (idempotent upsert
+semantics).
 
 Design constraints
 ------------------
@@ -70,10 +72,43 @@ _TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
         "created_at",
         "payload",
     ),
+    # Append-only lifecycle history (registry/store.py). The SQLite row ids are
+    # copied as-is: they are the conflict key that makes a re-run add nothing,
+    # and they carry the order of the transitions.
+    "asset_status_history": (
+        "id",
+        "asset_name",
+        "version",
+        "from_status",
+        "to_status",
+        "changed_at",
+        "changed_by",
+        "via",
+        "asset_id",
+        "spec_sha256",
+    ),
+}
+
+# Nullable columns added to a table after it first shipped. A source registry
+# from before the column existed is read with NULL in its place: the source is
+# opened read-only, so the registry's own ALTER TABLE never runs on it.
+_ADDITIVE_NULLABLE_COLUMNS: dict[str, frozenset[str]] = {
+    "asset_status_history": frozenset({"asset_id", "spec_sha256"}),
+}
+
+# Rows are read in this order, so the target receives them in the source's order.
+_TABLE_ORDER_BY: dict[str, str] = {
+    "asset_status_history": "id",
 }
 
 # Tables that must be inserted *before* tables with FK dependencies.
-_TABLE_ORDER = ("assets", "eval_results", "lineage_nodes", "lineage_edges")
+_TABLE_ORDER = (
+    "assets",
+    "eval_results",
+    "lineage_nodes",
+    "lineage_edges",
+    "asset_status_history",
+)
 
 
 # ── Result types ─────────────────────────────────────────────────────────────
@@ -141,9 +176,16 @@ def _read_table(
     """Return (row_count, rows) for *table*, or (0, []) if the table is absent."""
     if not _table_exists(conn, table):
         return 0, []
-    cols = ", ".join(_TABLE_COLUMNS[table])
+    present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    additive = _ADDITIVE_NULLABLE_COLUMNS.get(table, frozenset())
+    cols = ", ".join(
+        col if col in present or col not in additive else f"NULL AS {col}"
+        for col in _TABLE_COLUMNS[table]
+    )
+    order_by = _TABLE_ORDER_BY.get(table)
+    order = f" ORDER BY {order_by}" if order_by else ""
     rows_raw = conn.execute(
-        f"SELECT {cols} FROM {table}"  # noqa: S608
+        f"SELECT {cols} FROM {table}{order}"  # noqa: S608
     ).fetchall()
     rows = [tuple(r) for r in rows_raw]
     return len(rows), rows
@@ -201,6 +243,23 @@ def _ensure_postgres_schema(pg_conn: Any, table: str) -> None:
                 confidence     TEXT,
                 created_at     TEXT NOT NULL,
                 payload        TEXT NOT NULL
+            )
+        """,
+        # No identity default: every row arrives with its SQLite id, and that
+        # id is the ON CONFLICT key. asset_id/spec_sha256 are NULL on rows
+        # written before the registration binding existed.
+        "asset_status_history": """
+            CREATE TABLE IF NOT EXISTS asset_status_history (
+                id          BIGINT PRIMARY KEY,
+                asset_name  TEXT NOT NULL,
+                version     TEXT NOT NULL,
+                from_status TEXT,
+                to_status   TEXT NOT NULL,
+                changed_at  TEXT NOT NULL,
+                changed_by  TEXT NOT NULL,
+                via         TEXT NOT NULL,
+                asset_id    TEXT,
+                spec_sha256 TEXT
             )
         """,
     }

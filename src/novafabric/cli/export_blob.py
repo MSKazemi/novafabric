@@ -146,7 +146,11 @@ def export_blob_cmd(
     destination — already-present blobs are skipped, so re-runs are idempotent
     and an interrupted export resumes. The signed ``export-manifest.json`` is
     written LAST: its presence means the batch is complete. Source capsules are
-    never modified.
+    never modified. A capsule holding a symbolic link refuses the batch
+    (exit 2, nothing written): packing never follows a link. So does a member
+    whose capsule.yaml or redaction-proof.json is present but unusable (a FIFO,
+    directory); in a --since/--until/--query scan such a capsule refuses the
+    selection (exit 1) instead of silently dropping out of the batch.
 
     Scope: batch (N capsules).
 
@@ -171,7 +175,7 @@ def export_blob_cmd(
         worm_retain_until,
     )
     from novafabric.export_blob.models import MANIFEST_FILENAME, WormIntent
-    from novafabric.export_blob.packing import CapsulePackError
+    from novafabric.export_blob.packing import CapsulePackError, CapsulePackLinkError
     from novafabric.export_blob.service import (
         ExportSelectionError,
         KeyringSigner,
@@ -218,7 +222,9 @@ def export_blob_cmd(
             worm=worm_intent,
             allow_unsafe_skips=allow_unsafe_skips,
         )
-    except UnsafeSkipsExportError as exc:
+    except (UnsafeSkipsExportError, CapsulePackLinkError) as exc:
+        # A capsule holding a symlink is refused like an unsafe-skips one:
+        # nothing is written, and re-running will not change the answer.
         err_console.print(f"[red]Export refused:[/red] {exc}")
         raise typer.Exit(code=2)
     except (CapsulePackError, DestinationError, OSError) as exc:

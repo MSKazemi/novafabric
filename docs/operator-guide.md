@@ -301,7 +301,7 @@ nova capture \
 | `workdir` | no | Container working directory |
 | `user` | no | `--user` value (e.g. `1000:1000`); recommended to avoid root-owned capsule files |
 | `extra_volumes` | no | List of `host:container[:opts]` mount strings |
-| `extra_env` | no | Dict of additional env vars for the container |
+| `extra_env` | no | Dict of additional env vars for the container. Passed as `docker run -e NAME`, never `-e NAME=VALUE` — see below |
 
 **Project-level defaults** in `.novafabric/runners.yaml`:
 
@@ -324,6 +324,30 @@ specified in `extra_env` into the container. It does not pass through the
 full host environment, which would risk leaking credentials into the container
 at runtime.
 
+**Values never go on `docker run`'s command line (works today).** Each variable
+is passed as `-e NAME`, and its value is placed in the environment of the
+`docker` client process, from which Docker copies it into the container. A
+process's argv is readable by every user on the host (`ps`,
+`/proc/<pid>/cmdline`) for as long as the container runs; its environment is
+readable only by the same user and root. Before this change the runner ran
+`docker run -e OPENAI_API_KEY=sk-…`, so an `extra_env` API key was visible to
+every local user. The same applies to eval containers (`run_eval_container`).
+
+What is still visible:
+
+- `docker inspect <container>` shows the container's environment, values
+  included, to anyone who can reach the Docker daemon (on most hosts that is
+  root-equivalent already).
+- `--runner-option extra_env=K=V` on the `nova capture` command line is itself
+  in `nova capture`'s argv; put the value in `.novafabric/runners.yaml` (mode
+  0600) instead.
+- A variable the `docker` client itself reads — `PATH`, `HOME`, `USER`,
+  `TMPDIR`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, the proxy
+  variables, and anything starting with `DOCKER_`, `BUILDKIT_` or `LD_` — cannot
+  be placed in the client's environment without changing which daemon, binary
+  or configuration the client uses, so such a name is still passed as
+  `-e NAME=VALUE`. Never put a credential in one of these names.
+
 ### 3.3 SLURM cluster (SlurmRunner)
 
 **Works today.** This section is the most detailed because SLURM introduces
@@ -331,7 +355,8 @@ constraints that do not exist for local or Docker runners.
 
 #### Overview
 
-The SlurmRunner submits the workload via `sbatch --wrap`, polls for completion
+The SlurmRunner submits a generated batch script on `sbatch`'s stdin (never
+`--wrap`; see [How the job is submitted](#how-the-job-is-submitted)), polls for completion
 using `scontrol show job` (primary) with `sacct` as a fallback, and reads
 stdout/stderr from per-job output files. Capsule artifacts accumulate on a
 shared filesystem, then the orchestrator reads them on the submit node after
@@ -399,7 +424,7 @@ This is how wire-level capture fires on compute nodes.
 
 Before submitting the job, `SlurmRunner` writes `sitecustomize.py` to the
 capsule directory. The capsule directory is on shared filesystem, so it is
-visible to the compute node. The `sbatch --wrap` script prepends the capsule
+visible to the compute node. The batch script (sent on `sbatch`'s stdin) prepends the capsule
 directory to `PYTHONPATH`. When the compute node's Python starts, it
 auto-loads `sitecustomize`, which installs NovaFabric's HTTP hooks before
 any user code runs.
@@ -424,8 +449,8 @@ the job. It does not silently submit a job that will produce empty capsules.
 | `NOVAFABRIC_URL_REGISTRY` | optional | Path to a site-local URL registry file (see section 4) |
 
 `NOVAFABRIC_CAPSULE_DIR` and `NOVAFABRIC_SPAN_ID` are set automatically by the
-orchestrator and injected into the sbatch wrap script. Do not set them manually
-when using `nova capture`.
+orchestrator and exported by the batch script the runner pipes to `sbatch`. Do not
+set them manually when using `nova capture`.
 
 #### runner_options for SlurmRunner
 
@@ -443,6 +468,26 @@ Pass via `--runner-option key=value` on the CLI or via `.novafabric/runners.yaml
 | `constraint` | no | Node feature constraint (`--constraint`) |
 | `poll_interval_s` | no | How often to poll for job state, in seconds. Default 5.0 |
 | `output_dir` | no | Where to write `slurm-<jobid>.out/.err`. Default: capsule directory |
+| `extra_env` | no | Variables to export in the job, e.g. `extra_env=LOG_LEVEL=debug,HF_HOME=/scratch/hf`, or as a JSON object of strings, `extra_env='{"LOG_LEVEL":"debug"}'` (needed when a value contains a comma; a malformed one fails setup). The job receives only these, `NOVAFABRIC_*` (minus credentials) and `PATH` (ADR-0270, ADR-0311). Names must be shell identifiers |
+
+#### How the job is submitted
+
+The runner generates a `/bin/sh` batch script — the `export` lines, then `exec` of
+your command — and hands it to `sbatch` **on stdin**. It is never passed as
+`sbatch --wrap <script>` and never written to the capsule directory: a command line is
+readable by every user on the submit host (`ps`, `/proc/<pid>/cmdline`), and the
+capsule directory is on a shared filesystem and is sealed into the capsule. SLURM
+stores the script with the job, where you and the cluster's administrators can read
+it (`scontrol write batch_script <jobid>`).
+
+Every value is single-quoted in the script (`shlex.quote`), so `$`, backticks, `;` and
+`&` in an `extra_env` value or a command argument reach the job verbatim; they are not
+expanded or executed on the compute node.
+
+> **Credentials in `extra_env`.** The value is visible to the cluster's
+> administrators (above), and if you type it on the command line it is in
+> `nova capture`'s own argv for the whole run. Prefer a credential the job reads from
+> a file in your home directory with mode `0600`.
 
 #### State polling: scontrol and sacct
 
@@ -611,7 +656,7 @@ implicitly, name it explicitly now:
 nova capture --runner kubernetes \
   --runner-option image=myorg/agent-runtime:abc1234 \
   --runner-option namespace=novafabric-runs \
-  --runner-option extra_env='{"LOG_LEVEL":"debug"}' \
+  --runner-option extra_env=LOG_LEVEL=debug \
   python my_agent.py
 ```
 
@@ -647,10 +692,14 @@ live cluster the way `slurm` has. They were previously documented nowhere, which
 is not the same as not existing — `nova capture --runner lsf` has been accepted
 by the CLI for some time.
 
-Both follow the SLURM model: write a job script into the capsule directory,
-submit it, poll for completion, and read stdout/stderr back. Wire-level capture
-works — each writes a fixed job-script template that puts the hook loader on
-`PYTHONPATH`.
+Both follow the SLURM model: build a job script, submit it, poll for completion,
+and read stdout/stderr back. Wire-level capture works — each uses a fixed
+job-script template that puts the hook loader on `PYTHONPATH`. `lsf` pipes its
+script to `bsub` on stdin and never writes it to disk, because it carries the
+`extra_env` values (as for `slurm`, above); `pbs` takes no `extra_env` and writes
+its script, which holds no values from your environment, to
+`nova-<run>.pbs` in the capsule directory for `qsub`. Arguments are single-quoted in
+both scripts, so the job sees them verbatim.
 
 ```bash
 nova capture --runner lsf \
@@ -674,6 +723,7 @@ nova capture --runner pbs \
 | resources | `resource_requirement` → `-R` | — |
 | poll | `poll_interval_s`, default 30.0 | `poll_interval_s`, default 30.0 |
 | logs | `output_dir`, default capsule dir | `output_dir`, default capsule dir |
+| environment | `extra_env`, exported in the stdin script (ADR-0311) | — (`#PBS -v` names only) |
 
 **Preconditions — not verified by the runner; the job fails loudly if wrong:**
 
@@ -807,7 +857,8 @@ export NOVAFABRIC_URL_REGISTRY=/lustre/scratch/myproject/nova-url-registry.yaml
 ```
 
 Source the env file before submitting jobs. The `SlurmRunner` forwards
-`NOVAFABRIC_URL_REGISTRY` to the compute node's environment via the wrap script,
+`NOVAFABRIC_URL_REGISTRY` to the compute node's environment via the batch script
+(the job receives `NOVAFABRIC_*` minus credentials),
 so the compute node's hooks load the site registry.
 
 ### Registry file format
@@ -944,10 +995,14 @@ kubectl get pods -n <namespace> -l job-name=nf-<run-id-lowercase>
 kubectl cp <namespace>/<pod>:/novafabric/capsule/. ~/.novafabric/capsules/<run-id>/
 ```
 
-### Wire-capture records classified as gen_ai.system=unknown
+### Wire calls to an unlisted endpoint are not recorded
 
-The URL being called does not match any entry in the active URL registry.
-The call is captured (hooks are working) but cannot be classified.
+The URL being called does not match any entry in the active URL registry, so the
+wire hooks skip it: no record is written at all (there is no
+`gen_ai.system=unknown` record — each hook records a request only when
+`UrlRegistry.is_known()` is true; `capture/hooks/_httpx.py`, `_requests.py`,
+`_urllib3.py`, `_aiohttp.py`). The symptom is a model call that is missing from
+`model-calls.jsonl`.
 
 Add an entry to your URL registry override (see section 4). Then check the
 active registry path:
@@ -1009,7 +1064,7 @@ Disabled by default. This is the only path that leaves the trust boundary.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `NOVAFABRIC_DB_URL` | — | Target Postgres URL for `nova db` migrations |
+| `NOVAFABRIC_DB_URL` | — | Not read by `nova serve` (its `/api/health` `backend_type` reports the SQLite registry it actually opens; before 2026-10-23 this variable flipped that label to `postgres`). It is **not** a migration target: `nova migrate-to-postgres --target` and `nova db` read `NOVAFABRIC_POSTGRES_DSN` |
 | `NOVAFABRIC_API_WORKERS` | `1` | ⚠ Read by `SQLiteMetadataStore`, which **refuses to construct** when this is > 1. It is the guard behind "SQLite cannot be shared across writer processes" — see §3 on `--workers` |
 | `NOVAFABRIC_AUDIT_LOG_PATH` | `$XDG_DATA_HOME/novafabric/audit.jsonl` when `XDG_DATA_HOME` is set, else `~/.local/share/novafabric/audit.jsonl` (`NOVAFABRIC_HOME` deliberately does not move it) | Hash-chained audit log path. Every writer and reader (exports, promotions, holds, `nova audit-log`, `nova policy explain`, `nova serve`, backup) resolves it the same way, at the moment it is used |
 
@@ -1034,6 +1089,30 @@ request.
 | `NOVAFABRIC_SERVER_METRICS_EXEMPT` | `false` | Exempt `/metrics` from auth |
 | `NOVA_BUILD_SHA` | — | Build SHA reported in observability output |
 | `NOVA_COLLECTOR_METRICS_URL` | `http://localhost:9464/metrics` | Where the dashboard scrapes collector metrics |
+
+### Cluster collector receiver (`collector_app`)
+
+Read by `novafabric.collector_app:create_collector_app` (the Python `POST /capsule`
+receiver), not by `nova server`. Full walkthrough:
+[cluster-scale tutorial](tutorials/cluster-scale.md#running-the-python-collector-receiver-securely).
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVA_COLLECTOR_TOKEN` | unset (local mode) | Every `POST /capsule` must send `X-Nova-Token: <token>`, from any address. Unset: only loopback callers with a localhost `Host` and no proxy header are served, everyone else gets `403` |
+| `NOVA_COLLECTOR_TENANT` | `default` | The tenant the caller is authenticated as; every event is stored under it |
+
+Each event in a batch needs a string `event_type`; a malformed event (no `event_type`,
+a field of the wrong type, a token count out of range) refuses the whole batch with
+`422` naming the field. The full event contract is in the
+[cluster-scale tutorial](tutorials/cluster-scale.md#running-the-python-collector-receiver-securely).
+
+> **⚠ Set `NOVA_COLLECTOR_TOKEN` whenever anything proxies to the collector.**
+> Local mode refuses a request carrying `Forwarded`, `X-Forwarded-*`, `X-Real-IP`
+> or `Via`, but it cannot see a same-host reverse proxy that adds none of them —
+> nginx's `proxy_pass http://127.0.0.1:8090;` with its defaults connects from
+> loopback, sends `Host: 127.0.0.1:8090` and no forwarding header. Behind such a
+> proxy **every remote caller looks local** and is served without authentication.
+> No setting other than a token closes this; the startup warning says so too.
 
 ### API shape
 
@@ -1107,8 +1186,9 @@ inclusion proof in an append-only **Merkle log** (the proof is also carried in t
 since signing; a layer that was not requested prints `NOT PRESENT` rather than failing. This is what
 turns "here is a capsule" into "here is a capsule I can prove was not tampered with."
 
-NovaSeal is **opt-in** — if `~/.novafabric/novaseal.yaml` (or the
-`NOVAFABRIC_SEAL_CONFIG` environment variable) is absent, capture behaves exactly
+NovaSeal is **opt-in** — if `$NOVAFABRIC_HOME/novaseal.yaml`
+(`~/.novafabric/novaseal.yaml` when `NOVAFABRIC_HOME` is unset) and the
+`NOVAFABRIC_SEAL_CONFIG` environment variable are both absent, capture behaves exactly
 as before and no sealing occurs. This keeps the default path zero-dependency and
 air-gap friendly.
 
@@ -1152,14 +1232,19 @@ and configure `merkle_db:` inside it. See [novaseal-configuration.md §3.2](nova
 
 ```bash
 nova verify /path/to/capsule/
-# Checks three layers of integrity in the .seal/ directory:
+# Five checks over the capsule and its .seal/ directory:
 #   • ECDSA P-256 DSSE signature   → signature_ok=True
-#   • RFC 3161 timestamp           → timestamp_ok=True (None when no token: absent, not failed)
-#   • Merkle log inclusion proof   → log_integrity_ok=True
-#   • signer trust level           → identity_trust=self-asserted | local-ca-pinned | ca-anchored
-# Exits 0 if all checks pass, 1 otherwise. --json prints one JSON object.
+#   • RFC 3161 timestamp           → timestamp_ok=True (None when no token: absent, not failed);
+#                                    timestamp_trust=anchored | unanchored | absent | invalid
+#   • Merkle log inclusion proof   → log_integrity_ok=True (plus the sealer's own log when configured)
+#   • manifest binding             → capsule.yaml agrees with the signed payload
+#   • evidence binding             → every file's sha256 matches evidence_digests
+# It also reports the signer trust level (identity_trust=self-asserted | local-ca-pinned |
+# ca-anchored) and fails on recorded workload tampering or a link/special file in the capsule.
+# Exits 0 if all checks pass, 1 otherwise, 2 on a usage error (an incompatible flag
+# combination). --json prints one JSON object.
 
-# Explicit config path (instead of ~/.novafabric/novaseal.yaml):
+# Explicit config path (instead of $NOVAFABRIC_HOME/novaseal.yaml):
 nova verify --seal-config ~/configs/novaseal.yaml /path/to/capsule/
 ```
 
@@ -1274,7 +1359,9 @@ ADR-0018/ADR-0058 roles (`reader,writer,admin,auditor,promoter,approver`), and
 `clock_skew_seconds > 300` are rejected at load time. Unmapped attribute values
 fail closed to `default_roles` (default `[]`) — never to `admin`. If
 `attribute_role_map` is absent, roles come from the existing local
-role-assignment table (`nova server assign-role`), same as the OIDC fallback.
+role-assignment table (`nova server assign-role`), same as the OIDC fallback —
+which is consulted only once the workspace/org model is in use (ADR-0178);
+`assign-role` warns when a row is not in force.
 
 ### Registering NovaFabric with the IdP
 
@@ -1401,7 +1488,7 @@ The `nova` service uses three mounts. All host paths default to
 
 **All testbench workloads must write capsules to the host path that maps to
 `/data/capsules`.** Do not use a relative `capsules/` path or a symlink inside
-the testbench; set `NOVAFABRIC_HOME` (or `NOVA_CAPSULE_DIR`) explicitly.
+the testbench; set `NOVAFABRIC_HOME` (or `NOVAFABRIC_CAPSULE_DIR`) explicitly.
 See `deploy/docker/docker-compose.yml` for the exact mount syntax.
 
 ### 7.3 Data-path environment variables
@@ -1413,21 +1500,21 @@ without any error.
 | Variable | Value in Docker | Default outside Docker | Effect |
 |----------|----------------|----------------------|--------|
 | `NOVAFABRIC_HOME` | `/data/nova` | `~/.novafabric` | Registry DB, serve token, audit log root |
-| `NOVAFABRIC_EVIDENCE_DIR` | `/data/capsules/evidence` | `~/.novafabric/evidence` | Where `nova export-evidence` writes ZIPs; where the Evidence tab reads them |
+| `NOVAFABRIC_EVIDENCE_DIR` | `/data/capsules/evidence` | `$NOVAFABRIC_HOME/evidence` (`~/.novafabric/evidence`) | Where `nova export-evidence` writes ZIPs; where the Evidence tab reads them |
+| `NOVAFABRIC_SERVE_PATH_ROOTS` | *(unset)* | *(unset)* | Extra absolute directories (`:`-separated) that `nova serve` may read and write when a request names a path. Without it, writes are confined to `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence` and `$NOVAFABRIC_EVIDENCE_DIR`, and reads also to `$NOVAFABRIC_HOME` and the capsule dir. Reads never reach the server's secrets (token stores, `.env`, `dek.db`, ratchet state, `config.yaml`, audit logs, and for source paths key material), even under a listed root. Replaces `NOVAFABRIC_SERVE_ALLOW_ANY_PATH`, which is no longer honoured |
 | `NOVAFABRIC_METADATA_BACKEND` | `postgres` | `sqlite` | MetadataStore backend |
 | `NOVAFABRIC_METADATA_DSN` | `postgresql://nova:nova@postgres:5432/nova` | *(SQLite file)* | DB connection string |
-| `NOVAFABRIC_SERVER_BACKEND` | `postgres` | *(sqlite)* | Server-mode Postgres DSN alias |
-| `NOVAFABRIC_POSTGRES_DSN` | same as above | — | Used by DB migration commands |
-| `NOVA_WATCHER_BACKEND` | `auto` | `auto` | `CapsuleWatcher` backend: `auto` (polling, or watchdog if installed), `polling`, `watchdog` |
-| `NOVA_WATCHER_INTERVAL` | `2.0` | `2.0` | Poll interval in seconds for `PollingBackend` and `nova ingest-capsule --watch` |
+| `NOVAFABRIC_SERVER_BACKEND` | `postgres` | `sqlite` | Server-mode (`nova server start`) backend selector: `sqlite` or `postgres` (overrides `backend:` in `server.yaml`) |
+| `NOVAFABRIC_POSTGRES_DSN` | `postgresql://nova:nova@postgres:5432/nova` | — | The Postgres DSN for server mode (when the backend is `postgres`), `nova db` and `nova migrate-to-postgres`, and the fallback DSN for `nova backup create --profile pg` and `nova restore` of a pg set when `NOVA_DSN` is unset |
+| `NOVA_WATCHER_BACKEND` | `auto` | `auto` | `CapsuleWatcher` backend: `auto` (watchdog if installed, else polling), `polling`, `watchdog`. Any other value stops `nova serve` at startup (exit 2). An explicit `nova ingest-capsule --backend` wins. |
+| `NOVA_WATCHER_INTERVAL` | `2.0` | `2.0` | Poll interval in seconds for `PollingBackend` and `nova ingest-capsule --watch`; must be a finite number > 0. An explicit `--interval` wins. |
 
-> **Why `NOVAFABRIC_EVIDENCE_DIR` matters:** The serve app defaults to
-> `$HOME/.novafabric/evidence`, and inside the container that is a path that is
-> not mounted anywhere — it disappears on restart, and since the image runs as
-> the non-root `nova` user (uid 1000) the home directory does not even exist to
-> be written. The correct path is `/data/capsules/evidence`
-> (inside the capsule volume), which persists across restarts and is written to
-> by the testbench export stage.
+> **Why `NOVAFABRIC_EVIDENCE_DIR` matters:** Without it the serve app uses
+> `$NOVAFABRIC_HOME/evidence` (`_paths.evidence_dir`) — in the compose stack
+> `/data/nova/evidence`, which is on the persistent volume, but is not where the
+> testbench export stage writes. The compose file sets `/data/capsules/evidence`
+> (inside the capsule volume) so the Evidence tab and the testbench export stage
+> share one directory.
 
 ### 7.4 Fresh deployment checklist
 
@@ -1509,7 +1596,11 @@ the Compose healthcheck probes.
 | `NOVA_DB_REVISION` | `head` | Alembic revision to upgrade to. The server refuses to start when stamped behind head, so pinning below head breaks a server-mode deploy |
 
 The Helm chart exposes the same switch as `mode: dashboard | server` with
-`server.workers` (see `deploy/helm/novafabric/values.yaml`).
+`server.workers` (see `deploy/helm/novafabric/values.yaml`). Unlike the Compose
+entrypoint, the chart never adds `--insecure` on its own: `mode: dashboard`
+renders only with `serve.insecure: true` plus
+`serve.acknowledgeInsecureExposure` (ADR-0230), and `helm template` refuses
+otherwise rather than produce a pod that `nova serve` would refuse to start.
 
 ---
 

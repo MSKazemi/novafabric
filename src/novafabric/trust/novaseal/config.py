@@ -2,7 +2,7 @@
 
 Auto-discovery order:
   1. NOVAFABRIC_SEAL_CONFIG environment variable (path to YAML)
-  2. ~/.novafabric/novaseal.yaml
+  2. $NOVAFABRIC_HOME/novaseal.yaml (~/.novafabric/novaseal.yaml when NOVAFABRIC_HOME is unset)
   3. None — NovaSeal disabled
 
 novaseal.yaml schema (local profile):
@@ -21,7 +21,8 @@ Timestamping is **opt-in** (ADR-0292): there is no default TSA. NovaFabric never
 contacts a timestamp authority unless ``tsa_url`` or ``tsa_urls`` names one. The
 public FreeTSA service (``https://freetsa.org/tsr``) is a usable example for
 development; it is not eIDAS-qualified and not a default.
-    merkle_db: /path/to/merkle.db      # optional; defaults to ~/.novafabric/merkle.db
+    merkle_db: /path/to/merkle.db      # optional; defaults to $NOVAFABRIC_HOME/novaseal-merkle.db
+                                       # (or a postgres:// DSN; NOVAFABRIC_SEAL_DB_PATH overrides)
 
 novaseal.yaml schema (aws_kms profile):
 
@@ -74,14 +75,29 @@ EKU and its chain to these anchors at the token's genTime, offline. ``crl_dir`` 
 
     tsa_ca_certs:
       - /etc/novaseal/tsa/freetsa-cacert.pem
+
+Without ``tsa_ca_certs`` (or ``nova verify --tsa-ca-bundle``) a timestamp is reported
+``timestamp_trust: unanchored``: the token is intact, but its time is not trusted.
+There is no built-in default TSA trust bundle, and ``tsa_url`` anchors nothing (it
+is only where seals request tokens).
+
+The optional ``previous_merkle_dbs`` key (ADR-0297 Amendment 2) lists this host's
+earlier Merkle logs — after an ADR-0313 migration to a new v2 ``merkle_db``, the
+retired v1 log. Verification only; nothing is appended to them. Without it, a v1
+capsule verified on a host whose log is v2 reports ``sealer_log:
+unverifiable-other-version`` (``nova verify --strict`` fails on it):
+
+    merkle_db: ~/.novafabric/novaseal-merkle-v2.db
+    previous_merkle_dbs:
+      - ~/.novafabric/novaseal-merkle.db
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from novafabric._paths import nova_home
 
@@ -110,6 +126,7 @@ def _default_config_path() -> Path:
 
 _SUPPORTED_PROFILES = frozenset({"local", "aws_kms", "azure_kv", "gcp_kms"})
 _MAX_TSA_CA_CERTS = 32
+_MAX_PREVIOUS_MERKLE_DBS = 32
 
 
 @dataclass
@@ -146,7 +163,9 @@ class SigningProfile:
     # novaseal.yaml doesn't set tsa_urls explicitly, and is empty when no TSA is
     # configured (ADR-0292: timestamping is opt-in). Never None.
     tsa_urls: list[str] = field(default_factory=list)
-    merkle_db: Path = field(default_factory=_default_merkle_db)
+    # The resolved log location (see ``resolve_merkle_db_uri``): a ``Path`` for a
+    # SQLite file, a ``str`` for a Postgres DSN — never a DSN wrapped in ``Path``.
+    merkle_db: Path | str = field(default_factory=_default_merkle_db)
     # ADR-0055 (experimental): operator CA bundle for signer chain validation at
     # verify time. None = no chain validation (unchanged behaviour).
     ca_bundle: Optional[Path] = None
@@ -158,6 +177,10 @@ class SigningProfile:
     # ADR-0070 §5 (experimental): PEM files of operator-trusted TSA CA certificates
     # for RFC 3161 token trust-chain verification. Empty = no TSA chain check.
     tsa_ca_certs: list[Path] = field(default_factory=list)
+    # ADR-0297 Amendment 2: this host's earlier Merkle logs (SQLite paths or
+    # Postgres DSNs), e.g. the v1 log retired by an ADR-0313 migration. Verify-only:
+    # nothing is ever appended to them. Empty = only ``merkle_db`` is consulted.
+    previous_merkle_dbs: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.tsa_urls:
@@ -170,47 +193,92 @@ class SealConfigError(Exception):
     """Raised when novaseal.yaml is missing or malformed."""
 
 
-def resolve_merkle_db_uri() -> str:
-    """Canonical Merkle DB URI resolution — returns a string (path or DSN).
+def _merkle_location(configured: object) -> Path | str:
+    """The Merkle log location for a ``merkle_db`` value (``None``: not set).
 
-    Precedence:
-    1. ``NOVAFABRIC_SEAL_DB_PATH`` env var (explicit override / test escape hatch).
-       May be a file path **or** a ``postgresql://…`` DSN (Scale-S4).
-    2. ``merkle_db`` field in the discovered ``novaseal.yaml``.
-    3. ``~/.novafabric/novaseal-merkle.db`` default (SQLite).
+    The single precedence rule every NovaSeal caller goes through (audit M2):
+
+    1. ``NOVAFABRIC_SEAL_DB_PATH`` — a process-wide override (CI, tests, a job
+       that must seal into a specific log);
+    2. ``merkle_db`` in the ``novaseal.yaml`` being read;
+    3. ``$NOVAFABRIC_HOME/novaseal-merkle.db``.
+
+    A Postgres DSN stays a string (audit H2). Raises :class:`SealConfigError`
+    for a location that is neither a path nor a supported DSN; the message
+    never carries a password.
     """
+    from novafabric.trust.novaseal.log_location import (  # noqa: PLC0415
+        MerkleLocationError,
+        normalize_location,
+    )
+
     env_db = os.environ.get("NOVAFABRIC_SEAL_DB_PATH")
+    source = "NOVAFABRIC_SEAL_DB_PATH"
+    value: Path | str
     if env_db:
-        return env_db
+        value = env_db
+    elif configured is not None and str(configured).strip():
+        value, source = str(configured), "novaseal.yaml merkle_db"
+    else:
+        return _default_merkle_db()
+    try:
+        return normalize_location(value)
+    except MerkleLocationError as exc:
+        raise SealConfigError(f"{source}: {exc}") from exc
 
-    env_cfg = os.environ.get("NOVAFABRIC_SEAL_CONFIG")
-    config_path = Path(env_cfg) if env_cfg else _default_config_path()
-    if config_path.exists() and yaml is not None:
-        try:
-            with open(config_path) as f:
-                raw = yaml.safe_load(f)
-            if isinstance(raw, dict) and "merkle_db" in raw:
-                val = str(raw["merkle_db"])
-                if val.startswith(("postgresql://", "postgres://")):
-                    return val
-                return str(Path(val).expanduser())
-        except Exception:  # noqa: BLE001
-            pass  # malformed yaml — fall through
 
-    return str(_default_merkle_db())
+def resolve_merkle_db_uri(config_path: Path | None = None) -> str:
+    """Canonical Merkle log location — a file path or a Postgres DSN, as a string.
+
+    Precedence (``_merkle_location``): ``NOVAFABRIC_SEAL_DB_PATH``, then
+    ``merkle_db`` in *config_path* (default: the discovered ``novaseal.yaml`` —
+    ``NOVAFABRIC_SEAL_CONFIG``, else ``$NOVAFABRIC_HOME/novaseal.yaml``), then
+    ``$NOVAFABRIC_HOME/novaseal-merkle.db``. ``load_signing_profile().merkle_db``
+    is computed by the same rule, so the log capture seals into is the log every
+    verifier, the SealTab and ``nova seal log verify`` read.
+
+    A ``novaseal.yaml`` that is not valid YAML is skipped (the default applies);
+    a ``merkle_db`` that is neither a path nor a supported DSN raises
+    :class:`SealConfigError`.
+    """
+    configured: object = None
+    if not os.environ.get("NOVAFABRIC_SEAL_DB_PATH"):
+        if config_path is None:
+            env_cfg = os.environ.get("NOVAFABRIC_SEAL_CONFIG")
+            config_path = Path(env_cfg) if env_cfg else _default_config_path()
+        configured = _configured_merkle_db(config_path)
+    return str(_merkle_location(configured))
+
+
+def _configured_merkle_db(config_path: Path) -> object:
+    """The raw ``merkle_db`` of *config_path*, or None (absent, unreadable, not YAML)."""
+    if yaml is None or not config_path.is_file():
+        return None
+    try:
+        with open(config_path) as f:
+            raw = yaml.safe_load(f)
+    except Exception:  # noqa: BLE001 — malformed yaml: fall through to the default
+        return None
+    return raw.get("merkle_db") if isinstance(raw, dict) else None
 
 
 def resolve_merkle_db_path() -> Path:
-    """Backward-compatible wrapper — returns a ``Path`` for file-based configs.
+    """``resolve_merkle_db_uri()`` for callers that need a SQLite file.
 
-    For Postgres DSNs use ``resolve_merkle_db_uri()`` instead.  This function
-    raises ``ValueError`` if the configured URI is a ``postgresql://`` DSN.
+    Raises ``ValueError`` when the log is a Postgres DSN (the message shows the
+    DSN with its password redacted).
     """
+    from novafabric.trust.novaseal.log_location import (  # noqa: PLC0415
+        is_postgres_dsn,
+        redact_location,
+    )
+
     uri = resolve_merkle_db_uri()
-    if uri.startswith(("postgresql://", "postgres://")):
+    if is_postgres_dsn(uri):
         raise ValueError(
-            f"NOVAFABRIC_SEAL_DB_PATH is a Postgres DSN ({uri!r}); "
-            "use resolve_merkle_db_uri() and open_merkle_log() instead."
+            f"the NovaSeal Merkle log is a Postgres DSN ({redact_location(uri)}); "
+            "this operation needs a SQLite file — use resolve_merkle_db_uri() and "
+            "open_merkle_log() instead."
         )
     return Path(uri)
 
@@ -240,7 +308,11 @@ def _parse_profile(path: Path) -> SigningProfile:
         raw = yaml.safe_load(f)
     if not isinstance(raw, dict):
         raise SealConfigError(f"novaseal.yaml must be a YAML mapping: {path}")
+    previous_merkle_dbs = _parse_previous_merkle_dbs(raw)
+    return replace(_profile_from_raw(raw), previous_merkle_dbs=previous_merkle_dbs)
 
+
+def _profile_from_raw(raw: dict[str, Any]) -> SigningProfile:
     def req(key: str) -> str:
         if key not in raw:
             raise SealConfigError(f"novaseal.yaml missing required key: {key!r}")
@@ -257,8 +329,9 @@ def _parse_profile(path: Path) -> SigningProfile:
     # literal string "None" (which was then used as a URL until v0.102.x).
     raw_tsa_url = raw.get("tsa_url")
     tsa_url = "" if raw_tsa_url is None else str(raw_tsa_url).strip()
-    merkle_db = Path(raw.get("merkle_db", str(_default_merkle_db()))).expanduser()
-    merkle_db.parent.mkdir(parents=True, exist_ok=True)
+    # Never mkdir here: loading a profile has no side effects, and a DSN is not
+    # a path (audit H2). MerkleLog creates a SQLite file's directory on open.
+    merkle_db = _merkle_location(raw.get("merkle_db"))
 
     # REG-ADR-007: optional ordered TSA fallback list. tsa_urls[0] need not
     # equal tsa_url — an operator may want a distinct primary vs. fallback
@@ -368,6 +441,48 @@ def _parse_profile(path: Path) -> SigningProfile:
         crl_strict=crl_strict,
         tsa_ca_certs=tsa_ca_certs,
     )
+
+
+def _parse_previous_merkle_dbs(raw: dict[str, object]) -> list[str]:
+    """Parse the optional ``previous_merkle_dbs`` list (ADR-0297 Amendment 2).
+
+    This host's earlier Merkle logs — after an ADR-0313 migration, the v1 log the
+    host sealed into before it started a v2 one. ``nova verify`` checks a capsule
+    against them as well, so a v1-era capsule is confirmed by the log that sealed
+    it instead of reporting ``sealer_log: unverifiable-other-version``. Entries are
+    SQLite paths or Postgres DSNs. A listed SQLite file that does not exist is a
+    hard config error, never a silent downgrade to "not checked". Bounded to 32.
+    """
+    value = raw.get("previous_merkle_dbs")
+    if value is None:
+        return []
+    if (
+        not isinstance(value, list)
+        or not all(isinstance(v, str) and v.strip() for v in value)
+    ):
+        raise SealConfigError(
+            "novaseal.yaml previous_merkle_dbs must be a list of non-empty path/DSN strings"
+        )
+    if len(value) > _MAX_PREVIOUS_MERKLE_DBS:
+        raise SealConfigError(
+            f"novaseal.yaml previous_merkle_dbs lists {len(value)} logs; at most "
+            f"{_MAX_PREVIOUS_MERKLE_DBS} are allowed"
+        )
+    from novafabric.trust.novaseal.log_location import (  # noqa: PLC0415
+        MerkleLocationError,
+        normalize_location,
+    )
+
+    locations: list[str] = []
+    for entry in value:
+        try:
+            location = normalize_location(entry)
+        except MerkleLocationError as exc:
+            raise SealConfigError(f"novaseal.yaml previous_merkle_dbs: {exc}") from exc
+        if isinstance(location, Path) and not location.is_file():
+            raise SealConfigError(f"NovaSeal previous_merkle_dbs entry not found: {location}")
+        locations.append(str(location))
+    return locations
 
 
 def _parse_ca_bundle(raw: dict[str, object]) -> Optional[Path]:

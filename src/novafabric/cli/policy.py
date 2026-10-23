@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +13,22 @@ from novafabric.policy._opa_engine import _get_bundle_default
 
 console = Console()
 err_console = Console(stderr=True)
+
+
+def _resolve_policy_db(db: Optional[Path]) -> Path:
+    """An explicit ``--db``, else the resolved NovaSeal log (exit 2 if unusable)."""
+    if db is not None:
+        return db
+    from novafabric.promote.policy_location import (  # noqa: PLC0415
+        PolicyDbLocationError,
+        default_policy_db,
+    )
+
+    try:
+        return default_policy_db()
+    except PolicyDbLocationError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
 app = typer.Typer(
     help="Manage and test OPA Rego promotion policies.",
     no_args_is_help=True,
@@ -42,16 +57,28 @@ def policy_test(
       # Test with a custom bundle
       nova policy test --bundle path/to/my-bundle/
     """
+    from novafabric.policy._opa_sandbox import (  # noqa: PLC0415
+        OpaNotFoundError,
+        OpaSandboxError,
+        prepare,
+        run_opa,
+    )
+
     bundle_path = bundle or str(_get_bundle_default())
+    # Same sandbox as every other opa NovaFabric starts: no inherited
+    # environment, no opa.runtime/http.send/net.lookup_ip_addr, no network.
     try:
-        result = subprocess.run(
-            ["opa", "test", bundle_path, "--verbose"], capture_output=False
+        result = run_opa(
+            prepare(), "test", [bundle_path, "--verbose"], timeout=None, capture=False
         )
-    except FileNotFoundError:
+    except OpaNotFoundError:
         console.print(
             "[red]opa binary not found on PATH. "
             "Install OPA: https://www.openpolicyagent.org/docs/latest/#running-opa[/red]"
         )
+        raise typer.Exit(code=1)
+    except OpaSandboxError as exc:
+        console.print(f"[red]opa sandbox unavailable, refusing to run: {exc}[/red]")
         raise typer.Exit(code=1)
     raise typer.Exit(code=result.returncode)
 
@@ -110,10 +137,14 @@ def policy_sign(
     bypass_valid_hours: int = typer.Option(
         24, "--bypass-valid-hours", help="Bypass validity window in hours (1-168)"
     ),
-    db_path: Path = typer.Option(
-        Path.home() / ".local" / "share" / "novafabric" / "merkle.db",
+    db_path: Optional[Path] = typer.Option(
+        None,
         "--db",
-        help="SQLite DB path",
+        help=(
+            "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — "
+            "NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then "
+            "$NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads)."
+        ),
     ),
 ) -> None:
     """Sign and store a new promotion policy.
@@ -173,10 +204,12 @@ def policy_sign(
         err_console.print(f"[red]Signing error:[/red] {exc}")
         raise typer.Exit(code=1)
 
-    policy_store = PolicyStore(db_path)
+    store_path = _resolve_policy_db(db_path)
+    policy_store = PolicyStore(store_path)
     version = policy_store.put(envelope.decode("utf-8"))
 
     console.print(f"[green]Policy signed and stored:[/green] version {version}")
+    console.print(f"  store: {store_path}")
     console.print(f"  proposers: {proposers}")
     console.print(f"  approvers: {approvers}")
     console.print(f"  bypass_valid_hours: {bypass_valid_hours}")
@@ -188,9 +221,9 @@ def policy_list(
         None,
         "--db",
         help=(
-            "PolicyStore SQLite DB path "
-            "(default: NOVAFABRIC_HOME/promote/policy.db or "
-            "~/.local/share/novafabric/merkle.db)"
+            "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — "
+            "NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then "
+            "$NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads)."
         ),
     ),
     namespace: Optional[str] = typer.Option(
@@ -214,7 +247,7 @@ def policy_list(
       nova policy list
       nova policy list --namespace production
     """
-    from novafabric._paths import nova_home
+    from novafabric.promote.policy_location import legacy_policy_db
     from novafabric.promote.policy_store import PolicyStore
 
     # ── Section 1: Rego bundle files ─────────────────────────────────────────
@@ -238,19 +271,21 @@ def policy_list(
         console.print(f"[yellow]No Rego files found in bundle:[/yellow] {bundle_path}")
 
     # ── Section 2: signed promotion policies ─────────────────────────────────
-    # Resolve DB path: explicit flag → NOVAFABRIC_HOME/promote/policy.db → legacy default
-    if db is not None:
-        db_path = db
-    else:
-        home_db = nova_home() / "promote" / "policy.db"
-        legacy_db = Path.home() / ".local" / "share" / "novafabric" / "merkle.db"
-        db_path = home_db if home_db.exists() else legacy_db
+    # Resolve DB path: explicit flag, else the resolved NovaSeal log — the
+    # store `nova policy sign` writes and the dashboard reads.
+    db_path = _resolve_policy_db(db)
 
     if not db_path.exists():
         console.print(
             f"\n[dim]No signed promotion policies found "
             f"(DB not yet created: {db_path})[/dim]"
         )
+        legacy = legacy_policy_db() if db is None else None
+        if legacy is not None:
+            console.print(
+                f"[yellow]Note:[/yellow] a policy store exists at the old default {legacy}; "
+                f"list it with [bold]--db {legacy}[/bold]."
+            )
         return
 
     try:

@@ -74,21 +74,24 @@ Scale-S4 — Postgres backend
 
 Factory:
     Use ``open_merkle_log(uri)`` to obtain the right backend automatically:
-    - ``Path`` / ``str`` without ``postgresql://`` prefix → ``MerkleLog`` (SQLite)
-    - ``str`` starting with ``postgresql://`` or ``postgres://`` → ``PostgresMerkleLog``
+    - ``Path`` / ``str`` path → ``MerkleLog`` (SQLite)
+    - ``str`` starting with ``postgresql://``, ``postgres://`` or
+      ``postgresql+psycopg://`` → ``PostgresMerkleLog``
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
+import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Union
 
-from novafabric._sqlite_util import connect_sqlite
+from novafabric._sqlite_util import connect_sqlite, ensure_wal
 
 #: Legacy root (through v0.105): odd levels padded by duplicating the last node.
 #: Does not commit to the tree size; verified only with ``tree_size`` (ADR-0313).
@@ -695,6 +698,21 @@ END;
 
 _ROOT_VERSION_KEY = "root_version"
 
+_KEYID_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_keyid(value: object) -> bool:
+    """A seal entry ``keyid``: the lowercase SHA-256 hex of the signer certificate."""
+    return isinstance(value, str) and _KEYID_RE.fullmatch(value) is not None
+
+
+def _keyid_pattern(keyid: str) -> str:
+    """LIKE pattern for the canonical ``"keyid":"<hex>"`` member of a seal entry.
+
+    Only called with a validated hex digest, so the pattern holds no wildcard.
+    """
+    return f'%"keyid":"{keyid}"%'
+
 
 def _resolve_log_root_version(
     recorded: str | None, has_leaves: bool, requested: int | None, where: str
@@ -724,6 +742,18 @@ def _resolve_log_root_version(
     return version
 
 
+def _read_only_uri(db_path: Path) -> str:
+    """The SQLite URI a read-only open uses: ``immutable=1`` when no side file exists.
+
+    See :meth:`MerkleLog._open_read_only` for why the side files decide it.
+    """
+    resolved = db_path.resolve()
+    side_files = (Path(f"{resolved}-wal"), Path(f"{resolved}-shm"))
+    if any(p.exists() or p.is_symlink() for p in side_files):
+        return f"{resolved.as_uri()}?mode=ro"
+    return f"{resolved.as_uri()}?mode=ro&immutable=1"
+
+
 class MerkleLog:
     """Append-only Merkle log backed by SQLite.
 
@@ -737,18 +767,122 @@ class MerkleLog:
     one raises :class:`MerkleError`.
     """
 
-    def __init__(self, db_path: Path, *, root_version: int | None = None) -> None:
+    def __init__(
+        self, db_path: Path, *, root_version: int | None = None, read_only: bool = False
+    ) -> None:
+        # Expand ``~`` here, at the one place that creates the file: before
+        # audit L28 ``MerkleLog(Path("~/x.db"))`` made a literal ``./~``
+        # directory in the current working directory.
+        db_path = Path(db_path).expanduser()
         self._db_path = db_path
+        if read_only:
+            self._open_read_only(db_path, root_version)
+            return
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = connect_sqlite(str(db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        # Two captures may open a new log at the same moment. An unconditional
+        # ``PRAGMA journal_mode=WAL`` returns SQLITE_BUSY to the loser (the busy
+        # timeout does not apply to it), and the check-then-ALTER below raced
+        # into "duplicate column name". Both are tolerated now.
+        ensure_wal(self._conn, what="NovaSeal Merkle log")
         self._conn.executescript(_SCHEMA)
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(tree_heads)")}
+            if "root_version" not in columns:
+                # Additive migration of a pre-ADR-0313 log: NULL means a v1 head.
+                self._conn.execute("ALTER TABLE tree_heads ADD COLUMN root_version INTEGER")
+        self._root_version = self._init_root_version(root_version)
+
+    def _open_read_only(self, db_path: Path, requested: int | None) -> None:
+        """Open an existing log for verification: no file, schema or migration is written.
+
+        ``mode=ro`` makes SQLite refuse every write, so a legacy log is read as it
+        is — never migrated — and a missing file raises instead of being created
+        (ADR-0297 S2).
+
+        Side files (review r8): the log is in WAL mode, and a plain ``mode=ro``
+        connection to a cleanly closed log makes SQLite create ``-wal`` and ``-shm``
+        beside it, which a read-only connection cannot remove. So:
+
+        * neither side file exists — no writer is connected and every transaction
+          is checkpointed into the main file — the log is opened ``immutable=1``:
+          no locks, no side files, nothing created;
+        * a side file exists — a writer is connected or one exited without
+          checkpointing — the open stays ``mode=ro`` with normal locking.
+          ``immutable=1`` would ignore leaves committed only to the WAL and could
+          read pages a concurrent checkpoint is rewriting. SQLite may create the
+          missing one of the pair; nothing is created when both exist.
+
+        Residual: a writer that connects *after* the check and checkpoints during
+        the read can make an ``immutable`` read see a torn page, reported as an
+        inconsistent log or a database error — a false alarm, never a hidden leaf
+        that was committed before the read began.
+
+        Raises:
+            FileNotFoundError: *db_path* is not an existing regular file.
+            MerkleError: the file is a database but not a NovaSeal Merkle log.
+            sqlite3.DatabaseError: the file is not a SQLite database.
+        """
+        if not db_path.is_file():
+            raise FileNotFoundError(f"no NovaSeal Merkle log at {db_path}")
+        self._conn = sqlite3.connect(
+            _read_only_uri(db_path), uri=True, check_same_thread=False
+        )
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            tables = {
+                row[0]
+                for row in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            if not {"leaves", "tree_heads"} <= tables:
+                raise MerkleError(f"{db_path} is not a NovaSeal Merkle log (no leaves table)")
+            recorded = None
+            if "log_meta" in tables:
+                row = self._conn.execute(
+                    "SELECT value FROM log_meta WHERE key = ?", (_ROOT_VERSION_KEY,)
+                ).fetchone()
+                recorded = None if row is None else str(row[0])
+            has_leaves = self._conn.execute("SELECT 1 FROM leaves LIMIT 1").fetchone()
+            self._root_version = _resolve_log_root_version(
+                recorded, has_leaves is not None, requested, str(db_path)
+            )
+        except BaseException:
+            self._conn.close()
+            raise
+
+    def _heads_of_other_versions(self, version: int) -> int:
+        """Stored tree heads whose root version is not *version* (NULL = v1)."""
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(tree_heads)")}
         if "root_version" not in columns:
-            # Additive migration of a pre-ADR-0313 log: NULL means a v1 head.
-            self._conn.execute("ALTER TABLE tree_heads ADD COLUMN root_version INTEGER")
-        self._conn.commit()
-        self._root_version = self._init_root_version(root_version)
+            # A pre-ADR-0313 log opened read-only (never migrated): every head is v1.
+            if version == ROOT_VERSION_V1:
+                return 0
+            row = self._conn.execute("SELECT COUNT(*) FROM tree_heads").fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM tree_heads WHERE COALESCE(root_version, 1) != ?",
+                (version,),
+            ).fetchone()
+        return 0 if row is None else int(row[0])
+
+    def has_entry_for_capsule_id(self, capsule_id: str) -> bool:
+        """True when a stored seal entry's ``capsule_id`` equals *capsule_id* exactly.
+
+        Compared as a parsed JSON value, never as a SQL pattern: a ``LIKE`` over
+        ``entry_json`` let ``%``, ``_%`` or a signer's ``keyid`` match (attack A4,
+        2026-10-23). A leaf whose entry is not a JSON object matches nothing.
+        """
+        if not isinstance(capsule_id, str) or not capsule_id:
+            return False
+        for (entry_json,) in self._conn.execute("SELECT entry_json FROM leaves"):
+            try:
+                entry = json.loads(entry_json)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(entry, dict) and entry.get("capsule_id") == capsule_id:
+                return True
+        return False
 
     def _init_root_version(self, requested: int | None) -> int:
         with self._conn:
@@ -813,29 +947,39 @@ class MerkleLog:
         entry_json = entry_bytes.decode("utf-8")
         version = self._root_version
 
-        with self._conn:
-            # Determine next leaf_index
-            row = self._conn.execute(
-                "SELECT COALESCE(MAX(leaf_index) + 1, 0) FROM leaves"
-            ).fetchone()
-            leaf_index: int = row[0]
+        try:
+            with self._conn:
+                # BEGIN IMMEDIATE takes the write lock *before* reading the next
+                # index. Under the default deferred transaction two processes
+                # could both read MAX + 1 and the second INSERT failed with a
+                # UNIQUE violation, leaving its capsule unsealed (measured: 10 of
+                # 200 appends, 8 processes). The busy timeout queues the waiters.
+                self._conn.execute("BEGIN IMMEDIATE")
+                row = self._conn.execute(
+                    "SELECT COALESCE(MAX(leaf_index) + 1, 0) FROM leaves"
+                ).fetchone()
+                leaf_index: int = row[0]
 
-            self._conn.execute(
-                "INSERT INTO leaves (leaf_index, leaf_hash, entry_json) VALUES (?, ?, ?)",
-                (leaf_index, leaf_hash, entry_json),
-            )
+                self._conn.execute(
+                    "INSERT INTO leaves (leaf_index, leaf_hash, entry_json) VALUES (?, ?, ?)",
+                    (leaf_index, leaf_hash, entry_json),
+                )
 
-            # Recompute root
-            all_hashes = self._all_leaf_hashes()
-            root_hash = compute_root(all_hashes, root_version=version)
-            tree_size = len(all_hashes)
+                # Recompute root
+                all_hashes = self._all_leaf_hashes()
+                root_hash = compute_root(all_hashes, root_version=version)
+                tree_size = len(all_hashes)
 
-            self._conn.execute(
-                "INSERT OR REPLACE INTO tree_heads (tree_size, root_hash, root_version)"
-                " VALUES (?, ?, ?)",
-                (tree_size, root_hash, version),
-            )
-            inclusion_proof = _compute_inclusion_proof(leaf_index, all_hashes, version)
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO tree_heads (tree_size, root_hash, root_version)"
+                    " VALUES (?, ?, ?)",
+                    (tree_size, root_hash, version),
+                )
+                inclusion_proof = _compute_inclusion_proof(leaf_index, all_hashes, version)
+        except sqlite3.Error as exc:
+            # The documented contract: database faults are MerkleError, which the
+            # seal path handles; a raw sqlite3 error escaped it.
+            raise MerkleError(f"Merkle log append failed: {type(exc).__name__}: {exc}") from exc
 
         return {
             "leaf_index": leaf_index,
@@ -885,11 +1029,34 @@ class MerkleLog:
         return str(row[0])
 
     def find_leaf_index(self, leaf_hash: str) -> int | None:
-        """Return the lowest leaf_index whose leaf_hash is *leaf_hash*, or None."""
+        """Return the lowest leaf_index whose leaf_hash is *leaf_hash*, or None.
+
+        A leaf hash can occur more than once: sealing an identical manifest
+        twice with the same key appends a byte-identical leaf. To ask whether
+        a *specific* position holds a leaf, compare :meth:`get_leaf_hash` at
+        that index — never compare this lowest match with a recorded index.
+        """
         row = self._conn.execute(
             "SELECT MIN(leaf_index) FROM leaves WHERE leaf_hash = ?", (leaf_hash,)
         ).fetchone()
         return None if row is None or row[0] is None else int(row[0])
+
+    def has_entries_for_keyid(self, keyid: str) -> bool:
+        """True when the log holds a seal entry whose ``keyid`` is *keyid*.
+
+        Seal entries are canonical JSON (``{"capsule_id", "has_tsr", "keyid"}``,
+        sorted keys, no whitespace), so the ``"keyid":"<hex>"`` member is matched
+        exactly. *keyid* must be a SHA-256 hex digest (a certificate
+        fingerprint); anything else returns False rather than reaching SQL as a
+        pattern.
+        """
+        if not _is_keyid(keyid):
+            return False
+        row = self._conn.execute(
+            "SELECT 1 FROM leaves WHERE entry_json LIKE ? LIMIT 1",
+            (_keyid_pattern(keyid),),
+        ).fetchone()
+        return row is not None
 
     def get_inclusion_proof(self, leaf_index: int) -> list[str]:
         """Return the inclusion proof (list of sibling hashes) for *leaf_index*.
@@ -997,13 +1164,10 @@ class MerkleLog:
                 f"computed={computed_root[:16]}…"
             )
 
-        mixed = self._conn.execute(
-            "SELECT COUNT(*) FROM tree_heads WHERE COALESCE(root_version, 1) != ?",
-            (version,),
-        ).fetchone()
-        if mixed is not None and int(mixed[0]) > 0:
+        mixed = self._heads_of_other_versions(version)
+        if mixed > 0:
             errors.append(
-                f"{int(mixed[0])} tree head(s) carry a root_version other than this log's "
+                f"{mixed} tree head(s) carry a root_version other than this log's "
                 f"(v{version}) — written by a NovaFabric release that predates ADR-0313?"
             )
 
@@ -1252,7 +1416,7 @@ class PostgresMerkleLog:
         return str(row[0])
 
     def find_leaf_index(self, leaf_hash: str) -> int | None:
-        """Return the lowest leaf_index whose leaf_hash is *leaf_hash*, or None."""
+        """Return the lowest leaf_index whose leaf_hash is *leaf_hash* (see MerkleLog)."""
         self._ensure_connected()
         with self._conn.cursor() as cur:
             cur.execute(
@@ -1261,6 +1425,35 @@ class PostgresMerkleLog:
             )
             row = cur.fetchone()
         return None if row is None or row[0] is None else int(row[0])
+
+    def has_entries_for_keyid(self, keyid: str) -> bool:
+        """True when the log holds a seal entry whose ``keyid`` is *keyid* (see MerkleLog)."""
+        if not _is_keyid(keyid):
+            return False
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM nova_seal_leaves WHERE entry_json LIKE %s LIMIT 1",
+                (_keyid_pattern(keyid),),
+            )
+            row = cur.fetchone()
+        return row is not None
+
+    def has_entry_for_capsule_id(self, capsule_id: str) -> bool:
+        """Exact ``capsule_id`` match over parsed entries, never a pattern (see MerkleLog)."""
+        if not isinstance(capsule_id, str) or not capsule_id:
+            return False
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT entry_json FROM nova_seal_leaves")
+            for (entry_json,) in cur:
+                try:
+                    entry = json.loads(entry_json)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(entry, dict) and entry.get("capsule_id") == capsule_id:
+                    return True
+        return False
 
     def get_inclusion_proof(self, leaf_index: int) -> list[str]:
         version = self.root_version
@@ -1451,12 +1644,50 @@ class PostgresMerkleLog:
 def open_merkle_log(uri: Union[str, Path]) -> "MerkleLog | PostgresMerkleLog":
     """Return the appropriate Merkle log backend for *uri*.
 
-    - ``Path`` or non-DSN string → ``MerkleLog`` (SQLite, default)
-    - String starting with ``postgresql://`` or ``postgres://`` → ``PostgresMerkleLog``
+    - ``Path`` or a plain path string → ``MerkleLog`` (SQLite, default)
+    - ``postgres://``, ``postgresql://`` or ``postgresql+psycopg://`` →
+      ``PostgresMerkleLog`` (connects lazily)
+    - any other ``scheme:/…`` string → ``MerkleLocationError`` (a ``ValueError``):
+      it is never opened, or created, as a file (audit H2)
 
     Install Postgres support: ``pip install novafabric[seal-postgres]``
     """
-    uri_str = str(uri)
-    if uri_str.startswith(("postgresql://", "postgres://")):
-        return PostgresMerkleLog(uri_str)
-    return MerkleLog(Path(uri_str))
+    from novafabric.trust.novaseal.log_location import normalize_location  # noqa: PLC0415
+
+    location = normalize_location(uri)
+    if isinstance(location, str):
+        return PostgresMerkleLog(location)
+    return MerkleLog(location)
+
+
+def open_existing_merkle_log(
+    location: Union[str, Path, None],
+    *,
+    read_only: bool = False,
+) -> "MerkleLog | PostgresMerkleLog | None":
+    """Open the Merkle log at *location* for verification, or None when it does not exist.
+
+    Verification must never *create* a log: an empty one proves nothing and
+    would litter an auditor's machine (ADR-0297 S2). A Postgres DSN is opened as
+    given; a SQLite path only when the file already exists. With *read_only* a
+    SQLite log is opened ``mode=ro`` (no schema, migration or root-version write),
+    and a Postgres DSN raises :class:`MerkleError` — its constructor runs DDL.
+    """
+    from novafabric.trust.novaseal.log_location import (  # noqa: PLC0415
+        normalize_location,
+        redact_location,
+    )
+
+    if location is None or not str(location):
+        return None
+    resolved = normalize_location(location)
+    if isinstance(resolved, str):
+        if read_only:
+            raise MerkleError(
+                f"the Postgres Merkle log {redact_location(resolved)} cannot be opened "
+                "read-only here"
+            )
+        return PostgresMerkleLog(resolved)
+    if not resolved.is_file():
+        return None
+    return MerkleLog(resolved, read_only=read_only)

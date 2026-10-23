@@ -7,10 +7,11 @@ the submit node and the compute node — typically the cluster's home or
 scratch (``/scratch``, ``/lustre/...``, etc.). The runner does NOT
 rsync artifacts; we trust the shared FS.
 
-This v0.6.1 first cut does the minimum to satisfy the protocol on a
-real cluster:
-- Submit a one-line sbatch script (``--wrap=...``)
-- Poll ``sacct`` for state
+It does the minimum to satisfy the protocol on a real cluster:
+- Submit a generated batch script to ``sbatch`` on **stdin** — never as
+  ``--wrap <script>``: argv is readable by every user on the submit host
+  (``ps``, ``/proc/<pid>/cmdline``), and the script carries ``extra_env`` values
+- Poll ``scontrol`` / ``sacct`` for state
 - Read the per-job ``slurm-<jobid>.out`` / ``.err`` files
 
 Validated against at least 2 distinct cluster configurations is queued
@@ -23,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -60,19 +62,31 @@ _SBATCH_JOBID_RE = re.compile(r"Submitted batch job (\d+)")
 
 
 def _shell_quote(arg: str) -> str:
-    """Minimal POSIX-shell quoting for the --wrap script."""
-    if not arg or any(c in arg for c in " \t\n'\""):
-        return "'" + arg.replace("'", "'\"'\"'") + "'"
-    return arg
+    """POSIX-shell quoting for the batch script.
+
+    ``shlex.quote``: a value is either left bare (only ``[A-Za-z0-9@%+=:,./_-]``) or
+    single-quoted whole, so ``$``, backticks, ``;``, ``&``, ``|``, ``*`` and ``\\``
+    reach the job verbatim instead of being expanded or executed by its shell.
+    """
+    return shlex.quote(arg)
 
 
-def _build_wrap_script(
+#: Interpreter line for the batch script. ``sbatch`` refuses a script on stdin
+#: without one; ``/bin/sh`` is what ``--wrap`` used.
+_BATCH_SHEBANG = "#!/bin/sh"
+
+
+def _build_batch_script(
     command: list[str],
     env: dict[str, str],
     capsule_dir: Path,
     extra_env: dict[str, str] | None = None,
 ) -> str:
-    """Build the inline shell script for sbatch --wrap.
+    """Build the batch script ``sbatch`` reads from its stdin.
+
+    The script holds the operator's ``extra_env`` values (API keys, by design), so
+    it must never be passed as ``sbatch --wrap <script>``: argv is readable by every
+    user on the submit host. :meth:`SlurmRunner.run` feeds it on stdin instead.
 
     Exports the orchestrator-provided env vars, prepends the capsule
     directory (which contains ``sitecustomize.py``) to ``PYTHONPATH``
@@ -85,7 +99,7 @@ def _build_wrap_script(
     the workload does. (Surfaced by the v0.6.11 live e2e test on a
     real cluster.)
     """
-    lines: list[str] = ["set -e"]
+    lines: list[str] = [_BATCH_SHEBANG, "set -e"]
     # Default-deny (ADR-0270). PATH is the one addition SLURM needs: the batch
     # script runs on a compute node that must find the same interpreter.
     # The operator's explicit ``extra_env`` is the only other way in (ADR-0311).
@@ -105,7 +119,7 @@ def _build_wrap_script(
     )
     lines.append(f"export PYTHONPATH={_shell_quote(new_pythonpath)}")
     lines.append("exec " + " ".join(_shell_quote(a) for a in command))
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"
 
 
 class SlurmRunner:
@@ -128,6 +142,9 @@ class SlurmRunner:
     - ``poll_interval_s`` (float) — sacct poll interval. Default 5.0.
     - ``output_dir`` (str) — where to write slurm-<jobid>.out/.err.
       Default: capsule dir.
+    - ``extra_env`` (dict or ``"K=V,K2=V2"``) — variables exported in the job
+      (ADR-0311). They travel in the batch script on ``sbatch``'s stdin, never in
+      argv; SLURM stores that script with the job.
 
     **Required preconditions** (the runner does NOT verify these — the
     job will fail loudly if they are wrong):
@@ -298,6 +315,7 @@ class SlurmRunner:
         written. Factored so the parse/receipt step
         (:func:`capture_slurm_energy`) is unit-tested without a live cluster.
         """
+        from novafabric._capsule_fs import CapsuleEntryError
         from novafabric.runners._slurm_energy import (
             SACCT_ENERGY_FORMAT,
             capture_slurm_energy,
@@ -327,7 +345,10 @@ class SlurmRunner:
                 node_id=node_id,
                 energy_counter_available=self._energy_counter_available(),
             )
-        except OSError as exc:
+        except (OSError, CapsuleEntryError) as exc:
+            # CapsuleEntryError: a link/FIFO planted at the receipts path, or a
+            # required capsule file that is present but unusable, is refused --
+            # never written through or over. Fail-open: the job result stands.
             logger.warning("could not write energy receipt for job %s: %s", jobid, exc)
             return False
         return receipt is not None
@@ -346,7 +367,7 @@ class SlurmRunner:
 
         # v0.6.11: materialize the sitecustomize hook loader into the
         # capsule directory (which is on shared FS and visible to the
-        # compute node). The wrap script's PYTHONPATH points at the
+        # compute node). The batch script's PYTHONPATH points at the
         # capsule_dir so Python auto-loads it at interpreter startup
         # and NovaFabric's hooks install before the user's code runs.
         # Without this, wire-level capture silently no-ops on SLURM —
@@ -400,20 +421,22 @@ class SlurmRunner:
             argv.append(f"--time={mins}")
 
         try:
-            extra_env = shell_safe_env(coerce_str_dict(opts.get("extra_env")))
+            extra_env = shell_safe_env(coerce_str_dict(opts.get("extra_env"), name="extra_env"))
         except ValueError as exc:
             return RunnerJobResult(
                 exit_code=127, runner_status="failed_setup", runner_error=str(exc)
             )
-        wrap = _build_wrap_script(spec.command, spec.env, spec.capsule_dir, extra_env)
-        argv.extend(["--wrap", wrap])
+        script = _build_batch_script(spec.command, spec.env, spec.capsule_dir, extra_env)
 
-        # 1. Submit. sbatch propagates its own environment into the job by default
-        # (--export=ALL), so it runs with a minimal one, never the user's shell
-        # (ADR-0311).
+        # 1. Submit. The script goes on stdin: sbatch reads it from there when no
+        # script file is named, and argv (``ps``, /proc/<pid>/cmdline) is readable
+        # by every user on the submit host. sbatch propagates its own environment
+        # into the job by default (--export=ALL), so it runs with a minimal one,
+        # never the user's shell (ADR-0311).
         try:
             sub = subprocess.run(
                 argv,
+                input=script.encode(),
                 capture_output=True,
                 timeout=30,
                 env=scheduler_submit_env(

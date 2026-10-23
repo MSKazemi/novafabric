@@ -136,14 +136,11 @@ tier = "nightly:dashboard-scale"
 [[entry]]
 id = "lineage.kuzu-blast-radius.p99"
 title = "KuzuDB lineage blast-radius query at 10M edges, p99"
-status = "measured"
+status = "target"
 value = 0.0455
 unit = "s"
 workload = "10M-edge synthetic graph, lineage bench harness (BQ-015 promotion gate)"
-hardware = "workstation"
-measured_on = 2026-05-16
-revalidate_by = 2026-11-01
-source = "ROADMAP Phase 6 row; rationale in ADR-0053 (private design record)"
+source = "Demoted from measured (catalog rule): measured 2026-05-16 on a workstation with no re-measurement available before its 2026-11-01 revalidation date. ROADMAP Phase 6 row; rationale in ADR-0053 (private design record)"
 
 [[entry]]
 id = "query.persistent-index.speedup"
@@ -160,14 +157,11 @@ source = "BL-040; rationale in ADR-0225 (private design record)"
 [[entry]]
 id = "collector.seal-batch.throughput"
 title = "Go collector NovaSeal batch processing throughput"
-status = "measured"
+status = "target"
 value = 295000
 unit = "events/s"
 workload = "batch signing pipeline, p99 4.7 ms per batch (Phase 2 acceptance run)"
-hardware = "workstation"
-measured_on = 2026-05-10
-revalidate_by = 2026-11-01
-source = "ROADMAP Phase 2 row (BQ-011)"
+source = "Demoted from measured (catalog rule): measured 2026-05-10 on a workstation with no re-measurement available before its 2026-11-01 revalidation date. ROADMAP Phase 2 row (BQ-011)"
 
 # --- measured: the 2026-08-28 Azure campaign ------------------------------
 # Seven numbers from the paper campaign (ADR-0255). All were produced on
@@ -179,6 +173,10 @@ source = "ROADMAP Phase 2 row (BQ-011)"
 # kept in the private research record, not published here (see the docs honesty
 # rule): the number and its workload are the contract, the harvest is the audit
 # trail behind it.
+# Equivalent Azure VMs are no longer available to the project, so these cannot be
+# renewed as described above. Before 2027-03-01 each is either re-measured on other
+# stated hardware (a new measurement with its own `hardware`, not a renewal of this
+# one) or demoted to `target`.
 
 [[entry]]
 id = "capture.absolute-overhead.mean"

@@ -340,7 +340,14 @@ def score_list(
     as_json: Annotated[bool, typer.Option("--json", help="Emit JSON instead of a table.")] = False,
 ) -> None:
     """List Scores in a scores.jsonl file (or a capsule's score log)."""
-    scores = read_scores(_resolve_scores_path(scores_file, capsule))
+    # --capsule names a capsule: its scores.jsonl is read as a capsule member
+    # (never through a link, never a FIFO). --scores-file is a file you named.
+    try:
+        scores = read_scores(
+            _resolve_scores_path(scores_file, capsule), capsule_member=capsule is not None
+        )
+    except ValueError as exc:  # unreadable (a link, FIFO) or invalid score log
+        raise typer.BadParameter(str(exc)) from exc
     if source is not None:
         scores = [s for s in scores if s.source is source]
     if as_json:

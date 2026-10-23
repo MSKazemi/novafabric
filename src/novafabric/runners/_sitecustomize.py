@@ -38,6 +38,11 @@ HOOK_LOADER: str = textwrap.dedent("""\
             else:
                 from novafabric.capture.hooks import install_all as _ia
             _ia(writer=_w, parent_span_id=_span_id)
+            # M14: this process's recorder is never finalized here; at exit,
+            # hand its drop counts to the orchestrator via a capsule file,
+            # which merges them into capture-health.json. Fail-open.
+            from novafabric.capture.workload_health import register_workload_flush as _rwf
+            _rwf(_P(_capsule_dir))
         except Exception as _e:
             print(f"[novafabric] hook install failed: {_e}", file=_sys.stderr)
 """)

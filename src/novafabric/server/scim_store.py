@@ -531,6 +531,7 @@ def reconcile_subject_roles(
     *,
     scim_request_id: str | None = None,
     db_path: Path | None = None,
+    oidc_configured: bool = False,
 ) -> ReconcileResult:
     """Make the subject's SCIM-owned RBAC roles equal ``desired_roles`` (ADR-0190).
 
@@ -562,7 +563,9 @@ def reconcile_subject_roles(
         # revoke_role may raise LastAdminError; let it propagate before we drop
         # the intent row, so a refused revoke leaves state unchanged.
         if rbac_store.get_assigned_by(subject, role, db_path=db_path) == SCIM_ROLE_SOURCE:
-            rbac_store.revoke_role(subject, role, db_path=db_path)
+            rbac_store.revoke_role(
+                subject, role, db_path=db_path, oidc_configured=oidc_configured
+            )
             revoked.add(role)
         _drop_scim_grant(subject, role, db_path=db_path)
 

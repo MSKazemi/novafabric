@@ -33,6 +33,7 @@ import typer
 import yaml
 from rich.console import Console
 
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.capture.ui import KEYSTROKE_RESIDUAL_RISK
 
 app = typer.Typer(
@@ -57,12 +58,15 @@ def _capsule_manifest(capsule: Path) -> dict[str, Any]:
     if not capsule.is_dir():
         err_console.print(f"[red]Capsule directory not found:[/red] {capsule}")
         raise typer.Exit(2)
-    path = capsule / "capsule.yaml"
-    if not path.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    capsule_text = read_required_capsule_member(
+        capsule / "capsule.yaml", operation="nova capture-ui"
+    )
+    if capsule_text is None:
         err_console.print(f"[red]capsule.yaml not found in[/red] {capsule}")
         raise typer.Exit(2)
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = yaml.safe_load(capsule_text)
     except (OSError, yaml.YAMLError) as exc:
         err_console.print(f"[red]Could not read capsule.yaml:[/red] {exc}")
         raise typer.Exit(2) from exc

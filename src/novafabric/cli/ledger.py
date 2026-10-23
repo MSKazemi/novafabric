@@ -30,7 +30,13 @@ from novafabric.trust.ledger._chain import (
     verify_chain,
 )
 from novafabric.trust.ledger._checkpoint import checkpoint_path
-from novafabric.trust.ledger._verify import exit_code_for, verify_ledger
+from novafabric.trust.ledger._verify import (
+    MERKLE_INCLUSION_LOG,
+    MERKLE_INCLUSION_NONE,
+    MERKLE_INCLUSION_SELF_CONSISTENT,
+    exit_code_for,
+    verify_ledger,
+)
 
 console = Console()
 
@@ -127,11 +133,34 @@ def ledger_verify_cmd(
         Optional[int],
         typer.Option("--observed-epoch", help="Reject a checkpoint epoch below this"),
     ] = None,
+    merkle_db: Annotated[
+        Optional[str],
+        typer.Option(
+            "--merkle-db",
+            help=(
+                "The NovaSeal Merkle log the checkpoint was appended to (SQLite path or "
+                "Postgres DSN; opened read-only in effect, never created). Checks "
+                "inclusion against that log: its leaves must hold the checkpoint at "
+                "log_index and reproduce the recorded tree head; a checkpoint without a "
+                "merkle block must be in the log. Failure exits 8."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Verify the ledger; exit with the ADR-0094 taxonomy.
 
-    Without ``--pubkey`` the check is structural (chains + epoch + anchor); the
-    signature is then not verified.
+    Without ``--pubkey`` the check is structural (chains + epoch + Merkle +
+    anchor); the signature is then not verified. Exit 8 applies only to a
+    checkpoint carrying a merkle block (appended to a NovaSeal log through the
+    Python API), or to any checkpoint when ``--merkle-db`` is given; checkpoints
+    written by nova ledger anchor carry none.
+
+    What exit 0 proves about Merkle inclusion: without ``--merkle-db``, only that
+    the checkpoint's merkle block is self-consistent (its leaf is this checkpoint
+    and its proof recomputes its root). The block is outside the checkpoint
+    signature, so a fabricated tree that no log ever held — or a removed block —
+    also passes. With ``--merkle-db``, that the supplied log holds the checkpoint
+    and reproduces the recorded tree head from its own leaves.
 
     \b
     Exit codes: 0 ok | 3 tamper | 4 reorder | 5 truncation | 6 bad sig |
@@ -141,8 +170,17 @@ def ledger_verify_cmd(
     Examples:
       nova ledger verify ./run --pubkey ed25519.pub.pem
       nova ledger verify ./run --pubkey k.pub --observed-epoch 5
+      nova ledger verify ./run --pubkey k.pub --merkle-db ~/.novafabric/novaseal-merkle.db
     """
     capsule_dir = _resolve_capsule(capsule)
+    merkle_log = None
+    if merkle_db is not None:
+        from novafabric.trust.novaseal.merkle import open_existing_merkle_log  # noqa: PLC0415
+
+        merkle_log = open_existing_merkle_log(merkle_db)
+        if merkle_log is None:
+            console.print(f"[red]Merkle log not found:[/red] {merkle_db}")
+            raise typer.Exit(code=2)
 
     verify_fn = None
     if pubkey is not None:
@@ -155,17 +193,32 @@ def ledger_verify_cmd(
         def verify_fn(pae: bytes, sig: bytes) -> bool:
             return verify_with_pem(pub_pem, pae, sig)
 
-    verdict = verify_ledger(
-        capsule_dir, None, verify_fn, observed_epoch=observed_epoch
-    )
+    try:
+        verdict = verify_ledger(
+            capsule_dir, None, verify_fn, observed_epoch=observed_epoch, merkle_log=merkle_log
+        )
+    finally:
+        if merkle_log is not None:
+            merkle_log.close()
     code = exit_code_for(verdict)
     if verdict.ok:
         console.print("[green]✓ ledger OK[/green]")
+        console.print(f"  {_MERKLE_INCLUSION_LINES[verdict.merkle_inclusion]}")
     else:
         console.print(f"[red]✗ {verdict.exit.name}[/red] (exit {code})")
         for reason in verdict.reasons:
             console.print(f"  - {reason}")
     raise typer.Exit(code=code)
+
+
+_MERKLE_INCLUSION_LINES = {
+    MERKLE_INCLUSION_LOG: "Merkle inclusion: checked against the Merkle log (--merkle-db)",
+    MERKLE_INCLUSION_SELF_CONSISTENT: (
+        "Merkle inclusion: merkle block self-consistent only — it is unsigned and was "
+        "not compared with any log; pass --merkle-db to check inclusion"
+    ),
+    MERKLE_INCLUSION_NONE: "Merkle inclusion: no claim (no merkle block)",
+}
 
 
 @ledger_app.command("status")

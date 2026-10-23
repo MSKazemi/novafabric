@@ -61,6 +61,7 @@ components:
         cart_id:
           anyOf:
           - maxLength: 64
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
           - type: 'null'
           title: Cart Id
@@ -656,7 +657,7 @@ components:
       title: HoldCreatedResponse
       type: object
     HoldRecord:
-      description: One legal hold as stored in ``holds.jsonl``.
+      description: One legal hold as stored in ``holds.jsonl`` (the shared hold store).
       properties:
         created_at:
           title: Created At
@@ -1220,7 +1221,7 @@ info:
   license:
     name: Apache-2.0
   title: NovaFabric Dashboard API (serve)
-  version: 0.106.1
+  version: 0.107.0
 openapi: 3.1.0
 paths:
   /:
@@ -2128,7 +2129,12 @@ paths:
       x-nova-contract: pending
   /api/assets/register-from-yaml:
     post:
-      description: Register an asset from a YAML spec string (used by suggest-register panel).
+      description: 'Register an asset from a YAML spec string (used by suggest-register panel).
+
+
+        Same rules as ``POST /api/assets``: the asset enters as ``development``; a spec
+
+        declaring any other status is refused (``ok: false``).'
       parameters:
       - in: query
         name: token
@@ -2423,7 +2429,8 @@ paths:
       x-nova-contract: pending
   /api/assets/{asset_id}/promote:
     post:
-      description: Promote by UUID — resolves name+version from the registry then delegates.
+      description: Promote by UUID — resolves name+version from the registry then delegates (same ADR-0312
+        gate).
       parameters:
       - in: path
         name: asset_id
@@ -2731,6 +2738,12 @@ paths:
       x-nova-contract: pending
   /api/assets/{name}/{version}/promote:
     post:
+      description: 'Single-actor promotion, gated exactly like `nova promote direct` (ADR-0312).
+
+
+        `production` needs an explicit `promote_direct` policy allow (403 otherwise);
+
+        `force` does not bypass it.'
       parameters:
       - in: path
         name: name
@@ -2785,7 +2798,14 @@ paths:
       x-nova-contract: pending
   /api/assure/{run_id}:
     get:
-      description: Run OWASP Top 10 for LLM evidence checks against a capsule.
+      description: 'Run OWASP Top 10 for LLM evidence checks against a capsule.
+
+
+        ``capsule_path`` is a bare run id or a directory path. A path must lie
+
+        inside the server''s read roots; anything else is refused (403) whether
+
+        or not it exists.'
       parameters:
       - in: path
         name: run_id
@@ -2902,7 +2922,10 @@ paths:
       x-nova-contract: pending
   /api/capsule-migrate:
     post:
-      description: Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6).
+      description: 'Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6).
+
+
+        `source` must be under a read root and `output` under a write root (serve.paths).'
       parameters:
       - in: query
         name: token
@@ -3917,9 +3940,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
                 title: Response Compliance Pii Erase Endpoint Api Compliance Pii Erase Post
-                type: object
           description: Successful Response
         '422':
           content:
@@ -4882,6 +4903,34 @@ paths:
       x-nova-contract: pending
   /api/evidence/{bundle_id}:
     get:
+      description: 'Show one bundle: its manifest and run attestation as data, plus the verdict.
+
+
+        ``manifest``, ``dsse_statement`` and ``dsse_envelope`` are the bundle''s own
+
+        content, shown as data. ``verified``, ``run_id`` and ``run_ids`` come from the
+
+        shared verifier (as ``POST …/verify``, cached per archive SHA-256): ``run_id``
+
+        is the signed run when exactly one verifies, else the bundle id — never the
+
+        manifest''s unsigned label. The archive is copied once into a private snapshot
+
+        and both the verdict and everything shown come from that copy, so an in-place
+
+        rewrite can never put forged content beside ``verified: true`` (review r8).
+
+        ``signing_key_fingerprint`` is the ``sha256:`` SPKI fingerprint of the key
+
+        whose signatures verified (``signer_fingerprints`` lists every one), null when
+
+        none did or more than one key signed. ``members_signed`` /
+
+        ``unsigned_members`` report member coverage (ADR-0011 Amendment 7). Every
+
+        member is read with a size bound; a ``manifest.json`` over the limit, or an
+
+        archive over the snapshot bound, is a 413.'
       parameters:
       - in: path
         name: bundle_id
@@ -4924,6 +4973,14 @@ paths:
       x-nova-contract: pending
   /api/evidence/{bundle_id}/download:
     get:
+      description: 'Download the Evidence Bundle ZIP.
+
+
+        The file is opened without following a link and streamed from that
+
+        descriptor: a symlink, FIFO or other non-regular file is a 422, a missing
+
+        bundle a 404.'
       parameters:
       - in: path
         name: bundle_id
@@ -4963,10 +5020,53 @@ paths:
       x-nova-contract: pending
   /api/evidence/{bundle_id}/verify:
     post:
-      description: "Verify the cryptographic integrity of an evidence bundle.\n\nChecks (in order):\n\
-        \  1. signature_ok   — Ed25519 DSSE signature on attestations/run.intoto.json\n  2. timestamp_ok\
-        \   — RFC 3161 TSR in manifest.dsse.tsr (null if not present)\n  3. log_integrity_ok — NovaSeal\
-        \ Merkle inclusion (null if not configured)"
+      description: 'Verify an evidence bundle with the same verifier as ``nova verify <bundle>.zip``.
+
+
+        Runs the bundle''s whole recipe (``evidence/bundle_verify.verify_bundle_archive``):
+
+        every artifact digest, no missing/unlisted/duplicate member, ``manifest_hash``,
+
+        every attestation''s DSSE signature, and each signed subject recomputed from the
+
+        bundle''s own content. ``valid`` is that verdict, plus the RFC 3161 token
+
+        (``timestamp_ok``/``timestamp_trust``; "anchored" only when ``tsa_ca_certs`` in
+
+        novaseal.yaml validate the TSA chain) and the local NovaSeal log
+
+        (``log_integrity_ok``, null when not configured).
+
+
+        The verifying key ships inside the bundle, so ``valid`` alone proves the bundle
+
+        is consistent, not who signed it. ``signer_trust`` says which:
+
+        "anchored" (every signer is in the operator''s trust list,
+
+        ``NOVAFABRIC_EVIDENCE_TRUSTED_KEYS``), "unanchored" (no trust list configured:
+
+        origin not established), "untrusted" (a signer is not in the list; ``valid`` is
+
+        false) or "none" (no signature verified).
+
+
+        ``run_ids`` lists every run a verified run statement signs; ``run_id`` is that
+
+        run when exactly one verified, else null. ``manifest.json`` is unsigned, so a
+
+        subject, label or top-level ``run_id`` no verified statement signs fails the
+
+        bundle and is never reported; the local log is checked only for signed runs.
+
+
+        ``members_signed`` is true when the bundle''s members statement covers every
+
+        member and the manifest''s fields (ADR-0011 Amendment 7); a rewritten member
+
+        then fails ``valid``. A legacy bundle without one can be ``valid`` with
+
+        ``members_signed: false``: ``unsigned_members`` names what no signature covers.'
       parameters:
       - in: path
         name: bundle_id
@@ -7376,7 +7476,18 @@ paths:
       x-nova-contract: pending
   /api/policy/capture-level:
     get:
-      description: Return current capture level + tier descriptions (DB-CAP-1, cap-004).
+      description: 'Return the current capture level, each tier''s field allowlist, and
+
+        whether selecting the tier changes capture today (DB-CAP-1, cap-004).
+
+
+        ``tiers`` is the *designed* per-field allowlist; no capture path applies it
+
+        (``allowlist_enforced: false``). ``enforcement[level].enforced`` says whether
+
+        choosing that level changes what capture records — today only ``forensic``
+
+        and ``air_gapped`` do (ADR-0066 Amendment 1).'
       parameters:
       - in: query
         name: token
@@ -7460,9 +7571,20 @@ paths:
       description: 'Evaluate a policy check interactively.
 
 
-        Body: PolicyInput JSON
+        Body: PolicyInput JSON, optionally with ``explain`` and ``policy_source``.
 
-        Response: PolicyDecision JSON'
+        Response: PolicyDecision JSON
+
+
+        The packaged policies are evaluated for any ``read`` credential. A
+
+        non-blank ``policy_source`` (the caller''s own Rego) needs ``admin``
+
+        (403 otherwise). Either way ``opa`` runs sandboxed — no server
+
+        environment, no ``opa.runtime``/``http.send``/``net.lookup_ip_addr``,
+
+        no network — in a worker thread with a timeout.'
       parameters:
       - in: query
         name: token
@@ -7520,12 +7642,22 @@ paths:
 
         history with the byte-offset ``next_cursor`` (same contract as
 
-        /api/audit). ``truncated`` is true when the scan stopped early.'
+        /api/audit). ``truncated`` is true when the scan stopped early.
+
+
+        Requires the ``audit`` scope (it reads the audit trail). ``decision_id``
+
+        is matched **exactly** against the entry''s audit id or recorded
+
+        decision id; an empty or wildcard id is rejected with 422.'
       parameters:
-      - in: query
+      - description: The exact decision id (or audit id) to look up; no prefixes
+        in: query
         name: decision_id
         required: true
         schema:
+          description: The exact decision id (or audit id) to look up; no prefixes
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$
           title: Decision Id
           type: string
       - in: query
@@ -7741,7 +7873,16 @@ paths:
       x-nova-contract: pending
   /api/policy/test:
     post:
-      description: Run the Rego test suite for the policy bundle (nova policy test).
+      description: 'Run the Rego test suite for the policy bundle (nova policy test).
+
+
+        The packaged bundle is testable by any ``read`` credential. A
+
+        request-chosen ``bundle_path`` is Rego the server did not ship, so it
+
+        needs ``admin``, like ``policy_source`` on /api/policy/check.
+
+        ``opa test`` runs sandboxed, in a worker thread, with a timeout.'
       parameters:
       - in: query
         name: token
@@ -10284,10 +10425,18 @@ paths:
   /api/runs/{run_id}/verify:
     post:
       description: "Verify DSSE signature + RFC 3161 timestamp + Merkle log inclusion (nova verify).\n\
-        \nReturns:\n  sealed=False  — capsule has no .seal/ directory (was not sealed)\n  configured=False\
-        \ — NovaSeal config not found\n  signature_ok, timestamp_ok, log_integrity_ok, valid, errors —\
-        \ full result\n  timestamp_ok is null when no RFC 3161 token is present (ADR-0301)\n  identity_trust,\
-        \ signer_subject, local_seal_identity — signer trust level (ADR-0301)"
+        \nReturns:\n  sealed=False  — capsule has no .seal/ directory (was not sealed)\n  configured —\
+        \ whether a novaseal.yaml was found on this host. False no\n    longer means \"not verified\"\
+        : like `nova verify` and the trust radar,\n    the capsule is then verified from its own files\
+        \ (no local log, no\n    operator anchors), and every field below is still returned\n  signature_ok,\
+        \ timestamp_ok, log_integrity_ok, valid, errors — full result\n  capsule_binding_ok — ADR-0251\
+        \ binding (capsule.yaml + evidence_digests +\n    log-entry capsule_id); valid is the verdict\
+        \ `nova verify` exits on\n  timestamp_ok is null when no RFC 3161 token is present (ADR-0301)\n\
+        \  timestamp_trust — anchored | unanchored | absent | invalid: timestamp_ok says a\n    token\
+        \ is intact; only \"anchored\" (tsa_ca_certs in novaseal.yaml) is trusted time\n  sealer_log,\
+        \ log_inclusion, unanchored_claims — what the logs established\n    (ADR-0297 Amendment 2); unanchored_claims\
+        \ lists what `nova verify --strict`\n    would fail on\n  identity_trust, signer_subject, local_seal_identity\
+        \ — signer trust level (ADR-0301)"
       parameters:
       - in: path
         name: run_id
@@ -10374,14 +10523,39 @@ paths:
 
         Recomputes all leaf hashes and checks the stored root hash against the
 
-        recomputed root. Returns consistent=true when the log is intact.'
+        recomputed root. Returns consistent=true when the log is intact.
+
+
+        The log is the one capture seals into (``NOVAFABRIC_SEAL_DB_PATH``, then
+
+        ``merkle_db`` in novaseal.yaml, then ``$NOVAFABRIC_HOME/novaseal-merkle.db``)
+
+        and is opened read-only: verification creates, migrates and writes nothing
+
+        (ADR-0297 S2). A cleanly closed log is opened ``immutable=1``, so not even
+
+        SQLite''s ``-wal``/``-shm`` side files appear; while a writer holds them, the
+
+        open uses normal locking and adds no file (review r8). 404 when no log
+
+        exists there; 501 when it is a Postgres log (verify that with ``nova seal
+
+        log verify``; the DSN is shown without its password); 422 when the file is
+
+        not a NovaSeal log.
+
+
+        ``capsule_included`` (with ``capsule_id``): whether a seal entry''s
+
+        ``capsule_id`` equals the given value exactly — never a pattern match.'
       parameters:
       - in: query
         name: capsule_id
         required: false
         schema:
           anyOf:
-          - type: string
+          - maxLength: 256
+            type: string
           - type: 'null'
           title: Capsule Id
       - in: query
@@ -10555,7 +10729,7 @@ paths:
       x-nova-contract: pending
   /api/seal/ratchet/status:
     get:
-      description: Show a node's current signing epoch and registry history.
+      description: Show a node's current signing epoch and registry history (never its chain key).
       parameters:
       - in: query
         name: node_id
@@ -10706,7 +10880,22 @@ paths:
       x-nova-contract: pending
   /api/seal/{capsule_id}/bypass:
     post:
-      description: Create a time-limited SoD bypass, DSSE-signed and permanently logged (ADR-0059).
+      description: 'Create a time-limited SoD bypass, DSSE-signed and permanently logged (ADR-0059).
+
+
+        Fail closed (review r6): the bypass is stored only after its
+
+        ``seal.bypass.create`` entry is in the hash-chained audit log; if that
+
+        entry cannot be written the route answers 503 and stores nothing; if the
+
+        bundle cannot be stored after the entry was written, a ``seal.bypass.abort``
+
+        entry withdraws it and the route answers 503 (review r8). Each
+
+        attempt that reaches the store is also recorded in the dashboard audit
+
+        log, as the CLI''s is in the chained log.'
       parameters:
       - in: path
         name: capsule_id

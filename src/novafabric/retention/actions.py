@@ -30,11 +30,17 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
 from novafabric.audit import AuditEventType, AuditLog
-from novafabric.pii.dek import DEKStore, ErasureDeferredReceipt, ErasureReceipt
+from novafabric.pii.dek import (
+    DEKStore,
+    ErasureDeferredReceipt,
+    ErasureHeldReceipt,
+    ErasureReceipt,
+)
 from novafabric.retention.models import (
     Decision,
     PlannedDecision,
@@ -46,6 +52,10 @@ from novafabric.retention.sweep import EXPIRED_MARKER
 
 log = logging.getLogger(__name__)
 
+#: Re-check run immediately before each destructive action: returns why the item
+#: is held *now* (``"legal_hold_active: <ids>"``, ``"worm_hold"``), or ``None``.
+HoldCheck = Callable[[PlannedDecision], "str | None"]
+
 
 class SweepExecutor:
     """Applies a sweep plan one item at a time, bounded and fail-safe (D6).
@@ -54,6 +64,15 @@ class SweepExecutor:
     continues to *N+1*; a scheduler failure never harms capsules or blocks
     the user workload. Dry-run performs no action, emits no receipt, and
     appends no audit record (D3).
+
+    **Holds are re-read at apply time (D4).** The plan's hold context is a
+    snapshot; a hold placed after planning (while a confirmation prompt waits, or
+    during a long sweep) must still win. Immediately before each action the
+    executor calls *hold_check* (default: the active holds on *registry* from the
+    unified hold store, including *hold_roots*); a hit records ``skipped`` with
+    the hold as the reason. A failing check fails closed (``skipped``,
+    ``hold_check_failed``). A crypto-shred the DEK store refuses under a hold is
+    recorded ``skipped``, never ``applied``.
     """
 
     def __init__(
@@ -65,6 +84,9 @@ class SweepExecutor:
         dek_store: DEKStore | None = None,
         receipt_dir: Path | None = None,
         retention_months: int = 6,
+        hold_check: HoldCheck | None = None,
+        hold_roots: Iterable[Path] = (),
+        pepper: bytes | None = None,
     ) -> None:
         self._registry = registry
         self._principal = principal
@@ -72,6 +94,16 @@ class SweepExecutor:
         self._dek_store = dek_store
         self._receipt_dir = receipt_dir
         self._retention_months = retention_months
+        self._hold_roots = tuple(hold_roots)
+        self._hold_check: HoldCheck = hold_check or self._registry_hold_check
+        self._pepper = pepper
+
+    def _registry_hold_check(self, decision: PlannedDecision) -> str | None:
+        """Default re-check: active holds on this registry, read fresh."""
+        from novafabric.retention.holds import active_hold_ids  # noqa: PLC0415
+
+        ids = active_hold_ids(self._registry, extra_roots=self._hold_roots)
+        return f"legal_hold_active: {', '.join(ids)}" if ids else None
 
     # ------------------------------------------------------------------
     # Public API
@@ -161,6 +193,21 @@ class SweepExecutor:
         if dry_run:
             return self._record(decision, SweepOutcome.DRY_RUN)
 
+        # D4 at apply time: the plan's hold snapshot may be stale.
+        try:
+            held = self._hold_check(decision)
+        except Exception as exc:  # noqa: BLE001 — fail closed, never destroy on doubt
+            log.warning(
+                "retention: hold re-check failed for %s, skipping: %s",
+                decision.item.item_id,
+                exc,
+            )
+            return self._record(
+                decision, SweepOutcome.SKIPPED, reason=f"hold_check_failed: {exc}"
+            )
+        if held:
+            return self._record(decision, SweepOutcome.SKIPPED, reason=held)
+
         try:
             if decision.action is RetentionAction.EXPIRE_METADATA:
                 return self._apply_expire(decision)
@@ -211,20 +258,84 @@ class SweepExecutor:
         return self._record(decision, SweepOutcome.APPLIED)
 
     def _apply_crypto_shred(self, decision: PlannedDecision) -> RetentionActionRecord:
-        subject_id = decision.item.pii_subject_id
-        if subject_id is None or self._dek_store is None:
+        """Destroy the DEK of the capsule's data subject (ADR-0069/ADR-0314, experimental).
+
+        The subject is ``metadata.pii_subject_id`` when a manifest names it, else
+        the subject whose HMAC ``nova capture --pii-subject`` recorded in the
+        capsule's ``redaction_manifest.json``, resolved against the DEK store with
+        ``NOVA_PII_PEPPER`` (*pepper*). The DEK is per subject: destroying it makes
+        that subject's PII unreadable in every capsule captured with the same
+        ``--pii-subject``. A capsule that names no subject records ``no_dek``;
+        one whose subject cannot be resolved is ``skipped``, never ``applied``.
+        """
+        item = decision.item
+        store = self._dek_store
+        if store is None or (item.pii_subject_id is None and not item.pii_subject_refs):
             # No PII subject / no DEK store: no-op erasure (spec edge case).
             return self._record(decision, SweepOutcome.APPLIED, reason="no_dek")
+        if item.pii_subject_id is not None:
+            subject_ids = [item.pii_subject_id]
+        elif self._pepper is None:
+            return self._record(decision, SweepOutcome.SKIPPED, reason="pii_pepper_unavailable")
+        else:
+            subject_ids = self._resolve_subject_refs(store, item.pii_subject_refs, self._pepper)
+            if not subject_ids:
+                # The store cannot tell "erased" from "wrong pepper / other dek.db":
+                # only this sweep's own receipt proves the shred already happened.
+                receipt = self._receipt_path(item.item_id)
+                if receipt.is_file():
+                    # Carry the receipt so a restore can still re-shred this subject.
+                    return self._record(
+                        decision,
+                        SweepOutcome.APPLIED,
+                        reason="already_shredded",
+                        erasure_receipt_ref=str(receipt),
+                    )
+                return self._record(
+                    decision, SweepOutcome.SKIPPED, reason="pii_subject_unresolved"
+                )
+        records = [self._shred_one(decision, store, subject_id) for subject_id in subject_ids]
+        # The least final outcome speaks for the item: held > error > deferred > applied.
+        for outcome in (SweepOutcome.SKIPPED, SweepOutcome.ERROR, SweepOutcome.DEFERRED):
+            for record in records:
+                if record.outcome is outcome:
+                    return record
+        return records[0]
+
+    @staticmethod
+    def _resolve_subject_refs(store: DEKStore, refs: list[str], pepper: bytes) -> list[str]:
+        """Subjects with a live DEK whose ``HMAC(pepper, subject_id)`` is in *refs*."""
+        from novafabric.pii.envelope import subject_ref  # noqa: PLC0415
+
+        wanted = set(refs)
+        return sorted(
+            record.subject_id
+            for record in store.list_subjects()
+            if subject_ref(pepper, record.subject_id) in wanted
+        )
+
+    def _shred_one(
+        self, decision: PlannedDecision, store: DEKStore, subject_id: str
+    ) -> RetentionActionRecord:
         try:
-            result = self._dek_store.erase_subject(
+            result = store.erase_subject(
                 subject_id=subject_id,
                 capsule_ids=[decision.item.item_id],
                 retention_months=self._retention_months,
+                hold_roots=self._hold_roots,
             )
         except KeyError:
             # Already shredded or never registered: idempotent no-op (D2).
             return self._record(decision, SweepOutcome.APPLIED, reason="no_dek")
         receipt_ref = self._write_receipt(decision.item.item_id, result)
+        if isinstance(result, ErasureHeldReceipt):
+            # Never APPLIED: a restore replays applied shreds as evidenced erasures.
+            return self._record(
+                decision,
+                SweepOutcome.SKIPPED,
+                reason="legal_hold_active",
+                erasure_receipt_ref=receipt_ref,
+            )
         if isinstance(result, ErasureDeferredReceipt):
             return self._record(
                 decision,
@@ -236,17 +347,24 @@ class SweepExecutor:
             decision, SweepOutcome.APPLIED, erasure_receipt_ref=receipt_ref
         )
 
+    def _receipt_path(self, item_id: str, suffix: str = "receipt.json") -> Path:
+        base = self._receipt_dir if self._receipt_dir is not None else Path(".")
+        return base / f"{item_id}.{suffix}"
+
     def _write_receipt(
-        self, item_id: str, result: ErasureReceipt | ErasureDeferredReceipt
+        self,
+        item_id: str,
+        result: ErasureReceipt | ErasureDeferredReceipt | ErasureHeldReceipt,
     ) -> str | None:
         if self._receipt_dir is None:
             return None
         self._receipt_dir.mkdir(parents=True, exist_ok=True)
-        suffix = (
-            "deferred.receipt.json"
-            if isinstance(result, ErasureDeferredReceipt)
-            else "receipt.json"
-        )
-        path = self._receipt_dir / f"{item_id}.{suffix}"
+        if isinstance(result, ErasureHeldReceipt):
+            suffix = "held.receipt.json"
+        elif isinstance(result, ErasureDeferredReceipt):
+            suffix = "deferred.receipt.json"
+        else:
+            suffix = "receipt.json"
+        path = self._receipt_path(item_id, suffix)
         path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
         return str(path)

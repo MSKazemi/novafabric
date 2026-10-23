@@ -74,9 +74,15 @@ def test_detect_requires_capsule_path(client: TestClient) -> None:
     assert r.status_code == 422
 
 
-def test_detect_missing_dir_404(client: TestClient) -> None:
-    r = client.post(f"/api/kg/detect?{TOKEN_Q}", json={"capsule_path": "/nonexistent/xyzzy"}, headers=H)
+def test_detect_missing_dir_404(client: TestClient, capsule_dir: Path) -> None:
+    missing = str(capsule_dir / "nonexistent" / "xyzzy")
+    r = client.post(f"/api/kg/detect?{TOKEN_Q}", json={"capsule_path": missing}, headers=H)
     assert r.status_code == 404
+
+
+def test_detect_refuses_a_path_outside_the_allowed_roots(client: TestClient) -> None:
+    r = client.post(f"/api/kg/detect?{TOKEN_Q}", json={"capsule_path": "/nonexistent/xyzzy"}, headers=H)
+    assert r.status_code == 403
 
 
 def test_detect_empty_lineage_ok(client: TestClient, capsule_dir: Path) -> None:

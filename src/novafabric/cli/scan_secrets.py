@@ -9,6 +9,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric._capsule_fs import read_required_capsule_member
+
 console = Console()
 
 _SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"]
@@ -38,7 +40,10 @@ def scan_secrets_cmd(
     fail_on: ScanSeverity | None = typer.Option(
         None,
         "--fail-on",
-        help="Exit 1 if any finding at or above this severity is found.",
+        help=(
+            "Exit 2 if any finding at or above this severity is found "
+            "(exit 1 means the redaction proof is missing or unreadable)."
+        ),
     ),
     json_output: bool = typer.Option(
         False,
@@ -66,7 +71,11 @@ def scan_secrets_cmd(
         )
         raise typer.Exit(code=1)
 
-    proof = json.loads(proof_path.read_text())
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    capsule_text = (
+        read_required_capsule_member(proof_path, operation="nova scan-secrets") or ""
+    )
+    proof = json.loads(capsule_text)
 
     if json_output:
         typer.echo(json.dumps(proof, indent=2))

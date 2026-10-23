@@ -42,6 +42,7 @@ import yaml
 from pydantic import ValidationError
 from rich.console import Console
 
+from novafabric._capsule_fs import CapsuleRequiredFileError, read_required_capsule_member
 from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.preservation.anchor import PreservationError, PreservationFacet
 from novafabric.preservation.format_migration import (
@@ -108,8 +109,13 @@ def _load_from_capsule(ref: str) -> tuple[PreservationFacet, str | None]:
     except CapsuleRefError as exc:
         raise _InputError(str(exc)) from exc
     try:
-        manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text()) or {}
-    except (OSError, yaml.YAMLError) as exc:
+        # Present but unusable (a link, FIFO, directory) is an input error,
+        # never a migration from an assumed version.
+        manifest_text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="nova migrate-format"
+        )
+        manifest = yaml.safe_load(manifest_text or "") or {}
+    except (OSError, yaml.YAMLError, CapsuleRequiredFileError) as exc:
         raise _InputError(f"cannot read capsule.yaml in {capsule_dir}: {exc}") from exc
     if not isinstance(manifest, dict):
         raise _InputError(f"capsule.yaml in {capsule_dir} is not a mapping")

@@ -41,6 +41,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
+from novafabric._capsule_fs import read_capsule_text_or_none, read_required_capsule_member
+
 #: Reverse-DNS extension key naming the record's role.
 RECORD_ROLE_EXT = "io.novafabric.record_role"
 #: Reverse-DNS extension key linking a record to its logical call.
@@ -303,12 +305,27 @@ def count_logical_model_calls(records: Iterable[Any]) -> int:
     return sum(1 for role in classify_model_calls(list(records)) if role.counts)
 
 
-def _read_lines(path: Path) -> list[Any]:
-    """Every non-blank line, parsed; a malformed line is kept as the raw string."""
+def _read_lines(path: Path, *, required: bool = False) -> list[Any]:
+    """Every non-blank line, parsed; a malformed line is kept as the raw string.
+
+    *path* is a capsule stream (``<capsule>/model-calls.jsonl``). It is opened
+    without following a link and refused if it is not a regular file, so a
+    planted ``model-calls.jsonl -> ~/.aws/credentials`` reads as no records.
+    With *required* (a reader whose output claims to be complete) such a
+    stream raises :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`
+    instead; only an absent stream reads as no records.
+    """
     out: list[Any] = []
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    if required:
+        text = read_required_capsule_member(path, operation="reading model calls")
+    else:
+        try:
+            text = read_capsule_text_or_none(
+                path.parent, path.name, operation="reading model calls", errors="replace"
+            )
+        except OSError:
+            return out
+    if text is None:
         return out
     for line in text.splitlines():
         if not line.strip():
@@ -320,19 +337,25 @@ def _read_lines(path: Path) -> list[Any]:
     return out
 
 
-def read_logical_model_calls(path: Path) -> list[dict[str, Any]]:
-    """Logical model-call records of a ``model-calls.jsonl`` (malformed lines skipped)."""
-    return [r for r in logical_model_calls(_read_lines(path)) if isinstance(r, dict)]
+def read_logical_model_calls(path: Path, *, required: bool = False) -> list[dict[str, Any]]:
+    """Logical model-call records of a ``model-calls.jsonl`` (malformed lines skipped).
+
+    *required*: see :func:`_read_lines`.
+    """
+    return [
+        r for r in logical_model_calls(_read_lines(path, required=required))
+        if isinstance(r, dict)
+    ]
 
 
-def count_logical_model_calls_in_file(path: Path) -> int:
+def count_logical_model_calls_in_file(path: Path, *, required: bool = False) -> int:
     """``model_call_count`` for a ``model-calls.jsonl``.
 
     A malformed non-blank line still counts as one call (the pre-ADR-0305
     line count did), so the count never drops evidence it cannot parse.
-    Missing file -> 0.
+    Missing file -> 0. *required*: see :func:`_read_lines`.
     """
-    return count_logical_model_calls(_read_lines(path))
+    return count_logical_model_calls(_read_lines(path, required=required))
 
 
 def split_model_calls(records: Iterable[_T]) -> tuple[list[_T], list[_T]]:

@@ -45,6 +45,17 @@ class AuditEventType(str, enum.Enum):
     USAGE_RECONCILE = "usage.reconcile"
     # ADR-0184 D3: one entry per server start in anonymous-admin (insecure) mode
     SERVER_INSECURE_NO_AUTH = "server.insecure_no_auth"
+    # Audit H3 (2026-10-22): one entry per maker-checker bypass notification —
+    # outcome delivered / failed / not_configured (promote/bypass_notify.py)
+    SEAL_BYPASS_NOTIFY = "seal.bypass.notify"
+    # Review r6 (2026-10-23): one entry per stored maker-checker bypass, written
+    # BEFORE the bypass becomes visible; if it cannot be written the bypass is
+    # refused (promote/bundle_store.py, fail closed)
+    SEAL_BYPASS_CREATE = "seal.bypass.create"
+    # Review r8 (2026-10-23): compensating entry for a seal.bypass.create whose
+    # bypass file could not then be stored — same bypass_uuid; such a bypass never
+    # counts (promote/bundle_store.py, promote/verifier.py)
+    SEAL_BYPASS_ABORT = "seal.bypass.abort"
 
 
 class AuditEntry(BaseModel):

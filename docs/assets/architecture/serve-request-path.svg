@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 676" width="980" height="676" role="img" aria-labelledby="t d">
 <title id="t">nova serve: from request to handler</title>
-<desc id="d">How nova serve decides whether a request may run. Start-up refuses multi-tenant mode while any read-path store is tenant-unsafe. Each request passes a Host guard, then one app-level dependency that maps the credential to a scope and the route to its required scope. Unclassified routes and insufficient scopes get 403 and an audit record. Step 1: Start-up: NOVAFABRIC_SERVE_TENANCY=multi exits with code 2 while any read-path store is unsafe. The default is single-tenant. Step 2: Every HTTP request first meets the Host guard: a Host header that is not localhost gets 403 host_not_localhost. Step 3: One app-level dependency, enforce_scope, maps the credential: the server token holds admin, an issued token its minted scope. Step 4: required_scope looks up (method, route template). A public route or an unknown credential goes on to the route, which answers 401. Step 5: If the held scope does not satisfy the route, or the route is unclassified, the answer is 403 and one authz.denied record is appended. Step 6: Scope satisfied: the route's own verify_token checks the credential again and the endpoint runs.</desc>
+<desc id="d">How nova serve decides whether a request may run. Start-up refuses multi-tenant mode while any read-path store is tenant-unsafe. Each request passes a Host guard, then one app-level dependency that maps the credential to a scope and the route to its required scope. Unclassified routes and insufficient scopes get 403 and an audit record. Step 1: Start-up: NOVAFABRIC_SERVE_TENANCY=multi exits with code 2 while any read-path store is unsafe. The default is single-tenant. Step 2: Every HTTP request first meets the Host guard: a Host header that is not localhost gets 403 host_not_localhost. Step 3: One app-level dependency, enforce_scope, maps the credential: the server token holds admin, an issued token its minted scope. Step 4: required_scope looks up (method, route template). A public route, or an unknown credential on a classified route, goes on (401). Step 5: If the held scope does not satisfy the route, or the route is unclassified, the answer is 403 and one authz.denied record is appended. Step 6: Scope satisfied: the route's own verify_token checks the credential again and the endpoint runs.</desc>
 <style>
 svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--ver:#c4f0a8;--amb:#fcd34d;--warn:#fda4af}
 @media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--ver:#3f6212;--amb:#a16207;--warn:#be123c}}
@@ -120,7 +120,7 @@ text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvet
 <path class="wire" d="M322 282 H350" marker-end="url(#ah)"/>
 <path class="wire" d="M528 282 H556" marker-end="url(#ah)"/>
 <path class="wire observe" d="M440 230 V208 H972 V427 H960" marker-end="url(#ah)"/>
-<text class="s" x="560" y="220" text-anchor="start">public route, or unknown credential: straight to the route</text>
+<text class="s" x="560" y="220" text-anchor="start">public route, or classified + unknown credential: to the route</text>
 <path class="wire" d="M734 282 H762" marker-end="url(#ah)"/>
 <path class="wire deny" d="M800 334 V358 H560 V382" marker-end="url(#ahw)"/>
 <path class="wire" d="M900 334 V382" marker-end="url(#ah)"/>
@@ -179,7 +179,7 @@ text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvet
 <rect class="k lit f-seal" x="30" y="587" width="920" height="20" rx="5" style="animation-delay:10.2s"/>
 <circle class="f-seal" cx="48" cy="597" r="8"/>
 <text class="num" x="48" y="601" style="fill:var(--bg)">4</text>
-<text class="t" x="64" y="601" text-anchor="start">required_scope looks up (method, route template). A public route or an unknown credential goes on to the route, which answers 401.</text>
+<text class="t" x="64" y="601" text-anchor="start">required_scope looks up (method, route template). A public route, or an unknown credential on a classified route, goes on (401).</text>
 <rect class="k lit f-warn" x="30" y="608" width="920" height="20" rx="5" style="animation-delay:13.6s"/>
 <circle class="f-warn" cx="48" cy="618" r="8"/>
 <text class="num" x="48" y="622" style="fill:var(--bg)">5</text>

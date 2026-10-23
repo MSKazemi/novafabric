@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +13,13 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import (
+    pin_capsule_root,
+    read_capsule_file,
+    read_capsule_text_or_none,
+    replace_capsule_file,
+    with_capsule_root_pins,
+)
 from novafabric.capture._ulid import new_span_id, new_ulid
 from novafabric.capture.capsule import CapsuleWriter
 from novafabric.capture.deployment_env import (
@@ -38,6 +47,12 @@ from novafabric.capture.secrets import (
     redact_secrets_in_text,
 )
 from novafabric.capture.session import resolve_session_membership
+from novafabric.capture.tamper import (
+    inspect_capsule_after_workload,
+    record_tamper_in_manifest,
+    record_tamper_in_proof,
+    tamper_message,
+)
 from novafabric.capture.variant import resolve_variant_attribution
 from novafabric.cost.usage_types import usage_totals_from_model_calls
 from novafabric.runners import LocalRunner, RunnerJobSpec, RunnerSpec
@@ -70,12 +85,12 @@ def _event_stream_refs(capsule_dir: Path) -> dict[str, str]:
         "human_approvals_ref": "human_approvals.jsonl",
     }
     for ref_key, filename in _streams.items():
-        path = capsule_dir / filename
         try:
-            if path.exists() and path.stat().st_size > 0:
-                refs[ref_key] = filename
+            st = os.lstat(capsule_dir / filename)  # a link is not a stream
         except OSError:
-            pass
+            continue
+        if stat.S_ISREG(st.st_mode) and st.st_size > 0:
+            refs[ref_key] = filename
     return refs
 
 
@@ -285,6 +300,7 @@ class CaptureOrchestrator:
         # only (content_hash + byte_size), per ADR-0021 §4 privacy-by-default.
         self._capture_media = capture_media
 
+    @with_capsule_root_pins
     def run(
         self,
         command: list[str],
@@ -467,10 +483,40 @@ class CaptureOrchestrator:
         duration_ms = int((time.monotonic() - t0) * 1000)
         status = "success" if exit_code == 0 else "failure"
 
+        # The workload has run, so the capsule directory is untrusted input from
+        # here on (a container runner bind-mounts it). Before any host-side read
+        # or write, remove and record whatever it planted at a capsule-managed
+        # path -- a link, FIFO, device, a stray .seal/ -- never following it
+        # (capture/tamper.py). Every later read and write is no-follow as well.
+        tamper = inspect_capsule_after_workload(capsule_dir, expected_root=writer.root_identity)
+        if tamper.tampered:
+            print(tamper_message(tamper), file=sys.stderr)
+        if tamper.root_replaced:
+            # The capsule path no longer names the directory we created: writing
+            # anything would follow the workload's redirect. Fail open (ADR-0021):
+            # the workload's exit code stands, and nothing more is written.
+            env_executor.shutdown(wait=False)
+            clear_current_recorder(_event_recorder)
+            if _spool_sink is not None:
+                _spool_sink.close()
+            return CaptureResult(
+                run_id=run_id,
+                capsule_dir=capsule_dir,
+                exit_code=exit_code,
+                runner_status=runner_result.runner_status,
+                runner_error=runner_result.runner_error,
+            )
+        # A process the workload left running could still swap the capsule
+        # directory for a link after the sweep: pin it, so every later read or
+        # write raises CapsuleRootChangedError instead of following it.
+        if writer.root_identity is not None:
+            pin_capsule_root(capsule_dir, writer.root_identity)
+        _event_recorder.record_tampered(tamper.health_entries())
+
         if stdout_bytes:
-            (capsule_dir / "outputs" / "stdout.txt").write_bytes(stdout_bytes)
+            writer.write_bytes("outputs/stdout.txt", stdout_bytes)
         if stderr_bytes:
-            (capsule_dir / "outputs" / "stderr.txt").write_bytes(stderr_bytes)
+            writer.write_bytes("outputs/stderr.txt", stderr_bytes)
 
         writer.append_trace_span({
             "span_id": root_span_id,
@@ -490,7 +536,7 @@ class CaptureOrchestrator:
         writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
 
         scanner = SecretScannerV0(capsule_dir=capsule_dir, run_id=run_id)
-        proof = scanner.scan_and_redact()
+        proof = record_tamper_in_proof(scanner.scan_and_redact(), tamper)
         # ADR-0135: operator-registered maskers run after the built-in scanner
         # (built-ins are never disabled) and before the proof is written, so no
         # raw value the maskers redact ever persists. They walk the same targets
@@ -519,10 +565,11 @@ class CaptureOrchestrator:
         model_call_count = count_logical_model_calls_in_file(
             capsule_dir / "model-calls.jsonl"
         )
+        tool_calls_text = read_capsule_text_or_none(
+            capsule_dir, "tool-calls.jsonl", operation="nova capture"
+        )
         tool_call_count = sum(
-            1
-            for line in (capsule_dir / "tool-calls.jsonl").read_text().splitlines()
-            if line.strip()
+            1 for line in (tool_calls_text or "").splitlines() if line.strip()
         )
 
         # ADR-0092 slice C (C0) + ADR-0220 follow-up: re-emit each locally-
@@ -631,6 +678,8 @@ class CaptureOrchestrator:
         # the run produced synthetic content (≥1 model call).
         if self._mark_provenance and model_call_count > 0:
             manifest["content_provenance_ref"] = "c2pa-manifest.json"
+        # A tampered capsule says so in the signed manifest; verify/validate fail it.
+        record_tamper_in_manifest(manifest, tamper)
 
         # ADR-0009: the manifest carries the raw argv, so it is redacted (built-in
         # rules, ADR-0135 maskers, built-in rules again) before it is ever written
@@ -694,6 +743,11 @@ class CaptureOrchestrator:
         _health_seen: list[dict[str, int]] = []
 
         def _write_capture_health() -> None:
+            # M14: the workload's hooks ran in its own process, on its own
+            # recorder; fold the counts it handed off at exit into ours first.
+            from novafabric.capture.workload_health import merge_workload_drops
+
+            merge_workload_drops(capsule_dir, _event_recorder)
             _health_seen.append(_event_recorder.drop_counts)
             _event_recorder.finalize_health()
 
@@ -763,7 +817,9 @@ class CaptureOrchestrator:
                 event_type="capsule.created",
                 subject_kind="capsule",
                 subject_ref=run_id,
-                subject_digest=_sha256((capsule_dir / "capsule.yaml").read_bytes()),
+                subject_digest=_sha256(
+                    read_capsule_file(capsule_dir, "capsule.yaml", operation="nova capture")
+                ),
                 payload={
                     "status": status,
                     "exit_code": exit_code,
@@ -801,8 +857,18 @@ def _mark_content_provenance(capsule_dir: Path) -> None:
     """
     import sys as _sys
     try:
-        from novafabric.evidence.c2pa_exporter import export_c2pa
-        export_c2pa(capsule_dir, capsule_dir / "c2pa-manifest.json")
+        import json as _json
+
+        from novafabric.evidence.c2pa_exporter import C2PAManifestExporter
+
+        doc = C2PAManifestExporter().build_manifest(capsule_dir)
+        # Same bytes export_c2pa writes, but never through a planted link.
+        replace_capsule_file(
+            capsule_dir,
+            "c2pa-manifest.json",
+            _json.dumps(doc, indent=2).encode("utf-8"),
+            operation="C2PA provenance marking",
+        )
     except Exception as exc:
         print(
             f"[novafabric] ⚠ C2PA provenance marking failed (capsule is still valid): {exc}",

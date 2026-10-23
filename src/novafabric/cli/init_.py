@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 from rich.console import Console
 
-from novafabric._paths import nova_home
+from novafabric._paths import EVIDENCE_KEY_NAME, nova_home
 
 console = Console()
 err_console = Console(stderr=True)
@@ -75,8 +75,8 @@ def init_cmd(
     for sub in _SUBDIRS:
         (root / sub).mkdir(parents=True, exist_ok=True)
 
-    key_path = root / "keys" / "signing_key.pem"
-    pub_path = root / "keys" / "signing_key.pub.pem"
+    key_path = root / "keys" / EVIDENCE_KEY_NAME
+    pub_path = key_path.with_suffix(".pub.pem")
     already_existed = key_path.exists()
 
     if already_existed and not force:

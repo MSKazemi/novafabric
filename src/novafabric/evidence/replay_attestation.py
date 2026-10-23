@@ -24,12 +24,14 @@ Determinism classification (normative downgrade rule, ADR-0094 §B):
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.capture.record_roles import read_logical_model_calls
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
 from novafabric.evidence.reperformance import ReperformanceAttestation
@@ -175,10 +177,11 @@ def pinned_block_from_capsule(capsule_dir: Path) -> PinnedBlock:
     """
     model = PinnedModel(request_model="unknown", response_model="unknown")
     calls_path = capsule_dir / "model-calls.jsonl"
-    if calls_path.exists():
+    if os.path.lexists(calls_path):
         # ADR-0305: the first LOGICAL call -- a transport record only mirrors
-        # the request model, never the model that actually answered.
-        for rec in read_logical_model_calls(calls_path)[:1]:
+        # the request model, never the model that actually answered. A stream
+        # that is present but unusable raises CapsuleRequiredFileError.
+        for rec in read_logical_model_calls(calls_path, required=True)[:1]:
             request_model = str(rec.get("gen_ai.request.model", "unknown"))
             model = PinnedModel(
                 request_model=request_model,
@@ -190,10 +193,14 @@ def pinned_block_from_capsule(capsule_dir: Path) -> PinnedBlock:
             )
 
     env = PinnedEnv(lock_mode="best-effort")
-    lock_path = capsule_dir / "env.lock"
-    if lock_path.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
+    # never a signed attestation that silently downgrades to best-effort.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "env.lock", operation="replay attestation"
+    )
+    if capsule_text is not None:
         try:
-            data = yaml.safe_load(lock_path.read_text()) or {}
+            data = yaml.safe_load(capsule_text) or {}
         except yaml.YAMLError:
             data = {}
         if isinstance(data, dict):

@@ -75,12 +75,21 @@ def test_stock_values_run_the_multi_user_component() -> None:
 
 @helm_required
 def test_dashboard_mode_is_still_supported_when_chosen() -> None:
-    """The problem was the default, not the option."""
-    result = _render("mode=dashboard")
+    """The problem was the default, not the option.
+
+    M4: this used to render ``mode=dashboard`` alone and assert no ``--insecure``
+    — a pod binding 0.0.0.0 without it, which ``nova serve`` refuses (exit 2),
+    i.e. a crash loop pinned as "supported". Dashboard mode is supported through
+    the explicit acknowledgement; without it the chart now refuses at render
+    (``tests/deploy/test_dashboard_mode_starts.py``).
+    """
+    result = _render(
+        "mode=dashboard", "serve.insecure=true", f"serve.acknowledgeInsecureExposure={ACK}"
+    )
     assert result.returncode == 0, result.stderr
     args = [line.strip() for line in result.stdout.splitlines()]
     assert "- serve" in args
-    assert "--insecure" not in result.stdout
+    assert "- --insecure" in args
 
 
 # ---------------------------------------------------------------------------

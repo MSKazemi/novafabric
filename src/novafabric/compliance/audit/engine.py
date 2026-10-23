@@ -23,6 +23,9 @@ from pathlib import Path
 
 from ulid import ULID
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric.compliance.capture_coverage import evidence_is_uncaptured, not_captured_note
+
 from .models import AuditReport, Control, ControlCoverage, ControlProfile, EvidenceRequirement
 
 log = logging.getLogger(__name__)
@@ -62,7 +65,7 @@ def _check_policy_events(capsule_dir: Path) -> bool:
         return False
     # Check whether any line contains a deny decision (loose check)
     try:
-        text = p.read_text(encoding="utf-8")
+        text = (read_capsule_member_or_none(p, operation="compliance export") or "")
         for line in text.splitlines():
             if not line.strip():
                 continue
@@ -125,11 +128,21 @@ class AuditEngine:
     Args:
         data_dir: Root data directory (contains a ``capsules/`` sub-directory).
         profile: :class:`ControlProfile` loaded from a YAML file.
+        capsules_dir: Where the capsules are, when not ``<data_dir>/capsules``
+            (e.g. ``$NOVAFABRIC_CAPSULE_DIR``). Optional; additive.
     """
 
-    def __init__(self, data_dir: Path, profile: ControlProfile) -> None:
+    def __init__(
+        self, data_dir: Path, profile: ControlProfile, capsules_dir: Path | None = None
+    ) -> None:
         self._data_dir = data_dir
         self._profile = profile
+        self._capsules_dir = capsules_dir if capsules_dir is not None else data_dir / "capsules"
+
+    @property
+    def capsules_dir(self) -> Path:
+        """The directory whose sub-directories are scanned as capsules."""
+        return self._capsules_dir
 
     # ------------------------------------------------------------------
     # Public API
@@ -149,14 +162,18 @@ class AuditEngine:
         covered = sum(1 for c in coverages if c.status == "covered")
         partial = sum(1 for c in coverages if c.status == "partial")
         missing = sum(1 for c in coverages if c.status == "missing")
+        not_captured = sum(1 for c in coverages if c.status == "not_applicable")
 
-        # Weighted overall score
-        total_weight = sum(ctrl.weight for ctrl in self._profile.controls)
+        # Weighted overall score — controls not captured by this version are
+        # excluded rather than counted as zero (L18).
+        scored = [
+            (cov, ctrl)
+            for cov, ctrl in zip(coverages, self._profile.controls, strict=True)
+            if cov.status != "not_applicable"
+        ]
+        total_weight = sum(ctrl.weight for _, ctrl in scored)
         if total_weight > 0:
-            weighted_score = sum(
-                cov.coverage_score * ctrl.weight
-                for cov, ctrl in zip(coverages, self._profile.controls)
-            )
+            weighted_score = sum(cov.coverage_score * ctrl.weight for cov, ctrl in scored)
             overall_score = weighted_score / total_weight
         else:
             overall_score = 0.0
@@ -177,6 +194,7 @@ class AuditEngine:
             covered_controls=covered,
             partial_controls=partial,
             missing_controls=missing,
+            not_captured_controls=not_captured,
             overall_score=round(overall_score, 4),
             coverages=coverages,
             evidence_seal_verified=seal_verified,
@@ -187,13 +205,13 @@ class AuditEngine:
     # ------------------------------------------------------------------
 
     def _find_capsules(self) -> list[Path]:
-        """Return sorted list of capsule directories under ``data_dir/capsules/``."""
-        capsules_root = self._data_dir / "capsules"
+        """Return sorted list of capsule directories under :attr:`capsules_dir`."""
+        capsules_root = self._capsules_dir
         if not capsules_root.is_dir():
             return []
         dirs = sorted(
             p for p in capsules_root.iterdir()
-            if p.is_dir()
+            if p.is_dir() and not p.is_symlink()  # a scan never lists a linked entry
         )
         return dirs
 
@@ -225,8 +243,26 @@ class AuditEngine:
         missing_descs: list[str] = []
         contributing_capsule_ids: list[str] = []
 
-        required_reqs = [r for r in control.evidence_requirements if r.required]
-        optional_reqs = [r for r in control.evidence_requirements if not r.required]
+        # L18: evidence this version never captures, absent from every scanned
+        # capsule, is reported as not captured — never scored as a failure.
+        uncaptured = [
+            r for r in control.evidence_requirements
+            if evidence_is_uncaptured(r.evidence_type, capsule_dirs)
+        ]
+        not_captured_descs = [not_captured_note(r.description) for r in uncaptured]
+        uncaptured_required = any(r.required for r in uncaptured)
+        scored_reqs = [r for r in control.evidence_requirements if r not in uncaptured]
+        if uncaptured and not scored_reqs:
+            return ControlCoverage(
+                control_id=control.id,
+                control_title=control.title,
+                status="not_applicable",
+                coverage_score=0.0,
+                evidence_not_captured=not_captured_descs,
+            )
+
+        required_reqs = [r for r in scored_reqs if r.required]
+        optional_reqs = [r for r in scored_reqs if not r.required]
 
         required_satisfied = 0
         optional_satisfied = 0
@@ -291,6 +327,11 @@ class AuditEngine:
             else:
                 status = "missing"
 
+        if status == "covered" and uncaptured_required:
+            # What this version captures is all present, but a required part of
+            # the control is not captured at all: never claim full coverage.
+            status = "partial"
+
         return ControlCoverage(
             control_id=control.id,
             control_title=control.title,
@@ -298,5 +339,6 @@ class AuditEngine:
             coverage_score=round(coverage_score, 4),
             evidence_found=found_descs,
             evidence_missing=missing_descs,
+            evidence_not_captured=not_captured_descs,
             capsule_ids=contributing_capsule_ids,
         )

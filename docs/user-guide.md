@@ -111,8 +111,10 @@ nova capture python my_agent.py
 nova capture -- python -c "import sys; sys.exit(1)"
 ```
 
-Capsules are written to `.novafabric/capsules/<ulid>/` by default. Use
-`--output-dir` to change the base directory:
+Capsules are written to `$NOVAFABRIC_HOME/capsules/<ulid>/` by default
+(`~/.novafabric/capsules/<ulid>/` when `NOVAFABRIC_HOME` is unset;
+`$NOVAFABRIC_CAPSULE_DIR` overrides the base). Use `--output-dir` to change the
+base directory for one run:
 
 ```bash
 nova capture --output-dir /mnt/experiment-runs python train.py
@@ -133,7 +135,7 @@ Capture never silently drops a run: success and failure are both evidence.
 On success:
 
 ```
-✓ Capsule written: .novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
+✓ Capsule written: /home/me/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
 ```
 
 **What gets captured.** The following transports are hooked automatically via a
@@ -145,7 +147,8 @@ capsule is still written even when no AI SDK is present at all:
 |---|---|
 | `openai` SDK | `chat.completions.create` calls → `model-calls.jsonl`; since v0.105.0 also `responses.create`, async and streamed calls |
 | `anthropic` SDK | `messages.create` calls → `model-calls.jsonl`; since v0.105.0 also async and streamed calls |
-| `httpx` | Requests to URL-registry-classified hosts → `model-calls.jsonl` |
+| `httpx` | Requests to URL-registry-classified hosts → `model-calls.jsonl` and `network_events.jsonl` |
+| `httpx2` | Same as `httpx`, for the client `openai` 3.x uses by default; patched only when `httpx2` is installed (works today) |
 | `requests` | Same classification as `httpx`; covers LangChain, LlamaIndex, `boto3` |
 | `aiohttp` | Async wire-level capture; covers async LangChain, FastAPI agents |
 | `urllib3` | Lowest-tier wire-level capture; covers `boto3`/Bedrock |
@@ -257,7 +260,8 @@ decorator runs inside your process, so the capsule records `capture_mode:
 sdk-decorator` and a label (`@agent:<name>@<version>`) instead of a command.
 `nova replay --mode mocked` therefore refuses it (`CapsuleNotReplayable`, exit 1);
 `forensic` and `semantic` replay, `nova diff` and `nova validate` work as usual.
-Without `capsule_dir`,
+`capsule_dir` is a capsule store, like `nova capture --output-dir`: every call
+writes its own capsule to `capsules/<run_id>/`. Without `capsule_dir`,
 the decorator emits OTel spans only — no capsule is written. This is the
 original v0.1 observability mode and is still useful if you only need traces.
 
@@ -310,19 +314,23 @@ nova capture --runner slurm \
 > runs as you, on your machine, and keeps your full environment. Every other
 > runner sends the workload somewhere else, so it receives **only** `NOVAFABRIC_*`
 > variables — plus `PATH` for `slurm`, and anything you name explicitly in
-> `extra_env` for `docker` and `kubernetes`:
+> `extra_env` for `docker`, `kubernetes`, `slurm` and `lsf`:
 >
 > ```bash
 > nova capture --runner kubernetes \
 >   --runner-option image=myorg/agent-runtime:latest \
 >   --runner-option namespace=ml-jobs \
->   --runner-option extra_env='{"LOG_LEVEL":"debug"}' \
+>   --runner-option extra_env=LOG_LEVEL=debug \
 >   python agent.py
 > ```
 >
-> Credentials do not belong in `extra_env` — those values are stored in the
-> Kubernetes `Job` object. Use a `Secret` bound to the pod's `service_account`.
-> See [`operator-guide.md`](operator-guide.md) §3.4 and ADR-0270.
+> Credentials do not belong in `extra_env`. A value typed on the command line is in
+> `nova capture`'s argv, readable with `ps` by every user on the host for the whole
+> run; it is then stored in the Kubernetes `Job` object, in `docker inspect`, or with
+> the SLURM/LSF job script (which `slurm` and `lsf` pipe to the scheduler on stdin,
+> never on a command line). On Kubernetes use a `Secret` bound to the pod's
+> `service_account`. See [`operator-guide.md`](operator-guide.md) §3.3–3.4,
+> ADR-0270 and ADR-0311.
 
 Pass runner-specific options with `--runner-option key=value` (repeatable). All
 runners are non-privileged by design — see the enforcement notes per runner.
@@ -393,10 +401,10 @@ Adapters ship for eleven frameworks. Each is importable by name from
 | Haystack | `wrap_haystack(pipeline)` | a `Pipeline` |
 | OpenAI Agents SDK | `register_openai_agents()` | registers a trace processor |
 | Google ADK | `make_google_adk_plugin()` | returns a plugin |
-| AWS Bedrock AgentCore | `wrap_bedrock_agentcore(agent)` | an agent |
+| AWS Bedrock AgentCore | `wrap_bedrock_agentcore(client)` | a boto3 `bedrock-agent-runtime` client (returns a wrapped client) |
 | A2A SDK | `make_a2a_interceptor()` | returns an interceptor |
 
-The last four are not wrappers — they hook the framework's own extension point
+The OpenAI Agents SDK, Google ADK and A2A entry points are not wrappers — they hook the framework's own extension point
 (ADR-0078) rather than patching a method.
 
 **Evidence and sealing (since v0.105.0).** Every adapter finalizes its
@@ -560,7 +568,7 @@ against their JSON schemas. The command routes automatically based on what
 **Capsule validation:**
 
 ```bash
-nova validate .novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
+nova validate ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
 # ✓ Valid capsule: 01HXAY7M5JZ8R7K4P9DPBYK2WX  status=success
 ```
 
@@ -577,7 +585,7 @@ nova validate my-model.yaml
 **Replay result validation:**
 
 ```bash
-nova validate .novafabric/replays/01HXB.../
+nova validate ~/.novafabric/replays/01HXB.../
 # ✓ Valid replay result: 01HXB...  mode=forensic  status=success
 ```
 
@@ -585,7 +593,7 @@ nova validate .novafabric/replays/01HXB.../
 
 ```bash
 nova capture python agent.py
-nova validate .novafabric/capsules/$(ls -t .novafabric/capsules/ | head -1)
+nova validate ~/.novafabric/capsules/$(ls -t ~/.novafabric/capsules/ | head -1)
 ```
 
 ---
@@ -597,7 +605,7 @@ secret scanner found during capture. Does not modify the capsule — to re-run t
 scanner with different strategies, use [nova redact](#nova-redact).
 
 ```bash
-nova scan-secrets .novafabric/capsules/01HX.../
+nova scan-secrets ~/.novafabric/capsules/01HX.../
 ```
 
 Clean output:
@@ -645,8 +653,10 @@ dependencies) and only ever contains **post-redaction** capsule text — the
 same four files the secret scanner redacts before a capsule is complete.
 New capsules are indexed automatically at ingest (`nova serve` /
 `nova ingest-capsule`); run `nova search --reindex` once to backfill
-capsules captured before this feature. Capsules captured at `minimal`
-capture level simply contribute fewer (or no) content rows. All query terms
+capsules captured before this feature. A capsule missing one of those files
+simply contributes fewer (or no) content rows; the `minimal` capture level does
+not drop any of them today (it is planned, not implemented — see
+[`nova policy capture-level`](cli-reference.md#nova-policy-capture-level-set)). All query terms
 must match (AND); a trailing `*` does prefix search; FTS5 operators like
 `OR`/`NEAR`/`-` are matched literally. The same search is available in the
 dashboard API via `GET /api/runs/search?scope=content`. Set
@@ -677,7 +687,7 @@ supports.
 **Forensic mode (recommended as a first step):**
 
 ```bash
-nova replay .novafabric/capsules/01HX.../ --mode forensic
+nova replay ~/.novafabric/capsules/01HX.../ --mode forensic
 ```
 
 No subprocess is launched, no network calls are made. NovaFabric reads the
@@ -688,7 +698,7 @@ an artifact store. This is the mode for audit and post-incident review.
 **Semantic mode** (read-only similarity analysis):
 
 ```bash
-nova replay .novafabric/capsules/01HX.../ --mode semantic
+nova replay ~/.novafabric/capsules/01HX.../ --mode semantic
 ```
 
 Computes pairwise text similarity across model call responses using
@@ -700,7 +710,7 @@ when the upstream LLM is remote and non-deterministic.
 **Exact mode** (eligibility check):
 
 ```bash
-nova replay .novafabric/capsules/01HX.../ --mode exact
+nova replay ~/.novafabric/capsules/01HX.../ --mode exact
 ```
 
 Checks whether the capsule meets the requirements for byte-exact replay:
@@ -714,7 +724,7 @@ mode is for local / on-prem / compliance runs where determinism is controllable.
 **Mocked mode:**
 
 ```bash
-nova replay .novafabric/capsules/01HX.../ --mode mocked
+nova replay ~/.novafabric/capsules/01HX.../ --mode mocked
 ```
 
 The original command is re-spawned as a subprocess (Python workloads; what
@@ -783,7 +793,7 @@ plugin and OpenAI Agents tools through `wrap_tools`) — an unmatched call under
 `allow: true` override — and never stop a tool replay does not intercept:
 
 ```bash
-nova replay .novafabric/capsules/01HX.../ --mode mocked \
+nova replay ~/.novafabric/capsules/01HX.../ --mode mocked \
   --allow-readonly             # rung: read-only tool calls
   --allow-mutating             # rung: idempotent / non-idempotent writes (+ policy gate)
   --allow-external-side-effects  # rung: external-side-effect tools (+ policy gate)
@@ -817,10 +827,10 @@ against its recorded responses and diff the result.
 **Dry-run** (see what would happen without running):
 
 ```bash
-nova replay .novafabric/capsules/01HX.../ --dry-run
+nova replay ~/.novafabric/capsules/01HX.../ --dry-run
 ```
 
-Results land in `.novafabric/replays/<replay-ulid>/replay_result.yaml`. Use
+Results land in `$NOVAFABRIC_HOME/replays/<replay-ulid>/replay_result.yaml`. Use
 `--output-dir` to change the base directory.
 
 **Mode comparison:**
@@ -845,7 +855,7 @@ and content hash). This is what turns "it worked yesterday, fails
 today" into a precise, mechanical answer.
 
 ```bash
-nova diff .novafabric/capsules/01HX.../ .novafabric/capsules/01HY.../
+nova diff ~/.novafabric/capsules/01HX.../ ~/.novafabric/capsules/01HY.../
 ```
 
 Sample output:
@@ -1013,8 +1023,8 @@ this to backfill runs captured before the lineage graph was set up, or to
 rebuild the index after moving the database.
 
 ```bash
-nova lineage import .novafabric/capsules/01HX.../    # single capsule
-nova lineage import .novafabric/capsules/            # all capsules in the directory
+nova lineage import ~/.novafabric/capsules/01HX.../    # single capsule
+nova lineage import ~/.novafabric/capsules/            # all capsules in the directory
 ```
 
 The graph is fully derivable from `lineage.jsonl` files in the capsule
@@ -1024,8 +1034,11 @@ directories — losing the SQLite index is not data loss.
 > designed for graphs below roughly 1M edges. A KuzuDB-backed v2 tier for
 > larger graphs shipped as **experimental** in v0.10+ (`nova lineage-store
 > migrate` / `profile`; see the [lineage migration guide](lineage/migration-guide.md)).
-> Postgres/Apache AGE backends and the billion-edge federation tier remain
-> **future design**, not implemented.
+> Postgres (recursive CTE), Apache AGE (openCypher) and JanusGraph (Gremlin)
+> backends also ship as **experimental** library classes in
+> `novafabric.lineage.backends` (no CLI flag selects them yet). Cross-site lineage
+> federation remains **future design** (a protocol prototype lives in
+> `novafabric.lineage.federation`; nothing in the CLI or server uses it).
 
 ---
 
@@ -1037,13 +1050,13 @@ Marquez, Atlan, and OpenMetadata.
 
 ```bash
 # Print to stdout
-nova lineage emit-openlineage .novafabric/capsules/01HX.../ --output -
+nova lineage emit-openlineage ~/.novafabric/capsules/01HX.../ --output -
 
 # Post to an HTTP endpoint
-nova lineage emit-openlineage .novafabric/capsules/ --output http://marquez:5000/api/v1/lineage
+nova lineage emit-openlineage ~/.novafabric/capsules/ --output http://marquez:5000/api/v1/lineage
 
 # Write to a file
-nova lineage emit-openlineage .novafabric/capsules/ --output events.jsonl
+nova lineage emit-openlineage ~/.novafabric/capsules/ --output events.jsonl
 ```
 
 If `--output` is omitted, the target is resolved from `OPENLINEAGE_URL` →
@@ -1063,7 +1076,7 @@ schema-validated before emission, so a consumer that ignores them still sees unc
 core OpenLineage events:
 
 ```bash
-nova lineage emit-openlineage .novafabric/capsules/01HX.../ --with-facets --otel-correlation
+nova lineage emit-openlineage ~/.novafabric/capsules/01HX.../ --with-facets --otel-correlation
 ```
 
 > **Note:** these OpenLineage run facets are a different thing from the capsule
@@ -1141,7 +1154,7 @@ with potentially unscanned secrets.
 **Re-scan with default strategies** (mask in-place):
 
 ```bash
-nova redact .novafabric/capsules/01HX.../
+nova redact ~/.novafabric/capsules/01HX.../
 ```
 
 **Re-scan with strategy overrides.** Choose `mask` (default), `hash`
@@ -1180,28 +1193,32 @@ A reviewer can verify the bundle with nothing but `sha256sum` and an
 ed25519 verifier — **no NovaFabric runtime required.** This is the primitive
 that makes a capsule portable audit evidence you own.
 
-**Generate a signing key** (one time):
+**Generate a signing key** (one time): `nova init` writes an Ed25519 pair to
+`$NOVAFABRIC_HOME/keys/signing_key.pem` (private, mode 600) and
+`signing_key.pub.pem` (public). Re-running `nova init` keeps an existing pair.
 
-```python
-from pathlib import Path
-from novafabric.evidence.signing import generate_keypair
-generate_keypair(Path("./keys"))
-# writes keys/ed25519.pem (private) and keys/ed25519.pub.pem (public)
+```bash
+nova init
 ```
 
 **Build the bundle:**
 
 ```bash
 nova export-evidence <capsule> \
-  --key ~/.novafabric/keys/ed25519.pem \
+  --key ~/.novafabric/keys/signing_key.pem \
   --output evidence.zip
 ```
 
 **Options:**
 
-- `--key PATH` (required) — PEM-encoded ed25519 private key
-- `--output PATH` (required) — output ZIP path
+- `--key PATH` — PEM-encoded ed25519 private key. Not defaulted: without it the
+  command exits 1 and prints the path `nova init` would use.
+- `--output PATH` / `-o` (required) — output ZIP path
 - `--allow-unsafe-skips` — export even if `redaction-proof.json` contains acknowledged false positives
+- `--timestamp` / `--timestamp-url URL` / `--timestamp-optional` — opt-in RFC 3161
+  timestamp of the bundle (off by default; see `nova export-evidence --help`)
+- `--sigstore` — publish the run attestation's DSSE envelope to a Rekor transparency
+  log (see the note below)
 
 **Bundle layout:**
 
@@ -1213,7 +1230,8 @@ evidence.zip
 ├── attestations/                       # in-toto Statement v1, DSSE-enveloped
 │   ├── run.intoto.json
 │   ├── redaction.intoto.json
-│   └── lineage.intoto.json
+│   ├── lineage.intoto.json
+│   └── bundle.intoto.json
 ├── signatures/                         # raw signature + public key per envelope
 │   ├── *.sig
 │   └── *.cert
@@ -1221,8 +1239,11 @@ evidence.zip
 └── README.md                           # human-readable verification recipe
 ```
 
-> **Note.** `--sigstore` (keyless Sigstore signing) is **planned** but not
-> implemented. Passing `--sigstore` exits 1 with an explanation.
+> **Note.** `--sigstore` is Rekor *publication*, not keyless signing: when
+> `NOVA_REKOR_URL` is set it uploads the run attestation's DSSE envelope to that
+> Rekor log and prints the entry id; when it is unset it prints a warning and the
+> export still exits 0. The bundle is always signed by `--key`. Sigstore keyless
+> signing is **planned**.
 
 ---
 
@@ -1241,7 +1262,7 @@ evidence.zip
 > self-contained: new seals carry their Merkle inclusion proof, so an auditor needs only the
 > capsule — no `novaseal.yaml` and no copy of your log; a check that cannot run prints
 > `NOT CHECKED` / `NOT PRESENT` and does not fail the command. Sealing is
-> opt-in via `~/.novafabric/novaseal.yaml`; maker-checker seal flows are
+> opt-in via `$NOVAFABRIC_HOME/novaseal.yaml` (`~/.novafabric/novaseal.yaml` by default); maker-checker seal flows are
 > `nova seal propose / approve / verify` (ADR-0059). See the
 > [NovaSeal configuration guide](novaseal-configuration.md) and the
 > [CLI reference](cli-reference.md#nova-verify-capsule).
@@ -1426,21 +1447,35 @@ spec:
     - create_ticket
   prompts:
     system: "You are a support triage assistant. Classify incoming tickets by priority."
+  policies: []
   evals:
     - triage_accuracy_suite
 ```
 
-Supported asset types and their required `spec` fields:
+Spec files are validated strictly: a key NovaFabric does not define — at the top level or
+inside `spec:` — is a validation error that names the key, so a typo such as `suite_name:`
+for `suite:` is caught instead of silently dropped. Put vendor or custom data under the
+optional top-level `extensions:` mapping (reverse-DNS keys, kept verbatim), or in `tags:` /
+`external_refs:` (string values). (Before this change, unknown keys were accepted and
+discarded.)
 
-| `asset_type` | Spec fields |
-|---|---|
-| `model` | `framework`, `artifact_path` |
-| `agent` | `model`, `tools`, `prompts`, `policies`, `evals`, `memory` |
-| `prompt` | `template` |
-| `tool` | `entrypoint` |
-| `dataset` | `path` |
-| `evaluation` | `suite_name` |
-| `deployment` | `endpoint` |
+```yaml
+extensions:
+  com.example.owner: fraud-team
+  com.example.cost-centre: {id: 4711}
+```
+
+Supported asset types and their `spec` fields (`src/novafabric/spec/models.py`):
+
+| `asset_type` | Required `spec` fields | Optional `spec` fields |
+|---|---|---|
+| `model` | `framework`, `artifact_path` | — |
+| `agent` | `model` (`provider`, `name`), `tools`, `prompts`, `policies` (may be `[]`), `evals` (at least one) | `memory`, `model.temperature` |
+| `prompt` | — (`spec:` itself is optional) | `template` |
+| `tool` | — (`spec:` itself is optional) | `entrypoint` |
+| `dataset` | — (`spec:` itself is optional) | `path` |
+| `evaluation` | — (`spec:` itself is optional) | `suite` |
+| `deployment` | — (`spec:` itself is optional) | `endpoint` |
 
 Exits 0 on success, 1 on validation error or duplicate. Use `nova validate
 <spec.yaml>` to validate without registering.
@@ -1511,7 +1546,7 @@ registration, and eval results for agent assets.
 
 ### nova promote
 
-`nova promote` is a sub-group with three commands. Valid lifecycle transitions:
+`nova promote` is a sub-group with four commands (`direct`, `keygen`, `propose`, `approve`). Valid lifecycle transitions:
 
 ```
 development → staging → production → archived
@@ -1533,7 +1568,8 @@ nova promote direct fraud-detection-model@1.2.0 --to archived
 production` is refused unless an OPA policy explicitly allows the `promote_direct`
 action, and the shipped default policy denies it. With no OPA installed there is no
 explicit allow, so it is refused. `--force` does not bypass this. Use `propose` +
-`approve` below, or see the CLI reference for loading an allow policy.
+`approve` below, or see the CLI reference for loading an allow policy. The dashboard's
+Promote button and the HTTP promote endpoints go through the same gate and answer 403.
 
 **Eval gate.** Agent assets require a passing `nova eval` result before
 promotion to `staging` or `production`. Use `--force` to override
@@ -1608,8 +1644,16 @@ What is enforced today:
 - Proposals stored before ADR-0312 still list, as `unverified`. They cannot be approved.
   A new `propose` supersedes them.
 
-**Limit.** The trust list is the trust anchor. Anyone who can edit it can bind a second
-key to a second name. Keep it owned by an operator and read-only to signers.
+**Every single-actor route into production is gated the same way.** `nova promote direct`,
+`nova prompt promote`, the dashboard and `nova serve` promote endpoints, the `nova server`
+route `PUT /v0/assets/{id}/promote` (403 `promote_direct_denied`), and a `nova rollback` to a
+version that was never in production all need an explicit `promote_direct` policy allow;
+`--force` does not bypass it.
+
+**Limit.** The trust list is the trust anchor. Anyone who can edit it — or who can set
+`NOVAFABRIC_PROMOTE_SIGNERS` / `NOVAFABRIC_HOME` for the process doing the approving — can bind
+a second key to a second name. Keep it owned by an operator and read-only to signers, and do
+not let signers choose the environment of the process that verifies them (ADR-0312 Limits).
 
 ---
 
@@ -1629,10 +1673,14 @@ Steps performed in a single DB transaction:
 2. Find the most recent prior `production` version (auto, or use `--to`).
 3. Archive the current production version.
 4. Promote the prior version back to `production`.
-5. Write an audit log entry with a `rollback_reason` field.
+5. Write an audit log entry with a `rollback_reason` and a `gate` field.
 
-If the discovered prior version is archived, the command errors and asks you to
-supply `--to` explicitly. `--actor` is required and recorded in the audit trail.
+"Prior production version" comes from the registry's append-only status history. A version
+that was in production before is restored at once, even if it is archived — that is what
+incident response needs. A `--to` target that was **never** in production is refused unless
+the `promote_direct` policy action explicitly allows it (ADR-0312), the same gate as
+`nova promote direct`; otherwise `promote --to staging` followed by a rollback would be a
+single-person path into production. `--actor` is recorded in the audit trail.
 
 ---
 
@@ -1684,6 +1732,8 @@ nova eval contamination-check ./my-capsule --registry known-bad.json --json
 
 It reports a status per dataset (`current` / `superseded` / `contaminated` / `unknown`)
 and **exits `4`** when any dataset is contaminated or superseded, so CI can gate on it.
+It fails closed: a facet it cannot read or validate is reported as `invalid`, with a
+reason, and also exits `4`.
 Detection only — no remediation. See the [feature tour](tutorials/feature-tour.md#17-prove-supply-chain-provenance--eval-integrity)
 for the dataset provenance and SLSA-for-ML surfaces that pair with it.
 
@@ -1771,8 +1821,8 @@ you want the next start to mint a fresh token.
 | `--experimental` | (required) | Acknowledges the experimental gate |
 | `--port` | `4321` | TCP port |
 | `--host` | `127.0.0.1` | Bind address; localhost only without `--insecure` |
-| `--capsule-dir` | `./.novafabric/runs/` | Where to look for capsules |
-| `--db-path` | `~/.novafabric/registry.db` | Registry/lineage SQLite path |
+| `--capsule-dir` | `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules` | Where to look for capsules (where `nova capture` writes) |
+| `--db-path` | `$NOVAFABRIC_DB_PATH`, else `$NOVAFABRIC_HOME/registry.db` | Registry/lineage SQLite path |
 | `--no-browser` | off | Do not auto-open a browser tab |
 
 **Capsule index.** `nova serve` keeps a `runs_cache` SQLite index so the Runs
@@ -1786,9 +1836,11 @@ nova ingest-capsule <run_id>                    # index a single capsule
 nova ingest-capsule --watch                     # foreground watcher loop
 ```
 
-Two watcher backends: `PollingBackend` (default, zero extra deps) and
-`WatchdogBackend` (`pip install novafabric[watch]`; uses inotify/FSEvents).
-Override with `NOVA_WATCHER_BACKEND=watchdog` and `NOVA_WATCHER_INTERVAL=<seconds>`.
+Two watcher backends: `WatchdogBackend` (`pip install novafabric[watch]`; uses
+inotify/FSEvents) and `PollingBackend` (zero extra deps). The default, `auto`, uses
+watchdog when it is installed and falls back to polling otherwise. Force one with
+`NOVA_WATCHER_BACKEND=polling|watchdog` and set the poll period with
+`NOVA_WATCHER_INTERVAL=<seconds>` (default 2); an unknown value is refused at start-up.
 
 **Navigating.** The 30 tabs are grouped in the sidebar under seven headings:
 Overview · Runs & Debug · Govern & Promote · Provenance & Trust · Compliance ·
@@ -1814,7 +1866,7 @@ unchanged.)
 - **Lineage tab** — interactive DAG rendered with React Flow; provenance, blast-radius, and replay-chain highlight modes; ancestry breadcrumb; click or double-click a node to select it.
 - **Diff tab** — structural diff; 2-run or N-run (up to 5) comparison; stacked collapsible cards in N-run mode; URL-persistent `?run_ids=a,b,c` for sharing.
 - **Audit tab** — unified mutation audit log (every dashboard write action with equivalent `nova` command); action-type filter.
-- **Policy tab** — interactive OPA/Rego policy tester; ALLOW/DENY badge; explain toggle for full OPA trace output.
+- **Policy tab** — interactive OPA/Rego policy tester; ALLOW/DENY badge; explain toggle for full OPA trace output. Checking the packaged policies needs a `read` token; submitting your own Rego needs `admin`, and `opa` always runs sandboxed (no server environment, no `opa.runtime`/`http.send`/`net.lookup_ip_addr`).
 - **Commands tab** — live command builders across journey tracks with copy buttons.
 - **Home tab** — staleness indicator (amber border on resume cards > 24 h).
 - **Capture tab** — recent capsules panel with "Open folder" links for local paths.
@@ -1864,6 +1916,7 @@ may change between minor versions.
 |---|---|---|
 | `NOVAFABRIC_HOME` | `~/.novafabric` | Root directory for all internal NovaFabric data. Set this once to redirect all files (registry.db, .serve-token, dashboard audit log) to a shared location. |
 | `NOVAFABRIC_DB_PATH` | `$NOVAFABRIC_HOME/registry.db` | SQLite path for asset registry and lineage graph. Overrides `NOVAFABRIC_HOME` for this path only. |
+| `NOVAFABRIC_METADATA_DB_PATH` | `$NOVAFABRIC_HOME/metadata.db` | SQLite path for the MetadataStore (runtime and `nova db upgrade`). `NOVAFABRIC_DB_PATH` does not select it. |
 | `NOVAFABRIC_URL_REGISTRY` | (bundled) | Override path for the wire-level URL classification registry |
 | `NOVAFABRIC_CAPSULE_DIR` | — | Capsule storage directory. Set by `nova capture` in the subprocess; used by hook loader and proxy commands. Set explicitly to redirect captures to a shared path (e.g. a shared NFS mount). |
 | `NOVAFABRIC_SPAN_ID` | — | Root OTel span id injected into the subprocess by the orchestrator |
@@ -1872,8 +1925,8 @@ may change between minor versions.
 | `OPENLINEAGE_URL` | — | HTTP endpoint for automatic OpenLineage emission at capture time |
 | `OPENLINEAGE_FILE` | — | File path for OpenLineage emission (fallback if `OPENLINEAGE_URL` not set) |
 | `NOVAFABRIC_DASHBOARD_AUDIT_FILE` | `$NOVAFABRIC_HOME/dashboard-audit.jsonl` | Audit log destination for dashboard mutations. Overrides `NOVAFABRIC_HOME` for this path only. |
-| `NOVA_WATCHER_BACKEND` | `polling` | `nova serve` capsule-index watcher backend (`polling` or `watchdog`) |
-| `NOVA_WATCHER_INTERVAL` | — | Poll interval in seconds for the capsule-index watcher |
+| `NOVA_WATCHER_BACKEND` | `auto` | Capsule-index watcher backend (`auto`, `polling` or `watchdog`); an unknown value is refused. `auto` uses watchdog when installed, else polling. `nova ingest-capsule --watch --backend` overrides it; `nova serve` has no such flag. |
+| `NOVA_WATCHER_INTERVAL` | `2.0` | Poll interval in seconds for the capsule-index watcher; an explicit `--interval` flag wins. |
 | `NOVA_CONTENT_INDEX` | on | Set to `off` to disable content indexing at ingest (experimental, ADR-0204) |
 | `NOVA_CONTENT_INDEX_MAX_DOC_KB` | `64` | Per-doc text cap for the content index (operator tuning) |
 | `NOVA_CONTENT_INDEX_MAX_DOCS` | `10000` | Per-capsule doc cap for the content index (operator tuning) |

@@ -439,3 +439,46 @@ def test_orcid_x_check_digit_accepted() -> None:
 def test_none_pid_lists_normalise_to_empty() -> None:
     pids = PersistentIdentifiers(orcid_refs=None, ror_refs=None)  # type: ignore[arg-type]
     assert pids.orcid_refs == [] and pids.ror_refs == []
+
+
+# ── A capsule's run_id never names a file outside out_dir (review misc-3-04) ──
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    ["../../escaped", "../escaped", "/tmp/escaped-abs", "a/../../escaped", "..\\x", "x\x00", ".."],
+)
+def test_a_hostile_run_id_cannot_write_outside_out_dir(
+    capsule_factory: Callable[..., Path], tmp_path: Path, hostile: str
+) -> None:
+    from novafabric.science.fair_rocrate import UnsafeOutputNameError
+
+    capsule = capsule_factory(receipt_kwargs=FULL_RECEIPT)
+    manifest_file = capsule / "capsule.yaml"
+    manifest = yaml.safe_load(manifest_file.read_text())
+    manifest["run_id"] = hostile.replace("/tmp/", f"{tmp_path}/")
+    manifest_file.write_text(yaml.safe_dump(manifest, sort_keys=False))
+    out_dir = tmp_path / "deep" / "er" / "out"
+    before = sorted(p.as_posix() for p in tmp_path.rglob("*"))
+
+    with pytest.raises(UnsafeOutputNameError, match="run_id"):
+        export_science_rocrate(capsule, out_dir)
+
+    assert sorted(p.as_posix() for p in tmp_path.rglob("*")) == before
+    assert not list(tmp_path.rglob("*escaped*"))
+
+
+def test_a_link_at_the_crate_name_is_replaced_not_written_through(
+    capsule_factory: Callable[..., Path], tmp_path: Path
+) -> None:
+    capsule = capsule_factory(receipt_kwargs=FULL_RECEIPT)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"precious")
+    (out_dir / f"{RUN_ID}.science.rocrate.zip").symlink_to(victim)
+    from novafabric.science.fair_rocrate import UnsafeOutputNameError
+
+    with pytest.raises(UnsafeOutputNameError, match="symbolic link"):
+        export_science_rocrate(capsule, out_dir)
+    assert victim.read_bytes() == b"precious"

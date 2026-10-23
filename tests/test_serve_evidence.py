@@ -63,7 +63,12 @@ def test_list_evidence_empty(client: TestClient, evidence_dir: Path) -> None:
 
 
 def test_list_evidence_with_bundle(client: TestClient, sample_bundle: str) -> None:
-    """After adding a valid bundle, list returns it with verified=True."""
+    """A bundle with no signed attestation is listed, and is not ``verified``.
+
+    ``verified`` is the shared verifier's verdict. This fixture's manifest only
+    carries a self-consistent ``manifest_hash`` — a self-hash anyone can recompute —
+    so nothing verifies it (until 2026-10-23 the route reported it verified).
+    """
     r = client.get("/api/evidence", params={"token": TOKEN}, headers=LOCALHOST_HEADERS)
     assert r.status_code == 200
     data = r.json()
@@ -71,7 +76,8 @@ def test_list_evidence_with_bundle(client: TestClient, sample_bundle: str) -> No
     b = data["bundles"][0]
     assert b["bundle_id"] == sample_bundle
     assert b["run_id"] == sample_bundle
-    assert b["verified"] is True
+    assert b["verified"] is False
+    assert b["run_ids"] == []
     assert b["size_bytes"] > 0
     assert b["timestamp"] == "2026-05-12T10:00:00Z"
 
@@ -211,7 +217,11 @@ def test_list_evidence_corrupt_zip_handled_gracefully(
 def test_get_evidence_detail_with_dsse_and_cert(
     evidence_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Detail endpoint parses DSSE envelope, decodes payload, and extracts cert fingerprint."""
+    """Detail endpoint parses DSSE envelope and decodes payload.
+
+    A cert file proves nothing: ``signing_key_fingerprint`` is the key whose signature
+    *verified* (review r8), so an unsigned envelope next to a fake cert reports none.
+    """
     import base64
 
     monkeypatch.setenv("NOVAFABRIC_EVIDENCE_DIR", str(evidence_dir))
@@ -238,7 +248,9 @@ def test_get_evidence_detail_with_dsse_and_cert(
     data = r.json()
     assert data["dsse_statement"]["_type"] == "https://in-toto.io/Statement/v0.1"
     assert data["dsse_envelope"]["payloadType"] == "application/vnd.in-toto+json"
-    assert data["signing_key_fingerprint"] is not None
+    assert data["signing_key_fingerprint"] is None
+    assert data["signer_fingerprints"] == []
+    assert data["verified"] is False
 
 
 def test_get_evidence_detail_dsse_invalid_payload(
@@ -302,10 +314,16 @@ def test_verify_evidence_missing_dsse(client: TestClient, sample_bundle: str) ->
     assert data["valid"] is False
 
 
-def test_verify_evidence_valid_signature(
+def test_verify_evidence_a_valid_signature_alone_is_not_a_valid_bundle(
     evidence_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Bundle with a valid Ed25519 DSSE → signature_ok=True, valid=True."""
+    """A verifying DSSE signature over an unbound subject is not a valid bundle (M11).
+
+    This test used to assert ``valid: true`` here — it pinned the defect. The bundle
+    has no ``manifest_hash``, lists no artifact and no attestation, and its signed
+    subject is ``"a" * 64``: ``nova verify`` fails it, and so must the route.
+    Full coverage: ``tests/serve/test_evidence_verify_matches_cli.py``.
+    """
     from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
     from novafabric.evidence.signing import LocalSigner, generate_keypair
 
@@ -340,12 +358,15 @@ def test_verify_evidence_valid_signature(
     )
     assert r.status_code == 200
     data = r.json()
-    assert data["signature_ok"] is True
+    assert data["signature_ok"] is False  # no attestation is listed, so none verified
     assert data["timestamp_ok"] is None   # no TSR file in bundle
     assert data["log_integrity_ok"] is None  # NovaSeal not configured in test env
     assert data["seal_available"] is False
-    assert data["valid"] is True
-    assert data["errors"] == []
+    assert data["manifest_hash_ok"] is False
+    assert data["no_extras"] is False  # the envelope and cert are not in the manifest
+    assert data["signer_trust"] == "none"
+    assert data["valid"] is False
+    assert data["errors"]
 
 
 def test_verify_evidence_tampered_signature(

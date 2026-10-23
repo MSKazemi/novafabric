@@ -491,7 +491,10 @@ class TestServerAssignRole:
         )
         assert result.exit_code == 0, result.output
         assert recorded == {"user": "alice@example.com", "role": "reader"}
-        assert "assigned to" in result.output
+        # H6: no workspace/org model in this fresh home → the row is recorded
+        # but not in force, and the CLI must say so rather than "assigned to".
+        assert "recorded for" in result.output
+        assert "not in force" in result.output
 
     def test_assign_role_invalid_role_exits_1(self):
         result = runner.invoke(app, ["server", "assign-role", "bob", "superuser"])
@@ -514,7 +517,7 @@ class TestServerRevokeRole:
     def test_revoke_role_success(self, monkeypatch):
         monkeypatch.setattr(
             "novafabric.server.rbac_store.revoke_role",
-            lambda user, role, db_path=None: True,
+            lambda user, role, db_path=None, oidc_configured=False: True,
         )
         result = runner.invoke(app, ["server", "revoke-role", "alice", "writer"])
         assert result.exit_code == 0, result.output
@@ -523,7 +526,7 @@ class TestServerRevokeRole:
     def test_revoke_role_not_found_exits_1(self, monkeypatch):
         monkeypatch.setattr(
             "novafabric.server.rbac_store.revoke_role",
-            lambda user, role, db_path=None: False,
+            lambda user, role, db_path=None, oidc_configured=False: False,
         )
         result = runner.invoke(app, ["server", "revoke-role", "alice", "writer"])
         assert result.exit_code == 1
@@ -532,7 +535,7 @@ class TestServerRevokeRole:
     def test_revoke_role_last_admin_exits_2(self, monkeypatch):
         from novafabric.server.rbac_store import LastAdminError
 
-        def _boom(user, role, db_path=None):
+        def _boom(user, role, db_path=None, oidc_configured=False):
             raise LastAdminError("cannot remove last admin")
 
         monkeypatch.setattr(
@@ -543,7 +546,7 @@ class TestServerRevokeRole:
         assert "Refused" in result.output
 
     def test_revoke_role_generic_error_exits_1(self, monkeypatch):
-        def _boom(user, role, db_path=None):
+        def _boom(user, role, db_path=None, oidc_configured=False):
             raise RuntimeError("db error")
 
         monkeypatch.setattr(
@@ -740,9 +743,13 @@ class TestServe:
         )
 
         fake_app = _FakeApp()
-        monkeypatch.setattr(
-            "novafabric.serve.app.create_app", lambda **kw: fake_app
-        )
+        create_kwargs: dict[str, object] = {}
+
+        def fake_create_app(**kw: object) -> _FakeApp:
+            create_kwargs.update(kw)
+            return fake_app
+
+        monkeypatch.setattr("novafabric.serve.app.create_app", fake_create_app)
 
         import uvicorn
 
@@ -762,8 +769,10 @@ class TestServe:
             ],
         )
         assert result.exit_code == 0, result.output
-        # TV-5 router should have been mounted on the fake app.
-        assert fake_app.included, result.output
+        # The TV-5 router is handed to create_app (extra_routers) so it is
+        # registered before the WebSocket catch-all, never included afterwards.
+        assert create_kwargs.get("extra_routers"), result.output
+        assert not fake_app.included, result.output
 
 
 # ---------------------------------------------------------------------------
@@ -772,75 +781,8 @@ class TestServe:
 
 
 class TestLineageMigrate:
-    def test_from_ocs_missing_tenant_exits_1(self, tmp_path):
-        result = runner.invoke(
-            app,
-            [
-                "lineage-store",
-                "migrate",
-                "--from-ocs",
-                "--ocs-run-ids",
-                "run-1",
-                "--db",
-                str(tmp_path / "l.db"),
-            ],
-        )
-        assert result.exit_code == 1
-        assert "--ocs-tenant is required" in result.output
-
-    def test_from_ocs_missing_run_ids_exits_1(self, tmp_path):
-        result = runner.invoke(
-            app,
-            [
-                "lineage-store",
-                "migrate",
-                "--from-ocs",
-                "--ocs-tenant",
-                "org",
-                "--db",
-                str(tmp_path / "l.db"),
-            ],
-        )
-        assert result.exit_code == 1
-        assert "--ocs-run-ids is required" in result.output
-
-    def test_from_ocs_success_dry_run(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "novafabric.lineage.migration.kit.migrate_from_ocs",
-            lambda **kw: {
-                "loaded": 5,
-                "diverged": 0,
-                "capsules_scanned": 2,
-                "committed": False,
-            },
-        )
-        result = runner.invoke(
-            app,
-            [
-                "lineage-store",
-                "migrate",
-                "--from-ocs",
-                "--ocs-tenant",
-                "org",
-                "--ocs-run-ids",
-                "run-1,run-2",
-                "--db",
-                str(tmp_path / "l.db"),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        assert "loaded=5" in result.output
-        assert "no (dry-run)" in result.output
-
-    def test_from_ocs_divergence_exits_2(self, tmp_path, monkeypatch):
-        from novafabric.lineage.migration.kit import MigrationDivergenceError
-
-        def _boom(**kw):
-            raise MigrationDivergenceError("mismatch")
-
-        monkeypatch.setattr(
-            "novafabric.lineage.migration.kit.migrate_from_ocs", _boom
-        )
+    def test_from_ocs_is_refused_not_reported_as_success(self, tmp_path):
+        """H5: see tests/lineage/test_migrate_from_ocs_refuses.py for the full pin."""
         result = runner.invoke(
             app,
             [
@@ -856,8 +798,9 @@ class TestLineageMigrate:
                 str(tmp_path / "l.db"),
             ],
         )
-        assert result.exit_code == 2
-        assert "Divergence detected" in result.output
+        assert result.exit_code == 1
+        assert "not implemented" in result.output
+        assert "committed=yes" not in result.output
 
     def test_parquet_missing_arg_exits_1(self, tmp_path):
         result = runner.invoke(
@@ -865,6 +808,7 @@ class TestLineageMigrate:
         )
         assert result.exit_code == 1
         assert "Provide a Parquet source" in result.output
+        assert not (tmp_path / "l.db").exists()
 
     def test_parquet_file_not_found_exits_1(self, tmp_path):
         missing = tmp_path / "edges.parquet"

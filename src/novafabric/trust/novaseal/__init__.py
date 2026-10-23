@@ -30,9 +30,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
+import os
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from novafabric.trust.novaseal.envelope import (
     EnvelopeError,
@@ -95,6 +97,38 @@ LOG_INCLUSION_NOT_CHECKED = "not-checked"
 #: The log metadata is inconsistent with the capsule or with the log.
 LOG_INCLUSION_FAILED = "failed"
 
+# ``VerificationResult.sealer_log`` — what the verifier's Merkle log(s) said about
+# this capsule's entry (ADR-0297 Amendment 2).
+#: No log was available to the verifier (an auditor's machine).
+SEALER_LOG_NO_LOG = "no-log"
+#: A supplied log holds the entry (``log_inclusion`` is then ``local-log`` or ``failed``).
+SEALER_LOG_ENTRY_FOUND = "entry-found"
+#: The supplied log(s) hold no seals by this signer: another sealer's log or a fresh one.
+SEALER_LOG_NOT_SEALERS = "not-sealer-log"
+#: The signer's log is available only under a *newer* root version than the record
+#: (a v1 capsule on a host that started a v2 log, ADR-0313) and no log of the
+#: record's version was supplied (``previous_merkle_dbs``). The record's
+#: ``root_version`` is written by whoever wrote ``log-entry.json``, so absence
+#: from the newer log cannot be told apart from a forged v1 record: *unverified*,
+#: not passed. ``nova verify --strict`` fails on it.
+SEALER_LOG_OTHER_VERSION = "unverifiable-other-version"
+#: The sealer's log does not hold the entry (``log_inclusion`` is ``failed``).
+SEALER_LOG_MISSING = "missing"
+#: Inclusion failed on the capsule's own log metadata before any log was consulted.
+SEALER_LOG_NOT_CONSULTED = "not-consulted"
+
+# ``VerificationResult.timestamp_trust`` — how far the RFC 3161 *time* is trusted.
+#: The token verified and its TSA chain reached a verifier-supplied TSA anchor.
+TIMESTAMP_TRUST_ANCHORED = "anchored"
+#: The token is intact and bound to this envelope, but no TSA anchor was consulted:
+#: its genTime is a claim of whoever holds the embedded TSA key — a self-made,
+#: backdated "TSA" reaches this state. Not trusted time.
+TIMESTAMP_TRUST_UNANCHORED = "unanchored"
+#: No RFC 3161 token (timestamping is opt-in, ADR-0292): no time is claimed.
+TIMESTAMP_TRUST_ABSENT = "absent"
+#: A token is present and failed integrity, or failed the anchored chain check.
+TIMESTAMP_TRUST_INVALID = "invalid"
+
 __all__ = [
     "SealBundle",
     "VerificationResult",
@@ -114,6 +148,19 @@ __all__ = [
     "LOG_INCLUSION_PROOF",
     "LOG_INCLUSION_NOT_CHECKED",
     "LOG_INCLUSION_FAILED",
+    "SEALER_LOG_NO_LOG",
+    "SEALER_LOG_ENTRY_FOUND",
+    "SEALER_LOG_NOT_SEALERS",
+    "SEALER_LOG_OTHER_VERSION",
+    "SEALER_LOG_MISSING",
+    "SEALER_LOG_NOT_CONSULTED",
+    "TIMESTAMP_TRUST_ANCHORED",
+    "TIMESTAMP_TRUST_UNANCHORED",
+    "TIMESTAMP_TRUST_ABSENT",
+    "TIMESTAMP_TRUST_INVALID",
+    "timestamp_trust_for",
+    "unanchored_claims",
+    "verify_with_profile",
 ]
 
 
@@ -171,13 +218,25 @@ class VerificationResult:
     signer_subject: str | None = None
     # True when the signer certificate is a ``nova seal init`` local identity.
     local_seal_identity: bool = False
+    # How far the RFC 3161 *time* is trusted — one of the ``TIMESTAMP_TRUST_*``
+    # values. ``timestamp_ok`` says the token is intact and bound to the envelope;
+    # only ``anchored`` says a TSA the verifier trusts vouches for the time.
+    timestamp_trust: str = TIMESTAMP_TRUST_ABSENT
+    # The token's claimed genTime (ISO 8601) and TSA certificate subject — the
+    # token's own, unverified claims unless ``timestamp_trust`` is ``anchored``.
+    timestamp_gen_time: str | None = None
+    tsa_subject: str | None = None
+    # What the verifier's Merkle log(s) said — one of the ``SEALER_LOG_*`` values.
+    sealer_log: str = SEALER_LOG_NO_LOG
 
     def __str__(self) -> str:
         parts = [
             f"signature_ok={self.signature_ok}",
             f"timestamp_ok={self.timestamp_ok}",
+            f"timestamp_trust={self.timestamp_trust}",
             f"log_integrity_ok={self.log_integrity_ok}",
             f"log_inclusion={self.log_inclusion}",
+            f"sealer_log={self.sealer_log}",
             f"ca_chain_ok={self.ca_chain_ok}",
             f"identity_trust={self.identity_trust}",
         ]
@@ -214,7 +273,8 @@ class NovaSeal:
     Args:
         config:    KeyConfig with profile and key/cert paths.
         tsa_url:   RFC 3161 TSA URL; "" disables timestamping (no network call).
-        db_path:   Path to the SQLite Merkle log database.
+        db_path:   Merkle log location: a SQLite path (``~`` is expanded) or a
+                   Postgres DSN (never expanded); see ``log_location``.
         tsa_urls:  Optional ordered fallback list of TSA URLs (REG-ADR-007).
                    When it has more than one entry, each is tried in order
                    until one succeeds. Omit (or pass a single-entry list) for
@@ -239,12 +299,14 @@ class NovaSeal:
         # A cloud profile (aws_kms / azure_kv / gcp_kms) has no local private key.
         # ``config.key_path`` is stringified by callers, so an absent path arrives
         # as the literal "None"; treat that as unset rather than as a filename.
+        # ``~`` is expanded for library callers too (audit L28); the config
+        # loader already expands its own paths.
         self._key_path = (
-            Path(config.key_path)
+            Path(config.key_path).expanduser()
             if config.key_path and config.key_path != "None"
             else Path()
         )
-        self._cert_path = Path(config.cert_path)
+        self._cert_path = Path(config.cert_path).expanduser()
         # ADR-0292: timestamping is opt-in. An empty tsa_url with a non-empty
         # tsa_urls list still opts in (the list names the TSAs explicitly).
         self._tsa_url = tsa_url or (tsa_urls[0] if tsa_urls else "")
@@ -323,19 +385,35 @@ class NovaSeal:
             capsule_id=capsule_id,
         )
 
-    def verify(self, capsule_id: str, seal_dir: str) -> VerificationResult:
+    def verify(
+        self,
+        capsule_id: str,
+        seal_dir: str,
+        *,
+        previous_logs: "Sequence[MerkleLog | PostgresMerkleLog]" = (),
+        tsa_anchors_pem: bytes | None = None,
+    ) -> VerificationResult:
         """Verify signature, TSR, and Merkle inclusion for a capsule.
 
         Delegates to :func:`verify_seal_dir` with this instance's Merkle log, so
         the sealer's own log is consulted when it holds the entry.
 
         Args:
-            capsule_id: Unused; kept for API compatibility. The capsule id is
-                        re-derived from the signed payload (ADR-0251 §2).
-            seal_dir:   Path to the .seal/ directory inside the capsule dir.
+            capsule_id:      Unused; kept for API compatibility. The capsule id is
+                             re-derived from the signed payload (ADR-0251 §2).
+            seal_dir:        Path to the .seal/ directory inside the capsule dir.
+            previous_logs:   This host's earlier logs (ADR-0313 migration); see
+                             :func:`verify_seal_dir`.
+            tsa_anchors_pem: Operator TSA trust anchors (PEM); see
+                             :func:`verify_seal_dir`.
         """
         del capsule_id
-        return verify_seal_dir(Path(seal_dir), merkle_log=self._merkle)
+        return verify_seal_dir(
+            Path(seal_dir),
+            merkle_log=self._merkle,
+            previous_logs=previous_logs,
+            tsa_anchors_pem=tsa_anchors_pem,
+        )
 
     def rotate_key(self, new_key_config: KeyConfig) -> RotationReceipt:
         """Append a key-rotation log entry; future seals use the new key."""
@@ -366,9 +444,60 @@ class NovaSeal:
 # ---------------------------------------------------------------------------
 
 
+#: Size bounds for the files ``verify_seal_dir`` reads from ``.seal/``. The
+#: envelope bound matches ``capsule_verify``; a log entry with its inclusion
+#: proof is a few KiB, so 4 MiB is far above any real one.
+_SEAL_ENVELOPE_MAX_BYTES = 16 * 1024 * 1024
+_SEAL_LOG_ENTRY_MAX_BYTES = 4 * 1024 * 1024
+_SEAL_READ_OPERATION = "NovaSeal verification"
+
+
+@dataclass(frozen=True)
+class _SealMember:
+    """One ``.seal/`` file as read for verification.
+
+    ``data`` is None when the file is absent; ``refused`` names why a present
+    entry was not read (a symlink on its path, a special file, over the size
+    bound) — such a file is a verification failure, never followed.
+    """
+
+    path: Path
+    data: bytes | None = None
+    refused: str | None = None
+
+
+def _read_seal_member(seal_path: Path, name: str, *, max_bytes: int) -> _SealMember:
+    """Read ``<seal_path>/<name>`` through ``_capsule_fs``: no link, no FIFO, bounded.
+
+    The seal directory itself is opened relative to its parent, so a ``.seal``
+    that is itself a symlink is refused too.
+    """
+    from novafabric._capsule_fs import (  # noqa: PLC0415
+        CapsuleEntryError,
+        read_capsule_file,
+    )
+
+    path = seal_path / name
+    root, rel = (
+        (seal_path.parent, f"{seal_path.name}/{name}") if seal_path.name else (seal_path, name)
+    )
+    try:
+        data = read_capsule_file(
+            root, rel, operation=_SEAL_READ_OPERATION, max_bytes=max_bytes
+        )
+    except (FileNotFoundError, NotADirectoryError):
+        return _SealMember(path)
+    except CapsuleEntryError as exc:
+        return _SealMember(path, refused=str(exc))
+    return _SealMember(path, data=data)
+
+
 def verify_seal_dir(
     seal_dir: Path | str,
     merkle_log: "MerkleLog | PostgresMerkleLog | None" = None,
+    *,
+    previous_logs: "Sequence[MerkleLog | PostgresMerkleLog]" = (),
+    tsa_anchors_pem: bytes | None = None,
 ) -> VerificationResult:
     """Verify a capsule's ``.seal/`` directory from the capsule alone.
 
@@ -377,15 +506,43 @@ def verify_seal_dir(
 
     * ``carried-proof`` — ``log-entry.json`` carries ``inclusion_proof`` (sealed
       from v0.103 on) and it recomputes the recorded ``root_hash``;
-    * ``local-log`` — *merkle_log* (the sealer's log) holds this exact leaf at the
-      recorded index and it is included under the log's current root;
+    * ``local-log`` — *merkle_log* or one of *previous_logs* holds this exact
+      leaf at the recorded index, and the recorded tree head (size and root,
+      under the record's root version) is one that log's leaves reproduce;
     * ``not-checked`` — neither is available (a v0.102.x seal verified away from
       the sealer's log). The capsule still verifies; the caller must say so;
     * ``failed`` — anything inconsistent: the entry does not hash to its
       ``leaf_hash``, names another capsule, carries a proof that does not verify,
-      sits at a different index in the supplied log, records a ``root_hash``
-      without its ``tree_size``, or records a tree head (size + root) that the
-      supplied log's leaves do not reproduce.
+      sits at a different index in a supplied log, records a ``root_hash``
+      without its ``tree_size``, records a tree head (size + root) that the supplied log's
+      leaves do not reproduce, or is **absent from the sealer's log**.
+
+    *The sealer's log* is a supplied log that holds seals by the same signer
+    (entry ``keyid`` or the fingerprint of the certificate whose signature
+    verified), whatever its root version. ``sealer_log`` reports what the logs
+    said (``SEALER_LOG_*``):
+
+    * the sealer's log of the record's root version lacks the entry → ``failed``
+      / ``missing``. A carried proof does not override that absence: the sealer's
+      log is the authority on what that sealer sealed;
+    * the record claims a root version *newer* than every sealer's log (a v2
+      record against a v1 log) → ``failed`` / ``missing``: v2 logs came later, so
+      no v1 log produced a v2 seal (ADR-0313);
+    * the sealer's log exists only under a *newer* version than the record (a v1
+      record on a host that started a v2 log) and no log of the record's version
+      was supplied → the carried-proof / not-checked result stands, but
+      ``sealer_log`` is ``unverifiable-other-version``. ``root_version`` is read
+      from ``log-entry.json``, which the capsule's writer controls, so this
+      absence is consistent both with a genuine pre-migration capsule and with a
+      key holder's forgery claiming v1. Pass the host's earlier logs as
+      *previous_logs* (``previous_merkle_dbs`` in ``novaseal.yaml``) to decide
+      it; ``nova verify --strict`` fails on it;
+    * no supplied log holds this signer's seals (another sealer's log, a fresh
+      log) → the carried-proof / not-checked result stands, ``not-sealer-log``.
+
+    A leaf may occur more than once in a log (the same manifest sealed twice
+    with the same key appends a byte-identical leaf); the check asks whether the
+    *recorded* index holds the leaf, so every copy verifies.
 
     Root version (ADR-0313): ``log-entry.json`` may carry ``root_version``
     (absent: v1, every seal written before it). A v1 root does not commit to the
@@ -399,9 +556,27 @@ def verify_seal_dir(
     ``carried-proof`` proves the capsule's log metadata is self-consistent, not
     that a third party saw the log; checking a published or witnessed root is the
     job of ``nova seal log verify`` / ADR-0097.
+
+    Timestamp: ``timestamp_ok`` says a present token is intact and bound to this
+    envelope; ``timestamp_trust`` says whether its *time* is trusted. Without
+    *tsa_anchors_pem* no TSA identity is checked, so a present, intact token is
+    ``unanchored`` — a self-made TSA with any genTime reaches that state. With
+    *tsa_anchors_pem* (operator TSA CA certificates, PEM) the token's TSA
+    signature, EKU and chain are verified at its genTime (``anchored``, or
+    ``invalid`` and the seal fails), and a missing token fails, as in ``nova
+    verify --tsa-ca-bundle``: the token is outside the DSSE signature, so a
+    deleted one could not otherwise be told apart from one never requested.
     """
-    seal_path = Path(seal_dir)
+    # Lexically absolute (``.`` and ``..`` folded, no link resolved) so the seal
+    # directory has a name to be opened by, relative to its parent.
+    seal_path = Path(os.path.abspath(seal_dir))
     errors: list[str] = []
+
+    # Every ``.seal/`` file is read through ``_capsule_fs``: a symlink on its
+    # path or a special file is a failure, never followed or waited on.
+    envelope = _read_seal_member(
+        seal_path, "manifest.dsse", max_bytes=_SEAL_ENVELOPE_MAX_BYTES
+    )
 
     # --- Signature ---
     signature_ok = False
@@ -409,11 +584,12 @@ def verify_seal_dir(
     signing_intent: SigningIntent | None = None
     signing_intent_status = "absent"
     dsse_bytes = b""
-    dsse_file = seal_path / "manifest.dsse"
-    if not dsse_file.exists():
-        errors.append(f"Missing {dsse_file}")
+    if envelope.refused is not None:
+        errors.append(f"manifest.dsse not read: {envelope.refused}")
+    elif envelope.data is None:
+        errors.append(f"Missing {envelope.path}")
     else:
-        dsse_bytes = dsse_file.read_bytes()
+        dsse_bytes = envelope.data
         try:
             pae_encoding = verify_envelope_encoding(dsse_bytes)
             signature_ok = True
@@ -428,36 +604,35 @@ def verify_seal_dir(
             errors.append(f"Signature verification failed: {exc}")
 
     # --- Timestamp ---
-    # ADR-0301: an absent or empty token is reported as absent (None), not as a
-    # passed check. It does not invalidate the seal — timestamping is opt-in.
-    timestamp_ok: bool | None = None
-    timestamp_present = False
-    timestamp_strict = False
-    tsr_file = seal_path / "manifest.dsse.tsr"
-    if tsr_file.exists():
-        tsr_bytes = tsr_file.read_bytes()
-        if not tsr_bytes:
-            pass  # empty TSR = TSA skipped or not configured
-        elif dsse_bytes:
-            timestamp_present = True
-            ts_check = check_timestamp(tsr_bytes, dsse_bytes)
-            timestamp_ok = ts_check.ok
-            timestamp_strict = ts_check.strict
-            if not timestamp_ok:
-                errors.append(f"TSR verification failed: {ts_check.reason}")
-        else:
-            timestamp_ok = False
-            errors.append("Cannot verify TSR: DSSE envelope missing")
+    ts = _check_seal_timestamp(
+        _read_seal_member(seal_path, "manifest.dsse.tsr", max_bytes=_tsr_max_bytes()),
+        dsse_bytes,
+        tsa_anchors_pem,
+    )
+    errors.extend(ts.errors)
+
+    # --- Signer identity (ADR-0301) — what the capsule alone can establish ---
+    from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
+        signer_certificate_info,
+        unanchored_identity_trust,
+    )
+
+    signer = signer_certificate_info(dsse_bytes) if signature_ok else None
 
     # --- Merkle log inclusion ---
     payload_capsule_id = _payload_capsule_id(dsse_bytes) if signature_ok else None
-    log_inclusion, log_notes = _check_log_inclusion(
-        seal_path / "log-entry.json", payload_capsule_id, merkle_log
+    inclusion = _check_log_inclusion(
+        _read_seal_member(seal_path, "log-entry.json", max_bytes=_SEAL_LOG_ENTRY_MAX_BYTES),
+        payload_capsule_id,
+        merkle_log,
+        signer_keyid=signer.fingerprint_sha256 if signer else None,
+        previous_logs=previous_logs,
     )
-    if log_inclusion == LOG_INCLUSION_FAILED:
+    log_notes = list(inclusion.notes)
+    if inclusion.status == LOG_INCLUSION_FAILED:
         errors.extend(log_notes)
         log_notes = []
-    log_integrity_ok = log_inclusion in (LOG_INCLUSION_LOCAL, LOG_INCLUSION_PROOF)
+    log_integrity_ok = inclusion.status in (LOG_INCLUSION_LOCAL, LOG_INCLUSION_PROOF)
 
     # --- CA chain validation ---
     # ``_verify_ca_chain`` only *describes* the embedded certificate (self-signed, or
@@ -468,26 +643,22 @@ def verify_seal_dir(
     _described, ca_chain_errors = _verify_ca_chain(dsse_bytes)
     ca_chain_ok = False
 
-    # --- Signer identity (ADR-0301) — what the capsule alone can establish ---
-    from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
-        signer_certificate_info,
-        unanchored_identity_trust,
-    )
-
-    signer = signer_certificate_info(dsse_bytes) if signature_ok else None
-
     valid = (
         signature_ok
-        and timestamp_ok is not False
-        and log_inclusion != LOG_INCLUSION_FAILED
+        and ts.ok is not False
+        and not ts.anchor_failed
+        and inclusion.status != LOG_INCLUSION_FAILED
         and signing_intent_status != "mismatch"
     )
     return VerificationResult(
         valid=valid,
         signature_ok=signature_ok,
-        timestamp_ok=timestamp_ok,
-        timestamp_present=timestamp_present,
-        timestamp_strict=timestamp_strict,
+        timestamp_ok=ts.ok,
+        timestamp_present=ts.present,
+        timestamp_strict=ts.strict,
+        timestamp_trust=ts.trust,
+        timestamp_gen_time=ts.gen_time,
+        tsa_subject=ts.tsa_subject,
         log_integrity_ok=log_integrity_ok,
         errors=errors,
         signing_intent=signing_intent,
@@ -495,12 +666,196 @@ def verify_seal_dir(
         ca_chain_ok=ca_chain_ok,
         ca_chain_errors=ca_chain_errors,
         pae_encoding=pae_encoding,
-        log_inclusion=log_inclusion,
+        log_inclusion=inclusion.status,
         log_notes=log_notes,
+        sealer_log=inclusion.sealer_log,
         identity_trust=unanchored_identity_trust(signature_ok),
         signer_subject=signer.subject if signer else None,
         local_seal_identity=bool(signer and signer.local_seal_identity),
     )
+
+
+# ---------------------------------------------------------------------------
+# Timestamp trust
+# ---------------------------------------------------------------------------
+
+
+def timestamp_trust_for(timestamp_ok: bool | None, tsa_chain_ok: bool | None) -> str:
+    """The ``TIMESTAMP_TRUST_*`` value for a token check and an optional anchored check.
+
+    *timestamp_ok* is the anchor-free integrity result (None: no token);
+    *tsa_chain_ok* is the result of the TSA trust-chain check against operator
+    anchors, or None when no anchor was consulted. Only a passed anchored check
+    makes the time trusted.
+    """
+    if timestamp_ok is None:
+        return TIMESTAMP_TRUST_ABSENT
+    if timestamp_ok is False or tsa_chain_ok is False:
+        return TIMESTAMP_TRUST_INVALID
+    if tsa_chain_ok is True:
+        return TIMESTAMP_TRUST_ANCHORED
+    return TIMESTAMP_TRUST_UNANCHORED
+
+
+@dataclass(frozen=True)
+class _TimestampOutcome:
+    """What :func:`_check_seal_timestamp` established about ``manifest.dsse.tsr``."""
+
+    ok: bool | None = None
+    present: bool = False
+    strict: bool = False
+    trust: str = TIMESTAMP_TRUST_ABSENT
+    gen_time: str | None = None
+    tsa_subject: str | None = None
+    anchor_failed: bool = False
+    errors: tuple[str, ...] = ()
+
+
+def _tsr_max_bytes() -> int:
+    from novafabric.trust.novaseal.tsa_token import MAX_TOKEN_BYTES  # noqa: PLC0415
+
+    return MAX_TOKEN_BYTES
+
+
+def _check_seal_timestamp(
+    tsr: _SealMember, dsse_bytes: bytes, tsa_anchors_pem: bytes | None
+) -> _TimestampOutcome:
+    """Check the seal's RFC 3161 token; anchor it when *tsa_anchors_pem* is given.
+
+    ADR-0301: an absent or empty token is reported as absent (``ok`` None), not as
+    a passed check, and does not invalidate the seal — timestamping is opt-in —
+    unless TSA anchors were supplied (then the caller asked for a trusted time).
+    """
+    if tsr.refused is not None:
+        # A token entry that is a link or a special file is not an absent token:
+        # something was put where the token belongs, so the check fails.
+        return _TimestampOutcome(
+            ok=False,
+            present=True,
+            trust=TIMESTAMP_TRUST_INVALID,
+            errors=(f"manifest.dsse.tsr not read: {tsr.refused}",),
+        )
+    tsr_bytes = tsr.data or b""
+    if not tsr_bytes:
+        if tsa_anchors_pem is None:
+            return _TimestampOutcome()
+        return _TimestampOutcome(
+            anchor_failed=True,
+            errors=(
+                "no RFC 3161 token (manifest.dsse.tsr) although TSA trust anchors are "
+                "configured; the token is not covered by the DSSE signature, so a missing "
+                "one cannot be told apart from a deleted one",
+            ),
+        )
+    if not dsse_bytes:
+        return _TimestampOutcome(
+            ok=False,
+            present=True,
+            trust=TIMESTAMP_TRUST_INVALID,
+            errors=("Cannot verify TSR: DSSE envelope missing",),
+        )
+    check = check_timestamp(tsr_bytes, dsse_bytes)
+    claimed = _TimestampOutcome(
+        ok=check.ok,
+        present=True,
+        strict=check.strict,
+        trust=timestamp_trust_for(check.ok, None),
+        gen_time=check.gen_time.isoformat() if check.gen_time is not None else None,
+        tsa_subject=check.tsa_subject,
+        errors=() if check.ok else (f"TSR verification failed: {check.reason}",),
+    )
+    if not check.ok or tsa_anchors_pem is None:
+        return claimed
+    from novafabric.trust.novaseal.tsa_trust import (  # noqa: PLC0415
+        verify_tsa_trust_chain,
+    )
+
+    anchored = verify_tsa_trust_chain(
+        tsr_bytes, tsa_anchors_pem, None, expected_digest=hashlib.sha256(dsse_bytes).digest()
+    )
+    if anchored.valid:
+        return replace(claimed, trust=TIMESTAMP_TRUST_ANCHORED)
+    return replace(
+        claimed,
+        trust=TIMESTAMP_TRUST_INVALID,
+        anchor_failed=True,
+        errors=(f"TSA trust chain failed: {anchored.reason}",),
+    )
+
+
+def unanchored_claims(result: VerificationResult) -> list[str]:
+    """What a passed *result* still rests on without an anchor the verifier trusts.
+
+    ``nova verify --strict`` fails when this is non-empty. Each entry names one
+    claim that verified only as self-consistent or self-asserted:
+
+    * ``identity-self-asserted`` — no CA bundle validated the signer (ADR-0301);
+    * ``timestamp-unanchored`` — a present token's TSA was not validated against
+      a TSA trust anchor, so its genTime is not trusted time;
+    * ``log-head-unanchored`` — inclusion rests on the carried proof, whose tree
+      head is not signed or witnessed (ADR-0297 S2);
+    * ``log-inclusion-not-checked`` — no proof and no log;
+    * ``sealer-log-other-version`` — see ``SEALER_LOG_OTHER_VERSION``.
+
+    An absent timestamp is not listed: it claims no time.
+    """
+    from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
+        IDENTITY_SELF_ASSERTED,
+    )
+
+    claims: list[str] = []
+    if result.identity_trust == IDENTITY_SELF_ASSERTED:
+        claims.append("identity-self-asserted")
+    if result.timestamp_trust == TIMESTAMP_TRUST_UNANCHORED:
+        claims.append("timestamp-unanchored")
+    if result.log_inclusion == LOG_INCLUSION_PROOF:
+        claims.append("log-head-unanchored")
+    elif result.log_inclusion == LOG_INCLUSION_NOT_CHECKED:
+        claims.append("log-inclusion-not-checked")
+    if result.sealer_log == SEALER_LOG_OTHER_VERSION:
+        claims.append("sealer-log-other-version")
+    return claims
+
+
+def verify_with_profile(seal_dir: Path | str, profile: Any) -> VerificationResult:
+    """Verify *seal_dir* with what a NovaSeal *profile* (``novaseal.yaml``) provides.
+
+    Opens the configured ``merkle_db`` and every ``previous_merkle_dbs`` entry
+    only if they exist (verification never creates a log) and anchors the
+    timestamp with ``tsa_ca_certs`` when configured. *profile* may be None (no
+    config on this machine): the capsule is then verified from its own files.
+    Raises ``OSError`` when a configured TSA CA file cannot be read.
+    """
+    from novafabric.trust.novaseal.log_location import is_postgres_dsn  # noqa: PLC0415
+    from novafabric.trust.novaseal.merkle import open_existing_merkle_log  # noqa: PLC0415
+
+    anchors_pem: bytes | None = None
+    tsa_ca_certs = list(getattr(profile, "tsa_ca_certs", None) or [])
+    if tsa_ca_certs:
+        anchors_pem = b"\n".join(Path(p).read_bytes() for p in tsa_ca_certs)
+    def _open(location: Any) -> "MerkleLog | PostgresMerkleLog | None":
+        # SQLite mode=ro: verification never migrates or writes a log (ADR-0297 S2).
+        return open_existing_merkle_log(location, read_only=not is_postgres_dsn(location))
+
+    current = _open(getattr(profile, "merkle_db", None))
+    previous: list[MerkleLog | PostgresMerkleLog] = []
+    try:
+        for location in getattr(profile, "previous_merkle_dbs", None) or []:
+            opened = _open(location)
+            if opened is not None:
+                previous.append(opened)
+        return verify_seal_dir(
+            seal_dir, merkle_log=current, previous_logs=previous, tsa_anchors_pem=anchors_pem
+        )
+    finally:
+        for lg in (current, *previous):
+            if lg is not None:
+                lg.close()
+
+
+# ---------------------------------------------------------------------------
+# Merkle log inclusion
+# ---------------------------------------------------------------------------
 
 
 def _payload_capsule_id(dsse_bytes: bytes) -> str | None:
@@ -515,133 +870,314 @@ def _is_int(value: object) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+@dataclass(frozen=True)
+class _Inclusion:
+    """``(log_inclusion, notes, sealer_log)`` — see :func:`verify_seal_dir`."""
+
+    status: str
+    notes: tuple[str, ...]
+    sealer_log: str = SEALER_LOG_NOT_CONSULTED
+
+
+def _failed(note: str, sealer_log: str = SEALER_LOG_NOT_CONSULTED) -> _Inclusion:
+    return _Inclusion(LOG_INCLUSION_FAILED, (note,), sealer_log)
+
+
+@dataclass(frozen=True)
+class _LogRecord:
+    """The fields of ``log-entry.json`` the log checks use, already validated."""
+
+    leaf_index: int
+    leaf_hash: str
+    root_hash: str | None
+    tree_size: int | None
+    root_version: int
+    keyids: tuple[object, ...]
+
+
 def _check_log_inclusion(
-    log_file: Path,
+    log_file: _SealMember,
     payload_capsule_id: str | None,
     merkle_log: "MerkleLog | PostgresMerkleLog | None",
-) -> tuple[str, list[str]]:
-    """Return ``(log_inclusion status, notes)`` — see :func:`verify_seal_dir`."""
-    if not log_file.exists():
-        return LOG_INCLUSION_FAILED, [f"Missing {log_file}"]
-    try:
-        record = json.loads(log_file.read_bytes())
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        return LOG_INCLUSION_FAILED, [f"Merkle verification error: {exc}"]
-    if not isinstance(record, dict):
-        return LOG_INCLUSION_FAILED, ["log-entry.json is not a JSON object"]
+    *,
+    signer_keyid: str | None = None,
+    previous_logs: "Sequence[MerkleLog | PostgresMerkleLog]" = (),
+) -> _Inclusion:
+    """Check ``log-entry.json`` and, when given, the supplied logs — see :func:`verify_seal_dir`.
 
-    leaf_index = record.get("leaf_index")
-    if leaf_index is None:
-        return LOG_INCLUSION_FAILED, ["log-entry.json missing leaf_index"]
-    entry = record.get("entry")
-    if not _is_int(leaf_index) or leaf_index < 0 or not isinstance(entry, dict):
-        return LOG_INCLUSION_FAILED, ["log-entry.json has a malformed leaf_index or entry"]
-
-    # The leaf must be *this* entry, and the entry must name *this* capsule.
-    leaf_hash = _leaf_hash(json.dumps(entry, sort_keys=True, separators=(",", ":")).encode())
-    recorded_leaf = record.get("leaf_hash")
-    if recorded_leaf is not None and recorded_leaf != leaf_hash:
-        return LOG_INCLUSION_FAILED, [
-            "log-entry.json entry does not hash to its recorded leaf_hash"
-        ]
-    if payload_capsule_id is not None and entry.get("capsule_id") != payload_capsule_id:
-        return LOG_INCLUSION_FAILED, [
-            "log-entry.json names a different capsule than the signed payload "
-            f"({entry.get('capsule_id')!r} != {payload_capsule_id!r})"
-        ]
+    *signer_keyid* is the SHA-256 fingerprint of the certificate whose signature
+    verified; with the entry's own ``keyid`` it decides which supplied logs are
+    this signer's (:func:`_sealer_log_keyid`).
+    """
+    parsed = _parse_log_record(log_file, payload_capsule_id, signer_keyid)
+    if isinstance(parsed, _Inclusion):
+        return parsed
+    record, proof = parsed
 
     status = LOG_INCLUSION_NOT_CHECKED
     notes: list[str] = []
-
-    # ADR-0313: the root version selects the tree construction; absent means v1.
-    try:
-        root_version = root_version_of(record)
-    except UnsupportedRootVersionError as exc:
-        return LOG_INCLUSION_FAILED, [f"log-entry.json: {exc}"]
-    root_hash = record.get("root_hash")
-    tree_size = record.get("tree_size")
-    if root_hash is not None and tree_size is None:
-        return LOG_INCLUSION_FAILED, [
-            "log-entry.json records a root_hash without its tree_size; a Merkle root "
-            "is verified only together with its tree size (ADR-0313)"
-        ]
-    if tree_size is not None and (not _is_int(tree_size) or tree_size <= leaf_index):
-        return LOG_INCLUSION_FAILED, ["log-entry.json has a malformed tree_size"]
-
-    proof = record.get("inclusion_proof")
     if proof is not None:
-        if (
-            not isinstance(proof, list)
-            or not all(isinstance(h, str) for h in proof)
-            or not isinstance(root_hash, str)
-            or not _is_int(tree_size)
-            or (
-                root_version == ROOT_VERSION_V1
-                and len(proof) != inclusion_proof_length(tree_size)
-            )
-        ):
-            return LOG_INCLUSION_FAILED, ["log-entry.json carries a malformed inclusion_proof"]
-        try:
-            proof_ok = verify_inclusion_proof(
-                leaf_hash, leaf_index, proof, root_hash, tree_size, root_version=root_version
-            )
-        except ValueError:  # a sibling that is not hex
-            proof_ok = False
-        if not proof_ok:
-            return LOG_INCLUSION_FAILED, [
-                f"Merkle inclusion proof failed for leaf_index={leaf_index} "
-                f"(the carried proof does not recompute root {root_hash})"
-            ]
+        carried = _check_carried_proof(record, proof)
+        if carried is not None:
+            return carried
         status = LOG_INCLUSION_PROOF
         notes.append(
             "inclusion proof carried in the capsule verifies against the tree head "
-            f"recorded at seal time (size {tree_size}, root v{root_version}); that head "
-            "is not independently anchored"
+            f"recorded at seal time (size {record.tree_size}, root v{record.root_version}); "
+            "that head is not independently anchored"
         )
-        if root_version == ROOT_VERSION_V1:
+        if record.root_version == ROOT_VERSION_V1:
             notes.append(
                 "root v1 (sealed before ADR-0313) does not commit to the tree size; the "
                 "size is taken from log-entry.json and only the sealer's log can confirm it"
             )
 
-    if merkle_log is not None:
+    logs = [lg for lg in (merkle_log, *previous_logs) if lg is not None]
+    sealer_log = SEALER_LOG_NO_LOG
+    if logs:
         try:
-            found = merkle_log.find_leaf_index(leaf_hash)
-            if found is not None:
-                if found != leaf_index:
-                    return LOG_INCLUSION_FAILED, [
-                        f"log-entry.json says leaf_index={leaf_index} but the local log "
-                        f"holds this entry at leaf_index={found}"
-                    ]
-                if not merkle_log.verify_entry(leaf_index):
-                    return LOG_INCLUSION_FAILED, [
-                        f"Merkle inclusion proof failed for leaf_index={leaf_index}"
-                    ]
-                # ADR-0313: the recorded tree head (size AND root) must be one the
-                # log's own leaves reproduce — recomputed, never read from a stored head.
-                if isinstance(root_hash, str) and _is_int(tree_size):
-                    reproduced = merkle_log.compute_root_at_size(
-                        tree_size, root_version=root_version
-                    )
-                    if reproduced != root_hash:
-                        return LOG_INCLUSION_FAILED, [
-                            f"log-entry.json records a tree head (size {tree_size}, root "
-                            f"{root_hash[:16]}…, v{root_version}) that the local log's "
-                            "leaves do not reproduce"
-                        ]
-                status = LOG_INCLUSION_LOCAL
-                notes.append("entry found in the local Merkle log and included under its root")
-            elif status == LOG_INCLUSION_NOT_CHECKED:
-                notes.append("entry is not in the local Merkle log (a different or fresh log)")
+            for lg in logs:
+                held = _check_entry_in_log(lg, record)
+                if held is not None:
+                    return held
+            verdict = _sealer_log_verdict(logs, record)
         except MerkleError as exc:
-            return LOG_INCLUSION_FAILED, [f"Merkle verification error: {exc}"]
+            return _failed(f"Merkle verification error: {exc}")
+        if verdict.status == LOG_INCLUSION_FAILED:
+            return verdict
+        notes.extend(verdict.notes)
+        sealer_log = verdict.sealer_log
 
     if status == LOG_INCLUSION_NOT_CHECKED:
         notes.append(
             "log not available — inclusion not checked (this capsule carries no inclusion "
             "proof; verify against the sealer's log for that check)"
         )
-    return status, notes
+    return _Inclusion(status, tuple(notes), sealer_log)
+
+
+def _parse_log_record(
+    log_file: _SealMember, payload_capsule_id: str | None, signer_keyid: str | None
+) -> "tuple[_LogRecord, object] | _Inclusion":
+    """Validate ``log-entry.json``; return the record and its raw proof, or a failure."""
+    if log_file.refused is not None:
+        return _failed(f"log-entry.json not read: {log_file.refused}")
+    if log_file.data is None:
+        return _failed(f"Missing {log_file.path}")
+    try:
+        record = json.loads(log_file.data)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return _failed(f"Merkle verification error: {exc}")
+    if not isinstance(record, dict):
+        return _failed("log-entry.json is not a JSON object")
+
+    leaf_index = record.get("leaf_index")
+    if leaf_index is None:
+        return _failed("log-entry.json missing leaf_index")
+    entry = record.get("entry")
+    if not _is_int(leaf_index) or leaf_index < 0 or not isinstance(entry, dict):
+        return _failed("log-entry.json has a malformed leaf_index or entry")
+
+    # The leaf must be *this* entry, and the entry must name *this* capsule.
+    leaf_hash = _leaf_hash(json.dumps(entry, sort_keys=True, separators=(",", ":")).encode())
+    recorded_leaf = record.get("leaf_hash")
+    if recorded_leaf is not None and recorded_leaf != leaf_hash:
+        return _failed("log-entry.json entry does not hash to its recorded leaf_hash")
+    if payload_capsule_id is not None and entry.get("capsule_id") != payload_capsule_id:
+        return _failed(
+            "log-entry.json names a different capsule than the signed payload "
+            f"({entry.get('capsule_id')!r} != {payload_capsule_id!r})"
+        )
+
+    # ADR-0313: the root version selects the tree construction; absent means v1.
+    try:
+        root_version = root_version_of(record)
+    except UnsupportedRootVersionError as exc:
+        return _failed(f"log-entry.json: {exc}")
+    root_hash = record.get("root_hash")
+    tree_size = record.get("tree_size")
+    if root_hash is not None and tree_size is None:
+        return _failed(
+            "log-entry.json records a root_hash without its tree_size; a Merkle root "
+            "is verified only together with its tree size (ADR-0313)"
+        )
+    if tree_size is not None and (not _is_int(tree_size) or tree_size <= leaf_index):
+        return _failed("log-entry.json has a malformed tree_size")
+    parsed = _LogRecord(
+        leaf_index=leaf_index,
+        leaf_hash=leaf_hash,
+        root_hash=root_hash if isinstance(root_hash, str) else None,
+        tree_size=tree_size if _is_int(tree_size) else None,
+        root_version=root_version,
+        keyids=(entry.get("keyid"), signer_keyid),
+    )
+    if root_hash is not None and parsed.root_hash is None:
+        return _failed("log-entry.json has a malformed root_hash")
+    return parsed, record.get("inclusion_proof")
+
+
+def _check_carried_proof(record: _LogRecord, proof: object) -> _Inclusion | None:
+    """Verify the carried inclusion proof; a failure, or None when it verifies."""
+    if (
+        not isinstance(proof, list)
+        or not all(isinstance(h, str) for h in proof)
+        or record.root_hash is None
+        or record.tree_size is None
+        or (
+            record.root_version == ROOT_VERSION_V1
+            and len(proof) != inclusion_proof_length(record.tree_size)
+        )
+    ):
+        return _failed("log-entry.json carries a malformed inclusion_proof")
+    try:
+        proof_ok = verify_inclusion_proof(
+            record.leaf_hash,
+            record.leaf_index,
+            proof,
+            record.root_hash,
+            record.tree_size,
+            root_version=record.root_version,
+        )
+    except ValueError:  # a sibling that is not hex
+        proof_ok = False
+    if not proof_ok:
+        return _failed(
+            f"Merkle inclusion proof failed for leaf_index={record.leaf_index} "
+            f"(the carried proof does not recompute root {record.root_hash})"
+        )
+    return None
+
+
+def _check_entry_in_log(
+    merkle_log: "MerkleLog | PostgresMerkleLog", record: _LogRecord
+) -> _Inclusion | None:
+    """Check the entry against one log: ``local-log`` or ``failed`` if it holds it, else None."""
+    found = SEALER_LOG_ENTRY_FOUND
+    # Ask about the recorded position, not about the first match: sealing an
+    # identical manifest twice appends a byte-identical leaf, and the lowest
+    # index holding it is the *earlier* seal's.
+    if _leaf_hash_at(merkle_log, record.leaf_index) != record.leaf_hash:
+        elsewhere = merkle_log.find_leaf_index(record.leaf_hash)
+        if elsewhere is None:
+            return None
+        return _failed(
+            f"log-entry.json says leaf_index={record.leaf_index} but the local log "
+            f"holds this entry at leaf_index={elsewhere}, not at {record.leaf_index}",
+            found,
+        )
+    # The record's root version is not compared with the log's here: the entry is
+    # *in* this log, and the recorded head is recomputed below from the log's own
+    # leaves under the record's version, so a wrong label cannot make it pass.
+    if not merkle_log.verify_entry(record.leaf_index):
+        return _failed(f"Merkle inclusion proof failed for leaf_index={record.leaf_index}", found)
+    # ADR-0313: the recorded tree head (size AND root) must be one the log's own
+    # leaves reproduce — recomputed, never read from a stored head.
+    if record.root_hash is not None and record.tree_size is not None:
+        reproduced = merkle_log.compute_root_at_size(
+            record.tree_size, root_version=record.root_version
+        )
+        if reproduced != record.root_hash:
+            return _failed(
+                f"log-entry.json records a tree head (size {record.tree_size}, root "
+                f"{record.root_hash[:16]}…, v{record.root_version}) that the local log's "
+                "leaves do not reproduce",
+                found,
+            )
+    return _Inclusion(
+        LOG_INCLUSION_LOCAL,
+        ("entry found in the local Merkle log and included under its root",),
+        found,
+    )
+
+
+def _sealer_log_verdict(
+    logs: "Sequence[MerkleLog | PostgresMerkleLog]", record: _LogRecord
+) -> _Inclusion:
+    """Decide what absence from every supplied log means — see :func:`verify_seal_dir`.
+
+    The returned status is ``failed`` (absent from the sealer's log) or
+    ``not-checked`` (absence decides nothing; the caller keeps its own status and
+    takes the notes and ``sealer_log``).
+    """
+    signer_logs: list[tuple[str, int]] = []
+    for lg in logs:
+        keyid = _sealer_log_keyid(lg, record.keyids)
+        if keyid is not None:
+            signer_logs.append((keyid, lg.root_version))
+    rv = record.root_version
+    if not signer_logs:
+        return _Inclusion(
+            LOG_INCLUSION_NOT_CHECKED,
+            (
+                "entry is not in the local Merkle log, which holds no seals by this "
+                "signer (a different or fresh log)",
+            ),
+            SEALER_LOG_NOT_SEALERS,
+        )
+    same = [k for k, v in signer_logs if v == rv]
+    if same:
+        return _failed(
+            "this capsule's entry is not in the local Merkle log, yet that log "
+            f"holds other seals by the same signer (keyid {same[0][:16]}…, "
+            f"root v{rv}): it is the sealer's log, and a carried proof "
+            "cannot stand in for it. The log was rolled back or replaced, or the "
+            "capsule was signed outside the sealing path. (If another host sealed "
+            "it into its own log with a shared key, verify with that log, or with "
+            "a novaseal.yaml whose merkle_db does not exist.)",
+            SEALER_LOG_MISSING,
+        )
+    newest_keyid, newest = max(signer_logs, key=lambda kv: kv[1])
+    if newest < rv:
+        return _failed(
+            f"log-entry.json claims root v{rv}, but the sealer's local Merkle log "
+            f"(keyid {newest_keyid[:16]}…) is a v{newest} log and does not hold this "
+            f"entry. v{rv} logs came after v{newest} logs (ADR-0313), so this host's "
+            f"v{newest} log did not seal it: the record's root version was rewritten, "
+            "the log was replaced, or the capsule was signed outside the sealing path.",
+            SEALER_LOG_MISSING,
+        )
+    versions = ", ".join(f"v{v}" for v in sorted({v for _k, v in signer_logs}))
+    return _Inclusion(
+        LOG_INCLUSION_NOT_CHECKED,
+        (
+            f"UNVERIFIED: the sealer's local Merkle log ({versions}) is newer than this "
+            f"capsule's root v{rv} and does not hold it, and no v{rv} log of this host "
+            "was supplied. A capsule sealed before the ADR-0313 migration looks exactly "
+            f"like a key holder's forgery that claims v{rv} — root_version is written "
+            "by whoever wrote log-entry.json. Add the host's earlier log to "
+            "previous_merkle_dbs in novaseal.yaml to decide it.",
+        ),
+        SEALER_LOG_OTHER_VERSION,
+    )
+
+
+def _leaf_hash_at(
+    merkle_log: "MerkleLog | PostgresMerkleLog", leaf_index: int
+) -> str | None:
+    """The leaf hash the log stores at *leaf_index*, or None when it holds none."""
+    try:
+        return merkle_log.get_leaf_hash(leaf_index)
+    except MerkleError:
+        return None
+
+
+def _sealer_log_keyid(
+    merkle_log: "MerkleLog | PostgresMerkleLog",
+    keyids: tuple[object, ...],
+) -> str | None:
+    """Return the keyid that makes *merkle_log* one of this signer's logs, else None.
+
+    A log is the signer's when it holds seals by the same signer — the entry's
+    ``keyid`` or the fingerprint of the certificate whose signature verified.
+    The root version is deliberately *not* part of this test: it is read from
+    ``log-entry.json``, which the capsule's writer controls, so letting it decide
+    whether a log counts handed a forger the bypass (claim the other version).
+    :func:`_sealer_log_verdict` compares the versions instead.
+    """
+    for keyid in dict.fromkeys(k for k in keyids if isinstance(k, str)):
+        if merkle_log.has_entries_for_keyid(keyid):
+            return keyid
+    return None
 
 
 # ---------------------------------------------------------------------------

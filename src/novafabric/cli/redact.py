@@ -14,6 +14,7 @@ import yaml
 from rich.console import Console
 
 from novafabric import _paths as _nf_paths
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.capture.secrets import (
     SecretScannerV0,
     recompute_chain_hash,
@@ -227,8 +228,11 @@ def _parse_overrides(items: list[str]) -> dict[str, str]:
 
 
 def _run_id_for_capsule(capsule_dir: Path) -> str:
-    manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
-    run_id = manifest.get("run_id")
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    manifest = yaml.safe_load(
+        read_required_capsule_member(capsule_dir / "capsule.yaml", operation="nova redact") or ""
+    )
+    run_id = manifest.get("run_id") if isinstance(manifest, dict) else None
     if not isinstance(run_id, str):
         raise typer.BadParameter(
             f"capsule.yaml in {capsule_dir} is missing a string run_id"

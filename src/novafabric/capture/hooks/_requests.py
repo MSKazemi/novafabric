@@ -18,9 +18,15 @@ import json
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder, get_current_writer
+from novafabric.capture.hooks._fail_open import (
+    MODEL_CALLS_STREAM,
+    fail_open,
+    note_capture_failure,
+)
 from novafabric.capture.hooks._layering import claim_higher_layer
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
@@ -35,6 +41,10 @@ from novafabric.capture.record_roles import stamp_wire_record
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
+
+
+_LIBRARY = "requests"
+NETWORK_EVENTS_STREAM = "network_events.jsonl"
 
 
 def _now() -> str:
@@ -86,11 +96,22 @@ class RequestsHook:
         finally:
             self._original_send = None
 
+    def _target_url(self, prepared_request: Any) -> str | None:
+        """The URL to record, or ``None`` to pass the call through. Never raises:
+        a classification failure (a custom registry, an odd request object)
+        loses the record, never the user's request (ADR-0021)."""
+        try:
+            url = str(getattr(prepared_request, "url", ""))
+            return url if self._registry.is_known(url) else None
+        except Exception as exc:  # noqa: BLE001 -- capture must never block the workload
+            note_capture_failure(_LIBRARY, MODEL_CALLS_STREAM, exc)
+            return None
+
     def _wrapped_send(
         self, prepared_request: Any, original: Any = None, **kwargs: Any
     ) -> Any:
-        url = str(getattr(prepared_request, "url", ""))
-        if not self._registry.is_known(url):
+        url = self._target_url(prepared_request)
+        if url is None:
             if original is not None:
                 # Even passthroughs must claim the layer so a lower hook
                 # (e.g. Urllib3Hook) does not also record the same call.
@@ -112,23 +133,32 @@ class RequestsHook:
             error_status = 599
             raise
         finally:
-            duration_ms = int((time.monotonic() - t0) * 1000)
+            self._record(prepared_request, response, url, started,
+                         int((time.monotonic() - t0) * 1000), error_status)
+        return response
+
+    def _record(
+        self, prepared_request: Any, response: Any, url: str, started: str,
+        duration_ms: int, error_status: int | None,
+    ) -> None:
+        """Write the model-call record and the network event. Never raises:
+        the response or the transport's exception passes through unchanged."""
+        status_code = 0
+        with fail_open(_LIBRARY, MODEL_CALLS_STREAM):
             try:
                 raw_body = getattr(prepared_request, "body", None) or b"{}"
-                if isinstance(raw_body, bytes):
-                    body = json.loads(raw_body)
-                elif isinstance(raw_body, str):
-                    body = json.loads(raw_body)
-                else:
-                    body = {}
-            except Exception:
+                body: Any = json.loads(raw_body) if isinstance(raw_body, (bytes, str)) else {}
+            except Exception:  # noqa: BLE001 -- a non-JSON body records no attributes
                 body = {}
             if not isinstance(body, dict):
                 body = {}
+            # ``response is None``, never ``not response``: a requests
+            # ``Response`` is falsy for every 4xx/5xx (``__bool__`` is ``.ok``),
+            # which recorded a 503 as status 0 and ``"success"``.
             status_code = (
                 error_status
                 if error_status is not None
-                else getattr(response, "status_code", 200) if response else 0
+                else getattr(response, "status_code", 200) if response is not None else 0
             )
             record = build_record_envelope(
                 model_call_id=new_ulid(),
@@ -141,31 +171,21 @@ class RequestsHook:
             record.update(extract_request_attributes(
                 body, url=url, gen_ai_system=self._registry.gen_ai_system(url),
             ))
-            try:
-                get_current_writer(self._writer).append_model_call(
-                    stamp_wire_record(record)
-                )
-            except Exception:
-                # Never let a bookkeeping failure surface to the caller.
-                pass
+            get_current_writer(self._writer).append_model_call(stamp_wire_record(record))
 
-            # Record a NetworkEvent in the active capsule (fail-open).
-            try:
-                _recorder = get_current_recorder()
-                if _recorder is not None:
-                    from urllib.parse import urlparse
-                    _parsed = urlparse(url)
-                    _recorder.record_network_event(
-                        method=getattr(prepared_request, "method", "UNKNOWN") or "UNKNOWN",
-                        url=url,
-                        host=_parsed.hostname or "",
-                        port=_parsed.port,
-                        status_code=status_code if status_code != 0 else None,
-                        response_size_bytes=safe_response_size(response),
-                        duration_ms=float(duration_ms),
-                        library="requests",
-                        is_ai_api=_is_ai_api(url),
-                    )
-            except Exception:
-                pass  # fail-open
-        return response
+        # Record a NetworkEvent in the active capsule (fail-open).
+        with fail_open(_LIBRARY, NETWORK_EVENTS_STREAM):
+            _recorder = get_current_recorder()
+            if _recorder is not None:
+                _parsed = urlparse(url)
+                _recorder.record_network_event(
+                    method=getattr(prepared_request, "method", "UNKNOWN") or "UNKNOWN",
+                    url=url,
+                    host=_parsed.hostname or "",
+                    port=_parsed.port,
+                    status_code=status_code if status_code != 0 else None,
+                    response_size_bytes=safe_response_size(response),
+                    duration_ms=float(duration_ms),
+                    library=_LIBRARY,
+                    is_ai_api=_is_ai_api(url),
+                )

@@ -5,7 +5,11 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from novafabric.registry.service import DuplicateAssetError, register_asset
+from novafabric.registry.service import (
+    DuplicateAssetError,
+    RegistrationStatusError,
+    register_asset,
+)
 from novafabric.spec.validator import (
     SpecValidationError,
     print_spec_error,
@@ -22,6 +26,12 @@ def register_cmd(
 
     The spec must pass schema validation before the asset is written.
     Run `nova validate` first to check the spec without committing it.
+
+    A new asset always enters the registry as `development`. A spec that declares
+    any other `status:` (staging, production, ...) is refused with exit 1: move it
+    with `nova promote`, which runs the promotion gates (ADR-0312). A version that
+    was ever in production can never be registered again, even after
+    `nova unregister`; register the new content as a new version.
 
     Scope: registry-wide (adds or updates one asset entry).
 
@@ -40,9 +50,9 @@ def register_cmd(
         raise typer.Exit(code=1)
 
     try:
-        result = register_asset(spec, spec_file)
-    except DuplicateAssetError as exc:
-        console.print(f"[red]Registration failed:[/red] {exc}")
+        result = register_asset(spec, spec_file, actor="cli-user")
+    except (DuplicateAssetError, RegistrationStatusError) as exc:
+        console.print(f"[red]Registration failed:[/red] {exc}", soft_wrap=True)
         raise typer.Exit(code=1)
 
     console.print(

@@ -2,7 +2,7 @@
 
 **Status:** works today (v0.98.0). Generated from the live `nova serve` FastAPI route table (`src/novafabric/serve/app.py`).
 
-The `nova serve` dashboard server exposes **207 REST endpoints** in the generated tables below, plus the 14 experimental routes in the next section that the generator has not yet been re-run for (the authorization table classifies 225 routes in all, three of them the conditional TV-5 routes). All require a valid auth token except the unauthenticated probes `GET /api/health`, `GET /livez`, and `GET /readyz`. The multi-tenant `nova server` API is specified separately in `api/openapi.yaml`.
+The `nova serve` dashboard server exposes **208 REST endpoints** in the generated tables below, plus the 14 experimental routes in the next section that the generator has not yet been re-run for — 222 in all, every route `create_app` can mount across its flags (`GET /` and the `/api/topology/*` routes are conditional). The authorization table classifies 225, the other three being the TV-5 routes `nova serve` mounts after the app is built. All require a valid auth token except the seven `public` routes: the probes `GET /api/health`, `GET /livez` and `GET /readyz`, the interactive docs `GET /api/docs`, `GET /api/openapi.json` and `GET /docs/oauth2-redirect`, and `GET /` (the placeholder served when no dashboard is mounted). The multi-tenant `nova server` API is specified separately in `api/openapi.yaml`.
 
 ## Authorization (ADR-0228, experimental)
 
@@ -11,18 +11,111 @@ enforced by a single declarative table (`src/novafabric/serve/authz.py`):
 
 | Scope | Reaches | ADR-0027 layer |
 |---|---|---|
-| `read` | every read-only endpoint, **including the `POST` routes that only compute and return** — `/api/query`, `/api/policy/check`, `/api/mcp/scan`, `/api/kg/blast-radius`, and the whole `/api/compliance/export/*` family | Layer A |
-| `operate` | bounded, reversible mutations — register, promote, score, hold, incident, ingest | Layer B |
-| `admin` | irreversible or privilege-affecting — capsule/run deletion, PII erase, seal bypass, signing, key ratchet, role and token management, replay that spawns user code | Layer C |
-| `audit` | everything `read` reaches **plus** `GET /api/audit`, `GET /api/reports/dashboard-audit`, `GET /api/reports/policy-audit`, `GET /api/policy/recent-decisions`, `GET /v1/kg/audit` — and **never** `operate` or `admin` | orthogonal |
+| `read` | every read-only endpoint, **including the `POST` routes that only compute and return** — `/api/query`, `/api/policy/check` (packaged policies only), `/api/mcp/scan`, `/api/kg/blast-radius`, and the whole `/api/compliance/export/*` family | Layer A |
+| `operate` | bounded, reversible mutations — register, promote, score, placing a hold, incident, ingest | Layer B |
+| `admin` | irreversible or privilege-affecting — capsule/run deletion, releasing a legal hold, PII erase, seal bypass, signing, key ratchet, role and token management, and the `forensic`/`semantic`/`exact` replay routes (none of the three re-executes the workload; each writes a replay result beside the capsule) | Layer C |
+| `audit` | everything `read` reaches **plus** `GET /api/audit`, `GET /api/reports/dashboard-audit`, `GET /api/reports/policy-audit` (and their `/export`), `GET /api/policy/recent-decisions`, `GET /api/policy/explain`, `GET /v1/kg/audit` — and **never** `operate` or `admin` | orthogonal |
 
 `admin` ⊇ `operate` ⊇ `read`, and `admin` also reaches `audit`. Insufficient scope returns
 **403** with the required and held scope in `detail`, and appends an `authz.denied` record to
-the dashboard audit log. A missing or unrecognised credential still returns **401**, and writes
-nothing.
+the dashboard audit log. A missing or unrecognised credential on a classified route still
+returns **401**, and writes nothing.
+
+Two rules sit on top of the table:
+
+- **A derived route is never weaker than its base.** `GET /api/reports/{report_id}/export` needs the scope of `GET /api/reports/{report_id}`: exporting `dashboard-audit` or `policy-audit` needs `audit`, exporting `api-key-inventory` needs `admin`, and an unknown report id needs `admin` (so a non-admin gets 403, not 404).
+- **Rego the server did not ship needs `admin`.** `POST /api/policy/check` with a non-blank `policy_source`, and `POST /api/policy/test` with a `bundle_path`, return **403** below `admin` (audited like any other denial). A `read` credential evaluates and tests the packaged policies only.
+
+Whoever asks, every `opa` that `nova serve` (or the CLI) starts is **sandboxed**: it gets no environment from the server except a fixed `PATH`, and runs with an OPA capabilities file derived from the installed binary minus `opa.runtime`, `http.send` and `net.lookup_ip_addr`, with no network allowed. Rego that calls one of those fails to compile and the decision is a deny whose `reason` names the undefined function. If the capabilities cannot be derived (an `opa` too old for `opa capabilities --current`), nothing is evaluated and the decision is a deny. Request-path evaluations run in a worker thread with a 10 s timeout per `opa` call.
 
 **The default is unchanged:** the `.serve-token` holds `admin`, as does any token issued before
-this landed. Mint a narrower one with `POST /api/admin/tokens` and a `scope` field.
+this landed (a `tokens.jsonl` record with no `scope` field). Mint a narrower one with
+`POST /api/admin/tokens` with a `scope` field and `"confirmed": true` (without it the answer is
+**400** and nothing is minted). The scope must be exactly `read`, `operate`, `admin`
+or `audit`; anything else is refused with **422** and nothing is stored. A stored record whose
+`scope` is not one of those (for example a hand-edited typo) holds **no** scope: it is refused with
+403 on every non-public route, and `GET /api/admin/tokens` lists it as `none`.
+
+The audit fingerprint of the server token (`actor_token_fp` in route records,
+`session_token_fingerprint` in `GET /api/admin/tokens`, `user.uid` in the SIEM export) is 12 hex
+characters of a domain-separated SHA-256 of the token. It is stable, and it is never a prefix of
+the token.
+
+### Paths in requests
+
+Fields that name a server-side file or directory (`output_path`, `key_path`, `cert_path`,
+`db_path`, `source`, `output`, `capsule_path` (body, and the `?capsule_path=` query of
+`GET /api/assure/{run_id}`), `capsule_base`, `bundle_path`, `target_db`, a non-built-in
+compliance `profile`, and an `/api/ingest-capsule` `run_id` that contains a `/`) are
+confined to allowlisted roots. A **write** may target only `$NOVAFABRIC_HOME/exports`,
+`$NOVAFABRIC_HOME/evidence` or `$NOVAFABRIC_EVIDENCE_DIR`. A **read** may also target
+`$NOVAFABRIC_HOME` and the server's capsule directory. Each path is resolved, symlinks included,
+before it is checked. A `..` segment, or a path that resolves outside the roots, is refused with
+**403**. An empty path or a NUL byte is refused with **400**. Relative paths are taken from
+`$NOVAFABRIC_HOME` (reads) or `$NOVAFABRIC_HOME/exports` (writes). Operators add directories with
+`NOVAFABRIC_SERVE_PATH_ROOTS` (absolute paths, `os.pathsep`-separated).
+`NOVAFABRIC_SERVE_ALLOW_ANY_PATH` is no longer honoured.
+
+The same roots bound **run ids**. An entry of the capsule directory that is a symlink is
+never listed by `/api/runs`, `/api/runs/search`, the reports, the cost report or any other
+route that scans capsules. Named directly (`/api/runs/latest`), it is served only when it
+resolves inside the read roots; otherwise every `{run_id}` route answers **403**. A capsule
+whose top level holds a symlink or a special file (FIFO, socket, device) is refused with **403**,
+and a symlinked or special file in a *sibling* capsule is read as absent by every scanning route.
+See [Links inside a capsule are never followed](concepts.md#links-inside-a-capsule-are-never-followed-works-today).
+
+A **read** never reaches the server's own secrets, even inside a root: the token stores
+(`tokens.jsonl`, `.serve-token`, `.server-token`), `.env`, the PII key store (`dek.db` and its
+SQLite sidecars), the NovaSeal ratchet state, `config.yaml` and the audit logs are refused with
+**403**, and so is a directory that contains one of them (`$NOVAFABRIC_HOME` itself, for
+example). A source read (`source`, `capsule_path`, `capsule_base`, `bundle_path`, `profile`)
+also refuses key material: `$NOVAFABRIC_HOME/keys`, the NovaSeal keyring, and any `*.pem` or
+`*.key` file. `key_path`/`cert_path` may name key material, which the server uses to sign and
+never returns.
+
+Values a route joins onto a server directory as one name (`node_id` on `/api/seal/ratchet/*`,
+`capsule_id` on `/api/seal/sigstore/*` and `/api/seal/{capsule_id}/...`, `run_id` on
+`/children` and `/validate-distributed`) are refused with **400** if they contain `/`, `\`,
+`..`, a NUL or other control character, are absolute, or are longer than 255 bytes (one rule,
+shared with `nova server`'s `/v0` routes and `nova import`); an evidence-cart `cart_id` must match `[A-Za-z0-9_-]+`
+(**422** otherwise). Ratchet responses never include the chain key.
+
+### Capsule files and symbolic links
+
+No route returns the target of a symbolic link planted in a capsule.
+`GET /api/runs/{run_id}/file/{path}` answers **404** for a link or a special file; a capsule
+with a link at its top level is refused with **403** by every `/api/runs/{run_id}/...` route;
+`POST /api/compliance/export/rocrate` answers **422** for a capsule holding any link. See
+[Concepts: links inside a capsule](concepts.md#links-inside-a-capsule-are-never-followed-works-today).
+
+### Single-actor promotion into a protected stage
+
+`POST /api/assets/{name}/{version}/promote` and `POST /api/assets/{asset_id}/promote` apply the
+same ADR-0312 gate as `nova promote direct`: `production` needs an explicit `promote_direct`
+policy allow, and `force` does not bypass it. Without one, the answer is **403**. Without OPA there
+is never an explicit allow. Reach `production` through `nova promote propose` + `approve`. The
+policy subject is `serve:<credential fingerprint>`, not the request's `actor` field.
+
+Registration is not a way in either. `POST /api/assets` registers every asset as
+`development`; a spec that declares any other `status` is refused with **422** (audited as
+an error) and `POST /api/assets/register-from-yaml` answers `ok: false`. A version that was
+ever in production cannot be registered again (**409**). A rollback restores, without a
+policy decision, only a version whose *current* registration has production history; see
+[`nova rollback`](cli-reference.md#nova-rollback-name---actor-id).
+
+### Confirmation on state-changing routes
+
+Nineteen `POST` routes refuse to act unless the JSON body carries `"confirmed": true`; without it
+they answer **400** and change nothing:
+`/api/admin/tokens`, `/api/admin/rebuild-metadata-db`, `/api/admin/reindex-runs`, `/api/assets`,
+`/api/assets/{asset_id}/approve`, `/api/assets/{asset_id}/eval`,
+`/api/assets/{asset_id}/promote`, `/api/assets/{name}/rollback`,
+`/api/assets/{name}/{version}/eval`, `/api/assets/{name}/{version}/promote`,
+`/api/compliance/erasure/request`, `/api/evidence/{run_id}`, `/api/evidence/cart/export`,
+`/api/runs/{run_id}/redact`, `/api/seal/ratchet/rotate`, and the four
+`/api/runs/{run_id}/replay/{dry-run,exact,forensic,semantic}` routes. The flag is a guard
+against an accidental click, not an authorization step: the scope check
+runs first.
 
 ## Aggregates and the honest-degradation rule (ADR-0234, experimental)
 
@@ -66,8 +159,9 @@ mode is refused at startup** (`NOVAFABRIC_SERVE_TENANCY=multi` makes `nova serve
 than serve cross-tenant reads). Every endpoint below therefore answers for a single tenant.
 For multi-tenant deployments use `nova server` (`api/openapi.yaml`).
 
-A route absent from the table is **denied to everyone**, including the server token — a CI guard
-fails on the first unclassified route, so this should never be reachable in a release.
+A route absent from the table is **denied to everyone**, including the server token and callers
+that send no credential at all — a CI guard fails on the first unclassified route, so this should
+never be reachable in a release.
 
 > Generated by `design/scripts/gen_api_reference.py` (private) — re-run it after route changes rather than editing endpoints by hand.
 
@@ -121,13 +215,13 @@ route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
 | `POST` | `/api/validate-spec` | Validate an asset YAML spec without registering — mirrors `nova validate <spec>`. |
 | `GET` | `/docs/oauth2-redirect` | swagger ui redirect |
 
-## Runs & capsules  (33)
+## Runs & capsules  (34)
 
 | Method | Path | Summary |
 |---|---|---|
-| `POST` | `/api/capsule-migrate` | Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6). |
+| `POST` | `/api/capsule-migrate` | Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6). `source` must be under a read root and `output` under a write root (see *Paths in request bodies*). |
 | `POST` | `/api/otlp/v1/traces` | Ingest OTLP OTel GenAI spans into a run capsule (NF-034, experimental). |
-| `POST` | `/api/otlp/v1/logs` | Ingest OTLP log records into the sidecar log store, never into a capsule (ADR-0293, experimental). |
+| `POST` | `/api/otlp/v1/logs` | Ingest OTLP log records into the sidecar log store, never into a capsule (ADR-0293, experimental). The body is read bounded: over 16 MiB is a 413 before it is buffered. |
 | `GET` | `/api/runs` | list runs |
 | `GET` | `/api/runs/cost-summary` | Return per-run token and cost totals from ClickHouse. |
 | `GET` | `/api/runs/search` | Cursor-based run listing. True keyset paging: the cursor seeks the index directly — O(page), no cursor-to-offset conversion (ADR-0199 B2). |
@@ -135,7 +229,7 @@ route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
 | `GET` | `/api/runs/suggest-register` | Return asset registration suggestions derived from recent capsules. |
 | `DELETE` | `/api/runs/{run_id}` | Delete a capsule directory, subject to legal holds and retention policy. |
 | `GET` | `/api/runs/{run_id}` | get run |
-| `GET` | `/api/runs/{run_id}/children` | Return parent capsule metadata + list of child capsule summaries. |
+| `GET` | `/api/runs/{run_id}/children` | Return parent capsule metadata + list of child capsule summaries. A sealed capsule's `status` and `exit_code` come from its signed payload (`.seal/manifest.dsse`), never from an unsealed `capsule.yaml`/`capsule.json` beside it. |
 | `GET` | `/api/runs/{run_id}/diagnose` | Attribute a failed run to its most likely responsible step. |
 | `GET` | `/api/runs/{run_id}/energy` | Energy-Anchored Action Receipts + conservation for a run (ADR-0093). |
 | `POST` | `/api/runs/{run_id}/export-system-card` | Generate and SEAL an auto-generated system/audit card. |
@@ -158,7 +252,7 @@ route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
 | `GET` | `/api/runs/{run_id}/trust-radar` | Trust guarantees for one capsule (ADR-0173). |
 | `POST` | `/api/runs/{run_id}/validate` | Validate a capsule's schema and required files. |
 | `POST` | `/api/runs/{run_id}/validate-distributed` | Validate a distributed parent capsule + its workers (nova run validate-distributed). |
-| `POST` | `/api/runs/{run_id}/verify` | Verify DSSE signature + RFC 3161 timestamp + Merkle log inclusion (nova verify). |
+| `POST` | `/api/runs/{run_id}/verify` | Verify DSSE signature + RFC 3161 timestamp + Merkle log inclusion + the ADR-0251 capsule binding with the same function as `nova verify <capsule-dir>`. Without a `novaseal.yaml` on the host it verifies from the capsule alone, as `nova verify` does, and returns every check with `configured: false` (up to v0.106.0 it returned only `configured: false` and verified nothing). An unusable `novaseal.yaml` is `valid: false`. Opens configured logs read-only; creates nothing. |
 
 ### Content search on `GET /api/runs/search` — `scope` parameter (experimental, ADR-0204)
 
@@ -205,13 +299,13 @@ always reported as a gap, never fabricated. Each source is capped
 | `POST` | `/api/assets/{asset_id}/approve` | approve asset endpoint |
 | `POST` | `/api/assets/{asset_id}/eval` | Eval by UUID — resolves name+version from the registry then delegates. |
 | `GET` | `/api/assets/{asset_id}/eval-history` | eval history endpoint |
-| `POST` | `/api/assets/{asset_id}/promote` | Promote by UUID — resolves name+version from the registry then delegates. |
+| `POST` | `/api/assets/{asset_id}/promote` | Promote by UUID — resolves name+version from the registry then delegates (same ADR-0312 gate). |
 | `GET` | `/api/assets/{name}/diff` | asset spec diff endpoint |
-| `POST` | `/api/assets/{name}/rollback` | rollback asset endpoint |
+| `POST` | `/api/assets/{name}/rollback` | Roll back to the most recent version the registry's status history shows was in production (ADR-0312 D1); never to a version without production history. 409 when there is none; a gated target without a `promote_direct` allow is 403. |
 | `DELETE` | `/api/assets/{name}/{version}` | Hard-delete an asset from the registry (nova unregister). |
 | `GET` | `/api/assets/{name}/{version}` | get asset endpoint |
 | `POST` | `/api/assets/{name}/{version}/eval` | eval asset endpoint |
-| `POST` | `/api/assets/{name}/{version}/promote` | promote asset endpoint |
+| `POST` | `/api/assets/{name}/{version}/promote` | Single-actor promotion, gated exactly like `nova promote direct` (ADR-0312): `production` needs an explicit `promote_direct` policy allow (403 otherwise); `force` does not bypass it. |
 | `GET` | `/api/diff` | diff two runs; returns `summary` (changed/added/removed), `sections` (the `nova diff --output-format json` sections) and `has_changes` (the `--assert-no-regressions` property) beside the legacy `report` |
 | `POST` | `/api/eval/compare` | Compare two EvalResult JSON objects for regression — mirrors `nova eval compare`. |
 | `POST` | `/api/eval/run` | Run a standard eval suite against a capsule — nova eval run. |
@@ -235,11 +329,11 @@ always reported as a gap, never fabricated. Each source is capped
 | Method | Path | Summary |
 |---|---|---|
 | `GET` | `/api/audit` | list audit |
-| `GET` | `/api/evidence` | list evidence endpoint |
+| `GET` | `/api/evidence` | List Evidence Bundles (`*.zip` in the evidence directory), newest first. Only regular files are listed: a symlink or other special file named `*.zip` is skipped and not counted in `total`. `verified` is the verdict of the same verifier as `POST …/verify` under the operator trust list, cached per archive SHA-256 (a file-identity key reused a stale verdict on filesystems with 1 s timestamps; review r8); `run_ids` are the runs its verified run statements sign, `run_id` the signed run when exactly one verifies (else the bundle id), `signer_trust` as in `…/verify`, `members_signed` as in `…/verify`. `timestamp` comes from the bytes that were verified. `manifest.json` is read with a 64 MiB bound. Before 2026-10-23 `verified` compared a bare hash with the prefixed `manifest_hash` and was always false, and `run_id` was the unsigned manifest label. |
 | `GET` | `/api/evidence/completeness/{run_id}` | Compute the completeness assertion for a capsule. |
-| `GET` | `/api/evidence/{bundle_id}` | get evidence detail endpoint |
-| `GET` | `/api/evidence/{bundle_id}/download` | download evidence endpoint |
-| `POST` | `/api/evidence/{bundle_id}/verify` | Verify the cryptographic integrity of an evidence bundle. |
+| `GET` | `/api/evidence/{bundle_id}` | Bundle detail: manifest, decoded run statement, member list — the bundle's own content, shown as data — plus `verified`, `run_ids`, `run_id`, `signer_trust`, `members_signed` and `unsigned_members` from the shared verifier (as in the list). The archive is copied once into a private snapshot and the verdict and everything shown come from that copy, so a bundle rewritten in place during the request never shows forged content beside `verified: true` (review r8). `signing_key_fingerprint` is the `sha256:` fingerprint (SHA-256 of the SubjectPublicKeyInfo DER, as in `…/verify`'s `signer_fingerprints`) of the key whose signatures verified, `null` when none did or several keys signed; `signer_fingerprints` lists them. Before review r8 it hashed a `signatures/run.intoto.json.cert` member no bundle has, so it was always `null`. `run_id` is never the manifest's unsigned label. The ZIP is opened without following a link; a symlink, FIFO or other non-regular file returns 422, a missing bundle 404, a `manifest.json` over 64 MiB (or a run envelope over 16 MiB, or an archive over 1 GiB) 413. |
+| `GET` | `/api/evidence/{bundle_id}/download` | Stream the bundle ZIP (`Content-Length` set). Read from a descriptor opened without following a link; a symlink, FIFO or other non-regular file returns 422 and no bytes, a missing bundle 404. |
+| `POST` | `/api/evidence/{bundle_id}/verify` | Verify an evidence bundle with the same verifier as `nova verify <bundle>.zip`: every artifact digest, no missing, extra or duplicate member, `manifest_hash`, every attestation's DSSE signature, and each signed subject recomputed from the bundle's own content, plus the RFC 3161 token and the local NovaSeal log. The verifying key ships inside the bundle, so `valid: true` proves consistency, not origin. `signer_trust` is `anchored` only when every signer is in the operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default `$NOVAFABRIC_HOME/evidence-trusted-keys.pem`); `unanchored` means no trust list is configured; `untrusted` (with `valid: false`) means a signer is not in it. A key in the request is never used. `run_ids` lists every run a verified run statement signs and `run_id` is that run when exactly one verified, else `null`; a manifest `subject`, label or top-level `run_id` that no verified statement signs fails the bundle. `members_signed` is true when the bundle's members statement (`attestations/bundle.intoto.json`) covers every member and the manifest's fields; then a rewritten, added or removed member fails `valid`. A bundle exported before that statement existed can be `valid` with `members_signed: false`, and `unsigned_members` names what no signature covers (always `README.md`, `schemas/` and `manifest.json`) — signed content only, never fully verified ([details](architecture/sealing-and-verification.md#every-member-is-signed-works-today-review-r8)). The local NovaSeal log is checked only for signed runs. An unusable configured trust list returns 500, a link or non-ZIP 422, a bundle over 1 GiB uncompressed (or a `manifest.json` over 64 MiB) 413. |
 | `POST` | `/api/evidence/{run_id}` | export evidence endpoint |
 | `POST` | `/api/evidence/{run_id}/bind` | Build criterion-evidence bindings for a capsule against a profile. |
 
@@ -255,7 +349,7 @@ always reported as a gap, never fabricated. Each source is capped
 | `GET` | `/api/compliance/audit/map` | List evidence checkers for a compliance profile. |
 | `POST` | `/api/compliance/audit/report` | Run compliance audit against a capsule and return a coverage report. |
 | `POST` | `/api/compliance/audit/verify` | Validate the structure of an audit report JSON-LD (nova audit verify). |
-| `POST` | `/api/compliance/erasure/request` | **Experimental — works today (ADR-0210).** (Makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314.) Execute a GDPR Art.17 erasure request through the real DEK destruction machinery (`DEKStore.erase_subject`, same code path as `nova pii erase`). Safe-mutations gated: body must carry `confirmed: true` (400 otherwise, nothing mutated). Persists the request PENDING in `$NOVAFABRIC_HOME/erasure.db`, executes synchronously, returns the terminal state (`COMPLETED`/`DEFERRED`/`FAILED`) with a receipt + `receipt_sha256`. Gated on crypto-shredding's own prerequisite: when the DEK store cannot be loaded → 409 `{error: "crypto_shred_unavailable", reason}`. `NOVA_CAP003_ENABLED` (cap-003, the dual-object split) does **not** gate it; `cap003_enabled` is reported for information only. |
+| `POST` | `/api/compliance/erasure/request` | **Experimental — works today (ADR-0210).** (Makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314.) Execute a GDPR Art.17 erasure request through the real DEK destruction machinery (`DEKStore.erase_subject`, same code path as `nova pii erase`). Safe-mutations gated: body must carry `confirmed: true` (400 otherwise, nothing mutated). Persists the request PENDING in `$NOVAFABRIC_HOME/erasure.db`, executes synchronously, returns the terminal state (`COMPLETED`/`DEFERRED`/`FAILED`/`HELD`) with a receipt + `receipt_sha256`. **Legal holds win (GDPR Art.17(3)(e)):** while any legal hold is active the DEK is kept and the request ends `HELD` → 409 `{error: "legal_hold_active", erased: false}` with an `ErasureHeldReceipt` naming the holds and held capsules. Gated on crypto-shredding's own prerequisite: when the DEK store cannot be loaded → 409 `{error: "crypto_shred_unavailable", reason}`. `NOVA_CAP003_ENABLED` (cap-003, the dual-object split) does **not** gate it; `cap003_enabled` is reported for information only. |
 | `GET` | `/api/compliance/erasure/status` | **Experimental — works today (ADR-0210).** List persisted GDPR erasure requests from `erasure.db`, newest first (`?subject_id=` exact filter, `?limit=`, default 200). Rows are hash-only at top level (`subject_sha256`); receipts appear verbatim. Empty queue returns `requests: []` honestly. |
 | `POST` | `/api/compliance/euaiact/export` | Export EU AI Act Art.12 structured log records (ADR-0076). |
 | `GET` | `/api/compliance/euaiact/status` | Return EU AI Act Art.12 compliance configuration (ADR-0076). |
@@ -269,7 +363,7 @@ always reported as a gap, never fabricated. Each source is capped
 | `POST` | `/api/compliance/export/ropa` | Export GDPR Art.30 Records of Processing Activities (RoPA) — nova export-ropa. |
 | `POST` | `/api/compliance/export/{kind}` | Run one registry exporter — the same builder its CLI command calls. |
 | `GET` | `/api/compliance/nis2` | Build and return a NIS2 incident report as JSON. |
-| `POST` | `/api/compliance/pii/erase` | Destroy a data subject's DEK — nova pii erase (**experimental**: makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314). |
+| `POST` | `/api/compliance/pii/erase` | Destroy a data subject's DEK — nova pii erase (**experimental**: makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314). While any legal hold is active the DEK is kept: 409 `{error: "legal_hold_active", erased: false, receipt}` (GDPR Art.17(3)(e)). Optional `retention_months` must be an integer in `0..1200` (default 6; `0` = no Art.17(3)(b) window, as `nova pii erase --retention-months 0`); a negative, non-integer, boolean or string value is **422** and no key is touched. |
 | `GET` | `/api/compliance/subject-proof` | Return GDPR Art. 17 redaction proof for a data subject. |
 | `GET` | `/api/governance/classify` | Classify an AI system risk tier inferred from a Run Capsule. |
 | `POST` | `/api/governance/classify-manual` | Classify a manually described AI system — nova classify run. |
@@ -291,20 +385,20 @@ the generic `{kind}` route is registered last so it never shadows them
 
 | Method | Path | Summary |
 |---|---|---|
-| `GET` | `/api/policy/capture-level` | Return current capture level + tier descriptions (DB-CAP-1, cap-004). |
+| `GET` | `/api/policy/capture-level` | Return the current capture level, each tier's designed field allowlist (`tiers` — **not enforced**, `allowlist_enforced: false`), and per tier `enforcement.<level>.{enforced, effect}`: whether selecting it changes capture today (only `forensic` and `air_gapped`). DB-CAP-1, cap-004, ADR-0066 Am.1. |
 | `POST` | `/api/policy/capture-level` | Validate a capture-level value and return restart instructions (DB-CAP-1). |
-| `POST` | `/api/policy/check` | Evaluate a policy check interactively. |
-| `GET` | `/api/policy/explain` | Look up a past policy decision from the audit log (nova policy explain). Bounded O(page) tail read, **newest-first**; `limit` (default 100, max 1000) + byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). |
+| `POST` | `/api/policy/check` | Evaluate a policy check interactively. Body: a `PolicyInput` plus optional `explain` and `policy_source`. `read` for the packaged policies; a non-blank `policy_source` needs `admin` (403 otherwise; 422 if it is not a string). `opa` runs sandboxed (see Authorization). |
+| `GET` | `/api/policy/explain` | Look up a past policy decision from the audit log (nova policy explain). **`audit` scope.** `decision_id` is matched **exactly** against an entry's audit id or recorded decision id (no prefixes); an empty or wildcard id is **422**. Bounded O(page) tail read, **newest-first**; `limit` (default 100, max 1000) + byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). |
 | `GET` | `/api/policy/list` | List Rego bundle files and signed promotion policies — nova policy list. |
 | `GET` | `/api/policy/recent-decisions` | Return recent decision IDs from the audit log for autocomplete. Bounded O(page) tail read; byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). |
 | `POST` | `/api/policy/sign` | Sign and store a new promotion policy — nova policy sign. |
-| `POST` | `/api/policy/test` | Run the Rego test suite for the policy bundle (nova policy test). |
+| `POST` | `/api/policy/test` | Run the Rego test suite for the policy bundle (nova policy test). `read` for the packaged bundle; a `bundle_path` needs `admin` and is confined to the read roots. `opa test` runs sandboxed. |
 
 ## Sealing & trust  (10)
 
 | Method | Path | Summary |
 |---|---|---|
-| `GET` | `/api/seal/log/verify` | Verify internal consistency of the local Merkle log (ADR-0041). |
+| `GET` | `/api/seal/log/verify` | Verify internal consistency of the local Merkle log (ADR-0041). The log (`NOVAFABRIC_SEAL_DB_PATH`, `merkle_db`, then `$NOVAFABRIC_HOME/novaseal-merkle.db`) is opened read-only: nothing is created or migrated. A cleanly closed log is opened with SQLite's `immutable=1`, so not even its `-wal`/`-shm` side files are created; while a writer is connected (side files present) the open uses normal locking, reads every committed leaf and adds no file (review r8). 404 when no log exists, 501 for a Postgres log (use `nova seal log verify`; the DSN is shown without its password), 422 for a file that is not a NovaSeal log. `capsule_included` (with `capsule_id`, at most 256 characters) is an exact `capsule_id` match, never a pattern. |
 | `GET` | `/api/seal/policy` | Return the latest promotion policy predicate. |
 | `POST` | `/api/seal/ratchet/init` | Provision epoch-0 ratchet state for a node. |
 | `POST` | `/api/seal/ratchet/rotate` | Advance to the next signing epoch; erase the previous chain key. |
@@ -314,6 +408,8 @@ the generic `{kind}` route is registered last so it never shadows them
 | `POST` | `/api/seal/{capsule_id}/bypass` | Create a time-limited SoD bypass, DSSE-signed and permanently logged (ADR-0059). |
 | `GET` | `/api/seal/{capsule_id}/proposals` | List all proposals for a capsule with their approval status. |
 | `POST` | `/api/seal/{capsule_id}/verify` | Run the five-check SoD verifier for a capsule's promote bundles. |
+
+`POST /api/seal/{capsule_id}/bypass` fails closed: the bypass is stored only after its `seal.bypass.create` entry (actor `serve:<token fingerprint>`) is in the hash-chained audit log. If that entry cannot be written, the route answers **503** and stores nothing. If the entry was written but the bypass file then cannot be stored (disk full, I/O error), a compensating `seal.bypass.abort` entry for the same `bypass_uuid` withdraws it and the route answers **503** (review r8; it was a raw 500 with no dashboard record). Every attempt that reaches the store also writes a `seal_bypass` record to the dashboard audit log. A stored bypass counts in verification only while the audit log holds its `seal.bypass.create` entry and no `seal.bypass.abort` ([NovaSeal configuration §4.1](novaseal-configuration.md#41-maker-checker-bypass-notifications)). The response adds `notification_status` (`pending` or `not_configured`) and `notification_sent_to`, the channel configuration the signed predicate records; the delivery outcome is the `seal.bypass.notify` audit entry ([NovaSeal configuration §4.1](novaseal-configuration.md#41-maker-checker-bypass-notifications)).
 
 ## Knowledge graph  (18)
 
@@ -395,7 +491,7 @@ caller-supplied numbers isn't a mutating or boundary-crossing action).
 | `GET` | `/api/reports/run-history` | report run history |
 | `GET` | `/api/reports/seal-verification` | report seal verification |
 | `GET` | `/api/reports/throughput` | report throughput |
-| `GET` | `/api/reports/{report_id}/export?format=html\|pdf` | Export a self-contained report artifact with an inline-SVG chart where the registry declares one (ADR-0201: server-side chart rendering). HTML needs nothing; PDF lazily imports the optional WeasyPrint extra and degrades to `501` + install hint when absent (`pip install 'novafabric[compliance]'`). |
+| `GET` | `/api/reports/{report_id}/export?format=html\|pdf` | Export a self-contained report artifact with an inline-SVG chart where the registry declares one (ADR-0201: server-side chart rendering). HTML needs nothing; PDF lazily imports the optional WeasyPrint extra and degrades to `501` + install hint when absent (`pip install 'novafabric[compliance]'`). Scope is the exported report's own (`audit` for `dashboard-audit`/`policy-audit`, `admin` for `api-key-inventory` and unknown ids, otherwise `read`). |
 
 ## Legal holds  (3)
 
@@ -433,7 +529,7 @@ caller-supplied numbers isn't a mutating or boundary-crossing action).
 | `GET` | `/api/admin/roles` | List role assignments (local mode). |
 | `POST` | `/api/admin/roles` | Assign a role to a subject (idempotent). Local-mode admin shortcut. |
 | `DELETE` | `/api/admin/roles/{subject}/{role}` | Revoke a role from a subject. 404 if not found, 409 if lockout would occur. |
-| `GET` | `/api/admin/tokens` | List issued local tokens (stored in ~/.novafabric/tokens.jsonl), newest-first. Each row reports its `scope` (a record written before ADR-0228 has none and is enforced as `admin`). Bounded: `limit` (default 200, max 2000) + byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). Requires `admin` scope. |
+| `GET` | `/api/admin/tokens` | List issued local tokens (stored in ~/.novafabric/tokens.jsonl), newest-first. Each row reports the scope it is enforced with: a record written before ADR-0228 has none and is enforced as `admin`; a record whose `scope` is not recognised is reported as `none` and holds no scope. Bounded: `limit` (default 200, max 2000) + byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). Requires `admin` scope. |
 | `POST` | `/api/admin/tokens` | Issue a new local session token. The token is returned **once** and stored only as a `sha256:` digest (`0600`); it cannot be recovered from the file. It authenticates by `Authorization: Bearer` or `?token=`. Optional `scope` — `read`, `operate`, `admin` (default) or `audit` (ADR-0228) — bounds what it may reach; the response echoes the scope it minted. Omitting it reproduces the pre-ADR-0228 behaviour, **the same full access as the dashboard token**. Requires `admin` scope. |
 | `DELETE` | `/api/admin/tokens/{fingerprint}` | Revoke a token by fingerprint. Revocation takes effect immediately: the next request with that token gets 401. |
 
@@ -464,6 +560,8 @@ caller-supplied numbers isn't a mutating or boundary-crossing action).
 | Method | Path | Summary |
 |---|---|---|
 | `POST` | `/api/ingest-capsule` | Index capsule(s) into the runs metadata store — nova ingest-capsule. |
+
+The route indexes without opening a file watcher. Before 2026-10-23 each request started an inotify instance and watcher threads that were never closed, so about 128 requests could exhaust the user's inotify instances.
 
 ## lineage-store  (1)
 
@@ -596,8 +694,10 @@ When the server is running, the same route table is browsable interactively:
   parameter is ignored (an absent or non-Bearer header falls back to `?token=`).
   The query form is kept for the SPA and for printed/bookmarked URLs; prefer the header
   for scripts and `curl`, so the secret stays out of shell history, proxy logs, and
-  `Referer`. The unauthenticated probes `GET /api/health`, `GET /livez`, and `GET /readyz`
-  are open (`/metrics` requires the token). The server binds to `127.0.0.1` and rejects
+  `Referer`. The seven `public` routes are open: the probes `GET /api/health`, `GET /livez`
+  and `GET /readyz`, the interactive docs (`GET /api/docs`, `GET /api/openapi.json`,
+  `GET /docs/oauth2-redirect`) and the no-dashboard placeholder `GET /` (`/metrics` requires
+  the token). The server binds to `127.0.0.1` and rejects
   non-localhost `Host` headers.
 - The endpoint tables are **generated** — after any route change a maintainer
   re-runs the generator so this file stays truthful. The generator lives in the

@@ -9,7 +9,7 @@ The other three read the capsule and execute nothing.
 
 Every flag of these commands: [CLI reference — nova replay, diff and diagnose](../cli-reference.md#replay-commands-v03).
 
-> **Release scope.** This page describes **v0.106.1**, the current release. The following
+> **Release scope.** This page describes **v0.107.0**, the current release. The following
 > shipped in v0.105.0: recorded MCP `call_tool` results served (ADR-0300), the fail-closed
 > contract and `--permissive`, async / streamed / Responses API serving and live-network
 > reporting (ADR-0304), replay of recorded model errors (**experimental**), the
@@ -67,8 +67,10 @@ Before it branches, `ReplayEngine.run`:
   up to v0.105.0 only `--allow-mutating` triggered it.
 
 Every mode writes `replay_result.yaml` (`replay/_result.py:write_replay_result`,
-`schemas/replay-result.schema.json`) under `.novafabric/replays/<ulid>/` in the
-current directory, or under `-o <dir>`.
+`schemas/replay-result.schema.json`) under `$NOVAFABRIC_HOME/replays/<ulid>/`
+(`_paths.default_replays_dir()`, the directory `nova init` creates), or under
+`-o <dir>`. Up to v0.106.0 the default was `./.novafabric/replays/` in the current
+directory.
 
 ## The modes
 

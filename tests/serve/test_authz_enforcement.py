@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -382,3 +383,169 @@ def test_websockets_are_left_to_their_own_inline_guard(tmp_path: Path, home: Pat
         f"expected the inline token guard (4401); got {excinfo.value.code} — "
         "1011 means the authz dependency crashed the handshake"
     )
+
+
+# ---------------------------------------------------------------------------
+# D3 applies to anonymous callers too
+# ---------------------------------------------------------------------------
+
+
+def _app_with_unclassified_routes(tmp_path: Path) -> tuple[Any, list[str]]:
+    """An app plus two deliberately unclassified routes, neither using verify_token."""
+    from fastapi import Depends
+
+    capsules = tmp_path / "runs"
+    capsules.mkdir()
+    app = create_app(token=SERVER_TOKEN, capsule_dir=capsules, static_mounted_by_caller=True)
+    ran: list[str] = []
+
+    @app.get("/api/unclassified-no-auth")
+    async def no_auth() -> dict[str, str]:
+        ran.append("no-auth")
+        return {"leaked": "everything"}
+
+    def _always_ok() -> str:
+        return "anyone"
+
+    @app.post("/api/unclassified-own-dep", dependencies=[Depends(_always_ok)])
+    async def own_dep() -> dict[str, str]:
+        ran.append("own-dep")
+        return {"leaked": "everything"}
+
+    return app, ran
+
+
+def test_an_unclassified_route_denies_an_anonymous_caller(tmp_path: Path, home: Path) -> None:
+    """ADR-0228 D3: "denied to everyone" includes the caller who sent no credential.
+
+    The enforcement used to step aside for an unauthenticated request so the
+    route's own ``verify_token`` could answer 401. A route that carries no such
+    dependency -- the exact mistake D3 exists to catch -- then served everyone.
+    """
+    app, ran = _app_with_unclassified_routes(tmp_path)
+    with TestClient(app) as c:
+        r = c.get("/api/unclassified-no-auth", headers=HEADERS)
+        r2 = c.post("/api/unclassified-own-dep", headers=HEADERS)
+    assert r.status_code == 403, r.text
+    assert "no authorization classification" in r.json()["detail"]
+    assert r2.status_code == 403, r2.text
+    assert ran == [], "the handler of an unclassified route must never run"
+
+
+def test_an_unclassified_route_denies_an_unknown_credential(tmp_path: Path, home: Path) -> None:
+    app, ran = _app_with_unclassified_routes(tmp_path)
+    with TestClient(app) as c:
+        r = c.get("/api/unclassified-no-auth?token=not-a-real-token", headers=HEADERS)
+    assert r.status_code == 403
+    assert ran == []
+
+
+def test_an_anonymous_unclassified_denial_is_audited_without_a_secret(
+    tmp_path: Path, home: Path
+) -> None:
+    app, _ = _app_with_unclassified_routes(tmp_path)
+    with TestClient(app) as c:
+        c.get("/api/unclassified-no-auth?token=presented-but-unknown-secret", headers=HEADERS)
+    denials = [r for r in _audit_records() if r.get("action") == "authz.denied"]
+    assert len(denials) == 1
+    assert denials[0]["required_scope"] == "unclassified"
+    assert denials[0]["held_scope"] == "none"
+    assert denials[0]["actor_token_fp"] == "anonymous"
+    assert "presented-but-unknown-secret" not in json.dumps(_audit_records())
+
+
+def test_classified_routes_still_answer_401_to_anonymous_callers(client: TestClient) -> None:
+    """The D3 fix must not turn AC6's 401 into a 403 on classified routes."""
+    assert client.get("/api/runs", headers=HEADERS).status_code == 401
+    assert client.get("/api/health", headers=HEADERS).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# A scope the store does not recognise grants nothing (fail closed)
+# ---------------------------------------------------------------------------
+
+
+def _write_record(secret: str, **extra: object) -> dict[str, object]:
+    """Append a hand-written record, as an operator editing tokens.jsonl would."""
+    record: dict[str, object] = {
+        "label": "hand-edited",
+        "fingerprint": token_store.fingerprint(secret),
+        "token_digest": token_store.digest(secret),
+        "created_at": "2026-10-22T00:00:00+00:00",
+        "revoked": False,
+        **extra,
+    }
+    with token_store.tokens_path().open("a") as fh:
+        fh.write(json.dumps(record) + "\n")
+    return record
+
+
+_BAD_STORED_SCOPES: list[object] = [
+    "admn", "Admin", "ADMIN", " admin", "operator", "public", "", None, 7, ["admin"],
+]
+
+
+@pytest.mark.parametrize("bad", _BAD_STORED_SCOPES, ids=repr)
+def test_an_unrecognised_stored_scope_holds_no_scope(
+    client: TestClient, home: Path, bad: object
+) -> None:
+    """A typo'd, foreign or non-string scope must not be read as admin."""
+    secret = f"typo-scope-token-{_BAD_STORED_SCOPES.index(bad)}-abcdefgh"
+    record = _write_record(secret, scope=bad)
+    assert resolve_scope(secret, server_token=SERVER_TOKEN) == (record["fingerprint"], None)
+    # Not even read access.
+    assert client.get(f"/api/runs?token={secret}", headers=HEADERS).status_code == 403
+    assert client.get(f"/api/audit?token={secret}", headers=HEADERS).status_code == 403
+    r = client.post(
+        f"/api/admin/roles?token={secret}",
+        headers=HEADERS,
+        json={"subject": "mallory", "role": "admin"},
+    )
+    assert r.status_code == 403
+    # A public route needs no scope at all, so it stays reachable.
+    assert client.get(f"/api/health?token={secret}", headers=HEADERS).status_code == 200
+
+
+def test_an_unrecognised_scope_denial_is_audited_as_holding_none(
+    client: TestClient, home: Path
+) -> None:
+    secret = "typo-scope-audit-token-abcdef"
+    _write_record(secret, scope="admn")
+    client.get(f"/api/runs?token={secret}", headers=HEADERS)
+    denials = [r for r in _audit_records() if r.get("action") == "authz.denied"]
+    assert len(denials) == 1
+    assert denials[0]["held_scope"] == "none"
+    assert denials[0]["required_scope"] == "read"
+
+
+def test_token_listing_reports_the_effective_scope_of_a_bad_record(
+    client: TestClient, home: Path
+) -> None:
+    _write_record("typo-listing-token-abcdefgh", scope="admn")
+    _write_record("legacy-listing-token-abcdefg")  # no scope key: legacy admin (D4)
+    r = client.get(f"/api/admin/tokens?token={SERVER_TOKEN}", headers=HEADERS)
+    assert r.status_code == 200
+    scopes = {t["fingerprint"]: t["scope"] for t in r.json()["tokens"]}
+    assert scopes[token_store.fingerprint("typo-listing-token-abcdefgh")] == "none"
+    assert scopes[token_store.fingerprint("legacy-listing-token-abcdefg")] == "admin"
+
+
+@pytest.mark.parametrize("bad", ["admn", "Admin", " read", "read ", "operator", "public", ""])
+def test_issue_time_rejects_every_unrecognised_scope(home: Path, bad: str) -> None:
+    with pytest.raises(ValueError):
+        token_store.issue("bad", "never-stored-token-abcdefgh", bad)
+    assert token_store.load() == []
+
+
+@pytest.mark.parametrize("bad", ["admn", "Admin", "operator", "public", ""])
+def test_minting_endpoint_rejects_a_typo_and_writes_nothing(
+    client: TestClient, home: Path, bad: str
+) -> None:
+    r = client.post(
+        f"/api/admin/tokens?token={SERVER_TOKEN}",
+        headers=HEADERS,
+        json={"label": "typo", "confirmed": True, "scope": bad},
+    )
+    assert r.status_code == 422, r.text
+    assert "token" not in r.json()
+    assert token_store.load() == []

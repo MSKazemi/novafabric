@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import get_current_writer
+from novafabric.capture.hooks._fail_open import MODEL_CALLS_STREAM, fail_open
 from novafabric.capture.hooks._finish_reason import (
     attach_provider_finish_reasons,
     canonical_finish_reason,
@@ -25,6 +26,7 @@ from novafabric.capture.hooks._sdk_streams import (
     API_SURFACE_EXT,
     AnthropicStreamAccumulator,
     AsyncRecordingStream,
+    CaptureBinding,
     RecordingStream,
     attach_stream_info,
     is_async_stream,
@@ -42,6 +44,10 @@ if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
 
 
+#: The hook name in fail-open warnings and drop accounting.
+_HOOK = "anthropic"
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -55,6 +61,9 @@ class AnthropicHook:
         #: The sync ``Messages.create`` original (kept for callers).
         self._original: Any = None
         self._patched: list[tuple[Any, str, Any]] = []
+        #: Set by :meth:`uninstall`: the capture this hook served has ended, so a
+        #: stream it opened outside any capture scope records nothing after it.
+        self._torn_down = False
 
     def install(self) -> None:
         try:
@@ -78,6 +87,8 @@ class AnthropicHook:
             @functools.wraps(original)
             async def patched_async(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
                 bound = original.__get__(inner_self, type(inner_self))
+                if args:  # see the sync wrapper: the SDK gets the call as written
+                    return await bound(*args, **kwargs)
                 return await hook_self._intercept_async(bound, kwargs)
 
             return patched_async
@@ -85,11 +96,22 @@ class AnthropicHook:
         @functools.wraps(original)
         def patched(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
             original_bound = original.__get__(inner_self, type(inner_self))
+            if args:
+                # ``Messages.create`` is keyword-only, so a positional call is the
+                # SDK's to reject. It used to be recorded with the positional
+                # arguments silently DROPPED -- a call the SDK refuses succeeded
+                # under capture. Pass it through exactly as written, unrecorded.
+                return original_bound(*args, **kwargs)
             return hook_self._intercept(original_bound, **kwargs)
 
         return patched
 
+    def is_live(self) -> bool:
+        """False once :meth:`uninstall` has run (see ``CaptureBinding``)."""
+        return not self._torn_down
+
     def uninstall(self) -> None:
+        self._torn_down = True
         while self._patched:
             owner, attr, original = self._patched.pop()
             try:
@@ -107,17 +129,23 @@ class AnthropicHook:
             with sdk_call_scope(call_id):
                 response = original_bound(**kwargs)
         except Exception as exc:
-            self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
-                               kwargs, exc, call_id=call_id)
+            # Fail-open: the SDK's own exception re-raises unchanged.
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
+                                   kwargs, exc, call_id=call_id)
             raise
         if kwargs.get("stream") is True and is_sync_stream(response):
-            return RecordingStream(
-                response, AnthropicStreamAccumulator(),
-                self._on_stream_done(started, t0, kwargs, call_id),
-            )
-        self._record(started, _now(), int((time.monotonic() - t0) * 1000), kwargs,
-                     None if is_raw_response_call(kwargs) else response, "success",
-                     call_id=call_id)
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                return RecordingStream(
+                    response, AnthropicStreamAccumulator(),
+                    self._on_stream_done(started, t0, kwargs, call_id),
+                    CaptureBinding.capture(self.is_live),
+                )
+            return response  # the recording wrapper failed: hand back the raw stream
+        with fail_open(_HOOK, MODEL_CALLS_STREAM):
+            self._record(started, _now(), int((time.monotonic() - t0) * 1000), kwargs,
+                         None if is_raw_response_call(kwargs) else response, "success",
+                         call_id=call_id)
         return response
 
     async def _intercept_async(self, original_bound: Any, kwargs: dict[str, Any]) -> Any:
@@ -129,17 +157,23 @@ class AnthropicHook:
             with sdk_call_scope(call_id):
                 response = await original_bound(**kwargs)
         except Exception as exc:
-            self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
-                               kwargs, exc, call_id=call_id)
+            # Fail-open: the SDK's own exception re-raises unchanged.
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
+                                   kwargs, exc, call_id=call_id)
             raise
         if kwargs.get("stream") is True and is_async_stream(response):
-            return AsyncRecordingStream(
-                response, AnthropicStreamAccumulator(),
-                self._on_stream_done(started, t0, kwargs, call_id),
-            )
-        self._record(started, _now(), int((time.monotonic() - t0) * 1000), kwargs,
-                     None if is_raw_response_call(kwargs) else response, "success",
-                     call_id=call_id)
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                return AsyncRecordingStream(
+                    response, AnthropicStreamAccumulator(),
+                    self._on_stream_done(started, t0, kwargs, call_id),
+                    CaptureBinding.capture(self.is_live),
+                )
+            return response  # the recording wrapper failed: hand back the raw stream
+        with fail_open(_HOOK, MODEL_CALLS_STREAM):
+            self._record(started, _now(), int((time.monotonic() - t0) * 1000), kwargs,
+                         None if is_raw_response_call(kwargs) else response, "success",
+                         call_id=call_id)
         return response
 
     def _on_stream_done(
@@ -149,11 +183,12 @@ class AnthropicHook:
             response: Any, count: int, first_ms: int | None, complete: bool,
             error: BaseException | None = None,
         ) -> None:
-            self._record(
-                started, _now(), int((time.monotonic() - t0) * 1000), kwargs, response,
-                "success", stream_info=(count, first_ms, complete), call_id=call_id,
-                stream_error=error,
-            )
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                self._record(
+                    started, _now(), int((time.monotonic() - t0) * 1000), kwargs, response,
+                    "success", stream_info=(count, first_ms, complete), call_id=call_id,
+                    stream_error=error,
+                )
 
         return done
 

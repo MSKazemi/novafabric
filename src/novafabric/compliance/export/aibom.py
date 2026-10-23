@@ -29,6 +29,7 @@ No CycloneDX SDK dependency — the format is plain JSON per the ECMA-424 2nd Ed
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +37,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import (
+    CapsuleLinkError,
+    read_capsule_member_or_none,
+    read_required_capsule_member,
+)
 from novafabric.capture.record_roles import logical_model_calls
 
 # ---------------------------------------------------------------------------
@@ -311,9 +317,27 @@ class AIBOMExporter:
         }
 
     def export_json(self, document: AIBOMDocument, output_path: Path) -> Path:
-        """Write the CycloneDX ML-BOM to *output_path* as JSON."""
+        """Write the CycloneDX ML-BOM to *output_path* as JSON.
+
+        Never writes through a symlink at *output_path*: the default target is
+        ``<capsule>/aibom.json``, and a link planted there (dangling or not)
+        used to redirect the write to wherever it pointed.
+
+        Raises:
+            CapsuleLinkError: *output_path* is a symbolic link.
+        """
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as fh:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(output_path, flags, 0o644)
+        except OSError as exc:
+            if output_path.is_symlink():
+                raise CapsuleLinkError(
+                    f"{output_path} is a symlink; an AI-BOM is never written through one",
+                    links=(output_path.name,),
+                ) from exc
+            raise
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(self.to_payload(document), fh, indent=2, default=str)
         return output_path
 
@@ -326,15 +350,16 @@ class AIBOMExporter:
         """Read a capsule JSONL evidence file, skipping unparseable lines.
 
         A damaged evidence line must not fail a compliance export; a partial BOM is
-        worth more than an exception.
+        worth more than an exception. A whole stream that is present but unusable
+        (a link, FIFO, directory) is different: it raises
+        :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`, because a BOM
+        missing every model the run called is not partial but wrong.
         """
-        if not path.exists():
-            return []
         records: list[dict[str, Any]] = []
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
+        capsule_text = read_required_capsule_member(path, operation="compliance export")
+        if capsule_text is None:
             return []
+        lines = capsule_text.splitlines()
         for line in lines:
             line = line.strip()
             if not line:
@@ -423,13 +448,17 @@ class AIBOMExporter:
         return [aggregated[k] for k in sorted(aggregated)]
 
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
-        manifest_path = capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
+        # Absent manifest = no data. A manifest that is present but is not a
+        # readable regular file (a directory, link, FIFO) is an error, never an
+        # empty export: read_required_capsule_member raises for it.
+        text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="compliance export"
+        )
+        if text is None:
             return {}
         import yaml
 
-        with open(manifest_path) as fh:
-            return yaml.safe_load(fh) or {}
+        return yaml.safe_load(text) or {}
 
     def _build_model_card(
         self, manifest: dict[str, Any], capsule_dir: Path
@@ -441,7 +470,10 @@ class AIBOMExporter:
         eval_path = capsule_dir / "eval_result.json"
         if eval_path.exists():
             try:
-                eval_data = json.loads(eval_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(eval_path, operation="compliance export") or ""
+                )
+                eval_data = json.loads(capsule_text)
                 metrics = eval_data.get("metrics", [])
                 card["quantitativeAnalysis"] = {
                     "performanceMetrics": [

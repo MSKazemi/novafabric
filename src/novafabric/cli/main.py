@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import sys
 from importlib.metadata import PackageNotFoundError, version
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
+from typer.core import TyperGroup
 
+from novafabric._capsule_fs import CapsuleEntryError
 from novafabric.capsule.cli import capsule_phase3_app
 from novafabric.cli._community import VERSION_INVITE, hint_enabled
 from novafabric.cli.a2a_card import app as a2a_card_app
@@ -180,10 +182,45 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+#: Exit code of any command stopped by a capsule file that is present but unusable,
+#: or by a capsule that holds a link (never followed).
+EXIT_CAPSULE_FILE_UNUSABLE = 2
+
+
+class _NovaGroup(TyperGroup):
+    """The root ``nova`` group: one fail-closed rule for every sub-command.
+
+    A required capsule file (``capsule.yaml``, ``capsule.json``, a primary
+    stream) that is present but unusable raises
+    :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`; a capsule whose
+    Merkle root, subjects or copy would have to follow a symbolic link raises
+    :class:`~novafabric._capsule_fs.CapsuleLinkError`; a capsule file swapped
+    for a FIFO or device raises
+    :class:`~novafabric._capsule_fs.CapsuleSpecialFileError`. All three are a
+    :class:`~novafabric._capsule_fs.CapsuleEntryError`. A command that does not
+    catch one ends here: one ``error:`` line on stderr and exit code
+    :data:`EXIT_CAPSULE_FILE_UNUSABLE`, never a traceback and never exit 0.
+    """
+
+    def invoke(self, ctx: Any) -> Any:  # typer's vendored click Context
+        try:
+            return super().invoke(ctx)
+        except CapsuleEntryError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=EXIT_CAPSULE_FILE_UNUSABLE) from exc
+
+
 app = typer.Typer(
     name="novafabric",
     help="Capture, replay, audit, and govern AI agent runs.",
     no_args_is_help=True,
+    cls=_NovaGroup,
+    epilog=(
+        "A command whose output depends on a capsule file (capsule.yaml, a call "
+        "stream) that is present but unusable (a link, FIFO or directory), or on "
+        "a capsule that holds a link, prints one 'error:' line, writes nothing "
+        "and exits 2."
+    ),
 )
 
 
@@ -489,7 +526,10 @@ app.add_typer(
 app.add_typer(
     lineage_store_app,
     name="lineage-store",
-    help="Lineage store migration and deployment.",
+    help=(
+        "Lineage store migration (into a SQLite lineage store) and deployment "
+        "profiles (KuzuDB, JanusGraph)."
+    ),
 )
 app.add_typer(
     hold_app,
@@ -622,7 +662,7 @@ app.add_typer(
 app.add_typer(
     kg_app,
     name="kg",
-    help="Capsule Knowledge Graph: ingest, query, and inspect (requires novafabric[scale-kg]).",
+    help="Capsule Knowledge Graph: ingest, query, and inspect (requires novafabric\\[scale-kg]).",
 )
 
 # Top-level `nova new-run-id` shortcut (FR-27)
@@ -690,7 +730,10 @@ app.add_typer(memstore_app, name="memstore")
 policy_app.add_typer(
     capture_level_app,
     name="capture-level",
-    help="Get or set the capture-level policy for new runs.",
+    help=(
+        "Show or validate the capture level (experimental; read from NOVA_CAPTURE_LEVEL, "
+        "nothing is stored)."
+    ),
 )
 
 if __name__ == "__main__":

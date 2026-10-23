@@ -11,7 +11,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -29,11 +29,26 @@ This dashboard:
   • is opt-in (you ran `--experimental` to enable it),
   • binds to 127.0.0.1 only (localhost),
   • requires a session token on /api/* routes (reused across restarts),
-  • is read-only (Layer A); mutations are not yet supported.
+  • is NOT read-only: that token (scope `admin`, ADR-0228) can delete runs,
+    erase PII, bypass a seal and assign roles — guard it like a root password.
 
 Schemas, endpoints, and behaviour may change. The CLI remains canonical —
 every dashboard view surfaces the equivalent `nova` command.
 """
+
+#: Hosts ``nova serve`` binds without ``--insecure``. Anything else exposes the
+#: shared admin-scope token beyond this machine (ADR-0230), so it is refused.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def non_loopback_bind_refused(host: str, *, insecure: bool) -> bool:
+    """True when ``nova serve`` refuses to start on *host* (exit 2).
+
+    The single source of the bind policy: the command below applies it, and the
+    Helm chart's render-time guard is tested against it (M4), so a chart value
+    can never render a dashboard pod that this policy refuses to start.
+    """
+    return host not in LOOPBACK_HOSTS and not insecure
 
 
 def serve_cmd(
@@ -62,7 +77,10 @@ def serve_cmd(
         Path | None,
         typer.Option(
             "--capsule-dir",
-            help="Directory of capsules to browse. Defaults to $NOVAFABRIC_HOME/capsules.",
+            help=(
+                "Directory of capsules to browse. Defaults to where `nova capture` "
+                "writes: $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules."
+            ),
         ),
     ] = None,
     db_path: Annotated[
@@ -130,7 +148,7 @@ def serve_cmd(
     """Start the local dashboard.
 
     Binds to 127.0.0.1 only. Requires --experimental and the
-    'novafabric[serve]' extra (`pip install novafabric[serve]`).
+    'novafabric\\[serve]' extra (`pip install 'novafabric\\[serve]'`).
 
     Not read-only: Layer B mutations (register, promote, redact, export)
     ship, and each is confirm-gated and audit-logged. The summary line said
@@ -141,6 +159,14 @@ def serve_cmd(
     single-user run is unchanged; mint a narrower credential through
     POST /api/admin/tokens with {"scope": "read"} to grant a colleague
     visibility without the power to erase evidence.
+
+    Paths: a server-side path named in a request is confined. Writes may
+    target only $NOVAFABRIC_HOME/exports and the evidence directory. Reads may
+    also use $NOVAFABRIC_HOME and --capsule-dir. List any other directory in
+    NOVAFABRIC_SERVE_PATH_ROOTS (absolute paths, ':'-separated).
+
+    Promotion into production from the dashboard is gated like
+    `nova promote direct` (ADR-0312): it needs an explicit policy allow.
 
     Tenancy (ADR-0229): single-tenant by default. Multi-tenant mode
     (NOVAFABRIC_SERVE_TENANCY=multi) is refused while the runs index, the
@@ -178,7 +204,7 @@ def serve_cmd(
 
     # Bind safety — checked before any import so this security gate is always
     # reachable even when the [serve] extra is not installed.
-    if host not in {"127.0.0.1", "localhost", "::1"} and not insecure:
+    if non_loopback_bind_refused(host, insecure=insecure):
         console.print(Panel(
             f"[bold red]Refusing to bind to {host} without --insecure.[/bold red]\n\n"
             "The dashboard authenticates with a token but is designed for "
@@ -247,36 +273,40 @@ def serve_cmd(
     static_dir = Path(__file__).parent.parent / "serve" / "static"
     static_arg = static_dir if static_dir.exists() else None
 
-    # Build the app WITHOUT the static mount so that routers added below
-    # (TV-5) are registered before the "/" catch-all StaticFiles mount.
-    app = create_app(
-        token=token,
-        capsule_dir=resolved_capsule_dir,
-        # Resolve here so every router sees the file the panel prints; a bare None
-        # makes the runs-index routes report "index does not exist yet" forever.
-        db_path=db_path or _registry_db_path(),
-        static_dir=None,          # mounted last — see below
-        static_mounted_by_caller=static_arg is not None,
-        topology_enabled=topology,
-        topology_louvain_resolution=topology_louvain_resolution,
-    )
-
+    # The TV-5 router goes INTO create_app (extra_routers), so it is registered
+    # before both the WebSocket catch-all and the "/" StaticFiles mount. Included
+    # after create_app returned, /api/tv5/ws was shadowed by the catch-all.
+    tv5_router: Any = None
+    tv5_layout_pipe: Any = None
     if topology or tv5:
-        import logging as _logging
-        _tv5_logger = _logging.getLogger(__name__)
         try:
-            from novafabric.serve.topology.layout_pipeline_3d import LayoutPipeline3D
-            from novafabric.serve.topology.router_tv5 import make_tv5_router
-            from novafabric.serve.topology.snapshot_store_3d import SnapshotStore3D
-
-            snap_store = SnapshotStore3D()
-            layout_pipe = LayoutPipeline3D(snap_store)
-            tv5_router = make_tv5_router(snap_store, layout_pipe, token=token)
-            app.include_router(tv5_router)
-            app.state.tv5_layout_pipe = layout_pipe  # exposed to seed endpoint
-            _tv5_logger.info("TV-5 3D topology router mounted at /api/tv5/")
+            tv5_router, tv5_layout_pipe = _build_tv5_router(token)
         except Exception as _e:  # noqa: BLE001
             console.print(f"[yellow]warning:[/yellow] TV-5 router failed to mount: {_e}")
+
+    # Build the app WITHOUT the static mount (mounted last, below).
+    from novafabric.serve.capsule_watcher import WatcherConfigError  # noqa: PLC0415
+
+    try:
+        app = create_app(
+            token=token,
+            capsule_dir=resolved_capsule_dir,
+            # Resolve here so every router sees the file the panel prints; a bare None
+            # makes the runs-index routes report "index does not exist yet" forever.
+            db_path=db_path or _registry_db_path(),
+            static_dir=None,          # mounted last — see below
+            static_mounted_by_caller=static_arg is not None,
+            topology_enabled=topology,
+            topology_louvain_resolution=topology_louvain_resolution,
+            extra_routers=[tv5_router] if tv5_router is not None else [],
+        )
+    except WatcherConfigError as exc:
+        # A typo in NOVA_WATCHER_BACKEND/_INTERVAL used to become `auto`
+        # silently (audit L27); refuse before binding the port instead.
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
+    if tv5_layout_pipe is not None:
+        app.state.tv5_layout_pipe = tv5_layout_pipe  # exposed to seed endpoint
 
     # Mount static files LAST — the "/" catch-all must not shadow any route above.
     if static_arg is not None and static_arg.exists():
@@ -354,3 +384,24 @@ def serve_cmd(
         # the next start so process restarts (e.g. docker restart) keep the same
         # token and don't break open browser sessions.
         console.print("\n[dim]nova serve stopped.[/dim]")
+
+
+def _build_tv5_router(token: str) -> tuple[Any, Any]:
+    """Build the TV-5 3D topology router (``/api/tv5/*``) and its layout pipeline.
+
+    The TV-5 WebSocket (``/api/tv5/ws``) checks the Host header and the token
+    inline before ``accept()``: the app-level authorization dependency stands
+    aside for WebSockets (ADR-0228 OQ-2). Pass the router to
+    ``create_app(extra_routers=...)`` so the WebSocket catch-all cannot shadow it.
+    """
+    import logging as _logging
+
+    from novafabric.serve.topology.layout_pipeline_3d import LayoutPipeline3D
+    from novafabric.serve.topology.router_tv5 import make_tv5_router
+    from novafabric.serve.topology.snapshot_store_3d import SnapshotStore3D
+
+    snap_store = SnapshotStore3D()
+    layout_pipe = LayoutPipeline3D(snap_store)
+    router = make_tv5_router(snap_store, layout_pipe, token=token)
+    _logging.getLogger(__name__).info("TV-5 3D topology router mounted at /api/tv5/")
+    return router, layout_pipe

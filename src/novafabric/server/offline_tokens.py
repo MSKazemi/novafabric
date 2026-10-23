@@ -58,6 +58,53 @@ logger = logging.getLogger(__name__)
 
 _ALGORITHM = "EdDSA"
 
+#: Suffix ``generate_keypair`` gives the public half of a keypair.
+PUBLIC_KEY_SUFFIX = ".pub"
+
+#: Private-key file names tried, in order, for a ``<stem>.pub`` path (L22).
+_PRIVATE_KEY_SUFFIXES = (".pem", ".key", "")
+
+
+class OfflineKeyError(ValueError):
+    """The offline key path cannot be used for the requested operation.
+
+    Raised when signing is asked of a public key: a ``.pub`` path with no private
+    sibling, or a file that holds a public key under another name.
+    """
+
+
+def signing_key_path(key_path: Path) -> Path:
+    """The private signing key for a ``NOVAFABRIC_OFFLINE_KEY_PATH`` value (L22).
+
+    The variable names ONE keypair by either of its files: the private key (what
+    ``nova server issue-token`` signs with) or its ``.pub`` sibling (all a server
+    needs to verify). A ``<stem>.pub`` path maps to the first existing
+    ``<stem>.pem`` / ``<stem>.key`` / ``<stem>``, else to ``<stem>.pem`` (which
+    the caller finds missing). Any other path is the private key itself.
+    """
+    if key_path.suffix != PUBLIC_KEY_SUFFIX:
+        return key_path
+    candidates = [key_path.with_suffix(suffix) for suffix in _PRIVATE_KEY_SUFFIXES]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
+def names_public_key_only(key_path: Path) -> bool:
+    """True when *key_path* is an existing ``.pub`` file whose private sibling is missing.
+
+    That is a verify-only key: signing must refuse, and generating a fresh keypair
+    there would replace a public key servers already trust. A ``.pub`` path where
+    neither file exists yet is not this case — a keypair may be generated at
+    :func:`signing_key_path` and will write exactly that ``.pub``.
+    """
+    return (
+        key_path.suffix == PUBLIC_KEY_SUFFIX
+        and key_path.exists()
+        and not signing_key_path(key_path).exists()
+    )
+
 # ---------------------------------------------------------------------------
 # Keypair generation
 # ---------------------------------------------------------------------------
@@ -144,8 +191,19 @@ def issue_token(
     """Sign a JWT with the ed25519 private key at *key_path*.
 
     The token record is persisted in the audit DB adjacent to the key.
-    Returns the encoded JWT string.
+    Returns the encoded JWT string. *key_path* may name the keypair's ``.pub``
+    file; the private sibling is used (:func:`signing_key_path`).
+
+    Raises:
+        OfflineKeyError: *key_path* names a public key with no private sibling, or
+            the file holds a public key.
     """
+    if names_public_key_only(key_path):
+        raise OfflineKeyError(
+            f"{key_path} is a public key and no private key sits next to it "
+            f"({signing_key_path(key_path)}); issuing a token needs the private key"
+        )
+    key_path = signing_key_path(key_path)
     priv_key = _load_private_key(key_path)
 
     token_id = str(uuid.uuid4())
@@ -270,6 +328,11 @@ def verify_offline_token(
 
 def _load_private_key(key_path: Path) -> Ed25519PrivateKey:
     pem = key_path.read_bytes()
+    if b"-----BEGIN PUBLIC KEY-----" in pem:
+        raise OfflineKeyError(
+            f"{key_path} holds a public key; issuing a token needs the private key "
+            f"(the file generate_keypair wrote next to {key_path.stem}.pub)"
+        )
     key = load_pem_private_key(pem, password=None)
     if not isinstance(key, Ed25519PrivateKey):
         raise TypeError(f"Expected ed25519 private key, got {type(key).__name__}")

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.evals.result import EvalResult, Metric
 
 _SUITE_ID = "novafabric-smoke-v1"
@@ -40,7 +41,10 @@ class SmokeAdapter:
         capsule_schema_passed = False
         if capsule_yaml_path.exists():
             try:
-                data = yaml.safe_load(capsule_yaml_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(capsule_yaml_path, operation="smoke eval") or ""
+                )
+                data = yaml.safe_load(capsule_text)
                 if isinstance(data, dict) and "run_id" in data:
                     capsule_schema_passed = True
                     capsule_id = str(data["run_id"])

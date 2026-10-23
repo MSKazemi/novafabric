@@ -42,11 +42,17 @@ Workflow invariants (spec ``the private design/spec/annotation-queue-v0.md``, no
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    CapsuleRequiredFileError,
+    read_required_capsule_member,
+)
 from novafabric.eval.annotation_queue import (
     AnnotationError,
     AnnotationQueue,
@@ -364,9 +370,14 @@ def _capsule_facts(capsule_dir: Path) -> tuple[str, list[str], list[str]]:
 
     run_id = capsule_dir.name
     tags: list[str] = []
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    # A capsule is never matched or skipped on facts nobody could read.
+    manifest_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="annotations"
+    )
     try:
-        manifest = _yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
-    except (OSError, _yaml.YAMLError):
+        manifest = _yaml.safe_load(manifest_text or "")
+    except _yaml.YAMLError:
         manifest = None
     if isinstance(manifest, dict):
         run_id = str(manifest.get("run_id") or capsule_dir.name)
@@ -378,9 +389,11 @@ def _capsule_facts(capsule_dir: Path) -> tuple[str, list[str], list[str]]:
             tags = [raw_tags]
 
     tool_names: list[str] = []
-    tool_path = capsule_dir / "tool-calls.jsonl"
-    if tool_path.is_file():
-        for line in tool_path.read_text(encoding="utf-8").splitlines():
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "tool-calls.jsonl", operation="annotations"
+    )
+    if capsule_text is not None:
+        for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -429,17 +442,35 @@ def populate_queue(
     skipped_existing = skipped_sample = 0
 
     for child in sorted(Path(capsule_root).iterdir()) if Path(capsule_root).is_dir() else []:
-        if not (child.is_dir() and (child / "capsule.yaml").is_file()):
+        # A scan never lists a linked entry (novafabric._capsule_fs); a capsule is
+        # a real directory holding a capsule.yaml entry of any kind.
+        if child.is_symlink() or not child.is_dir():
+            continue
+        if not os.path.lexists(child / "capsule.yaml"):
             continue
         scanned += 1
-        run_id, tags, tool_names = _capsule_facts(child)
+        try:
+            run_id, tags, tool_names = _capsule_facts(child)
+        except CapsuleRequiredFileError as exc:
+            raise AnnotationError(
+                f"cannot populate queue {queue_ref!r}: capsule {child.name} is "
+                f"unreadable: {exc}"
+            ) from exc
         if not _capsule_matches_selector(
             selector, run_id=run_id, tags=tags, tool_names=tool_names
         ):
             continue
         matched += 1
 
-        subject = annotation_subject_digest(child)
+        try:
+            subject = annotation_subject_digest(child)
+        except CapsuleEntryError as exc:
+            # A link inside the capsule is never followed: no subject, no
+            # partial scan reported as complete.
+            raise AnnotationError(
+                f"cannot populate queue {queue_ref!r}: capsule {child.name} "
+                f"cannot be hashed: {exc}"
+            ) from exc
         if selector.sample is not None and _selector_sample_hash(subject) >= selector.sample:
             skipped_sample += 1
             continue

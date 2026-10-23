@@ -215,7 +215,15 @@ def _user_resource(user: ScimUser) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _revoke_all_roles(user_name: str) -> tuple[list[str], list[str]]:
+def _oidc_configured(request: Request) -> bool:
+    """The serving app's OIDC state -- the ADR-0060 guard input (L15)."""
+    config: ServerConfig = request.app.state.config
+    return config.oidc.enabled
+
+
+def _revoke_all_roles(
+    user_name: str, *, oidc_configured: bool
+) -> tuple[list[str], list[str]]:
     """Revoke every role assignment for *user_name*.
 
     Returns ``(roles_before, roles_after)``. Revokes ``admin`` first so the
@@ -226,7 +234,7 @@ def _revoke_all_roles(user_name: str) -> tuple[list[str], list[str]]:
     ordered = sorted(roles_before, key=lambda r: (r != "admin", r))
     for role in ordered:
         try:
-            rbac_store.revoke_role(user_name, role)
+            rbac_store.revoke_role(user_name, role, oidc_configured=oidc_configured)
         except LastAdminError as exc:
             raise _ScimError(409, str(exc), "mutability") from exc
     return roles_before, sorted(rbac_store.get_roles(user_name))
@@ -503,7 +511,9 @@ async def patch_user(user_id: str, request: Request, actor: _Actor) -> JSONRespo
     if deactivating:
         # Revoke first: if the last-admin guard refuses, nothing has mutated
         # (neither role assignments nor the stored user).
-        roles_before, roles_after = _revoke_all_roles(user.user_name)
+        roles_before, roles_after = _revoke_all_roles(
+            user.user_name, oidc_configured=_oidc_configured(request)
+        )
         operation = "user.deactivate"
     else:
         roles_before = sorted(rbac_store.get_roles(user.user_name))
@@ -532,11 +542,13 @@ async def patch_user(user_id: str, request: Request, actor: _Actor) -> JSONRespo
 
 
 @router.delete("/Users/{user_id}", status_code=204)
-async def delete_user(user_id: str, actor: _Actor) -> Response:
+async def delete_user(user_id: str, request: Request, actor: _Actor) -> Response:
     user = _get_user_or_404(user_id)
     # De-provision before deleting: the last-admin guard can still refuse,
     # in which case the user row is untouched.
-    roles_before, roles_after = _revoke_all_roles(user.user_name)
+    roles_before, roles_after = _revoke_all_roles(
+        user.user_name, oidc_configured=_oidc_configured(request)
+    )
     scim_store.delete_user(user_id)
     scim_store.append_audit_event(
         actor=actor,
@@ -614,7 +626,9 @@ def _reconcile_member(request: Request, user_id: str, actor: str) -> None:
     display_names = scim_store.group_display_names_for_user(user_id)
     desired = resolve_roles(display_names, config.scim.role_mapping())
     try:
-        scim_store.reconcile_subject_roles(user.user_name, desired, actor)
+        scim_store.reconcile_subject_roles(
+            user.user_name, desired, actor, oidc_configured=config.oidc.enabled
+        )
     except rbac_store.LastAdminError as exc:
         raise _ScimError(409, str(exc), "mutability") from exc
 

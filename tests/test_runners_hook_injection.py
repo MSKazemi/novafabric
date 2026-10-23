@@ -27,6 +27,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from _docker_container_env import docker_run_container_env
 
 from novafabric.runners import DockerRunner, RunnerJobSpec
 from novafabric.runners._sitecustomize import HOOK_LOADER
@@ -81,6 +82,7 @@ class TestDockerInjectsTheHookLoader:
         with patch("shutil.which", return_value="/usr/bin/docker"), \
              patch("subprocess.run", return_value=fail) as run:
             DockerRunner().run(spec)
+        self._env = docker_run_container_env(run)
         return _docker_run_argv(run), spec.capsule_dir
 
     def test_materialises_the_loader_into_the_mounted_capsule_dir(
@@ -99,14 +101,14 @@ class TestDockerInjectsTheHookLoader:
         self, tmp_path: Path
     ) -> None:
         argv, _ = self._argv(tmp_path)
-        pythonpath = [a for a in argv if a.startswith("PYTHONPATH=")]
+        pythonpath = self._env.get("PYTHONPATH")
         assert pythonpath, (
             f"B3 regression: no PYTHONPATH passed to the container. "
             f"Materialising the loader is only half the fix. argv={argv}"
         )
         # It must point at the in-container mount point, not the host path.
-        assert pythonpath[0].startswith("PYTHONPATH=/novafabric/capsule"), (
-            f"PYTHONPATH must name the in-container path: {pythonpath[0]}"
+        assert pythonpath.startswith("/novafabric/capsule"), (
+            f"PYTHONPATH must name the in-container path: {pythonpath}"
         )
 
     def test_an_existing_pythonpath_is_preserved_not_replaced(
@@ -118,18 +120,17 @@ class TestDockerInjectsTheHookLoader:
         with patch("shutil.which", return_value="/usr/bin/docker"), \
              patch("subprocess.run", return_value=fail) as run:
             DockerRunner().run(spec)
-        argv = _docker_run_argv(run)
-        pp = next(a for a in argv if a.startswith("PYTHONPATH="))
-        assert pp == "PYTHONPATH=/novafabric/capsule:/opt/workload-libs", (
+        pp = docker_run_container_env(run)["PYTHONPATH"]
+        assert pp == "/novafabric/capsule:/opt/workload-libs", (
             f"prepend, never clobber, the workload's own PYTHONPATH: {pp}"
         )
 
 
 class TestSlurmInjectsTheHookLoader:
-    def test_slurm_wrap_script_sets_pythonpath(self, tmp_path: Path) -> None:
-        from novafabric.runners._slurm import _build_wrap_script
+    def test_slurm_batch_script_sets_pythonpath(self, tmp_path: Path) -> None:
+        from novafabric.runners._slurm import _build_batch_script
 
-        script = _build_wrap_script(
+        script = _build_batch_script(
             ["python", "agent.py"],
             {"NOVAFABRIC_SPAN_ID": "a", "PATH": "/usr/bin"},
             tmp_path / "capsule",

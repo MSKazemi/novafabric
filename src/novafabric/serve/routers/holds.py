@@ -10,20 +10,36 @@ Paths, methods, auth, response shapes, and status codes are unchanged:
 The router is built by a factory so the caller injects its own auth
 dependency: ``serve`` passes its shared-token ``verify_token`` closure;
 ``server`` can mount the same routes behind OIDC/RBAC (ADR-0183 §3).
+
+Storage: the one legal-hold store shared with ``nova hold``
+(:mod:`novafabric.retention.holds`, ``$NOVAFABRIC_HOME/registries/<registry>/
+holds.jsonl``). Holds this router wrote before that store existed —
+``<capsule_dir>/../registries/<registry>/holds.jsonl`` — are still listed and can
+still be released, and every deletion gate keeps honouring them.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import uuid
 from collections.abc import Callable
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
+
+from novafabric.retention.holds import (
+    HoldNotFoundError,
+    InvalidRegistryNameError,
+    capsule_base_holds_root,
+    place_hold,
+    read_holds,
+)
+from novafabric.retention.holds import (
+    release_hold as _store_release_hold,
+)
+
+#: Actor recorded in the hash-chained audit log for holds placed/released here.
+_API_ACTOR = "serve-api"
 
 
 class PlaceHoldRequest(BaseModel):
@@ -33,7 +49,7 @@ class PlaceHoldRequest(BaseModel):
 
 
 class HoldRecord(BaseModel):
-    """One legal hold as stored in ``holds.jsonl``."""
+    """One legal hold as stored in ``holds.jsonl`` (the shared hold store)."""
 
     hold_id: str
     registry: str
@@ -74,27 +90,13 @@ def build_holds_router(
 ) -> APIRouter:
     """Build the legal-holds router.
 
-    ``verify_token`` is the auth dependency guarding every route;
-    ``capsule_dir`` anchors the on-disk holds registries at
-    ``<capsule_dir>/../registries/<registry>/holds.jsonl``.
+    ``verify_token`` is the auth dependency guarding every route. New holds go
+    to the shared store (``$NOVAFABRIC_HOME/registries``); ``capsule_dir`` names
+    the pre-unification location ``<capsule_dir>/../registries`` that is still
+    read and released from.
     """
     router = APIRouter(dependencies=[Depends(verify_token)], tags=["holds"])
-
-    def _holds_base() -> Path:
-        return capsule_dir.parent / "registries"
-
-    def _read_holds_file(registry: str) -> list[dict[str, Any]]:
-        path = _holds_base() / registry / "holds.jsonl"
-        if not path.exists():
-            return []
-        return [
-            json.loads(line)
-            for line in path.read_text().splitlines()
-            if line.strip()
-        ]
-
-    def _active_holds(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [h for h in records if h.get("released_at") is None]
+    legacy_roots = (capsule_base_holds_root(capsule_dir),)
 
     @router.get(
         "/api/holds",
@@ -103,17 +105,15 @@ def build_holds_router(
         response_model=None,
     )
     async def list_holds() -> dict[str, Any]:
-        base = _holds_base()
-        registries: list[dict[str, Any]] = []
-        total_active = 0
-        if base.exists():
-            for reg_dir in sorted(base.iterdir()):
-                if not reg_dir.is_dir():
-                    continue
-                all_records = _read_holds_file(reg_dir.name)
-                active = _active_holds(all_records)
-                total_active += len(active)
-                registries.append({"name": reg_dir.name, "holds": active})
+        by_registry: dict[str, list[dict[str, Any]]] = {}
+        for hold in read_holds(extra_roots=legacy_roots):
+            bucket = by_registry.setdefault(hold.registry, [])
+            if hold.active:
+                bucket.append(hold.as_dict())
+        registries = [
+            {"name": name, "holds": holds} for name, holds in sorted(by_registry.items())
+        ]
+        total_active = sum(len(r["holds"]) for r in registries)
         return {"total_active": total_active, "registries": registries}
 
     @router.post(
@@ -133,21 +133,15 @@ def build_holds_router(
             raise HTTPException(status_code=422, detail="registry must not be empty")
         if not body.reason.strip():
             raise HTTPException(status_code=422, detail="reason must not be empty")
-
-        hold_id = f"hold-{uuid.uuid4().hex[:8]}"
-        path = _holds_base() / body.registry / "holds.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        record: dict[str, Any] = {
-            "hold_id": hold_id,
-            "registry": body.registry,
-            "reason": body.reason,
-            "duration_days": body.duration_days,
-            "created_at": datetime.now(tz=timezone.utc).isoformat(),
-            "released_at": None,
-        }
-        with path.open("a") as f:
-            f.write(json.dumps(record) + "\n")
-        return {k: v for k, v in record.items() if k != "released_at"}
+        try:
+            record = place_hold(
+                body.registry, body.reason, body.duration_days, actor=_API_ACTOR
+            )
+        except InvalidRegistryNameError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return {k: v for k, v in record.as_dict().items() if k != "released_at"}
 
     @router.post(
         "/api/holds/{hold_id}/release",
@@ -158,37 +152,16 @@ def build_holds_router(
     async def release_hold(hold_id: str) -> dict[str, Any]:
         if "/" in hold_id or ".." in hold_id:
             raise HTTPException(status_code=400, detail="invalid hold_id")
-
-        base = _holds_base()
-        if not base.exists():
-            raise HTTPException(status_code=404, detail=f"hold not found: {hold_id}")
-
-        for reg_dir in base.iterdir():
-            if not reg_dir.is_dir():
-                continue
-            holds_file = reg_dir / "holds.jsonl"
-            if not holds_file.exists():
-                continue
-            lines = holds_file.read_text().splitlines()
-            updated: list[str] = []
-            registry = reg_dir.name
-            released = False
-            for line in lines:
-                if not line.strip():
-                    continue
-                h = json.loads(line)
-                if h["hold_id"] == hold_id and h["released_at"] is None:
-                    h["released_at"] = datetime.now(tz=timezone.utc).isoformat()
-                    released = True
-                updated.append(json.dumps(h))
-            if released:
-                tmp = holds_file.with_suffix(".tmp")
-                tmp.write_text("\n".join(updated) + "\n")
-                os.replace(tmp, holds_file)
-                return {"released": True, "hold_id": hold_id, "registry": registry}
-
-        raise HTTPException(
-            status_code=404, detail=f"hold not found or already released: {hold_id}"
-        )
+        try:
+            registries = _store_release_hold(
+                hold_id, actor=_API_ACTOR, extra_roots=legacy_roots
+            )
+        except InvalidRegistryNameError:
+            raise HTTPException(status_code=400, detail="invalid hold_id") from None
+        except HoldNotFoundError:
+            raise HTTPException(
+                status_code=404, detail=f"hold not found or already released: {hold_id}"
+            ) from None
+        return {"released": True, "hold_id": hold_id, "registry": registries[0]}
 
     return router

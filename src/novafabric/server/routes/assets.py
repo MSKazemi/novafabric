@@ -21,6 +21,7 @@ from novafabric.server.deps import get_config, get_db_path
 from novafabric.server.errors import (
     BadRequestError,
     ConflictError,
+    ForbiddenError,
     NotFoundError,
     PreconditionFailedError,
     ValidationError,
@@ -137,6 +138,13 @@ async def list_assets(
     response_model=None,
     operation_id="createAsset",
     summary="Register an asset from a YAML spec",
+    description=(
+        "Registers a new asset version. It always enters as `development`; a spec that "
+        "declares any other `status` is refused with 422 "
+        "`registration_status_not_allowed` (move it with the promote route, which runs "
+        "the promotion gates). A version that was ever in production cannot be "
+        "registered again (409)."
+    ),
     responses={
         201: {"model": AssetDetail, "description": "The registered asset."},
         **error_responses(400, 401, 403, 409),
@@ -151,7 +159,11 @@ async def create_asset(
     if not spec_yaml:
         raise BadRequestError("spec_yaml is required")
 
-    from novafabric.registry.service import DuplicateAssetError, register_asset
+    from novafabric.registry.service import (
+        DuplicateAssetError,
+        RegistrationStatusError,
+        register_asset,
+    )
     from novafabric.spec.validator import SpecValidationError, validate_spec
 
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
@@ -165,7 +177,11 @@ async def create_asset(
             raise ValidationError(f"spec validation failed: {exc}")
 
         try:
-            result = register_asset(spec, tmp_path, db_path=db_path)
+            result = register_asset(
+                spec, tmp_path, db_path=db_path, actor=f"server:{_auth.subject}"
+            )
+        except RegistrationStatusError as exc:
+            raise ValidationError(str(exc), code="registration_status_not_allowed")
         except DuplicateAssetError as exc:
             raise ConflictError(str(exc))
     finally:
@@ -237,10 +253,11 @@ async def promote_asset(
 
     from novafabric.registry.service import (
         AssetNotFoundError,
+        DirectPromotionDeniedError,
         InvalidLifecycleTransitionError,
         PromotionBlockedError,
+        promote_asset_direct,
     )
-    from novafabric.registry.service import promote_asset as _promote_asset
     from novafabric.registry.store import get_connection, init_schema
     from novafabric.spec.models import AssetStatus
 
@@ -263,19 +280,26 @@ async def promote_asset(
     except ValueError:
         raise BadRequestError(f"invalid to_status: {to_status_raw!r}")
 
+    # ADR-0312 D1: a single-actor promotion, gated exactly like
+    # `nova promote direct`. `production` needs an explicit `promote_direct`
+    # policy allow (403 otherwise); `force` does not bypass it. The policy sees
+    # the authenticated principal, never the caller-chosen `actor` label.
     try:
-        result = _promote_asset(
+        result = promote_asset_direct(
             name=name,
             version=version,
             to_status=target,
             actor=actor,
             force=force,
             db_path=db_path,
+            policy_subject=f"server:{_auth.subject}",
         )
     except AssetNotFoundError as exc:
         raise NotFoundError(str(exc))
     except InvalidLifecycleTransitionError as exc:
         raise ConflictError(str(exc))
+    except DirectPromotionDeniedError as exc:
+        raise ForbiddenError(str(exc), code="promote_direct_denied")
     except PromotionBlockedError as exc:
         raise PreconditionFailedError(str(exc))
 

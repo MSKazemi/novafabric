@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.lineage._store import LineageStore
 from novafabric.lineage._types import (
     LineageEdge,
@@ -104,7 +105,10 @@ def index_capsule_lineage(
     lineage_path = capsule_dir / "lineage.jsonl"
     capsule_run_id = run_id or capsule_dir.name
 
-    if not lineage_path.exists():
+    # Absent: nothing to index. Present but unusable (a link, FIFO, directory):
+    # CapsuleRequiredFileError, never an index that reports zero edges.
+    capsule_text = read_required_capsule_member(lineage_path, operation="lineage import")
+    if capsule_text is None:
         return ImportResult(
             capsule_run_id=capsule_run_id,
             edges_indexed=0,
@@ -116,7 +120,7 @@ def index_capsule_lineage(
         edges: list[LineageEdge] = []
         nodes_by_id: dict[str, LineageNode] = {}
 
-        for line in lineage_path.read_text().splitlines():
+        for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
                 continue

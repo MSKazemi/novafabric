@@ -45,7 +45,7 @@ class NetworkEvent(BaseModel):
     status_code: int | None = None
     response_size_bytes: int | None = None
     duration_ms: float | None = None
-    library: str  # "requests", "httpx", "aiohttp", "urllib3"
+    library: str  # "requests", "httpx", "httpx2", "aiohttp", "urllib3"
     is_ai_api: bool = False  # True if host matches known AI API endpoints
 
 

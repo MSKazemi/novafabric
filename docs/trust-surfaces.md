@@ -89,13 +89,11 @@ Input: a JSON object of the guarantees (`signature_ok`, `timestamp_ok`,
 `log_integrity_ok`, `redaction_coverage`, `secret_scan_clean`, `policy_pass`,
 `eval_gate_pass`), or `--capsule <dir>`.
 
-⚠ **The radar is a projection of those seven keys only — it is not
-verification.** It ignores `nova verify`'s overall `valid`, the ADR-0251
-capsule-binding and capsule-id checks, and the CA/TSA chain results, and its
-`--capsule` / dashboard Seal-tab path runs only the NovaSeal signature, timestamp
-and log checks. A capsule whose content changed after sealing can therefore still
-render `attested`. Always gate on `nova verify`'s exit code; never treat
-`attested` as "verified" (fix tracked).
+⚠ **Given a JSON object, the radar is a projection of those seven keys only —
+it is not verification.** Whoever wrote the JSON chose the values. With
+`--capsule <dir>` (and in the dashboard Seal tab) the seal axes come from
+`nova verify`'s own checks, below. For a release gate, use `nova verify`'s exit
+code; `attested` describes the axes, not `--strict` anchoring.
 
 ```bash
 $ nova trust-radar verify.json --capsule-id run-2041
@@ -115,6 +113,65 @@ log-integrity — **failed**), `unsealed` (no signature guarantee; an unsealed
 capsule can never be `attested`, however clean its policy and eval axes).
 Exit codes: `0` for attested/partial/unsealed (informational), `1` only on
 `critical`, `2` on bad input.
+
+**`--capsule <dir>` runs `nova verify`'s own checks** (works today). The radar
+with `--capsule`, `GET /api/runs/{id}/trust-radar`, the dashboard Seal tab and
+`POST /api/runs/{id}/verify` all call the same function that
+`nova verify <capsule-dir>` reports from. A capsule that `nova verify` rejects is
+therefore never `attested`. The three seal axes mean:
+
+| Axis | `ok` only when |
+|---|---|
+| Signature | the DSSE signature verifies, **and** binds this directory (ADR-0251): the manifest the capsule was sealed with (`capsule.yaml`) exists and equals the signed payload, no other manifest-named file (`capsule.json`) disagrees with it, every `evidence_digests` file still hashes to its signed digest, no file a signed `*_ref` names was added after sealing, and `log-entry.json` names this payload. A signer chain configured in `novaseal.yaml` (`ca_bundle`) must also validate. A capsule edited after sealing, whose `capsule.yaml` was renamed or replaced by a `capsule.json`, or carrying another capsule's `.seal/`, fails this axis and the verdict is `critical`. |
+| Timestamp | an RFC 3161 token is present, intact, and its TSA chain reaches an anchor you supplied (`tsa_ca_certs` in `novaseal.yaml`): `timestamp_trust` is `anchored`. An intact but unanchored token plots `0.5` (`warn`), no token is `n/a`, a failed token is `0` (`fail`). See [Timestamp trust](#timestamp-trust-anchored-unanchored-absent-invalid). |
+| Log integrity | Merkle inclusion was established by the carried proof or the sealer's log. |
+
+Like `nova verify`, the radar verifies from the capsule alone when this machine
+has no `novaseal.yaml`; the profile adds the sealer's log and the operator
+anchors. A `novaseal.yaml` that fails to load leaves the seal axes `n/a`
+(verification could not run), never `ok`. `POST /api/runs/{id}/verify` reports
+the binding as `capsule_binding_ok`, and its `valid` is the verdict `nova verify`
+exits on.
+
+### Timestamp trust: anchored, unanchored, absent, invalid
+
+Works today. A timestamp has two separate questions: is the RFC 3161 token
+*intact* (`timestamp_ok`), and is its *time* trusted (`timestamp_trust`)? Anyone
+can mint a TSA certificate and sign any `genTime`, so an intact token alone
+proves nothing about when the capsule was sealed. `timestamp_trust` takes one
+of four values:
+
+| `timestamp_trust` | Meaning | `nova verify` prints | Radar axis |
+|---|---|---|---|
+| `anchored` | The token verified and its TSA chain reached a TSA anchor you supplied (`--tsa-ca-bundle`, or `tsa_ca_certs` in `novaseal.yaml`). Trusted time. | `Timestamp (RFC 3161): OK` | `1.00` (ok) |
+| `unanchored` | The token is intact and bound to this envelope, but no TSA anchor was consulted. Its `genTime` is an unverified claim. | `UNANCHORED`, with the claimed `genTime` and TSA subject | `0.50` (warn) |
+| `absent` | No token. Timestamping is opt-in (ADR-0292), so no time is claimed. | `NOT PRESENT` | `n/a` |
+| `invalid` | A token is present and failed integrity, or failed the anchored chain check. | `Timestamp (RFC 3161): FAIL` | `0.00` (fail) |
+
+`unanchored` never counts as ok:
+
+- On the radar it is a `warn` axis, so a capsule with an unanchored token reads
+  `partial`, never `attested`.
+- `nova verify` exits 0 on an unanchored token. `nova verify --strict` exits 1,
+  because `timestamp-unanchored` is listed in `unanchored_claims`.
+- `nova verify --json`, `POST /api/runs/{id}/verify` and the seal-verify route
+  return `timestamp_trust` next to `timestamp_ok`. `timestamp_ok: true` with
+  `timestamp_trust: unanchored` means "intact, time not trusted".
+- `nova evidence bind-custody --timestamp-ok` and
+  `nova evidence check-admissibility --timestamp-ok` assert an `anchored`
+  timestamp, not merely an intact token.
+
+With TSA anchors configured, a missing or empty token fails, because the token
+is not covered by the DSSE signature. Until 2026-10-22, `nova verify` printed an
+intact but unanchored token as `OK`.
+
+Before 2026-10-22 the radar ran only the signature, timestamp and log checks,
+so a capsule tampered after sealing could show `attested`. Until 2026-10-23 a
+sealed capsule whose `capsule.yaml` was renamed to `capsule.json` and edited
+still read `attested`, while `nova query` and the runs list served the edited
+status: the missing `capsule.yaml` counted as "not present" and `capsule.json`
+as an extra file. Both now fail the Signature axis, and every reader of a sealed
+capsule's status takes it from the signed payload.
 
 ## nova redaction-xray (ADR-0174)
 

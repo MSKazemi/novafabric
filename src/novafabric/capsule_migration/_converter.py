@@ -8,18 +8,21 @@ The source directory is never modified.
 from __future__ import annotations
 
 import json
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import CapsuleLinkError, copy_capsule_tree, refuse_capsule_links
+from novafabric._hashutil import sha256_file_prefixed
 from novafabric.capture._ulid import new_ulid
 from novafabric.lineage._types import LineageEdge
 
 SOURCE_VERSION = "0.1.0"
 TARGET_VERSION = "1.0.0"
+
+_OPERATION = "a migration"
 
 # YAML files inside a capsule directory that may carry schema_version
 _YAML_FILES = frozenset({"capsule.yaml", "replay.yaml", "env.lock"})
@@ -67,6 +70,24 @@ class CapsuleMigrationError(Exception):
         return d
 
 
+class CapsuleMigrationLinkError(CapsuleMigrationError, CapsuleLinkError):
+    """The source capsule holds a symbolic link; a migration never follows one.
+
+    Following it would copy the link's target (anything the migrating user can
+    read) into the migrated capsule as if it were capsule content. Nothing is
+    written: a partial output directory is removed.
+    """
+
+    def __init__(self, message: str, *, links: tuple[str, ...] = ()) -> None:
+        CapsuleMigrationError.__init__(
+            self,
+            message,
+            rule="a capsule holds no symbolic links",
+            spec_section="ADR-0034 §6",
+        )
+        self.links = links
+
+
 class CapsuleMigrator:
     """Converts a v0.1.x capsule directory to v1.0.0.
 
@@ -86,7 +107,9 @@ class CapsuleMigrator:
                 spec_section="ADR-0034 §6",
             )
 
-        shutil.copytree(source, output)
+        # Never shutil.copytree: it follows links, so inputs/x -> ~/.ssh/id_rsa
+        # copied the key into the output as a capsule file. Any link refuses.
+        copy_capsule_tree(source, output, operation=_OPERATION, error=CapsuleMigrationLinkError)
 
         files_updated: list[str] = []
 
@@ -128,6 +151,8 @@ class CapsuleMigrator:
                 rule="source must be a directory",
                 spec_section="ADR-0034 §6",
             )
+        # Before reading anything: capsule.yaml itself may be a planted link.
+        refuse_capsule_links(source, operation=_OPERATION, error=CapsuleMigrationLinkError)
         capsule_yaml = source / "capsule.yaml"
         if not capsule_yaml.exists():
             raise CapsuleMigrationError(
@@ -217,21 +242,21 @@ class CapsuleMigrator:
             capsule = yaml.safe_load(f)
         run_id: str = (capsule or {}).get("run_id", new_ulid())
 
+        # Both endpoints are the same run in two formats (ADR-0034 §6). The source
+        # is identified by run id plus a digest of its capsule.yaml, never by a
+        # filesystem path: a path is operator layout, not evidence. The edge is
+        # written after the JSONL bump, so it carries the target version itself.
         edge = LineageEdge(
             edge_type="migration_source",
-            source={
-                "kind": "capsule",
-                "ref": str(source.resolve()),
-                "schema_version": SOURCE_VERSION,
-            },
-            target={
-                "kind": "capsule",
-                "ref": str(output.resolve()),
-                "schema_version": TARGET_VERSION,
-            },
-            confidence="high",
+            source={"kind": "run", "run_id": run_id, "schema_version": SOURCE_VERSION},
+            target={"kind": "run", "run_id": run_id, "schema_version": TARGET_VERSION},
+            confidence="declared",
             capsule_run_id=run_id,
-            facets={"from_schema_version": SOURCE_VERSION},
+            schema_version=TARGET_VERSION,
+            facets={
+                "from_schema_version": SOURCE_VERSION,
+                "source_capsule_sha256": sha256_file_prefixed(source / "capsule.yaml"),
+            },
         )
 
         lineage_path = output / "lineage.jsonl"

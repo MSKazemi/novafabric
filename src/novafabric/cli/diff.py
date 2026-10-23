@@ -8,6 +8,7 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.cli._output import emit_json
 from novafabric.eval.regression_diff import (
@@ -123,7 +124,9 @@ def _variant_group(capsule: Path) -> str:
     import yaml
 
     try:
-        manifest = yaml.safe_load((capsule / "capsule.yaml").read_text(encoding="utf-8"))
+        manifest = yaml.safe_load(
+            read_capsule_member_or_none(capsule / "capsule.yaml", operation="nova diff") or ""
+        )
     except (OSError, yaml.YAMLError):
         return _NO_VARIANT_GROUP
     block = manifest.get("variant") if isinstance(manifest, dict) else None
@@ -324,7 +327,12 @@ def _resolve_scores(path: Path) -> Path:
 
 def _read_outcomes(path: Path, metric: str) -> list[int]:
     """Read a boolean metric from a scores.jsonl (or capsule dir) as a 0/1 sequence."""
-    scores = [s for s in read_scores(_resolve_scores(path)) if s.name == metric]
+    # A capsule dir's scores.jsonl is a capsule member: never through a link.
+    try:
+        all_scores = read_scores(_resolve_scores(path), capsule_member=path.is_dir())
+    except ValueError as exc:  # unreadable (a link, FIFO) or invalid score log
+        raise typer.BadParameter(str(exc)) from exc
+    scores = [s for s in all_scores if s.name == metric]
     if not scores:
         raise typer.BadParameter(f"no scores named {metric!r} in {path}")
     outcomes: list[int] = []

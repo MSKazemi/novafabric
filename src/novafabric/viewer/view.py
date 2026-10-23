@@ -24,7 +24,10 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_text
 from novafabric.capture.record_roles import logical_model_calls
+
+_OPERATION = "nova export --html"
 
 #: ``CapsuleView.schema_version`` — tracks ``schemas/capsule-view.schema.json``.
 CAPSULE_VIEW_SCHEMA_VERSION = "0.1.0"
@@ -66,12 +69,20 @@ def _int_or_none(value: Any) -> int | None:
     return None
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Parse a JSONL file; ``[]`` if absent; ``ValueError`` on an unparseable line."""
-    if not path.exists():
+def _read_jsonl(capsule_dir: Path, filename: str) -> list[dict[str, Any]]:
+    """Parse a capsule JSONL file; ``[]`` if absent; ``ValueError`` on an unparseable line.
+
+    Opened without following a link (:mod:`novafabric._capsule_fs`): a linked,
+    FIFO or device section raises :class:`CapsuleEntryError`, which the caller
+    turns into a skipped-section warning, so its target never reaches the HTML.
+    """
+    try:
+        text = read_capsule_text(capsule_dir, filename, operation=_OPERATION)
+    except FileNotFoundError:
         return []
     records: list[dict[str, Any]] = []
-    for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    path = capsule_dir / filename
+    for line_no, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line:
             continue
@@ -136,10 +147,11 @@ def _load_manifest(capsule_dir: Path) -> dict[str, Any]:
         raise FileNotFoundError(f"capsule directory not found: {capsule_dir}")
     if not capsule_dir.is_dir():
         raise NotADirectoryError(f"not a capsule directory: {capsule_dir}")
-    manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}")
-    loaded = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    try:
+        text = read_capsule_text(capsule_dir, "capsule.yaml", operation=_OPERATION)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}") from None
+    loaded = yaml.safe_load(text)
     return loaded if isinstance(loaded, dict) else {}
 
 
@@ -172,7 +184,11 @@ def build_capsule_view(capsule_dir: str | Path, *, title: str | None = None) -> 
 
     def _section(filename: str) -> list[dict[str, Any]]:
         try:
-            return _read_jsonl(capsule_dir / filename)
+            return _read_jsonl(capsule_dir, filename)
+        except CapsuleEntryError as exc:
+            # A link, FIFO or device is never followed: say so, keep the rest.
+            warnings.append(f"{filename} not read — section skipped ({exc})")
+            return []
         except (ValueError, OSError) as exc:
             warnings.append(f"{filename} unreadable — section skipped ({exc})")
             return []

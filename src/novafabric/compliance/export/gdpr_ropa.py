@@ -30,6 +30,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -211,13 +213,17 @@ class GDPRRoPAExporter:
     # ------------------------------------------------------------------
 
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
-        manifest_path = capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
+        # Absent manifest = no data. A manifest that is present but is not a
+        # readable regular file (a directory, link, FIFO) is an error, never an
+        # empty export: read_required_capsule_member raises for it.
+        text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="compliance export"
+        )
+        if text is None:
             return {}
         import yaml  # already in core deps
 
-        with open(manifest_path) as fh:
-            return yaml.safe_load(fh) or {}
+        return yaml.safe_load(text) or {}
 
     def _derive_personal_data_categories(self, capsule_dir: Path) -> list[str]:
         """Infer personal data categories from the redaction manifest.
@@ -232,7 +238,10 @@ class GDPRRoPAExporter:
         if not redaction_path.exists():
             return []
         try:
-            data = json.loads(redaction_path.read_text())
+            capsule_text = (
+                read_capsule_member_or_none(redaction_path, operation="compliance export") or ""
+            )
+            data = json.loads(capsule_text)
             types: set[str] = set()
             for entry in data.get("entries", []):
                 rule = entry.get("detection_rule_id", "")

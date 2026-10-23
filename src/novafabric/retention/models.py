@@ -146,6 +146,12 @@ class RetentionActionRecord(BaseModel):
     description: str | None = None
 
 
+#: Manifest file names the sweep enumerates. ``capsule.json`` is the legacy
+#: (``CapsuleWriter``) format the sweep always acted on; ``capsule.yaml`` is what
+#: ``nova capture`` and the framework adapters write.
+ManifestName = Literal["capsule.json", "capsule.yaml"]
+
+
 class SweepItem(BaseModel):
     """One sweepable item (a local capsule) with the attributes bindings match on."""
 
@@ -153,11 +159,36 @@ class SweepItem(BaseModel):
     item_kind: ItemKind = ItemKind.CAPSULE
     created_at: datetime
     path: Path | None = None
+    manifest: ManifestName = "capsule.json"
     deployment_environment: str | None = None
     tags: set[str] = Field(default_factory=set)
     asset_ids: list[str] = Field(default_factory=list)
     pii_subject_id: str | None = None
+    #: ``sha256:`` subject HMACs of spans ``nova capture --pii-subject`` encrypted
+    #: under a subject DEK (``redaction_manifest.json``, ``protection: envelope``).
+    pii_subject_refs: list[str] = Field(default_factory=list)
     expired: bool = False
+
+
+class SweepOptions(BaseModel):
+    """Optional top-level sweep switches in ``retention-policy.yaml`` (additive).
+
+    ``include_capture_capsules`` (default ``false``): let ``nova retention apply``
+    act on ``capsule.yaml`` capsules — the ones ``nova capture`` and the adapters
+    write. Off by default so an upgrade never starts deleting capsules an existing
+    cron sweep has never touched; ``plan``/``status``/``explain`` show them either way.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    include_capture_capsules: bool = False
+
+    @field_validator("include_capture_capsules", mode="before")
+    @classmethod
+    def _strict_bool(cls, v: Any) -> Any:
+        if not isinstance(v, bool):
+            raise ValueError("include_capture_capsules must be true or false")
+        return v
 
 
 class Decision(str, enum.Enum):

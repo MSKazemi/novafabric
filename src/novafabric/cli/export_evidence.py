@@ -12,6 +12,7 @@ from typing import Any, Optional  # noqa: UP007
 import typer
 import yaml
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
 from novafabric.evidence.bundle import (
@@ -19,6 +20,7 @@ from novafabric.evidence.bundle import (
     EvidenceBundleBuilder,
     PolicyAuditUnavailableError,
     UnsafeSkipsError,
+    reseal_bundle_members,
 )
 from novafabric.evidence.signing import LocalSigner
 from novafabric.trust._rfc3161 import DEFAULT_TSA_URL, TimestampError, add_rfc3161_timestamp
@@ -129,6 +131,8 @@ def _add_timestamp_to_bundle(
     bundle_path: Path,
     tsa_url: str,
     timestamp_optional: bool,
+    *,
+    signer: LocalSigner | None = None,
 ) -> None:
     """Post-process an Evidence Bundle ZIP to add an RFC 3161 timestamp.
 
@@ -141,6 +145,9 @@ def _add_timestamp_to_bundle(
        manifest.dsse.tsr in artifacts[], add manifest_dsse_tsr_sha256,
        timestamp_status, timestamp_tsa_url, and recompute manifest_hash — so
        every file is still covered by the bundle's own verification recipe.
+    6. With *signer* (the key that built the bundle), re-sign the members statement
+       (ADR-0011 Amendment 7) so it covers the new README, the token and the new
+       manifest fields; without it a bundle that carries one no longer verifies.
     """
     with zipfile.ZipFile(bundle_path, "r") as zf:
         names = zf.namelist()
@@ -177,6 +184,8 @@ def _add_timestamp_to_bundle(
                 "manifest.json",
                 json.dumps(manifest, indent=2, sort_keys=True).encode(),
             )
+            if signer is not None:
+                reseal_bundle_members(bundle_path, signer)
             return
         raise
 
@@ -225,6 +234,8 @@ def _add_timestamp_to_bundle(
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
+    if signer is not None:
+        reseal_bundle_members(bundle_path, signer)
 
 
 def export_evidence_cmd(
@@ -329,6 +340,9 @@ def export_evidence_cmd(
     Ed25519 key, and a manifest.json with a SHA-256 for every file plus the
     verification recipe (full list: docs/architecture/sealing-and-verification.md).
 
+    A capsule holding a symbolic link is refused (exit 1): the export never
+    follows a link, whose target could be any file you can read.
+
     Scope: single capsule.
 
     \b
@@ -338,10 +352,15 @@ def export_evidence_cmd(
           --output bundle.zip
     """
     if key is None:
+        # L5: `nova init` is the command that writes the evidence-signing key.
+        default_key = _nf_paths.local_key_path()
         console.print(
-            "[red]✗[/red] --key is required in v0.4 (local-key signing). "
-            "Generate one with `python -m novafabric.evidence.signing` "
-            "or your preferred ed25519 tool."
+            "[red]✗[/red] --key is required (local Ed25519 signing). Run `nova init` "
+            "to generate one, then pass "
+            f"--key {escape(str(default_key))}",
+            soft_wrap=True,
+            markup=True,
+            highlight=False,
         )
         raise typer.Exit(code=1)
 
@@ -380,7 +399,7 @@ def export_evidence_cmd(
         tsa_url = _resolve_tsa_url(timestamp_url)
         console.print(f"[dim]Requesting RFC 3161 timestamp from {tsa_url} …[/dim]")
         try:
-            _add_timestamp_to_bundle(out_path, tsa_url, timestamp_optional)
+            _add_timestamp_to_bundle(out_path, tsa_url, timestamp_optional, signer=signer)
         except TimestampError as exc:
             console.print(f"[red]✗[/red] RFC 3161 timestamp failed: {exc}")
             raise typer.Exit(code=1) from exc
@@ -457,7 +476,7 @@ def export_annex_iv_cmd(
         "--pdf/--no-pdf",
         help=(
             "Also render a PDF using WeasyPrint (BSD-2-Clause). "
-            "Requires: pip install 'novafabric[compliance]'"
+            r"Requires: pip install 'novafabric\[compliance]'"
         ),
     ),
 ) -> None:

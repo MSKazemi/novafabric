@@ -76,7 +76,8 @@ def export_bagit(
     """Export a BagIt-packaged evidence archive from a capsule.
 
     BagIt (RFC 8493) is a standard for digital preservation and evidence
-    exchange used by forensic examiners and archivists.
+    exchange used by forensic examiners and archivists. A capsule holding a
+    symbolic link is refused (exit 1, nothing written).
 
     Scope: single capsule.
 

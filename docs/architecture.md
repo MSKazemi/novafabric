@@ -131,7 +131,7 @@ the database:
 
 | Universe | Versions | Applies to | Command |
 |---|---|---|---|
-| **MetadataStore** (default) | `src/novafabric/metadata_store/migrations/{sqlite,postgres}/` | The run metadata tier — SQLite at `NOVAFABRIC_DB_PATH` (default `$NOVAFABRIC_HOME/metadata.db`), Postgres at `NOVAFABRIC_METADATA_DSN` | `nova db upgrade [--backend postgres]` |
+| **MetadataStore** (default) | `src/novafabric/metadata_store/migrations/{sqlite,postgres}/` | The run metadata tier — SQLite at `NOVAFABRIC_METADATA_DB_PATH` (default `$NOVAFABRIC_HOME/metadata.db`), Postgres at `NOVAFABRIC_METADATA_DSN` | `nova db upgrade [--backend postgres]` |
 | **Registry** (experimental) | `alembic/sqlite/versions/` (`alembic.ini`), `alembic/postgres/versions/` (`alembic-postgres.ini`) | The registry/server database (`assets`, `eval_results`, `lineage_*`) — SQLite at `$NOVAFABRIC_HOME/registry.db`, Postgres at `NOVAFABRIC_POSTGRES_DSN` | `nova db upgrade --track registry [--backend postgres]` |
 
 From a repository checkout the registry track can also be driven with Alembic directly:
@@ -179,10 +179,11 @@ rewrites a bare scheme to `postgresql+psycopg://` and leaves an explicitly named
 driver (`+asyncpg`, `+psycopg2`) alone — naming a driver is a deliberate choice.
 
 **If you add another consumer of the Postgres DSN, route it through that
-function** rather than re-deriving the rule. (Today the MetadataStore Postgres
-track's `metadata_store/migrations/postgres/env.py` still carries its own,
-narrower rewrite — it handles only `postgresql://` and also rewrites an explicit
-`+psycopg2`; consolidating it onto `to_sqlalchemy_url` is tracked as a code fix.) The bug survived precisely because
+function** rather than re-deriving the rule. The MetadataStore Postgres track's
+`metadata_store/migrations/postgres/env.py` does (it used to carry its own,
+narrower rewrite that missed `postgres://` and overrode an explicit `+psycopg2`;
+`tests/metadata_store/test_alembic_env_uses_shared_dsn_rule.py` now pins it to
+the shared rule). The bug survived precisely because
 each consumer was individually correct.
 
 ---

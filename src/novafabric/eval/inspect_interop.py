@@ -324,7 +324,7 @@ def export_inspect_log(capsule: str | Path) -> dict[str, Any]:
     capsule_dir = Path(capsule)
     if not capsule_dir.is_dir():
         raise FileNotFoundError(f"not a capsule directory: {capsule_dir}")
-    scores = read_scores(capsule_dir / SCORES_FILENAME)
+    scores = read_scores(capsule_dir / SCORES_FILENAME, capsule_member=True)
 
     record = _read_import_record(capsule_dir)
     prov = record.get("provenance", {}) if isinstance(record.get("provenance"), dict) else {}

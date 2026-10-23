@@ -15,7 +15,6 @@ Schema:
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,8 +34,8 @@ class LastAdminError(Exception):
     """Raised when a revoke would leave the system with no admin path.
 
     See ADR-0060 for the invariant: at least one row with role='admin' in
-    role_assignments must remain, OR an OIDC issuer must be configured via
-    NOVA_OIDC_ISSUER so JWT-claim-based admins can still authenticate.
+    role_assignments must remain, OR the server must have OIDC configured (its
+    YAML ``oidc:`` block) so JWT-claim-based admins can still authenticate.
     """
 
 
@@ -135,42 +134,64 @@ def revoke_role(
     role: str,
     *,
     db_path: Path | None = None,
+    oidc_configured: bool = False,
 ) -> bool:
     """Revoke *role* from *subject*.
 
     Returns True if a row was deleted, False if the assignment did not exist.
 
     Raises LastAdminError if the deletion would leave the system with no admin
-    path (no remaining ``role_assignments`` admin row AND no OIDC issuer
-    configured via ``NOVA_OIDC_ISSUER``).
+    path: no remaining ``role_assignments`` admin row AND *oidc_configured* is
+    False. Callers pass the server's own ``config.oidc.enabled`` (L15: this used
+    to read the env var ``NOVA_OIDC_ISSUER``, which server-mode OIDC never
+    reads, so a real OIDC server got a false refusal and a stray env var
+    disabled the guard). The default keeps the guard on.
+
+    The existence check, the last-admin count and the DELETE are one atomic step:
+    ``BEGIN IMMEDIATE`` takes SQLite's write lock *before* the count. In the old
+    deferred transaction, two concurrent revokes of the last two admins each
+    counted "one other admin" and both deleted, leaving none (review r6). A second
+    revoke now waits for the lock (sqlite3's busy timeout) and counts after the
+    first commits. The role store is SQLite in every server mode, so there is no
+    Postgres variant to lock.
     """
     conn = _get_conn(db_path)
     try:
-        exists = conn.execute(
-            "SELECT COUNT(*) AS c FROM role_assignments WHERE subject = ? AND role = ?",
+        conn.execute("BEGIN IMMEDIATE")
+        return _revoke_locked(conn, subject, role, oidc_configured=oidc_configured)
+    finally:
+        if conn.in_transaction:  # refused or not found: release the write lock
+            conn.rollback()
+        conn.close()
+
+
+def _revoke_locked(
+    conn: sqlite3.Connection, subject: str, role: str, *, oidc_configured: bool
+) -> bool:
+    """The body of :func:`revoke_role`; the caller holds the write lock and rolls back."""
+    exists = conn.execute(
+        "SELECT COUNT(*) AS c FROM role_assignments WHERE subject = ? AND role = ?",
+        (subject, role),
+    ).fetchone()["c"]
+    if exists == 0:
+        # Deleting a row that does not exist can never cause admin lockout —
+        # report not-found instead of tripping the last-admin guard below
+        # (which previously fired on an empty store and masked the 404).
+        return False
+    if role == "admin" and not oidc_configured:
+        remaining = conn.execute(
+            "SELECT COUNT(*) AS c FROM role_assignments "
+            "WHERE role = 'admin' AND NOT (subject = ? AND role = ?)",
             (subject, role),
         ).fetchone()["c"]
-        if exists == 0:
-            # Deleting a row that does not exist can never cause admin lockout —
-            # report not-found instead of tripping the last-admin guard below
-            # (which previously fired on an empty store and masked the 404).
-            return False
-        if role == "admin" and not os.environ.get("NOVA_OIDC_ISSUER"):
-            remaining = conn.execute(
-                "SELECT COUNT(*) AS c FROM role_assignments "
-                "WHERE role = 'admin' AND NOT (subject = ? AND role = ?)",
-                (subject, role),
-            ).fetchone()["c"]
-            if remaining == 0:
-                raise LastAdminError(
-                    f"refusing to revoke last admin role from {subject!r}: "
-                    "no other admin assignment remains and no OIDC issuer is configured"
-                )
-        cursor = conn.execute(
-            "DELETE FROM role_assignments WHERE subject = ? AND role = ?",
-            (subject, role),
-        )
-        conn.commit()
-        return cursor.rowcount > 0
-    finally:
-        conn.close()
+        if remaining == 0:
+            raise LastAdminError(
+                f"refusing to revoke last admin role from {subject!r}: "
+                "no other admin assignment remains and no OIDC issuer is configured"
+            )
+    cursor = conn.execute(
+        "DELETE FROM role_assignments WHERE subject = ? AND role = ?",
+        (subject, role),
+    )
+    conn.commit()
+    return cursor.rowcount > 0

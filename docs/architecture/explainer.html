@@ -865,7 +865,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "y": 560
   }
  ],
- "note": "on main, unreleased (after v0.106.1)",
+ "note": "on main, unreleased (after v0.107.0)",
  "page": "README.md",
  "stages": [
   {
@@ -1381,7 +1381,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    ],
    "caption": "OTLP traces carrying gen_ai.* spans become a brand-new capsule; OTLP logs go to an append-only sidecar, never into a capsule.",
    "color": "rep",
-   "detail": "<p>An ingested capsule is secret-scanned and records <code>capture_mode: otel-import</code>; this path does not sign it. A sealed capsule is observed, never written. Zoom in: <a href=\"#flow-otlp-ingest-1\">the OTLP ingest flow</a>.</p>",
+   "detail": "<p>An ingested capsule records <code>capture_mode: otel-import</code> and finalizes through the same path as <code>nova capture</code>: secret scan, <code>evidence_digests</code>, and a seal only when a signing profile exists. An existing sealed capsule is observed, never written. Zoom in: <a href=\"#flow-otlp-ingest-1\">the OTLP ingest flow</a>.</p>",
    "edges": [
     "otel_serve",
     "serve_otlp",
@@ -1394,7 +1394,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "otlp",
     "capsule"
    ],
-   "ref": "otel/genai_ingest.py:write_ingest_capsule · otel/logs_ingest.py:ingest_otlp_logs",
+   "ref": "otel/genai_ingest.py:write_ingest_capsule_finalized · otel/logs_ingest.py:ingest_otlp_logs",
    "stage": "server",
    "term": "POST /api/otlp/v1/traces → new capsule 01J9…",
    "title": "Ingest OpenTelemetry",
@@ -2312,7 +2312,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 404
    }
   ],
-  "note": "on main, unreleased (after v0.106.1)",
+  "note": "on main, unreleased (after v0.107.0)",
   "page": "replay-modes.md",
   "steps": [
    {
@@ -2720,7 +2720,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 388
    }
   ],
-  "note": "on main, unreleased (after v0.106.1)",
+  "note": "on main, unreleased (after v0.107.0)",
   "page": "pipeline.md",
   "steps": [
    {
@@ -3079,7 +3079,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 398
    }
   ],
-  "note": "on main, unreleased (after v0.106.1)",
+  "note": "on main, unreleased (after v0.107.0)",
   "page": "otlp-ingest.md",
   "steps": [
    {
@@ -3270,7 +3270,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "color": "ver",
     "d": "M440 230 V208 H972 V427 H960",
     "id": "df",
-    "label": "public route, or unknown credential: straight to the route",
+    "label": "public route, or classified + unknown credential: to the route",
     "lx": 560,
     "ly": 220,
     "style": "observe"
@@ -3470,7 +3470,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 384
    }
   ],
-  "note": "on main, unreleased (after v0.106.1)",
+  "note": "on main, unreleased (after v0.107.0)",
   "page": "serve-request-path.md",
   "steps": [
    {
@@ -3520,7 +3520,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     ],
     "caption": "One app-level dependency, enforce_scope, maps the credential: the server token holds admin, an issued token its minted scope.",
     "color": "seal",
-    "detail": "<p>A token issued before scopes existed reads as <code>admin</code>, so a laptop behaves exactly as before. WebSocket routes are skipped here and keep their inline host and token checks (ADR-0228 OQ-2).</p>",
+    "detail": "<p>A token issued before scopes existed (no <code>scope</code> field) reads as <code>admin</code>, so a laptop behaves exactly as before. A record whose <code>scope</code> is not recognised, such as a typo, holds <em>no</em> scope and is refused everywhere but public routes. WebSocket routes are skipped here and keep their inline host and token checks (ADR-0228 OQ-2).</p>",
     "edges": [
      "r2"
     ],
@@ -3536,9 +3536,9 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      560,
      232
     ],
-    "caption": "required_scope looks up (method, route template). A public route or an unknown credential goes on to the route, which answers 401.",
+    "caption": "required_scope looks up (method, route template). A public route, or an unknown credential on a classified route, goes on (401).",
     "color": "seal",
-    "detail": "<p>Deferring an unknown credential keeps the answer a 401 rather than a 403, which would also reveal that the route exists. The table is one dict, so a test can check that every mounted route is classified.</p>",
+    "detail": "<p>Deferring an unknown credential on a classified route keeps the answer a 401 rather than a 403. An unclassified route is not deferred: it may have no <code>verify_token</code> of its own, so it is denied even to an anonymous caller. The table is one dict, so a test can check that every mounted route is classified.</p>",
     "edges": [
      "r3",
      "df"
@@ -3558,7 +3558,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     ],
     "caption": "If the held scope does not satisfy the route, or the route is unclassified, the answer is 403 and one authz.denied record is appended.",
     "color": "warn",
-    "detail": "<p>An unclassified route is denied to everyone, the server token included (ADR-0228 D3). The record names both scopes and states how well it knows the actor: <code>shared-token</code> for the one <code>.serve-token</code>, <code>credential</code> for an issued token (ADR-0231). An audit failure never turns a denial into an allow.</p>",
+    "detail": "<p>An unclassified route is denied to everyone, the server token and anonymous callers included (ADR-0228 D3). The record names both scopes and states how well it knows the actor: <code>shared-token</code> for the one <code>.serve-token</code>, <code>credential</code> for an issued token (ADR-0231). An audit failure never turns a denial into an allow.</p>",
     "edges": [
      "r4",
      "dn"
@@ -3947,7 +3947,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 504
    }
   ],
-  "note": "on main, unreleased (after v0.106.1)",
+  "note": "on main, unreleased (after v0.107.0)",
   "page": "encryption-at-rest.md",
   "steps": [
    {
@@ -4420,7 +4420,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 424
    }
   ],
-  "note": "on main, unreleased (after v0.106.1)",
+  "note": "on main, unreleased (after v0.107.0)",
   "page": "server-data-plane.md",
   "steps": [
    {
@@ -4518,7 +4518,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "b3",
      "b4"
     ],
-    "ref": "server/routes/capsules.py:_record_usage_capsule_upload · server/usage.py",
+    "ref": "server/routes/capsules.py:_record_usage_capsule_created · server/usage.py",
     "unreleased": false
    },
    {

@@ -32,11 +32,68 @@ These helpers accept both routes. The string forms are the conventional ones for
 a CLI — comma-separated items, ``key=value`` pairs — and are deliberately narrow:
 anything that is neither a string nor the structured type still yields empty,
 because guessing at a malformed option is worse than ignoring it.
+
+A mapping option also accepts a **JSON object** string, ``'{"K":"V"}'``: ADR-0270's
+migration note and the v0.102.0 upgrade notes tell users to pass
+``extra_env='{"LOG_LEVEL":"debug"}'``, and the ``k=v`` parser silently skipped it
+(no ``=`` in ``{"K":"V"}``). A string that starts with ``{`` is that form and nothing
+else, so it is parsed strictly: a malformed one raises :class:`RunnerOptionError`
+rather than being dropped.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+
+class RunnerOptionError(ValueError):
+    """A runner option was given in a recognised form but is malformed.
+
+    A ``ValueError`` so the runners that already turn a bad ``extra_env`` into
+    ``failed_setup`` (``shell_safe_env``) handle it the same way. The message names
+    the problem and the offending key, never a value: ``extra_env`` values may be
+    credentials.
+    """
+
+
+class _DuplicateKey(Exception):
+    def __init__(self, key: str) -> None:
+        self.key = key
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise _DuplicateKey(key)
+        out[key] = value
+    return out
+
+
+def _parse_json_object(text: str, name: str) -> dict[str, str]:
+    """``'{"K":"V",...}'`` as a dict of non-empty string keys to string values."""
+    try:
+        obj = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    except _DuplicateKey as dup:
+        raise RunnerOptionError(f"{name} names {dup.key!r} more than once") from None
+    except (ValueError, RecursionError) as exc:
+        # JSONDecodeError's message carries a position, not the text; RecursionError
+        # is CPython's answer to pathological nesting.
+        reason = exc.msg if isinstance(exc, json.JSONDecodeError) else "nested too deeply"
+        raise RunnerOptionError(f"{name} is not valid JSON ({reason})") from None
+    if not isinstance(obj, dict):  # pragma: no cover - a "{" prefix guarantees an object
+        raise RunnerOptionError(f"{name} must be a JSON object")
+    out: dict[str, str] = {}
+    for key, value in obj.items():
+        if not key:
+            raise RunnerOptionError(f"{name} has an empty name")
+        if not isinstance(value, str):
+            raise RunnerOptionError(
+                f"{name}: the value of {key!r} must be a string, got {type(value).__name__}"
+            )
+        out[key] = value
+    return out
 
 
 def coerce_str_list(value: Any) -> list[str]:
@@ -53,14 +110,24 @@ def coerce_str_list(value: Any) -> list[str]:
     return [str(v) for v in value]
 
 
-def coerce_str_dict(value: Any) -> dict[str, str]:
-    """A dict of strings from either a real mapping or ``"k=v,k2=v2"``.
+def coerce_str_dict(value: Any, *, name: str = "runner option") -> dict[str, str]:
+    """A dict of strings from a real mapping, ``"k=v,k2=v2"`` or ``'{"k":"v"}'``.
 
     Only the **first** ``=`` separates key from value, so a value may itself
     contain ``=`` (base64 padding, query strings). An item with no ``=`` is
     skipped rather than guessed at.
+
+    A string whose first non-blank character is ``{`` is a JSON object of string
+    to string (commas and ``=`` inside its values are then literal). ``name`` is
+    the option's name, used only in an error message.
+
+    Raises:
+        RunnerOptionError: the JSON form is malformed — invalid JSON, a duplicated
+            or empty name, or a value that is not a string.
     """
     if isinstance(value, str):
+        if value.lstrip().startswith("{"):
+            return _parse_json_object(value, name)
         out: dict[str, str] = {}
         for item in value.split(","):
             item = item.strip()

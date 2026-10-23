@@ -11,6 +11,394 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+## [0.107.0] - 2026-10-23
+
+**Capture that a workload cannot turn against its host, one verifier behind every trust surface,
+and documented behaviour that is true.** A security and correctness release from a line-by-line
+review of the documentation against the code, a docs-vs-code audit, and four attack reviews of
+the fixes. **Many entries below change behaviour** — read *Changed — BREAKING* before upgrading.
+Full notes: [docs/releases/v0.107.0.md](docs/releases/v0.107.0.md).
+
+### Security
+
+- **`nova serve`: a `read` token could become `admin` through `POST /api/policy/check` (P0).**
+  Caller-supplied Rego (`policy_source`) was evaluated for any `read` credential by an `opa` that
+  inherited the server's environment, so `opa.runtime().env` returned `NOVAFABRIC_SERVE_TOKEN` and
+  `http.send` reached the network. Caller Rego (`policy_source`, and `bundle_path` on
+  `/api/policy/test`) now needs `admin` (403, audited). Every `opa` NovaFabric starts runs with no
+  inherited environment and with capabilities that remove `opa.runtime`, `http.send` and
+  `net.lookup_ip_addr`; if those cannot be derived, nothing is evaluated. Report exports take the
+  exported report's own scope, and `GET /api/policy/explain` is `audit`-scoped with exact matching
+  (an empty `decision_id` returned the whole dashboard audit log to `read` tokens).
+- **`nova server`: a `writer` could overwrite any file the server could write (P0).** `POST
+  /v0/evidence` accepted a client `output_path` and an absolute or `..` `run_id`. It now refuses
+  `output_path` (400) and writes only `<evidence dir>/<run_id>.zip`. Every id taken from a request,
+  manifest, event or `capsule.yaml` must be one path segment, and a symlinked store entry is refused —
+  across `POST /v0/replays`, `GET /v0/capsules/{run_id}`, capsule upload, `nova import`
+  (`capsule_id`), capsule-set evidence bundles, `nova collector rebuild`, `nova export-rocrate-science`
+  and `nova capture-ui verify`. Auto-generated evidence signing keys are created 0600 atomically
+  (they were 0664).
+- **Schema validation never retrieves a `$ref`.** A nested remote `$ref`, an `$id`-relative ref
+  or a `$dynamicRef` inside a tool's argument or result schema made capture send an HTTP GET — at
+  every capture level, `air_gapped` included — and a `file://` ref was read from disk. Every
+  validator is now built by one helper whose reference registry refuses retrieval: only refs
+  inside the schema document and the bundled meta-schemas resolve. Anything else gives a `null`
+  verdict with `schema-unresolved`; `nova eval offline --check contract` exits 2.
+- **`nova serve` writes no part of its token to any log.** The audit log, the SIEM export, the
+  evidence-cart record and `GET /api/admin/tokens` carried the server token's first 8
+  characters; they now carry a 12-hex-character, domain-separated SHA-256 fingerprint. Audit
+  records written earlier still hold the prefix (the log is hash-chained, so they are not
+  rewritten): rotate the serve token if those records have left the machine.
+- **`nova serve` confines request-body paths to an allowlist.** An `operate` token could read or
+  write files anywhere the server could, through evidence export, capsule migrate, policy
+  sign/test, KG/lineage `capsule_path` and metadata rebuild; the old protection was a denylist of
+  system directories. Writes now go only to `$NOVAFABRIC_HOME/exports`,
+  `$NOVAFABRIC_HOME/evidence` and `$NOVAFABRIC_EVIDENCE_DIR`; reads may also use
+  `$NOVAFABRIC_HOME` and the capsule directory; `..` segments and symlink escapes are refused
+  (403). Extra roots: `NOVAFABRIC_SERVE_PATH_ROOTS`.
+- **HTTP promote goes through the `promote_direct` gate (ADR-0312).** Both `nova serve` promote
+  routes reached a promotion the CLI would refuse. They now call the same gate: a refusal is
+  403, and `force` does not bypass it. The policy sees the calling credential's fingerprint, not
+  the caller-chosen `actor` field.
+- **An unrecognised stored token scope grants nothing.** A typo, different case or padding in an
+  issued token's stored scope fell back to `admin`; it now holds no scope. A record with no scope
+  field is still legacy `admin` (ADR-0228 D4).
+- **Unclassified routes refuse anonymous callers too.** ADR-0228's "unclassified ⇒ deny
+  everyone" skipped requests without credentials, so a route with no classification and no own
+  token check was open.
+- **Evidence export never follows a symbolic link.** A symlink inside a capsule made
+  `nova export-evidence` copy its *target* — any file the exporting user could read, such as
+  `~/.ssh/id_rsa` — into the signed bundle, past redaction. A capsule containing any symlink is
+  now refused (`CapsuleSymlinkError`, exit 1, nothing written). Inspect bundles exported earlier
+  from capsules that contained links.
+- **An RFC 3161 token that cannot be verified is not a timestamp.** When the strict parser
+  rejected a token, the fallback reported `timestamp_ok: true` without a verified TSA signature,
+  and one non-DER byte let a genuine token with a swapped imprint verify. The fallback now
+  requires a verifying signature, a signed `messageDigest` equal to the hash of the TSTInfo, and
+  the imprint read by position.
+- **An entry missing from the sealer's own Merkle log fails verification.** On a host whose log
+  holds other seals by the same signer under the same root version, absence of the entry now
+  fails even when the capsule carries a valid inclusion proof. Another signer's log, a fresh log
+  or no log keeps the carried-proof result (ADR-0297).
+- **Batch job scripts never reach a command line.** `slurm` passed its job script — `extra_env`
+  values, such as API keys, included — as `sbatch --wrap <script>`, readable by every user on the
+  submit host through `ps`; it now goes on `sbatch`'s stdin. `lsf` wrote the same values to
+  `nova-<run>.lsf` in the shared capsule directory, where the capsule sealed it; it now pipes the
+  script from memory. `slurm`, `lsf` and `pbs` quote with `shlex.quote`: `$`, backticks, `;` and
+  `&` in a value were expanded or executed by the job's shell. (The 0.106.0 entry below
+  suggests `extra_env` for API keys; that advice is safe only from this release on, and the
+  value is still in `nova capture`'s own argv for the run — see the operator guide.)
+- **The cluster collector authenticates and scopes tenants.** Without `NOVA_COLLECTOR_TOKEN` it
+  served everyone; it now serves only loopback, non-proxied, `localhost`-Host requests and warns
+  at startup. The token compare is constant-time. The tenant comes from the authenticated caller
+  (`NOVA_COLLECTOR_TENANT`, default `default`); a body or event tenant that differs is 403.
+- **Protected-label maker-checker binds to the signer trust list.** One person could satisfy both
+  roles by passing a second `--identity`, because approval minted a key for any unseen identity.
+  Propose and approve now need an existing key bound in the ADR-0312 trust list (`proposer` /
+  `approver`); separation of duties compares the bound identity and key fingerprint; only
+  approvals that verify are counted.
+- **One legal-hold store for the CLI and the API.** A hold placed through `POST /api/holds` did
+  not stop `nova retention` or `nova capsule delete`, and a CLI hold did not stop the server's
+  delete routes. Holds now live in `$NOVAFABRIC_HOME/registries/<r>/holds.jsonl`; holds at both
+  old locations are still honoured and releasable. API hold create/release is audited.
+
+- **Rollback and every other route into production are gated.** "Promote to staging, then roll
+  back" put an unreviewed version into production: `rollback_asset` (`nova rollback`, `POST
+  /api/assets/{name}/rollback`) had no `promote_direct` gate and fell back to "any other version".
+  A new append-only `asset_status_history` records every status change; a rollback restores
+  without a policy decision only a version that was in production, and anything else needs an
+  explicit `promote_direct` allow plus the promote, eval and lifecycle gates. `PUT
+  /v0/assets/{id}/promote` (`nova server`) and `nova prompt promote` are gated too (403
+  `promote_direct_denied`).
+- **Relaxing a protected label is maker-checker.** Unprotect → set → re-protect moved a label with
+  no second person. `--unprotect`, fewer required approvals, or a changed or removed
+  `--policy-ref` now only *proposes* the change (new `--identity`); a trust-listed checker
+  approves it with `nova label approve-move <change-id>`. Strengthening stays single-actor.
+- **Legal holds stop PII erasure and are re-checked at the moment of action.** `nova pii erase`
+  and the REST erasure routes destroyed a held subject's key; they now keep it and report
+  `legal_hold_active` (GDPR Art. 17(3)(e); `nova pii erase` exits 3, HTTP 409, queue state `HELD`).
+  Holds are registry-wide today, so **any active hold defers every erasure** until it is released.
+  `nova retention apply` re-reads holds and WORM locks before every action; a held crypto-shred is
+  never recorded as applied.
+- **No capsule exporter or `nova serve` route follows a symbolic link.** Beyond `nova
+  export-evidence`, a link planted in a capsule was followed by `nova export-blob`, `nova migrate`
+  / `/api/capsule-migrate`, `nova export-rocrate` / `/api/compliance/export/rocrate`, `nova backup
+  create`, `nova audit bundle`, `nova export-examiner bagit` and the SDK's `upload_capsule`, and a
+  **read-scope** token got the target's contents from `GET /api/runs/{id}/file/...`. One shared
+  no-follow layer (per-component `O_NOFOLLOW` opens, exclusive copies, a re-check after copying)
+  now serves all of them; each refuses with a named error and writes nothing; the file route
+  answers 404 and run routes 403 for a capsule with a top-level link; `nova restore` refuses link
+  members. Hard links remain a documented limit.
+- **`nova serve` reads never reach the server's own secrets, and every path parameter is
+  confined.** Read roots covered all of `$NOVAFABRIC_HOME`, so a request could name the token
+  store or `dek.db` as a source. Token stores, `.serve-token`, `.env`, `dek.db`, ratchet state,
+  `config.yaml`, the audit logs and (for source reads) key material are now refused.
+  `/api/assure?capsule_path=`, compliance `profile`, ratchet `node_id`, sigstore and seal
+  `capsule_id`, `run_id` and `cart_id` are confined or validated as one path segment; ratchet
+  responses no longer return the chain key.
+- **A forged capsule cannot dodge the sealer-log check by claiming the other log version.**
+  `root_version` comes from the writer-controlled `log-entry.json`. The sealer's log is now
+  recognised by signer alone: a record claiming a newer version than the log fails; one claiming an
+  older version is checked against the retired logs in the new `novaseal.yaml` key
+  `previous_merkle_dbs`, and is otherwise reported `sealer_log: unverifiable-other-version`.
+- **An unanchored timestamp is never reported as OK.** A token from any self-made TSA verified as
+  `OK`. The new `timestamp_trust` (`anchored` / `unanchored` / `absent` / `invalid`) with
+  `timestamp_gen_time` and `tsa_subject` separates trusted time from token integrity; human output
+  prints `UNANCHORED`. `timestamp_ok` and the exit code keep their meaning.
+- **The docker runner keeps `extra_env` values off its command line**: `-e NAME`, with the value in
+  the docker client's environment (names the client itself reads keep `-e K=V`).
+- **Capture never consumes a streamed response.** The `requests` hook read `response.content` to
+  size the network event, so `stream=True` returned only when the stream ended — never, for SSE.
+  `response_size_bytes` is now an already-read body's size, else `Content-Length`, else `null`.
+
+- **Registration never places an asset in a gated status.** A spec declaring `status:
+  production` was registered straight into production — no gate, no history, no promotion audit —
+  by `nova register`, `nova serve` `POST /api/assets` and `nova server` `POST /v0/assets`. Any
+  declared status other than `development` is now refused (exit 1; HTTP 422
+  `registration_status_not_allowed`). Rollback evidence is bound to the asset id and spec SHA-256,
+  and a version that was ever in production can never be registered again, so unregistering and
+  re-registering the same version with new content no longer inherits "previously production".
+- **Releasing a legal hold needs `admin`**, as ADR-0031 always required; `nova serve` granted it
+  to `operate`, so one `operate` credential could lift a hold an `admin` delete then acted on.
+  Placing a hold stays `operate`.
+- **Every capsule reader and multi-capsule scan refuses links and special files.**
+  `/api/cost/report`, `/api/runs/suggest-register` and `/api/runs/{id}/run-lineage` read a linked
+  file in a sibling capsule; a capsule-directory entry linked outside it was served by 9 routes;
+  `nova export --html` copied a linked stream into the page and hung on a FIFO; the KG consumer
+  ingested linked streams; `nova diff` read any file named by a capsule's `blob_ref`. Scans no
+  longer list linked entries, and `nova serve` refuses (403) a capsule root that resolves outside
+  its read roots.
+- **A streamed SDK call is recorded only into the capture that opened it.** A `stream=True` call
+  (OpenAI, Anthropic; sync and async) ended after its capture — for example garbage-collected
+  while a second capture ran — wrote the first capture's prompt and answer into the second capsule;
+  concurrent task-scoped captures could cross-file the same way. Such a late record is now dropped
+  and counted (`capture.stream_record_dropped`).
+- **Restore's crypto-shred replay acts only on verified evidence**: a decision log whose audit
+  chain verifies, the receipt named for the record, and never while a legal hold is active (the
+  restore step fails instead).
+- **Re-validating a stored capsule never reads an arbitrary local file**: an absolute
+  `schema_ref` is honoured at capture only; afterwards only the packaged schemas resolve.
+
+- **The trust radar, the Seal tab and `POST /api/runs/{id}/verify` run the same verification as
+  `nova verify`.** A capsule edited after sealing, or carrying another capsule's `.seal/`, read
+  `attested` / `valid: true` on those surfaces. The endpoint verifies without a profile, creates
+  nothing, and adds `capsule_binding_ok`.
+- **A sealed capsule's manifest cannot be substituted.** Renaming `capsule.yaml` to `capsule.json` and
+  editing it passed `nova verify` and the radar while the query and serve surfaces served the forged
+  status. Seals now record `_novaseal.manifest`; a missing sealed manifest, a differing unsealed
+  manifest, or an unsealed file under a signed `*_ref` fails, and readers of a sealed capsule use the
+  signed payload.
+- **`POST /api/evidence/{id}/verify` runs the same verifier as `nova verify <bundle>.zip`.** It reported
+  `valid: true` for tampered or re-signed bundles. A bundle's runs now come only from its verified
+  signatures (fabricated, relabelled or stripped runs fail; duplicate ZIP members fail), signer trust is
+  pinned with the operator trust list `NOVAFABRIC_EVIDENCE_TRUSTED_KEYS` (`signer_trust`:
+  anchored/unanchored/untrusted), and the list route's `verified` is the real verdict.
+- **Capture treats the capsule as untrusted once the workload has run.** A link, FIFO or device the
+  workload planted at a capsule path made the secret scanner rewrite a file outside the capsule, hung
+  capture, or — with `--runner docker` — let finalisation write host files through container-planted
+  links. Such entries are now removed without being followed and recorded (`capture_tampered`,
+  `capture-health.json` `tampered_entries`); `nova verify` and `nova validate` fail the capsule; capture
+  still exits with the workload's code. Workload capture-health hand-offs are bounded and labelled
+  unverified.
+- **The capsule Merkle root and in-toto subjects never follow a link.** A link inside a capsule made the
+  signed root of Evidence Bundles, the evidence cart, consent attestations, baselines and score/comment
+  subjects commit to a file outside the capsule. Roots of capsules without links are byte-identical.
+- **A required capsule file that is present but unusable is an error, never empty output.** Exports,
+  compliance artifacts, reports, verdicts, attestations, replay and lineage writes stop (CLI exit 2,
+  `nova serve` 422, server 409) when `capsule.yaml` or a stream they depend on is a link, FIFO, directory
+  or over-size file. Before, `nova cost estimate` reported $0, the EU AI Act Art. 12 log dropped the run
+  and `nova assure` passed "no secrets detected" over an unreadable proof.
+- **A Postgres `merkle_db` DSN is never written to disk.** It became a directory named after the DSN,
+  password included, and capture silently sealed into SQLite. One Merkle-log resolver now serves every
+  caller; DSN passwords are redacted everywhere. If you configured a DSN before, delete any stray
+  `postgres:`/`postgresql:` directory where you ran `nova`.
+- **A seal bypass is refused unless its audit entry is written**, the serve route audits its actor, the
+  signed `notification_status` is `pending`/`not_configured` (never a false `sent`), bypass
+  notifications are actually sent, and the webhook has a 5 s total deadline.
+- **Writers into a finished capsule and the policy store never write through a link**
+  (`assets.jsonl`, energy receipts, `nova validate --write`); the evidence download/detail routes and
+  `verify_seal_dir` never follow links; `GET /api/seal/log/verify` opens the log read-only and matches
+  exactly (a `%` matched everything).
+- **`novacap` never blocks the workload**: a busy or refusing daemon falls back to `nova capture
+  --no-daemon`; a daemon lost after accepting a run does not re-run it.
+- **`issue-token` never overwrites a private key** when `NOVAFABRIC_OFFLINE_KEY_PATH` names a `.pub`
+  file; the OTLP traces and logs routes refuse bodies over 16 MiB before buffering them; prompt version
+  numbers are never reused; concurrent admin revokes cannot leave zero admins.
+
+- **Capture sweeps the whole capsule, and nothing downstream writes through a planted link.** The
+  post-workload sweep removes and records every symlink, FIFO, socket and device at any depth; `nova
+  verify` and `nova validate` fail a capsule holding one anywhere, even if it was planted after sealing
+  (`special_entries`); the capsule directory is pinned after the sweep (a swap stops capture with
+  `✗ capture integrity`). With `--pii-subject`, the PII stage wrote `redaction_manifest.json` through a
+  planted link and rewrote hard-linked files in place; it now writes only by rename, and an append to a
+  hard-linked file copies it first. Score appends, dataset-provenance facets, `nova export-c2pa` and
+  `--emit-otel-genai` never write through a link; the C2PA binder reads only inside the capsule.
+- **Every Evidence Bundle member is signed.** A signed members statement
+  (`attestations/bundle.intoto.json`) covers every file and the manifest's fields, so rewriting
+  `README.md`, the bundled schemas or `verifier_instructions` fails `nova verify`, `--public-key`
+  included. Bundles built before this verify as "signed content only" (`members_signed: false`,
+  `unsigned_members`) and are never shown as fully verified; the dashboard's Verify button now shows
+  the server's verdict instead of a partial in-browser signature check.
+- **The audit log's hash chain cannot fork.** Concurrent appends (8 threads × 5 bypasses gave 12
+  `prev_hash` mismatches) are serialised with `flock` plus an in-process lock. A seal bypass counts only
+  while its `seal.bypass.create` entry exists; a bypass audited but not stored is withdrawn with
+  `seal.bypass.abort`.
+- **The cluster collector refuses a malformed event with 422** instead of failing with 500, and stores
+  nothing from that batch.
+
+### Fixed
+
+- **Capture hooks are fail-open.** A recorder failure — an SDK object passed back in `messages`,
+  a full disk, a record-build error — reached the workload from the OpenAI, Anthropic, MCP and
+  wire (httpx, requests, aiohttp, urllib3) hooks; the MCP hook also recorded a successful call as
+  an error. The call's own return value or exception now passes through unchanged; the loss is
+  logged once as `capture.record_dropped` and counted in `capture-health.json`. SDK objects in
+  `messages` are recorded as the SDK sends them on the wire.
+- **`openai` 3.x traffic is captured again.** It sends through `httpx2`, which no hook watched,
+  so OpenAI calls had no transport record and no `network_events`. A new optional `httpx2` hook
+  covers it; one SDK call is still one model call (ADR-0305).
+- **Re-sealing an identical manifest verifies on the sealer host.** The second seal failed with
+  "the local log holds this entry at leaf_index=0".
+- **`nova ledger verify` exits 8 when a checkpoint's Merkle block does not verify.** Exit 8 was
+  documented and never produced.
+- **`nova lineage provenance` / `blast-radius --edge-type` filters.** Every filter returned an
+  empty result; the traversal now follows only edges of the given types.
+- **`nova eval contamination-check` fails closed.** A facet it could not read or validate was
+  skipped and the command exited 0; it is now an `invalid` verdict with a `reason` (exit 4).
+- **The RLS static guard tests can fail.** `tests/metadata_store/test_grep_constraints.py` used a
+  lookahead `grep -E` cannot parse, and counted grep's error exit as "no violation"; the guards are
+  now Python scans with known-bad controls.
+- **`requests` 4xx/5xx responses were recorded as status 0 / success** (a failed `Response` is
+  falsy). Failure classifying a request now sends it unrecorded instead of raising, and positional
+  arguments to OpenAI/Anthropic `create` reach the SDK unchanged.
+- **`nova capsule delete` deletes.** With `--force` it printed "Deleted capsule" and audited a
+  deletion while removing nothing, and ignored holds. It now runs the governed delete core: holds in
+  any registry always refuse, and success is printed and audited only after the capsule is gone.
+- **`/api/tv5/ws` is reachable under `nova serve`.** It was registered after the WebSocket
+  catch-all and closed every connection with 1011.
+- **The collector's local mode refuses `Via` / `X-Forwarded-*` requests** and warns at startup to
+  set `NOVA_COLLECTOR_TOKEN` whenever anything proxies to it.
+- **`nova eval contamination-check` cannot be made to pass or hang.** Hashes are compared in
+  canonical form (`sha256:<lowercase hex>`); duplicate JSON keys, subdirectories and linked, FIFO,
+  device or over-1-MiB facets are `invalid` (exit 4); `*.json` is matched case-insensitively.
+- **`POST /api/compliance/pii/erase` validates `retention_months`** (an integer 0–1200, else 422);
+  a negative value set the retention window in the past, a string caused a 500.
+- **The RLS static guards cannot be dodged by spelling.** They are a default-deny AST scan with an
+  allowlist of reviewed call sites plus a behavioural guard over every statement the Postgres
+  metadata store executes; 11 session-scoped tenant-setting spellings the regex guard missed are
+  caught. The shipped store was already correct.
+- `nova serve` `/readyz` updates its gauge; TV-5 routes accept issued tokens; watcher settings follow
+  flag → env → default and an unknown backend is refused; `nova verify --seal-config` help names the
+  real default; `~` is expanded in NovaSeal paths (never in a DSN).
+- `@agent(capsule_dir=X)` writes one capsule per call (`X/<run_id>/`); drops in the workload process
+  reach `capture-health.json` under `nova capture`; approval events record the real bundle path.
+- Capsules with network, file or approval events pass `nova validate` (three optional schema refs);
+  tool-permission evidence is reported as "not captured" rather than a failed control;
+  `GET /api/policy/capture-level` says which levels are enforced.
+- Retention plan/status/explain list capture capsules, and crypto-shred works for `--pii-subject`
+  capsules when `NOVA_PII_PEPPER` is set (experimental); `nova lineage-store migrate --from-ocs` refuses
+  instead of reporting fake success; `nova audit`, `nova retention`, `nova classify` and `nova backup`
+  follow `NOVAFABRIC_CAPSULE_DIR`.
+- `nova server assign-role` says whether the role is in force; Helm `mode: dashboard` refuses to render
+  rather than crash-loop; `nova login` is labelled demo-only; the quota recount runs off the event loop;
+  `nova storage validate` reports the real object-lock mode; the last-admin guard reads the server's
+  OIDC config; `--workers` children load the parent's config; the GCS WORM backend is selectable.
+- The GitHub capture Action keeps the capsule when validation fails; dataset-card hashes must be
+  complete; a malformed audit profile is a clear error; `--help` keeps `[extra]` hints; lineage,
+  C2PA and safety-case records carry the installed version; `nova eval agent` exits 1 on FAIL.
+- `POST /api/ingest-capsule` no longer leaks a file watcher per request.
+- `--runner-option extra_env='{"K":"V"}'` — the JSON form the upgrade notes recommend — reaches the job
+  for `docker`, `kubernetes`, `slurm` and `lsf` (it was silently ignored); a malformed object fails the run
+  at setup, naming the key, never the value; the same applies to `kubernetes`'s `node_selector`.
+- `nova pii erase`/`status` and `nova migrate-schema` default `--capsule-dir` to where `nova capture`
+  writes; `nova retention` reads `retention-policy.yaml` and `worm.db` from
+  `$NOVAFABRIC_HOME/registries/<registry>/` wherever it runs (a legacy working-directory copy is still
+  read, with a warning), and `deletion_mode: prohibited` or a WORM lock in any copy holds the item.
+- `nova migrate-to-postgres` copies `asset_status_history`, so rollback evidence survives the move.
+- `nova migrate` writes a `migration_source` lineage edge that passes `nova validate` (every migrated
+  capsule failed validation); `migration_source` is a new additive `edge_type` value (ADR-0034 §6), and
+  the edge names the original by run id and `capsule.yaml` digest instead of absolute paths.
+- `GET /api/seal/log/verify` creates no `-wal`/`-shm` files; the evidence detail route verifies and shows
+  one snapshot and reports the real signer-key fingerprint; verdicts are cached by archive SHA-256.
+- **`nova replay --help` states that a timeout exits 124** (`ReplayTimeout`), not 1, and the CLI
+  prints why it stopped.
+
+### Added
+
+- `nova verify --strict` (fails on `unverifiable-other-version`, unanchored timestamps and other
+  unanchored claims, listed as `unanchored_claims`); `novaseal.yaml` `previous_merkle_dbs`;
+  `verify_with_profile()`.
+- `nova ledger verify --merkle-db`: checks each checkpoint's inclusion against the real log
+  (`merkle_inclusion`: `log` / `self-consistent` / `none`). Without it, exit 0 means the Merkle
+  block is self-consistent only.
+- `NOVAFABRIC_SERVE_PATH_ROOTS` (extra `nova serve` path roots).
+- `NOVAFABRIC_EVIDENCE_TRUSTED_KEYS` (Evidence Bundle signer trust list); `NOVAFABRIC_METADATA_DB_PATH`;
+  `retention-policy.yaml` `include_capture_capsules`; spec `extensions:` block; `nova revoke-role --config`.
+
+### Changed — BREAKING
+
+- Caller-supplied Rego on `/api/policy/check` and `/api/policy/test` needs `admin`; `POST /v0/evidence`
+  refuses `output_path`; `nova collector rebuild` refuses a target that already holds partitions; a
+  capsule set with a repeated `run_id` is refused.
+- `nova serve` request-body paths are confined (above). A relative path containing `/` resolves
+  under `$NOVAFABRIC_HOME` (reads) or `$NOVAFABRIC_HOME/exports` (writes);
+  `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` is no longer honoured; metadata rebuild's default target is
+  `$NOVAFABRIC_HOME/exports/nova-metadata-rebuild.db`; policy sign returns 422 without
+  `key_path`/`cert_path`.
+- HTTP promotion to production needs an explicit `promote_direct` policy allow (403 otherwise).
+- `nova label propose-move` / `approve-move` need a keyring key (`nova promote keygen`) bound in
+  `promote-signers.yaml`; exit 3 is a maker-side failure, exit 4 a checker-side one. `--reject`
+  a pending move whose maker is not listed.
+- The collector refuses non-loopback callers without a token, and one token serves one tenant.
+- `$VAR` in a `slurm`/`lsf`/`pbs` command argument is passed literally, as the local runner does.
+- `nova ledger verify` exits 8 for a checkpoint logged before 0.106.0 (it has no `tree_size`).
+- `nova export-evidence` refuses a capsule containing a symlink.
+- `nova rollback` no longer falls back to a version with no production history, and `--to
+  <never-production>` needs a `promote_direct` allow.
+- `nova label protect --unprotect` (or fewer approvals / a changed policy) proposes the change and
+  needs `approve-move`.
+- `nova capsule delete`: holds in any registry block it, `--force` included; a missing capsule
+  exits 1; `--force` no longer skips `deletion_mode: prohibited`.
+- `nova pii erase` exits 3 while any legal hold is active.
+- A capsule containing any symbolic link can no longer be exported, packed, migrated, backed up or
+  served (`pack_capsule` followed links by design before).
+- `response_size_bytes` for a streamed response is the `Content-Length` or `null`.
+- A spec declaring any `status:` other than `development` is refused at registration; a version
+  that was ever in production cannot be registered again.
+- `POST /api/holds/{hold_id}/release` needs the `admin` scope.
+- `nova export --html` refuses a capsule whose `capsule.yaml` is a link (exit 2).
+
+- Asset specs reject unknown keys (put extensions under `extensions:`).
+- `NOVAFABRIC_DB_PATH` names only the registry; the metadata store reads `NOVAFABRIC_METADATA_DB_PATH`.
+- The promotion-policy store defaults to the resolved NovaSeal Merkle log, not
+  `~/.local/share/novafabric/merkle.db` (pass `--db` for a policy signed there).
+- Replays default to `$NOVAFABRIC_HOME/replays`; `@agent(capsule_dir=X)` treats `X` as a capsule store.
+- Retention acts on capture capsules only with `include_capture_capsules: true`.
+- `nova storage validate` fails GOVERNANCE or missing default retention; Helm `mode: dashboard` needs the
+  insecure acknowledgement; the last-admin guard ignores `NOVA_OIDC_ISSUER`.
+- A bundle whose run statement signs no `predicate.run_id` fails verification; `GET /api/seal/log/verify`
+  answers 404 for a missing log instead of creating one.
+- Backup sets that include a capsule store outside the home use manifest schema 0.2.1.
+- A bypass fails when the audit log is unwritable; `nova seal bypass --notify` no longer signs `sent`.
+- `nova safety tripwire list --framework <typo>` exits 2; `nova eval agent` exits 1 on FAIL;
+  `rebuild-metadata-db` refuses the in-memory `local` backend and `--data-dir`.
+
+- Any symbolic link a workload leaves in its capsule — even one pointing inside it — marks the capsule
+  tampered (`nova verify`/`nova validate` fail).
+- A seal bypass created before this release stops counting until re-created (bypasses expire within
+  168 h); `NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1` skips the audit check for a copied store.
+- A malformed `extra_env`/`node_selector` JSON object fails the run instead of being dropped.
+
+### Documentation
+
+- Capture levels are documented as they behave: `minimal` and `standard` do not reduce capture,
+  `nova policy capture-level set` persists nothing, and `model-calls.jsonl` holds full prompts at
+  every level; only `forensic`/`air_gapped` change behaviour (experimental).
+- Retention `crypto-shred` is relabelled **experimental**: the sweep does not see `capsule.yaml`
+  capsules and nothing writes `pii_subject_id`, so it destroys no key today. Use `nova pii erase`.
+- The adapter-core docstring and developer guide count the adapters correctly (8 own a capsule
+  body, 3 use the shared core).
+
 ## [0.106.1] - 2026-10-23
 
 **The release image builds again, the collector clears a new Go advisory, and a release now

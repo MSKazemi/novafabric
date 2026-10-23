@@ -16,6 +16,7 @@ Covers:
 """
 from __future__ import annotations
 
+import base64
 import json
 import shutil
 import sqlite3
@@ -23,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
+from cryptography.hazmat.primitives import serialization
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
@@ -75,9 +78,32 @@ def _fixture(name: str) -> dict[str, Any]:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
+def _bind_signers(trust_path: Path, identities: tuple[str, ...]) -> None:
+    """ADR-0312 trust list: each identity's (explicitly created) key, both roles."""
+    rows = []
+    for ident in identities:
+        key, _ = kr.ensure_keypair(ident, create=True)
+        raw = key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        rows.append(
+            {
+                "identity": ident,
+                "public_key": base64.b64encode(raw).decode(),
+                "roles": ["proposer", "approver"],
+            }
+        )
+    trust_path.write_text(yaml.safe_dump({"signers": rows}), encoding="utf-8")
+
+
 @pytest.fixture(autouse=True)
 def _isolated_keyring(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(kr, "_KEYRING_DIR", tmp_path / "keyring")
+    # Maker-checker signers must be bound in the ADR-0312 trust list; attacks on
+    # that binding live in tests/test_protected_label_signer_trust.py.
+    trust = tmp_path / "promote-signers.yaml"
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_SIGNERS", str(trust))
+    _bind_signers(trust, ("alice", "bob", "carol"))
 
 
 @pytest.fixture()
@@ -187,9 +213,25 @@ def test_protect_does_not_move_the_label(db_path: Path) -> None:
     assert get_label("triage", "production", db_path=db_path)["target_version"] == "1"
 
 
+def _unprotect(db_path: Path, label: str = "production", checkers: tuple[str, ...] = ("bob",)) -> None:
+    """Un-protecting is maker-checker (ADR-0114 Amendment 2): alice proposes, checkers approve."""
+    from novafabric.registry.protected_labels import (
+        approve_protection_change,
+        propose_protection_change,
+    )
+
+    change = propose_protection_change(
+        "triage", label, protected=False, identity="alice", db_path=db_path
+    )
+    for checker in checkers:
+        approve_protection_change(
+            "triage", label, change["change_id"], identity=checker, db_path=db_path
+        )
+
+
 def test_unprotect_restores_free_behaviour(db_path: Path) -> None:
     _protected_prod(db_path)
-    protect_label("triage", "production", protected=False, db_path=db_path)
+    _unprotect(db_path)
     record, moved = set_label("triage", "production", "2", db_path=db_path)
     assert moved is True
     # Projection: the newest event wins; both events remain (append-only).
@@ -215,7 +257,7 @@ def test_other_labels_on_same_asset_stay_free(db_path: Path) -> None:
 def test_list_protections_projection(db_path: Path) -> None:
     _protected_prod(db_path, required_approvals=2, note="gates live traffic")
     protect_label("triage", "canary", db_path=db_path)
-    protect_label("triage", "canary", protected=False, db_path=db_path)
+    _unprotect(db_path, "canary")
     records = list_protections("triage", db_path=db_path)
     by_label = {r["label"]: r for r in records}
     assert by_label["production"]["protected"] is True
@@ -501,7 +543,7 @@ def test_unprotect_midflight_uses_snapshot(db_path: Path) -> None:
     """Un-protecting leaves an in-flight move resolving under its snapshot."""
     _protected_prod(db_path, required_approvals=2)
     move = propose_move("triage", "production", "2", identity="alice", db_path=db_path)
-    protect_label("triage", "production", protected=False, db_path=db_path)
+    _unprotect(db_path, checkers=("bob", "carol"))
     record, detail = approve_move(
         "triage", "production", move["move_id"], identity="bob", db_path=db_path
     )

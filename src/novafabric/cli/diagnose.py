@@ -61,7 +61,7 @@ def diagnose_cmd(
             "--replay-dir",
             help=(
                 "Base directory for the intervention replay output "
-                "(default: .novafabric/replays). Only with --intervene or "
+                "(default: $NOVAFABRIC_HOME/replays). Only with --intervene or "
                 "--search-root-cause."
             ),
         ),

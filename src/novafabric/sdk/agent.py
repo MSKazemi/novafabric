@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 import time
 import uuid
 from collections.abc import Callable, Mapping
@@ -12,9 +13,12 @@ from typing import Any, TypeVar
 import yaml
 from opentelemetry import trace
 
+from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -30,7 +34,14 @@ def agent(
     session_id: str | None = None,
     session_sequence: int | None = None,
 ) -> Callable[[F], F]:
-    """Capture decorator. ``deployment_environment`` (ADR-0126) tags the capsule
+    """Capture decorator.
+
+    ``capsule_dir`` is a capsule *store*, like ``nova capture --output-dir``:
+    every call to the decorated function writes its own capsule to
+    ``<capsule_dir>/<run_id>/`` (the run id is a fresh ULID per call, also
+    logged as ``sdk_capsule_started``). ``None`` = OTel spans only, no capsule.
+
+    ``deployment_environment`` (ADR-0126) tags the capsule
     with its delivery-lifecycle context (e.g. ``production``); the CLI flag and
     the ``NOVAFABRIC_ENVIRONMENT`` env var take precedence over this argument.
 
@@ -78,7 +89,7 @@ def _run_with_capture(
     kwargs: dict[str, Any],
     agent_name: str,
     agent_version: str,
-    cap_dir: Path,
+    capsule_root: Path,
     deployment_environment: str | None = None,
     variant: Mapping[str, Any] | None = None,
     session_id: str | None = None,
@@ -114,14 +125,18 @@ def _run_with_capture(
     created_at = _now()
     t0 = time.monotonic()
 
-    cap_dir.mkdir(parents=True, exist_ok=True)
-    (cap_dir / "inputs").mkdir(exist_ok=True)
-    (cap_dir / "outputs").mkdir(exist_ok=True)
-    for fname in ("model-calls.jsonl", "tool-calls.jsonl", "trace.jsonl", "assets.jsonl"):
-        (cap_dir / fname).touch()
-
-    writer = CapsuleWriter(run_id=run_id, base_dir=cap_dir.parent)
-    writer._dir = cap_dir
+    # M13: ``capsule_root`` is a capsule *store*, exactly like
+    # ``nova capture --output-dir``: every call gets its own fresh
+    # ``<capsule_root>/<run_id>/``. Writing into ``capsule_root`` itself made a
+    # second call overwrite capsule.yaml while the JSONL streams appended, so
+    # one capsule held several runs' spans under the last run's id.
+    writer = CapsuleWriter(run_id=run_id, base_dir=capsule_root)
+    writer.open()
+    cap_dir = writer.capsule_dir
+    logger.info(
+        "sdk_capsule_started",
+        extra={"run_id": run_id, "capsule_dir": str(cap_dir), "agent_name": agent_name},
+    )
 
     _hook_token = install_all(writer=writer, parent_span_id=root_span_id)
     exit_code = 0
@@ -160,7 +175,9 @@ def _run_with_capture(
         )
         tool_call_count = sum(
             1
-            for line in (cap_dir / "tool-calls.jsonl").read_text().splitlines()
+            for line in (
+                read_capsule_member_or_none(cap_dir / "tool-calls.jsonl", operation="the SDK") or ""
+            ).splitlines()
             if line.strip()
         )
 

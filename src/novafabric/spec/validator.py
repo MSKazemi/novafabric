@@ -44,6 +44,12 @@ def _hint_for_error(error: Any) -> str | None:
 
     if error_type == "missing":
         return f"Add required field '{loc}' to your YAML spec."
+    if error_type == "extra_forbidden":
+        # L33: unknown keys are refused rather than silently dropped.
+        return (
+            f"'{loc}' is not a spec field — check the spelling. Vendor or custom data "
+            "belongs under the top-level `extensions:` mapping (reverse-DNS keys)."
+        )
     # Pydantic v2 emits 'union_tag_invalid' when a discriminated-union
     # tag (asset_type) is unknown. The discriminator name is in
     # ctx.discriminator (single-quoted, e.g. "'asset_type'").

@@ -51,7 +51,7 @@ jobs:
           environment: test
           # Pin for reproducible CI. Without this you get the latest release,
           # which means a capsule produced by a version you did not choose.
-          novafabric-version: "0.106.1"
+          novafabric-version: "0.107.0"
           artifact-name: capsule-${{ github.run_id }}
           retention-days: "90"
 
@@ -71,12 +71,12 @@ Every row matches `action.yml` exactly.
 |---|---|---|---|
 | `run` | **yes** | — | The command to capture. Runs under `nova capture`. |
 | `environment` | no | `test` | Deployment environment recorded on the capsule (ADR-0126). See the note below — the default is deliberate. |
-| `timeout` | no | `""` | Wall-clock deadline in seconds. Empty uses `nova capture`'s default deadline of 600 s. |
-| `validate` | no | `true` | Run `nova validate` and fail the step if the capsule is invalid. |
+| `timeout` | no | `""` | Wall-clock deadline in seconds for the captured command. Empty uses `nova capture`'s default of **600 s**; past it the workload is killed (exit 124). Set a larger value for long jobs. |
+| `validate` | no | `true` | Run `nova validate`. An invalid capsule is still uploaded, and the action then fails (exit 1, or the captured command's own exit code if that failed too). |
 | `upload-artifact` | no | `true` | Upload the capsule as a workflow artifact. |
 | `artifact-name` | no | `novafabric-capsule` | Name for the uploaded artifact. |
 | `retention-days` | no | `90` | How long to retain the artifact. |
-| `novafabric-version` | no | `""` (latest) | Version passed to the installer (uv), e.g. `0.106.1`. **Pin it** for reproducible CI. |
+| `novafabric-version` | no | `""` (latest) | Version passed to the installer (uv), e.g. `0.107.0`. **Pin it** for reproducible CI. |
 | `python-version` | no | `3.12` | NovaFabric requires 3.12+. |
 | `extras` | no | `""` (core) | Extras to install, e.g. `all`. Core is ~113 MB; `all` is ~412 MB. |
 
@@ -120,12 +120,14 @@ something. Override it when you genuinely have staging or production CI.
 | `capsule-path` | Filesystem path to the capsule directory. |
 | `status` | `success` or `failure` — the captured command's own outcome. |
 | `exit-code` | The captured command's exit code. |
+| `valid` | `true` or `false` — whether `nova validate` accepted the capsule. Empty when `validate: false`. |
 
 > **⚠ Outputs are empty when the action fails.** GitHub does not propagate a
 > composite action's declared outputs when the action itself fails, so a step
 > reading `steps.capture.outputs.run-id` after a failed capture gets nothing.
 > The action therefore *also* exports `NOVAFABRIC_RUN_ID`,
-> `NOVAFABRIC_CAPSULE_PATH` and `NOVAFABRIC_STATUS` through `GITHUB_ENV`, which
+> `NOVAFABRIC_CAPSULE_PATH`, `NOVAFABRIC_STATUS` and (when validation ran)
+> `NOVAFABRIC_VALID` through `GITHUB_ENV`, which
 > **do** survive. Use the environment variables in any `if: always()` step.
 
 ## What happens when the step fails
@@ -138,10 +140,13 @@ capsule with `status: failure` for a command that crashed. So the action:
 
 1. runs your command and records its exit code without aborting;
 2. locates the capsule **regardless** of that exit code;
-3. validates it, uploads it, writes the job summary — ⚠ if `nova validate` rejects
-   the capsule, that step fails and the upload is skipped, so no artifact is produced
-   (set `validate: false` to always upload; a fix is tracked);
-4. and only then, as its **last** step, re-raises your command's exit code.
+3. validates it **without failing** (the verdict goes to the `valid` output,
+   `$NOVAFABRIC_VALID` and the job summary), then uploads it — an invalid capsule
+   is still uploaded, because it is still evidence;
+4. and only then, as its **last** step, fails the job: with your command's own
+   exit code when the command failed (the error also says whether the capsule
+   validated), otherwise with exit 1 and an `Invalid capsule` error naming the
+   run id and the artifact when `nova validate` rejected the capsule.
 
 ```mermaid
 flowchart TD

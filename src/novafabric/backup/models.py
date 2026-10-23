@@ -23,7 +23,10 @@ from pydantic import BaseModel, ConfigDict
 #: object-store fields (``object_store_backend``/``object_store_fingerprint``).
 #: All additions default, so 0.1.x manifests still validate; the schema stays
 #: closed, so pre-0.2.0 binaries reject 0.2.0 manifests (deliberate).
-MANIFEST_SCHEMA_VERSION = "0.2.0"
+#: 0.2.1 adds the ``capsule-dir`` member origin: a capsule store outside the
+#: home (``NOVAFABRIC_CAPSULE_DIR``) travels under ``external/capsule-dir/``.
+#: Sets without such a store carry no new value and validate on 0.2.0 readers.
+MANIFEST_SCHEMA_VERSION = "0.2.1"
 
 #: First-slice profile: local deployment, blobs included (no WORM delegation).
 PROFILE_LOCAL_FULL = "local-full"
@@ -49,7 +52,9 @@ MemberKind = Literal[
 #: Where a member's bytes came from / where restore puts them back. ``home``
 #: members map 1:1 under the NovaFabric home (0.1.x behaviour); the rest are
 #: archived under ``external/<origin>/`` and restored to their real roots.
-MemberOrigin = Literal["home", "audit", "keyring", "seal-config"]
+#: ``capsule-dir`` is the capsule store named by ``NOVAFABRIC_CAPSULE_DIR`` when
+#: it is not ``<home>/capsules`` (restored under the same rule on the target).
+MemberOrigin = Literal["home", "audit", "keyring", "seal-config", "capsule-dir"]
 
 #: Coverage row status (ADR-0216 D2): what a set does NOT contain is evidence.
 CoverageStatus = Literal["included", "absent", "skipped", "excluded"]

@@ -83,6 +83,18 @@ Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-c
 | 0306 slice 1 | Python functions declared with `record.tool` are captured as `transport: python` tool records and served by mocked replay before the body runs, one-to-one, fail-closed (`tool_result_not_servable`), `--permissive` gated by the safety ladder; per-surface tool counters; indexed tool matcher | `novafabric.capture.record.tool`, `replay_contract.tool_calls_by_surface` / `tool_calls_refused`, `docs/architecture/replay-modes.md#support-matrix` | **experimental** (v0.105.0). Payloads kept only at `forensic`/`air_gapped`; non-JSON results not servable; nested boundaries not servable in v0.105.0 (served since slice 4, unreleased); ~~slice 2~~ shipped (row below), slice 3 (framework seams) planned, ~~slice 4~~ landed unreleased (row below) |
 | 0306 slice 2 | `replay.yaml` `tool_overrides` enforced inside the mocked replay on MCP and `record.tool` (one decision shared with `--dry-run`, pinned dry-run == replay over every override × surface × flag); a capsule's restriction holds even under `--permissive`, its permission needs the operator's ladder flag; a strict replay refuses to start when an `allow: false` cannot be enforced (`ToolOverrideUnenforceable`, exit 3); `--permissive` runs an unmatched MCP call live only with `--allow-unknown-mutation` (behaviour change) | `nova replay` (`--permissive`, `--allow-*`, `--dry-run`), `replay_contract.tool_overrides`, divergence `override_unenforceable` | **experimental** (v0.105.0). Overrides are not enforced in `--mode intervention` (no tool dispatcher); a capsule-supplied class is never used to permit; slice 3 (framework seams) planned; ~~nested coverage, echo check, redact-then-hash for MCP~~ landed unreleased as slice 4 (row below) |
 
+### Landed — v0.107.0 (2026-10-23)
+
+The code-vs-docs defect batch: about 100 defects confirmed by a line-by-line review of the
+documentation against the code, a docs-vs-code audit and four attack reviews, each fixed with a
+test that fails when the fix is reverted. Highlights: the capsule is untrusted input once the
+workload has run (whole-tree sweep, no-follow I/O, root pin); one verifier behind every capsule and
+Evidence Bundle surface; every bundle member signed; every route into production gated; legal
+holds that block erasure, deletion and retention at the moment of action; a fail-closed,
+fork-proof audit trail for seal bypasses. Full list: CHANGELOG `[0.107.0]` and
+[docs/releases/v0.107.0.md](docs/releases/v0.107.0.md). Known limits left after it: the
+open-items table under *Next*.
+
 ### Landed — v0.106.0 (2026-10-22)
 
 | ADR | Slice | Surface | Still open |
@@ -99,6 +111,36 @@ Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-c
 | 0314 | Per-subject DEK envelope encryption at capture makes `nova pii erase` a real crypto-shred (experimental) | `nova capture --pii-subject` | binary/oversize artifacts, in-process capsules |
 | 0315 | Promote signers must chain to a pinned CA; a seal bypass counts only from a policy approver, for its own capsule, by its signed expiry | `nova seal verify\|approve --ca-bundle` | requiring a signed policy when a trust root is pinned |
 | — | `nova verify <bundle>.zip` checks `manifest_hash`, DSSE signatures and subjects; `--public-key` pins the signer. `attest-replay --mode exact` refuses an ineligible run. Every write-permitting replay flag goes through the `replay_mutating` policy | `nova verify`, `nova evidence attest-replay`, `nova replay` | — |
+
+### Next — open items left after the v0.107.0 defect batch
+
+These are known limits left after the defect batch in CHANGELOG `[0.107.0]`. Each is
+**planned** (no implementation yet) unless marked as an owner decision.
+
+| Item | Why it is open | Status |
+|---|---|---|
+| Capsule-scoped legal holds | Holds are registry-wide and a subject's DEK covers all their capsules, so **any** active hold defers every PII erasure | planned |
+| Retention sweep sees `capsule.yaml` capsules | The sweep enumerates `capsule.json` only, so no retention action reaches capsules NovaFabric writes; enabling it starts real deletion for deployments with bindings | owner decision |
+| ~~`nova retention plan/apply` paths under `$NOVAFABRIC_HOME`~~ | **Resolved:** read from `$NOVAFABRIC_HOME/registries/<r>/`, legacy copy still honoured (`nova export-retention` still cwd-relative — open) | resolved |
+| Pin the signer trust list | `NOVAFABRIC_PROMOTE_SIGNERS` / `NOVAFABRIC_HOME` choose the trust list (ADR-0312 Limits); proposal: pin its sha256 in the registry | owner decision |
+| Annotation sign-off keys | `eval/annotation_store.py` still creates a keypair on first use | owner decision (which trust list/roles) |
+| `extra_env` from the environment | `--runner-option extra_env=K=V` puts the value in `nova capture`'s argv; a bare `extra_env=NAME` would copy it from the submitting shell (needs a CLI ADR). The JSON form is **resolved** (parsed strictly) | planned |
+| Capture-level enforcement | `minimal`/`standard` do not reduce capture; `GET /api/policy/capture-level` reports tiers as if enforced | planned |
+| Workload-process capture drops in `capture-health.json` | Drops counted in the workload's child process never reach the capsule's health file | planned |
+| `openai.DefaultAioHttpClient` double network events | httpx2 over aiohttp is recorded by both hooks (one logical call) | planned |
+| Hard links inside a capsule | Not detected by exporters (mitigated by `fs.protected_hardlinks`) | documented limit |
+| Opt-in dual-approval hold release | ADR-0031 §3 promises "dual-approval if configured"; nothing implements it (release is `admin` now) | planned |
+| Erasure replay on restore | `nova pii erase` / the erasure queue write no `RETENTION_ACTION`, so a restore never replays those erasures; receipt paths are absolute | planned |
+| ~~Rollback evidence survives a SQLite→Postgres migration~~ | **Resolved:** `nova migrate-to-postgres` copies `asset_status_history` | resolved |
+| Per-track Alembic version table (ADR-0317, proposed) | Containers share one `alembic_version` table for the metadata and registry tracks, so `nova server start` can refuse with E-SKEW-AHEAD | owner decision |
+| Capture tamper sweep under a live child | A process the workload leaves running can re-plant a link after the sweep (refused, never followed; capture may stop with an error) | documented limit |
+| Readers verify signatures | List and query views show a re-sealed capsule's own payload; only `nova verify` and the radar reject it | planned |
+| `nova seal log verify` CLI read-only | The CLI still opens the log read-write and creates one if missing | planned |
+| `nova seal bypass --notify <email>` | No email transport exists; the signed status is honest (`pending`) | planned |
+| Promote-bundle `--data-dir` default | The CLI defaults to `~/.local/share/novafabric`, `nova serve` to `$NOVAFABRIC_HOME` | planned |
+| ~~`capsule_migration` edge type~~ | **Resolved:** `migration_source` is an additive lineage `edge_type` (ADR-0034 §6) | resolved |
+| Writers never write through a link | `registry/service.py` (`assets.jsonl`) and `energy/_attribution.py` open a capsule path for writing | planned |
+| ~~Collector 500 on an event without `event_type`~~ | **Resolved:** a malformed event is refused with 422 and the batch is not stored | resolved |
 
 ### Next — specified, unclaimed, ready to build
 
@@ -719,14 +761,14 @@ See [Storage Architecture](docs/architecture.md#production-storage-stack-polyglo
 ## Documentation & spec reconciliation (2026-07 as-built audit)
 
 A repo-wide code-vs-docs drift audit (2026-07-23) corrected the documentation to match the
-shipped code. Three items are genuine **code/spec gaps** (not just stale prose) and are tracked
-here for reconciliation:
+shipped code. Three items were found as genuine **code/spec gaps** (not just stale prose); REC-1 and REC-2
+are still open, REC-3 is closed:
 
 | ID | Item | Nature | Action |
 |---|---|---|---|
 | **REC-1** | `parent-child-capsule-v1.md` prose describes an earlier field model (`capsule_role ∈ {STANDALONE,PARENT,WORKER,COORDINATOR}`, `lifecycle_state`/`ACTIVE`) that diverged from its own frozen JSON schema (`{PARENT,CHILD,STANDALONE}` + `distribution_role`, `status`/`RUNNING`). | Doc-vs-own-schema drift; an as-built reconciliation callout was added, but the §2–§4 prose still needs a full pass or a `0.2.1` spec revision. | Reconcile prose to the schema, or cut a `0.2.1` normative revision. |
 | **REC-2** | `pending_parent_timeout`: the accepted spec decision (OQ-02) is **300 s**, but the shipped code (`capsule/orphan.py:98`, `FR-14`) defaults to **86 400 s / 24 h**. | Genuine spec-vs-code **conflict** — the accepted decision and the implementation disagree. | Decide which is correct; amend the ADR/spec **or** the code default so they match. Do not treat either value as settled until then. |
-| **REC-3** | `api/openapi.yaml` is a hand-maintained partial spec documenting ~30 of the ~64 shipped server-mode operations (missing orgs/workspaces/service-accounts/SCIM/SAML/seal/admin-roles/suggest-register groups). | Under-coverage of a shipped surface; `api-reference.md` and the spec's own `info.description` now flag it. | Add an OpenAPI generator (dump `app.openapi()`) or a curated authoring pass so the spec covers all shipped `/v0` routes. |
+| **REC-3** | ~~`api/openapi.yaml` was a hand-maintained partial spec (~30 of ~64 operations).~~ **Resolved in v0.64.0:** the spec is generated from the live server app by `scripts/gen_openapi.py` (`app.openapi()`), so it covers exactly the mounted routes. | Closed. | Regenerate with `uv run python scripts/gen_openapi.py` after any server-route change. |
 
 The at-scale lineage graph backends (KuzuDB/Postgres/AGE/JanusGraph) surfaced by the same audit
 are tracked under **Cluster-scale phases** above.

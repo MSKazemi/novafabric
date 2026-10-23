@@ -8,19 +8,34 @@ if the `mcp` SDK is not installed).
 Design (per ADR-0015): client-wrapper is the primary capture position. Envelope
 fields are built from the boundary inputs (`name`, `arguments`); fully-verbatim
 wire capture is the proxy path's job and lives outside this hook.
+
+Fail-open (ADR-0021): the hooked `call_tool` returns — or raises — exactly what
+the un-hooked call would have. A failure to build or persist the record is
+never raised into the workload; it is counted (`MCPHook.dropped_records`, and
+on the active capture recorder via `EventRecorder.note_drop`) and logged once
+as a structured warning. Under `nova capture` the hook runs in the workload's
+child process; that process hands its recorder's counts to the orchestrator at
+exit (`capture/workload_health.py`, M14), so they reach `capture-health.json`.
 """
 from __future__ import annotations
 
 import functools
+import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
-from novafabric.capture.event_recorder import get_current_writer
+from novafabric.capture.event_recorder import get_current_recorder, get_current_writer
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
+
+logger = logging.getLogger(__name__)
+
+#: The capsule stream an MCP tool-call record is written to.
+_STREAM = "tool-calls.jsonl"
 
 
 def _now() -> str:
@@ -55,6 +70,8 @@ class MCPHook:
         self._original_call_tool: Any = None
         self._original_initialize: Any = None
         self._patched_class: Any = None
+        #: Tool-call records this hook could not persist (fail-open loss count).
+        self.dropped_records = 0
 
     def install(self) -> None:
         try:
@@ -100,25 +117,19 @@ class MCPHook:
                 started = _now()
                 t0 = time.monotonic()
                 request_id = new_ulid()
+                # Only the tool call itself sits inside this try: an exception
+                # here is the user's, recorded and re-raised unchanged. Recording
+                # runs outside it and is fail-open (_record_safely), so a writer
+                # failure can neither replace the result nor the user's error.
                 try:
                     response = await original_call_tool(
                         inner_self, name, arguments, *args, **kwargs
                     )
-                    duration_ms = int((time.monotonic() - t0) * 1000)
-                    hook_self._record_success(
-                        inner_self=inner_self,
-                        name=name,
-                        arguments=arguments,
-                        response=response,
-                        request_id=request_id,
-                        started=started,
-                        finished=_now(),
-                        duration_ms=duration_ms,
-                    )
-                    return response
                 except Exception as exc:
                     duration_ms = int((time.monotonic() - t0) * 1000)
-                    hook_self._record_error(
+                    hook_self._record_safely(
+                        name,
+                        hook_self._record_error,
                         inner_self=inner_self,
                         name=name,
                         arguments=arguments,
@@ -129,6 +140,20 @@ class MCPHook:
                         duration_ms=duration_ms,
                     )
                     raise
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                hook_self._record_safely(
+                    name,
+                    hook_self._record_success,
+                    inner_self=inner_self,
+                    name=name,
+                    arguments=arguments,
+                    response=response,
+                    request_id=request_id,
+                    started=started,
+                    finished=_now(),
+                    duration_ms=duration_ms,
+                )
+                return response
 
             target.call_tool = patched_call_tool
         except (ImportError, AttributeError):
@@ -148,6 +173,48 @@ class MCPHook:
             self._patched_class = None
             self._original_call_tool = None
             self._original_initialize = None
+
+    def _record_safely(
+        self, tool_name: str, record: Callable[..., None], **fields: Any
+    ) -> None:
+        """Run one ``_record_*`` call fail-open (ADR-0021: never block the workload).
+
+        Building or persisting the record may fail — a full disk, a removed
+        capsule directory, a response object whose attributes raise. The loss
+        is counted on :attr:`dropped_records` and on the active capture
+        recorder (``EventRecorder.note_drop``); the first loss per hook logs one
+        structured warning carrying the exception *type* only (its message may
+        echo payload). Never raises ``Exception``.
+        """
+        try:
+            record(**fields)
+        except Exception as exc:  # noqa: BLE001 — fail-open is the invariant
+            self._note_record_dropped(tool_name, exc)
+
+    def _note_record_dropped(self, tool_name: str, exc: Exception) -> None:
+        try:
+            self.dropped_records += 1
+            recorder = get_current_recorder()
+            if recorder is not None:
+                recorder.note_drop(_STREAM)
+            if self.dropped_records == 1:
+                logger.warning(
+                    "capture fail-open: MCP tool-call record dropped "
+                    "(tool %s, %s); the call's result or exception reached the "
+                    "workload unchanged. "
+                    "Further drops by this hook are counted, not logged.",
+                    tool_name,
+                    type(exc).__name__,
+                    extra={
+                        "nova_event": "capture.record_dropped",
+                        "hook": "mcp",
+                        "stream": _STREAM,
+                        "tool_name": tool_name,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+        except Exception:  # noqa: BLE001 — pragma: no cover, last-resort guard
+            pass
 
     def _build_envelope(
         self, name: str, arguments: dict[str, Any] | None, request_id: str

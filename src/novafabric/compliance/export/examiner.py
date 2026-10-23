@@ -34,7 +34,15 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import (
+    read_capsule_file,
+    read_required_capsule_file,
+    read_required_capsule_member,
+    refuse_capsule_links,
+)
 from novafabric._hashutil import sha256_file_hex, sha256_hex
+
+_OPERATION = "an examiner BagIt export"
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -60,10 +68,9 @@ def _now_iso_full() -> str:
 
 def _load_manifest(capsule_dir: Path) -> dict[str, Any]:
     """Load capsule.yaml from *capsule_dir* (or return empty dict if absent)."""
-    path = capsule_dir / "capsule.yaml"
-    if not path.exists():
-        return {}
-    data = yaml.safe_load(path.read_text())
+    # Present but unusable (a link, FIFO, directory) raises CapsuleRequiredFileError.
+    text = read_required_capsule_member(capsule_dir / "capsule.yaml", operation="compliance export")
+    data = yaml.safe_load(text) if text is not None else None
     return data if isinstance(data, dict) else {}
 
 
@@ -132,29 +139,43 @@ class BagItExporter:
 
         Returns:
             Path to the written ZIP file.
+
+        Raises:
+            CapsuleLinkError: the capsule holds a symbolic link. Nothing is written.
         """
-        output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{self.capsule_id}-bag.zip"
+
+        # Never follow a link: a planted capsule.yaml -> ~/.ssh/id_rsa used to be
+        # bagged as payload. Any link in the capsule refuses the export before
+        # anything is written.
+        refuse_capsule_links(self.data_dir, operation=_OPERATION)
 
         # Collect payload files from the capsule directory
         payload: dict[str, bytes] = {}  # filename (relative to data/) -> bytes
 
         # Always include capsule manifest if present
+        # (absent: not bagged; present but not a regular file: CapsuleRequiredFileError,
+        # never a bag that silently lacks its manifest)
         for candidate in ["capsule.yaml", "capsule-manifest.json"]:
-            src = self.data_dir / candidate
-            if src.exists():
-                payload[candidate] = src.read_bytes()
+            manifest_bytes = read_required_capsule_file(
+                self.data_dir, candidate, operation=_OPERATION
+            )
+            if manifest_bytes is not None:
+                payload[candidate] = manifest_bytes
 
         # Include evidence bundle zip if present
         for zip_path in sorted(self.data_dir.glob("*.zip")):
             if zip_path != output_path:
-                payload[zip_path.name] = zip_path.read_bytes()
+                payload[zip_path.name] = read_capsule_file(
+                    self.data_dir, zip_path.name, operation=_OPERATION
+                )
 
         # Include audit report
-        if include_audit_report:
-            audit_path = self.data_dir / "audit-report.json"
-            if audit_path.exists():
-                payload["audit-report.json"] = audit_path.read_bytes()
+        if include_audit_report and (self.data_dir / "audit-report.json").is_file():
+            payload["audit-report.json"] = read_capsule_file(
+                self.data_dir, "audit-report.json", operation=_OPERATION
+            )
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # Compute checksums
         manifest_lines: list[str] = []
@@ -300,11 +321,7 @@ class PCCPExporter:
         capsule_dir = self.data_dir / capsule_id
         if not capsule_dir.exists():
             # Try treating data_dir as the capsule dir directly for the given ID
-            manifest_path = self.data_dir / "capsule.yaml"
-            if manifest_path.exists():
-                data = yaml.safe_load(manifest_path.read_text())
-                return data if isinstance(data, dict) else {}
-            return {}
+            return _load_manifest(self.data_dir)
         return _load_manifest(capsule_dir)
 
     def _compute_modification_summary(self) -> str:
@@ -384,8 +401,9 @@ _ISO42001_CONTROLS: dict[str, dict[str, str]] = {
     "8.1": {
         "title": "Operational planning and control",
         "narrative": (
-            "Runs are captured deterministically. Capsules include tool-permission "
-            "events, redaction proof, and OTel GenAI spans. Replay modes (forensic, "
+            "Runs are captured deterministically. Capsules include redaction "
+            "proof, and OTel GenAI spans when requested; tool-permission events are "
+            "not captured by this version. Replay modes (forensic, "
             "mocked, semantic) allow operational verification."
         ),
     },
@@ -566,12 +584,16 @@ class ISO42001Exporter:
 
         # Collect capsule IDs in the audit period
         for child in sorted(self.data_dir.iterdir()):
-            if not child.is_dir():
+            if child.is_symlink() or not child.is_dir():
+                continue  # a scan never lists a linked entry
+            # Absent: not a capsule. Present but unusable: CapsuleRequiredFileError,
+            # so the audit-period package never silently omits a capsule.
+            capsule_text = read_required_capsule_member(
+                child / "capsule.yaml", operation="compliance export"
+            )
+            if capsule_text is None:
                 continue
-            manifest_path = child / "capsule.yaml"
-            if not manifest_path.exists():
-                continue
-            data = yaml.safe_load(manifest_path.read_text())
+            data = yaml.safe_load(capsule_text)
             if not isinstance(data, dict):
                 continue
             created_at_raw = data.get("created_at", "")
@@ -595,12 +617,16 @@ class ISO42001Exporter:
             return index
 
         for child in sorted(self.data_dir.iterdir()):
-            if not child.is_dir():
+            if child.is_symlink() or not child.is_dir():
+                continue  # a scan never lists a linked entry
+            # Absent: not a capsule. Present but unusable: CapsuleRequiredFileError,
+            # so the audit-period package never silently omits a capsule.
+            capsule_text = read_required_capsule_member(
+                child / "capsule.yaml", operation="compliance export"
+            )
+            if capsule_text is None:
                 continue
-            manifest_path = child / "capsule.yaml"
-            if not manifest_path.exists():
-                continue
-            data = yaml.safe_load(manifest_path.read_text())
+            data = yaml.safe_load(capsule_text)
             if not isinstance(data, dict):
                 continue
             created_at_raw = data.get("created_at", "")

@@ -47,6 +47,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
 from novafabric.capture.media import iter_media_parts
 
 SCHEMA_VERSION = "0.1.0"
@@ -248,10 +249,12 @@ def _blob_bytes(capsule_dir: Path, part: dict[str, Any]) -> bytes | None:
     blob_ref = part.get("blob_ref")
     if not isinstance(blob_ref, str) or not blob_ref:
         return None
-    path = capsule_dir / blob_ref
-    if not path.is_file():
+    # blob_ref comes from the capsule: an absolute path, a ``..`` or a link must
+    # not make the diff read a file outside it (novafabric._capsule_fs).
+    try:
+        return read_capsule_file(capsule_dir, blob_ref, operation="nova diff")
+    except (ValueError, OSError, CapsuleEntryError):
         return None
-    return path.read_bytes()
 
 
 def _perceptual_pair(

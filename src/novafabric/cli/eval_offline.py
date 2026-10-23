@@ -39,6 +39,7 @@ from rich.console import Console
 
 from novafabric.cli._output import emit_json
 from novafabric.eval.offline import (
+    ContractSchemaError,
     MetamorphicSpecError,
     run_contract,
     run_coverage,
@@ -63,7 +64,11 @@ def offline_cmd(
         str | None, typer.Option(help="Comma-separated declared tools (coverage).")
     ] = None,
     schema: Annotated[
-        Path | None, typer.Option(help="JSON-schema file (contract).")
+        Path | None,
+        typer.Option(
+            help="JSON-schema file (contract). Validated offline: a $ref outside the "
+            "file is never fetched and exits 2.",
+        ),
     ] = None,
     spec: Annotated[
         Path | None,
@@ -91,7 +96,10 @@ def offline_cmd(
         if schema is None:
             raise typer.BadParameter("contract requires --schema")
         schema_obj = json.loads(schema.read_text(encoding="utf-8"))
-        score = run_contract(capsule, schema_obj, field=field, records_file=records_file)
+        try:
+            score = run_contract(capsule, schema_obj, field=field, records_file=records_file)
+        except ContractSchemaError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--schema") from exc
     else:  # metamorphic
         if spec is None:
             raise typer.BadParameter("metamorphic requires --spec")

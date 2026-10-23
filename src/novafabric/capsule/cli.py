@@ -31,6 +31,7 @@ import typer
 from rich.console import Console
 from rich.tree import Tree
 
+from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
 from novafabric.capsule.ulid_util import new_ulid
 
 console = Console()
@@ -94,13 +95,17 @@ def validate_distributed_cmd(
         console.print(f"[red]x[/red] Not a directory: {capsule_dir}")
         raise typer.Exit(code=1)
 
-    manifest_path = capsule_dir / "capsule.json"
-    if not manifest_path.exists():
+    # Never through a link or into a FIFO: present but unusable raises
+    # CapsuleRequiredFileError (exit 2), never a verdict on a stand-in.
+    manifest_text = read_required_capsule_member(
+        capsule_dir / "capsule.json", operation="nova run validate-distributed"
+    )
+    if manifest_text is None:
         console.print(f"[red]x[/red] capsule.json not found in {capsule_dir}")
         raise typer.Exit(code=1)
 
     if not parent_run_id:
-        data = json.loads(manifest_path.read_text())
+        data = json.loads(manifest_text)
         parent_run_id = data.get("run_id", "unknown")
 
     validator = DistributedCapsuleValidator(capsule_dir)
@@ -155,10 +160,13 @@ def show_cmd(
         raise typer.Exit(code=1)
 
     # Determine spool dir and run_id
-    manifest_path = capsule_dir / "capsule.json"
-    if manifest_path.exists() and not run_id:
+    manifest_text = (
+        None if run_id
+        else read_required_capsule_member(capsule_dir / "capsule.json", operation="nova run show")
+    )
+    if manifest_text is not None and not run_id:
         # capsule_dir IS the capsule dir itself
-        data = json.loads(manifest_path.read_text())
+        data = json.loads(manifest_text)
         run_id = data.get("run_id", "")
         spool_dir = capsule_dir.parent
     elif run_id:
@@ -292,7 +300,10 @@ def lineage_cmd(
             lineage_path = entry / "lineage.jsonl"
             if not lineage_path.exists():
                 continue
-            for line in lineage_path.read_text(encoding="utf-8").splitlines():
+            capsule_text = (
+                read_capsule_member_or_none(lineage_path, operation="nova capsule") or ""
+            )
+            for line in capsule_text.splitlines():
                 line = line.strip()
                 if not line:
                     continue

@@ -510,9 +510,25 @@ export interface VerifyResult {
   valid: boolean;
   signature_ok: boolean;
   timestamp_ok: boolean | null;
+  // ADR-0297 Am.2: only 'anchored' (tsa_ca_certs) is trusted time.
+  timestamp_trust?: 'anchored' | 'unanchored' | 'absent' | 'invalid';
   log_integrity_ok: boolean | null;
   seal_available: boolean;
   errors: string[];
+  // M11: the same recipe as `nova verify <bundle>.zip`. `valid` proves consistency;
+  // only signer_trust === 'anchored' proves the signer is an operator-trusted key.
+  manifest_hash_ok?: boolean;
+  artifacts_ok?: boolean;
+  complete?: boolean;
+  no_extras?: boolean;
+  subjects_ok?: boolean;
+  attestations_verified?: number;
+  signer_trust?: 'anchored' | 'unanchored' | 'untrusted' | 'none';
+  signer_fingerprints?: string[];
+  // r8: false for a legacy bundle whose members no signature covers.
+  members_signed?: boolean;
+  unsigned_members?: string[];
+  run_ids?: string[];
 }
 
 export interface EvalHistoryResponse {
@@ -767,7 +783,12 @@ export interface CapsuleVerifyResult {
   capsule_id?: string;
   signature_ok?: boolean;
   timestamp_ok?: boolean;
+  // ADR-0297 Am.2: timestamp_ok is token integrity; only 'anchored' is trusted time.
+  timestamp_trust?: 'anchored' | 'unanchored' | 'absent' | 'invalid';
   log_integrity_ok?: boolean;
+  log_inclusion?: string;
+  sealer_log?: string;
+  unanchored_claims?: string[];
   valid?: boolean;
   errors?: string[];
   message?: string;
@@ -1042,6 +1063,15 @@ export interface SafetyCaseResponse {
   nodes: SafetyCaseNode[];
   residual_risk: unknown;
   case_hash: string;
+}
+
+export interface CaptureLevelInfo {
+  current_level: string;
+  env_var: string;
+  tiers: Record<string, string[]>;
+  allowlist_enforced?: boolean;
+  enforcement?: Record<string, { enforced: boolean; effect: string }>;
+  note: string;
 }
 
 export const api = {
@@ -1476,7 +1506,10 @@ export const api = {
 
   // ---------- DB-CAP-1: Capture-level policy (v0.18.0 — cap-004) ----------
   captureLevelGet: () =>
-    request<{ current_level: string; env_var: string; tiers: Record<string, string[]>; note: string }>(
+    // `tiers` is the designed field allowlist — NOT applied by any capture path
+    // (`allowlist_enforced: false`); `enforcement[level].enforced` says whether choosing
+    // the level changes capture today (only forensic / air_gapped do — ADR-0066 Am.1).
+    request<CaptureLevelInfo>(
       '/api/policy/capture-level'
     ),
   captureLevelSet: (level: string) =>
@@ -1486,8 +1519,9 @@ export const api = {
 
   // ---------- DB-ERA-1: GDPR erasure (real execution per ADR-0210 — experimental) ----------
   erasureRequest: (subject_id: string, reason: string = 'gdpr_art_17', confirmed = true) =>
-    // A FAILED erasure is an HTTP 404/500 with ok:false and a `detail` string, so postJson throws
-    // ServeApiError (shown by GdprErasurePanel). A resolved value is therefore ok:true; `erased` is true
+    // A FAILED erasure is an HTTP 404/500 with ok:false and a `detail` string, and a HELD one (an
+    // active legal hold kept the DEK, GDPR Art.17(3)(e)) is a 409 `legal_hold_active` of the same
+    // shape, so postJson throws ServeApiError (shown by GdprErasurePanel). A resolved value is therefore ok:true; `erased` is true
     // only for COMPLETED (a DEFERRED retention-window request erases nothing yet).
     postJson<{ ok: true; erased: boolean; cap003_enabled: boolean; crypto_shred_available?: boolean; reattached: boolean; request: { request_id: string; subject_sha256: string; state: string; reason: string; requested_at: string; executed_at: string | null; capsule_ids: string[]; receipt: Record<string, unknown> | null; receipt_sha256: string | null; error_class: string | null; error_detail: string | null } }>(
       '/api/compliance/erasure/request', { subject_id, reason, confirmed }

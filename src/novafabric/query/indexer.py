@@ -38,14 +38,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import yaml
-
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_text
+from novafabric._capsule_manifest import (
+    MANIFEST_NAMES,
+    SEALED_ENVELOPE,
+    CapsuleManifestError,
+    read_capsule_manifest,
+)
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.eval.scores import SCORES_FILENAME, ScoreValueType, read_scores
 from novafabric.query.errors import QueryIndexError
 from novafabric.query.model import LOG_LEVEL_ALIASES, LOG_LEVEL_RANKS
 
-_MANIFEST_NAMES = ("capsule.yaml", "capsule.json")
+_MANIFEST_NAMES = MANIFEST_NAMES
 
 MODEL_CALLS_FILENAME = "model-calls.jsonl"
 
@@ -56,6 +61,7 @@ MODEL_CALLS_FILENAME = "model-calls.jsonl"
 #: neither the directory mtime nor any signed-for file). Extend this whenever the
 #: indexer learns to read something new.
 INDEXED_FILENAMES: tuple[str, ...] = (
+    SEALED_ENVELOPE,
     *_MANIFEST_NAMES,
     MODEL_CALLS_FILENAME,
     SCORES_FILENAME,
@@ -166,19 +172,17 @@ def _opt_num(value: Any) -> float | None:
 
 
 def _load_manifest(capsule_dir: Path) -> dict[str, Any] | None:
-    for name in _MANIFEST_NAMES:
-        path = capsule_dir / name
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-            data = json.loads(text) if name.endswith(".json") else yaml.safe_load(text)
-        except (OSError, ValueError, yaml.YAMLError) as exc:
-            raise QueryIndexError(f"{path}: unreadable capsule manifest: {exc}") from exc
-        if not isinstance(data, dict):
-            raise QueryIndexError(f"{path}: capsule manifest is not a mapping")
-        return data
-    return None
+    """The capsule's manifest — the signed payload when sealed (ADR-0251).
+
+    A sealed capsule is indexed from ``.seal/manifest.dsse``, never from an
+    on-disk ``capsule.yaml``/``capsule.json`` the seal may not cover: a
+    substituted manifest must not change the status, asset or run id served.
+    """
+    try:
+        found = read_capsule_manifest(capsule_dir, operation="nova query")
+    except CapsuleManifestError as exc:
+        raise QueryIndexError(f"{capsule_dir}: unreadable capsule manifest: {exc}") from exc
+    return None if found is None else found.data
 
 
 def _variant_of(manifest: dict[str, Any], metadata: dict[str, Any]) -> str | None:
@@ -208,8 +212,12 @@ def _model_call_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[CallRow]:
     path = capsule_dir / MODEL_CALLS_FILENAME
     rows: list[CallRow] = []
     records: list[dict[str, Any]] = []
-    if path.is_file():
-        for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    if path.is_file() or path.is_symlink():
+        try:
+            text = read_capsule_text(capsule_dir, MODEL_CALLS_FILENAME, operation="nova query")
+        except CapsuleEntryError as exc:
+            raise QueryIndexError(f"{path}: not read: {exc}") from exc
+        for line_no, raw in enumerate(text.splitlines(), start=1):
             line = raw.strip()
             if not line:
                 continue
@@ -273,10 +281,10 @@ def _model_call_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[CallRow]:
 
 def _score_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[ScoreRow]:
     path = capsule_dir / SCORES_FILENAME
-    if not path.is_file():
+    if not (path.is_file() or path.is_symlink()):
         return []
     try:
-        scores = read_scores(path)
+        scores = read_scores(path, capsule_member=True)
     except ValueError as exc:
         raise QueryIndexError(f"{path}: invalid scores.jsonl: {exc}") from exc
     rows: list[ScoreRow] = []
@@ -345,8 +353,8 @@ def find_capsule(capsule_dir: str | Path, run_id: str) -> Path | None:
     if not base.is_dir():
         raise QueryIndexError(f"capsule directory not found: {base}")
     for child in sorted(base.iterdir()):
-        if not child.is_dir():
-            continue
+        if child.is_symlink() or not child.is_dir():
+            continue  # a scan never lists a linked entry (novafabric._capsule_fs)
         manifest = _load_manifest(child)
         if manifest is None:
             continue
@@ -358,8 +366,9 @@ def find_capsule(capsule_dir: str | Path, run_id: str) -> Path | None:
 def scan_capsule_dir(capsule_dir: str | Path) -> IndexRows:
     """Scan a local capsule directory into index rows.
 
-    Every immediate subdirectory containing a ``capsule.yaml`` /
-    ``capsule.json`` manifest is one capsule; anything else is ignored. An
+    Every immediate subdirectory containing a manifest — the signed payload of
+    ``.seal/manifest.dsse`` for a sealed capsule, else ``capsule.yaml`` /
+    ``capsule.json`` — is one capsule; anything else is ignored. An
     unreadable manifest or record fails with a clear :class:`QueryIndexError`
     — never a silent wrong answer (ADR-0129 D3). An empty or capsule-free
     directory yields zero rows (not an error).
@@ -371,8 +380,8 @@ def scan_capsule_dir(capsule_dir: str | Path) -> IndexRows:
     score_rows: list[ScoreRow] = []
     capsule_count = 0
     for child in sorted(base.iterdir()):
-        if not child.is_dir():
-            continue
+        if child.is_symlink() or not child.is_dir():
+            continue  # a scan never lists a linked entry (novafabric._capsule_fs)
         scanned = scan_capsule(child)
         if scanned is None:
             continue

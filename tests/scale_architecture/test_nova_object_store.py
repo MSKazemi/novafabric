@@ -18,8 +18,13 @@ from novafabric.storage.nova_object_store import (
 
 def _mock_client_with_object_lock_enabled() -> MagicMock:
     client = MagicMock()
+    # M8: COMPLIANCE is read from the default retention rule; "Enabled" alone
+    # (no rule) is "none", which this fixture used to be reported as COMPLIANCE.
     client.get_bucket_object_lock_configuration.return_value = {
-        "ObjectLockConfiguration": {"ObjectLockEnabled": "Enabled"}
+        "ObjectLockConfiguration": {
+            "ObjectLockEnabled": "Enabled",
+            "Rule": {"DefaultRetention": {"Mode": "COMPLIANCE", "Days": 30}},
+        }
     }
     return client
 

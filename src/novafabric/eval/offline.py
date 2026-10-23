@@ -39,8 +39,8 @@ import string
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-import jsonschema  # type: ignore[import-untyped]
-
+from novafabric._capsule_fs import read_required_capsule_text
+from novafabric._jsonschema_offline import SchemaRefUnresolved, offline_validator
 from novafabric.eval.card import EvalCard, card_digest
 from novafabric.eval.scores import Score, ScoreSource, ScoreValueType
 from novafabric.evidence.merkle import capsule_merkle_root
@@ -59,15 +59,33 @@ METAMORPHIC_CARD = EvalCard(
 )
 
 
+class ContractSchemaError(ValueError):
+    """A ``run_contract`` schema could not be evaluated offline.
+
+    Raised when validation reaches a ``$ref`` outside the schema document (an
+    ``http(s)://``, ``file://`` or ``$id``-relative URI) or a dangling local
+    pointer. Such refs are never retrieved, so the contract cannot be scored
+    and no misleading fraction is emitted.
+    """
+
+
 def _capsule_subject(capsule_dir: Path) -> str:
     return capsule_merkle_root(capsule_dir)
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
+def _read_jsonl(capsule_dir: Path, rel: str) -> list[dict[str, Any]]:
+    """Records of capsule stream *rel*; ``[]`` only when it is absent.
+
+    *rel* is opened relative to the capsule and refused if it leaves it. A
+    stream that is present but unusable (a link, FIFO, directory) raises
+    :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`: no score is
+    emitted over records nobody read (an empty record set scores 1.0).
+    """
+    text = read_required_capsule_text(capsule_dir, rel, operation="offline eval")
+    if text is None:
         return []
     records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if line:
             records.append(json.loads(line))
@@ -100,7 +118,7 @@ def run_coverage(
     capsule_dir = Path(capsule_dir)
     exercised = {
         rec.get("tool_name")
-        for rec in _read_jsonl(capsule_dir / "tool-calls.jsonl")
+        for rec in _read_jsonl(capsule_dir, "tool-calls.jsonl")
         if rec.get("tool_name") is not None
     }
     declared = list(declared_tools)
@@ -122,18 +140,27 @@ def run_contract(
     """Fraction of records whose ``field`` satisfies *schema* (zero-token).
 
     A record missing ``field`` counts as a contract failure. With no records the score is
-    vacuously ``1.0``. Validation uses the bundled ``jsonschema`` (no model call).
+    vacuously ``1.0``. Validation uses the bundled ``jsonschema`` (no model call) and is
+    offline: a ``$ref`` outside the schema document is never retrieved. Reaching one (or a
+    dangling local pointer) raises :class:`ContractSchemaError` instead of emitting a score.
     """
     capsule_dir = Path(capsule_dir)
-    records = _read_jsonl(capsule_dir / records_file)
+    records = _read_jsonl(capsule_dir, records_file)
     if not records:
         return _numeric_score(capsule_dir, CONTRACT_CARD, name, 1.0)
-    validator = jsonschema.Draft202012Validator(schema)
+    validator = offline_validator(schema)
     valid = 0
     for rec in records:
         if field not in rec:
             continue
-        if validator.is_valid(rec[field]):
+        try:
+            conforms = validator.is_valid(rec[field])
+        except SchemaRefUnresolved as exc:
+            raise ContractSchemaError(
+                f"contract schema $ref not retrieved (offline-only; refs outside the "
+                f"schema document are never fetched): {exc}"
+            ) from exc
+        if conforms:
             valid += 1
     return _numeric_score(capsule_dir, CONTRACT_CARD, name, valid / len(records))
 
@@ -262,7 +289,7 @@ def run_metamorphic_spec(
     output_field = str(spec.get("output_field", "output"))
     records_file = str(spec.get("records_file", "tool-calls.jsonl"))
 
-    records = _read_jsonl(capsule_dir / records_file)
+    records = _read_jsonl(capsule_dir, records_file)
     groups: dict[str, list[Any]] = {}
     for rec in records:
         if input_field not in rec or output_field not in rec:

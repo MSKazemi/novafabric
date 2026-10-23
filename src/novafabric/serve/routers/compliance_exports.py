@@ -48,6 +48,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from novafabric.serve.capsule_loader import (
+    confined_capsule_root,
     discover_capsule_dirs,
     load_capsule_manifest,
 )
@@ -598,6 +599,10 @@ def build_compliance_exports_router(
             raise HTTPException(status_code=400, detail="invalid run_id")
         candidate = capsule_dir / run_id
         if candidate.is_dir() and (candidate / "capsule.yaml").exists():
+            if confined_capsule_root(candidate, capsule_dir) is None:
+                raise HTTPException(
+                    status_code=403, detail="run is a symlink outside the read roots"
+                )
             return
         for d in discover_capsule_dirs(capsule_dir):
             try:

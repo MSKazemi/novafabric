@@ -1,7 +1,8 @@
 """Alembic env.py for the SQLite (dev-only) migration track.
 
-Reads NOVAFABRIC_DB_PATH from the environment; defaults to
-$NOVAFABRIC_HOME/metadata.db (default ~/.novafabric) when unset.
+Reads NOVAFABRIC_METADATA_DB_PATH from the environment; defaults to
+$NOVAFABRIC_HOME/metadata.db (default ~/.novafabric) when unset. NOVAFABRIC_DB_PATH
+names the registry DB and is not read here (L20).
 """
 from __future__ import annotations
 
@@ -16,9 +17,7 @@ config = context.config  # noqa: F841 — Alembic expects this name to be access
 
 
 def get_url() -> str:
-    db_path = os.environ.get(
-        "NOVAFABRIC_DB_PATH", str(_nf_paths.nova_home() / "metadata.db")
-    )
+    db_path = str(_nf_paths.metadata_db_path())
     # A fresh custom NOVAFABRIC_HOME does not exist yet and sqlite will not
     # create the parent directory, so create it before connecting.
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)

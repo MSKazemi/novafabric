@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from novafabric._capsule_fs import read_required_capsule_member, read_required_capsule_text
 from novafabric.capture.record_roles import logical_model_calls
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -183,11 +184,19 @@ class CapsuleNotFoundError(FileNotFoundError):
     """Raised when the capsule directory or its manifest cannot be read."""
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
+def _read_jsonl(capsule_dir: Path, ref: str) -> list[dict[str, Any]]:
+    """Records of stream *ref* in *capsule_dir*; ``[]`` only when it is absent.
+
+    *ref* comes from the manifest, so it is opened relative to the capsule and
+    refused if it leaves it. A stream that is present but unusable raises
+    :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`: a diagnosis never
+    runs on a silently missing stream.
+    """
+    text = read_required_capsule_text(capsule_dir, ref, operation="nova diagnose")
+    if text is None:
         return []
     out: list[dict[str, Any]] = []
-    for line in path.read_text().splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -257,7 +266,7 @@ def _load_steps(capsule_dir: Path, manifest: dict[str, Any]) -> list[Step]:
     for ref, kind in sources:
         if not isinstance(ref, str):
             continue
-        records = _read_jsonl(capsule_dir / ref)
+        records = _read_jsonl(capsule_dir, ref)
         if kind == "model":
             # ADR-0305: a transport record is a wire attempt, not a step.
             records = logical_model_calls(records)
@@ -328,9 +337,12 @@ def attribute_failure(
     """
     capsule_dir = Path(capsule_dir)
     manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
+    # Absent: CapsuleNotFoundError. Present but unusable (a link, FIFO,
+    # directory): CapsuleRequiredFileError. Never a verdict on an empty manifest.
+    manifest_text = read_required_capsule_member(manifest_path, operation="nova diagnose")
+    if manifest_text is None:
         raise CapsuleNotFoundError(f"No capsule.yaml under {capsule_dir}")
-    manifest = yaml.safe_load(manifest_path.read_text()) or {}
+    manifest = yaml.safe_load(manifest_text) or {}
     run_id = str(manifest.get("run_id", capsule_dir.name))
     status = str(manifest.get("status", "unknown"))
 

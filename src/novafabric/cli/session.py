@@ -582,7 +582,7 @@ def replay_cmd(
             help=(
                 "Base directory for replay output (per-turn replay capsules "
                 "plus the session replay result). Defaults to "
-                "./.novafabric/replays."
+                "$NOVAFABRIC_HOME/replays."
             ),
         ),
     ] = None,
@@ -643,13 +643,13 @@ def replay_cmd(
 
     Exit code is 0 only when the whole-session verdict is 'reproduced'.
     """
-    from novafabric._paths import default_capsule_dir
+    from novafabric._paths import default_capsule_dir, default_replays_dir
     from novafabric.capture._ulid import new_ulid
 
     if capsule_dir is None:
         capsule_dir = default_capsule_dir()
     pins = _parse_turn_modes(turn_mode or [])
-    base = output_dir or (Path.cwd() / ".novafabric" / "replays")
+    base = output_dir or default_replays_dir()
     try:
         if dry_run:
             plan = plan_session_replay(

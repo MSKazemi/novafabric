@@ -62,6 +62,15 @@ describe('IntegrityPanel', () => {
       .toHaveTextContent('Sealed, but not verifiable here.');
   });
 
+  it('shows the checks when the server verified from the capsule alone', async () => {
+    const v = await verdictFor({
+      sealed: true, configured: false, signature_ok: true, timestamp_ok: true,
+      log_integrity_ok: true, valid: true, message: 'verified from the capsule alone',
+    });
+    expect(v).toHaveTextContent('Seal verified');
+    expect(screen.getByTestId('integrity-scope')).toHaveTextContent('capsule alone');
+  });
+
   it('names the failing checks', async () => {
     const v = await verdictFor({
       sealed: true, configured: true, signature_ok: true, timestamp_ok: false,

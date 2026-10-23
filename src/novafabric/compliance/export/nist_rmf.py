@@ -29,6 +29,20 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import (
+    is_capsule_regular_file,
+    read_capsule_member_or_none,
+    read_required_capsule_member,
+)
+from novafabric.compliance.capture_coverage import (
+    NOT_CAPTURED_REASON,
+    TOOL_PERMISSION_EVENTS_FILE,
+    TOOL_PERMISSION_EVENTS_LEGACY_FILE,
+)
+
+#: ``RMFMetric.measurement_method`` for evidence this version does not capture.
+NOT_CAPTURED_METHOD = "not_captured"
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -70,6 +84,9 @@ class NISTRMFReport(BaseModel):
     risk_level: Literal["low", "medium", "high", "critical"] = "medium"
     completeness: str = "partial"
     missing_evidence: list[str] = Field(default_factory=list)
+    #: Evidence files this version reads but never writes (L18) — unscored, and
+    #: never counted in ``missing_evidence`` or as a non-compliant metric.
+    not_captured_evidence: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +173,9 @@ class NISTAIRMFReporter:
             risk_level=risk_level,
             completeness=completeness,
             missing_evidence=missing,
+            not_captured_evidence=[
+                m.data_source for m in metrics if m.measurement_method == NOT_CAPTURED_METHOD
+            ],
         )
 
     def export_json(self, report: NISTRMFReport, output_path: Path) -> Path:
@@ -180,7 +200,10 @@ class NISTAIRMFReporter:
         audit_path = capsule_dir / "audit_coverage.json"
         if audit_path.exists():
             try:
-                data = json.loads(audit_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(audit_path, operation="compliance export") or ""
+                )
+                data = json.loads(capsule_text)
                 coverage = data.get("coverage_fraction", 0.0)
                 metrics.append(
                     RMFMetric(
@@ -230,25 +253,41 @@ class NISTAIRMFReporter:
         # MP-2.1: Tool permission events captured.
         # The capture pipeline writes the hyphenated name; accept the legacy
         # underscore form too for older capsules.
-        tool_events_path = capsule_dir / "tool-permission-events.jsonl"
-        if not tool_events_path.exists():
-            tool_events_path = capsule_dir / "tool_permission_events.jsonl"
-        has_tool_events = tool_events_path.exists()
-        if not has_tool_events:
-            missing.append("tool-permission-events.jsonl")
-        metrics.append(
-            RMFMetric(
-                metric_id="MP-2.1",
-                name="Tool Permission Observability",
-                rmf_function="MAP",
-                risk_category="safety",
-                value=1.0 if has_tool_events else 0.0,
-                measurement_method="file_presence",
-                data_source="tool-permission-events.jsonl",
-                threshold=0.5,
-                compliant=has_tool_events,
-            )
+        # L18: no NovaFabric producer writes this stream, so its absence is
+        # "not captured by this version" — unscored, never non-compliant.
+        has_tool_events = any(
+            is_capsule_regular_file(capsule_dir, name)
+            for name in (TOOL_PERMISSION_EVENTS_FILE, TOOL_PERMISSION_EVENTS_LEGACY_FILE)
         )
+        if has_tool_events:
+            metrics.append(
+                RMFMetric(
+                    metric_id="MP-2.1",
+                    name="Tool Permission Observability",
+                    rmf_function="MAP",
+                    risk_category="safety",
+                    value=1.0,
+                    measurement_method="file_presence",
+                    data_source=TOOL_PERMISSION_EVENTS_FILE,
+                    threshold=0.5,
+                    compliant=True,
+                )
+            )
+        else:
+            metrics.append(
+                RMFMetric(
+                    metric_id="MP-2.1",
+                    name="Tool Permission Observability",
+                    rmf_function="MAP",
+                    risk_category="safety",
+                    value=None,
+                    measurement_method=NOT_CAPTURED_METHOD,
+                    data_source=TOOL_PERMISSION_EVENTS_FILE,
+                    threshold=0.5,
+                    compliant=None,
+                    notes=NOT_CAPTURED_REASON,
+                )
+            )
 
         # MP-2.2: Capture level adequacy.
         capture_level = manifest.get("capture_level", "standard")
@@ -280,7 +319,10 @@ class NISTAIRMFReporter:
         eval_path = capsule_dir / "eval_result.json"
         if eval_path.exists():
             try:
-                data = json.loads(eval_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(eval_path, operation="compliance export") or ""
+                )
+                data = json.loads(capsule_text)
                 eval_metrics = data.get("metrics", [])
                 if eval_metrics:
                     # Normalise first numeric metric as primary performance score.
@@ -320,7 +362,11 @@ class NISTAIRMFReporter:
         regression_path = capsule_dir / "regression_report.json"
         if regression_path.exists():
             try:
-                data = json.loads(regression_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(regression_path, operation="compliance export")
+                    or ""
+                )
+                data = json.loads(capsule_text)
                 reg_detected = data.get("regression_detected", True)
                 metrics.append(
                     RMFMetric(
@@ -355,7 +401,10 @@ class NISTAIRMFReporter:
             redaction_path = capsule_dir / "redaction_manifest.json"
         if redaction_path.exists():
             try:
-                data = json.loads(redaction_path.read_text())
+                capsule_text = (
+                    read_capsule_member_or_none(redaction_path, operation="compliance export") or ""
+                )
+                data = json.loads(capsule_text)
                 entries = data.get("entries", data.get("redacted_items", []))
                 # Presence of a redaction manifest is itself the evidence; the
                 # rate is the share of detections that carry a redaction record.
@@ -419,10 +468,14 @@ class NISTAIRMFReporter:
         return "critical"
 
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
-        manifest_path = capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
+        # Absent manifest = no data. A manifest that is present but is not a
+        # readable regular file (a directory, link, FIFO) is an error, never an
+        # empty export: read_required_capsule_member raises for it.
+        text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="compliance export"
+        )
+        if text is None:
             return {}
         import yaml
 
-        with open(manifest_path) as fh:
-            return yaml.safe_load(fh) or {}
+        return yaml.safe_load(text) or {}

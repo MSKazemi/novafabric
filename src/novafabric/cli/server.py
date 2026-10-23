@@ -326,8 +326,14 @@ def _launch_workers(
         os.environ["NOVAFABRIC_SERVER_I_KNOW_THIS_IS_PUBLIC"] = "1"
     if cfg.i_accept_shared_capsule_store:  # type: ignore[attr-defined]
         os.environ["NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE"] = "1"
+    # L17: hand workers exactly the file the parent resolved. Without --config
+    # the parent used the default path, so an inherited CONFIG_ENV (internal,
+    # never user-facing) must be cleared -- otherwise every worker would load a
+    # different file than the one the parent validated.
     if config_path is not None:
         os.environ[CONFIG_ENV] = str(config_path)
+    else:
+        os.environ.pop(CONFIG_ENV, None)
 
     uvicorn.run(  # type: ignore[attr-defined]
         FACTORY_TARGET,
@@ -385,9 +391,10 @@ def issue_token_cmd(
         typer.Option(
             "--key-path",
             help=(
-                "Path to ed25519 private key PEM. "
+                "Path to the ed25519 private key PEM, or its .pub sibling "
+                "(the private key next to it is used). "
                 "Defaults to NOVAFABRIC_OFFLINE_KEY_PATH env var, "
-                "or ~/.novafabric/keys/offline-key.pem."
+                "or $NOVAFABRIC_HOME/keys/offline-key.pem."
             ),
             exists=False,
         ),
@@ -405,17 +412,40 @@ def issue_token_cmd(
       nova server issue-token --subject alice@example.com
       nova server issue-token --subject worker-01 --roles reader,writer --expires-in 30d
     """
-    resolved_key = _resolve_key_path(key_path)
+    from novafabric.server.offline_tokens import names_public_key_only, signing_key_path
+
+    named_key = _resolve_key_path(key_path)
     role_list = [r.strip() for r in roles.split(",") if r.strip()]
     days = _parse_days(expires_in)
+    # L22: NOVAFABRIC_OFFLINE_KEY_PATH may name the keypair's .pub file (what the
+    # server needs). Sign with its private sibling; never generate a new keypair
+    # over a public key that servers already trust.
+    if names_public_key_only(named_key):
+        typer.echo(
+            f"Error: {named_key} is a public key and there is no private key next to "
+            f"it ({signing_key_path(named_key)}). Issue tokens on the host that holds "
+            "the private signing key, or pass --key-path <private-key.pem>.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    resolved_key = signing_key_path(named_key)
 
     try:
-        from novafabric.server.offline_tokens import generate_keypair, issue_token
+        from novafabric.server.offline_tokens import (
+            OfflineKeyError,
+            generate_keypair,
+            issue_token,
+        )
 
         if not resolved_key.exists():
-            typer.echo(f"Key not found at {resolved_key}. Generating new keypair …")
+            # L3: status lines go to stderr -- `TOKEN=$(nova server issue-token ...)`
+            # captures stdout, which must hold the token and nothing else.
+            typer.echo(f"Key not found at {resolved_key}. Generating new keypair …", err=True)
             generate_keypair(resolved_key)
-            typer.echo(f"Keypair written to {resolved_key} / {resolved_key.with_suffix('.pub')}")
+            typer.echo(
+                f"Keypair written to {resolved_key} / {resolved_key.with_suffix('.pub')}",
+                err=True,
+            )
 
         token = issue_token(
             subject=subject,
@@ -429,6 +459,9 @@ def issue_token_cmd(
         # generic "Failed to issue token".
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1)
+    except OfflineKeyError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2)
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"Failed to issue token: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -445,8 +478,9 @@ def issue_token_cmd(
     typer.echo(
         f"The server accepts this token only if it was started with\n"
         f"  NOVAFABRIC_OFFLINE_KEY_PATH={resolved_key.with_suffix('.pub')}\n"
-        f"Without it, offline-JWT authentication is disabled and this token is "
-        f"rejected. See ADR-0018.",
+        f"(the public key is enough to verify; either file of the pair works here and "
+        f"for issue-token). Without it, offline-JWT authentication is disabled and "
+        f"this token is rejected. See ADR-0018.",
         err=True,
     )
     typer.echo(token)
@@ -512,9 +546,13 @@ def assign_role_cmd(
         typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
     ] = None,
 ) -> None:
-    """Assign a role to a user (reader, writer, admin, or auditor).
+    """Record a role for a user (reader, writer, admin, or auditor).
 
     Scope: single server.
+
+    The row takes effect only once the workspace/org model is in use (a scoped
+    membership or service account exists, ADR-0178); until then a principal's
+    roles come from its token, and the command says so on stderr.
 
     \b
     Examples:
@@ -535,7 +573,18 @@ def assign_role_cmd(
         typer.echo(f"Failed to assign role: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(f"Role '{role}' assigned to '{user}'.")
+    from novafabric.server.rbac import NOT_IN_FORCE_EXPLANATION, role_assignments_in_force
+
+    if role_assignments_in_force(db_path=db_path):
+        typer.echo(f"Role '{role}' assigned to '{user}'.")
+        return
+    # H6: the row is written (the ADR-0060 last-admin guard counts it, and it
+    # takes effect the moment the workspace/org model is in use), but it grants
+    # nothing today — never print "assigned" for an assignment with no effect.
+    typer.echo(f"Role '{role}' recorded for '{user}' in role_assignments.")
+    typer.echo(
+        f"warning: this assignment is not in force: {NOT_IN_FORCE_EXPLANATION}", err=True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -720,21 +769,40 @@ def revoke_role_cmd(
         Optional[Path],  # noqa: UP007
         typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
     ] = None,
+    config: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option(
+            "--config",
+            "-c",
+            help=(
+                "Server YAML config (as for `nova server start`; default "
+                "~/.config/novafabric/server.yaml). Its `oidc:` block decides "
+                "whether revoking the last admin row is a lockout."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Revoke a user's role on the NovaFabric server.
 
-    The last admin cannot be removed (lockout invariant enforced).
+    The last admin cannot be removed (lockout invariant enforced) unless the
+    server config has OIDC configured, so JWT-claim admins can still log in
+    (ADR-0060).
 
     Scope: single server.
 
     \b
     Examples:
       nova server revoke-role alice@example.com admin
+      nova server revoke-role alice@example.com admin --config /etc/nova/server.yaml
     """
     try:
+        from novafabric.server.config import load_config
         from novafabric.server.rbac_store import LastAdminError, revoke_role
 
-        deleted = revoke_role(user, role, db_path=db_path)
+        # L15: the guard's OIDC input is the server's own config (YAML oidc:),
+        # never an env var the server does not read.
+        oidc_configured = load_config(config).oidc.enabled
+        deleted = revoke_role(user, role, db_path=db_path, oidc_configured=oidc_configured)
     except LastAdminError as exc:
         typer.echo(f"Refused: {exc}", err=True)
         raise typer.Exit(code=2) from exc

@@ -29,6 +29,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric import _capsule_fs
+from novafabric._capsule_fs import read_capsule_file, read_required_capsule_member
+
+_OPERATION = "an RO-Crate export"
+
 # Well-known capsule file names that become File entities in the crate graph.
 _CAPSULE_FILES = [
     "model-calls.jsonl",
@@ -119,6 +124,8 @@ def export_ro_crate(capsule_dir: Path, output_path: Path) -> Path:
 
     Raises:
         FileNotFoundError: If ``capsule_dir`` does not exist.
+        CapsuleLinkError: The capsule holds a symbolic link, including one
+            planted during the export. No archive is written.
     """
     if not capsule_dir.exists():
         raise FileNotFoundError(
@@ -139,45 +146,45 @@ def export_ro_crate(capsule_dir: Path, output_path: Path) -> Path:
     # compares the exported document against the capsule's own manifest rather than
     # against a list of required keys (ADR-0256).
     run_id = capsule_dir.name
-    manifest_path = capsule_dir / "capsule.yaml"
-    if manifest_path.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
+    # never a crate that silently lacks its manifest. Unparseable YAML is still
+    # tolerated below.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="compliance export"
+    )
+    if capsule_text is not None:
         try:
             import yaml
 
-            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            manifest = yaml.safe_load(capsule_text) or {}
             if isinstance(manifest, dict) and manifest.get("run_id"):
                 run_id = str(manifest["run_id"])
         except Exception:  # noqa: BLE001 - a damaged manifest must not fail the export
             pass
 
-    # Collect files to include
-    file_entities: list[dict[str, Any]] = []
-    files_to_copy: list[Path] = []
+    # Never follow a link: a planted ``notes.txt -> ~/.ssh/id_rsa`` used to be
+    # zipped as a capsule file. Any link in the capsule refuses the export.
+    listing = _capsule_fs.list_capsule(capsule_dir, operation=_OPERATION)
 
-    # Walk capsule directory (non-recursive for top level + .seal/ subdir)
-    for child in sorted(capsule_dir.iterdir()):
-        if child.is_file():
-            files_to_copy.append(child)
-            file_entities.append({
-                "@id": child.name,
-                "@type": "File",
-                "name": child.name,
-                "encodingFormat": _mime_type(child.name),
-                "contentSize": child.stat().st_size,
-            })
-        elif child.is_dir() and child.name in (".seal", "seal"):
-            # Include .seal/ subdirectory contents
-            for sub in sorted(child.iterdir()):
-                if sub.is_file():
-                    rel = f"{child.name}/{sub.name}"
-                    files_to_copy.append(sub)
-                    file_entities.append({
-                        "@id": rel,
-                        "@type": "File",
-                        "name": sub.name,
-                        "encodingFormat": _mime_type(sub.name),
-                        "contentSize": sub.stat().st_size,
-                    })
+    # Top-level files plus the .seal/ (or seal/) subdirectory, as before.
+    selected = [
+        rel
+        for rel in listing.files
+        if "/" not in rel or (rel.count("/") == 1 and rel.split("/")[0] in (".seal", "seal"))
+    ]
+    payloads: dict[str, bytes] = {
+        rel: read_capsule_file(listing.root, rel, operation=_OPERATION) for rel in selected
+    }
+    file_entities: list[dict[str, Any]] = [
+        {
+            "@id": rel,
+            "@type": "File",
+            "name": rel.rsplit("/", 1)[-1],
+            "encodingFormat": _mime_type(rel),
+            "contentSize": len(data),
+        }
+        for rel, data in payloads.items()
+    ]
 
     # Build metadata
     metadata = _build_metadata(capsule_dir, file_entities, run_id)
@@ -187,9 +194,7 @@ def export_ro_crate(capsule_dir: Path, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("ro-crate-metadata.json", metadata_bytes)
-        for fpath in files_to_copy:
-            # Archive path relative to capsule_dir
-            rel_path = fpath.relative_to(capsule_dir)
-            zf.write(fpath, str(rel_path))
+        for rel, data in payloads.items():
+            zf.writestr(rel, data)
 
     return output_path

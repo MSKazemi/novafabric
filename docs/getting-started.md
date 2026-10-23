@@ -87,7 +87,7 @@ Confirm the install:
 
 ```bash
 nova --version
-# novafabric 0.106.1
+# novafabric 0.107.0
 ```
 
 Both `nova` and `novafabric` are the same binary. The examples throughout this
@@ -121,7 +121,7 @@ guide use `nova`.
 > `nova seal init` as an optional next step (see
 > [Seal your captures](#optional-seal-your-captures-with-a-local-identity) below).
 
-> **Maturity.** NovaFabric is in beta (v0.106.1 at the time of writing). Most surfaces work today but
+> **Maturity.** NovaFabric is in beta (v0.107.0 at the time of writing). Most surfaces work today but
 > carry `experimental` maturity: interfaces may change before the v1.0 schema
 > freeze. On-disk formats are **not** frozen until v1.0. See
 > [ROADMAP.md](../ROADMAP.md) for the sequencing.
@@ -245,7 +245,8 @@ python examples/minimal-agent-run/agent.py
 ```
 
 This example uses the in-process `@agent` decorator (`novafabric.sdk.agent`), which writes
-its **own** capsule to `examples/minimal-agent-run/capsule/` — no `nova capture` wrapper
+its **own** capsule to `examples/minimal-agent-run/capsule/<run_id>/` (one per call; the
+script prints the path) — no `nova capture` wrapper
 needed (see the [User guide: SDK decorator](user-guide.md#sdk-decorator-in-process-capture)).
 If you do wrap it in `nova capture`, the model calls are filed into the decorator's capsule,
 and the wrapper capsule's `model-calls.jsonl` stays empty.
@@ -253,7 +254,7 @@ and the wrapper capsule's `model-calls.jsonl` stays empty.
 After the run, look at the model-calls record:
 
 ```bash
-cat examples/minimal-agent-run/capsule/model-calls.jsonl | python -m json.tool | head -40
+cat examples/minimal-agent-run/capsule/<run_id>/model-calls.jsonl | python -m json.tool | head -40
 ```
 
 You will see one JSON record per LLM call, following the
@@ -354,11 +355,11 @@ from the capsule directory. **No subprocess is launched and no network calls are
 made** — this is the safe way to inspect a run handed to you by a colleague or
 pulled from a CI artifact store.
 
-Results are written to `.novafabric/replays/<replay-ulid>/replay_result.yaml` under
-the **current directory** (not `$NOVAFABRIC_HOME`; pass `--output-dir` to choose). A
-replay result is not a capsule (only the experimental `intervention` mode also writes a
-counterfactual capsule) — to diff behaviour, capture the run again and `nova diff` the
-two capsules.
+Results are written to `$NOVAFABRIC_HOME/replays/<replay-ulid>/replay_result.yaml`
+(default `~/.novafabric/replays/`; pass `--output-dir` to choose). Up to v0.106.0 they
+went under the current directory instead. A replay result is not a capsule (only the
+experimental `intervention` mode also writes a counterfactual capsule) — to diff
+behaviour, capture the run again and `nova diff` the two capsules.
 
 The other modes each answer a different question:
 

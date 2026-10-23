@@ -24,8 +24,10 @@ Anti-patterns explicitly forbidden by this runner (per ADR-0025
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +50,65 @@ from novafabric.runners._types import ContainerEvalError, RunnerJobResult, Runne
 _coerce_str_dict = coerce_str_dict
 _coerce_str_list = coerce_str_list
 
+#: Variables the ``docker`` CLI itself -- or a credential helper / CLI plugin it
+#: spawns -- reads from its own environment: which daemon and context to use,
+#: where its config lives, which binaries ``PATH`` finds, the proxy it dials
+#: through. A container value for one of these cannot ride in the client's
+#: environment without changing what the client does, so it is the one case
+#: still passed as ``-e NAME=VALUE`` (on the command line). None of them is a
+#: place for a credential.
+_DOCKER_CLIENT_KEYS = frozenset({
+    "PATH", "HOME", "USER", "TMPDIR", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME",
+    "SSH_AUTH_SOCK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+})
+_DOCKER_CLIENT_PREFIXES = ("DOCKER_", "BUILDKIT_", "LD_")
+
+
+def _by_name_only(key: str) -> bool:
+    """Whether *key*'s value can travel in the docker client's environment."""
+    if not key or "=" in key or "\x00" in key:
+        return False  # not a name the OS accepts in an environment: docker parses it
+    return key not in _DOCKER_CLIENT_KEYS and not key.startswith(_DOCKER_CLIENT_PREFIXES)
+
+
+def docker_env_args(
+    container_env: Mapping[str, str], client_base: Mapping[str, str]
+) -> tuple[list[str], dict[str, str]]:
+    """The ``-e`` flags for *container_env* and the environment to run ``docker`` with.
+
+    A value must never be on ``docker run``'s command line: argv is
+    world-readable on the host (``ps``, ``/proc/<pid>/cmdline``) for as long as
+    the container runs, and ``extra_env`` is how operators pass API keys. So
+    each variable is named with ``-e NAME`` -- docker then copies the value from
+    its *own* environment -- and the value is put in the environment of the
+    ``docker`` client process, which only its user and root can read
+    (``/proc/<pid>/environ`` is mode 0400). The container receives exactly the
+    same ``NAME=VALUE`` pairs as before.
+
+    Exception: a name in :data:`_DOCKER_CLIENT_KEYS` or starting with one of
+    ``_DOCKER_CLIENT_PREFIXES`` (``PATH``, ``HOME``, ``DOCKER_*``, proxies...)
+    steers the client itself, so it keeps the literal ``-e NAME=VALUE`` form.
+
+    Args:
+        container_env: the variables the container must receive (already
+            filtered by :func:`~novafabric.runners._env.forwardable_env`).
+        client_base: the environment the ``docker`` CLI would otherwise
+            inherit (``os.environ``); the client keeps all of it.
+
+    Returns:
+        ``(flags, client_env)``. Never mutates its inputs.
+    """
+    flags: list[str] = []
+    client_env = dict(client_base)
+    for key, value in container_env.items():
+        if _by_name_only(key):
+            flags.extend(["-e", key])
+            client_env[key] = value
+        else:
+            flags.extend(["-e", f"{key}={value}"])
+    return flags, client_env
+
 
 class DockerRunner:
     """Run the captured workload inside a Docker container.
@@ -66,8 +127,11 @@ class DockerRunner:
     - ``extra_volumes`` (list[str]) — additional ``-v`` mounts beyond
       the capsule volume. Each entry is the raw ``host:container[:opts]``
       string passed straight to docker.
-    - ``extra_env`` (dict[str, str]) — additional env vars layered
-      on top of the orchestrator-provided env.
+    - ``extra_env`` (dict[str, str]) — additional env vars for the
+      container. Passed as ``docker run -e NAME`` with the value in the
+      ``docker`` client's environment, so no value is in any process's
+      argv (``ps``). It is still in the container's config
+      (``docker inspect``), readable by anyone who can reach the daemon.
     - ``user`` (str) — passed as ``--user <value>``. Encouraged (e.g.
       ``1000:1000``) to avoid root-owned files in the mounted capsule.
     """
@@ -150,6 +214,12 @@ class DockerRunner:
                     ".novafabric/runners.yaml"
                 ),
             )
+        try:
+            extra_env = _coerce_str_dict(opts.get("extra_env"), name="extra_env")
+        except ValueError as exc:
+            return RunnerJobResult(
+                exit_code=127, runner_status="failed_setup", runner_error=str(exc)
+            )
 
         # In-container capsule path. The orchestrator's host capsule_dir is
         # mounted at this path, so NOVAFABRIC_CAPSULE_DIR inside the
@@ -181,25 +251,31 @@ class DockerRunner:
             if _existing_pp
             else in_container_capsule
         )
-        for k, v in _coerce_str_dict(opts.get("extra_env")).items():
-            env[k] = v
+        env.update(extra_env)
 
         # docker run argv. Order matters: --rm, env, volumes, image-level
         # options, then image, then command.
         argv: list[str] = [self._docker, "run", "--rm"]
 
-        # Each env var as -e KEY=VALUE, default-deny (ADR-0270): NOVAFABRIC_*
-        # plus the operator's explicit extra_env. The orchestrator passes its
-        # full env in spec.env, and `docker inspect` exposes whatever we set.
-        # PYTHONPATH is allow-listed deliberately: it is set by this runner
-        # (above), not inherited from the submitter, and capture does not fire
-        # without it. It is not the submitting shell's PYTHONPATH unless the
-        # orchestrator passed one, which is then prefixed rather than replaced.
-        for key, value in forwardable_env(
-            env,
-            also_allow={"PYTHONPATH", *_coerce_str_dict(opts.get("extra_env"))},
-        ).items():
-            argv.extend(["-e", f"{key}={value}"])
+        # Default-deny (ADR-0270): NOVAFABRIC_* plus the operator's explicit
+        # extra_env. The orchestrator passes its full env in spec.env, and
+        # `docker inspect` exposes whatever we set. PYTHONPATH is allow-listed
+        # deliberately: it is set by this runner (above), not inherited from
+        # the submitter, and capture does not fire without it. It is not the
+        # submitting shell's PYTHONPATH unless the orchestrator passed one,
+        # which is then prefixed rather than replaced.
+        # Each variable goes in as `-e NAME`, its value in the docker client's
+        # own environment -- never `-e NAME=VALUE`, which put every extra_env
+        # secret in argv, readable by any user with `ps` for the container's
+        # whole lifetime (docker_env_args).
+        env_flags, client_env = docker_env_args(
+            forwardable_env(
+                env,
+                also_allow={"PYTHONPATH", *extra_env},
+            ),
+            os.environ,
+        )
+        argv.extend(env_flags)
 
         # Capsule volume — host:container, rw.
         argv.extend(["-v", f"{spec.capsule_dir}:{in_container_capsule}"])
@@ -233,7 +309,7 @@ class DockerRunner:
 
         try:
             proc = subprocess.run(
-                argv, capture_output=True, timeout=timeout,
+                argv, capture_output=True, timeout=timeout, env=client_env,
             )
         except subprocess.TimeoutExpired as exc:
             return RunnerJobResult(
@@ -318,7 +394,9 @@ class DockerRunner:
         command:
             Argv to execute inside the container.
         env:
-            Extra env vars injected as ``-e KEY=VALUE``.
+            Extra env vars for the container. Each is passed as ``-e KEY``
+            with its value in the ``docker`` client's environment, never on
+            the command line (see :func:`docker_env_args`).
         timeout_s:
             Wall-clock deadline in seconds.  Defaults to 600.
 
@@ -348,15 +426,17 @@ class DockerRunner:
         mount = f"{capsule_path}:{self._EVAL_CAPSULE_MOUNTPOINT}:ro"
 
         argv: list[str] = [self._docker, "run", "--rm", "-v", mount]
-        for key, value in (env or {}).items():
-            argv.extend(["-e", f"{key}={value}"])
+        env_flags, client_env = docker_env_args(env or {}, os.environ)
+        argv.extend(env_flags)
         argv.append(pinned)
         argv.extend(command)
 
         timeout = timeout_s if timeout_s is not None else 600.0
 
         try:
-            proc = subprocess.run(argv, capture_output=True, timeout=timeout)
+            proc = subprocess.run(
+                argv, capture_output=True, timeout=timeout, env=client_env
+            )
         except subprocess.TimeoutExpired as exc:
             raise ContainerEvalError(
                 f"eval container exceeded {timeout}s wall-clock deadline"

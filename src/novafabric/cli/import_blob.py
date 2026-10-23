@@ -61,7 +61,10 @@ def import_cmd(
         Optional[Path],
         typer.Option(
             "--capsule-dir",
-            help="Target capsule store root (default: $NOVAFABRIC_HOME/capsules).",
+            help=(
+                "Target capsule store root (default: where `nova capture` writes — "
+                "$NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules)."
+            ),
         ),
     ] = None,
     dry_run: Annotated[

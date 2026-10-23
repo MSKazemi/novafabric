@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 import typer
 from rich.console import Console
 
+from novafabric._capsule_fs import CapsuleRootChangedError, replace_capsule_file
 from novafabric._paths import default_capsule_dir
 from novafabric.capture.deployment_env import InvalidDeploymentEnvironmentError
 from novafabric.capture.orchestrator import (
@@ -461,7 +462,17 @@ def capture_cmd(
             except OSError:
                 pass  # daemon not reachable → fall through to in-process spawn
             else:
-                os.execvp("novacap", ["novacap", *cmd])  # never returns
+                try:
+                    os.execvp("novacap", ["novacap", *cmd])  # never returns on success
+                except OSError as exc:
+                    # M10: a reachable daemon but no runnable `novacap` (not on
+                    # PATH, not executable) must not block the workload — run it
+                    # in-process, as if no daemon were running.
+                    Console(stderr=True).print(
+                        "[yellow]warning:[/yellow] a capture daemon is running but "
+                        f"`novacap` could not be started ({exc.strerror or exc}); "
+                        "capturing in-process instead."
+                    )
 
     try:
         runner = get_runner(runner_name.value)
@@ -525,6 +536,16 @@ def capture_cmd(
         raise typer.BadParameter(str(exc), param_hint="'--variant'") from exc
     except InvalidSessionMembershipError as exc:
         raise typer.BadParameter(str(exc), param_hint="'--session-id'") from exc
+    except CapsuleRootChangedError as exc:
+        # The capsule directory was swapped (for a link, or another directory)
+        # after the post-workload sweep -- by a process the workload left
+        # running. Nothing more was written; the capsule is incomplete.
+        typer.echo(
+            f"[novafabric] ✗ capture integrity: {exc}. The capsule is incomplete "
+            "and must not be trusted.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
 
     status_icon = "[green]✓[/green]" if result.exit_code == 0 else "[red]✗[/red]"
     if result.runner_status == "failed_setup":
@@ -547,7 +568,13 @@ def capture_cmd(
 
         spans = emit_spans(result.capsule_dir, capture_content=capture_content)
         spans_path = result.capsule_dir / "otel-genai-spans.json"
-        spans_path.write_text(_json.dumps(spans, indent=2), encoding="utf-8")
+        # Never through a link planted at the name (the capsule is untrusted).
+        replace_capsule_file(
+            result.capsule_dir,
+            spans_path.name,
+            _json.dumps(spans, indent=2).encode("utf-8"),
+            operation="nova capture --emit-otel-genai",
+        )
         content_note = "with redacted content" if capture_content else "no content"
         console.print(
             f"[green]✓[/green] OTel GenAI spans: {spans_path} "

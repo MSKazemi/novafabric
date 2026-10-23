@@ -27,6 +27,13 @@ from fastapi import APIRouter, Depends, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from novafabric._capsule_fs import (
+    CapsuleRequiredFileError,
+    read_capsule_member_or_none,
+    read_required_capsule_member,
+)
+from novafabric._safe_path import PathEscapeError, UnsafePathSegmentError, safe_child
+
 # Imported eagerly, unlike the rest of this module's novafabric.eval imports:
 # the route decorator needs the model at import time to describe the request
 # body in the OpenAPI document (ADR-0227).
@@ -417,14 +424,15 @@ def _unpack_and_publish(
             if not run_id:
                 raise BadRequestError("capsule.yaml is missing run_id.")
             run_id = str(run_id)
-            if "/" in run_id or "\\" in run_id or ".." in run_id:
-                # The run_id becomes a path component of the capsule store —
-                # never let it traverse (mirrors the read-route guard).
-                raise BadRequestError("capsule.yaml has an invalid run_id.")
+            # The run_id becomes a path component of the capsule store —
+            # never let it traverse (the same rule as the read routes).
+            try:
+                dest = safe_child(capsule_dir, run_id, field="run_id")
+            except (UnsafePathSegmentError, PathEscapeError) as exc:
+                raise BadRequestError(f"capsule.yaml has an invalid run_id: {exc}") from exc
 
             _check_parent_exists(manifest, capsule_dir)
 
-            dest = capsule_dir / run_id
             if dest.exists():
                 raise ConflictError(f"Capsule '{run_id}' already exists.")
 
@@ -853,6 +861,7 @@ async def submit_score(
     from novafabric.eval.score_config import ScoreConfigViolation
     from novafabric.eval.score_submission import (
         CapsuleNotFoundError,
+        CapsuleUnusableError,
         IdempotencyConflictError,
         ScoreSubmissionRequest,
         SubjectNotFoundError,
@@ -899,6 +908,10 @@ async def submit_score(
     except ScoreConfigViolation as exc:
         _audit("error", str(exc))
         raise ValidationError(str(exc), code="score_config_violation")
+    except CapsuleUnusableError as exc:
+        # Same code as a present-but-unusable capsule.yaml (_load_manifest).
+        _audit("error", str(exc))
+        raise ConflictError(str(exc), code="capsule_file_unusable")
     _audit("ok")
 
     import json as _json
@@ -932,7 +945,10 @@ def _check_parent_exists(manifest: dict[str, Any], capsule_dir: Path) -> None:
     parent_run_id = manifest.get("parent_run_id")
     if not parent_run_id:
         return
-    parent_dest = capsule_dir / str(parent_run_id)
+    try:
+        parent_dest = safe_child(capsule_dir, str(parent_run_id), field="parent_run_id")
+    except (UnsafePathSegmentError, PathEscapeError) as exc:
+        raise BadRequestError(f"capsule.yaml has an invalid parent_run_id: {exc}") from exc
     parent_exists = parent_dest.is_dir() and (parent_dest / "capsule.yaml").exists()
     if parent_exists:
         return
@@ -958,10 +974,18 @@ def _check_parent_exists(manifest: dict[str, Any], capsule_dir: Path) -> None:
 
 
 def _load_manifest(cdir: Path) -> dict[str, Any]:
-    path = cdir / "capsule.yaml"
-    if not path.exists():
+    # Present but unusable (a link, FIFO, directory): 409, never a 200 detail
+    # built from an empty manifest.
+    try:
+        text = read_required_capsule_member(cdir / "capsule.yaml", operation="nova server")
+    except CapsuleRequiredFileError as exc:
+        raise ConflictError(
+            f"capsule.yaml of {cdir.name} is present but cannot be used ({exc.reason})",
+            code="capsule_file_unusable",
+        ) from exc
+    if text is None:
         raise NotFoundError(f"capsule.yaml not found in {cdir}")
-    raw = yaml.safe_load(path.read_text())
+    raw = yaml.safe_load(text)
     return dict(raw) if raw else {}
 
 
@@ -982,13 +1006,16 @@ def _collect_summaries(capsule_dir: Path) -> list[dict[str, Any]]:
     if not capsule_dir.exists():
         return summaries
     for entry in sorted(capsule_dir.iterdir(), key=lambda p: p.name, reverse=True):
-        if not entry.is_dir():
-            continue
+        if entry.is_symlink() or not entry.is_dir():
+            continue  # a scan never lists a linked entry (novafabric._capsule_fs)
         yaml_path = entry / "capsule.yaml"
         if not yaml_path.exists():
             continue
         try:
-            manifest = yaml.safe_load(yaml_path.read_text()) or {}
+            capsule_text = (
+                read_capsule_member_or_none(yaml_path, operation="nova server") or ""
+            )
+            manifest = yaml.safe_load(capsule_text) or {}
             summaries.append(_capsule_summary(manifest))
         except Exception:  # noqa: BLE001
             pass
@@ -996,9 +1023,10 @@ def _collect_summaries(capsule_dir: Path) -> list[dict[str, Any]]:
 
 
 def _resolve(run_id: str, capsule_dir: Path) -> Path:
-    if "/" in run_id or ".." in run_id:
-        raise BadRequestError("invalid run_id")
-    candidate = capsule_dir / run_id
+    try:
+        candidate = safe_child(capsule_dir, run_id, field="run_id")
+    except (UnsafePathSegmentError, PathEscapeError) as exc:
+        raise BadRequestError(str(exc)) from exc
     if candidate.is_dir() and (candidate / "capsule.yaml").exists():
         return candidate
     raise NotFoundError(f"Capsule '{run_id}' not found.")

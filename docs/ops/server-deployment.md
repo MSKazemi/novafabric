@@ -185,6 +185,10 @@ an [offline token](#scenario-4--airgapped--offline-token-mode).
 nova login --server http://nova.example.com:7433   # demo device grant only
 ```
 
+Against a server without the demo grant, `nova login` exits 1 with that
+explanation (not a bare `404`); after a demo login it warns on stderr that the
+stored token is not accepted by the server's API.
+
 Credentials are stored in `~/.config/novafabric/credentials.json` at mode `0600`.
 
 ### Log out
@@ -246,9 +250,9 @@ nova server issue-token \
   --key-path /etc/novafabric/keys/offline-key.pem
 ```
 
-The command prints the raw JWT as the last line of stdout. Store it securely
-(on the very first call, when it generates the keypair, two "Generating …" lines
-also go to stdout — run it once beforehand so `$(…)` captures only the token):
+The command prints the raw JWT — and nothing else — on stdout; every status
+line (including the keypair-generation messages on the very first call) goes to
+stderr, so `$(…)` captures only the token. Store it securely:
 
 ```bash
 TOKEN=$(nova server issue-token --subject ci-runner --roles writer --expires-in 30d)
@@ -263,12 +267,22 @@ env -i PATH="$PATH" HOME="$HOME" NOVA_TOKEN="$TOKEN" sbatch job.sh
 ```
 
 `issue-token` also reads its key path from `NOVAFABRIC_OFFLINE_KEY_PATH` when
-`--key-path` is not given — point it at the private `.pem` there:
+`--key-path` is not given. The variable names **one keypair by either of its
+files**: given `offline-key.pub`, `issue-token` signs with the private key next to
+it (`offline-key.pem`, else `offline-key.key`, else `offline-key`), so the same
+export works for the server and for issuing (works today):
 
 ```bash
-NOVAFABRIC_OFFLINE_KEY_PATH=/etc/novafabric/keys/offline-key.pem \
+NOVAFABRIC_OFFLINE_KEY_PATH=/etc/novafabric/keys/offline-key.pub \
   nova server issue-token --subject user@example.com --roles reader
 ```
+
+On a verify-only host that holds just the `.pub`, `issue-token` refuses with
+exit 2 and names the missing private key; it never generates a new keypair over
+a public key the server trusts. (Before 2026-10-23 it read the `.pub` as a private
+key and failed, or — when the `.pub` did not exist yet — wrote the public key over
+the private one.) Service-account creation on the server follows the same rule:
+it needs the private key and answers 400 when the server was given only the `.pub`.
 
 ### Revoke a token
 
@@ -329,7 +343,7 @@ deployment tiers.
 | Values | Effect |
 |---|---|
 | *(stock)* | `nova server start`, no `--insecure`. Terminate TLS at the ingress. |
-| `mode: dashboard` | `nova serve`. ⚠ The chart passes `--host 0.0.0.0`, and `nova serve` refuses a non-loopback bind without `--insecure`, so `mode: dashboard` alone exits 2 at container start today; it currently needs `serve.insecure: true` plus the acknowledgement below. |
+| `mode: dashboard` | `nova serve`. A pod must bind `0.0.0.0` for its Service and probes, and `nova serve` refuses a non-loopback bind without `--insecure` (exit 2), so **`helm template` refuses to render** `mode: dashboard` unless `serve.insecure: true` and the acknowledgement below are also set — rather than rendering a pod that crash-loops. Terminate TLS at the ingress in front of it. |
 | `serve.insecure: true` | **`helm template` fails** unless `serve.acknowledgeInsecureExposure` is set to `i-accept-serving-evidence-over-plain-http`. |
 | upgrading from < v0.102.0 | **fails** until `upgradeAcknowledged: true`; the message carries the exact values that restore the old behaviour. |
 
@@ -495,7 +509,7 @@ The four built-in roles are:
 | Role | Permissions |
 |---|---|
 | `reader` | Read capsules, assets, lineage, replays |
-| `writer` | Reader + create/upload capsules and assets |
+| `writer` | Reader + create/upload capsules and assets, export evidence bundles (written only inside the server's evidence directory) |
 | `admin` | Writer + manage roles, tokens, server config |
 | `auditor` | Read audit logs and evidence bundles; cannot read raw capsule content |
 
@@ -510,11 +524,16 @@ Roles are stored in the `role_assignments` table. When using OIDC, roles can
 also be carried in the `nova_roles` (or `roles`) JWT claim. **The token's own
 roles are checked first;** `role_assignments` rows are only a fallback, and that
 fallback is consulted only once the workspace/org model is in use (at least one
-scoped membership or service account exists). ⚠ In a stock deployment that has
-neither, `assign-role` therefore has no effect on OIDC or offline-token
-principals, although the command reports success (known gap, tracked as a code
-fix). `promoter` and `approver` also exist for separation-of-duties and SCIM
-group mapping (`nova server scim-map-group`).
+scoped membership or service account exists, ADR-0178). ⚠ In a stock deployment
+that has neither, a recorded row has **no effect** on OIDC or offline-token
+principals. `assign-role` still writes the row (the last-admin guard counts it,
+and it takes effect the moment the workspace/org model is in use), but it then
+prints `Role '<role>' recorded for '<subject>'` and a `warning: this assignment is
+not in force` on stderr instead of claiming success. `GET /v0/admin/roles`
+reports the same thing per row as `effective_now`. To grant a role in a stock
+deployment today, carry it in the token: the OIDC `nova_roles`/`roles` claim, or
+`nova server issue-token --roles …`. `promoter` and `approver` also exist for
+separation-of-duties and SCIM group mapping (`nova server scim-map-group`).
 
 ---
 
@@ -572,7 +591,7 @@ the NovaFabric `/v0/` error model.
   `role_assignments` rows immediately — the same table `nova server
   assign-role` writes; the `userName` is the auth subject.
 - The ADR-0060 **last-admin lockout guard** applies: a SCIM deprovision that
-  would remove the last admin (with no OIDC issuer configured) is refused
+  would remove the last admin (with no OIDC configured in the server YAML) is refused
   with a SCIM `409` and *nothing* is mutated — the user stays active and
   keeps its roles.
 - Every mutation appends an event (`user.create` / `user.update` /
@@ -602,7 +621,9 @@ command — provision the SCIM bearer token via `$NOVAFABRIC_SCIM_TOKEN` for now
 The config file is `~/.config/novafabric/server.yaml`, or the file passed with
 `nova server start --config <path>` — there is no other search path.
 (`NOVAFABRIC_SERVER_CONFIG` is set internally to hand the path to `--workers`
-child processes; do not set it yourself.) Keys are top-level; the main ones, with
+child processes; do not set it yourself — `nova server start` overwrites it, or
+clears an inherited value when `--config` is absent, so every worker loads the
+same file as the parent.) Keys are top-level; the main ones, with
 their defaults:
 
 ```yaml

@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from novafabric.capture._jsonable import to_jsonable
+
 # OTel-aligned mapping from request-body keys to semconv attribute names.
 # Both the OpenAI and Anthropic Messages API surface these keys with the
 # same JSON name (the differences are at the SDK call site, not the
@@ -70,6 +72,26 @@ def _extract_choice_count(body: dict[str, Any]) -> int | None:
     if isinstance(n, int) and n > 0:
         return n
     return None
+
+
+def _request_messages(value: Any) -> list[Any]:
+    """``messages`` as a JSON-safe list.
+
+    The SDK hooks pass the caller's own ``kwargs``, whose messages may hold SDK
+    objects (``completion.choices[0].message`` passed back into the next call).
+    Each one is converted the way the SDK serialises it on the wire (see
+    :mod:`novafabric.capture._jsonable`), so the record never holds a value
+    ``json.dumps`` rejects and later steps (media annotation) see plain dicts.
+    Wire-hook bodies are parsed JSON already and come back equal.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        try:
+            value = list(value)
+        except TypeError:  # not iterable: nothing to record
+            return []
+    return [to_jsonable(m) for m in value]
 
 
 def extract_request_attributes(
@@ -113,7 +135,7 @@ def extract_request_attributes(
         "gen_ai.operation.name": operation_name,
         "gen_ai.request.model": model,
         "gen_ai.response.model": model,
-        "gen_ai.request.messages": list(body.get("messages", [])),
+        "gen_ai.request.messages": _request_messages(body.get("messages")),
         "gen_ai.response.choices": [],
         "gen_ai.usage.input_tokens": 0,
         "gen_ai.usage.output_tokens": 0,
@@ -164,21 +186,61 @@ def build_record_envelope(
     }
 
 
-def safe_response_size(response: Any) -> int | None:
-    """Return the response body size in bytes, or ``None`` if unavailable.
+#: Instance attributes in which a client library keeps a body it has already
+#: read: ``requests``/``httpx``/``httpx2`` use ``_content``, ``aiohttp`` and
+#: ``urllib3`` use ``_body``. Read from the instance ``__dict__`` only, so no
+#: property or descriptor -- nothing that could do I/O -- ever runs.
+_BUFFERED_BODY_ATTRS = ("_content", "_body")
 
-    Reading ``response.content`` raises on a streaming/unread HTTP response
-    (e.g. ``httpx.ResponseNotRead`` when the body was sent with ``stream=True``,
-    which LLM chat clients like ``langchain_ollama.ChatOllama`` use). This helper
-    isolates that access so a streaming response yields ``None`` for the size
-    rather than aborting the surrounding NetworkEvent record. Never raises.
+
+def _buffered_body_size(response: Any) -> int | None:
+    try:
+        attrs = vars(response)
+    except TypeError:  # no __dict__ (slots): nothing we may look at
+        return None
+    for name in _BUFFERED_BODY_ATTRS:
+        value = attrs.get(name)
+        if isinstance(value, (bytes, bytearray)):
+            return len(value)
+    return None
+
+
+def _declared_content_length(response: Any) -> int | None:
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    value = headers.get("content-length") or headers.get("Content-Length")
+    if isinstance(value, bytes):
+        value = value.decode("ascii", "replace")
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return int(value) if value.isdigit() else None
+
+
+def safe_response_size(response: Any) -> int | None:
+    """The response body size in bytes, **without ever touching the body**.
+
+    A wire hook runs inside the user's ``send``; a streamed response
+    (``stream=True``, ``client.stream()``, an SSE feed) is handed back before
+    its body is read, and the hook must neither consume, buffer nor wait for
+    that body (ADR-0021: capture never changes the workload's behaviour).
+    ``requests.Response.content`` *reads the whole body*: calling it here made
+    ``Session.send`` block until a streamed response ended -- forever, for an
+    endless SSE stream. So this never calls ``.content``/``.data``/``read()``:
+
+    1. a body the library has **already buffered** (a non-streamed response)
+       -> its exact length;
+    2. otherwise the declared ``Content-Length`` header -> that value (the
+       size on the wire, i.e. before any content-decoding);
+    3. otherwise -> ``None`` (unknown): a chunked or endless stream.
+
+    Never raises.
     """
     if response is None:
         return None
     try:
-        content = getattr(response, "content", None)
-        if content:
-            return len(content)
-    except Exception:
+        size = _buffered_body_size(response)
+        return size if size is not None else _declared_content_length(response)
+    except Exception:  # noqa: BLE001 -- sizing is best-effort, never fatal
         return None
-    return None

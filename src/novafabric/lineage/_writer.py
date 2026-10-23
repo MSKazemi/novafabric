@@ -7,15 +7,46 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_required_capsule_member, replace_capsule_file
 from novafabric.lineage._facets import attach_column_facets, facets_from_tool_calls
-from novafabric.lineage._types import LineageEdge
+from novafabric.lineage._types import LineageEdge, default_emitter
+
+#: Optional Artifact fields carried into ``artifact_ref`` (identity stays ``path``).
+_ARTIFACT_HINTS = ("name", "content_hash", "media_type")
+
+
+def _output_artifact_ref(entry: object, run_id: str) -> dict[str, Any] | None:
+    """``artifact_ref`` for one manifest ``outputs[]`` entry, or ``None`` to skip it.
+
+    The run-capsule schema makes each entry an Artifact object (``name``, ``path``,
+    ``content_hash``, …); older capsules list bare path strings. An inline
+    Artifact has no meaningful ``path`` (the schema says it is ignored), so it is
+    keyed ``inline:<name>``. Anything else carries no usable path and is skipped
+    rather than stringified into a node ref (L14).
+    """
+    if isinstance(entry, str):
+        return {"capsule_run_id": run_id, "path": entry} if entry else None
+    if not isinstance(entry, dict):
+        return None
+    name = entry.get("name")
+    path = entry.get("path")
+    if entry.get("inline") is True:
+        path = f"inline:{name}" if isinstance(name, str) and name else None
+    if not isinstance(path, str) or not path:
+        return None
+    ref: dict[str, Any] = {"capsule_run_id": run_id, "path": path}
+    for key in _ARTIFACT_HINTS:
+        value = entry.get(key)
+        if isinstance(value, str) and value:
+            ref[key] = value
+    return ref
 
 
 class LineageWriter:
-    def __init__(self, capsule_dir: Path, run_id: str, version: str = "0.4.0") -> None:
+    def __init__(self, capsule_dir: Path, run_id: str, version: str | None = None) -> None:
         self._capsule_dir = capsule_dir
         self._run_id = run_id
-        self._version = version
+        self._version = version if version is not None else default_emitter()["version"]
 
     def infer(self) -> list[LineageEdge]:
         edges: list[LineageEdge] = []
@@ -31,15 +62,25 @@ class LineageWriter:
     def write(self, edges: list[LineageEdge]) -> Path:
         path = self._capsule_dir / "lineage.jsonl"
         lines = [json.dumps(e.as_dict(), ensure_ascii=False) for e in edges]
-        path.write_text("\n".join(lines) + ("\n" if lines else ""))
+        # An atomic rename: never written through a link planted at the name.
+        replace_capsule_file(
+            self._capsule_dir,
+            "lineage.jsonl",
+            ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"),
+            operation="lineage write",
+        )
         return path
 
     def _consumed_edges(self) -> list[LineageEdge]:
-        assets_path = self._capsule_dir / "assets.jsonl"
-        if not assets_path.exists():
+        # Absent: no edges. Present but unusable (a link, FIFO, directory):
+        # CapsuleRequiredFileError -- lineage is never written from a stand-in.
+        capsule_text = read_required_capsule_member(
+            self._capsule_dir / "assets.jsonl", operation="lineage"
+        )
+        if capsule_text is None:
             return []
         edges: list[LineageEdge] = []
-        for line in assets_path.read_text().splitlines():
+        for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -78,24 +119,27 @@ class LineageWriter:
         return edges
 
     def _produced_by_edges_from_manifest(self) -> list[LineageEdge]:
-        manifest_path = self._capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
+        capsule_text = read_required_capsule_member(
+            self._capsule_dir / "capsule.yaml", operation="lineage"
+        )
+        if capsule_text is None:
             return []
         try:
-            manifest: dict[str, Any] = yaml.safe_load(manifest_path.read_text()) or {}
+            manifest: Any = yaml.safe_load(capsule_text) or {}
         except Exception:
             return []
-        output_paths: list[str] = manifest.get("outputs", []) or []
+        outputs = manifest.get("outputs") if isinstance(manifest, dict) else None
+        if not isinstance(outputs, list):
+            return []
         edges: list[LineageEdge] = []
-        for rel_path in output_paths:
+        for entry in outputs:
+            artifact_ref = _output_artifact_ref(entry, self._run_id)
+            if artifact_ref is None:
+                continue
             edges.append(
                 LineageEdge(
                     edge_type="produced_by",
-                    source={"kind": "artifact",
-                            "artifact_ref": {
-                                "capsule_run_id": self._run_id,
-                                "path": rel_path,
-                            }},
+                    source={"kind": "artifact", "artifact_ref": artifact_ref},
                     target={"kind": "run", "run_id": self._run_id},
                     confidence="inferred",
                     capsule_run_id=self._run_id,
@@ -107,11 +151,13 @@ class LineageWriter:
 
     def _produced_by_edges_from_file(self) -> list[LineageEdge]:
         """Read produced.jsonl written by record_produced() and emit produced_by edges."""
-        produced_path = self._capsule_dir / "produced.jsonl"
-        if not produced_path.exists():
+        capsule_text = read_required_capsule_member(
+            self._capsule_dir / "produced.jsonl", operation="lineage"
+        )
+        if capsule_text is None:
             return []
         edges: list[LineageEdge] = []
-        for line in produced_path.read_text().splitlines():
+        for line in capsule_text.splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -140,11 +186,13 @@ class LineageWriter:
         return edges
 
     def _replayed_from_edge(self) -> LineageEdge | None:
-        manifest_path = self._capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
+        capsule_text = read_required_capsule_member(
+            self._capsule_dir / "capsule.yaml", operation="lineage"
+        )
+        if capsule_text is None:
             return None
         try:
-            manifest: dict[str, Any] = yaml.safe_load(manifest_path.read_text()) or {}
+            manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
         except Exception:
             return None
         original_run_id: str = manifest.get("replay_of_run_id", "") or ""

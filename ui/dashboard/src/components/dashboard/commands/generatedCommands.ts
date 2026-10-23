@@ -1077,7 +1077,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "NovaFabric data root directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -1109,7 +1109,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "NovaFabric data root directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -1142,7 +1142,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "NovaFabric data root directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -1181,7 +1181,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "NovaFabric data root directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -1394,7 +1394,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "backend",
         "label": "--backend",
         "type": "text",
-        "hint": "Object-store backend for --profile manifest: local | s3 | minio | ceph_rgw | azure_blob.",
+        "hint": "Object-store backend for --profile manifest: local | s3 | minio | ceph_rgw | azure_blob | gcs.",
         "flag": "--backend"
       },
       {
@@ -1458,7 +1458,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-capsule-delete",
     "name": "nova capsule delete",
     "journey": "infra",
-    "description": "Delete a capsule record, subject to retention policy and legal holds.",
+    "description": "Delete a capsule, subject to legal holds, WORM, seals and retention policy.",
     "fields": [
       {
         "key": "capsule-id",
@@ -1488,8 +1488,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "force",
         "label": "--force",
         "type": "toggle",
-        "hint": "Skip retention check (dangerous, requires confirmation)",
+        "hint": "Skip the retention-window check only. Legal holds, WORM locks, NovaSeal seals and deletion_mode=prohibited still refuse.",
         "flag": "--force"
+      },
+      {
+        "key": "capsule-dir",
+        "label": "--capsule-dir",
+        "type": "text",
+        "hint": "Capsule store to delete from (default: NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
+        "flag": "--capsule-dir"
       }
     ],
     "docsPath": "/docs/cli-reference/",
@@ -1679,6 +1686,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--masking-config"
       },
       {
+        "key": "pii-subject",
+        "label": "--pii-subject",
+        "type": "text",
+        "hint": "EXPERIMENTAL (ADR-0314): the data subject this run's PII belongs to. Detected PII (and every literal occurrence of the id) is encrypted with the subject's AES-256-GCM DEK from $NOVAFABRIC_HOME/dek.db, so `nova pii erase <id>` makes it unreadable. Requires NOVA_PII_PEPPER. If the DEK is unavailable the PII is masked instead, never stored in plaintext. Without --pii-subject PII is not encrypted.",
+        "flag": "--pii-subject"
+      },
+      {
         "key": "daemon",
         "label": "--daemon",
         "type": "toggle",
@@ -1765,7 +1779,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "data-dir",
         "label": "--data-dir",
         "type": "text",
-        "hint": "Root novafabric-data directory",
+        "hint": "Data root holding a capsules/ directory. Default: the capsules `nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--data-dir"
       },
       {
@@ -1955,7 +1969,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "kind",
         "label": "--kind",
         "type": "text",
-        "hint": "What the subject digest addresses: capsule | span | run | score.",
+        "hint": "What the subject addresses: capsule | span | run | score | asset.",
         "flag": "--kind",
         "defaultValue": "capsule"
       },
@@ -2699,7 +2713,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "hash",
         "label": "--hash",
         "type": "text",
-        "hint": "Dataset content sha256 (bare hex or sha256:…).",
+        "hint": "Dataset content SHA-256: all 64 hex digits, bare or prefixed sha256:. A truncated or malformed digest exits 2 and nothing is signed.",
         "flag": "--hash",
         "required": true
       },
@@ -2735,7 +2749,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "registry-digest",
         "label": "--registry-digest",
         "type": "text",
-        "hint": "Content-addressed registry digest to bind to.",
+        "hint": "Content-addressed registry digest to bind to (full SHA-256, bare or sha256:).",
         "flag": "--registry-digest"
       },
       {
@@ -2879,7 +2893,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "replay-dir",
         "label": "--replay-dir",
         "type": "text",
-        "hint": "Base directory for the intervention replay output (default: .novafabric/replays). Only with --intervene or --search-root-cause.",
+        "hint": "Base directory for the intervention replay output (default: $NOVAFABRIC_HOME/replays). Only with --intervene or --search-root-cause.",
         "flag": "--replay-dir"
       },
       {
@@ -4170,7 +4184,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "schema",
         "label": "--schema",
         "type": "text",
-        "hint": "JSON-schema file (contract).",
+        "hint": "JSON-schema file (contract). Validated offline: a $ref outside the file is never fetched and exits 2.",
         "flag": "--schema"
       },
       {
@@ -4650,7 +4664,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "output-dir",
         "label": "--output-dir",
         "type": "text",
-        "hint": "Base dir for replay output",
+        "hint": "Base dir for replay output (default: $NOVAFABRIC_HOME/replays)",
         "flag": "--output-dir"
       },
       {
@@ -4751,7 +4765,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "timestamp-ok",
         "label": "--timestamp-ok",
         "type": "toggle",
-        "hint": "Assert an RFC 3161 timestamp verifies for this capsule (FRE-902(14) point 4).",
+        "hint": "Assert an RFC 3161 timestamp verifies for this capsule against a TSA trust anchor (FRE-902(14) point 4): `nova verify --tsa-ca-bundle` reports timestamp_trust=anchored. An unanchored token is not trusted time.",
         "flag": "--timestamp-ok"
       },
       {
@@ -4790,7 +4804,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "timestamp-ok",
         "label": "--timestamp-ok",
         "type": "toggle",
-        "hint": "The checker has independently verified an RFC 3161 timestamp.",
+        "hint": "The checker has independently verified an RFC 3161 timestamp against a TSA trust anchor (timestamp_trust=anchored, not merely an intact token).",
         "flag": "--timestamp-ok"
       }
     ],
@@ -5285,7 +5299,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "dest",
         "label": "--dest",
         "type": "text",
-        "hint": "Destination: a local directory (always works) or s3://bucket\\[/prefix] (any S3-compatible endpoint; set NOVA_S3_ENDPOINT_URL for a private one). azure:// and gcs:// are planned (ADR-0141 P2).",
+        "hint": "Destination: a local directory (always works) or s3://bucket[/prefix] (any S3-compatible endpoint; set NOVA_S3_ENDPOINT_URL for a private one). azure:// and gcs:// are planned (ADR-0141 P2).",
         "flag": "--dest",
         "required": true
       },
@@ -5389,7 +5403,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "output",
         "label": "--output",
         "type": "text",
-        "hint": "Output JSON file path (default: <capsule_dir>/c2pa-manifest.json)",
+        "hint": "Output JSON file path (default: <capsule_dir>/c2pa-manifest.json). Never written through a symlink; inside the capsule a planted link or hard link is replaced.",
         "flag": "--output"
       },
       {
@@ -5996,7 +6010,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "policy-db",
         "label": "--policy-db",
         "type": "text",
-        "hint": "NovaSeal promote-policy SQLite database.",
+        "hint": "NovaSeal promote-policy SQLite database. Default: the NovaSeal Merkle log (NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db), where nova policy sign writes.",
         "flag": "--policy-db"
       },
       {
@@ -6254,7 +6268,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "registry",
         "label": "--registry",
         "type": "text",
-        "hint": "Registry whose retention-policy.yaml, holds.jsonl and worm.db are read.",
+        "hint": "Registry whose retention-policy.yaml and worm.db are read, and whose legal holds are read from the shared hold store (nova hold / API).",
         "flag": "--registry"
       },
       {
@@ -6885,7 +6899,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Target capsule store root (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Target capsule store root (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
@@ -7060,17 +7074,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "interval",
         "label": "--interval",
         "type": "number",
-        "hint": "Watcher poll interval in seconds (--watch only)",
-        "flag": "--interval",
-        "defaultValue": "2.0"
+        "hint": "Watcher poll interval in seconds (--watch only). Default: NOVA_WATCHER_INTERVAL, else 2.0.",
+        "flag": "--interval"
       },
       {
         "key": "backend",
         "label": "--backend",
         "type": "text",
-        "hint": "Backend: auto, polling, watchdog",
-        "flag": "--backend",
-        "defaultValue": "auto"
+        "hint": "Backend: auto, polling, watchdog. Default: NOVA_WATCHER_BACKEND, else auto. Unknown values are refused.",
+        "flag": "--backend"
       },
       {
         "key": "capsule-dir",
@@ -7974,7 +7986,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "identity",
         "label": "--identity",
         "type": "text",
-        "hint": "Approver identity (Ed25519 keyring key; defaults to OS user).",
+        "hint": "Approver identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'approver' role. Defaults to the OS user.",
         "flag": "--identity",
         "defaultValue": ""
       },
@@ -8120,7 +8132,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "identity",
         "label": "--identity",
         "type": "text",
-        "hint": "Proposer identity (Ed25519 keyring key; defaults to OS user).",
+        "hint": "Proposer identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'proposer' role. Defaults to the OS user.",
         "flag": "--identity",
         "defaultValue": ""
       },
@@ -8183,8 +8195,16 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "unprotect",
         "label": "--unprotect",
         "type": "toggle",
-        "hint": "Revert the label to free ADR-0113 behaviour.",
+        "hint": "Revert the label to free ADR-0113 behaviour. On a protected label this is proposed, not applied: it needs maker-checker approval.",
         "flag": "--unprotect"
+      },
+      {
+        "key": "identity",
+        "label": "--identity",
+        "type": "text",
+        "hint": "Maker identity for a relaxation (--unprotect, fewer approvals, or a different --policy-ref on a protected label). Proposer identity. It must name an existing keyring key (create one with `nova promote keygen --identity NAME`; none is created here) that the signer trust list ($NOVAFABRIC_PROMOTE_SIGNERS, default $NOVAFABRIC_HOME/promote-signers.yaml) binds to this identity with the 'proposer' role. Defaults to the OS user.",
+        "flag": "--identity",
+        "defaultValue": ""
       },
       {
         "key": "json",
@@ -8241,7 +8261,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-label-status",
     "name": "nova label status",
     "journey": "govern",
-    "description": "Label protection config, current targets, and pending moves.",
+    "description": "Label protection config, current targets, pending moves and protection changes.",
     "fields": [
       {
         "key": "asset",
@@ -8378,6 +8398,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "number",
         "hint": "Reject a checkpoint epoch below this",
         "flag": "--observed-epoch"
+      },
+      {
+        "key": "merkle-db",
+        "label": "--merkle-db",
+        "type": "text",
+        "hint": "The NovaSeal Merkle log the checkpoint was appended to (SQLite path or Postgres DSN; opened read-only in effect, never created). Checks inclusion against that log: its leaves must hold the checkpoint at log_index and reproduce the recorded tree head; a checkpoint without a merkle block must be in the log. Failure exits 8.",
+        "flag": "--merkle-db"
       }
     ],
     "docsPath": "/docs/cli-reference/",
@@ -8424,7 +8451,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "edge-type",
         "label": "--edge-type",
         "type": "text",
-        "hint": "Comma-separated edge types to filter: contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory",
+        "hint": "Walk only edges of these types (comma-separated): attested_by,consumed,contains,delegated_to,depends_on,derived_from,evaluated_by,member_of_session,migration_source,produced_by,read_memory,replayed_from,spawned,wrote_memory",
         "flag": "--edge-type"
       },
       {
@@ -8706,7 +8733,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "edge-type",
         "label": "--edge-type",
         "type": "text",
-        "hint": "Comma-separated edge types to filter: contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory",
+        "hint": "Walk only edges of these types (comma-separated): attested_by,consumed,contains,delegated_to,depends_on,derived_from,evaluated_by,member_of_session,migration_source,produced_by,read_memory,replayed_from,spawned,wrote_memory",
         "flag": "--edge-type"
       },
       {
@@ -8832,7 +8859,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-lineage-store-migrate",
     "name": "nova lineage-store migrate",
     "journey": "audit",
-    "description": "Migrate lineage edges from a Parquet file or ObjectCapsuleStore to a SQLite store.",
+    "description": "Migrate lineage edges from a Parquet file into a SQLite lineage store.",
     "fields": [
       {
         "key": "parquet",
@@ -8866,7 +8893,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "from-ocs",
         "label": "--from-ocs",
         "type": "toggle",
-        "hint": "Migrate from ObjectCapsuleStore (ADR-0022 canonical path). Requires --ocs-tenant and --ocs-run-ids.",
+        "hint": "Not implemented: refuses with exit 1. NovaFabric has no on-disk ObjectCapsuleStore reader for this command (ADR-0022 path planned).",
         "flag": "--from-ocs"
       },
       {
@@ -8889,7 +8916,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "ocs-data-dir",
         "label": "--ocs-data-dir",
         "type": "text",
-        "hint": "Local OCS data directory for the InMemoryWormAdapter fallback (used with --from-ocs)",
+        "hint": "Not read: --from-ocs is not implemented (kept for compatibility).",
         "flag": "--ocs-data-dir"
       }
     ],
@@ -8980,7 +9007,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-login",
     "name": "nova login",
     "journey": "infra",
-    "description": "Authenticate with a NovaFabric server via Device Authorization Grant.",
+    "description": "Log in through a server's DEMO device grant (local testing only).",
     "fields": [
       {
         "key": "server",
@@ -9610,7 +9637,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Root directory that contains one sub-directory per capsule. Default: ~/.novafabric/capsules/",
+        "hint": "Root directory that contains one sub-directory per capsule. Default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules/ (~/.novafabric/capsules/ when NOVAFABRIC_HOME is unset).",
         "flag": "--capsule-dir"
       },
       {
@@ -9725,7 +9752,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-pii-erase",
     "name": "nova pii erase",
     "journey": "audit",
-    "description": "Destroy the AES-256-GCM DEK for a data subject (GDPR Art.17 crypto-shredding).",
+    "description": "Destroy the AES-256-GCM DEK for a data subject (experimental, ADR-0314).",
     "fields": [
       {
         "key": "subject-id",
@@ -9739,7 +9766,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Directory to scan for redaction_manifest.json files associated with the data subject. Defaults to $NOVAFABRIC_HOME/capsules/ or ~/.novafabric/capsules/.",
+        "hint": "Directory to scan for redaction_manifest.json files associated with the data subject. Defaults to where `nova capture` writes: $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules/ (~/.novafabric/capsules/ when NOVAFABRIC_HOME is unset).",
         "flag": "--capsule-dir"
       },
       {
@@ -9779,7 +9806,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Directory scanned for the capsule's redaction_manifest.json when a bare capsule ID is given. Defaults to $NOVAFABRIC_HOME/capsules/ or ~/.novafabric/capsules/.",
+        "hint": "Directory scanned for the capsule's redaction_manifest.json when a bare capsule ID is given. Defaults to where `nova capture` writes: $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules/ (~/.novafabric/capsules/ when NOVAFABRIC_HOME is unset).",
         "flag": "--capsule-dir"
       },
       {
@@ -9797,7 +9824,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-policy-capture-level-get",
     "name": "nova policy capture-level get",
     "journey": "govern",
-    "description": "Show the current capture-level policy.",
+    "description": "Show the capture level this process resolves (experimental).",
     "fields": [],
     "docsPath": "/docs/cli-reference/",
     "generated": true
@@ -9806,13 +9833,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-policy-capture-level-set",
     "name": "nova policy capture-level set",
     "journey": "govern",
-    "description": "Set the capture-level policy for new runs.",
+    "description": "Validate a capture level and print the variable to export (experimental).",
     "fields": [
       {
         "key": "level",
         "label": "--level",
         "type": "text",
-        "hint": "Capture level: minimal, standard, forensic, air_gapped",
+        "hint": "Capture level to validate: minimal, standard, forensic, air_gapped",
         "flag": "--level",
         "required": true
       }
@@ -9855,7 +9882,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "PolicyStore SQLite DB path (default: NOVAFABRIC_HOME/promote/policy.db or ~/.local/share/novafabric/merkle.db)",
+        "hint": "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads).",
         "flag": "--db"
       },
       {
@@ -9926,7 +9953,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "SQLite DB path",
+        "hint": "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads).",
         "flag": "--db"
       }
     ],
@@ -11226,21 +11253,21 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "allow-external-side-effects",
         "label": "--allow-external-side-effects",
         "type": "toggle",
-        "hint": "Safety ladder (ADR-0012): permit external side effects (implies --allow-mutating). In mocked mode, under --permissive an unmatched record.tool call of that class runs live, and a replay.yaml `allow: true` override for such a tool is honoured (ADR-0306, experimental).",
+        "hint": "Safety ladder (ADR-0012): permit external side effects (implies --allow-mutating, including its replay_mutating policy check). In mocked mode, under --permissive an unmatched record.tool call of that class runs live, and a replay.yaml `allow: true` override for such a tool is honoured (ADR-0306, experimental).",
         "flag": "--allow-external-side-effects"
       },
       {
         "key": "allow-unknown-mutation",
         "label": "--allow-unknown-mutation",
         "type": "toggle",
-        "hint": "Safety ladder (ADR-0012): permit tools of unknown mutation class (implies every lower rung). Every MCP call counts as unknown: in mocked mode this is the flag that lets an unmatched MCP call run live under --permissive, and that a replay.yaml `allow: true` override on an MCP tool needs before it re-executes (ADR-0306, experimental).",
+        "hint": "Safety ladder (ADR-0012): permit tools of unknown mutation class (implies every lower rung, including the replay_mutating policy check). Every MCP call counts as unknown: in mocked mode this is the flag that lets an unmatched MCP call run live under --permissive, and that a replay.yaml `allow: true` override on an MCP tool needs before it re-executes (ADR-0306, experimental).",
         "flag": "--allow-unknown-mutation"
       },
       {
         "key": "output-dir",
         "label": "--output-dir",
         "type": "text",
-        "hint": "Base dir for replay output",
+        "hint": "Base dir for replay output (default: $NOVAFABRIC_HOME/replays)",
         "flag": "--output-dir"
       },
       {
@@ -11420,7 +11447,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "backend",
         "label": "--backend",
         "type": "text",
-        "hint": "Object-store backend when restoring a manifest-only set: local | s3 | minio | ceph_rgw | azure_blob.",
+        "hint": "Object-store backend when restoring a manifest-only set: local | s3 | minio | ceph_rgw | azure_blob | gcs.",
         "flag": "--backend"
       },
       {
@@ -11453,14 +11480,14 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Capsule directory to sweep (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until (default: .novafabric/registries/<registry>/worm.db).",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
         "flag": "--worm-db"
       },
       {
@@ -11544,14 +11571,14 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Capsule directory to sweep (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until.",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
         "flag": "--worm-db"
       },
       {
@@ -11583,14 +11610,14 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Capsule directory to sweep (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until (default: .novafabric/registries/<registry>/worm.db).",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
         "flag": "--worm-db"
       },
       {
@@ -11629,14 +11656,14 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Capsule directory to sweep (default: $NOVAFABRIC_HOME/capsules).",
+        "hint": "Capsule directory to sweep (default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
         "flag": "--capsule-dir"
       },
       {
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until.",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
         "flag": "--worm-db"
       },
       {
@@ -11668,7 +11695,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "to",
         "label": "--to",
         "type": "text",
-        "hint": "Explicit target version to restore (e.g. v1.8.0). If omitted, the most recent previous production version is used.",
+        "hint": "Explicit target version to restore (e.g. v1.8.0). If omitted, the most recent previous production version is used. A version the registry never recorded in production needs an explicit 'promote_direct' policy allow, like `nova promote direct` (ADR-0312).",
         "flag": "--to"
       },
       {
@@ -11888,7 +11915,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "framework",
         "label": "--framework",
         "type": "text",
-        "hint": "Only triggers for this framework (anthropic_rsp, openai_preparedness, deepmind_fsf, other).",
+        "hint": "Only triggers for this framework. An unknown name exits 2.",
         "flag": "--framework"
       },
       {
@@ -12012,7 +12039,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "fail-on",
         "label": "--fail-on",
         "type": "text",
-        "hint": "Exit 1 if any finding at or above this severity is found.",
+        "hint": "Exit 2 if any finding at or above this severity is found (exit 1 means the redaction proof is missing or unreadable).",
         "flag": "--fail-on"
       },
       {
@@ -12376,7 +12403,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "SQLite DB path",
+        "hint": "Accepted for compatibility; this command does not read the policy (nova seal propose and nova seal verify do).",
         "flag": "--db"
       },
       {
@@ -12462,14 +12489,14 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "notify",
         "label": "--notify",
         "type": "text",
-        "hint": "Email to notify (repeatable) (repeatable — add more in your terminal)",
+        "hint": "Address to notify (repeatable). Signed into the bypass as mailto:<addr> and passed to the configured channel's receiver to relay; NovaFabric itself sends no email. (repeatable — add more in your terminal)",
         "flag": "--notify"
       },
       {
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "Option --db.",
+        "hint": "Accepted for compatibility; this command does not read the policy (nova seal propose and nova seal verify do).",
         "flag": "--db"
       },
       {
@@ -12524,7 +12551,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires the seal-postgres extra). Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then merkle_db in novaseal.yaml, then ~/.novafabric/novaseal-merkle.db.",
+        "hint": "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires the seal-postgres extra). Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db — the same log capture seals into.",
         "flag": "--db"
       },
       {
@@ -12602,7 +12629,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "SQLite DB path",
+        "hint": "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads).",
         "flag": "--db"
       },
       {
@@ -12737,7 +12764,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "SQLite DB path",
+        "hint": "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads).",
         "flag": "--db"
       },
       {
@@ -12886,7 +12913,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "capsule-dir",
         "label": "--capsule-dir",
         "type": "text",
-        "hint": "Directory of capsules to browse. Defaults to $NOVAFABRIC_HOME/capsules.",
+        "hint": "Directory of capsules to browse. Defaults to where `nova capture` writes: $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules.",
         "flag": "--capsule-dir"
       },
       {
@@ -13105,7 +13132,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-server-assign-role",
     "name": "nova server assign-role",
     "journey": "infra",
-    "description": "Assign a role to a user (reader, writer, admin, or auditor).",
+    "description": "Record a role for a user (reader, writer, admin, or auditor).",
     "fields": [
       {
         "key": "user",
@@ -13201,7 +13228,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "key-path",
         "label": "--key-path",
         "type": "text",
-        "hint": "Path to ed25519 private key PEM. Defaults to NOVAFABRIC_OFFLINE_KEY_PATH env var, or ~/.novafabric/keys/offline-key.pem.",
+        "hint": "Path to the ed25519 private key PEM, or its .pub sibling (the private key next to it is used). Defaults to NOVAFABRIC_OFFLINE_KEY_PATH env var, or $NOVAFABRIC_HOME/keys/offline-key.pem.",
         "flag": "--key-path"
       }
     ],
@@ -13267,6 +13294,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "text",
         "hint": "SQLite DB path. Defaults to registry default.",
         "flag": "--db-path"
+      },
+      {
+        "key": "config",
+        "label": "--config",
+        "type": "text",
+        "hint": "Server YAML config (as for `nova server start`; default ~/.config/novafabric/server.yaml). Its `oidc:` block decides whether revoking the last admin row is a lockout.",
+        "flag": "--config"
       }
     ],
     "docsPath": "/docs/cli-reference/",
@@ -13815,7 +13849,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "output-dir",
         "label": "--output-dir",
         "type": "text",
-        "hint": "Base directory for replay output (per-turn replay capsules plus the session replay result). Defaults to ./.novafabric/replays.",
+        "hint": "Base directory for replay output (per-turn replay capsules plus the session replay result). Defaults to $NOVAFABRIC_HOME/replays.",
         "flag": "--output-dir"
       },
       {
@@ -14605,7 +14639,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "seal-config",
         "label": "--seal-config",
         "type": "text",
-        "hint": "Path to novaseal.yaml config (default: ~/.novafabric/novaseal.yaml)",
+        "hint": "Path to novaseal.yaml config (default: $NOVAFABRIC_HOME/novaseal.yaml, i.e. ~/.novafabric/novaseal.yaml only when NOVAFABRIC_HOME is unset)",
         "flag": "--seal-config"
       },
       {
@@ -14619,7 +14653,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "backend",
         "label": "--backend",
         "type": "text",
-        "hint": "Verification backend: 'local' (ECDSA P-256 DSSE, default) or 'sigstore' (Sigstore bundle verification). Requires pip install \"novafabric\\[sigstore]\" for the sigstore backend.",
+        "hint": "Verification backend: 'local' (ECDSA P-256 DSSE, default) or 'sigstore' (Sigstore bundle verification). Requires pip install \"novafabric[sigstore]\" for the sigstore backend.",
         "flag": "--backend",
         "defaultValue": "local"
       },
@@ -14685,8 +14719,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "json",
         "label": "--json",
         "type": "toggle",
-        "hint": "Print one JSON object instead of the text report (capsule directories, local backend). Carries identity_trust and timestamp_ok (null when the capsule has no RFC 3161 token) — ADR-0301. Exit code is unchanged.",
+        "hint": "Print one JSON object instead of the text report (capsule directories, local backend). Carries identity_trust and timestamp_ok (null when the capsule has no RFC 3161 token) — ADR-0301, timestamp_trust (anchored|unanchored|absent|invalid), sealer_log and unanchored_claims. Exit code is unchanged.",
         "flag": "--json"
+      },
+      {
+        "key": "strict",
+        "label": "--strict",
+        "type": "toggle",
+        "hint": "Also exit 1 when a passing check rests on something no anchor you trust vouches for (capsule directories, local backend): a self-asserted signer (no --ca-bundle), a timestamp whose TSA is not anchored (no --tsa-ca-bundle / tsa_ca_certs), Merkle inclusion shown only by the proof the capsule carries or not checked, or sealer_log=unverifiable-other-version. Listed as unanchored_claims.",
+        "flag": "--strict"
       }
     ],
     "docsPath": "/docs/cli-reference/",

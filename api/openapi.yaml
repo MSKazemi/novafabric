@@ -751,7 +751,7 @@ info:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
   title: NovaFabric Multi-User REST API
-  version: 0.106.1
+  version: 0.107.0
 openapi: 3.1.0
 paths:
   /.well-known/mcp.json:
@@ -1338,6 +1338,10 @@ paths:
       tags:
       - assets
     post:
+      description: Registers a new asset version. It always enters as `development`;
+        a spec that declares any other `status` is refused with 422 `registration_status_not_allowed`
+        (move it with the promote route, which runs the promotion gates). A version
+        that was ever in production cannot be registered again (409).
       operationId: createAsset
       requestBody:
         content:
@@ -2042,15 +2046,12 @@ paths:
                   default: false
                   title: Allow Unsafe Skips
                   type: boolean
-                output_path:
-                  anyOf:
-                  - type: string
-                  - type: 'null'
-                  description: Optional override for the output ZIP path (server-side
-                    path).
-                  title: Output Path
                 run_id:
-                  description: The capsule run_id to export as evidence.
+                  description: 'The capsule run_id to export as evidence: one path
+                    segment (no ''/'', ''\'', ''..'', NUL or absolute path), else
+                    400. The server writes the bundle to <evidence dir>/<run_id>.zip
+                    and returns that path as bundle_path; a request naming an output_path
+                    is refused with 400.'
                   title: Run Id
                   type: string
               required:

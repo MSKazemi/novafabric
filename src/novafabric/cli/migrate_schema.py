@@ -28,6 +28,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric import _paths as _nf_paths
+from novafabric._capsule_fs import find_capsule_links
 
 console = Console()
 
@@ -99,6 +100,20 @@ def migrate_capsule(
     """
     capsule_id = capsule_dir.name
     manifest_path = capsule_dir / "manifest.json"
+
+    # ── Never through a link ──────────────────────────────────────────────
+    # A linked manifest.json / legacy event log would be read through, copied
+    # into a real .bak file (laundering the target into the capsule) and then
+    # overwritten in place: refuse the capsule instead.
+    links = find_capsule_links(capsule_dir)
+    if links:
+        return _CapsuleResult(
+            capsule_id=capsule_id,
+            old_version="—",
+            action="error",
+            result=f"capsule holds symlink(s), never followed: {', '.join(links[:5])}",
+            failed=True,
+        )
 
     # ── Read manifest ─────────────────────────────────────────────────────
     if not manifest_path.exists():
@@ -240,16 +255,18 @@ def migrate_capsule_dir(
 
 def migrate_schema_cmd(
     capsule_dir: Annotated[
-        Path,
+        Path | None,
         typer.Option(
             "--capsule-dir",
             help=(
                 "Root directory that contains one sub-directory per capsule. "
-                "Default: ~/.novafabric/capsules/"
+                "Default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, "
+                "else $NOVAFABRIC_HOME/capsules/ (~/.novafabric/capsules/ when "
+                "NOVAFABRIC_HOME is unset)."
             ),
             show_default=False,
         ),
-    ] = _nf_paths.default_capsule_dir(),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -279,11 +296,13 @@ def migrate_schema_cmd(
     \b
     Examples:
       # Preview changes without applying them
-      nova migrate-schema --dry-run capsules/
+      nova migrate-schema --dry-run --capsule-dir capsules/
 
       # Apply with backup copies preserved
-      nova migrate-schema --backup capsules/
+      nova migrate-schema --backup --capsule-dir capsules/
     """
+    if capsule_dir is None:
+        capsule_dir = _nf_paths.default_capsule_dir()
     if dry_run:
         console.print(
             f"[bold yellow]Dry run[/bold yellow] — reading from "

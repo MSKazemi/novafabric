@@ -4,21 +4,120 @@ Two backends:
 - PollingBackend (default, zero extra deps) — incremental directory scan
 - WatchdogBackend (optional, ``pip install novafabric[watch]``) — inotify/FSEvents/kqueue
 
-Backend selection: ``NOVA_WATCHER_BACKEND`` env var (``auto`` | ``polling`` | ``watchdog``).
-Poll interval: ``NOVA_WATCHER_INTERVAL`` env var (float seconds, default 2.0).
+Settings resolve as **explicit argument (CLI flag) > environment > default**
+(:func:`resolve_watcher_settings`):
+
+- backend: ``--backend`` > ``NOVA_WATCHER_BACKEND`` > ``auto``
+  (``auto`` | ``polling`` | ``watchdog``);
+- poll interval: ``--interval`` > ``NOVA_WATCHER_INTERVAL`` > ``2.0`` seconds.
+
+An unknown backend or a non-positive / non-finite interval raises
+:class:`WatcherConfigError` naming where the value came from. Until audit
+L27/L30 an unknown backend silently became ``auto`` and the environment
+overrode an explicit flag.
 """
 from __future__ import annotations
 
 import logging
+import math
 import os
 import queue
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+
+from novafabric._capsule_fs import is_capsule_regular_file
 
 logger = logging.getLogger(__name__)
+
+BACKEND_ENV = "NOVA_WATCHER_BACKEND"
+INTERVAL_ENV = "NOVA_WATCHER_INTERVAL"
+VALID_BACKENDS: tuple[str, ...] = ("auto", "polling", "watchdog")
+DEFAULT_BACKEND = "auto"
+DEFAULT_INTERVAL = 2.0
+
+SettingSource = Literal["flag", "env", "default"]
+
+
+class WatcherConfigError(ValueError):
+    """A capsule-watcher backend or interval setting is not usable."""
+
+
+@dataclass(frozen=True)
+class WatcherSettings:
+    """The effective watcher settings and where each one came from."""
+
+    backend: str
+    interval: float
+    backend_source: SettingSource
+    interval_source: SettingSource
+
+
+def _where(source: SettingSource, flag: str, env: str) -> str:
+    return flag if source == "flag" else env
+
+
+def _check_backend(raw: str, source: SettingSource) -> str:
+    value = raw.strip().lower()
+    if value not in VALID_BACKENDS:
+        raise WatcherConfigError(
+            f"unknown capsule-watcher backend {raw!r} from "
+            f"{_where(source, '--backend', BACKEND_ENV)}; "
+            f"choose one of: {', '.join(VALID_BACKENDS)}"
+        )
+    return value
+
+
+def _check_interval(raw: str | float, source: SettingSource) -> float:
+    where = _where(source, "--interval", INTERVAL_ENV)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise WatcherConfigError(
+            f"capsule-watcher interval {raw!r} from {where} is not a number of seconds"
+        ) from None
+    if not math.isfinite(value) or value <= 0:
+        raise WatcherConfigError(
+            f"capsule-watcher interval {raw!r} from {where} must be a finite number > 0"
+        )
+    return value
+
+
+def resolve_watcher_settings(
+    backend: str | None = None, interval: float | None = None
+) -> WatcherSettings:
+    """Resolve backend + interval: explicit argument > environment > default.
+
+    ``None`` means "not given explicitly". Raises :class:`WatcherConfigError`
+    for an unknown backend or an unusable interval, whatever its source — a
+    typo is refused rather than silently replaced with ``auto``.
+    """
+    b_source: SettingSource
+    if backend is not None:
+        b_raw, b_source = backend, "flag"
+    elif BACKEND_ENV in os.environ:
+        b_raw, b_source = os.environ[BACKEND_ENV], "env"
+    else:
+        b_raw, b_source = DEFAULT_BACKEND, "default"
+
+    i_source: SettingSource
+    i_raw: str | float
+    if interval is not None:
+        i_raw, i_source = interval, "flag"
+    elif INTERVAL_ENV in os.environ:
+        i_raw, i_source = os.environ[INTERVAL_ENV], "env"
+    else:
+        i_raw, i_source = DEFAULT_INTERVAL, "default"
+
+    return WatcherSettings(
+        backend=_check_backend(b_raw, b_source),
+        interval=_check_interval(i_raw, i_source),
+        backend_source=b_source,
+        interval_source=i_source,
+    )
 
 
 # ── helpers ───────────────────────────────────────────────────────────────
@@ -157,7 +256,9 @@ class WatchdogBackend:
                 p = self._queue.get_nowait()
             except queue.Empty:
                 break
-            if not (p / "capsule.yaml").exists():
+            # A watch event for a link (to a directory anywhere) is not a
+            # capsule this server lists: iter_capsule_dirs' rule, per event.
+            if p.is_symlink() or not is_capsule_regular_file(p, "capsule.yaml"):
                 continue
             try:
                 m = load_capsule_manifest(p)
@@ -190,14 +291,21 @@ class CapsuleWatcher:
         self,
         capsule_dir: Path,
         db_path: Path | None = None,
-        interval: float = 2.0,
-        backend: str = "auto",
+        interval: float | None = None,
+        backend: str | None = None,
     ) -> None:
+        """*interval* / *backend* given explicitly win over the environment.
+
+        ``None`` (the default) means "not given": ``NOVA_WATCHER_INTERVAL`` /
+        ``NOVA_WATCHER_BACKEND`` apply, else ``2.0`` / ``auto``. Raises
+        :class:`WatcherConfigError` for an unknown backend or a bad interval.
+        """
         self._capsule_dir = capsule_dir
         self._db_path = db_path
-        self._interval = float(os.environ.get("NOVA_WATCHER_INTERVAL", interval))
+        self.settings = resolve_watcher_settings(backend=backend, interval=interval)
+        self._interval = self.settings.interval
 
-        resolved = os.environ.get("NOVA_WATCHER_BACKEND", backend)
+        resolved = self.settings.backend
         if resolved == "watchdog":
             self._backend: _BackendProtocol = WatchdogBackend(capsule_dir)
         elif resolved == "polling":
@@ -242,6 +350,10 @@ class CapsuleWatcher:
         p = Path(run_id_or_path)
         if not p.is_absolute():
             p = self._capsule_dir / str(run_id_or_path)
+            if p.is_symlink():
+                # A bare name is looked up like a scan: a linked entry in the
+                # capsule dir is never indexed (an explicit path may be a link).
+                return False, False
         if not p.exists() or not (p / "capsule.yaml").exists():
             return False, False
         try:
@@ -298,6 +410,11 @@ class CapsuleWatcher:
     def backend_name(self) -> str:
         """Return ``'polling'`` or ``'watchdog'``."""
         return self._backend.name
+
+    @property
+    def interval(self) -> float:
+        """The effective poll interval in seconds (flag > env > default)."""
+        return self._interval
 
     def close(self) -> None:
         """Stop any OS-level watchers (WatchdogBackend only)."""

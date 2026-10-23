@@ -50,7 +50,9 @@ _GENERATIONAL_DIFFERENCES: dict[str, set[str]] = {
     # Canonical carries the Phase 3 causal/compositional vocabulary
     # (contains/spawned/delegated_to/…, ADR-0044 + ADR-0122 D3). The packaged
     # copy carries the data-flow vocabulary (consumed/produced_by/…) that
-    # `lineage/_writer.py` actually emits. Disjoint on purpose.
+    # `lineage/_writer.py` actually emits. Disjoint on purpose, with one
+    # deliberate overlap: `migration_source` (ADR-0034 §6), which `nova migrate`
+    # writes and both generations must accept.
     "lineage-edge.schema.json": {"edge_type"},
 }
 

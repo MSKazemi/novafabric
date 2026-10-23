@@ -16,6 +16,8 @@ from rich.table import Table
 
 from novafabric.registry.service import (
     AssetNotFoundError,
+    InvalidLifecycleTransitionError,
+    PromotionBlockedError,
     RollbackError,
     rollback_asset,
 )
@@ -30,7 +32,9 @@ def rollback_cmd(
         None,
         "--to",
         help="Explicit target version to restore (e.g. v1.8.0). "
-        "If omitted, the most recent previous production version is used.",
+        "If omitted, the most recent previous production version is used. "
+        "A version the registry never recorded in production needs an explicit "
+        "'promote_direct' policy allow, like `nova promote direct` (ADR-0312).",
     ),
     actor: str = typer.Option(
         "cli-user",
@@ -52,6 +56,12 @@ def rollback_cmd(
     Archives the current production version and atomically restores the
     previous one. Use --to to target a specific prior version.
     Leaves a full audit trail.
+
+    Only a version the registry's status history shows was in production is
+    restored without a policy decision. Any other --to target is a single-actor
+    move into production: it is refused unless the `promote_direct` policy
+    action explicitly allows it, exactly like `nova promote direct` (ADR-0312).
+    Without --to, only versions with production history are considered.
 
     Scope: single asset.
 
@@ -76,8 +86,11 @@ def rollback_cmd(
     except AssetNotFoundError as exc:
         console.print(f"[red]Asset not found:[/red] {exc}")
         raise typer.Exit(code=1)
-    except RollbackError as exc:
-        console.print(f"[red]Rollback failed:[/red] {exc}")
+    except (RollbackError, InvalidLifecycleTransitionError) as exc:
+        console.print(f"[red]Rollback failed:[/red] {exc}", soft_wrap=True)
+        raise typer.Exit(code=1)
+    except PromotionBlockedError as exc:  # incl. DirectPromotionDeniedError (ADR-0312)
+        console.print(f"[red]Rollback refused:[/red] {exc}", soft_wrap=True)
         raise typer.Exit(code=1)
 
     # Pretty confirmation table

@@ -54,9 +54,16 @@ def export_model_independence_cmd(
         typer.Option("--data-dir", help="NovaSeal promote-bundle data directory."),
     ] = _SEAL_HOME,
     policy_db: Annotated[
-        Path,
-        typer.Option("--policy-db", help="NovaSeal promote-policy SQLite database."),
-    ] = _SEAL_HOME / "merkle.db",
+        Path | None,
+        typer.Option(
+            "--policy-db",
+            help=(
+                "NovaSeal promote-policy SQLite database. Default: the NovaSeal Merkle "
+                "log (NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then "
+                "$NOVAFABRIC_HOME/novaseal-merkle.db), where nova policy sign writes."
+            ),
+        ),
+    ] = None,
     json_out: Annotated[
         bool,
         typer.Option("--json", help="Emit the independence file as JSON."),
@@ -83,12 +90,27 @@ def export_model_independence_cmd(
         collect_registry_records,
         collect_seal_record,
     )
+    from novafabric.promote.policy_location import (
+        PolicyDbLocationError,
+        default_policy_db,
+    )
+
+    resolved_policy_db = policy_db
+    if capsule_ids and resolved_policy_db is None:
+        try:
+            resolved_policy_db = default_policy_db()
+        except PolicyDbLocationError as exc:
+            err_console.print(f"[red]Error:[/red] {escape(str(exc))} (--policy-db)")
+            raise typer.Exit(2) from exc
 
     records: list[MakerCheckerRecord] = []
     try:
         records.extend(collect_registry_records(db or registry_db_path(), model))
         for capsule_id in capsule_ids or []:
-            rec = collect_seal_record(capsule_id, data_dir=data_dir, policy_db=policy_db)
+            assert resolved_policy_db is not None  # resolved above whenever capsule_ids
+            rec = collect_seal_record(
+                capsule_id, data_dir=data_dir, policy_db=resolved_policy_db
+            )
             if rec is not None:
                 records.append(rec)
     except ValueError as exc:

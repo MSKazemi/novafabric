@@ -256,6 +256,7 @@ if [ "$1" = info ]; then
 fi
 if [ "$1" = run ]; then
   printf '%s\\n' "$@" > "$STUB_DOCKER_RECORD"
+  printf '%s' "${NOVAFABRIC_CAPSULE_DIR-}" > "$STUB_DOCKER_RECORD.capsule-dir"
   echo "stub: docker run recorded"
   exit 0
 fi
@@ -350,7 +351,10 @@ def test_run_sh_issues_the_documented_unprivileged_docker_run(tmp_path: Path) ->
     assert "EXAMPLE_HOST_SECRET" not in env_keys
     assert "do-not-forward" not in "\n".join(argv)
     assert env_keys <= {"PYTHONPATH"} | {k for k in env_keys if k.startswith("NOVAFABRIC_")}
-    assert "NOVAFABRIC_CAPSULE_DIR=/novafabric/capsule" in value_of("-e")
+    # `-e NAME` only (ADR-0311 Amendment 3): the value rides in the docker
+    # client's environment, never on its command line.
+    assert "NOVAFABRIC_CAPSULE_DIR" in value_of("-e")
+    assert (tmp_path / "docker-argv.txt.capsule-dir").read_text() == "/novafabric/capsule"
 
 
 def test_run_sh_capsule_records_the_runner_and_the_resolved_digest(tmp_path: Path) -> None:

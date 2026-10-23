@@ -106,27 +106,23 @@ def test_rollback_requires_token(client: TestClient) -> None:
 
 
 def test_rollback_success(client: TestClient, env: dict[str, Path]) -> None:
-    """Set up production + archived versions directly in DB; rollback should restore archived."""
-    from novafabric.registry.store import get_connection, init_schema
+    """v1 was in production, then archived for v2; rollback restores v1.
+
+    Set up through the registry service (not raw SQL) so the status history
+    records v1's time in production -- the evidence an ungated rollback needs
+    (ADR-0312 D1).
+    """
+    from novafabric.registry.service import promote_asset
     from novafabric.spec.models import AssetStatus
 
-    # Register two versions
-    id_v1 = _register_asset(client, "rollback-model", "1.0.0")
-    id_v2 = _register_asset(client, "rollback-model", "2.0.0")
-
-    # Set v1 to archived (was previously in production), v2 to production
-    conn = get_connection(env["db"])
-    init_schema(conn)
-    conn.execute(
-        "UPDATE assets SET status = ? WHERE id = ?",
-        (AssetStatus.archived.value, id_v1),
-    )
-    conn.execute(
-        "UPDATE assets SET status = ?, promoted_at = '2026-01-01T00:00:00+00:00' WHERE id = ?",
-        (AssetStatus.production.value, id_v2),
-    )
-    conn.commit()
-    conn.close()
+    _register_asset(client, "rollback-model", "1.0.0")
+    _register_asset(client, "rollback-model", "2.0.0")
+    for version, status in (
+        ("1.0.0", AssetStatus.production),
+        ("1.0.0", AssetStatus.archived),
+        ("2.0.0", AssetStatus.production),
+    ):
+        promote_asset("rollback-model", version, status, actor="owner", db_path=env["db"])
 
     # Rollback: v2 should be archived, v1 restored to production
     res = client.post(
@@ -143,8 +139,21 @@ def test_rollback_success(client: TestClient, env: dict[str, Path]) -> None:
     assert "rollback_id" in result
 
 
-def test_rollback_no_previous_version_returns_409(client: TestClient) -> None:
+def test_rollback_no_previous_version_returns_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A single production version with no history yields 409."""
+    from novafabric.policy._models import PolicyDecision, PolicyInput
+
+    class _AllowDirect:
+        """ADR-0312: single-actor promotion into production needs an explicit allow."""
+
+        def evaluate(self, input_: PolicyInput) -> PolicyDecision:
+            return PolicyDecision(allow=True, reason="test allow", decision_id="t-1")
+
+    monkeypatch.setattr(
+        "novafabric.registry.service.get_policy_engine", lambda: _AllowDirect()
+    )
     id_v1 = _register_asset(client, "solo-model", "1.0.0")
     _promote_asset(client, id_v1, "staging")
     _promote_asset(client, id_v1, "production")

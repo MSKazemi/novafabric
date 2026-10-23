@@ -449,3 +449,157 @@ def test_cli_restore_refuses_non_empty_home_exit_1(
     result = runner.invoke(app, ["restore", str(backup_set), "--home", str(target)])
     assert result.exit_code == 1
     assert "not empty" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Shred replay hardening (adversarial review 2026-10-22): holds, chain, receipts
+# ---------------------------------------------------------------------------
+
+
+def _resurrected(target: Path, *subjects: str) -> None:
+    target.mkdir(exist_ok=True)
+    store = DEKStore(target / "dek.db")
+    for subject in subjects:
+        store.get_or_create_dek(subject)
+    store.close()
+
+
+def _subjects(target: Path) -> set[str]:
+    conn = sqlite3.connect(target / "dek.db")
+    try:
+        return {r[0] for r in conn.execute("SELECT subject_id FROM data_subject_deks")}
+    finally:
+        conn.close()
+
+
+def _replay_step(result: object) -> object:
+    return next(s for s in result.steps if s.name == "crypto-shred-replay")  # type: ignore[attr-defined]
+
+
+def test_shred_replay_never_destroys_a_key_under_an_active_legal_hold(
+    backup_set: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Destroying a DEK is irreversible; a hold says nothing may be destroyed. The hold
+    wins, the DEK stays, and the restore is NOT declared complete (D4 is unmet)."""
+    from novafabric.retention.holds import place_hold
+
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / "deployment-home"))
+    hold = place_hold("default", "litigation", actor="legal")
+    log_path = tmp_path / "audit.jsonl"
+    _seed_shred_record(log_path, tmp_path / "receipts" / "run-001.receipt.json", "subj-1")
+    target = tmp_path / "held-home"
+    _resurrected(target, "subj-1")
+
+    result = restore_backup(backup_set, home=target, force=True, decision_log_path=log_path)
+
+    step = _replay_step(result)
+    assert step.ok is False  # type: ignore[attr-defined]
+    assert hold.hold_id in step.detail  # type: ignore[attr-defined]
+    assert "legal hold" in step.detail  # type: ignore[attr-defined]
+    assert result.ok is False
+    assert "subj-1" in _subjects(target)
+
+
+def test_shred_replay_honours_a_hold_that_came_with_the_restored_home(
+    backup_set: Path, tmp_path: Path
+) -> None:
+    log_path = tmp_path / "audit.jsonl"
+    _seed_shred_record(log_path, tmp_path / "receipts" / "run-001.receipt.json", "subj-1")
+    target = tmp_path / "held-home-2"
+    _resurrected(target, "subj-1")
+    ledger = target / "registries" / "default" / "holds.jsonl"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text(
+        json.dumps(
+            {"hold_id": "hold-restored", "registry": "default", "reason": "audit",
+             "duration_days": None, "created_at": "2026-07-01T00:00:00+00:00",
+             "released_at": None}
+        )
+        + "\n"
+    )
+
+    result = restore_backup(backup_set, home=target, force=True, decision_log_path=log_path)
+
+    step = _replay_step(result)
+    assert step.ok is False and "hold-restored" in step.detail  # type: ignore[attr-defined]
+    assert "subj-1" in _subjects(target)
+
+
+def test_shred_replay_refuses_a_log_whose_chain_does_not_verify(
+    backup_set: Path, tmp_path: Path
+) -> None:
+    """A line appended outside the hash chain must not be able to destroy a key."""
+    log_path = tmp_path / "audit.jsonl"
+    _seed_shred_record(log_path, tmp_path / "receipts" / "run-001.receipt.json", "subj-1")
+    victim = tmp_path / "receipts" / "run-002.receipt.json"
+    victim.write_text(json.dumps({"subject_id": "victim", "capsule_ids_affected": ["run-002"]}))
+    with log_path.open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {"event_type": "retention.action",
+                 "details": {"action": "crypto-shred", "outcome": "applied",
+                             "item_id": "run-002", "erasure_receipt_ref": str(victim)}}
+            )
+            + "\n"
+        )
+    target = tmp_path / "forged-home"
+    _resurrected(target, "subj-1", "victim")
+
+    result = restore_backup(backup_set, home=target, force=True, decision_log_path=log_path)
+
+    step = _replay_step(result)
+    assert step.ok is False  # type: ignore[attr-defined]
+    assert "chain" in step.detail  # type: ignore[attr-defined]
+    assert result.ok is False
+    assert {"subj-1", "victim"} <= _subjects(target)  # nothing destroyed from that log
+
+
+def test_shred_replay_refuses_an_edited_record(backup_set: Path, tmp_path: Path) -> None:
+    log_path = tmp_path / "audit.jsonl"
+    _seed_shred_record(log_path, tmp_path / "receipts" / "run-001.receipt.json", "subj-1")
+    victim = tmp_path / "receipts" / "victim.receipt.json"
+    victim.write_text(json.dumps({"subject_id": "victim", "capsule_ids_affected": ["run-001"]}))
+    entry = json.loads(log_path.read_text().splitlines()[0])
+    entry["details"]["erasure_receipt_ref"] = str(victim)
+    log_path.write_text(json.dumps(entry) + "\n")
+    target = tmp_path / "edited-home"
+    _resurrected(target, "victim")
+
+    result = restore_backup(backup_set, home=target, force=True, decision_log_path=log_path)
+
+    assert _replay_step(result).ok is False  # type: ignore[attr-defined]
+    assert "victim" in _subjects(target)
+
+
+def test_a_record_cannot_borrow_another_erasures_receipt(
+    backup_set: Path, tmp_path: Path
+) -> None:
+    """The record names its receipt by path; a receipt for another item does not count."""
+    log_path = tmp_path / "audit.jsonl"
+    other = tmp_path / "receipts" / "run-999.receipt.json"
+    _seed_shred_record(log_path, other, "victim")  # chained record for run-001 -> run-999
+    target = tmp_path / "mismatch-home"
+    _resurrected(target, "victim")
+
+    result = restore_backup(backup_set, home=target, force=True, decision_log_path=log_path)
+
+    step = _replay_step(result)
+    assert step.ok is False and "cannot be proven" in step.detail  # type: ignore[attr-defined]
+    assert "victim" in _subjects(target)
+
+
+def test_a_symlinked_receipt_is_unresolvable(backup_set: Path, tmp_path: Path) -> None:
+    log_path = tmp_path / "audit.jsonl"
+    receipt = tmp_path / "receipts" / "run-001.receipt.json"
+    _seed_shred_record(log_path, receipt, "subj-1")
+    real = tmp_path / "elsewhere.json"
+    real.write_text(receipt.read_text())
+    receipt.unlink()
+    receipt.symlink_to(real)
+    target = tmp_path / "link-home"
+    _resurrected(target, "subj-1")
+
+    result = restore_backup(backup_set, home=target, force=True, decision_log_path=log_path)
+
+    assert _replay_step(result).ok is False  # type: ignore[attr-defined]
+    assert "subj-1" in _subjects(target)

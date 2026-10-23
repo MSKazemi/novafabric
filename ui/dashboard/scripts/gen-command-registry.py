@@ -129,7 +129,7 @@ def make_field(p: click.Parameter) -> dict | None:
         "hint": "",
     }
 
-    help_txt = getattr(p, "help", None) or ""
+    help_txt = _plain(getattr(p, "help", None) or "")
     if positional:
         field["positional"] = True
         field["hint"] = f"Positional argument <{p.name}>."
@@ -161,6 +161,15 @@ def make_field(p: click.Parameter) -> dict | None:
     return field
 
 
+def _plain(text: str) -> str:
+    """Help text as the terminal shows it: drop Rich's ``\\[`` escape (L9).
+
+    Help strings escape a literal ``[`` as ``\\[`` so Rich does not eat
+    ``[server]`` as markup; the dashboard renders plain text, so it wants ``[``.
+    """
+    return text.replace("\\[", "[")
+
+
 def walk(cmd, path: str, out: list) -> None:
     children = subcommands(cmd)
     if children is not None:
@@ -174,7 +183,7 @@ def walk(cmd, path: str, out: list) -> None:
         f = make_field(p)
         if f is not None:
             fields.append(f)
-    desc = (cmd.help or cmd.short_help or "").strip().split("\n")[0]
+    desc = _plain(cmd.help or cmd.short_help or "").strip().split("\n")[0]
     out.append({
         "id": path.replace(" ", "-"),
         "name": path,

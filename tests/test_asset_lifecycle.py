@@ -38,7 +38,7 @@ novafabric_spec_version: "1"
 asset_type: tool
 name: lifecycle-tool
 version: 2.0.0
-status: production
+status: development
 description: tool v2
 spec:
   entrypoint: /v2/run
@@ -49,7 +49,7 @@ novafabric_spec_version: "1"
 asset_type: tool
 name: dep-tool
 version: 1.0.0
-status: staging
+status: development
 description: dependency tool
 spec:
   entrypoint: /dep/run

@@ -2,28 +2,65 @@
 
 The CLI never centralised this logic — each command did its own parsing.
 The dashboard needs it as a single, typed entry point.
+
+Every capsule file is read through :mod:`novafabric._capsule_fs`, so a link
+planted in a capsule (``capsule.yaml -> ~/.kube/config``) is never followed: the
+manifest reads as missing, a JSONL stream reads as empty (logged), and the
+``inputs``/``outputs`` listings leave links out.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import stat
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import CapsuleEntryError, iter_capsule_dirs, read_capsule_file
 from novafabric.capture.record_roles import split_model_calls
+
+_log = logging.getLogger(__name__)
+_OPERATION = "the dashboard"
 
 
 def discover_capsule_dirs(base: Path) -> list[Path]:
-    """Return every directory under `base` that contains a capsule.yaml."""
+    """Return every directory under `base` that contains a capsule.yaml.
+
+    Delegates to :func:`novafabric._capsule_fs.iter_capsule_dirs`: an entry
+    that is itself a link (to a directory inside *or* outside `base`) is never
+    listed, and neither is one whose ``capsule.yaml`` is a link.
+    """
     if not base.exists() or not base.is_dir():
         return []
-    out: list[Path] = []
-    for entry in sorted(base.iterdir()):
-        if entry.is_dir() and (entry / "capsule.yaml").exists():
-            out.append(entry)
-    return out
+    return iter_capsule_dirs(base)
+
+
+def confined_capsule_root(candidate: Path, capsule_dir: Path) -> Path | None:
+    """*candidate* (an entry of *capsule_dir*), or ``None`` if ``nova serve`` must refuse it.
+
+    A real directory is returned as is. A link is returned *resolved* when its
+    target lies inside the server's read roots (the capsule dir itself, so an
+    alias such as ``latest -> 01J...`` works, ``$NOVAFABRIC_HOME`` minus its
+    secrets, and any ``NOVAFABRIC_SERVE_PATH_ROOTS`` entry), and is ``None``
+    otherwise: a link to a directory elsewhere would put that directory behind
+    every ``{run_id}`` route. Returning the resolved path means a link swapped
+    after this check is not followed by the read.
+    """
+    if not candidate.is_symlink():
+        return candidate
+    from novafabric.serve import paths as serve_paths  # noqa: PLC0415
+
+    try:
+        return serve_paths.confine_read(candidate, capsule_dir)
+    except serve_paths.PathConfinementError as exc:
+        _log.warning(
+            "capsule_root_link_refused",
+            extra={"capsule": str(candidate), "reason": str(exc)[:200]},
+        )
+        return None
 
 
 # Event files KG ingest reads; a dir is "ingestable" if it has any of them.
@@ -41,34 +78,41 @@ def discover_ingestable_dirs(base: Path) -> list[Path]:
     """
     if not base.exists() or not base.is_dir():
         return []
-    out: list[Path] = []
-    for entry in sorted(base.iterdir()):
-        if entry.is_dir() and any((entry / f).exists() for f in _KG_EVENT_FILES):
-            out.append(entry)
-    return out
+    return iter_capsule_dirs(base, markers=_KG_EVENT_FILES)
 
 
 def load_capsule_manifest(capsule_dir: Path) -> dict[str, Any]:
     """Parse capsule.yaml and return its dict. Raises FileNotFoundError if missing."""
-    manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}")
-    with manifest_path.open("r") as f:
-        return yaml.safe_load(f) or {}
+    try:
+        raw = read_capsule_file(capsule_dir, "capsule.yaml", operation=_OPERATION)
+    except CapsuleEntryError as exc:
+        # A linked or special manifest is unreadable, never followed.
+        raise FileNotFoundError(
+            f"capsule.yaml in {capsule_dir} is not a regular file: {exc}"
+        ) from exc
+    except FileNotFoundError:
+        raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}") from None
+    return yaml.safe_load(raw.decode("utf-8")) or {}
 
 
 def load_jsonl(capsule_dir: Path, filename: str) -> list[dict[str, Any]]:
     """Parse a JSONL file relative to the capsule directory; empty list if missing."""
-    p = capsule_dir / filename
-    if not p.exists():
+    try:
+        raw = read_capsule_file(capsule_dir, filename, operation=_OPERATION)
+    except FileNotFoundError:
+        return []
+    except CapsuleEntryError as exc:
+        _log.warning(
+            "capsule_file_not_followed",
+            extra={"capsule": str(capsule_dir), "file": filename, "reason": str(exc)},
+        )
         return []
     out: list[dict[str, Any]] = []
-    with p.open("r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            out.append(json.loads(line))
+    for line in raw.decode("utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        out.append(json.loads(line))
     return out
 
 
@@ -128,12 +172,14 @@ def run_summaries_for(base: Path, run_ids: list[str]) -> list[dict[str, Any]]:
 def _list_dir_files(capsule_dir: Path, subdir: str) -> list[dict[str, Any]]:
     """Return [{name, size_bytes}] for files directly inside a capsule subdirectory."""
     d = capsule_dir / subdir
-    if not d.is_dir():
+    if d.is_symlink() or not d.is_dir():
         return []
-    return sorted(
-        [{"name": f.name, "size_bytes": f.stat().st_size} for f in d.iterdir() if f.is_file()],
-        key=lambda x: x["name"],
-    )
+    files: list[dict[str, Any]] = []
+    for f in d.iterdir():
+        st = f.lstat()  # a link is left out: its target's size is not capsule data
+        if stat.S_ISREG(st.st_mode):
+            files.append({"name": f.name, "size_bytes": st.st_size})
+    return sorted(files, key=lambda x: x["name"])
 
 
 def load_full_capsule(capsule_dir: Path) -> dict[str, Any]:

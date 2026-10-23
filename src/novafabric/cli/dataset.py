@@ -46,7 +46,12 @@ def provenance_card_cmd(
     ],
     version: Annotated[str, typer.Option("--version", help="Dataset version label.")],
     dataset_hash: Annotated[
-        str, typer.Option("--hash", help="Dataset content sha256 (bare hex or sha256:…).")
+        str,
+        typer.Option(
+            "--hash",
+            help="Dataset content SHA-256: all 64 hex digits, bare or prefixed sha256:. "
+            "A truncated or malformed digest exits 2 and nothing is signed.",
+        ),
     ],
     retrieved_at: Annotated[
         Optional[str], typer.Option("--retrieved-at", help="RFC 3339 retrieval time.")
@@ -66,7 +71,10 @@ def provenance_card_cmd(
     ] = None,
     registry_digest: Annotated[
         Optional[str],
-        typer.Option("--registry-digest", help="Content-addressed registry digest to bind to."),
+        typer.Option(
+            "--registry-digest",
+            help="Content-addressed registry digest to bind to (full SHA-256, bare or sha256:).",
+        ),
     ] = None,
     sign: Annotated[
         bool, typer.Option("--sign", help="Ed25519-sign the card with the keyring key.")
@@ -89,26 +97,31 @@ def provenance_card_cmd(
     \b
     Examples:
       nova dataset provenance-card dataset:gaia@2026-05 --source oci://reg/gaia:2026-05 \\
-          --version 2026-05 --hash b17a... --sign
+          --version 2026-05 --hash sha256:<64-hex-digest> --sign
     """
     from novafabric.supplychain.dataset_card import (
+        DatasetCardError,
         build_card,
         sign_card,
         transforms_from_capsule,
     )
 
     transforms = transforms_from_capsule(from_capsule) if from_capsule else None
-    card = build_card(
-        asset=asset,
-        source_uri=source,
-        version=version,
-        dataset_hash=dataset_hash,
-        retrieved_at=retrieved_at,
-        license=license_id,
-        tlp=tlp,
-        transforms=transforms,
-        registry_digest=registry_digest,
-    )
+    try:
+        card = build_card(
+            asset=asset,
+            source_uri=source,
+            version=version,
+            dataset_hash=dataset_hash,
+            retrieved_at=retrieved_at,
+            license=license_id,
+            tlp=tlp,
+            transforms=transforms,
+            registry_digest=registry_digest,
+        )
+    except DatasetCardError as exc:
+        console.print(f"[red]✗[/red] {exc}", markup=True, highlight=False)
+        raise typer.Exit(code=2) from exc
 
     if sign:
         from novafabric.trust.keyring import ensure_keypair

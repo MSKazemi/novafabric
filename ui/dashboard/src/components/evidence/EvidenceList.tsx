@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { clsx } from 'clsx';
 import { api, getConnection } from '../../lib/api';
 import type { EvidenceSummary, VerifyResult } from '../../lib/api';
+import { contentBadge, signerBadge } from '../../lib/evidenceVerdict';
 import type { Tab } from '../dashboard/Sidebar';
 import EmptyState from '../ui/EmptyState';
 
@@ -22,16 +23,17 @@ function relativeTime(iso: string): string {
   return `${Math.floor(diffHr / 24)}d ago`;
 }
 
-function CheckBadge({ label, ok }: { label: string; ok: boolean | null }) {
+function CheckBadge({ label, ok, title }: { label: string; ok: boolean | null; title?: string }) {
   if (ok === null) {
     return (
-      <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-mono bg-[var(--color-bg-raised)] text-[var(--color-text-faint)] border border-[var(--color-border)]">
+      <span title={title} className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-mono bg-[var(--color-bg-raised)] text-[var(--color-text-faint)] border border-[var(--color-border)]">
         {label} –
       </span>
     );
   }
   return (
     <span
+      title={title}
       className={clsx(
         'inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-mono border',
         ok
@@ -185,15 +187,26 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
                     >
                       {result ? (
                         <div className="flex items-center gap-1 flex-wrap">
+                          <CheckBadge
+                            label={result.valid ? 'valid' : 'invalid'}
+                            ok={result.valid}
+                            title={result.errors.length ? result.errors.join('\n') : undefined}
+                          />
+                          {[contentBadge(result), signerBadge(result)].map(
+                            (badge) => badge && <CheckBadge key={badge.label} {...badge} />,
+                          )}
                           <CheckBadge label="sig" ok={result.signature_ok} />
-                          <CheckBadge label="tsr" ok={result.timestamp_ok} />
+                          <CheckBadge
+                            label={result.timestamp_trust === 'unanchored' ? 'tsr unanchored' : 'tsr'}
+                            ok={result.timestamp_ok}
+                          />
                           <CheckBadge label="log" ok={result.log_integrity_ok} />
                         </div>
                       ) : (
                         <button
                           onClick={() => handleVerify(b.bundle_id)}
                           disabled={isVerifying}
-                          title="Run full cryptographic verification (DSSE signature + RFC 3161 TSR + Merkle log)"
+                          title="Run the nova verify recipe server-side (digests, manifest_hash, every DSSE signature, signed subjects, signer trust) + RFC 3161 TSR + Merkle log"
                           className={clsx(
                             'text-[10px] px-2 py-0.5 rounded border transition-colors',
                             isVerifying

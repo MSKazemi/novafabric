@@ -39,6 +39,7 @@ from __future__ import annotations
 from novafabric.eval.score_config import ScoreConfigViolation
 from novafabric.eval.score_submission import (
     CapsuleNotFoundError,
+    CapsuleUnusableError,
     IdempotencyConflictError,
     ScoreSubmissionError,
     ScoreSubmissionRequest,
@@ -53,6 +54,7 @@ from novafabric.eval.scores import Score, ScoreSource, ScoreValueType, Significa
 
 __all__ = [
     "CapsuleNotFoundError",
+    "CapsuleUnusableError",
     "IdempotencyConflictError",
     "Score",
     "ScoreConfigViolation",

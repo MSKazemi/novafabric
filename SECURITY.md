@@ -124,6 +124,72 @@ STRIDE analysis in the project's internal threat model:
   SLURM wrote them into the job script on `sbatch`'s command line; rotate any that
   were set when you used one of those runners.
 
+  Fixed in the next release: `--runner slurm` passed its job script — `extra_env`
+  values included — as `sbatch --wrap <script>`, readable by every user on the
+  submit host through `ps`; `--runner lsf` wrote the same values to
+  `nova-<run>.lsf` in the capsule directory, where the capsule sealed it; and
+  `--runner docker` passed `-e NAME=VALUE`. If you passed a credential through
+  `extra_env` with one of these runners, rotate it. The value given on `nova
+  capture`'s own command line (`--runner-option extra_env=K=V`) is still in that
+  process's argv for the run, and Docker values remain visible to `docker
+  inspect`.
+
+  Also fixed in the next release, in the opt-in server and export surfaces:
+  a symbolic link inside a capsule made `nova export-evidence` and other
+  exporters copy its target (any file the exporting user could read) into the
+  output, and let a read-scope `nova serve` token read it — **inspect bundles,
+  backups and exports made from capsules that contained links**; `nova serve`
+  wrote the first 8 characters of its token into the audit log and SIEM export —
+  **rotate the serve token if those records left the machine**; an
+  `operate`-scope token could read or write files anywhere the server could;
+  and the cluster collector served unauthenticated callers on every interface
+  when no `NOVA_COLLECTOR_TOKEN` was set (it now serves only loopback,
+  non-proxied requests — set a token whenever anything proxies to it).
+
+  Also fixed in the next release: a spec could register an asset directly into
+  `production` (CLI, `nova serve` `operate` scope, `nova server` writer role),
+  bypassing every promotion gate; reusing a version number after `unregister`
+  let new content inherit rollback evidence; a read-scope `nova serve` caller
+  could read files outside capsules through a link in a sibling capsule or a
+  linked capsule root; and an `operate` credential could release a legal hold.
+  If you run `nova serve` or `nova server` with non-admin credentials, review the
+  registry for assets in `production` with no promotion history.
+
+  Also fixed in the next release, in capture and verification: with
+  `--runner docker` or Kubernetes, links a containerised workload planted in its
+  capsule directory could make host-side finalisation write host files (the
+  secret scanner, `capsule.yaml`, `env.lock`, health and proof files); a capsule
+  whose `capsule.yaml` was swapped for an edited `capsule.json` passed `nova
+  verify` and the trust radar; the radar and run-verify API could show a tampered
+  capsule as attested; `POST /api/evidence/{id}/verify` accepted tampered or
+  re-signed bundles; and a Postgres `merkle_db` DSN was written to disk as a
+  directory name, password included. **Re-verify capsules and bundles you relied
+  on from these surfaces, rotate a Postgres password you put in `merkle_db`, and
+  delete any stray `postgres:`/`postgresql:` directory where you ran `nova`.**
+
+  Also fixed in the next release: with `--pii-subject`, a workload could make
+  capture overwrite a host file through a planted `redaction_manifest.json` link
+  or a hard link; links and FIFOs nested below the capsule root survived capture
+  and passed `nova verify` and `nova validate`; concurrent appends could fork the
+  audit log's hash chain; and Evidence Bundle members no signature covered
+  (`README.md`, the bundled schemas, `verifier_instructions`) could be rewritten
+  without failing verification. **Re-run `nova validate`/`nova verify` on capsules
+  captured from untrusted workloads, and treat Evidence Bundles exported before
+  this release as "signed content only".**
+
+  **Critical, fixed in v0.107.0.** In `nova server` ≤ v0.106.1 a principal with the
+  `writer` role could overwrite any file the server process could write through
+  `POST /v0/evidence` (`output_path`, or an absolute/`..` `run_id`), and
+  auto-generated evidence signing keys were world-readable (0664). In `nova serve`
+  ≤ v0.106.1 any non-admin issued token could obtain the admin session token by
+  posting Rego that read `opa.runtime().env` to `/api/policy/check` (the default
+  single-token laptop setup is already `admin`). **Upgrade; then rotate the serve
+  token and any non-admin issued tokens, rotate an auto-generated
+  `$NOVAFABRIC_HOME/keys/signing_key.pem`, and check server-writable files if
+  untrusted writers had access.** Known limits: audit-log locking uses
+  advisory `flock`, which NFS without lock support and Lustre without `-o flock`
+  do not honour; the audit chain is unkeyed.
+
 If you find a way to make any disabled-by-default surface reachable without
 explicit opt-in, that is a vulnerability — please report it.
 
@@ -150,7 +216,7 @@ docs for its own risk surface would have missed all four.
 |---|---|---|
 | `NOVAFABRIC_SERVER_INSECURE_NO_AUTH` | authentication | restores pre-ADR-0184 **anonymous admin** — every request is an administrator |
 | `NOVAFABRIC_SERVER_I_KNOW_THIS_IS_PUBLIC` | the non-loopback refusal | the two above **combine**: `insecure_no_auth` on a non-loopback bind raises `InsecureBindError` unless this is also set. ADR-0184 makes anonymous admin on a network-reachable interface a *doubly*-explicit choice — this is the second half |
-| `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` | the dashboard path denylist | `nova serve` endpoints that take a caller-chosen path (evidence export, capsule migrate, promote-sign) stop refusing system directories. Note this is a **denylist, deliberately not a sandbox** |
+| `NOVAFABRIC_SERVE_PATH_ROOTS` | the `nova serve` path allowlist | Extra absolute directories, `:`-separated, that `nova serve` endpoints may read and write when a request names a path (evidence export, capsule migrate, policy sign/test, KG/lineage `capsule_path`, metadata rebuild). Without it, writes are confined to `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence` and `$NOVAFABRIC_EVIDENCE_DIR`, and reads also to `$NOVAFABRIC_HOME` and the capsule dir. This is an **allowlist**; the former denylist opt-out `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` is no longer honoured. Reads never reach the server's own secrets (token stores, `.serve-token`, `.env`, `dek.db`, ratchet state, `config.yaml`, audit logs) nor, for source reads, key material |
 | `NOVAFABRIC_SERVER_WEBHOOKS_ALLOW_INSECURE_URL` | webhook URL validation | permits insecure webhook destinations; the outbound path is the only one that leaves the trust boundary |
 | `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT` | the device-grant guard | enables local/testing scaffolding whose `/approve` endpoint is **unauthenticated**. The code's own comment says it is off by default "so no production deployment exposes an unauthenticated role-approval surface" |
 | `NOVAFABRIC_ALLOW_SEALED_DELETE` | the sealed-capsule delete refusal | `DELETE /v0/capsules`, `bulk-delete` and `nova serve`'s `DELETE /api/runs` may delete a NovaSeal-sealed capsule (`.seal/` present), destroying sealed evidence. It never overrides a legal hold or WORM lock; deletions stay audited (experimental, ADR-0206) |

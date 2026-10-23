@@ -31,6 +31,8 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
+
 from .models import (
     COMPLETENESS_COMPLETE,
     COMPLETENESS_MISSING,
@@ -55,7 +57,10 @@ def _read_tool_permission_events(capsule_dir: Path) -> list[dict[str, Any]]:
     if not events_path.exists():
         return []
     events: list[dict[str, Any]] = []
-    for line in events_path.read_text().splitlines():
+    capsule_text = (
+        read_capsule_member_or_none(events_path, operation="compliance export") or ""
+    )
+    for line in capsule_text.splitlines():
         line = line.strip()
         if line:
             try:
@@ -340,9 +345,9 @@ class NIS2Exporter:
         )
 
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
-        manifest_path = capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
-            return {}
-        with open(manifest_path) as f:
-            data = yaml.safe_load(f)
+        # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+        text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="compliance export"
+        )
+        data = yaml.safe_load(text) if text is not None else None
         return data if isinstance(data, dict) else {}

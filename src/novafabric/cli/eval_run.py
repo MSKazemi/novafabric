@@ -51,6 +51,9 @@ def eval_agent_cmd(
 
     Prefer `nova eval run` for new work.
 
+    Exit codes: 0 when every suite passes, 1 on FAIL (including a suite that is
+    not installed) or when the asset is not found — usable as a CI gate.
+
     Scope: named asset.
 
     \b
@@ -74,6 +77,11 @@ def eval_agent_cmd(
     for suite in result.get("suites", []):
         icon = "✓" if suite["passed"] else "✗"
         console.print(f"  {icon} {suite['suite_name']}: {suite.get('reason', '')}")
+
+    # M9: the exit code carries the verdict, as `nova eval run` does — 0 on PASS,
+    # 1 on FAIL — so the command can gate a CI step.
+    if not result["passed"]:
+        raise typer.Exit(code=1)
 
 
 eval_app.command("compare")(eval_compare_cmd)

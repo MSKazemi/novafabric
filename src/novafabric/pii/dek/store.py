@@ -39,6 +39,7 @@ import logging
 import os
 import sqlite3
 import threading
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -136,6 +137,76 @@ class ErasureDeferredReceipt(BaseModel):
     )
 
     model_config = {"frozen": True}
+
+
+class ErasureHold(BaseModel):
+    """One active legal hold that blocked an erasure (from the unified hold store)."""
+
+    hold_id: str = Field(
+        ..., description="Hold id (``__corrupt__:<registry>`` = an unreadable ledger)"
+    )
+    registry: str = Field(..., description="Registry the hold was placed on")
+    reason: str = Field(default="", description="Reason recorded when the hold was placed")
+
+    model_config = {"frozen": True}
+
+
+class HeldCapsule(BaseModel):
+    """A capsule whose PII was not erased because a legal hold covers it."""
+
+    capsule_id: str = Field(..., description="Capsule associated with the subject")
+    hold_ids: list[str] = Field(default_factory=list, description="Holds covering it")
+
+    model_config = {"frozen": True}
+
+
+class ErasureHeldReceipt(BaseModel):
+    """Erasure not performed: a legal hold covers the subject's data (Art.17(3)(e)).
+
+    A subject's DEK protects every capsule of that subject at once, so it cannot be
+    destroyed for some capsules and kept for others; and legal holds are
+    registry-global today. While any hold is active the DEK is therefore retained
+    and **no** capsule of the subject is erased. The request can be repeated once
+    the holds are released.
+    """
+
+    subject_id: str = Field(..., description="Data subject whose erasure was held")
+    requested_at: datetime = Field(..., description="UTC timestamp of the erasure request")
+    outcome: str = Field(default="held", description="Always 'held'")
+    dek_retained: bool = Field(default=True, description="The DEK was not destroyed")
+    held_capsules: list[HeldCapsule] = Field(
+        default_factory=list,
+        description="Capsules associated with the subject, each with the holds covering it",
+    )
+    holds: list[ErasureHold] = Field(
+        default_factory=list, description="The active holds that blocked the erasure"
+    )
+    capsule_ids_erased: list[str] = Field(
+        default_factory=list, description="Always empty: nothing was erased"
+    )
+    reason: str = Field(..., description="Human-readable reason")
+    legal_basis: str = Field(
+        default="GDPR Art.17(3)(e) — data needed for legal claims (legal hold)",
+        description="Exemption the erasure was held under",
+    )
+
+    model_config = {"frozen": True}
+
+
+def active_erasure_holds(extra_roots: Iterable[Path] = ()) -> list[ErasureHold]:
+    """Active legal holds across every registry (fail closed on a damaged ledger).
+
+    Reads the unified hold store (:mod:`novafabric.retention.holds`): the
+    canonical ``$NOVAFABRIC_HOME/registries``, the legacy working-directory
+    location and any caller-known root (a serve capsule base). Imported lazily:
+    ``novafabric.retention`` imports this package.
+    """
+    from novafabric.retention.holds import active_holds  # noqa: PLC0415
+
+    return [
+        ErasureHold(hold_id=h.hold_id, registry=h.registry, reason=h.reason)
+        for h in active_holds(extra_roots=extra_roots)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -307,8 +378,15 @@ class DEKStore:
         subject_id: str,
         capsule_ids: list[str],
         retention_months: int = 6,
-    ) -> ErasureReceipt | ErasureDeferredReceipt:
+        *,
+        hold_roots: Iterable[Path] = (),
+    ) -> ErasureReceipt | ErasureDeferredReceipt | ErasureHeldReceipt:
         """Destroy the DEK for *subject_id* (experimental, ADR-0314; --pii-subject PII only).
+
+        **Legal holds win (GDPR Art.17(3)(e)).** If any legal hold is active in the
+        unified hold store (every registry; *hold_roots* adds legacy locations such
+        as a serve capsule base), returns an :class:`ErasureHeldReceipt` and keeps
+        the DEK. There is no override. A damaged hold ledger counts as a hold.
 
         If the DEK was created within the Art.17(3)(b) retention window
         (``retention_months``), returns an :class:`ErasureDeferredReceipt`
@@ -325,8 +403,9 @@ class DEKStore:
                               ``NOVA_AI_ACT_RETENTION_MONTHS`` (default 6).
 
         Returns:
-            :class:`ErasureReceipt` on success, or
-            :class:`ErasureDeferredReceipt` if within the retention window.
+            :class:`ErasureReceipt` on success, :class:`ErasureHeldReceipt` under a
+            legal hold, or :class:`ErasureDeferredReceipt` if within the retention
+            window.
 
         Raises:
             KeyError: If no DEK exists for *subject_id*.
@@ -344,6 +423,36 @@ class DEKStore:
                 raise KeyError(
                     f"No DEK found for subject_id={subject_id!r}. "
                     "Either the subject was never registered or the DEK has already been erased."
+                )
+
+            # Read immediately before the destructive step, under the store lock:
+            # a hold placed after the caller planned the erasure still wins.
+            holds = active_erasure_holds(hold_roots)
+            if holds:
+                hold_ids = [h.hold_id for h in holds]
+                logger.info(
+                    "dek_erasure_held",
+                    extra={
+                        "event": "dek_erasure_held",
+                        "subject_sha256_prefix": _subject_hash_prefix(subject_id),
+                        "hold_ids": hold_ids,
+                        "capsule_count": len(capsule_ids),
+                    },
+                )
+                return ErasureHeldReceipt(
+                    subject_id=subject_id,
+                    requested_at=now,
+                    held_capsules=[
+                        HeldCapsule(capsule_id=c, hold_ids=hold_ids) for c in capsule_ids
+                    ],
+                    holds=holds,
+                    reason=(
+                        f"{len(holds)} active legal hold(s) ({', '.join(hold_ids)}) cover "
+                        "this subject's data. Legal holds are registry-global and one DEK "
+                        "protects all of the subject's capsules, so the DEK is retained "
+                        "and nothing is erased (GDPR Art.17(3)(e)). Repeat the request "
+                        "after the holds are released."
+                    ),
                 )
 
             created_at = datetime.fromisoformat(row[3])

@@ -70,7 +70,7 @@ def create(
         typer.Option(
             "--backend",
             help="Object-store backend for --profile manifest: "
-            "local | s3 | minio | ceph_rgw | azure_blob.",
+            "local | s3 | minio | ceph_rgw | azure_blob | gcs.",
             envvar="NOVA_OCS_BACKEND",
             show_default=False,
         ),
@@ -129,7 +129,13 @@ def create(
     carries a coverage table — what was NOT captured is recorded, never
     silent. Signing keys are excluded unless --include-keys. Connection
     strings are treated as secrets: the DSN never appears in the set, the
-    manifest, or any output.
+    manifest, or any output. A symbolic link under capsules/, runs/, spool/
+    or seal/ratchet/ refuses the backup: the copy never follows a link.
+
+    The capsule store is found the way capture finds it: $NOVAFABRIC_CAPSULE_DIR
+    when set (for example the Docker layout's /data/capsules), else
+    <home>/capsules. A store outside the home travels as external/capsule-dir/
+    and `nova restore` puts it back under the same rule on the target.
 
     NOTE: the default set includes the PII DEK store (dek.db) so restored PII
     stays readable — treat backup sets as sensitive artifacts and store them
@@ -327,7 +333,7 @@ def restore_cmd(
         typer.Option(
             "--backend",
             help="Object-store backend when restoring a manifest-only set: "
-            "local | s3 | minio | ceph_rgw | azure_blob.",
+            "local | s3 | minio | ceph_rgw | azure_blob | gcs.",
             envvar="NOVA_OCS_BACKEND",
             show_default=False,
         ),

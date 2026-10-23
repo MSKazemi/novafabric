@@ -31,7 +31,9 @@ directory listing is already in chronological order.
 ## The files, in write order
 
 `CaptureOrchestrator.run` in `capture/orchestrator.py` writes the files in this
-order. A failed run gets the same set of files.
+order. A failed run gets the same set of files. Rows 2 to 10 run after the
+workload, so they treat the capsule as untrusted input (see
+[After the workload runs](#after-the-workload-runs-the-capsule-is-untrusted-input)).
 
 | # | Path | Holds | Written by |
 |---|---|---|---|
@@ -46,7 +48,7 @@ order. A failed run gets the same set of files.
 | 4 | `replay.yaml` | Replay policy (`schemas/replay-policy.schema.json`); capture writes a minimal policy, which you can extend | `capture/replay.py:minimal_replay_policy` |
 | 5 | `capsule.yaml` | The run manifest, redacted as a data structure before it is written | orchestrator |
 | 6 | `lineage.jsonl` | Typed lineage edges for this run | `lineage/_writer.py:LineageWriter` |
-| 7 | `capture-health.json` | Dropped-event counts, only when the recorder dropped events. Written before the residual pass, so it is scanned and listed in `evidence_digests` | `capture/event_recorder.py:EventRecorder.finalize_health` |
+| 7 | `capture-health.json` | Dropped-event counts, only when the recorder dropped events — the orchestrator's own and those the workload process handed off at exit — or when the workload tampered with a capsule path (`tampered_entries`). Written before the residual pass, so it is scanned and listed in `evidence_digests` | `capture/event_recorder.py:EventRecorder.finalize_health`, `capture/workload_health.py` |
 | 8 | `redaction-proof.json` | The secret-scan proof (see below), written once after the residual pass | `capture/secrets.py:SecretScannerV0` |
 | 9 | `capsule.yaml` (rewritten) | The manifest again, now with `evidence_digests` | orchestrator, `_evidence_digests` |
 | 10 | `.seal/manifest.dsse`, `.seal/manifest.dsse.tsr`, `.seal/log-entry.json` | The seal, only when NovaSeal is configured | orchestrator, `_seal_capsule` |
@@ -55,10 +57,82 @@ These files appear only in some runs:
 
 | Path | When |
 |---|---|
-| `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`). `nova capture` then also adds `network_events_ref` / `file_events_ref` / `human_approvals_ref` to `capsule.yaml` (`capture/orchestrator.py:_event_stream_refs`) — note these keys are not yet in the packaged schema, so `nova validate` rejects such a capsule today (known defect, being fixed) |
-| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass (since v0.105.0; v0.104.0 wrote it after sealing, unbound), so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. |
+| `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`). The manifest then carries the matching optional `network_events_ref`, `file_events_ref` or `human_approvals_ref` (each a fixed file name; `capture/orchestrator.py:_event_stream_refs`). Before this release those three keys were missing from the closed capsule schema, so `nova validate` rejected any capsule that had one — for example a run with a single instrumented HTTP call to a model endpoint |
+| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass (since v0.105.0; v0.104.0 wrote it after sealing, unbound), so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. `dropped_events` covers both processes of a `nova capture` run: the hooks run in the workload's own Python process, which writes its counts to a hidden `.capture-health.workload.<pid>.json` at exit; `nova capture` merges and deletes those files just before writing `capture-health.json`. When the workload dropped anything, the additive optional `sources` object splits the total into `orchestrator` and `workload`, and `sources_note` says the `workload` counts are self-reported and unverified. A hand-off is written by the recorded process, so it is untrusted: only the capsule's own stream names (`capture/streams.py:CAPSULE_STREAMS`) and counts up to 10⁹ are accepted (any other hand-off file is ignored and logged), each merged total is capped at 10⁹, and a hand-off can only add to the orchestrator's counts, never lower them. A workload process that ends with `os._exit` or is killed hands off nothing. |
 | `c2pa-manifest.json` | `nova capture --mark-provenance` |
 | `otel-genai-spans.json` | `nova capture --emit-otel-genai` |
+| `redaction_manifest.json` | `nova capture --pii-subject` (experimental, ADR-0314): one entry per protected span |
+
+### After the workload runs: the capsule is untrusted input
+
+The workload writes into its own capsule, and with `--runner docker` the capsule
+directory is bind-mounted read-write into the container (`runners/_docker.py`).
+Anything the host-side finalisation then follows is a container-to-host write,
+so from the moment the runner returns, capture treats the capsule as untrusted
+(works today):
+
+1. **Integrity check, before any host-side read or write**
+   (`capture/tamper.py:inspect_capsule_after_workload`). Each capsule-managed path
+   (every JSONL stream, `capsule.yaml`, `env.lock`, `replay.yaml`,
+   `redaction-proof.json`, `capture-health.json`, `lineage.jsonl`,
+   `c2pa-manifest.json`, `redaction_manifest.json`, `outputs/stdout.txt`,
+   `outputs/stderr.txt`, the `inputs/` and `outputs/` directories, and `.seal/`)
+   is `lstat`-ed and never opened. A symlink, FIFO, socket or device there, a
+   directory where a file belongs (or the reverse), or any `.seal/` at all is
+   removed without being followed, the empty stream or directory
+   `CapsuleWriter.open` made is recreated, and a finding is recorded. Then the
+   **whole tree** is walked, one `openat(2)` + `O_NOFOLLOW` directory at a time
+   (re-opened from the root, so a wide tree never exhausts descriptors), and
+   every symlink, FIFO, socket and device at any depth is removed and recorded:
+   NovaFabric never writes one, so each was planted. A directory nested more than
+   64 levels deep (`MAX_SWEEP_DEPTH`) is not descended and is recorded as
+   `not-swept`. A hard link (a regular file with `st_nlink > 1`) is kept and is
+   not a finding: see step 2. If the capsule directory itself is no longer the
+   one `CapsuleWriter.open` created (moved and replaced by a link, which only the
+   local runner allows), capture writes nothing more.
+2. **Every later write** goes through `novafabric._capsule_fs`: `CapsuleWriter`,
+   the secret scanner, the masking pipeline, the `--pii-subject` stage
+   (including `redaction_manifest.json`), the lineage writer, the event
+   recorder, the C2PA marker and the seal writer replace a whole file by an
+   atomic rename (`replace_capsule_file`, which replaces a planted link, FIFO or
+   hard link instead of writing through it) or append with `O_NOFOLLOW |
+   O_NONBLOCK` (`open_capsule_file_for_write`, which refuses a link or special
+   file and gives a hard-linked file a private copy before appending). The
+   capsule directory is **pinned** after step 1 (`pin_capsule_root`, by the
+   `(st_dev, st_ino)` `CapsuleWriter.open` recorded): every later open under it
+   opens the root `O_NOFOLLOW` and raises `CapsuleRootChangedError` if it is a
+   link or a different directory, and `nova capture` then prints `✗ capture
+   integrity: ...` and exits 1.
+3. **Every later read** (the scanner, `evidence_digests`, the call counters, the
+   usage roll-up, the spool re-emission) opens with `O_NOFOLLOW | O_NONBLOCK` and
+   a regular-file check, so an entry planted after step 1 is never followed and
+   never blocks.
+4. **At the digest step** (`capture/finalize.py:finalize_capsule`), the tree is
+   walked once more without following or opening anything; a link or special
+   file found there was planted after step 1 and is appended to
+   `metadata.capture_tampered` (`planted after the sweep: ...`) before the
+   manifest is gated and sealed.
+
+A finding marks the capsule **tampered** in three places:
+
+| Where | What |
+|---|---|
+| `capsule.yaml` | `metadata.capture_tampered`, e.g. `model-calls.jsonl (symlink); inputs/pipe (fifo)`: the first 20 entries, then `and N more (M in total)`. Inside the signed manifest, so a seal binds it. `nova verify` and `nova validate` fail on it (exit 1). |
+| `capture-health.json` | `tampered_entries`: `path`, `kind` (`symlink`, `fifo`, `socket`, `char-device`, `block-device`, `directory`, `regular-file`), `action` (`removed`, `removed-and-recreated`, `not-removed`, `not-swept`) and, for a link, `link_target` (redacted, never resolved). At most 1,000 entries. The file is written even when nothing was dropped. |
+| `redaction-proof.json` | A target `<path>#tampered` per finding: `skipped: true`, `skip_reason: "stream_tampered: ..."`. The `#` suffix keeps it apart from the recreated file's own target. |
+
+Capture is fail-open (ADR-0021): it still exits with the workload's exit code,
+and prints `✗ capture integrity: ...` on stderr. A link the workload leaves
+anywhere in the capsule, even one that stays inside it (say
+`outputs/latest -> model.bin`), is tampering: no export format can represent it,
+and before 2026-10-23 such a link at an unmanaged path survived capture.
+`nova verify` and `nova validate` also fail any link or special file found in
+the capsule later (planted after sealing), naming each one.
+Residual limits: with the local runner a process the workload leaves running can
+still race step 1. Steps 2–4 then refuse, replace or record what it planted,
+never following it, but the capture may stop with an error instead of
+finishing. And `kubectl cp` (the Kubernetes runner) runs before step 1, so its
+own handling of links in the pod's capsule directory applies.
 
 ```mermaid
 flowchart TB
@@ -88,7 +162,14 @@ The schema requires `schema_version`, `run_id`, `created_at`, `finished_at`,
 `working_directory`, `host`, the `*_ref` pointers to the files above,
 `trace_root_span_id`, `inputs`, `outputs`, and the call counters
 (`model_call_count`, `tool_call_count`, `mutating_tool_count`). `model_call_count`
-counts logical model calls, not records (see below).
+counts logical model calls, not records (see below). Optional refs —
+`lineage_ref`, `attestations_ref`, `content_provenance_ref`, and the event-stream
+refs `network_events_ref`, `file_events_ref`, `human_approvals_ref` — appear only
+when their file exists. The top level is closed (`additionalProperties: false`),
+so every key a writer adds must be registered in all three schema copies
+(`src/novafabric/schemas/`, `schemas/`, `ui/dashboard/src/data/schemas/`);
+`tests/capture/test_event_stream_refs_schema.py` checks the event-stream refs
+against the orchestrator and validates a real capture end to end.
 
 ### The `host` block
 
@@ -213,7 +294,12 @@ manifest is checked again before it is sealed. The rule pack is `gitleaks-core-v
   (`masking/`);
 - `residual_check`: what the final pass rescanned, any residual it redacted, and
   any file whose after-hash it updated because the file changed after its first
-  scan.
+  scan;
+- a skipped `<path>#tampered` target for each capsule path the workload replaced
+  with a link or special file (see
+  [After the workload runs](#after-the-workload-runs-the-capsule-is-untrusted-input)).
+  The scanner never reads or rewrites such a file: it opens every file without
+  following a link or blocking on a FIFO, and rewrites by atomic rename.
 
 `redaction-proof.json` is listed in `evidence_digests`, so a seal covers the proof
 along with everything else.

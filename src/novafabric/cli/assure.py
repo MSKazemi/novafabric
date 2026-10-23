@@ -33,7 +33,9 @@ def assure_cmd(
 
     Checks for evidence of prompt injection protection, output sanitisation,
     model theft prevention, and other OWASP LLM Top 10 (2025) controls.
-    Exits 0 if all checks pass or warn; exits 1 if any check fails.
+    Exits 0 if all checks pass or warn; exits 1 if any check fails; exits 2
+    (no report) if an evidence file a check reads is present but unusable (a
+    link, FIFO or directory), so no check passes on evidence nobody read.
 
     Scope: single capsule.
 

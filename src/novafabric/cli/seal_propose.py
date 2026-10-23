@@ -40,7 +40,15 @@ seal_app = typer.Typer(
     no_args_is_help=True,
 )
 
-_DEFAULT_DB = Path.home() / ".local" / "share" / "novafabric" / "merkle.db"
+_DB_HELP = (
+    "Promotion-policy SQLite DB. Default: the NovaSeal Merkle log — "
+    "NOVAFABRIC_SEAL_DB_PATH, then merkle_db in novaseal.yaml, then "
+    "$NOVAFABRIC_HOME/novaseal-merkle.db (the store the dashboard reads)."
+)
+_DB_UNUSED_HELP = (
+    "Accepted for compatibility; this command does not read the policy "
+    "(nova seal propose and nova seal verify do)."
+)
 _DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "novafabric"
 
 _CA_BUNDLE_HELP = (
@@ -52,6 +60,36 @@ _INSECURE_HELP = (
     "Accept any self-signed signer certificate (no identity check). Local development "
     "only; same as NOVAFABRIC_PROMOTE_INSECURE_SELF_SIGNED=1."
 )
+
+
+def _policy_db(db: Path | None) -> Path:
+    """An explicit ``--db``, else the resolved NovaSeal log (exit 2 if it cannot be used)."""
+    if db is not None:
+        return db
+    from novafabric.promote.policy_location import (  # noqa: PLC0415
+        PolicyDbLocationError,
+        default_policy_db,
+    )
+
+    try:
+        return default_policy_db()
+    except PolicyDbLocationError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
+
+
+def _print_legacy_policy_hint(explicit_db: bool) -> None:
+    """Name the pre-2026-10-23 default store when a policy may still be there."""
+    if explicit_db:
+        return
+    from novafabric.promote.policy_location import legacy_policy_db  # noqa: PLC0415
+
+    legacy = legacy_policy_db()
+    if legacy is not None:
+        err_console.print(
+            f"[yellow]Note:[/yellow] a policy store exists at the old default {legacy}. "
+            f"Pass [bold]--db {legacy}[/bold], or re-sign the policy without --db."
+        )
 
 
 def _promote_trust(ca_bundle: Path | None, insecure_self_signed: bool) -> PromoteTrust:
@@ -91,7 +129,7 @@ def seal_sign_cmd(
     using the local ECDSA P-256 key configured in ``novaseal.yaml``.
 
     With ``--backend sigstore``, performs Sigstore keyless signing via OIDC.
-    Requires: pip install novafabric[sigstore].  The resulting Sigstore
+    Requires: pip install 'novafabric\\[sigstore]'.  The resulting Sigstore
     bundle is stored under ``<home>/sigstore/<capsule_id>.bundle.json``.
 
     Scope: single capsule.
@@ -212,7 +250,7 @@ def seal_propose_cmd(
     key: Path = typer.Option(..., "--key", help="Path to ECDSA P-256 private key PEM"),
     cert: Path = typer.Option(..., "--cert", help="Path to X.509 certificate PEM"),
     target_env: str = typer.Option("staging", "--target-env", help="Target environment"),
-    db_path: Path = typer.Option(_DEFAULT_DB, "--db", help="SQLite DB path"),
+    db_path: Path | None = typer.Option(None, "--db", help=_DB_HELP),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
 ) -> None:
     """Propose a NovaSeal signature for a capsule (maker step).
@@ -240,15 +278,18 @@ def seal_propose_cmd(
         raise typer.Exit(code=1)
 
     # Load policy
+    explicit_db = db_path is not None
+    db_path = _policy_db(db_path)
     try:
         policy_store = PolicyStore(db_path)
         policy_store.get_latest()  # ensure a policy exists
         policy_version = str(policy_store.get_latest_version())
     except PolicyNotFoundError:
         err_console.print(
-            "[red]Error:[/red] No promotion policy found. "
+            f"[red]Error:[/red] No promotion policy found in {db_path}. "
             "Run [bold]nova policy sign[/bold] first."
         )
+        _print_legacy_policy_hint(explicit_db)
         raise typer.Exit(code=1)
 
     # Extract proposer subject from cert
@@ -310,7 +351,7 @@ def seal_approve_cmd(
     capsule_id: str = typer.Option(..., "--capsule-id", help="Capsule ID"),
     key: Path = typer.Option(..., "--key", help="Path to ECDSA P-256 private key PEM"),
     cert: Path = typer.Option(..., "--cert", help="Path to X.509 certificate PEM"),
-    db_path: Path = typer.Option(_DEFAULT_DB, "--db", help="SQLite DB path"),
+    db_path: Path | None = typer.Option(None, "--db", help=_DB_UNUSED_HELP),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
     ca_bundle: Path | None = typer.Option(None, "--ca-bundle", help=_CA_BUNDLE_HELP),
     insecure_self_signed: bool = typer.Option(
@@ -412,7 +453,8 @@ def seal_approve_cmd(
                 target_run_id=capsule_id,
                 rationale=proposal_pred.get("justification"),
                 policy_version=proposal_pred.get("policy_version"),
-                seal_bundle_path=str(data_dir / capsule_id / f"approval_{approval_uuid}.json"),
+                # L21: the file put_approval() actually wrote (keyed by proposal).
+                seal_bundle_path=str(bundle_store.approval_path(capsule_id, proposal_uuid)),
             )
     except Exception:
         pass  # fail-open: never block the approval workflow
@@ -444,7 +486,7 @@ def _parse_duration_hours(duration: str) -> int:
 def seal_verify_cmd(
     capsule_id: str = typer.Argument(..., help="Capsule ID to verify"),
     offline: bool = typer.Option(False, "--offline", help="Skip network checks"),
-    db_path: Path = typer.Option(_DEFAULT_DB, "--db", help="SQLite DB path"),
+    db_path: Path | None = typer.Option(None, "--db", help=_DB_HELP),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
     ca_bundle: Path | None = typer.Option(None, "--ca-bundle", help=_CA_BUNDLE_HELP),
     insecure_self_signed: bool = typer.Option(
@@ -473,7 +515,7 @@ def seal_verify_cmd(
       8  — missing approval bundle
       9  — missing proposal bundle
     """
-    policy_store = PolicyStore(db_path)
+    policy_store = PolicyStore(_policy_db(db_path))
     bundle_store = PromoteBundleStore(data_dir)
 
     trust = _promote_trust(ca_bundle, insecure_self_signed)
@@ -499,23 +541,42 @@ def seal_bypass_cmd(
     key: Path = typer.Option(..., "--key", help="ECDSA P-256 private key PEM"),
     cert: Path = typer.Option(..., "--cert", help="X.509 certificate PEM"),
     target_env: str = typer.Option("production", "--target-env"),
-    notify: list[str] = typer.Option([], "--notify", help="Email to notify (repeatable)"),
-    db_path: Path = typer.Option(_DEFAULT_DB, "--db"),
+    notify: list[str] = typer.Option(
+        [],
+        "--notify",
+        help=(
+            "Address to notify (repeatable). Signed into the bypass as mailto:<addr> "
+            "and passed to the configured channel's receiver to relay; NovaFabric "
+            "itself sends no email."
+        ),
+    ),
+    db_path: Path | None = typer.Option(None, "--db", help=_DB_UNUSED_HELP),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir"),
 ) -> None:
     """Create a time-limited bypass of the maker-checker SoD requirement.
 
     The bypass is signed with the operator's key and stored locally.
     Use sparingly — every bypass creates a permanent audit trail.
+
+    Fail closed: the bypass is stored only after its seal.bypass.create entry is
+    in the hash-chained audit log. If that entry cannot be written, the bypass is
+    refused, nothing is stored, and the command exits 1. If the bundle cannot be
+    stored after that entry was written, a seal.bypass.abort entry withdraws it and
+    the command exits 1.
+
+    The signed predicate records the notification channels configured at signing
+    time (notification_status pending or not_configured, never sent); delivery
+    follows and its outcome is the seal.bypass.notify audit entry.
     """
     from datetime import UTC, datetime, timedelta
 
     from cryptography.x509 import NameOID, load_pem_x509_certificate
 
-    from novafabric.promote.exceptions import PredicateValidationError
+    from novafabric.promote.exceptions import BypassRefusedError, PredicateValidationError
     from novafabric.promote.predicates import (
         BYPASS_PAYLOAD_TYPE,
         build_bypass_predicate,
+        bypass_notification_fields,
         sign_promote_envelope,
         validate_predicate,
     )
@@ -553,6 +614,19 @@ def seal_bypass_cmd(
 
     capsule_digest_hex = hashlib.sha256(capsule_id.encode()).hexdigest()
 
+    # The store's channels are what put_bypass delivers to: sign that configuration
+    # (pending / not_configured), never a claimed "sent" (review r6).
+    bundle_store = PromoteBundleStore(data_dir)
+    notification = bypass_notification_fields(
+        bundle_store.notification_channels(), list(notify)
+    )
+    if notify and notification["notification_status"] == "not_configured":
+        err_console.print(
+            "[yellow]Warning:[/yellow] --notify addresses are recorded, but NovaFabric "
+            "sends no email and no notification channel is configured. Set "
+            "NOVA_BYPASS_NOTIFY_WEBHOOK (or NOVA_BYPASS_NOTIFY_FILE) to relay them."
+        )
+
     predicate = build_bypass_predicate(
         capsule_id=capsule_id,
         capsule_digest_hex=capsule_digest_hex,
@@ -560,8 +634,8 @@ def seal_bypass_cmd(
         bypass_reason=reason,
         bypass_authorized_by=authorized_by,
         valid_until=valid_until_str,
-        notification_sent_to=list(notify),
-        notification_status="sent" if notify else "not_configured",
+        notification_sent_to=notification["notification_sent_to"],
+        notification_status=notification["notification_status"],
     )
 
     try:
@@ -577,8 +651,19 @@ def seal_bypass_cmd(
         err_console.print(f"[red]Signing error:[/red] {exc}")
         raise typer.Exit(code=1)
 
-    bundle_store = PromoteBundleStore(data_dir)
-    bypass_uuid = bundle_store.put_bypass(capsule_id, envelope, valid_until_str)
+    try:
+        bypass_uuid = bundle_store.put_bypass(
+            capsule_id,
+            envelope,
+            valid_until_str,
+            actor="cli-user",
+            surface="cli",
+            authorized_by=authorized_by,
+            recipients=[f"mailto:{r}" for r in notify],
+        )
+    except BypassRefusedError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from None
 
     # Record bypass event in the active capsule, if one is running (fail-open).
     try:
@@ -591,7 +676,8 @@ def seal_bypass_cmd(
                 target_run_id=capsule_id,
                 rationale=reason,
                 policy_version=None,
-                seal_bundle_path=str(data_dir / capsule_id / f"bypass_{bypass_uuid}.json"),
+                # L21: the file put_bypass() actually wrote.
+                seal_bundle_path=str(bundle_store.bypass_path(capsule_id, bypass_uuid)),
             )
     except Exception:
         pass  # fail-open: never block the bypass workflow
@@ -627,7 +713,8 @@ def log_verify_cmd(
         help=(
             "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires the "
             "seal-postgres extra). Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then "
-            "merkle_db in novaseal.yaml, then ~/.novafabric/novaseal-merkle.db."
+            "merkle_db in novaseal.yaml, then $NOVAFABRIC_HOME/novaseal-merkle.db — "
+            "the same log capture seals into."
         ),
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all leaf details"),
@@ -667,6 +754,7 @@ def log_verify_cmd(
       2 — consistency proof failed (--consistency)
     """
     from novafabric.trust.novaseal.config import resolve_merkle_db_uri
+    from novafabric.trust.novaseal.log_location import redact_location
     from novafabric.trust.novaseal.merkle import (
         PostgresMerkleLog,
         open_merkle_log,
@@ -681,7 +769,8 @@ def log_verify_cmd(
     else:
         result = merkle_log.verify_consistency()
 
-    console.print(f"Merkle log: {resolved_db}  [backend: {backend}]")
+    # Never print a DSN's password (audit H2).
+    console.print(f"Merkle log: {redact_location(resolved_db)}  [backend: {backend}]")
     console.print(f"  Leaves:      {result.leaf_count}")
     console.print(f"  Root version: v{result.root_version}  (ADR-0313)")
     if result.root_hash:

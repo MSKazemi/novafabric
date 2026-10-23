@@ -20,9 +20,15 @@ import json
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder, get_current_writer
+from novafabric.capture.hooks._fail_open import (
+    MODEL_CALLS_STREAM,
+    fail_open,
+    note_capture_failure,
+)
 from novafabric.capture.hooks._layering import is_inside_higher_layer
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
@@ -37,6 +43,10 @@ from novafabric.capture.record_roles import stamp_wire_record
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
+
+
+_LIBRARY = "urllib3"
+NETWORK_EVENTS_STREAM = "network_events.jsonl"
 
 
 def _now() -> str:
@@ -124,6 +134,16 @@ class Urllib3Hook:
         finally:
             self._original_urlopen = None
 
+    def _target_url(self, pool_self: Any, url_path: Any) -> str | None:
+        """The URL to record, or ``None`` to pass the call through. Never raises:
+        a classification failure loses the record, never the user's request."""
+        try:
+            full_url = _build_url(pool_self, url_path)
+            return full_url if self._registry.is_known(full_url) else None
+        except Exception as exc:  # noqa: BLE001 -- capture must never block the workload
+            note_capture_failure(_LIBRARY, MODEL_CALLS_STREAM, exc)
+            return None
+
     def _wrapped_urlopen(
         self,
         pool_self: Any,
@@ -139,8 +159,8 @@ class Urllib3Hook:
                 return original(method, url_path, **kwargs)
             raise RuntimeError("original urlopen function required")
 
-        full_url = _build_url(pool_self, url_path)
-        if not self._registry.is_known(full_url):
+        full_url = self._target_url(pool_self, url_path)
+        if full_url is None:
             if original is not None:
                 return original(method, url_path, **kwargs)
             raise RuntimeError("original urlopen function required")
@@ -156,7 +176,18 @@ class Urllib3Hook:
             error_status = 599
             raise
         finally:
-            duration_ms = int((time.monotonic() - t0) * 1000)
+            self._record(method, full_url, kwargs, response, started,
+                         int((time.monotonic() - t0) * 1000), error_status)
+        return response
+
+    def _record(
+        self, method: str, full_url: str, kwargs: dict[str, Any], response: Any,
+        started: str, duration_ms: int, error_status: int | None,
+    ) -> None:
+        """Write the model-call record and the network event. Never raises:
+        the response or the transport's exception passes through unchanged."""
+        status_code = 0
+        with fail_open(_LIBRARY, MODEL_CALLS_STREAM):
             body = _extract_body_from_kwargs(kwargs)
             status_code = (
                 error_status
@@ -175,34 +206,25 @@ class Urllib3Hook:
                 body, url=full_url,
                 gen_ai_system=self._registry.gen_ai_system(full_url),
             ))
-            try:
-                get_current_writer(self._writer).append_model_call(
-                    stamp_wire_record(record)
-                )
-            except Exception:
-                pass
+            get_current_writer(self._writer).append_model_call(stamp_wire_record(record))
 
-            # Record a NetworkEvent in the active capsule (fail-open) —
-            # ADR-0209 D2.4 parity with the httpx/requests hooks. Reached only
-            # when no higher-layer hook owns the call (see the layering guard
-            # early-return above), so a requests-initiated urllib3 call is
-            # never double-recorded.
-            try:
-                _recorder = get_current_recorder()
-                if _recorder is not None:
-                    from urllib.parse import urlparse
-                    _parsed = urlparse(full_url)
-                    _recorder.record_network_event(
-                        method=str(method or "UNKNOWN"),
-                        url=full_url,
-                        host=_parsed.hostname or "",
-                        port=_parsed.port,
-                        status_code=status_code if status_code != 0 else None,
-                        response_size_bytes=safe_response_size(response),
-                        duration_ms=float(duration_ms),
-                        library="urllib3",
-                        is_ai_api=_is_ai_api(full_url),
-                    )
-            except Exception:
-                pass  # fail-open
-        return response
+        # Record a NetworkEvent in the active capsule (fail-open) —
+        # ADR-0209 D2.4 parity with the httpx/requests hooks. Reached only
+        # when no higher-layer hook owns the call (see the layering guard
+        # early-return in _wrapped_urlopen), so a requests-initiated urllib3
+        # call is never double-recorded.
+        with fail_open(_LIBRARY, NETWORK_EVENTS_STREAM):
+            _recorder = get_current_recorder()
+            if _recorder is not None:
+                _parsed = urlparse(full_url)
+                _recorder.record_network_event(
+                    method=str(method or "UNKNOWN"),
+                    url=full_url,
+                    host=_parsed.hostname or "",
+                    port=_parsed.port,
+                    status_code=status_code if status_code != 0 else None,
+                    response_size_bytes=safe_response_size(response),
+                    duration_ms=float(duration_ms),
+                    library=_LIBRARY,
+                    is_ai_api=_is_ai_api(full_url),
+                )

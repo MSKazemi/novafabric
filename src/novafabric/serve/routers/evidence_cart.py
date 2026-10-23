@@ -71,7 +71,6 @@ import hashlib
 import json
 import logging
 import os
-import stat
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,6 +81,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from novafabric import _paths as _nf_paths
+from novafabric._capsule_fs import CapsuleEntryError, CapsuleLinkError
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,8 @@ class CartItemIn(BaseModel):
 
 
 class CartExportRequest(BaseModel):
-    cart_id: str | None = Field(default=None, max_length=64)
+    #: Joined into the bundle's file name, so one plain segment only.
+    cart_id: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     items: list[CartItemIn] = Field(default_factory=list)
     confirmed: bool = False
     #: Proceed when some references did not resolve, recording the omissions.
@@ -172,18 +173,10 @@ def _ensure_signing_key(key_path: Path) -> bool:
     per-run export: a missing *default* key is auto-generated and disclosed)."""
     if key_path.exists():
         return False
-    from novafabric.evidence.signing import generate_keypair
+    from novafabric.evidence.signing import ensure_signing_key
 
-    priv_path, pub_path = generate_keypair(key_path.parent)
-    if priv_path != key_path:
-        key_path.write_bytes(priv_path.read_bytes())
-        try:
-            os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
-        except OSError:
-            pass
-        pub_alias = key_path.with_suffix(".pub.pem")
-        if not pub_alias.exists():
-            pub_alias.write_bytes(pub_path.read_bytes())
+    # Mode 0600 from the first byte, atomic, never through a link (review server-01).
+    ensure_signing_key(key_path)
     return True
 
 
@@ -208,6 +201,23 @@ def _sha256_file(path: Path) -> str:
 
 class _NotResolvable(Exception):
     """A cart kind with no resolver in this slice."""
+
+
+def _refusal_reason(exc: CapsuleEntryError) -> str:
+    """Why a capsule's Merkle root was refused, naming capsule-relative links only."""
+    if isinstance(exc, CapsuleLinkError) and exc.links:
+        shown = ", ".join(exc.links[:20])
+        return f"holds {len(exc.links)} symlink(s), which are never followed: {shown}"
+    return "a capsule file is not a regular file (a FIFO, socket or device)"
+
+
+def _refusal_detail(refused: list[str]) -> str:
+    """One 422 detail listing every refused cart capsule; no server paths."""
+    return (
+        f"{len(refused)} cart capsule(s) cannot be exported: "
+        + "; ".join(refused[:20])
+        + ". Replace links with regular files or remove them, then export again."
+    )
 
 
 def build_evidence_cart_router(
@@ -279,6 +289,12 @@ def build_evidence_cart_router(
             )
 
         dirs: dict[tuple[str, str], Path] = {}
+        #: Why each refused capsule was refused: a link or special file inside
+        #: it (the Merkle root never follows one), or a 403 from resolution (a
+        #: top-level link, a root linked out of the read roots). Not
+        #: "unresolved": the reference names a capsule that no export may carry,
+        #: so ``accept_unresolved`` must not turn it into a recorded omission.
+        refused: list[str] = []
 
         def _digest_for(item: CartItem) -> str | None:
             from novafabric.evidence.merkle import capsule_merkle_root
@@ -291,9 +307,16 @@ def build_evidence_cart_router(
             try:
                 cdir = resolve_capsule(item.ref, capsule_dir)
             except HTTPException as exc:
+                if exc.status_code == 403:
+                    refused.append(f"{item.ref}: {exc.detail}")
                 raise LookupError(str(exc.detail)) from exc
+            try:
+                digest = capsule_merkle_root(cdir)
+            except CapsuleEntryError as exc:
+                refused.append(f"{item.ref}: {_refusal_reason(exc)}")
+                raise
             dirs[item.identity()] = cdir
-            return capsule_merkle_root(cdir)
+            return digest
 
         def _holds_for(item: CartItem) -> tuple[str, ...]:
             # Holds are registry-global (``<capsule base>/../registries/*``), so
@@ -311,6 +334,10 @@ def build_evidence_cart_router(
             digest_for=_digest_for,
             holds_for=_holds_for,
         )
+        if refused:
+            # The builder refuses such a capsule too (422); refusing here keeps
+            # a linked capsule from becoming a recorded "omission" in a bundle.
+            raise HTTPException(status_code=422, detail=_refusal_detail(refused))
         unresolved = [item.as_dict() for item in resolved.unresolved]
         if unresolved and not body.accept_unresolved:
             return JSONResponse(

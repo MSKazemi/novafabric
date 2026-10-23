@@ -42,7 +42,12 @@ flowchart LR
 The packaged lineage-edge schema (`src/novafabric/schemas/lineage-edge.schema.json`,
 which `nova lineage import` validates against) also allows `derived_from`,
 `evaluated_by`, `attested_by` and `depends_on`, and node kinds `external` and
-`attestation`, for producers other than the capture writer. (The repo-root
+`attestation`, for producers other than the capture writer. `nova migrate`
+appends one `migration_source` edge (run → the same run, `declared`) to the
+capsule it converts: the endpoints carry the source and target
+`schema_version`, and `facets` carry `from_schema_version` and
+`source_capsule_sha256` (the SHA-256 of the original `capsule.yaml`), so the
+original is identified by run id and digest, not by a filesystem path. (The repo-root
 `schemas/lineage-edge.schema.json` is the v1.0 target and is not yet in force.)
 `nova memory` derives `wrote_memory` / `read_memory` edges between runs and
 memory keys **on demand** (`lineage/memory.py`); they are not stored in

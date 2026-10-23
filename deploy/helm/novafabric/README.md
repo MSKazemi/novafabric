@@ -52,10 +52,12 @@ By default the chart runs `nova server start` — the multi-user REST API with
 OIDC/RBAC (ADR-0230). `mode: dashboard` runs `nova serve` instead; that dashboard
 is **not** read-only and has not been since v0.8 — it exposes irreversible
 operations including `DELETE /api/runs/{id}` and `POST /api/compliance/pii/erase`.
-Note that `mode: dashboard` on its own currently fails at container start: the
-chart binds `0.0.0.0`, and `nova serve` refuses a non-loopback bind without
-`--insecure` — so it also needs `serve.insecure: true` plus
-`serve.acknowledgeInsecureExposure`. In server mode auth is on by default:
+A dashboard pod must bind `0.0.0.0` for its Service and probes to reach it, and
+`nova serve` deliberately refuses a non-loopback bind without `--insecure`
+(exit 2). So `mode: dashboard` needs `serve.insecure: true` plus
+`serve.acknowledgeInsecureExposure: i-accept-serving-evidence-over-plain-http`
+(and TLS terminated at the ingress); without them **`helm template` refuses to
+render** instead of producing a pod that would crash-loop. In server mode auth is on by default:
 configure OIDC with an `oidc:` block in a mounted `server.yaml` (there are no
 OIDC environment variables), or a local token is generated; probes use `/readyz`
 and `/livez`.

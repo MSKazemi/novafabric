@@ -39,6 +39,8 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
+
 _DEPLOYER_RETENTION_MONTHS: int = 6
 _PROVIDER_RETENTION_MONTHS: int = 120  # 10 years per Art.18
 
@@ -80,46 +82,42 @@ def infer_logging_event_types(meta: dict[str, Any], capsule_dir: Path) -> list[s
     if meta.get("created_at"):
         types.append("interaction_timestamp")
 
-    # model-calls.jsonl present → output_record
-    if (capsule_dir / "model-calls.jsonl").exists():
-        try:
-            first_line = next(
-                (
-                    line for line in (capsule_dir / "model-calls.jsonl")
-                    .read_text(encoding="utf-8").splitlines()
-                    if line.strip()
-                ),
-                None,
-            )
-            if first_line:
-                types.append("output_record")
-        except OSError:
-            pass
+    # model-calls.jsonl present → output_record. A stream that is present but
+    # unusable (a link, FIFO, directory) raises CapsuleRequiredFileError: the
+    # record would otherwise claim fewer event types than the run produced.
+    model_calls_text = read_required_capsule_member(
+        capsule_dir / "model-calls.jsonl", operation="compliance export"
+    )
+    if model_calls_text is not None and any(
+        line.strip() for line in model_calls_text.splitlines()
+    ):
+        types.append("output_record")
 
     # tool-calls.jsonl with human_approval tool present → human_review_event
-    tool_calls_path = capsule_dir / "tool-calls.jsonl"
-    if tool_calls_path.exists():
+    tool_calls_text = read_required_capsule_member(
+        capsule_dir / "tool-calls.jsonl", operation="compliance export"
+    )
+    for raw in (tool_calls_text or "").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
         try:
-            for raw in tool_calls_path.read_text(encoding="utf-8").splitlines():
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    call = json.loads(raw)
-                    if "human" in call.get("tool_name", "").lower() or \
-                       call.get("tool_name") == "human_approval":
-                        types.append("human_review_event")
-                        break
-                except json.JSONDecodeError:
-                    pass
-        except OSError:
+            call = json.loads(raw)
+            if "human" in call.get("tool_name", "").lower() or \
+               call.get("tool_name") == "human_approval":
+                types.append("human_review_event")
+                break
+        except json.JSONDecodeError:
             pass
 
     # evidence.json with input classification present → input_classification
     evidence_path = capsule_dir / "evidence.json"
     if evidence_path.exists():
         try:
-            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            capsule_text = (
+                read_capsule_member_or_none(evidence_path, operation="compliance export") or ""
+            )
+            evidence = json.loads(capsule_text)
             if isinstance(evidence, dict) and evidence.get("input_classification"):
                 types.append("input_classification")
         except (OSError, json.JSONDecodeError):
@@ -174,16 +172,23 @@ class EuAiActExporter:
             return records
 
         for capsule_dir in sorted(self._capsules_dir.iterdir()):
-            if not capsule_dir.is_dir():
+            # A scan never lists a linked entry (novafabric._capsule_fs).
+            if capsule_dir.is_symlink() or not capsule_dir.is_dir():
                 continue
             manifest_path = capsule_dir / "capsule.yaml"
-            if not manifest_path.exists():
+            if not os.path.lexists(manifest_path):
                 continue
 
+            # Present but unusable (a link, FIFO, directory) raises
+            # CapsuleRequiredFileError: the Art.12 log never silently omits a run.
+            manifest_text = read_required_capsule_member(
+                manifest_path, operation="compliance export"
+            )
             try:
-                with manifest_path.open(encoding="utf-8") as f:
-                    meta: dict[str, Any] = yaml.safe_load(f) or {}
-            except Exception:  # noqa: BLE001
+                meta: dict[str, Any] = yaml.safe_load(manifest_text or "") or {}
+            except yaml.YAMLError:
+                continue
+            if not isinstance(meta, dict):
                 continue
 
             created_at = _parse_capsule_created_at(meta)

@@ -58,7 +58,8 @@ export default function CapsuleVerifyPanel({ runIds }: { runIds: string[] }) {
       </p>
       <p className="text-xs text-[var(--color-text-muted)]">
         Verify a capsule's cryptographic seal — DSSE signature (ECDSA P-256), RFC 3161 timestamp, and
-        Merkle log inclusion. Requires NovaSeal to be configured. (ADR-0041)
+        Merkle log inclusion. Without a local novaseal.yaml the capsule is verified from its own
+        files, as `nova verify` does. (ADR-0041)
       </p>
 
       <div className="flex items-end gap-2">
@@ -107,7 +108,7 @@ export default function CapsuleVerifyPanel({ runIds }: { runIds: string[] }) {
           'rounded border p-3 space-y-2',
           result.sealed === false
             ? 'border-[color-mix(in_oklab,var(--color-status-pending)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-status-pending)_6%,transparent)]'
-            : result.configured === false
+            : result.configured === false && result.signature_ok === undefined
               ? 'border-[color-mix(in_oklab,var(--color-status-pending)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-status-pending)_6%,transparent)]'
               : result.valid
                 ? 'border-[color-mix(in_oklab,var(--color-status-success)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-status-success)_8%,transparent)]'
@@ -115,15 +116,37 @@ export default function CapsuleVerifyPanel({ runIds }: { runIds: string[] }) {
         )}>
           {result.sealed === false ? (
             <p className="text-xs text-[var(--color-status-pending)]">Not sealed — {result.message}</p>
-          ) : result.configured === false ? (
+          ) : result.configured === false && result.signature_ok === undefined ? (
             <p className="text-xs text-[var(--color-status-pending)]">{result.message}</p>
           ) : (
             <>
+              {result.configured === false && result.message && (
+                <p className="text-[10px] text-[var(--color-text-faint)]">{result.message}</p>
+              )}
               <div className="space-y-1">
                 <CheckRow label="Signature (DSSE ECDSA P-256)" ok={result.signature_ok} />
-                <CheckRow label="Timestamp (RFC 3161)" ok={result.timestamp_ok} />
+                <CheckRow
+                  label={
+                    result.timestamp_trust === 'unanchored'
+                      ? 'Timestamp token intact (RFC 3161) — TSA unanchored'
+                      : 'Timestamp (RFC 3161)'
+                  }
+                  ok={result.timestamp_ok}
+                />
                 <CheckRow label="Merkle log inclusion" ok={result.log_integrity_ok} />
               </div>
+              {result.timestamp_trust === 'unanchored' && (
+                <p className="text-[10px] text-[var(--color-status-pending)]">
+                  ⚠ The token's time is not trusted: no TSA trust anchor (tsa_ca_certs) validated
+                  who issued it.
+                </p>
+              )}
+              {result.sealer_log === 'unverifiable-other-version' && (
+                <p className="text-[10px] text-[var(--color-status-pending)]">
+                  ⚠ Sealer's log UNVERIFIED: this host's log is a newer root version; list the
+                  retired log in previous_merkle_dbs.
+                </p>
+              )}
               {result.capsule_id && (
                 <p className="text-[10px] font-mono text-[var(--color-text-faint)]">
                   capsule_id: {result.capsule_id}

@@ -21,7 +21,7 @@ capsule, and that capsule may be sealed, so the record cannot go into it
 flowchart LR
     X["OTel exporter<br/>SDK or Collector"] -->|POST /api/otlp/v1/traces| A{"token +<br/>scope operate"}
     X -->|POST /api/otlp/v1/logs| A
-    A -->|traces| G["genai_ingest<br/>keep gen_ai.* spans"]
+    A -->|traces| G["genai_ingest<br/>≤16 MiB · keep gen_ai.* spans"]
     G -->|"≥1 GenAI span"| C["NEW capsule<br/>capsules/&lt;new ULID&gt;/"]
     G -->|"no GenAI span"| N["no capsule written"]
     A -->|logs| L["logs_ingest<br/>≤16 MiB, ≤10,000 records"]
@@ -36,9 +36,10 @@ flowchart LR
 | # | What happens | Code |
 |---|---|---|
 | 1 | The exporter POSTs a trace export. Like every `serve` route, it first passes the [scope check](serve-request-path.md); both OTLP routes need `operate`. | `serve/app.py:otlp_ingest_traces`, `serve/authz.py:ROUTE_SCOPES` |
+| 1a | The body is read in chunks and capped at 16 MiB — the same bound as the logs route. A larger body (declared or streamed) is a **413** before it is buffered, and nothing is written. | `serve/body_limits.py:read_body_capped`, `otel/genai_ingest.py:MAX_OTLP_TRACES_BYTES` |
 | 2 | Spans that carry at least one `gen_ai.*` attribute become model and tool calls. Every other span is counted as skipped, never guessed at. If no GenAI span is present, the response says so and **no capsule is written**. | `otel/genai_ingest.py:ingest_otlp_json`, `ingest_otlp_protobuf` |
 | 3 | `write_ingest_capsule` writes a new capsule under a fresh ULID with the native `CapsuleWriter`, environment lock and replay policy. The manifest records `capture_mode: otel-import` and `metadata.capture_level: ingested-otlp`. The capsule then finalizes through the same path as `nova capture` (since v0.105.0): secret scan, manifest redaction, `lineage.jsonl`, residual pass, `evidence_digests`, manifest gate, and a seal **only when a signing profile exists**. The response says `"sealed": true/false`. A finalization failure keeps every ingested record, leaves the capsule unsealed, records the redacted reason in `metadata.finalization_error`, and returns it as `finalization_error` (still a 200). | `otel/genai_ingest.py:write_ingest_capsule_finalized`, `capture/finalize.py:finalize_in_process_capsule` |
-| 4 | The exporter POSTs a logs export. A body over 16 MiB or more than 10,000 records is a 400, and nothing is written. Protobuf needs the `otlp` extra. | `otel/logs_ingest.py:ingest_otlp_logs_body` |
+| 4 | The exporter POSTs a logs export. The body is read in chunks and capped at 16 MiB, like the traces route: a larger body (declared or streamed) is a **413** before it is buffered. More than 10,000 records, or a malformed payload, is a 400. Nothing is written in either case. Protobuf needs the `otlp` extra. | `serve/body_limits.py:read_body_capped`, `otel/logs_ingest.py:ingest_otlp_logs_body` |
 | 5 | Each record is routed by its link key: the `novafabric.run_id` attribute (record or resource), else a valid non-zero 32-hex `traceId`, else the UTC day of the record time. | `otel/logs_ingest.py:ingest_otlp_logs` |
 | 6 | For a run-linked record, the run's capsule state is *observed*: `absent` (no `capsule.yaml`), `unsealed`, or `sealed` (`.seal/` present). The state is stamped on the record. The capsule directory is never opened for writing. | `otel/logs_ingest.py:_capsule_state`, `capsule/_manifest_write.py:is_sealed` |
 | 7 | Lines are appended with one `O_APPEND` write under `flock`, to files created `0600` in directories created `0700`; symlinks are refused. Records that would push a stream past 64 MiB are rejected and counted in `partialSuccess.rejectedLogRecords`. | `otel/logs_ingest.py:_append_lines`, `_secure_dir` |

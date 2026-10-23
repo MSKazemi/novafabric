@@ -10,6 +10,7 @@ import typer
 from rich.console import Console
 
 from novafabric import _paths as _nf_paths
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
 
 console = Console()
 err_console = Console(stderr=True)
@@ -30,7 +31,10 @@ def verify_cmd(
         typer.Option(
             "--seal-config",
             envvar="NOVAFABRIC_SEAL_CONFIG",
-            help="Path to novaseal.yaml config (default: ~/.novafabric/novaseal.yaml)",
+            help=(
+                "Path to novaseal.yaml config (default: $NOVAFABRIC_HOME/novaseal.yaml, "
+                "i.e. ~/.novafabric/novaseal.yaml only when NOVAFABRIC_HOME is unset)"
+            ),
         ),
     ] = None,
     check_redaction: Annotated[
@@ -158,7 +162,23 @@ def verify_cmd(
             help=(
                 "Print one JSON object instead of the text report (capsule directories, "
                 "local backend). Carries identity_trust and timestamp_ok (null when the "
-                "capsule has no RFC 3161 token) — ADR-0301. Exit code is unchanged."
+                "capsule has no RFC 3161 token) — ADR-0301, timestamp_trust "
+                "(anchored|unanchored|absent|invalid), sealer_log and unanchored_claims. "
+                "Exit code is unchanged."
+            ),
+        ),
+    ] = False,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help=(
+                "Also exit 1 when a passing check rests on something no anchor you "
+                "trust vouches for (capsule directories, local backend): a "
+                "self-asserted signer (no --ca-bundle), a timestamp whose TSA is not "
+                "anchored (no --tsa-ca-bundle / tsa_ca_certs), Merkle inclusion shown "
+                "only by the proof the capsule carries or not checked, or "
+                "sealer_log=unverifiable-other-version. Listed as unanchored_claims."
             ),
         ),
     ] = False,
@@ -179,12 +199,27 @@ def verify_cmd(
     another CA bundle you passed). A capsule without an RFC 3161 token reports the
     timestamp as NOT PRESENT (timestamp_ok=None), which does not fail verification.
 
+    The timestamp line separates integrity from trust: OK means the token is intact,
+    bound to this envelope and its TSA chain reached an anchor you passed
+    (--tsa-ca-bundle or tsa_ca_certs) — timestamp_trust=anchored. Without an anchor a
+    present token prints UNANCHORED (timestamp_trust=unanchored): anyone can mint a
+    TSA certificate and sign any time, so the genTime it shows is a claim, not trusted
+    time. It does not fail verification unless --strict.
+
     Exits 0 if all checks pass, 1 otherwise. Needs only the capsule: no NovaSeal
     config and no Merkle log are required (an independent auditor can verify on a
     fresh machine). With novaseal.yaml (or NOVAFABRIC_SEAL_CONFIG) the entry is also
     checked against the sealer's own Merkle log. A capsule that carries no
     inclusion proof (sealed by <= v0.102.x) and is not in a local log prints
-    "Merkle log inclusion: NOT CHECKED" and does not fail.
+    "Merkle log inclusion: NOT CHECKED" and does not fail. An entry missing from
+    the sealer's log (a local log holding this signer's seals) fails. A v1 capsule
+    on a host whose log is a newer v2 log (ADR-0313 migration) is UNVERIFIED unless
+    the retired v1 log is listed in previous_merkle_dbs
+    (sealer_log=unverifiable-other-version; --strict fails on it).
+
+    --strict exits 1 unless every passing claim is anchored (see unanchored_claims
+    in --json): signer CA-validated, timestamp absent or anchored, entry found in
+    the sealer's log.
 
     Scope: single capsule.
 
@@ -212,6 +247,9 @@ def verify_cmd(
       # Verify the RFC 3161 token's TSA chain against an operator TSA CA (offline)
       nova verify --tsa-ca-bundle /etc/novaseal/tsa-ca.pem path/to/my-capsule/
 
+      # Fail unless signer, timestamp and log inclusion are all anchored
+      nova verify --strict --ca-bundle ca.pem --tsa-ca-bundle tsa-ca.pem path/to/my-capsule/
+
       # Verify a redaction proof report seal independently
       nova verify --check-redaction path/to/report.seal.json path/to/my-capsule/
 
@@ -224,17 +262,18 @@ def verify_cmd(
       # ... and pin the key every attestation must be signed with
       nova verify --public-key signer.pub.pem path/to/evidence-bundle.zip
     """
-    if json_out and (
-        check_redaction is not None
-        or backend != "local"
-        or capsule_dir.suffix == ".zip"
-        or capsule_dir.is_file()
-    ):
-        err_console.print(
-            "[red]Error:[/red] --json is supported for capsule directories with the "
-            "local backend only."
-        )
-        raise typer.Exit(code=2)
+    for flag, given in (("--json", json_out), ("--strict", strict)):
+        if given and (
+            check_redaction is not None
+            or backend != "local"
+            or capsule_dir.suffix == ".zip"
+            or capsule_dir.is_file()
+        ):
+            err_console.print(
+                f"[red]Error:[/red] {flag} is supported for capsule directories with the "
+                "local backend only."
+            )
+            raise typer.Exit(code=2)
 
     # Handle --check-redaction standalone check
     if check_redaction is not None:
@@ -315,6 +354,7 @@ def verify_cmd(
             crl_strict=crl_strict,
             tsa_ca_bundle=tsa_ca_bundle,
             json_out=json_out,
+            strict=strict,
         )
     finally:
         console.quiet = previous_quiet
@@ -337,6 +377,7 @@ def _verify_capsule_dir(
     crl_strict: bool,
     tsa_ca_bundle: Optional[Path],
     json_out: bool,
+    strict: bool = False,
 ) -> None:
     """Verify one sealed capsule directory (local backend) and print the report."""
 
@@ -358,98 +399,55 @@ def _verify_capsule_dir(
         console.print(f"[red]NovaSeal config error:[/red] {exc}")
         raise typer.Exit(code=1)
 
-    # Verification is self-contained (audit finding S2): the signature, the
-    # timestamp and a carried inclusion proof need nothing but the capsule. The
-    # sealer's Merkle log, when this machine has one, is an extra check — never a
-    # prerequisite, or an independent auditor could not verify at all.
-    merkle_log = _open_existing_merkle_log(profile)
-    if profile is None:
-        console.print(
-            "[dim]No NovaSeal config on this machine — verifying from the capsule "
-            "alone (no local Merkle log).[/dim]"
-        )
-
-    # Read capsule_id from log-entry.json
-    import json
-
-    log_file = seal_dir / "log-entry.json"
-    capsule_id = ""
-    if log_file.exists():
-        try:
-            entry = json.loads(log_file.read_bytes())
-            capsule_id = entry.get("entry", {}).get("capsule_id", "")
-        except Exception:
-            pass
-
-    # ADR-0251 §2: capsule_id above came from log-entry.json, a file inside the
-    # capsule an attacker can rewrite. Re-derive it from the signed payload and
-    # treat a disagreement as a failure rather than trusting the file.
-    dsse_bytes = b""
-    dsse_file = seal_dir / "manifest.dsse"
-    if dsse_file.exists():
-        dsse_bytes = dsse_file.read_bytes()
-    capsule_id_ok = True
-    derived_capsule_id = _derive_capsule_id(dsse_bytes)
-    if derived_capsule_id and capsule_id and derived_capsule_id != capsule_id:
-        capsule_id_ok = False
-
-    from novafabric.trust.novaseal import verify_seal_dir  # noqa: PLC0415
-
-    try:
-        result = verify_seal_dir(seal_dir, merkle_log=merkle_log)
-    finally:
-        if merkle_log is not None:
-            merkle_log.close()
-    binding = _capsule_binding_report(capsule_dir, dsse_bytes)
-    chain_bundle = ca_bundle if ca_bundle is not None else getattr(profile, "ca_bundle", None)
-    crl_directory = crl_dir if crl_dir is not None else getattr(profile, "crl_dir", None)
-    strict_crl = crl_strict or bool(getattr(profile, "crl_strict", False))
     configured_tsa = getattr(profile, "tsa_ca_certs", None)
-    tsa_anchor_paths: list[Path] = (
-        [tsa_ca_bundle]
-        if tsa_ca_bundle is not None
-        else list(configured_tsa)
-        if isinstance(configured_tsa, list)
-        else []
-    )
-    if crl_dir is not None and chain_bundle is None and not tsa_anchor_paths:
+    if (
+        crl_dir is not None
+        and ca_bundle is None
+        and getattr(profile, "ca_bundle", None) is None
+        and tsa_ca_bundle is None
+        and not (isinstance(configured_tsa, list) and configured_tsa)
+    ):
         err_console.print(
             "[red]Error:[/red] --crl-dir needs a CA bundle to build the chain it checks "
             "(pass --ca-bundle / --tsa-ca-bundle or set ca_bundle / tsa_ca_certs in "
             "novaseal.yaml)."
         )
         raise typer.Exit(code=2)
-    chain_check = (
-        _signer_chain_check(dsse_bytes, chain_bundle, crl_dir=crl_directory, crl_strict=strict_crl)
-        if chain_bundle is not None
-        else None
-    )
 
-    tsa_check = (
-        _tsa_chain_check(
-            _read_capsule_tsr(seal_dir / "manifest.dsse.tsr"),
-            hashlib.sha256(dsse_bytes).digest(),
-            tsa_anchor_paths,
-            crl_dir=crl_directory,
-            crl_strict=strict_crl,
+    # Verification is self-contained (audit finding S2): the signature, the
+    # timestamp and a carried inclusion proof need nothing but the capsule. The
+    # sealer's Merkle log, when this machine has one, is an extra check — never a
+    # prerequisite, or an independent auditor could not verify at all.
+    if profile is None:
+        console.print(
+            "[dim]No NovaSeal config on this machine — verifying from the capsule "
+            "alone (no local Merkle log).[/dim]"
         )
-        if tsa_anchor_paths
-        else None
-    )
 
-    # ADR-0301: the signer's trust level — what *this verifier* established.
+    # One verification path (audit H1): the trust radar, the dashboard Seal tab
+    # and POST /api/runs/{id}/verify call the same function, so they can never
+    # call a capsule valid that this command rejects.
+    from novafabric.trust.novaseal import unanchored_claims  # noqa: PLC0415
+    from novafabric.trust.novaseal.capsule_verify import verify_capsule  # noqa: PLC0415
     from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
         IDENTITY_TRUST_STATEMENTS,
-        anchored_identity_trust,
     )
 
-    chain_ok = True
-    chain_anchor: Any = None
-    if chain_check is not None:
-        chain_ok, _, _, chain_anchor = chain_check
-    result.ca_chain_ok = chain_check is not None and chain_ok
-    if result.signature_ok and chain_check is not None and chain_ok:
-        result.identity_trust = anchored_identity_trust(chain_anchor)
+    report = verify_capsule(
+        capsule_dir,
+        profile,
+        ca_bundle=ca_bundle,
+        crl_dir=crl_dir,
+        crl_strict=crl_strict,
+        tsa_ca_bundle=tsa_ca_bundle,
+    )
+    result = report.result
+    binding = report.binding
+    capsule_id = report.log_entry_capsule_id
+    capsule_id_ok = report.capsule_id_ok
+    chain_check = report.chain_check
+    chain_ok = report.chain_ok
+    tsa_check = report.tsa_check
 
     # Print results
     console.print(f"\n[bold]NovaSeal verification:[/bold] {capsule_dir.name}")
@@ -473,51 +471,69 @@ def _verify_capsule_dir(
             "— no trusted time"
         )
     else:
-        _print_check("Timestamp (RFC 3161)", result.timestamp_ok)
-        if result.timestamp_ok and not result.timestamp_strict:
-            console.print(
-                "    [yellow]⚠ structural check only:[/yellow] the token could not be "
-                "parsed strictly, so its TSA signature and imprint binding were not fully "
-                "verified"
-            )
-        elif result.timestamp_ok and not tsa_anchor_paths:
-            console.print(
-                "    token intact and bound to this envelope; TSA identity not checked "
-                "(pass --tsa-ca-bundle)"
-            )
+        _print_timestamp(result)
     _print_log_inclusion(result.log_inclusion, result.log_notes)
+    _print_sealer_log(result.sealer_log)
     binding_ok = _print_capsule_binding(binding)
     if chain_check is not None:
-        chain_ok, chain_detail, revocation_lines, _ = chain_check
-        _print_check("Signer certificate chain (CA bundle)", chain_ok)
-        console.print(f"    {chain_detail}")
-        for line in revocation_lines:
+        _print_check("Signer certificate chain (CA bundle)", chain_check.ok)
+        console.print(f"    {chain_check.reason}")
+        for line in _revocation_lines(chain_check.revocation):
             console.print(f"    {line}")
-    tsa_ok = _print_tsa_check(tsa_check)
+    tsa_ok = _print_tsa_check(_tsa_lines(tsa_check) if tsa_check is not None else None)
     if not capsule_id_ok:
         _print_check("Log-entry capsule_id matches the signed payload", False)
         console.print(
             f"    [red]log-entry.json says[/red] {capsule_id}\n"
-            f"    [red]signed payload hashes to[/red] {derived_capsule_id}"
+            f"    [red]signed payload hashes to[/red] {report.derived_capsule_id}"
         )
 
     _print_identity(result)
 
-    if result.errors:
+    # A capture that recorded tampering by its workload is not trustworthy
+    # evidence, however good its seal: the seal signs that record.
+    from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415
+        capture_tampered_error,
+        special_entry_errors,
+    )
+
+    tamper_errors = (
+        [capture_tampered_error(report.capture_tampered)]
+        if report.capture_tampered is not None
+        else []
+    )
+    if report.capture_tampered is not None:
+        _print_check("Capture integrity (no workload tampering recorded)", False)
+    # A link or special file in the directory now: planted after the capture's
+    # sweep or after sealing. Never followed, and never valid.
+    special_errors = special_entry_errors(report.special_entries)
+    if report.special_entries:
+        _print_check("No links or special files in the capsule", False)
+    all_errors = [*result.errors, *report.errors, *tamper_errors, *special_errors]
+    if all_errors:
         console.print()
-        for err in result.errors:
+        for err in all_errors:
             console.print(f"  [red]✗[/red] {err}")
 
     console.print()
     console.print(str(result))
 
-    overall_ok = result.valid and binding_ok and capsule_id_ok and chain_ok and tsa_ok
+    overall_ok = report.valid
+    claims = unanchored_claims(result)
+    if strict:
+        _print_strict(claims)
     if json_out:
         _emit_json(
             {
                 "capsule": capsule_dir.name,
                 "sealed": True,
                 "valid": overall_ok,
+                "strict": strict,
+                "unanchored_claims": claims,
+                "timestamp_trust": result.timestamp_trust,
+                "timestamp_gen_time": result.timestamp_gen_time,
+                "tsa_subject": result.tsa_subject,
+                "sealer_log": result.sealer_log,
                 "signature_ok": result.signature_ok,
                 "pae_encoding": result.pae_encoding,
                 "timestamp_ok": result.timestamp_ok,
@@ -527,6 +543,12 @@ def _verify_capsule_dir(
                 "log_inclusion": result.log_inclusion,
                 "log_notes": list(result.log_notes),
                 "capsule_binding_ok": binding_ok,
+                # Additive: which manifest the seal binds, and the unsealed
+                # substitutes (manifest files, signed refs) that failed it.
+                "manifest_file": binding.manifest_name,
+                "unsealed_manifests": list(binding.unsealed_manifests),
+                "unsealed_refs": list(binding.unsealed_refs),
+                "binding_errors": binding.failure_reasons(),
                 "capsule_id_ok": capsule_id_ok,
                 "ca_chain_checked": chain_check is not None,
                 "ca_chain_ok": chain_ok if chain_check is not None else None,
@@ -539,10 +561,16 @@ def _verify_capsule_dir(
                 "signing_intent": (
                     result.signing_intent.value if result.signing_intent is not None else None
                 ),
-                "errors": list(result.errors),
+                "capture_tampered": report.capture_tampered,
+                "special_entries": list(report.special_entries),
+                "errors": all_errors,
             }
         )
 
+    if strict and overall_ok and claims:
+        # Verified, but not to the anchored standard --strict asked for. Not a
+        # seal failure, so no ADR-0192 critical alert.
+        raise typer.Exit(code=1)
     if not overall_ok:
         # ADR-0192 wired source: the evidence guarantee itself failed, so
         # this is `critical` — the run can no longer be proven.
@@ -552,7 +580,7 @@ def _verify_capsule_dir(
 
         emit_seal_verify_failed_alert(
             capsule_id=capsule_id,
-            errors=list(result.errors),
+            errors=all_errors,
             signature_ok=result.signature_ok,
         )
         raise typer.Exit(code=1)
@@ -592,83 +620,6 @@ def _print_identity(result: Any) -> None:
             )
 
 
-def _signer_chain_check(
-    dsse_bytes: bytes,
-    bundle_path: Path,
-    *,
-    crl_dir: Path | None = None,
-    crl_strict: bool = False,
-) -> tuple[bool, str, list[str], Any]:
-    """Bind the DSSE signature to a CA-validated signer certificate (ADR-0055).
-
-    Offline and fail-closed. Passes only when some signature entry verifies over the
-    signed PAE bytes under the public key of its own embedded certificate *and* that
-    same certificate chains to the bundle — chain-validating ``signatures[0].cert``
-    alone let a forged envelope pair a legitimate leaf with an attacker's ``pubkey``
-    and signature. An unreadable bundle, an envelope without an embedded certificate,
-    or a chain that does not reach a bundle anchor all return ``(False, reason, …)``.
-    Returns ``(True, "chain: leaf <- ... <- anchor", …)`` on success.
-
-    With ``crl_dir`` (ADR-0070 §3), the validated path is also revocation-checked
-    against the locally synced CRLs — never fetched. An unusable CRL directory fails
-    closed. The third element holds the per-certificate revocation lines and any
-    skipped-file findings, printed so soft-fail warnings are always visible. The fourth
-    is the bundle certificate the validated chain ended at (``None`` on failure), which
-    decides ``local-ca-pinned`` vs ``ca-anchored`` (ADR-0301).
-    """
-    from novafabric.trust.novaseal.crl import (  # noqa: PLC0415
-        CrlStoreError,
-        load_crl_directory,
-    )
-    from novafabric.trust.novaseal.x509_identity import (  # noqa: PLC0415
-        X509ChainError,
-        load_ca_bundle,
-        verify_dsse_signer_chain,
-    )
-
-    try:
-        anchors = load_ca_bundle(bundle_path.read_bytes())
-        store = load_crl_directory(crl_dir) if crl_dir is not None else None
-        outcome = verify_dsse_signer_chain(
-            dsse_bytes, anchors, crl_store=store, crl_strict=crl_strict
-        )
-    except OSError as exc:
-        return False, f"cannot read CA bundle {bundle_path}: {exc}", [], None
-    except (X509ChainError, CrlStoreError) as exc:
-        return False, str(exc), [], None
-    lines = _revocation_lines(outcome.revocation)
-    if not outcome.valid:
-        return False, outcome.reason, lines, None
-    anchor = _anchor_by_fingerprint(anchors, outcome.trust_anchor_fingerprint)
-    return True, "chain: " + " <- ".join(outcome.chain_subjects), lines, anchor
-
-
-def _anchor_by_fingerprint(anchors: list[Any], fingerprint: str | None) -> Any:
-    """The bundle certificate whose ``sha256:`` fingerprint is *fingerprint*, else None."""
-    from cryptography.hazmat.primitives import hashes  # noqa: PLC0415
-
-    if fingerprint is None:
-        return None
-    for cert in anchors:
-        if "sha256:" + cert.fingerprint(hashes.SHA256()).hex() == fingerprint:
-            return cert
-    return None
-
-
-def _read_capsule_tsr(tsr_path: Path) -> bytes | None:
-    """Read ``manifest.dsse.tsr`` bounded to one byte past the token size limit.
-
-    Returns ``None`` when the file is absent. An oversize file is returned truncated
-    to ``MAX_TOKEN_BYTES + 1`` bytes, which the parser then rejects (fail closed).
-    """
-    from novafabric.trust.novaseal.tsa_token import MAX_TOKEN_BYTES  # noqa: PLC0415
-
-    if not tsr_path.is_file():
-        return None
-    with tsr_path.open("rb") as handle:
-        return handle.read(MAX_TOKEN_BYTES + 1)
-
-
 def _tsa_chain_check(
     token: bytes | None,
     expected_digest: bytes,
@@ -677,54 +628,30 @@ def _tsa_chain_check(
     crl_dir: Path | None = None,
     crl_strict: bool = False,
 ) -> tuple[bool, str, list[str]]:
-    """Verify an RFC 3161 token's TSA signature, EKU and chain (ADR-0070 §1).
+    """TSA chain check (ADR-0070 §1) as ``(ok, reason, lines to print)``.
 
-    Offline and fail-closed. Only called when TSA anchors were given
-    (``--tsa-ca-bundle``) or configured (``tsa_ca_certs``): the operator then asked
-    for a TSA-attested time, so an absent or empty token *fails* — the ``.tsr`` is
-    not covered by the DSSE signature, and a key holder backdating a capsule could
-    otherwise just delete it. Returns ``(False, reason, lines)`` on any failure — an
-    unreadable anchor file, a missing token or a bad token — and
-    ``(True, summary, lines)`` when the token verifies. ``lines`` carry the
-    genTime / chain / revocation details to print.
+    The check itself is ``capsule_verify.tsa_chain_check``; this renders it.
     """
-    from novafabric.trust.novaseal.tsa_trust import verify_tsa_trust_chain  # noqa: PLC0415
+    from novafabric.trust.novaseal.capsule_verify import tsa_chain_check  # noqa: PLC0415
 
-    try:
-        anchors_pem = b"\n".join(p.read_bytes() for p in anchor_paths)
-    except OSError as exc:
-        return False, f"cannot read TSA CA bundle: {exc}", []
-    if token is None:
-        return (
-            False,
-            "no RFC 3161 token (manifest.dsse.tsr) although TSA trust anchors are "
-            "configured; the token is not covered by the DSSE signature, so a missing "
-            "one cannot be told apart from a deleted one",
-            [],
+    return _tsa_lines(
+        tsa_chain_check(
+            token, expected_digest, anchor_paths, crl_dir=crl_dir, crl_strict=crl_strict
         )
-    if not token:
-        return (
-            False,
-            "timestamp token (manifest.dsse.tsr) is empty although TSA trust anchors "
-            "are configured",
-            [],
-        )
-    outcome = verify_tsa_trust_chain(
-        token,
-        anchors_pem,
-        crl_dir,
-        crl_strict=crl_strict,
-        expected_digest=expected_digest,
     )
+
+
+def _tsa_lines(check: Any) -> tuple[bool, str, list[str]]:
+    """Render an ``AnchorCheck`` from a TSA chain check as printable lines."""
     lines: list[str] = []
-    if outcome.gen_time is not None:
-        lines.append(f"genTime: {outcome.gen_time.isoformat()}")
-    if outcome.signer_subject is not None:
-        lines.append(f"TSA signer: {outcome.signer_subject}")
-    if outcome.chain_subjects:
-        lines.append("chain: " + " <- ".join(outcome.chain_subjects))
-    lines.extend(_revocation_lines(outcome.revocation))
-    return outcome.valid, outcome.reason, lines
+    if check.gen_time is not None:
+        lines.append(f"genTime: {check.gen_time}")
+    if check.signer_subject is not None:
+        lines.append(f"TSA signer: {check.signer_subject}")
+    if check.chain_subjects:
+        lines.append("chain: " + " <- ".join(check.chain_subjects))
+    lines.extend(_revocation_lines(check.revocation))
+    return check.ok, check.reason, lines
 
 
 def _print_tsa_check(check: tuple[bool, str, list[str]] | None) -> bool:
@@ -763,171 +690,54 @@ def _revocation_lines(revocation: Any) -> list[str]:
     return lines
 
 
-def _derive_capsule_id(dsse_bytes: bytes) -> str:
-    """SHA-256 of the DSSE payload — the capsule_id, recomputed rather than read.
-
-    ADR-0251 §2: ``cli/verify.py`` read ``capsule_id`` from ``log-entry.json``, a
-    file inside the capsule directory. An identifier read from an attacker-writable
-    file and never checked is a suggestion, not an identifier.
-    """
-    import base64
-    import json
-
-    if not dsse_bytes:
-        return ""
-    try:
-        payload = base64.urlsafe_b64decode(json.loads(dsse_bytes)["payload"] + "==")
-    except (ValueError, KeyError, TypeError):
-        return ""
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _capsule_binding_report(capsule_dir: Path, dsse_bytes: bytes) -> dict[str, Any]:
-    """Check that *capsule_dir* is the directory the seal was made over (ADR-0251).
-
-    The DSSE signature proves a manifest was signed. It does not prove that
-    manifest describes this directory: ``capsule.yaml`` was never opened during
-    verification, and the manifest names its evidence files by filename with no
-    digest. Both halves were measured green against a forged capsule on
-    2026-08-27.
-
-    Returns a report dict; the caller prints and decides the exit code. Never
-    raises — an unreadable envelope degrades to ``present=False``, which prints
-    NOT PRESENT rather than a check that did not run.
-    """
-    import base64
-    import json
-
-    report: dict[str, Any] = {
-        "manifest_present": False,
-        "manifest_ok": False,
-        "differing_keys": [],
-        "digests_present": False,
-        "digests_ok": False,
-        "mismatched": [],
-        "missing": [],
-        "unlisted": [],
-        "errors": [],
-    }
-    if not dsse_bytes:
-        return report
-
-    try:
-        envelope = json.loads(dsse_bytes)
-        payload = base64.urlsafe_b64decode(envelope["payload"] + "==")
-        signed = json.loads(payload)
-    except (ValueError, KeyError, TypeError) as exc:
-        report["errors"].append(f"Cannot decode signed payload: {exc}")
-        return report
-    if not isinstance(signed, dict):
-        report["errors"].append("Signed payload is not a manifest object")
-        return report
-
-    # --- half 1: does capsule.yaml on disk match the signed payload? ---
-    manifest_file = capsule_dir / "capsule.yaml"
-    if not manifest_file.exists():
-        # Not every sealed directory is a run capsule — the object capsule store
-        # seals a single-field manifest with no capsule.yaml at all. §4: absent is
-        # reported as absent, not failed.
-        pass
-    else:
-        report["manifest_present"] = True
-        try:
-            import yaml
-
-            on_disk = yaml.safe_load(manifest_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            report["errors"].append(f"Cannot read capsule.yaml: {exc}")
-            on_disk = None
-        if isinstance(on_disk, dict):
-            # ``_novaseal`` is seal metadata bound into the signed payload (ADR-0309,
-            # the signing intent); it is never part of capsule.yaml.
-            from novafabric.trust.novaseal.envelope import SEAL_METADATA_KEY  # noqa: PLC0415
-
-            differing = sorted(
-                k
-                for k in (set(signed) | set(on_disk)) - {SEAL_METADATA_KEY}
-                if signed.get(k) != on_disk.get(k)
-            )
-            report["differing_keys"] = differing
-            report["manifest_ok"] = not differing
-        elif on_disk is not None:
-            report["errors"].append("capsule.yaml did not parse as a mapping")
-
-    # --- half 2: do the evidence files still hash to what was signed? ---
-    digests = signed.get("evidence_digests")
-    if not isinstance(digests, dict):
-        return report  # sealed before ADR-0251 — absent, reported as NOT PRESENT
-    report["digests_present"] = True
-
-    on_disk_files = {
-        path.relative_to(capsule_dir).as_posix()
-        for path in capsule_dir.rglob("*")
-        if path.is_file()
-        and not path.is_symlink()
-        and path.relative_to(capsule_dir).parts[0] not in {".seal", "capsule.yaml"}
-    }
-    for rel, expected in sorted(digests.items()):
-        target = capsule_dir / rel
-        if not target.is_file():
-            report["missing"].append(rel)
-            continue
-        actual = "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
-        if not isinstance(expected, dict) or actual != expected.get("sha256"):
-            report["mismatched"].append(rel)
-    # Files added after sealing are legitimate (`nova export-c2pa` writes one).
-    # Report them so nothing is silently uncovered; never fail on them.
-    report["unlisted"] = sorted(on_disk_files - set(digests))
-    report["digests_ok"] = not report["mismatched"] and not report["missing"]
-    return report
-
-
-def _print_capsule_binding(report: dict[str, Any]) -> bool:
+def _print_capsule_binding(binding: Any) -> bool:
     """Print the ADR-0251 binding checks. Returns False if the capsule is unbound."""
-    ok = True
-
-    if not report["manifest_present"]:
+    name = binding.manifest_name
+    label = f"Manifest binding ({name} == signed payload)"
+    if not binding.manifest_present:
         console.print(
             "  [yellow]⊘[/yellow] Manifest binding: "
-            "[yellow]NOT PRESENT[/yellow] (no capsule.yaml to compare)"
+            "[yellow]NOT PRESENT[/yellow] (no manifest file to compare)"
         )
-    elif report["manifest_ok"]:
-        _print_check("Manifest binding (capsule.yaml == signed payload)", True)
+    elif binding.manifest_ok and not binding.unsealed_manifests:
+        _print_check(label, True)
     else:
-        _print_check("Manifest binding (capsule.yaml == signed payload)", False)
-        keys = ", ".join(report["differing_keys"][:8])
-        more = len(report["differing_keys"]) - 8
-        console.print(
-            f"    [red]capsule.yaml disagrees with the signed payload:[/red] {keys}"
-            + (f" (+{more} more)" if more > 0 else "")
-        )
-        ok = False
+        _print_check(label, False)
+        if binding.differing_keys:
+            keys = ", ".join(binding.differing_keys[:8])
+            more = len(binding.differing_keys) - 8
+            console.print(
+                f"    [red]{name} disagrees with the signed payload:[/red] {keys}"
+                + (f" (+{more} more)" if more > 0 else "")
+            )
+    # A manifest-named file or a signed ref's target the seal does not cover is a
+    # substitute every reader would trust: a failure, never "not covered" noise.
+    for reason in binding.reasons:
+        console.print(f"  [red]✗[/red] {reason}")
 
-    if not report["digests_present"]:
+    if not binding.digests_present:
         console.print(
             "  [yellow]⊘[/yellow] Evidence binding: "
             "[yellow]NOT PRESENT[/yellow] (sealed before evidence_digests)"
         )
-    elif report["digests_ok"]:
+    elif binding.digests_ok:
         _print_check("Evidence binding (per-file sha256)", True)
     else:
         _print_check("Evidence binding (per-file sha256)", False)
-        for rel in report["mismatched"]:
+        for rel in binding.mismatched:
             console.print(f"    [red]modified:[/red] {rel}")
-        for rel in report["missing"]:
+        for rel in binding.missing:
             console.print(f"    [red]missing:[/red] {rel}")
-        ok = False
 
-    if report["unlisted"]:
+    if binding.unlisted:
         console.print(
-            f"    [yellow]not covered by the seal ({len(report['unlisted'])}):[/yellow] "
-            + ", ".join(report["unlisted"][:5])
-            + (" …" if len(report["unlisted"]) > 5 else "")
+            f"    [yellow]not covered by the seal ({len(binding.unlisted)}):[/yellow] "
+            + ", ".join(binding.unlisted[:5])
+            + (" …" if len(binding.unlisted) > 5 else "")
         )
-    for err in report["errors"]:
+    for err in binding.errors:
         console.print(f"  [red]✗[/red] {err}")
-        ok = False
-    return ok
+    return bool(binding.ok)
 
 
 def _is_export_manifest(path: Path) -> bool:
@@ -983,23 +793,60 @@ def _print_check(label: str, ok: bool) -> None:
     console.print(f"  {icon} {label}: {status}")
 
 
-def _open_existing_merkle_log(profile: Any) -> Any:
-    """Open the configured Merkle log only if it already exists; else None.
+def _print_timestamp(result: Any) -> None:
+    """Print a present token's line: integrity, and whether its *time* is trusted."""
+    from novafabric.trust.novaseal import (  # noqa: PLC0415
+        TIMESTAMP_TRUST_ANCHORED,
+        TIMESTAMP_TRUST_UNANCHORED,
+    )
 
-    Verification must never *create* a log (an empty one proves nothing and would
-    litter an auditor's machine), and a missing log is not an error.
-    """
-    if profile is None:
-        return None
-    from novafabric.trust.novaseal.merkle import open_merkle_log  # noqa: PLC0415
+    if result.timestamp_trust == TIMESTAMP_TRUST_ANCHORED:
+        _print_check("Timestamp (RFC 3161)", True)
+        console.print("    TSA chain verified against your TSA trust anchors — trusted time")
+    elif result.timestamp_trust == TIMESTAMP_TRUST_UNANCHORED:
+        console.print(
+            "  [yellow]⚠[/yellow] Timestamp (RFC 3161): [yellow]UNANCHORED[/yellow] — token "
+            "intact and bound to this envelope; its time is NOT trusted"
+        )
+        claimed = result.timestamp_gen_time or "(unknown)"
+        tsa = result.tsa_subject or "(unknown)"
+        console.print(
+            f"    claims genTime {claimed} from TSA {tsa!r} — unverified: anyone can mint a "
+            "TSA certificate and sign any time. Pass --tsa-ca-bundle (or set tsa_ca_certs) "
+            "to anchor it"
+        )
+    else:
+        _print_check("Timestamp (RFC 3161)", bool(result.timestamp_ok))
+    if result.timestamp_ok and not result.timestamp_strict:
+        console.print(
+            "    [yellow]⚠ structural check only:[/yellow] the token could not be "
+            "parsed strictly, so its TSA signature and imprint binding were not fully "
+            "verified"
+        )
 
-    location = str(profile.merkle_db)
-    if location.startswith(("postgres://", "postgresql://", "postgresql:/", "postgres:/")):
-        return open_merkle_log(location)
-    path = Path(location).expanduser()
-    if not path.is_file():
-        return None
-    return open_merkle_log(path)
+
+def _print_sealer_log(sealer_log: str) -> None:
+    """Warn when the sealer's log exists only under a newer root version (ADR-0313)."""
+    from novafabric.trust.novaseal import SEALER_LOG_OTHER_VERSION  # noqa: PLC0415
+
+    if sealer_log == SEALER_LOG_OTHER_VERSION:
+        console.print(
+            "  [yellow]⚠[/yellow] Sealer's log: [yellow]UNVERIFIED[/yellow] "
+            "(sealer_log=unverifiable-other-version) — this host's log is a newer root "
+            "version and cannot confirm or refute this capsule; list the retired log in "
+            "previous_merkle_dbs"
+        )
+
+
+def _print_strict(claims: list[str]) -> None:
+    """Report the --strict verdict: the unanchored claims a pass would rest on."""
+    if not claims:
+        console.print("  [green]✓[/green] Strict: every passing claim is anchored")
+        return
+    console.print(
+        "  [red]✗[/red] Strict: [red]FAIL[/red] — passing checks rest on unanchored "
+        f"claims: {', '.join(claims)}"
+    )
 
 
 def _print_log_inclusion(status: str, notes: list[str]) -> None:
@@ -1067,7 +914,12 @@ def _verify_sigstore(
         for candidate in ("manifest.json", "capsule.json"):
             manifest_file = capsule_dir / candidate
             if manifest_file.exists():
-                manifest_bytes = manifest_file.read_bytes()
+                try:
+                    manifest_bytes = read_capsule_file(
+                        capsule_dir, candidate, operation="nova verify"
+                    )
+                except CapsuleEntryError:
+                    continue  # a link or special file is never followed
                 if not effective_capsule_id:
                     effective_capsule_id = hashlib.sha256(manifest_bytes).hexdigest()
                 break
@@ -1135,11 +987,9 @@ def _verify_evidence_bundle(
     (:func:`novafabric.evidence.bundle_verify.verify_bundle_signatures`); with
     ``public_key`` the signer must also be that key. Exits 1 on any failure.
     """
-    import hashlib
-    import json
     import zipfile
 
-    from novafabric.evidence.bundle_verify import verify_bundle_signatures
+    from novafabric.evidence.bundle_verify import BundleArchiveError, verify_bundle_archive
 
     try:
         zf = zipfile.ZipFile(bundle_path)
@@ -1147,67 +997,45 @@ def _verify_evidence_bundle(
         console.print(f"[red]Error:[/red] not a readable ZIP: {bundle_path} ({exc})")
         raise typer.Exit(code=1) from exc
 
+    # One verifier for the CLI and `POST /api/evidence/{bundle_id}/verify`, so the two
+    # can never reach different verdicts on the same bundle.
     with zf:
-        names = set(zf.namelist())
-        if "manifest.json" not in names:
-            console.print(
-                f"[red]Error:[/red] {bundle_path} has no manifest.json — "
-                "this is not a NovaFabric Evidence Bundle."
-            )
-            raise typer.Exit(code=1)
         try:
-            manifest = json.loads(zf.read("manifest.json"))
-        except ValueError as exc:
-            console.print(f"[red]Error:[/red] manifest.json is not valid JSON: {exc}")
+            outcome = verify_bundle_archive(
+                zf,
+                trusted_public_pems=[public_key.read_bytes()] if public_key is not None else (),
+            )
+        except BundleArchiveError as exc:
+            console.print(f"[red]Error:[/red] {bundle_path}: {exc}")
             raise typer.Exit(code=1) from exc
-
-        artifacts = manifest.get("artifacts") or []
-        console.print(f"\nEvidence Bundle verification: {bundle_path.name}")
-        console.print(f"  bundle_id: {manifest.get('bundle_id', '(none)')}")
-        console.print(f"  artifacts: {len(artifacts)}")
-
-        mismatched: list[str] = []
-        missing: list[str] = []
-        for art in artifacts:
-            rel = art.get("path", "")
-            want = art.get("sha256", "")
-            if rel not in names:
-                missing.append(rel)
-                continue
-            got = "sha256:" + hashlib.sha256(zf.read(rel)).hexdigest()
-            if got != want:
-                mismatched.append(rel)
-
-        # Files present in the ZIP that the manifest never accounted for: an
-        # addition is a modification too, so it must not pass silently.
-        unlisted = sorted(names - {a.get("path", "") for a in artifacts} - {"manifest.json"})
-        signed = verify_bundle_signatures(
-            manifest,
-            zf.read,
-            names,
-            trusted_public_pem=public_key.read_bytes() if public_key is not None else None,
-        )
+        names = set(zf.namelist())
         tsa_check = (
             _bundle_tsa_check(zf, names, tsa_ca_bundle, crl_dir=crl_dir, crl_strict=crl_strict)
             if tsa_ca_bundle is not None
             else None
         )
 
-    _print_check(f"Artifact digests ({len(artifacts)} recomputed)", not mismatched)
-    for rel in mismatched:
+    signed = outcome.signatures
+    console.print(f"\nEvidence Bundle verification: {bundle_path.name}")
+    console.print(f"  bundle_id: {outcome.manifest.get('bundle_id', '(none)')}")
+    console.print(f"  artifacts: {outcome.artifact_count}")
+    _print_check(f"Artifact digests ({outcome.artifact_count} recomputed)", outcome.digests_ok)
+    for rel in outcome.modified:
         console.print(f"    [red]✗ modified:[/red] {rel}")
-    if missing:
-        _print_check(f"All listed artifacts present ({len(missing)} missing)", False)
-        for rel in missing:
+    if outcome.missing:
+        _print_check(f"All listed artifacts present ({len(outcome.missing)} missing)", False)
+        for rel in outcome.missing:
             console.print(f"    [red]✗ missing:[/red] {rel}")
     else:
         _print_check("All listed artifacts present", True)
-    if unlisted:
-        _print_check(f"No unlisted files ({len(unlisted)} extra)", False)
-        for rel in unlisted:
+    if outcome.unlisted:
+        _print_check(f"No unlisted files ({len(outcome.unlisted)} extra)", False)
+        for rel in outcome.unlisted:
             console.print(f"    [red]✗ not in manifest:[/red] {rel}")
     else:
         _print_check("No unlisted files", True)
+    for rel in outcome.duplicate_members:
+        console.print(f"    [red]✗ duplicate archive member:[/red] {rel}")
 
     _print_check("manifest_hash matches the manifest", signed.manifest_hash_ok)
     _print_check(
@@ -1223,6 +1051,7 @@ def _verify_evidence_bundle(
         console.print(f"    [red]✗ subject:[/red] {rel}")
     for err in signed.errors:
         console.print(f"    [red]✗[/red] {err}")
+    _print_members(outcome)
     if public_key is not None:
         _print_check("Signer is the --public-key", not signed.signer_not_trusted)
     elif signed.signer_fingerprints:
@@ -1232,14 +1061,50 @@ def _verify_evidence_bundle(
             "to require a known signer"
         )
     tsa_ok = _print_tsa_check(tsa_check)
-    ok = not mismatched and not missing and not unlisted and tsa_ok and signed.ok
+    if tsa_check is None and outcome.has_timestamp_token:
+        # Not checked at all without anchors: say so rather than staying silent, so
+        # the bundle's token is never read as a verified, trusted time.
+        console.print(
+            "  [yellow]⚠[/yellow] Timestamp (RFC 3161): [yellow]NOT CHECKED[/yellow] — the "
+            "bundle carries manifest.dsse.tsr, but no TSA trust anchor was given; its time "
+            "is not trusted (pass --tsa-ca-bundle)"
+        )
+    ok = outcome.ok and tsa_ok
     console.print(
-        f"\nartifacts_ok={not mismatched}, complete={not missing}, no_extras={not unlisted}"
+        f"\nartifacts_ok={outcome.digests_ok}, complete={outcome.complete}, "
+        f"no_extras={outcome.no_extras}"
     )
     if not ok:
         console.print("[red]Evidence Bundle verification FAILED[/red]")
         raise typer.Exit(code=1)
+    if not outcome.members_signed:
+        # A legacy bundle: its signed content verified, but not every member is
+        # signed. Never reported as a plain PASSED (ADR-0011 Amendment 7).
+        console.print(
+            "[yellow]Evidence Bundle verification PASSED — signed content only[/yellow] "
+            f"({len(outcome.unsigned_members)} member(s) not covered by any signature)"
+        )
+        return
     console.print("[green]Evidence Bundle verification PASSED[/green]")
+
+
+def _print_members(outcome: Any) -> None:
+    """Report the members statement check (ADR-0011 Amendment 7, review r8)."""
+    if outcome.member_problems:
+        _print_check("Every bundle member is covered by the signed members statement", False)
+        for problem in outcome.member_problems:
+            console.print(f"    [red]✗ members:[/red] {problem}")
+        return
+    if outcome.members_signed:
+        _print_check("Every bundle member is covered by the signed members statement", True)
+        return
+    unsigned = outcome.unsigned_members
+    shown = ", ".join(unsigned[:8]) + (f", … (+{len(unsigned) - 8})" if len(unsigned) > 8 else "")
+    console.print(
+        "  [yellow]![/yellow] signed content only: this bundle has no members statement "
+        "(exported before it existed), so these members are not covered by any signature "
+        f"and are not verified: {shown}"
+    )
 
 
 def _bundle_tsa_check(

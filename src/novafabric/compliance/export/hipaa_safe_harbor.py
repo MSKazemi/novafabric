@@ -38,6 +38,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -381,15 +383,20 @@ class HIPAASafeHarborExporter:
     # ------------------------------------------------------------------
 
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
-        """Load capsule.yaml; return empty dict if absent."""
-        manifest_path = capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
+        """Load capsule.yaml; return empty dict if absent.
+
+        Present but unusable (a link, FIFO, directory) raises
+        :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`.
+        """
+        text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="compliance export"
+        )
+        if text is None:
             return {}
         try:
             import yaml  # already a core dependency
 
-            with open(manifest_path) as fh:
-                data = yaml.safe_load(fh)
+            data = yaml.safe_load(text)
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
@@ -448,7 +455,10 @@ class HIPAASafeHarborExporter:
         """
         results: list[tuple[str, str]] = []
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            capsule_text = (
+                read_capsule_member_or_none(path, operation="compliance export") or ""
+            )
+            data = json.loads(capsule_text)
         except Exception:
             return results
 

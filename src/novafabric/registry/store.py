@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import threading
 from pathlib import Path
@@ -167,6 +168,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_eval_results_run_at ON eval_results(run_at DESC);
         """
     )
+    _ensure_status_history(conn)
     _ensure_additive_columns(conn)
     # Scale-S1: runs_cache — indexed capsule summaries (replaces O(N) disk scan)
     from novafabric.registry.runs_cache import ensure_runs_cache  # noqa: PLC0415
@@ -180,7 +182,113 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # ADR-0312: signature scheme a proposal was verified under. NULL = stored before
     # signatures were verified (reported as "unverified").
     ("promotion_proposals", "signoff_scheme", "TEXT"),
+    # Rollback evidence is bound to the registration it was written for, not to a
+    # reusable name@version: the asset row id and the SHA-256 of its spec_json.
+    # NULL = written before the binding existed (see rollback's legacy rule).
+    ("asset_status_history", "asset_id", "TEXT"),
+    ("asset_status_history", "spec_sha256", "TEXT"),
 )
+
+
+#: Append-only lifecycle history (additive table). ``nova rollback`` restores a
+#: version without the ADR-0312 ``promote_direct`` gate only when this table shows
+#: it was in ``production`` before; any other target is gated like a direct promote.
+_STATUS_HISTORY_SQL = """
+CREATE TABLE IF NOT EXISTS asset_status_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_name   TEXT NOT NULL,
+    version      TEXT NOT NULL,
+    from_status  TEXT,
+    to_status    TEXT NOT NULL,
+    changed_at   TEXT NOT NULL,
+    changed_by   TEXT NOT NULL,
+    via          TEXT NOT NULL,
+    asset_id     TEXT,
+    spec_sha256  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_asset_status_history_name
+    ON asset_status_history(asset_name, to_status, changed_at DESC);
+CREATE TRIGGER IF NOT EXISTS trg_asset_status_history_no_update
+    BEFORE UPDATE ON asset_status_history
+    BEGIN SELECT RAISE(ABORT, 'asset_status_history is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS trg_asset_status_history_no_delete
+    BEFORE DELETE ON asset_status_history
+    BEGIN SELECT RAISE(ABORT, 'asset_status_history is append-only'); END;
+"""
+
+
+def _ensure_status_history(conn: sqlite3.Connection) -> None:
+    """Create ``asset_status_history``; on first creation, backfill current production.
+
+    A registry that predates the table has no record of which versions were in
+    production. The versions in ``production`` right now are the one fact it can
+    still state, so they are recorded with ``via='backfill'``. That keeps the usual
+    upgrade path working: today's production version can be rolled back to after a
+    later release replaces it. A version archived *before* the upgrade has no
+    evidence and goes through the ``promote_direct`` gate.
+    """
+    existed = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'asset_status_history'"
+    ).fetchone()
+    conn.executescript(_STATUS_HISTORY_SQL)
+    if not existed:
+        # Positional access: init_schema may be handed a connection without Row factory.
+        for asset_id, name, version, spec_json, at, by in conn.execute(
+            "SELECT id, name, version, spec_json, COALESCE(promoted_at, created_at), "
+            "COALESCE(promoted_by, '') FROM assets WHERE status = 'production'"
+        ).fetchall():
+            record_status_change(
+                conn,
+                asset_name=name,
+                version=version,
+                from_status=None,
+                to_status="production",
+                changed_at=at,
+                changed_by=by,
+                via="backfill",
+                asset_id=asset_id,
+                spec_sha256=spec_digest(spec_json),
+            )
+    conn.commit()
+
+
+def spec_digest(spec_json: str) -> str:
+    """SHA-256 (hex) of an asset row's stored ``spec_json`` — the content a history row binds."""
+    return hashlib.sha256(spec_json.encode("utf-8")).hexdigest()
+
+
+def record_status_change(
+    conn: sqlite3.Connection,
+    *,
+    asset_name: str,
+    version: str,
+    from_status: str | None,
+    to_status: str,
+    changed_at: str,
+    changed_by: str,
+    via: str,
+    asset_id: str,
+    spec_sha256: str,
+) -> None:
+    """Append one lifecycle transition. The caller commits (same transaction).
+
+    *asset_id* and *spec_sha256* bind the row to one registration: the assets row id
+    and :func:`spec_digest` of its ``spec_json``. They are required so that no new
+    writer can produce an unbound row, which a re-registration of the same
+    name@version could otherwise borrow as "previously in production".
+    """
+    conn.execute(
+        """
+        INSERT INTO asset_status_history
+            (asset_name, version, from_status, to_status, changed_at, changed_by, via,
+             asset_id, spec_sha256)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            asset_name, version, from_status, to_status, changed_at, changed_by, via,
+            asset_id, spec_sha256,
+        ),
+    )
 
 
 def _ensure_additive_columns(conn: sqlite3.Connection) -> None:

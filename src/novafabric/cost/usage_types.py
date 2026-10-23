@@ -30,6 +30,8 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import read_capsule_member_or_none
+
 log = logging.getLogger(__name__)
 
 #: The closed set of named usage-type fields (schemas/token-usage.schema.json).
@@ -251,9 +253,13 @@ def usage_totals_from_model_calls(path: Path) -> dict[str, Any] | None:
     and malformed records — a capsule with no usage evidence gets ``None``
     (no aggregate), never a fabricated zero block.
     """
+    # Never through a link and never blocking on a FIFO: the capsule may hold
+    # whatever the recorded workload planted at model-calls.jsonl.
     try:
-        text = path.read_text()
+        text = read_capsule_member_or_none(path, operation="usage totals")
     except OSError:
+        return None
+    if text is None:
         return None
     blocks: list[Mapping[str, Any]] = []
     for line in text.splitlines():

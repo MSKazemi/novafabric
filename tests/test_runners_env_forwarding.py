@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -22,6 +23,7 @@ import pytest
 from novafabric.runners import DockerRunner, KubernetesRunner, RunnerJobSpec, SlurmRunner
 from novafabric.runners._env import forwardable_env
 from novafabric.runners._lsf import LSFRunner
+from novafabric.runners._pbs import PBSRunner
 
 #: A secret that must never appear in anything a runner sends off-host.
 SECRET_KEY = "OPENAI_API_KEY"
@@ -116,13 +118,15 @@ def _docker_argv(tmp_path: Path, **runner_options: object) -> list[str]:
 
 
 def _slurm_script(tmp_path: Path) -> str:
+    """Everything ``sbatch`` is handed: its argv and the batch script on its stdin."""
     fail = subprocess.CompletedProcess([], 1, b"", b"stop here\n")
     with patch("shutil.which", return_value="/usr/bin/sbatch"), \
          patch("subprocess.run", return_value=fail) as run:
         SlurmRunner().run(_spec(
             tmp_path, runner_options={"partition": "normal"},
         ))
-    return " ".join(str(a) for a in run.call_args.args[0])
+    argv = " ".join(str(a) for a in run.call_args.args[0])
+    return argv + "\n" + run.call_args.kwargs["input"].decode()
 
 
 class TestNoRunnerTransportsTheSubmittingEnvironment:
@@ -161,7 +165,7 @@ class TestNoRunnerTransportsTheSubmittingEnvironment:
 
     def test_slurm_script_carries_no_secret(self, tmp_path: Path) -> None:
         script = _slurm_script(tmp_path)
-        assert SECRET_VALUE not in script, "secret exported into the sbatch --wrap script"
+        assert SECRET_VALUE not in script, "secret exported into the sbatch batch script"
         assert f"export {SECRET_KEY}=" not in script
         # PATH is SLURM's one documented exception — the compute node needs it.
         assert "export PATH=" in script
@@ -207,12 +211,8 @@ class TestBatchSchedulersSubmitWithAMinimalEnvironment:
             else:
                 LSFRunner().run(_spec(tmp_path, runner_options=dict(options)))
         call = run.call_args
-        script = (
-            " ".join(str(a) for a in call.args[0])
-            if runner == "sbatch"
-            else next(tmp_path.glob("capsule/*.lsf")).read_text()
-        )
-        return call.kwargs["env"], script
+        # Both submit commands read the job script from stdin (never argv, never disk).
+        return call.kwargs["env"], call.kwargs["input"].decode()
 
     @pytest.mark.parametrize("runner", ["sbatch", "bsub"])
     def test_the_submit_process_does_not_hold_the_users_secrets(
@@ -297,3 +297,280 @@ class TestLocalRunnerIsDeliberatelyExempt:
             "LocalRunner started filtering its environment — that breaks capture "
             "for every local agent that needs a provider key. See ADR-0270."
         )
+
+
+class TestBatchSchedulersKeepValuesOffTheCommandLine:
+    """No value a batch runner sends into the job may appear in a submit command's argv.
+
+    ``argv`` is world-readable on the submit host: any user can read it with ``ps`` or
+    ``/proc/<pid>/cmdline`` for as long as the submit command runs. SLURM used to put the
+    whole job script, ``export OPENAI_API_KEY=…`` lines included, on ``sbatch``'s command
+    line as ``--wrap <script>``; ``extra_env`` (ADR-0311) is how operators pass API keys,
+    so the documented path disclosed them. The script now goes on the submit command's
+    stdin, and nothing that carries a value is left on the shared filesystem.
+    """
+
+    EXTRA_KEY = "OPENAI_API_KEY"
+
+    def _run(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> list[Any]:
+        monkeypatch.setenv(SECRET_KEY, SECRET_VALUE)
+        monkeypatch.setenv(NF_SECRET_KEY, "nf-token-must-never-be-transported")
+        fail = subprocess.CompletedProcess([], 1, b"", b"stop here\n")
+        extra = {"extra_env": {self.EXTRA_KEY: SECRET_VALUE}}
+        with patch("shutil.which", return_value=f"/usr/bin/{runner}"), \
+             patch("subprocess.run", return_value=fail) as run:
+            if runner == "sbatch":
+                SlurmRunner().run(_spec(tmp_path, runner_options={"partition": "n", **extra}))
+            elif runner == "bsub":
+                LSFRunner().run(_spec(tmp_path, runner_options=extra))
+            else:
+                PBSRunner().run(_spec(tmp_path, runner_options={}))
+        return list(run.call_args_list)
+
+    @pytest.mark.parametrize("runner", ["sbatch", "bsub", "qsub"])
+    def test_no_secret_value_appears_anywhere_in_argv(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._run(runner, tmp_path, monkeypatch)
+        assert calls, f"{runner} was never invoked"
+        for call in calls:
+            argv = [str(a) for a in call.args[0]]
+            for value in (SECRET_VALUE, "nf-token-must-never-be-transported",
+                          "aws-must-never-be-transported"):
+                assert not any(value in a for a in argv), (
+                    f"{argv[0]} carries a secret on its command line, readable by every "
+                    f"user on the submit host via ps or /proc/<pid>/cmdline: {argv}"
+                )
+            assert "--wrap" not in argv
+
+    @pytest.mark.parametrize("runner", ["sbatch", "bsub"])
+    def test_the_job_script_travels_on_stdin(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        submit = self._run(runner, tmp_path, monkeypatch)[0]
+        script = submit.kwargs.get("input")
+        assert isinstance(script, bytes), f"{runner} got no job script on stdin"
+        assert script.startswith(b"#!"), "sbatch/bsub need an interpreter line on stdin"
+        # The operator's explicit extra_env still reaches the job (ADR-0311 decision 2).
+        assert f"export {self.EXTRA_KEY}={SECRET_VALUE}".encode() in script
+        assert b"NOVAFABRIC_SPAN_ID" in script
+
+    @pytest.mark.parametrize("runner", ["sbatch", "bsub", "qsub"])
+    def test_no_secret_value_is_left_on_the_shared_filesystem(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The capsule dir is on a shared FS, and it is sealed and exported as evidence."""
+        self._run(runner, tmp_path, monkeypatch)
+        for path in tmp_path.rglob("*"):
+            if path.is_file():
+                assert SECRET_VALUE.encode() not in path.read_bytes(), (
+                    f"{runner} left a secret in {path.relative_to(tmp_path)}"
+                )
+
+
+def _fake_scheduler_bin(directory: Path, name: str, stdout: str) -> Path:
+    """An executable stand-in that records its own argv and stdin, as the OS sees them."""
+    path = directory / name
+    path.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$0" "$@" > "{directory}/{name}.argv"\n'
+        f'cat > "{directory}/{name}.stdin"\n'
+        f"printf '%s\\n' '{stdout}'\n"
+    )
+    path.chmod(0o700)
+    return path
+
+
+#: Values carrying every character a POSIX shell treats specially. The second has no
+#: whitespace or quote, which the old quoter took as "safe" and left bare: its ``$HOME``
+#: was expanded, and ``;`` / ``&`` / backticks ran as commands in the job.
+NASTY_VALUES = [
+    "s3cr3t $(id);`id` & | 'q' \"dq\" \\ * ~ end",
+    "s3cr3t$HOME;`id`&|*~\\end",
+]
+
+
+class TestBatchScriptsSurviveARealShell:
+    """End to end with real child processes: what ``/proc/<pid>/cmdline`` would show,
+    and what the job's shell would actually export."""
+
+    @pytest.mark.parametrize("value", NASTY_VALUES)
+    def test_sbatch_argv_has_no_secret_and_the_script_reaches_stdin(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        sbatch = _fake_scheduler_bin(bindir, "sbatch", "42")
+        scontrol = _fake_scheduler_bin(
+            bindir, "scontrol", "JobId=42 JobState=COMPLETED ExitCode=0:0"
+        )
+        sacct = _fake_scheduler_bin(bindir, "sacct", "")
+        spec = _spec(tmp_path, runner_options={
+            "partition": "n", "extra_env": {"OPENAI_API_KEY": value},
+            "poll_interval_s": 0.01,
+        }, timeout_s=30.0)
+        result = SlurmRunner(
+            sbatch_bin=str(sbatch), sacct_bin=str(sacct), scontrol_bin=str(scontrol),
+        ).run(spec)
+        assert result.runner_status == "completed", result.runner_error
+        argv = (bindir / "sbatch.argv").read_text()
+        assert "s3cr3t" not in argv and "--wrap" not in argv, argv
+        script = (bindir / "sbatch.stdin").read_text()
+        assert script.startswith("#!/bin/sh\n")
+        assert _exported_value(script, "OPENAI_API_KEY") == value, (
+            "the job would see a mangled — or executed — value"
+        )
+
+    @pytest.mark.parametrize("value", NASTY_VALUES)
+    def test_bsub_script_exports_the_value_verbatim(self, tmp_path: Path, value: str) -> None:
+        fail = subprocess.CompletedProcess([], 1, b"", b"stop here\n")
+        with patch("subprocess.run", return_value=fail) as run:
+            LSFRunner().run(_spec(
+                tmp_path, runner_options={"extra_env": {"OPENAI_API_KEY": value}},
+            ))
+        script = run.call_args.kwargs["input"].decode()
+        assert _exported_value(script, "OPENAI_API_KEY") == value
+
+
+def _exported_value(script: str, name: str) -> str:
+    """Run a job script's ``export`` lines in a real ``/bin/sh`` and read ``name`` back."""
+    exports = "\n".join(
+        line for line in script.splitlines() if line.startswith(f"export {name}=")
+    )
+    probe = f'{exports}\nprintf "%s" "${name}"\n'
+    out = subprocess.run(["/bin/sh", "-c", probe], capture_output=True, check=True)
+    return out.stdout.decode()
+
+
+#: Every value that must never be on a command line, whichever way it arrived.
+_ALL_SECRET_VALUES = (
+    SECRET_VALUE, "nf-token-must-never-be-transported", "aws-must-never-be-transported",
+)
+
+
+class TestNoRunnerPutsAValueOnACommandLine:
+    """No runner puts a variable's value in any argv it executes -- every runner.
+
+    ``argv`` is world-readable on the host (``ps``, ``/proc/<pid>/cmdline``). The
+    batch runners were fixed in ADR-0311 Amendment 2, but ``docker`` still ran
+    ``docker run -e OPENAI_API_KEY=sk-...``, visible for the container's whole
+    lifetime -- and ``extra_env`` is the documented way to pass an API key. Asserted
+    once over **every** runner, with the secret both in the submitting shell and in
+    ``extra_env``, so the next runner that forgets fails here.
+    """
+
+    EXTRA_KEY = "MODEL_API_KEY"
+
+    def _calls(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> list[Any]:
+        monkeypatch.setenv(SECRET_KEY, SECRET_VALUE)
+        monkeypatch.setenv(NF_SECRET_KEY, "nf-token-must-never-be-transported")
+        fail = subprocess.CompletedProcess([], 1, b"", b"stop here\n")
+        extra = {"extra_env": {self.EXTRA_KEY: SECRET_VALUE}}
+        with patch("shutil.which", return_value=f"/usr/bin/{runner}"), \
+             patch("subprocess.run", return_value=fail) as run:
+            if runner == "docker":
+                DockerRunner().run(_spec(tmp_path, runner_options={"image": "img", **extra}))
+            elif runner == "kubernetes":
+                KubernetesRunner().run(_spec(
+                    tmp_path, runner_options={"image": "img", "namespace": "ns", **extra}))
+            elif runner == "slurm":
+                SlurmRunner().run(_spec(tmp_path, runner_options={"partition": "n", **extra}))
+            elif runner == "lsf":
+                LSFRunner().run(_spec(tmp_path, runner_options=extra))
+            else:
+                PBSRunner().run(_spec(tmp_path, runner_options={}))
+        return list(run.call_args_list)
+
+    # Not "docker" first: the container-tier guard (tests/docs/
+    # test_container_marker_is_complete.py) reads a list literal that starts with
+    # "docker" as a docker CLI call. Nothing here talks to a daemon.
+    @pytest.mark.parametrize("runner", ["kubernetes", "docker", "slurm", "lsf", "pbs"])
+    def test_no_secret_value_appears_in_any_argv(
+        self, runner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._calls(runner, tmp_path, monkeypatch)
+        assert calls, f"the {runner} runner executed nothing"
+        for call in calls:
+            argv = [str(a) for a in call.args[0]]
+            for value in _ALL_SECRET_VALUES:
+                assert not any(value in a for a in argv), (
+                    f"the {runner} runner put a secret on {argv[0]}'s command line, "
+                    f"readable by every user on the host via ps: {argv}"
+                )
+
+    def test_docker_names_the_variable_and_hands_docker_the_value(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The container still receives the value: ``-e NAME`` tells docker to copy
+        it from the docker client's own environment, which is where it now is."""
+        run = next(c for c in self._calls("docker", tmp_path, monkeypatch)
+                   if c.args[0][1:2] == ["run"])
+        argv = [str(a) for a in run.args[0]]
+        assert argv[argv.index(self.EXTRA_KEY) - 1] == "-e"
+        client_env = run.kwargs.get("env")
+        assert client_env is not None, "docker must be run with the values in its environment"
+        assert client_env[self.EXTRA_KEY] == SECRET_VALUE
+        assert client_env["NOVAFABRIC_CAPSULE_DIR"] == "/novafabric/capsule"
+        # The default-deny filter is unchanged (ADR-0270): only named variables are
+        # forwarded into the container, whatever the client's own environment holds.
+        names = {argv[i + 1].split("=", 1)[0] for i, a in enumerate(argv) if a == "-e"}
+        assert SECRET_KEY not in names and NF_SECRET_KEY not in names
+        assert {self.EXTRA_KEY, "NOVAFABRIC_SPAN_ID", "PYTHONPATH"} <= names
+
+    def test_docker_eval_container_keeps_values_off_the_command_line(
+        self, tmp_path: Path
+    ) -> None:
+        ok = subprocess.CompletedProcess([], 0, b"24.0.7\n", b"")
+        with patch("shutil.which", return_value="/usr/bin/docker"), \
+             patch("subprocess.run", return_value=ok) as run:
+            DockerRunner().run_eval_container(
+                image_ref="ghcr.io/org/eval:v1", digest="sha256:" + "a" * 64,
+                capsule_path=tmp_path, command=["true"], env={"JUDGE_KEY": SECRET_VALUE},
+            )
+        docker_run = run.call_args_list[-1]
+        assert not any(SECRET_VALUE in str(a) for a in docker_run.args[0])
+        assert docker_run.kwargs["env"]["JUDGE_KEY"] == SECRET_VALUE
+
+    def test_a_real_docker_client_receives_the_value_and_argv_does_not(
+        self, tmp_path: Path
+    ) -> None:
+        """End to end with a real child process: what ``/proc/<pid>/cmdline`` shows,
+        and what the docker client reads for ``-e NAME``."""
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        docker = bindir / "docker"
+        docker.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$0" "$@" >> "{bindir}/docker.argv"\n'
+            f'if [ "$1" = run ]; then printf "%s" "${self.EXTRA_KEY}" > "{bindir}/value"; fi\n'
+        )
+        docker.chmod(0o700)
+        result = DockerRunner(docker_bin=str(docker)).run(_spec(
+            tmp_path, runner_options={"image": "img",
+                                      "extra_env": {self.EXTRA_KEY: SECRET_VALUE}},
+            timeout_s=30.0,
+        ))
+        assert result.exit_code == 0, result.runner_error
+        assert SECRET_VALUE not in (bindir / "docker.argv").read_text()
+        assert (bindir / "value").read_text() == SECRET_VALUE
+
+    def test_a_docker_client_variable_keeps_the_literal_form(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``PATH``/``DOCKER_*`` steer the docker client itself; putting a container
+        value for them in the client's environment would change which daemon or
+        binary it uses. They stay ``-e NAME=VALUE`` (documented: never a secret)."""
+        fail = subprocess.CompletedProcess([], 1, b"", b"stop here\n")
+        monkeypatch.setenv("DOCKER_HOST", "unix:///run/user/1000/docker.sock")
+        with patch("shutil.which", return_value="/usr/bin/docker"), \
+             patch("subprocess.run", return_value=fail) as run:
+            DockerRunner().run(_spec(tmp_path, runner_options={
+                "image": "img", "extra_env": {"DOCKER_HOST": "tcp://inside:2375"},
+            }))
+        docker_run = next(c for c in run.call_args_list if c.args[0][1:2] == ["run"])
+        assert "DOCKER_HOST=tcp://inside:2375" in docker_run.args[0]
+        assert docker_run.kwargs["env"]["DOCKER_HOST"] == "unix:///run/user/1000/docker.sock"

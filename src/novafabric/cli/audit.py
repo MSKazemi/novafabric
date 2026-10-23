@@ -24,9 +24,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric import _paths as _nf_paths
 from novafabric.compliance.audit import (
     BUILT_IN_PROFILES,
     AuditEngine,
+    ProfileValidationError,
     load_profile,
 )
 from novafabric.compliance.audit.models import AuditReport
@@ -46,8 +48,16 @@ _PROFILE_HELP = (
 )
 
 _DataDirArg = Annotated[
-    Path,
-    typer.Option("--data-dir", "-d", help="NovaFabric data root directory"),
+    Optional[Path],  # noqa: UP045
+    typer.Option(
+        "--data-dir",
+        "-d",
+        help=(
+            "Data root holding a capsules/ directory. Default: the capsules "
+            "`nova capture` writes ($NOVAFABRIC_CAPSULE_DIR, else "
+            "$NOVAFABRIC_HOME/capsules)."
+        ),
+    ),
 ]
 _ProfileArg = Annotated[
     str,
@@ -55,14 +65,31 @@ _ProfileArg = Annotated[
 ]
 
 
-def _load_engine(data_dir: Path, profile: str) -> AuditEngine:
+def _resolve_dirs(data_dir: Optional[Path]) -> tuple[Path, Path]:  # noqa: UP045
+    """``(data_root, capsules_dir)`` for *data_dir*, or capture's location when unset (M3).
+
+    The old default, ``~/novafabric-data``, is a directory ``nova capture`` never
+    writes, so a default audit scanned nothing. An explicit ``--data-dir`` keeps
+    its meaning: a root that holds ``capsules/``.
+    """
+    if data_dir is None:
+        return _nf_paths.nova_home(), _nf_paths.default_capsule_dir()
+    return data_dir, data_dir / "capsules"
+
+
+def _load_engine(data_dir: Optional[Path], profile: str) -> AuditEngine:  # noqa: UP045
     """Resolve profile and return an :class:`AuditEngine`."""
     try:
         ctrl_profile = load_profile(profile)
+    except ProfileValidationError as exc:
+        # L25: a malformed custom profile is a usage error (exit 2), not a traceback.
+        console.print(f"[red]x[/red] {exc}", markup=True, highlight=False)
+        raise typer.Exit(code=2) from exc
     except ValueError as exc:
         console.print(f"[red]x[/red] {exc}")
         raise typer.Exit(code=1) from exc
-    return AuditEngine(data_dir=data_dir, profile=ctrl_profile)
+    root, capsules_dir = _resolve_dirs(data_dir)
+    return AuditEngine(data_dir=root, profile=ctrl_profile, capsules_dir=capsules_dir)
 
 
 def _status_colour(status: str) -> str:
@@ -89,6 +116,11 @@ def _print_report_summary(report: AuditReport) -> None:
         f"[green]{report.covered_controls} covered[/green]  "
         f"[yellow]{report.partial_controls} partial[/yellow]  "
         f"[red]{report.missing_controls} missing[/red]"
+        + (
+            f"  [dim]{report.not_captured_controls} not captured by this version[/dim]"
+            if report.not_captured_controls
+            else ""
+        )
     )
     score_pct = f"{report.overall_score * 100:.1f}%"
     colour = "green" if report.overall_score >= 0.8 else (
@@ -114,10 +146,16 @@ def _print_coverage_table(report: AuditReport) -> None:
             cov.control_id,
             cov.control_title,
             f"[{colour}]{cov.status}[/{colour}]",
-            f"{cov.coverage_score * 100:.0f}%",
+            "—" if cov.status == "not_applicable" else f"{cov.coverage_score * 100:.0f}%",
             str(len(cov.capsule_ids)),
         )
     console.print(table)
+    if any(cov.evidence_not_captured for cov in report.coverages):
+        console.print(
+            "[dim]Not captured by this version: tool-permission-events.jsonl has no "
+            "producer, so tool-permission / policy-event evidence is reported as not "
+            "captured (not_applicable), never as missing.[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +165,7 @@ def _print_coverage_table(report: AuditReport) -> None:
 
 @app.command("map")
 def audit_map(
-    data_dir: _DataDirArg = Path.home() / "novafabric-data",
+    data_dir: _DataDirArg = None,
     profile: _ProfileArg = "nist-ai-rmf",
     capsule_id: Annotated[
         Optional[str],
@@ -144,18 +182,19 @@ def audit_map(
     scientific-reproducibility.
     Exits 1 if any required control has no evidence.
 
-    Scope: single capsule (or all capsules via --data-dir).
+    Scope: all capsules (default: where `nova capture` writes; or
+    <data-dir>/capsules), or a single capsule with --capsule.
 
     \b
     Examples:
       # Audit a capsule against the EU AI Act profile
       nova audit map --profile eu-ai-act-high-risk --capsule <capsule-id>
 
-      # Audit all capsules in a data directory
-      nova audit map --profile nist-ai-rmf --data-dir ~/novafabric-data/capsules/
+      # Audit the capsules under another data root (reads <root>/capsules/)
+      nova audit map --profile nist-ai-rmf --data-dir /srv/novafabric
 
       # Export the audit report as JSON
-      nova audit map --profile gdpr --json --data-dir ~/novafabric-data/
+      nova audit map --profile gdpr --json
     """
     engine = _load_engine(data_dir, profile)
     report = engine.scan()
@@ -184,7 +223,7 @@ def audit_map(
 
 @app.command("report")
 def audit_report(
-    data_dir: _DataDirArg = Path.home() / "novafabric-data",
+    data_dir: _DataDirArg = None,
     profile: _ProfileArg = "nist-ai-rmf",
     output: Annotated[
         Optional[Path],
@@ -200,7 +239,8 @@ def audit_report(
 ) -> None:
     """Generate a full compliance audit report (JSON-LD or text).
 
-    Scope: all capsules under --data-dir.
+    Scope: all capsules (default: where `nova capture` writes; or
+    <data-dir>/capsules).
 
     \b
     Examples:
@@ -226,7 +266,8 @@ def audit_report(
             f"Controls: {report.total_controls} total, "
             f"{report.covered_controls} covered, "
             f"{report.partial_controls} partial, "
-            f"{report.missing_controls} missing",
+            f"{report.missing_controls} missing, "
+            f"{report.not_captured_controls} not captured by this version",
             "",
         ]
         for cov in report.coverages:
@@ -236,6 +277,8 @@ def audit_report(
             if cov.evidence_missing:
                 for m in cov.evidence_missing:
                     lines.append(f"  MISSING: {m}")
+            for m in cov.evidence_not_captured:
+                lines.append(f"  NOT CAPTURED: {m}")
         content = "\n".join(lines)
     else:
         content = report.model_dump_json(indent=2, by_alias=True, exclude_none=True)
@@ -292,7 +335,7 @@ def audit_verify(
 
 @app.command("bundle")
 def audit_bundle(
-    data_dir: _DataDirArg = Path.home() / "novafabric-data",
+    data_dir: _DataDirArg = None,
     profile: _ProfileArg = "nist-ai-rmf",
     output: Annotated[
         Path,
@@ -302,8 +345,11 @@ def audit_bundle(
     """Export audit evidence as a ZIP archive for a compliance profile.
 
     Includes the audit report and all contributing capsule evidence files.
+    A contributing capsule holding a symbolic link refuses the bundle (exit 1,
+    nothing written).
 
-    Scope: all capsules under --data-dir.
+    Scope: all capsules (default: where `nova capture` writes; or
+    <data-dir>/capsules).
 
     \b
     Examples:
@@ -314,32 +360,37 @@ def audit_bundle(
     report = engine.scan()
 
     # Collect capsule directories contributing evidence
-    capsules_root = data_dir / "capsules"
+    capsules_root = engine.capsules_dir
     contributing_ids: set[str] = set()
     for cov in report.coverages:
         contributing_ids.update(cov.capsule_ids)
+
+    # Read every evidence file before the archive is opened: a capsule holding a
+    # symlink refuses the whole bundle and nothing is written. rglob + zf.write
+    # used to follow a planted link and archive its target (ADR-0011 Am. 2).
+    from novafabric._capsule_fs import CapsuleEntryError, list_capsule, read_capsule_file
+
+    evidence: list[tuple[str, bytes]] = []
+    try:
+        if capsules_root.is_dir():
+            for capsule_dir in sorted(capsules_root.iterdir()):
+                if capsule_dir.name not in contributing_ids or not capsule_dir.is_dir():
+                    continue
+                listing = list_capsule(capsule_dir, operation="an audit bundle")
+                for rel in listing.files:
+                    data = read_capsule_file(listing.root, rel, operation="an audit bundle")
+                    evidence.append((f"capsules/{capsule_dir.name}/{rel}", data))
+    except CapsuleEntryError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
 
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         # Write the audit report as audit-report.json at the root
         report_json = report.model_dump_json(indent=2, by_alias=True, exclude_none=True)
         zf.writestr("audit-report.json", report_json)
-
-        # Include evidence files from each contributing capsule
-        files_added = 0
-        if capsules_root.is_dir():
-            for capsule_dir in capsules_root.iterdir():
-                if not capsule_dir.is_dir():
-                    continue
-                if capsule_dir.name not in contributing_ids:
-                    continue
-                for evidence_file in sorted(capsule_dir.rglob("*")):
-                    if evidence_file.is_file():
-                        rel = evidence_file.relative_to(capsule_dir)
-                        arc_name = str(
-                            Path("capsules") / capsule_dir.name / rel
-                        )
-                        zf.write(evidence_file, arc_name)
-                        files_added += 1
+        for arc_name, data in evidence:
+            zf.writestr(arc_name, data)
+    files_added = len(evidence)
 
     console.print(
         f"[green]ok[/green] Audit bundle written to [cyan]{output}[/cyan]  "
@@ -353,7 +404,7 @@ def audit_bundle(
 
 @app.command("coverage")
 def audit_coverage(
-    data_dir: _DataDirArg = Path.home() / "novafabric-data",
+    data_dir: _DataDirArg = None,
     profile: _ProfileArg = "nist-ai-rmf",
     threshold: Annotated[
         float,
@@ -370,7 +421,8 @@ def audit_coverage(
     Exits 1 if the coverage score is below the threshold. Use in CI pipelines
     to gate promotion on compliance coverage.
 
-    Scope: all capsules under --data-dir.
+    Scope: all capsules (default: where `nova capture` writes; or
+    <data-dir>/capsules).
 
     \b
     Examples:

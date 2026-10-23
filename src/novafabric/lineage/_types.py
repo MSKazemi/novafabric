@@ -5,11 +5,45 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from novafabric.capsule.schema import EdgeType
 from novafabric.capture._ulid import new_ulid
+
+#: Edge types the in-force ``lineage.jsonl`` schema accepts
+#: (``src/novafabric/schemas/lineage-edge.schema.json`` ``edge_type.enum``), i.e. what
+#: ``nova capture``'s lineage writer emits and ``nova lineage import`` indexes:
+#: ``consumed`` (run -> asset), ``produced_by`` (artifact -> run), ``replayed_from``,
+#: and the registry's ``depends_on``. Kept as a literal so no module reads a file at
+#: import time; ``tests/test_cli_lineage_capture_edge_types.py`` pins it to the schema.
+IN_FORCE_SCHEMA_EDGE_TYPES: frozenset[str] = frozenset(
+    {
+        "consumed",
+        "produced_by",
+        "replayed_from",
+        "derived_from",
+        "evaluated_by",
+        "attested_by",
+        "depends_on",
+        "migration_source",
+    }
+)
+
+#: Every edge type the lineage store can hold: the in-force schema vocabulary above
+#: plus the typed :class:`~novafabric.capsule.schema.EdgeType` vocabulary (hierarchy,
+#: sessions, memory provenance). The single allow-list for ``--edge-type`` filters (M15).
+LINEAGE_EDGE_TYPES: frozenset[str] = IN_FORCE_SCHEMA_EDGE_TYPES | frozenset(
+    e.value for e in EdgeType
+)
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def default_emitter() -> dict[str, str]:
+    """The emitter block for edges this NovaFabric writes: the installed version (L7)."""
+    from novafabric import __version__  # noqa: PLC0415 — package root, no cycle at call time
+
+    return {"name": "novafabric", "version": __version__}
 
 
 def node_id_for(kind: str, ref: str) -> str:
@@ -89,9 +123,7 @@ class LineageEdge:
     edge_id: str = field(default_factory=new_ulid)
     direction: str = "source_to_target"
     created_at: str = field(default_factory=_now)
-    emitter: dict[str, Any] = field(
-        default_factory=lambda: {"name": "novafabric", "version": "0.4.0"}
-    )
+    emitter: dict[str, Any] = field(default_factory=lambda: default_emitter())
     facets: dict[str, Any] | None = None
     evidence_refs: list[str] | None = None
 

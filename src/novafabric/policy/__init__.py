@@ -8,7 +8,7 @@ from ._engine import PolicyEngine
 from ._environment import deployment_environment_from_capsule
 from ._models import PolicyDecision, PolicyDeniedError, PolicyInput, PolicyResource, PolicySubject
 from ._noop_engine import NoopEngine
-from ._opa_engine import OpaEngine, OpaNotFoundError
+from ._opa_engine import OpaEngine, OpaNotFoundError, OpaSandboxError
 
 
 def get_policy_engine() -> PolicyEngine:
@@ -38,6 +38,7 @@ __all__ = [
     "NoopEngine",
     "OpaEngine",
     "OpaNotFoundError",
+    "OpaSandboxError",
     "budget_block_from_capsule",
     "deployment_environment_from_capsule",
     "get_policy_engine",

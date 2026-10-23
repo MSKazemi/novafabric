@@ -9,12 +9,16 @@
 ## Overview
 
 The migration kit (`nova lineage-store migrate`) rebuilds a lineage graph in a target
-**SQLite** lineage store. Two sources are supported:
+**SQLite** lineage store. One source works from the CLI today:
 
-- `--from-ocs` — the **canonical** path (ADR-0022): derives edges from the
-  ObjectCapsuleStore manifest chain, reading each capsule's `lineage.jsonl`.
 - a positional Parquet file — a **deprecated** legacy path, kept for backward
-  compatibility.
+  compatibility (**works today**).
+- `--from-ocs` — the ADR-0022 path that would derive edges from the ObjectCapsuleStore
+  manifest chain — is **planned**, not implemented in the CLI: it refuses with exit 1 and
+  writes nothing (see [`--from-ocs` is not implemented](#--from-ocs-is-not-implemented)).
+
+To rebuild lineage from local capsule directories, use `nova lineage import
+<capsule-dir>` (**works today**): it indexes each capsule's `lineage.jsonl`.
 
 **Corrected 2026-07-30.** The `nova lineage-store migrate` **CLI command's target flag
 is SQLite only** today — that part of this guide was always accurate. What was *not*
@@ -33,9 +37,9 @@ for full per-backend status.
 
 **When to migrate:**
 
-- Rebuild or repair a local SQLite lineage store from the durable OCS capsules (the
-  lineage graph is a derived, rebuildable index).
-- Consolidate lineage from a set of runs into a single queryable SQLite store.
+- Load a legacy Parquet edge export into a queryable SQLite store.
+- To rebuild or repair lineage from capsules (the lineage graph is a derived,
+  rebuildable index), use `nova lineage import` on the capsule directories instead.
 
 For deployments whose graph grows beyond ~1M edges, the embedded KuzuDB tier
 (**experimental**, benchmark-cleared: blast_radius p99 45.5ms @10M edges) and the
@@ -48,70 +52,52 @@ see above).
 
 ## Prerequisites
 
-1. **A source of lineage edges** — one of:
-   - an ObjectCapsuleStore reachable locally, plus the tenant and the run IDs to migrate
-     (`--from-ocs`); or
-   - a Parquet file of edges from the legacy export tooling (**deprecated**).
+1. **A source of lineage edges** — a Parquet file of edges from the legacy export
+   tooling (**deprecated**). (`--from-ocs` is **planned**; see below.)
 2. **A target SQLite database path** (`--db`, default `lineage.db`). The command creates
    the store if it does not exist.
 3. **Disk space** for the SQLite store (roughly proportional to the edge count).
 
 ---
 
-## Step 1: Dry run (canonical OCS source)
+## Step 1: Dry run
 
 ```bash
-nova lineage-store migrate --from-ocs \
-  --ocs-tenant org \
-  --ocs-run-ids run-001,run-002 \
-  --db lineage.db
+nova lineage-store migrate edges.parquet --db lineage.db
 ```
 
-The dry run (the default, i.e. without `--commit`):
-
-- Enumerates the named capsules in the OCS and reconstructs their `lineage.jsonl` edges.
-- Reports `loaded` and `capsules_scanned` counts (`diverged` is always `0` on a dry run).
-- Does **not** write to the target SQLite store.
-
-The post-load divergence check runs only with `--commit` (and can be skipped with
-`--no-validate`).
-
-**Experimental — not yet wired to a real store from the CLI.** `nova lineage migrate
---from-ocs` currently builds an empty in-memory OCS and never reads `--ocs-data-dir`, so it
-reports `loaded=0` and exits 0 whatever the store holds (known defect, tracked as a code
-fix). Call `migrate_from_ocs()` from Python with your own `ObjectCapsuleStore` for a real
-migration. `--from-ocs` requires `--ocs-tenant` and `--ocs-run-ids`; there is no global run
-enumeration (by design, FR-05).
-
----
+The dry run (the default, i.e. without `--commit`) reads the Parquet edges, reports the
+`loaded` count and does **not** write to the target SQLite store.
 
 ## Step 2: Commit the migration
-
-```bash
-nova lineage-store migrate --from-ocs \
-  --ocs-tenant org \
-  --ocs-run-ids run-001,run-002 \
-  --db lineage.db \
-  --commit
-```
-
-Adding `--commit`:
-
-- Runs the same reconstruction and divergence check as Step 1.
-- Writes the reconstructed edges into the SQLite store at `--db`.
-- Exits non-zero if a `MigrationDivergenceError` is detected (skip with `--no-validate`).
-
-**works today** — the target is the `SqliteLineageStore`; edge IDs are content-addressed,
-so re-running the migration is idempotent.
-
-### Legacy Parquet source (deprecated)
 
 ```bash
 nova lineage-store migrate edges.parquet --db lineage.db --commit
 ```
 
-The positional Parquet argument routes through the deprecated `migrate()` path
-(`lineage/migration/kit.py`, emits a `DeprecationWarning`). Prefer `--from-ocs`.
+Adding `--commit`:
+
+- Writes the edges into the SQLite store at `--db`.
+- Runs a post-load divergence check (unless `--no-validate` is passed) and exits 2 if a
+  `MigrationDivergenceError` is detected.
+
+**works today** (deprecated path) — the target is the `SqliteLineageStore`; the Parquet
+argument routes through the deprecated `migrate()` (`lineage/migration/kit.py`, emits a
+`DeprecationWarning`). A missing or absent Parquet file exits 1 before the target store is
+created.
+
+### `--from-ocs` is not implemented
+
+**planned.** Before this fix, `nova lineage-store migrate --from-ocs` built an empty
+in-memory ObjectCapsuleStore, never read `--ocs-data-dir`, and printed
+`ok loaded=0 … committed=yes` with exit 0 — a migration that migrated nothing reported as
+a success. NovaFabric has no on-disk ObjectCapsuleStore backend this command could read
+(the router's `local` backend is in-memory and test-only), so `--from-ocs` now **refuses
+with exit 1**, says that `--ocs-data-dir` was not read, and creates no target store. The
+Python function `novafabric.lineage.migration.kit.migrate_from_ocs()` still works against an
+`ObjectCapsuleStore` you construct yourself over a real WORM adapter. `--ocs-tenant`,
+`--ocs-run-ids` and `--ocs-data-dir` are kept so existing scripts fail loudly rather than
+with "no such option".
 
 ---
 
@@ -185,5 +171,5 @@ KuzuDB `node_id` outside the store must be recomputed. `ref` is unchanged.
 | Apache AGE backend | **experimental, testcontainers-verified** (v0.69.0) — `lineage/backends/age.py` is a real openCypher implementation, not a stub |
 | Postgres backend | **experimental, testcontainers-verified** (v0.68.0) — `lineage/backends/postgres.py` uses recursive CTEs, no AGE extension needed |
 | JanusGraph backend | **experimental, testcontainers-verified** (v0.70.0) — requires Docker/Cassandra + Gremlin (GraphSON serializer, not default GraphBinary); not suitable for local-only deployments |
-| `--from-ocs` on the CLI reads a real ObjectCapsuleStore | **experimental — not wired yet**: the CLI scans an empty in-memory store; use `migrate_from_ocs()` from Python |
+| `--from-ocs` is not implemented in the CLI: it refuses with exit 1 and writes nothing; `migrate_from_ocs()` works from Python over a store you construct | **planned** (CLI) |
 | Federation (`/federation/query`) requires OQ-04 legal sign-off for regulated-industry deployments | Open — do not use in regulated multi-site deployments until resolved |

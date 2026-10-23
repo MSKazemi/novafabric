@@ -63,8 +63,12 @@ and a secret-scan record (rule-based scanning for known key and token patterns).
 Capsules are identified by a [ULID](https://github.com/ulid/spec) — a
 lexicographically sortable, time-prefixed unique identifier.
 
+Capture writes each capsule to `$NOVAFABRIC_CAPSULE_DIR/<ulid>/` when that
+variable is set, otherwise to `$NOVAFABRIC_HOME/capsules/<ulid>/`
+(`~/.novafabric/capsules/<ulid>/` by default; `_paths.default_capsule_dir`).
+
 ```
-.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
+~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
   capsule.yaml          ← run manifest
   trace.jsonl           ← execution spans (OTel)
   model-calls.jsonl     ← LLM API calls (OTel GenAI semconv)
@@ -89,6 +93,178 @@ Capsules support additive, optional `extensions:` blocks (for example `slurm`,
 new top-level format. Readers tolerate unknown fields; old capsules stay readable
 forever.
 
+### Links inside a capsule are never followed (works today)
+
+A capsule is a plain directory, so anyone who can write into it can plant a
+symbolic link such as `inputs/data.csv -> ~/.ssh/id_rsa`. NovaFabric never
+writes a link into a capsule, and neither a ZIP entry nor the capsule Merkle root
+can represent one. So nothing that copies, archives or serves capsule files
+follows one. They all share one module (`novafabric._capsule_fs`):
+
+- **Refused with a named error, nothing written:** `nova export-evidence`,
+  `nova export-blob` (exit 2, "Export refused"), `nova migrate` and
+  `/api/capsule-migrate`, `nova export-rocrate` and
+  `/api/compliance/export/rocrate` (HTTP 422), `nova backup create` (also for
+  links under `spool/` and `seal/ratchet/`), `nova audit bundle`,
+  `nova export-examiner bagit`, and the SDK's `upload_capsule`. Any link counts:
+  one to a file or a directory outside the capsule, a dangling one, and one that
+  stays inside the capsule. The error names each link and where it points.
+- **Never followed, even when planted mid-export:** files are opened one path
+  component at a time with `O_NOFOLLOW`, so a link swapped in after the check
+  is refused at open time instead of copied.
+- **The capsule Merkle root:** the root (`capsule_merkle_root`, both the v1 and
+  v2 leaves) is the signed subject of Evidence Bundles, the `nova serve`
+  evidence cart, consent attestations, AI-BOM citations, OpenLineage capsule
+  facets, chain-of-custody blocks, session bundles, baseline pins, experiment and
+  offline-eval scores, and comment, annotation and score-submission subjects. It
+  walks the capsule without following a link and refuses a capsule holding one,
+  so it can never commit to a file outside the capsule. No root is computed
+  over the remaining files. The CLI prints one `error:` line and exits 2 (`nova
+  score submit` reports `capsule_unusable`, exit 2; `nova consent attest` exits
+  1, and `nova consent verify-attestation` reports the root check as failed,
+  exit 1, not stale). `nova serve` answers 422, also for the evidence cart even
+  with `accept_unresolved`, so a linked capsule never becomes a recorded
+  omission. Server-mode score submission answers 409. In `nova experiment run`
+  the item is recorded as an error, with no score. Each file is opened with
+  `O_NOFOLLOW` and read in chunks. A FIFO, socket or device in the capsule is
+  left out without being opened, as it always was, and a file swapped for one
+  mid-hash is refused. So the root never blocks. For a capsule without links,
+  the root is byte-identical to the one earlier releases computed.
+- **`nova serve`:** `GET /api/runs/{id}/file/{path}` answers 404 for a link (or
+  a FIFO) and never returns its target. A run whose capsule holds a link or a
+  special file (FIFO, socket, device) at its top level (`capsule.yaml`, a JSONL
+  stream, `redaction-proof.json`, `inputs`, `outputs`) is refused with 403 by
+  every `/api/runs/{id}/...` route. The run listing never parses a linked
+  `capsule.yaml`, and the `inputs`/`outputs` listings leave links out.
+- **Scans of many capsules** (the `nova serve` run listing, search, cost report,
+  `suggest-register`, run lineage, children, topology, AI-BOM status, the run
+  index, KG bulk ingest, `nova query`, the examiner and audit exporters, server
+  mode's capsule listing) never list an entry of the capsule directory that is
+  itself a link, whether it points inside the directory (`latest -> 01J...`, an
+  alias of a capsule the scan already lists) or outside it. Every file they read
+  in each capsule goes through the same no-follow open, so a link or a FIFO
+  planted in a *sibling* capsule is never followed either.
+- **A capsule root that is a link, in `nova serve`:** a run named directly
+  (`/api/runs/latest`) whose directory entry is a link is served only when the
+  link resolves inside the server's read roots (the capsule directory,
+  `$NOVAFABRIC_HOME` minus its secrets, any `NOVAFABRIC_SERVE_PATH_ROOTS` entry);
+  otherwise every route answers 403. The server reads through the resolved path.
+- **Readers:** every command that parses one well-known capsule file (`nova
+  export --html`, `nova diagnose`, `nova diff`, `nova replay`, `nova assure`,
+  `nova validate`, `nova verify`, `nova eval contamination-check`, the lineage
+  and OpenLineage importers, the knowledge-graph consumer, the content and query
+  indexes, and the compliance exporters) opens it the same way. A link, a FIFO
+  or a device is never followed and never blocks.
+- **A required file that is present but unusable is an error, never empty
+  output.** An *absent* file still means "no data". But when `capsule.yaml`,
+  `capsule.json` or a stream a command's output depends on (`model-calls.jsonl`,
+  `tool-calls.jsonl`, `trace.jsonl`, `lineage.jsonl`, `replay.yaml`, `env.lock`,
+  `redaction-proof.json`, ...) is there but is a link, a FIFO, a directory, an
+  unreadable or an over-size file, every command whose output claims to be
+  complete or correct stops. That covers every export and compliance artifact,
+  report, verdict and attestation, replay, migration, lineage write, PROV-O
+  mapping and annotation-queue fill. The CLI prints one `error:` line naming the
+  file and exits 2, unless the command has its own refusal code (`nova validate`
+  reports it as a validation error, exit 1). It writes no output file. `nova
+  serve` answers 422 and server mode answers 409. Such a command never reports
+  0 model calls, an empty Art. 12 log, a "no secrets detected" assurance pass or
+  a best-effort replay pin for a file nobody could read. Only best-effort
+  listings (the dashboard run list, search and content indexes, session view,
+  lineage child listings) still skip such a file. They log
+  `capsule_file_not_followed`, and the knowledge-graph bulk ingest counts it as
+  `skipped`. `nova export --html` skips such a section with a warning on stderr
+  and in the page; a linked `capsule.yaml` refuses the export (exit 2).
+- **`nova restore`** refuses a set whose listed member is a link entry, and
+  never writes through a link at a destination path. `nova migrate-schema`
+  skips (and reports) a capsule holding a link, and AI-BOM generation never
+  writes `aibom.json` through one.
+- **Writers into a finished capsule** never write through a link either:
+  `nova energy attest` and the SLURM runner's sacct receipt
+  (`energy-receipts.jsonl`), `nova validate --write` (`tool-calls.jsonl`), the
+  registry's asset-consumption append (`assets.jsonl`), every score append to
+  `scores.jsonl` (`nova eval offline`, the annotation queue, score submission,
+  `nova experiment run`), and the `nova capture` workload's capture-health
+  hand-off all open the file with `O_NOFOLLOW`
+  (`_capsule_fs.open_capsule_file_for_write`). A link, a dangling link or a FIFO
+  at that path is refused with a named error (`nova energy attest` exits 2; the
+  SLURM receipt is skipped with a warning) and its target is left untouched.
+  Whole-file writers replace the entry by an atomic rename instead, so a link
+  or hard link planted at the name is replaced, never written through: the
+  dataset-provenance facets (`extensions/dev.novafabric.dataset-provenance/`;
+  a linked `extensions/` directory is refused), `nova export-c2pa`'s default
+  `c2pa-manifest.json`, and `nova capture --emit-otel-genai`'s
+  `otel-genai-spans.json`.
+- **`nova capture` itself, once the workload has run.** The workload writes into
+  its own capsule, and with `--runner docker` the capsule directory is mounted
+  read-write into the container (with `--runner kubernetes` it is copied back by
+  `kubectl cp`). So capture treats the capsule as untrusted input from the moment
+  the runner returns. Following a link the container planted would be a
+  container-to-host write: before this was fixed, a `model-calls.jsonl` link made
+  the secret scanner rewrite the file it pointed at, and a FIFO at
+  `tool-calls.jsonl` hung capture forever. Now, before any host-side read or
+  write, capture checks every capsule-managed path (the JSONL streams,
+  `capsule.yaml`, `env.lock`, `replay.yaml`, `redaction-proof.json`,
+  `capture-health.json`, `lineage.jsonl`, `c2pa-manifest.json`,
+  `redaction_manifest.json`, `outputs/stdout.txt`, `outputs/stderr.txt`, the
+  `inputs/` and `outputs/` directories, and `.seal/`, which cannot exist yet)
+  with `lstat` and never opens it. A link, FIFO, socket or device there, a
+  directory where a file belongs, or any `.seal/` is removed without being
+  followed (removing a link never touches its target), and the empty stream or
+  directory is recreated. Capture then walks the **whole** capsule tree, one
+  `O_NOFOLLOW` directory at a time, and removes every symlink, FIFO, socket and
+  device at any depth: `inputs/data.csv -> ~/.ssh/id_rsa`,
+  `outputs/media/blob.bin`, `extensions/...`, a linked `outputs/dirlink`, a
+  FIFO at `inputs/pipe`, a link at `scores.jsonl`. NovaFabric never writes any
+  of these, so each one was planted, including one that points inside the
+  capsule (for example `outputs/latest -> model.bin`). A directory nested more
+  than 64 levels deep is not descended and is recorded as `not-swept`. Each
+  entry found marks the capsule **tampered**: `metadata.capture_tampered` in the
+  signed manifest, `tampered_entries` in `capture-health.json`, and a skipped
+  `<path>#tampered` target (`skip_reason: "stream_tampered: ..."`) in
+  `redaction-proof.json` (the first 1,000 entries are listed one by one; the
+  summary always gives the total). Every later write is an atomic rename or an
+  `O_NOFOLLOW` append, and every later read is a no-follow, non-blocking open,
+  so an entry planted *after* the sweep (by a process the workload left
+  running, which only the local runner allows) is refused or replaced, never
+  followed. That covers the `--pii-subject` stage too: it reads and rewrites
+  every target, and writes `redaction_manifest.json`, the same way. When the
+  evidence digests are computed, any link or special file found anyway is added
+  to `metadata.capture_tampered` ("planted after the sweep: ...") before the
+  manifest is sealed. After the sweep the capsule directory is pinned by its
+  device and inode: if it is then swapped for a link or another directory, every
+  read and write refuses (`CapsuleRootChangedError`) and `nova capture` prints
+  `✗ capture integrity: ...` and exits 1. Otherwise capture stays fail-open
+  (ADR-0021): it exits with the workload's own exit code and prints `✗ capture
+  integrity: ...` on stderr. `nova verify` and `nova validate` fail a tampered
+  capsule (exit 1). If the capsule directory itself was moved and replaced
+  while the workload ran, capture writes nothing more and says so.
+- **`nova verify` and `nova validate` fail any link or special file**, wherever
+  it is in the capsule and whenever it was planted, including after sealing:
+  each is named in the output (`nova verify --json` lists them under
+  `special_entries` and in `errors`) and the command exits 1. The walk never
+  follows or opens an entry, so a FIFO cannot hang either command.
+
+The capsule *path you pass* to a CLI command may itself be a link
+(`runs/latest`); only links inside it are refused. That one link is followed
+because you named it. A scan never follows one it finds, and `nova serve`
+follows one only into its read roots.
+
+**Hard links are read, never written through.** A hard link is an ordinary
+directory entry for a regular file, so it is read and exported like any other
+file, and capture does not record it as tampering. Under Linux's default
+`fs.protected_hardlinks = 1`, a user can only hard-link a file they own or can
+already read and write, so a planted hard link exposes nothing the planter
+could not read already. NovaFabric never creates hard links. Refusing every
+file with more than one link would break capsule trees kept in
+`rsync --link-dest` or `cp -al` snapshots, and workloads that build a
+virtualenv in `outputs/` with a hard-linking installer. What a hard link can no
+longer do is carry a *write* out of the capsule: a whole-file rewrite (the
+secret scanner, the maskers, the `--pii-subject` stage, the facet and C2PA
+writers) replaces the entry by a rename, and an append or truncate first gives
+the file a private copy, so the file's other names are never modified. On a
+system with `fs.protected_hardlinks = 0`, do not export capsules from a
+directory other users can write to.
+
 ### Sessions vs parent/child (two different groupings)
 
 Two distinct, composable ways of relating capsules exist — do not conflate them:
@@ -110,8 +286,9 @@ A session member may itself be a distributed-run PARENT. A capsule that belongs
 to a session carries two additive optional back-reference fields (`session_id`,
 `sequence`); absence means a standalone run, byte-identical to before.
 
-> **Related:** [Replay Modes](#replay-modes) (a replay is itself a new capsule
-> you can diff), [Lineage Graph](#lineage-graph), and
+> **Related:** [Replay Modes](#replay-modes) (a replay writes a
+> `replay_result.yaml` report; only `intervention` also writes a counterfactual
+> capsule you can diff), [Lineage Graph](#lineage-graph), and
 > [Evidence Bundle](#evidence-bundle).
 
 ---
@@ -167,13 +344,14 @@ the portable Agent Card and the Task/Message/Artifact mapping (ADR-0149). The
 starts the subprocess, it imports this loader automatically, which installs
 monkey-patches for:
 
-- **OpenAI** — `Completions.create`; since v0.105.0 also `AsyncCompletions.create`, `Responses.create` and `AsyncResponses.create`, in `openai.resources` (`capture/hooks/_openai.py`). A `stream=True` call is folded into one record when the stream ends (ADR-0304), and a call that raised is recorded with the SDK error detail (`io.novafabric.sdk_error`, `capture/hooks/_sdk_errors.py`) that mocked replay needs to raise it again.
+- **OpenAI** — `Completions.create`; since v0.105.0 also `AsyncCompletions.create`, `Responses.create` and `AsyncResponses.create`, in `openai.resources` (`capture/hooks/_openai.py`). A `stream=True` call is folded into one record when the stream ends (ADR-0304) — and that record goes to the capture that *opened* the stream, whichever task, thread or later capture ends it; a stream that ends after its own capture has finished is dropped and counted (`nova_event=capture.stream_record_dropped`), never filed into another capsule (**works today**) — and a call that raised is recorded with the SDK error detail (`io.novafabric.sdk_error`, `capture/hooks/_sdk_errors.py`) that mocked replay needs to raise it again.
 - **Anthropic** — `anthropic.resources.messages.Messages.create`; since v0.105.0 also `AsyncMessages.create`, streamed or not (`capture/hooks/_anthropic.py`).
 - **httpx** — `httpx.Client.send`, recording requests classified by the URL registry (`src/novafabric/capture/hooks/url_registry.yaml` + `~/.novafabric/url_registry.yaml` override). Default coverage: OpenAI, Anthropic, Cohere, Together, Mistral, Replicate, AWS Bedrock, Ollama (default port 11434). Non-default Ollama ports are detected automatically from `OLLAMA_BASE_URL` / `OLLAMA_HOST` at call time.
+- **httpx2** — `httpx2.Client.send` / `httpx2.AsyncClient.send`, same classification and records as `httpx` (network events carry `library: "httpx2"`). `openai` 3.x builds its default client on `httpx2`, so without this hook an OpenAI call left no transport record and no network event. Installed only when `httpx2` is importable — never a NovaFabric dependency. Under an SDK call each attempt is still a `transport` record (ADR-0305), so one call counts once. **Works today.**
 - **requests** — `requests.Session.send`, same URL-registry classification (v0.5; RFC-0001 Option C wire-level layer). Covers LangChain HTTP adapters, LlamaIndex REST clients, and any SDK that ships over `requests`.
 - **aiohttp** — `aiohttp.ClientSession._request`, async wire-level capture (v0.6 / C-3.1). Catches LangChain async paths, FastAPI agents, streaming-first SDKs.
 - **urllib3** — `urllib3.connectionpool.HTTPConnectionPool.urlopen`, lowest-tier wire-level capture (v0.6 / C-3.2). Sits below `requests` and `boto3`; transitively covers AWS Bedrock and any SDK that uses `urllib3` directly. Layered with the higher hooks via a context-local guard so a single `requests` call records exactly once.
-- **MCP (Model Context Protocol)** — `mcp.client.session.ClientSession.call_tool`, recording every tool invocation as a `tool-calls.jsonl` entry with `transport=mcp` and a synthesized JSON-RPC envelope (v0.5; ADR-0015 §Primary).
+- **MCP (Model Context Protocol)** — `mcp.client.session.ClientSession.call_tool`, recording every tool invocation as a `tool-calls.jsonl` entry with `transport=mcp` and a synthesized JSON-RPC envelope (v0.5; ADR-0015 §Primary). **Works today — fail-open:** the hooked call returns, or raises, exactly what the un-hooked call would have. If the record cannot be built or written (a full disk, a removed capsule directory, a response object whose attributes raise), the record is dropped — never reported as a tool error — and the workload continues. The loss is counted (`MCPHook.dropped_records` and the capture's in-process drop counter) and logged once as a structured warning (`nova_event=capture.record_dropped`, exception type only). Under `nova capture` the hook runs in the workload's own process; that process hands its drop counts to `nova capture` when it exits, and they land in the capsule's `capture-health.json` under `sources.workload` (a process that ends with `os._exit` or is killed hands off nothing).
 - **Third-party plugins** — any class registered under the `novafabric.hooks` entry-point group is auto-discovered alongside the built-ins (v0.5.x experimental; RFC-0001 §Detailed design — Option C). Plugin authors: see [`docs/integrations/writing-a-hook-plugin.md`](integrations/writing-a-hook-plugin.md).
 
 The layering is deliberate: **per-SDK hooks** capture rich, structured request
@@ -192,6 +370,29 @@ through `io.novafabric.logical_call_id`, and every count — `model_call_count`,
 logical calls only (ADR-0305, works today). A capsule captured before this marker
 existed is read with the same rule: readers recognise the old wire-plus-SDK duplicate
 shape. See [Model-call record roles](architecture/run-capsule.md#model-call-record-roles).
+
+**A hook never changes what the call does (works today; ADR-0021).** In particular:
+
+- **Streamed responses are never read by capture.** A wire hook records the call when
+  the response object comes back — for `requests.post(..., stream=True)`,
+  `httpx` `client.stream(...)` / `send(..., stream=True)`, an `aiohttp` response or a
+  `urllib3` `preload_content=False` response, that is when the headers arrive, before
+  the body. The hook does not consume, buffer or wait for the body: the caller gets
+  the response at the same moment as without capture, and iterates the same bytes —
+  an endless server-sent-events stream included. The network event's
+  `response_size_bytes` is the exact length of a body the client library had already
+  read, else the declared `Content-Length`, else `null` (unknown — a chunked or
+  endless stream). Before this fix the `requests` hook read `response.content` to size
+  the event, which drained a streamed body inside `Session.send`, so `send` returned
+  only when the stream ended — never, for an endless one.
+- **Work before the call is fail-open too.** Deciding whether a request is a model
+  call (building its URL, the URL-registry lookup) cannot stop the request: if it
+  fails, the request is sent unrecorded and the loss is counted
+  (`nova_event=capture.record_dropped`).
+- **A positional call reaches the SDK as written.** The OpenAI and Anthropic `create`
+  methods are keyword-only; a call with positional arguments is passed through
+  unrecorded, so the SDK rejects it exactly as it would without capture (the hook
+  used to drop the positional arguments and record the call).
 
 Patches are removed after the run. If an SDK is not installed, its hook is
 silently skipped. Capture works even if none of the AI SDKs are present — the
@@ -213,14 +414,19 @@ Choose one with `nova capture --runner <name>`:
 | **`local`** | v0.5.x | Runs the workload as a local subprocess. Default; no remote infrastructure needed. | — |
 | **`docker`** | v0.6 | Runs the workload inside a Docker container. The image must already have NovaFabric installed. Capsule directory is mounted as a volume so artifacts land on the host. | `image` |
 | **`kubernetes`** | v0.6.1 | Runs the workload as a Kubernetes `Job` via `kubectl` shell-out. Artifacts are pulled back via `kubectl cp`. | `image`, `namespace` |
-| **`slurm`** | v0.6.1 | Runs the workload as a SLURM batch job via `sbatch` + `sacct`. Trusts a shared filesystem for artifacts (no rsync). | `partition` |
+| **`slurm`** | v0.6.1 | Runs the workload as a SLURM batch job: the generated script goes to `sbatch` on stdin (never `--wrap`), polled with `sacct`. Trusts a shared filesystem for artifacts (no rsync). | `partition` |
+| **`lsf`** | — | Runs the workload as an IBM LSF batch job: the script goes to `bsub` on stdin, polled with `bjobs`. Shared filesystem, no rsync. | — (`queue` defaults to `normal`) |
+| **`pbs`** | — | Runs the workload as a PBS batch job: `qsub <capsule>/nova-<run>.pbs`, polled with `qstat`. Shared filesystem, no rsync. | — (`queue` defaults to `default`) |
 
 Runner details:
 
 - **`docker`** — pass `--runner-option image=<ref>` (e.g. `pip install novafabric`
   in your Dockerfile). Other options: `network`, `workdir`, `user`,
   `extra_volumes`, `extra_env`. No privileged containers, no docker-socket
-  mounts, no host namespaces by default — see ADR-0025 §Anti-patterns.
+  mounts, no host namespaces by default — see ADR-0025 §Anti-patterns. The
+  capsule directory is mounted read-write, so the container can write anything
+  into it, including links. Host-side finalisation never follows one: see
+  [Links inside a capsule are never followed](#links-inside-a-capsule-are-never-followed-works-today).
 - **`kubernetes`** — optional: `service_account`, `node_selector`, `resources`.
   Anti-patterns are enforced in the Job manifest itself:
   `securityContext.privileged: false`, `hostNetwork: false`, `hostPID: false`,
@@ -636,7 +842,8 @@ The lineage graph is a directed graph stored in SQLite — a rebuildable cache
 derived from each capsule's `lineage.jsonl`. It has two table types:
 
 - **`lineage_nodes`** — runs, assets, and artifacts. Each node has a
-  deterministic ID (SHA-256 of `kind:ref`).
+  deterministic ID: the first 26 hex characters of SHA-256(`kind:ref`)
+  (`lineage/_types.py::node_id_for`).
 - **`lineage_edges`** — typed, directional edges between nodes.
 
 Because the graph is derived from the capsules, it can always be rebuilt from
@@ -653,18 +860,33 @@ DESIGN**, not implemented.
 
 ### Edge types
 
-| Edge type | Meaning |
-|---|---|
-| `consumed` | The run read/used this asset or artifact |
-| `produced_by` | This artifact was produced by the run |
-| `replayed_from` | This run is a replay of the referenced run |
+The capsule's `lineage.jsonl` vocabulary (`src/novafabric/schemas/lineage-edge.schema.json`),
+labelled by who writes each type today:
+
+| Edge type | Meaning | Written by |
+|---|---|---|
+| `consumed` | The run read/used this asset | `nova capture`, from `assets.jsonl` |
+| `produced_by` | This artifact was produced by the run | `nova capture`, from the capsule's outputs (or `produced.jsonl`) |
+| `replayed_from` | This run is a replay of the referenced run | `nova capture`, from `replay_of_run_id` in `capsule.yaml` |
+| `depends_on` | This asset depends on another asset | the registry, from an asset's declared dependencies |
+| `migration_source` | This v1.0.0 capsule was upgraded from a v0.1.x capsule (same run) | `nova migrate` (ADR-0034 §6) |
+| `derived_from`, `evaluated_by`, `attested_by` | Reserved by the schema | no NovaFabric writer emits them today |
+
+Two further vocabularies share the lineage store
+(`lineage/_types.py::LINEAGE_EDGE_TYPES`): the typed parent/child and session edges
+(`contains`, `spawned`, `delegated_to`, `member_of_session`; ADR-0044, ADR-0122) and
+the memory-provenance pair `wrote_memory` / `read_memory` (ADR-0143). The memory
+edges are **derived on demand** from a capsule's memory-operation events
+(`lineage/memory.py`), keyed by memory key only; capture does not write them to
+`lineage.jsonl`.
 
 ### Confidence levels
 
 | Confidence | Meaning |
 |---|---|
-| `observed` | Directly recorded at runtime (e.g., explicit API call) |
+| `observed` | Directly recorded at runtime (e.g., an explicit asset reference in `assets.jsonl`) |
 | `inferred` | Derived from capsule structure (e.g., output file presence) |
+| `declared` | Stated by a record the run or capsule carries (e.g., `produced.jsonl`, `replay_of_run_id`) |
 
 ### Graph queries
 
@@ -936,10 +1158,12 @@ The registry is a local SQLite database at `~/.novafabric/registry.db`
 The registry is entirely local. There is no server, no credentials, and no
 network dependency for local mode.
 
-In server mode (`nova serve`, v0.7, experimental), the same data lives in
-Postgres 16 and is accessible via the REST API at `/api/v1/assets`, guarded by
-OIDC and an RBAC model (`reader < writer < admin`, plus an orthogonal
-`auditor`). Server mode is strictly additive: **local mode never requires it.**
+In server mode (`nova server start`, experimental — not the single-user
+`nova serve` dashboard), the same data lives in the server's database (SQLite by
+default, Postgres via `backend: postgres`) and is accessible via the REST API
+under `/v0/assets`, guarded by bearer-token auth (OIDC, offline tokens, API keys
+or the local token) and an RBAC model (`reader < writer < admin`, plus an
+orthogonal `auditor`). Server mode is strictly additive: **local mode never requires it.**
 
 ---
 
@@ -956,7 +1180,8 @@ in `nova inspect` output and the audit log — the escape hatch is visible,
 not silent.
 
 Standard eval suites ship OCI-pinned for reproducibility: **GAIA, SWE-bench,
-AgentBench, MMLU, and a Smoke suite** (v0.9). Promotion can be Rego-gated to
+AgentBench, MMLU, TruthfulQA, and a Smoke suite** (v0.9; the `novafabric.evals`
+entry points in `pyproject.toml`). Promotion can be Rego-gated to
 block on a regression against a prior result.
 
 ---
@@ -1002,10 +1227,11 @@ so a reader can tell what was actually observed from what an operator merely
 declared.
 
 > **Experimental — NovaSeal signing core.** The in-process NovaSeal core
-> shipped in v0.10+ (`experimental`): DSSE signing (ECDSA P-256), best-effort
-> **RFC 3161 trusted timestamps**, and an append-only SQLite Merkle log,
+> shipped in v0.10+ (`experimental`): DSSE signing (ECDSA P-256), opt-in
+> **RFC 3161 trusted timestamps** (no default TSA and no network call unless
+> `tsa_url` is set — ADR-0292), and an append-only SQLite Merkle log,
 > verified offline by `nova verify` (`signature_ok` / `timestamp_ok` /
-> `log_integrity_ok`), plus the maker-checker `nova seal propose/approve/verify`
+> `log_integrity_ok`, plus `timestamp_trust`), plus the maker-checker `nova seal propose/approve/verify`
 > chain (ADR-0059). Still **PLANNED / FUTURE DESIGN** per
 > [ADR-0041](./decisions.md): the
 > dedicated network signing *service*, qualified timestamps, Sigstore-keyless

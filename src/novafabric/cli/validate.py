@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import jsonschema  # type: ignore[import-untyped]
@@ -8,6 +9,13 @@ import typer
 import yaml
 from rich.console import Console
 
+from novafabric._capsule_fs import (
+    CapsuleRequiredFileError,
+    find_capsule_special_entries,
+    is_capsule_regular_file,
+    read_capsule_member_or_none,
+    read_required_capsule_member,
+)
 from novafabric.cli._capsule_ref import (
     AmbiguousCapsuleRefError,
     CapsuleRefError,
@@ -57,7 +65,10 @@ def _emit_capsule_validated(capsule_dir: Path, errors: list[str]) -> None:
 
         ref = capsule_dir.name
         try:
-            manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+            manifest = yaml.safe_load(
+                read_capsule_member_or_none(capsule_dir / "capsule.yaml", operation="nova validate")
+                or ""
+            )
             if isinstance(manifest, dict) and manifest.get("run_id"):
                 ref = str(manifest["run_id"])
         except Exception:  # noqa: BLE001 — best-effort ref resolution
@@ -76,35 +87,107 @@ def _emit_capsule_validated(capsule_dir: Path, errors: list[str]) -> None:
         pass
 
 
-def _validate_capsule(capsule_dir: Path) -> None:
-    errors: list[str] = []
+def _validate_artifacts(
+    root: Path, schemas: dict[str, str], errors: list[str]
+) -> None:
+    """Schema-check each of *schemas* under *root*, appending to *errors*.
 
-    for filename, schema_name in _CAPSULE_SCHEMAS.items():
-        artifact = capsule_dir / filename
-        if not artifact.exists():
+    Each file is read without following a link and never blocks on a FIFO. A
+    file that is present but unusable (a link, FIFO, directory) is a
+    validation error, never a pass and never a hang.
+    """
+    for filename, schema_name in schemas.items():
+        try:
+            text = read_required_capsule_member(root / filename, operation="nova validate")
+        except CapsuleRequiredFileError as exc:
+            errors.append(f"{filename}: present but unusable ({exc.reason})")
+            continue
+        if text is None:
             errors.append(f"missing: {filename}")
             continue
         try:
             schema = _load_schema(schema_name)
-            if filename.endswith(".json"):
-                data = json.loads(artifact.read_text())
-            else:
-                data = yaml.safe_load(artifact.read_text())
+            data = json.loads(text) if filename.endswith(".json") else yaml.safe_load(text)
             jsonschema.validate(data, schema, format_checker=jsonschema.FormatChecker())
         except jsonschema.ValidationError as exc:
             errors.append(f"{filename}: {exc.message}")
         except Exception as exc:
             errors.append(f"{filename}: {exc}")
 
+
+def _capture_tamper_error(capsule_dir: Path) -> str | None:
+    """An error when capture recorded that the workload tampered with the capsule.
+
+    ``metadata.capture_tampered`` is written by ``nova capture`` when the
+    recorded workload replaced a capsule-managed path (a stream, a manifest
+    file, ``.seal/``) with a link or special file. Nothing was followed, but the
+    evidence is incomplete, so the capsule is not valid.
+    """
+    try:
+        text = read_required_capsule_member(capsule_dir / "capsule.yaml", operation="nova validate")
+        manifest = yaml.safe_load(text or "")
+    except Exception:  # noqa: BLE001 — a bad manifest is reported by the schema check
+        return None
+    metadata = manifest.get("metadata") if isinstance(manifest, dict) else None
+    value = metadata.get("capture_tampered") if isinstance(metadata, dict) else None
+    if not value:
+        return None
+    return (
+        f"capsule.yaml: capture recorded tampering by the workload "
+        f"(metadata.capture_tampered: {value}); see capture-health.json"
+    )
+
+
+#: Most planted entries named one by one; the count is always given.
+_MAX_SPECIAL_REPORTED = 20
+
+
+def _special_entry_errors(capsule_dir: Path) -> list[str]:
+    """An error per symlink, FIFO, socket or device anywhere in the capsule.
+
+    NovaFabric never writes one into a capsule, so each was planted -- during
+    capture past the post-workload sweep, or afterwards. The walk never follows
+    or opens an entry, so a FIFO cannot hang it.
+    """
+    entries = find_capsule_special_entries(capsule_dir)
+    errors = [
+        f"{rel}: a {kind} inside the capsule (NovaFabric never writes one; never followed)"
+        for rel, kind in entries[:_MAX_SPECIAL_REPORTED]
+    ]
+    if len(entries) > _MAX_SPECIAL_REPORTED:
+        errors.append(
+            f"and {len(entries) - _MAX_SPECIAL_REPORTED} more link(s) or special "
+            f"file(s) ({len(entries)} in total)"
+        )
+    return errors
+
+
+def _validate_capsule(capsule_dir: Path) -> None:
+    errors: list[str] = []
+
+    _validate_artifacts(capsule_dir, _CAPSULE_SCHEMAS, errors)
+    tamper_error = _capture_tamper_error(capsule_dir)
+    if tamper_error is not None:
+        errors.append(tamper_error)
+    errors.extend(_special_entry_errors(capsule_dir))
+
     for fname in ("trace.jsonl", "model-calls.jsonl", "tool-calls.jsonl", "assets.jsonl"):
-        if not (capsule_dir / fname).exists():
+        if not os.path.lexists(capsule_dir / fname):
             errors.append(f"missing: {fname}")
+        elif not is_capsule_regular_file(capsule_dir, fname):
+            errors.append(f"{fname}: present but not a regular file (a link, FIFO or directory)")
 
     # Optional: validate lineage.jsonl schema if present (v0.4)
-    lineage_path = capsule_dir / "lineage.jsonl"
-    if lineage_path.exists():
+    try:
+        lineage_text = read_required_capsule_member(
+            capsule_dir / "lineage.jsonl", operation="nova validate"
+        )
+    except CapsuleRequiredFileError as exc:
+        errors.append(f"lineage.jsonl: present but unusable ({exc.reason})")
+        lineage_text = None
+    if lineage_text is not None:
         lineage_schema = _load_schema("lineage-edge.schema.json")
-        for i, line in enumerate(lineage_path.read_text().splitlines(), 1):
+        for i, line in enumerate(lineage_text.splitlines(), 1):
             line = line.strip()
             if not line:
                 continue
@@ -139,7 +222,10 @@ def _validate_capsule(capsule_dir: Path) -> None:
             console.print(f"[red]✗[/red] {err}")
         raise typer.Exit(code=1)
 
-    manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+    manifest = yaml.safe_load(
+        read_required_capsule_member(capsule_dir / "capsule.yaml", operation="nova validate")
+        or ""
+    )
 
     # ADR-0126: advisory warning (never an error) for a deployment_environment
     # value outside the conventional set — custom environments are legitimate.
@@ -160,26 +246,19 @@ def _validate_capsule(capsule_dir: Path) -> None:
 def _validate_replay(replay_dir: Path) -> None:
     errors: list[str] = []
 
-    for filename, schema_name in _REPLAY_SCHEMAS.items():
-        artifact = replay_dir / filename
-        if not artifact.exists():
-            errors.append(f"missing: {filename}")
-            continue
-        try:
-            schema = _load_schema(schema_name)
-            data = yaml.safe_load(artifact.read_text())
-            jsonschema.validate(data, schema, format_checker=jsonschema.FormatChecker())
-        except jsonschema.ValidationError as exc:
-            errors.append(f"{filename}: {exc.message}")
-        except Exception as exc:
-            errors.append(f"{filename}: {exc}")
+    _validate_artifacts(replay_dir, _REPLAY_SCHEMAS, errors)
 
     if errors:
         for err in errors:
             console.print(f"[red]✗[/red] {err}")
         raise typer.Exit(code=1)
 
-    result = yaml.safe_load((replay_dir / "replay_result.yaml").read_text())
+    result = yaml.safe_load(
+        read_required_capsule_member(
+            replay_dir / "replay_result.yaml", operation="nova validate"
+        )
+        or ""
+    )
     console.print(
         f"[green]✓[/green] Valid replay result: {result.get('replay_id')}  "
         f"mode={result.get('mode')}  status={result.get('status')}"
@@ -265,7 +344,10 @@ def validate_cmd(
     """Validate an asset YAML spec file without writing to the registry.
 
     Runs the same schema and field checks as `nova register` but makes no
-    changes. Use in CI to gate spec files before merging.
+    changes. Use in CI to gate spec files before merging. For a capsule
+    directory, a required file that is present but unusable (a link, FIFO or
+    directory) is a validation error (exit 1); it is never read through or
+    waited on.
 
     Scope: single spec file.
 

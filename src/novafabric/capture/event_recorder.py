@@ -33,11 +33,13 @@ import json
 import logging
 import secrets
 import threading
+from collections.abc import Mapping
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import open_capsule_file_for_write, replace_capsule_file
 from novafabric.capture.events import (
     EvaluatorEvent,
     FileEvent,
@@ -417,7 +419,14 @@ class EventRecorder:
         # (bounded: one key per JSONL stream) so capture loss is visible in
         # logs and, via finalize_health(), in the capsule itself.
         self._drops: dict[str, int] = {}
+        # Drops counted by *another* process's recorder and merged in (M14:
+        # the ``nova capture`` workload's own recorder), keyed by source.
+        # Bounded: one key per source, one per stream within it.
+        self._merged: dict[str, dict[str, int]] = {}
         self._warned: set[str] = set()
+        # Capsule paths the workload replaced with a link or special file
+        # (capture.tamper); written to capture-health.json as evidence.
+        self._tampered: list[dict[str, str]] = []
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -448,15 +457,73 @@ class EventRecorder:
     def _append(self, filename: str, data: dict) -> None:  # type: ignore[type-arg]
         """Append a JSON record to a JSONL file. Never raises."""
         try:
-            path = self._capsule_dir / filename
             line = json.dumps(data, separators=(",", ":")) + "\n"
             with self._lock:
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(line)
+                # O_NOFOLLOW | O_NONBLOCK: a link or FIFO planted at the stream
+                # is refused (counted as a drop), never written through.
+                with open_capsule_file_for_write(
+                    self._capsule_dir, filename, mode="a", operation="the event recorder"
+                ) as f:
+                    f.write(line.encode("utf-8"))
         except Exception:
             # fail-open: never block the agent workflow — but never lose
             # the fact that an event was lost, either.
             self._note_drop(filename)
+
+    def note_drop(self, stream: str) -> None:
+        """Count one record that a capture hook failed to persist to *stream*.
+
+        For hooks that write through the capsule writer rather than this
+        recorder (e.g. the MCP hook's ``tool-calls.jsonl`` records): the loss
+        joins :attr:`drop_counts` and is written by :meth:`finalize_health`
+        like the recorder's own drops — when this recorder is the one
+        finalized. Never raises; warns once per stream.
+        """
+        self._note_drop(stream)
+
+    def merge_drops(self, counts: Mapping[str, int], *, source: str) -> None:
+        """Add drops another recorder counted, e.g. the workload process's (M14).
+
+        The counts join :attr:`drop_counts`, and :meth:`finalize_health` then
+        breaks the total down by source in the optional ``sources`` block. A
+        non-positive or non-integer count is ignored. Never raises.
+        """
+        try:
+            with self._lock:
+                bucket = self._merged.setdefault(source, {})
+                for stream, n in counts.items():
+                    if type(n) is not int or n <= 0:
+                        continue
+                    self._drops[stream] = self._drops.get(stream, 0) + n
+                    bucket[stream] = bucket.get(stream, 0) + n
+        except Exception:  # pragma: no cover — last-resort guard
+            pass
+
+    def record_tampered(self, entries: list[dict[str, str]]) -> None:
+        """Record capsule paths the workload tampered with (``capture.tamper``).
+
+        They are written to ``capture-health.json`` as ``tampered_entries`` by
+        :meth:`finalize_health`, which then writes a report even with no drops.
+        Never raises.
+        """
+        try:
+            with self._lock:
+                self._tampered.extend(dict(e) for e in entries)
+        except Exception:  # pragma: no cover — last-resort guard
+            pass
+
+    def _sources_block(self) -> dict[str, dict[str, int]] | None:
+        """``{"orchestrator": own, <source>: merged}``, or None when nothing was merged."""
+        with self._lock:
+            merged = {k: dict(v) for k, v in self._merged.items() if v}
+            if not merged:
+                return None
+            own = dict(self._drops)
+        for counts in merged.values():
+            for stream, n in counts.items():
+                own[stream] = own.get(stream, 0) - n
+        own = {stream: n for stream, n in own.items() if n > 0}
+        return {"orchestrator": own, **merged} if own else merged
 
     @property
     def drop_counts(self) -> dict[str, int]:
@@ -468,24 +535,47 @@ class EventRecorder:
         """Write ``capture-health.json`` if any events were dropped.
 
         Clean runs write nothing, so capsules without capture loss are
-        byte-identical to earlier versions. Fail-open like everything else.
+        byte-identical to earlier versions. A run whose workload tampered with
+        capsule paths writes a report even with no drops. The file is replaced
+        by an atomic rename, never written through a planted link. Fail-open
+        like everything else.
         """
         try:
             drops = self.drop_counts
-            if not drops:
+            with self._lock:
+                tampered = [dict(e) for e in self._tampered]
+            if not drops and not tampered:
                 return
-            target = (capsule_dir or self._capsule_dir) / "capture-health.json"
-            report = {
+            target_dir = capsule_dir or self._capsule_dir
+            report: dict[str, Any] = {
                 "run_id": self._run_id,
                 "capsule_id": self._capsule_id,
                 "generated_at": self._utc_now(),
                 "dropped_events": drops,
-                "note": (
-                    "Counts of events the fail-open capture layer could not "
-                    "persist; the workload was never blocked (ADR-0021)."
-                ),
             }
-            target.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            # Additive, optional (M14): present only when another process's
+            # drops were merged in, so every earlier report shape is unchanged.
+            sources = self._sources_block()
+            if sources is not None:
+                report["sources"] = sources
+                report["sources_note"] = (
+                    "Counts under sources other than 'orchestrator' were reported "
+                    "by the recorded process itself and are not verified."
+                )
+            if tampered:
+                # Additive, optional: present only when the workload replaced a
+                # capsule-managed path with a link or special file.
+                report["tampered_entries"] = tampered
+            report["note"] = (
+                "Counts of events the fail-open capture layer could not "
+                "persist; the workload was never blocked (ADR-0021)."
+            )
+            replace_capsule_file(
+                target_dir,
+                "capture-health.json",
+                (json.dumps(report, indent=2) + "\n").encode("utf-8"),
+                operation="the capture-health report",
+            )
         except Exception:
             pass  # fail-open
 

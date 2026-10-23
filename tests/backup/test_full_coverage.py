@@ -113,7 +113,7 @@ def test_full_coverage_create(full_home: Path, audit_log: Path, tmp_path: Path) 
         tmp_path / "set.tar.gz", home=full_home, audit_log_path=audit_log
     )
     manifest = result.manifest
-    assert manifest.manifest_schema_version == MANIFEST_SCHEMA_VERSION == "0.2.0"
+    assert manifest.manifest_schema_version == MANIFEST_SCHEMA_VERSION == "0.2.1"
 
     by_path = {m.path: m for m in manifest.members}
     for expected in (
@@ -358,22 +358,23 @@ def test_shred_in_live_log_survives_restore_of_older_backup(
         tmp_path / "set.tar.gz", home=full_home, audit_log_path=audit_log
     )
 
-    receipt = tmp_path / "receipt-s2.json"
-    receipt.write_text(json.dumps({"subject_id": "subject-2"}))
+    from novafabric.audit import AuditEventType, AuditLog
+
+    receipt = tmp_path / "run-s2.receipt.json"
+    receipt.write_text(
+        json.dumps({"subject_id": "subject-2", "capsule_ids_affected": ["run-s2"]})
+    )
     live_audit = tmp_path / "live" / "audit.jsonl"
-    live_audit.parent.mkdir(parents=True)
-    live_audit.write_text(
-        json.dumps(
-            {
-                "event_type": "retention.action",
-                "details": {
-                    "action": "crypto-shred",
-                    "outcome": "applied",
-                    "erasure_receipt_ref": str(receipt),
-                },
-            }
-        )
-        + "\n"
+    AuditLog(live_audit).append(
+        event_type=AuditEventType.RETENTION_ACTION,
+        actor="retention-sweep",
+        resource_id="run-s2",
+        details={
+            "action": "crypto-shred",
+            "outcome": "applied",
+            "item_id": "run-s2",
+            "erasure_receipt_ref": str(receipt),
+        },
     )
 
     home_b = tmp_path / "home-b"

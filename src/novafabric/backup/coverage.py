@@ -22,6 +22,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
 
+from novafabric import _capsule_fs
+from novafabric._capsule_fs import CapsuleLinkError, open_capsule_file
+from novafabric._paths import capsule_dir_for_home
 from novafabric.audit import resolve_audit_log_path
 from novafabric.backup.models import BackupMember, CoverageEntry, MemberOrigin
 
@@ -59,6 +62,10 @@ DASHBOARD_DUCKDB = "dashboard.duckdb"
 MERKLE_DB = "novaseal-merkle.db"
 AUDIT_ARC = f"{EXTERNAL_PREFIX}/audit/audit.jsonl"
 
+#: Origin of a capsule store that lives outside the home (``NOVAFABRIC_CAPSULE_DIR``).
+CAPSULE_DIR_ORIGIN: MemberOrigin = "capsule-dir"
+CAPSULE_DIR_ARC = f"{EXTERNAL_PREFIX}/{CAPSULE_DIR_ORIGIN}"
+
 #: Every component name a local-full coverage list reports on, in order.
 ALL_COMPONENTS: tuple[str, ...] = (
     "registry",
@@ -78,6 +85,40 @@ class CoverageError(Exception):
     """Raised when a component that exists cannot be snapshotted safely."""
 
 
+_COPY_OPERATION = "a backup"
+
+
+def copy_tree_files(
+    src_dir: Path,
+    dest_dir: Path,
+    *,
+    skip: Callable[[str], bool] | None = None,
+    error: type[CapsuleLinkError] = CapsuleLinkError,
+) -> list[str]:
+    """Copy every regular file under *src_dir* into *dest_dir*; return the copied paths.
+
+    Goes through :mod:`novafabric._capsule_fs`, so it never follows a link: any
+    symlink under *src_dir*, including one planted mid-copy, raises *error*.
+    ``rglob`` + ``shutil.copyfile`` used to store a link's target in the set.
+    *src_dir* itself may be reached through a link. Special files (FIFOs,
+    sockets) are skipped, as ``is_file`` skipped them. *skip* drops paths, given
+    relative to *src_dir*, before they are opened.
+    """
+    listing = _capsule_fs.list_capsule(src_dir, operation=_COPY_OPERATION, error=error)
+    copied: list[str] = []
+    for rel in listing.files:
+        if skip is not None and skip(rel):
+            continue
+        dst = dest_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with open_capsule_file(
+            listing.root, rel, operation=_COPY_OPERATION, error=error
+        ) as fsrc, open(dst, "xb") as fdst:
+            shutil.copyfileobj(fsrc, fdst)
+        copied.append(rel)
+    return copied
+
+
 @dataclass(frozen=True)
 class CollectedComponent:
     """Result of collecting one component into the staging directory."""
@@ -93,10 +134,16 @@ def resolve_origin_root(
     audit_log_path: Optional[Path] = None,
     keyring_dir: Optional[Path] = None,
     seal_config_dir: Optional[Path] = None,
+    capsule_dir: Optional[Path] = None,
 ) -> Path:
     """Filesystem root a member origin maps to (create and restore share this)."""
     if origin == "home":
         return home
+    if origin == CAPSULE_DIR_ORIGIN:
+        # The capture rule, evaluated on the target: NOVAFABRIC_CAPSULE_DIR, else
+        # <home>/capsules (M12) — a set taken in the Docker layout restores into
+        # that layout's capsule store, and into the home on a plain local host.
+        return capsule_dir if capsule_dir is not None else capsule_dir_for_home(home)
     if origin == "audit":
         return (audit_log_path or default_audit_log_path()).parent
     if origin == "keyring":
@@ -217,12 +264,9 @@ def collect_extended_components(
                 out.append(_absent(name))
                 continue
             members = []
-            for f in sorted(p for p in src.rglob("*") if p.is_file()):
-                arc = PurePosixPath(rel) / f.relative_to(src).as_posix()
-                dst = stage / arc
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(f, dst)
-                members.append(member_fn(dst, str(arc), kind="log", role=name))
+            for copied in copy_tree_files(src, stage / rel):
+                arc = PurePosixPath(rel) / copied
+                members.append(member_fn(stage / arc, str(arc), kind="log", role=name))
             if not members:
                 out.append(_absent(name))
                 continue
@@ -310,7 +354,9 @@ def _collect_merkle(
         )
         if uri is None:
             return _absent(name)
-        if uri.startswith(("postgresql://", "postgres://")):
+        from novafabric.trust.novaseal.log_location import is_postgres_dsn  # noqa: PLC0415
+
+        if is_postgres_dsn(uri):
             return CollectedComponent(
                 members=[],
                 coverage=CoverageEntry(
@@ -341,16 +387,13 @@ def _collect_ratchet(
     if not src_dir.is_dir():
         return _absent(name)
     members: list[BackupMember] = []
-    for f in sorted(p for p in src_dir.rglob("*") if p.is_file()):
-        arc = RATCHET_REL / f.relative_to(src_dir).as_posix()
-        dst = stage / arc
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(f, dst)
+    for copied in copy_tree_files(src_dir, stage / Path(*RATCHET_REL.parts)):
+        arc = RATCHET_REL / copied
         # Per-node state files hold the current chain key (secret); the
         # epoch-registry holds public keys only.
-        sensitive = f.name != "epoch-registry.jsonl"
+        sensitive = arc.name != "epoch-registry.jsonl"
         members.append(
-            member_fn(dst, str(arc), kind="state_db", role=name, sensitive=sensitive)
+            member_fn(stage / arc, str(arc), kind="state_db", role=name, sensitive=sensitive)
         )
     if not members:
         return _absent(name)

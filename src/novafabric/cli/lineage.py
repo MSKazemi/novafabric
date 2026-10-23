@@ -17,6 +17,7 @@ from novafabric.lineage._importer import (
     index_capsule_lineage,
 )
 from novafabric.lineage._store import LineageStore
+from novafabric.lineage._types import LINEAGE_EDGE_TYPES, node_ref_for_asset
 
 console = Console()
 
@@ -44,23 +45,20 @@ _DepthArg = Annotated[
     int,
     typer.Option("--depth", "-d", help="Max traversal depth"),
 ]
+#: Derived from the edge-type vocabularies (M15): ``nova capture`` writes ``consumed``
+#: and ``produced_by``, which a hand-kept list here once rejected.
+_VALID_EDGE_TYPES = LINEAGE_EDGE_TYPES
+
 _EdgeTypeArg = Annotated[
     Optional[str],
     typer.Option(
         "--edge-type",
         help=(
-            "Comma-separated edge types to filter: "
-            "contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory"
+            "Walk only edges of these types (comma-separated): "
+            + ",".join(sorted(_VALID_EDGE_TYPES))
         ),
     ),
 ]
-
-_VALID_EDGE_TYPES = frozenset(
-    {
-        "contains", "spawned", "delegated_to", "replayed_from",
-        "member_of_session", "wrote_memory", "read_memory",
-    }
-)
 
 _WithFacetsArg = Annotated[
     bool,
@@ -126,6 +124,38 @@ def _get_store() -> LineageStore:
     return LineageStore()
 
 
+def _resolve_ref(store: LineageStore, ref: str, kind: str | None) -> str:
+    """Return the stored ref for *ref*, mapping a bare ``name@version`` to ``local:``.
+
+    Asset nodes are keyed ``<registry>:<name>@<version>``; a bare ``my-agent@v1.0``
+    (the form every asset command takes) resolves to the local registry when that
+    node exists. Anything else is returned unchanged.
+    """
+    if store.has_node(ref, kind):
+        return ref
+    if _is_bare_asset_ref(ref) and kind in (None, "asset"):
+        candidate = node_ref_for_asset("local", ref)
+        if store.has_node(candidate, kind):
+            return candidate
+    return ref
+
+
+def _is_bare_asset_ref(ref: str) -> bool:
+    return "@" in ref and ":" not in ref
+
+
+def _exit_unknown_ref(ref: str) -> None:
+    hint = ""
+    if _is_bare_asset_ref(ref):
+        hint = (
+            " (asset nodes are stored as <registry>:<name>@<version>; tried "
+            + node_ref_for_asset("local", ref)
+            + ")"
+        )
+    console.print(f"[red]x[/red] Unknown ref: {ref}{hint}", markup=True, highlight=False)
+    raise typer.Exit(code=1)
+
+
 def _render_nodes_text(nodes: list[dict[str, Any]], title: str) -> None:
     if not nodes:
         console.print(f"[dim]No results for {title}[/dim]")
@@ -165,12 +195,13 @@ def provenance_cmd(
     """
     filter_types = _parse_edge_types(edge_type)
     store = _get_store()
-    results = store.provenance(ref=ref, kind=kind, depth=depth)
-    if filter_types is not None:
-        results = [r for r in results if r.get("edge_type") in filter_types]
+    asked = ref
+    ref = _resolve_ref(store, ref, kind)
+    # The filter restricts the traversal itself: the rows returned are nodes and
+    # carry no edge type, so filtering them afterwards always yielded nothing.
+    results = store.provenance(ref=ref, kind=kind, depth=depth, edge_type=filter_types)
     if not results and not store._node_id_for_ref(ref, kind):
-        console.print(f"[red]x[/red] Unknown ref: {ref}")
-        raise typer.Exit(code=1)
+        _exit_unknown_ref(asked)
     if output == "json":
         typer.echo(json.dumps(results, indent=2))
     else:
@@ -208,12 +239,13 @@ def blast_radius_cmd(
     """
     filter_types = _parse_edge_types(edge_type)
     store = _get_store()
-    results = store.blast_radius(ref=ref, kind=kind, depth=depth)
-    if filter_types is not None:
-        results = [r for r in results if r.get("edge_type") in filter_types]
+    asked = ref
+    ref = _resolve_ref(store, ref, kind)
+    # The filter restricts the traversal itself: the rows returned are nodes and
+    # carry no edge type, so filtering them afterwards always yielded nothing.
+    results = store.blast_radius(ref=ref, kind=kind, depth=depth, edge_type=filter_types)
     if not results and not store._node_id_for_ref(ref, kind):
-        console.print(f"[red]x[/red] Unknown ref: {ref}")
-        raise typer.Exit(code=1)
+        _exit_unknown_ref(asked)
     if output == "json":
         typer.echo(json.dumps(results, indent=2))
     else:

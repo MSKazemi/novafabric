@@ -96,8 +96,9 @@ nova-worm-test --backend s3 --endpoint https://s3.example.com \
 ```
 
 The package is `nova-worm-conformance`; its console script is `nova-worm-test`. The in-tree
-`nova storage validate` is a much narrower pre-flight — it only checks that S3 Object Lock is
-enabled on the bucket and does not run the conformance cases. **Maturity: experimental.**
+`nova storage validate` is a much narrower pre-flight — it only checks that the bucket's Object
+Lock default retention is `COMPLIANCE` (not `GOVERNANCE`, not absent) and does not run the
+conformance cases. **Maturity: experimental.**
 
 To attest the retention *posture* of a specific set of Evidence Bundles (not the backend),
 `nova export-retention --bundle <zip> --registry <name>` renders the policy window, legal-hold

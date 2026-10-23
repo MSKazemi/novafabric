@@ -55,6 +55,14 @@ turn every uncaptured manifest into a provenance failure.
 the capsule is byte-identical to one captured before this feature existed. Malformed
 manifest documents are skipped, never raised — this is a reader, not a validator.
 
+**Every read stays inside the capsule.** ``blob_ref`` and the sidecar names come
+from files the recorded workload wrote, so both are read through
+:func:`novafabric._capsule_fs.read_capsule_file`: no absolute path, no ``..``, no link
+anywhere on the path, no FIFO or device, and a bounded size. A blob that cannot be
+read that way is never followed: the binding falls back to the recorded hash and the
+ref is listed in :attr:`MediaProvenanceFacet.blob_refs_refused`. A blob read outside
+the capsule could otherwise make a binding pass against bytes the capsule never held.
+
 **Where manifests come from.** Manifests are discovered as JSON sidecars next to the
 capsule's media (see :func:`discover_sidecar_manifests`). Extracting an *embedded*
 JUMBF manifest from image bytes is **not implemented** and needs a C2PA library; a
@@ -67,6 +75,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -74,7 +83,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from novafabric.capture.media import iter_media_parts
+from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
+from novafabric.capture.media import iter_media_parts, media_max_bytes
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "0.1.0"
 FACET_NAME = "media_provenance"
@@ -91,6 +103,18 @@ HARD_BINDING_LABEL = "c2pa.hash.data"
 NO_CERT_VERIFIER = "no_offline_cert_chain_verifier"
 
 _CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
+
+#: Smallest read bound for one media blob; the capture-time cap
+#: (``NOVAFABRIC_MEDIA_MAX_BYTES``) raises it, never lowers it.
+_MIN_BLOB_READ_BYTES = 64 * 1024 * 1024
+#: Bound for one sidecar manifest document.
+_MAX_SIDECAR_BYTES = 16 * 1024 * 1024
+#: Longest ``blob_ref`` echoed into ``blob_refs_refused`` (it is workload-written).
+_MAX_REF_ECHO = 200
+#: Most refused refs listed in one facet; the rest are only logged.
+_MAX_REFUSED_LISTED = 50
+#: The ``operation`` named in a ``_capsule_fs`` refusal.
+_READ_OPERATION = "C2PA binding"
 
 Direction = Literal["input", "output"]
 ManifestKind = Literal["c2pa", "content_credentials"]
@@ -198,6 +222,15 @@ class MediaProvenanceFacet(BaseModel):
     )
     manifests_found: int = Field(
         default=0, description="How many provenance manifests were discovered."
+    )
+    blob_refs_refused: list[str] | None = Field(
+        default=None,
+        description=(
+            "Media blob_refs that were not read because they leave the capsule "
+            "(absolute or '..'), go through a link, name a FIFO or device, or exceed "
+            "the read bound, each as '<ref> (<reason>)'. Those parts were bound "
+            "against the recorded hash instead. Absent when none was refused."
+        ),
     )
 
 
@@ -358,10 +391,14 @@ def bind_manifest(
     )
 
 
-def _read_json(path: Path) -> Any | None:
+def _read_json(capsule_dir: Path, rel: str) -> Any | None:
+    """Parse capsule file *rel*, read inside the capsule only; ``None`` when unusable."""
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = read_capsule_file(
+            capsule_dir, rel, max_bytes=_MAX_SIDECAR_BYTES, operation=_READ_OPERATION
+        )
+        return json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, CapsuleEntryError):
         return None
 
 
@@ -386,20 +423,44 @@ def discover_sidecar_manifests(capsule_dir: Path) -> dict[str, Any]:
         content_hash = normalise_content_hash(stem)
         if content_hash is None:
             continue
-        document = _read_json(path)
+        document = _read_json(capsule_dir, f"outputs/{path.name}")
         if document is not None:
             found[content_hash] = document
     return found
 
 
-def _blob_bytes_for(capsule_dir: Path, media: Mapping[str, Any]) -> bytes | None:
+def _max_blob_bytes() -> int:
+    """Read bound for one media blob."""
+    return max(_MIN_BLOB_READ_BYTES, media_max_bytes())
+
+
+def _blob_bytes_for(
+    capsule_dir: Path, media: Mapping[str, Any], refused: list[str]
+) -> bytes | None:
+    """The stored blob for *media*, read inside the capsule only (module docstring).
+
+    ``None`` when there is no ``blob_ref`` or no stored blob (byte capture is
+    opt-in). A ref that cannot be read safely is appended to *refused* as
+    ``"<ref> (<reason>)"`` and also gives ``None``: never followed.
+    """
     blob_ref = media.get("blob_ref")
     if not isinstance(blob_ref, str):
         return None
-    path = capsule_dir / blob_ref
     try:
-        return path.read_bytes()
-    except OSError:
+        return read_capsule_file(
+            capsule_dir, blob_ref, max_bytes=_max_blob_bytes(), operation=_READ_OPERATION
+        )
+    except FileNotFoundError:
+        return None
+    except (ValueError, CapsuleEntryError, OSError) as exc:
+        reason = str(exc) if isinstance(exc, CapsuleEntryError) else type(exc).__name__
+        if isinstance(exc, ValueError):
+            reason = "not a relative path inside the capsule"
+        refused.append(f"{blob_ref[:_MAX_REF_ECHO]} ({reason[:_MAX_REF_ECHO]})")
+        logger.warning(
+            "c2pa_blob_ref_refused",
+            extra={"blob_ref": blob_ref[:_MAX_REF_ECHO], "reason": reason[:_MAX_REF_ECHO]},
+        )
         return None
 
 
@@ -431,6 +492,7 @@ def build_facet(
 
     entries: list[MediaProvenanceEntry] = []
     seen: set[tuple[str, str]] = set()
+    refused: list[str] = []
     scanned = 0
     for _call_id, media in iter_media_parts(capsule_dir):
         scanned += 1
@@ -442,7 +504,7 @@ def build_facet(
             content_hash=content_hash,
             document=discovered[content_hash],
             direction=direction,
-            blob_bytes=_blob_bytes_for(capsule_dir, media),
+            blob_bytes=_blob_bytes_for(capsule_dir, media, refused),
             capture_manifest_bytes=capture_manifest_bytes,
             producing_model=producing_model,
             producing_run_id=producing_run_id,
@@ -463,6 +525,7 @@ def build_facet(
         entries=entries,
         media_parts_scanned=scanned,
         manifests_found=len(discovered),
+        blob_refs_refused=refused[:_MAX_REFUSED_LISTED] or None,
     )
 
 

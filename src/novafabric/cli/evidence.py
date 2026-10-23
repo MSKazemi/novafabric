@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 import typer
 from rich.console import Console
 
-from novafabric._paths import default_capsule_dir
+from novafabric._paths import default_capsule_dir, default_replays_dir
 from novafabric.audit import resolve_audit_log_path
 from novafabric.evidence.admissibility import (
     ChainOfCustody,
@@ -200,7 +200,10 @@ def evidence_attest_replay_cmd(
     output: _OutOpt = None,
     output_dir: Annotated[
         Optional[Path],
-        typer.Option("--output-dir", help="Base dir for replay output"),
+        typer.Option(
+            "--output-dir",
+            help="Base dir for replay output (default: $NOVAFABRIC_HOME/replays)",
+        ),
     ] = None,
     certify: Annotated[
         bool,
@@ -247,7 +250,7 @@ def evidence_attest_replay_cmd(
 
     capsule_dir = _resolve_capsule(capsule)
     signer = _load_signer(key)
-    base = output_dir or (Path.cwd() / ".novafabric" / "replays")
+    base = output_dir or default_replays_dir()
     flags = ReplayFlags(mode=mode.value, output_dir=base)
     result = ReplayEngine(capsule_dir=capsule_dir, flags=flags, base_dir=base).run()
     try:
@@ -404,7 +407,11 @@ def evidence_bind_custody_cmd(
         bool,
         typer.Option(
             "--timestamp-ok/--no-timestamp-ok",
-            help="Assert an RFC 3161 timestamp verifies for this capsule (FRE-902(14) point 4).",
+            help=(
+                "Assert an RFC 3161 timestamp verifies for this capsule against a TSA trust "
+                "anchor (FRE-902(14) point 4): `nova verify --tsa-ca-bundle` reports "
+                "timestamp_trust=anchored. An unanchored token is not trusted time."
+            ),
         ),
     ] = False,
     key: _KeyOpt = None,
@@ -461,7 +468,10 @@ def evidence_check_admissibility_cmd(
         bool,
         typer.Option(
             "--timestamp-ok/--no-timestamp-ok",
-            help="The checker has independently verified an RFC 3161 timestamp.",
+            help=(
+                "The checker has independently verified an RFC 3161 timestamp against a TSA "
+                "trust anchor (timestamp_trust=anchored, not merely an intact token)."
+            ),
         ),
     ] = False,
 ) -> None:

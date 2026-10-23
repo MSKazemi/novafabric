@@ -107,8 +107,8 @@ nova lineage provenance 01HXAY7M5JZ8R7K4P9DPBYK2WX
 
 Capsules are written on **success and on failure**: a crash is captured evidence, not
 lost state. A replay writes a replay result (`replay_result.yaml`) under
-`./.novafabric/replays/`, not a new capsule (only the experimental `intervention` mode
-also writes a counterfactual capsule). To compare behaviour, capture the run again and
+`$NOVAFABRIC_HOME/replays/` (default `~/.novafabric/replays/`), not a new capsule (only the experimental
+`intervention` mode also writes a counterfactual capsule). To compare behaviour, capture the run again and
 diff the two capsules.
 
 <details>
@@ -140,12 +140,12 @@ diff the two capsules.
 ```python
 from novafabric.sdk.agent import agent
 
-@agent(name="research-agent", version="0.1.0", capsule_dir="capsule/")
+@agent(name="research-agent", version="0.1.0", capsule_dir="capsules/")
 def run():
     # OpenAI, Anthropic and httpx calls are captured automatically
     return client.chat.completions.create(...)
 
-run()
+run()   # each call writes its own capsules/<run_id>/
 ```
 
 Without `capsule_dir`, the decorator emits OpenTelemetry spans only and writes no capsule.
@@ -251,7 +251,7 @@ W3C PROV · C2PA (experimental). Each claim is listed, with how to check it, in
 
 ## Status
 
-**Beta: v0.106.1.**
+**Beta: v0.107.0.**
 
 - **Usable today:** local capture, replay, diff, lineage (SQLite), the trust layer
   (signing, secret scanning, redaction), the asset registry, policy and approval gates,
@@ -352,7 +352,7 @@ To cite a specific software release:
   author  = {Seyedkazemi Ardebili, Mohsen},
   title   = {{NovaFabric}: replayable, verifiable execution evidence for {AI} agents},
   url     = {https://github.com/MSKazemi/novafabric},
-  version = {0.106.1},
+  version = {0.107.0},
   license = {Apache-2.0}
 }
 ```

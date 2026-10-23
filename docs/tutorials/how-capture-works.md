@@ -90,7 +90,7 @@ multiple agents, streaming — and can't afford to freeze at each one.
 |---|---|---|
 | Style | synchronous (`def`) | async (`async def`) |
 | Good for | simple scripts, one call at a time | agents, servers, concurrent work |
-| Used by | older SDKs, simple tools | LangGraph, FastAPI, OpenAI SDK v1+ |
+| Used by | older SDKs, simple tools | async agents and tools (the OpenAI and Anthropic SDKs use `httpx`, covered below) |
 
 Both do the same job. NovaFabric captures both — and, because it also hooks the
 lower-level libraries described below, it captures calls that never touch either of
@@ -143,8 +143,12 @@ The same pattern applies across the wire-level surface NovaFabric ships hooks fo
 | `requests` | The most common synchronous HTTP client |
 | `aiohttp` | The async client used by concurrent agents |
 | `urllib3` | The lowest-level library that both `requests` and `boto3` use internally |
-| `httpx` | The client under the OpenAI and Anthropic SDKs v1+ |
-| Bedrock | AWS Bedrock runtime calls |
+| `httpx` | The client under the Anthropic SDK, `openai` before 3.x, and most other Python LLM clients |
+| `httpx2` | The client `openai` 3.x builds by default (`openai.OpenAI()` sends over `httpx2`, not `httpx`). Patched only when `httpx2` is installed; NovaFabric does not depend on it — **works today** |
+
+AWS Bedrock has no dedicated hook: `boto3` sends over `urllib3`, so a Bedrock runtime
+call is captured by the `urllib3` hook and classified by the URL registry's
+`bedrock-runtime.` pattern.
 
 Alongside these wire-level hooks, NovaFabric also installs per-SDK hooks
 (OpenAI `Completions.create`, Anthropic `Messages.create`) and an MCP hook
@@ -153,6 +157,33 @@ are auto-discovered through the `novafabric.hooks` entry-point group, so an
 agent-framework author can add a hook without patching NovaFabric. If an SDK isn't
 present, its hook is silently skipped — a capsule is still written even when no AI
 SDK is installed at all.
+
+**Capture never fails your call (works today).** Every hook writes its record
+behind one fail-open guard. If a record cannot be built or written — a full disk,
+or an object NovaFabric cannot serialise — your call still returns exactly what
+the SDK returned, or raises exactly the exception the SDK raised. The lost record
+is logged once as a `WARNING` (`nova_event=capture.record_dropped`, with the hook,
+the stream and the exception *type* — never its message, which may quote your
+prompt) and counted in the capsule's `capture-health.json` (under `nova capture`
+the workload process hands its counts over when it exits; `sources.workload`
+shows them, labelled unverified because the workload itself wrote them). A workload
+process that ends with `os._exit` or is killed runs no exit handler, so its drops are
+still lost. SDK objects you pass
+back into the next call — the common
+`messages.append(completion.choices[0].message)` pattern — are recorded the way
+the SDK sends them on the wire (`model_dump(mode="json", exclude_unset=True)`).
+
+**A streamed call belongs to the capture that made it (works today).** A
+`stream=True` call is recorded when its stream ends — fully read, `close()`d, its
+`with` block exited, or garbage-collected. That can happen later, in another
+task, or after a second capture has started. The record is bound to the capture
+that was active when the stream was *opened* and is written only into that
+capsule. If that capture has already finished, the record is dropped rather than
+filed into the capture that happens to be running: it is logged once as a
+`WARNING` (`nova_event=capture.stream_record_dropped`, never the prompt) and
+counted against the capture that lost it. When a wire-level hook saw the request,
+its transport record still counts the call once in its own capsule (ADR-0305). Read or close a stream
+before its capture ends if you want its answer recorded.
 
 ---
 
@@ -186,10 +217,12 @@ Only URLs that match a known LLM provider pattern are recorded into
 registry ships classifiers for providers including OpenAI, Anthropic, Cohere,
 Together, Mistral, Replicate, Bedrock, and Ollama.
 
-You can add your own entries by dropping a `~/.novafabric/url_registry.yaml` file,
-which the loader prefers over the vendored default (or point `$NOVAFABRIC_URL_REGISTRY`
-at an absolute path, which takes precedence over both) — useful for private LLM
-endpoints, mirrors, or internal gateways. Nothing calls out to a hardcoded external
+You can supply your own registry as `$NOVAFABRIC_HOME/url_registry.yaml`
+(`~/.novafabric/url_registry.yaml` by default), or point `$NOVAFABRIC_URL_REGISTRY`
+at an absolute path, which takes precedence over both. An override file
+**replaces** the vendored registry; it is not merged with it, so copy the provider
+entries you still need from `capture/hooks/url_registry.yaml` into your file. This is
+useful for private LLM endpoints, mirrors, or internal gateways. Nothing calls out to a hardcoded external
 service; every endpoint is configurable to a private one.
 
 ---
@@ -268,6 +301,41 @@ so secrets never leave in a shared capsule. The capsule is written on **both suc
 and failure**; a failed run sets `status: failure` and records an `error` block
 rather than producing nothing.
 
+### The workload cannot redirect its own recording
+
+The hooks run inside the workload, so the workload writes into its own capsule
+directory. With `--runner docker` that directory is mounted read-write into the
+container. A workload could therefore swap `model-calls.jsonl` for a symbolic
+link to a file on the host, or for a FIFO, before NovaFabric finishes the
+capsule. Finalisation on the host never follows either (works today):
+
+1. Right after the workload exits, and before anything else touches the capsule,
+   capture checks every path it manages (the streams, `capsule.yaml`, `env.lock`,
+   `replay.yaml`, `redaction-proof.json`, `outputs/stdout.txt`, `.seal/`, ...)
+   without opening it. A link, FIFO or other special file there is removed
+   (never followed; the file a link pointed at is untouched) and the empty
+   stream is recreated.
+2. Every later read opens files without following a link and without blocking,
+   and every later write replaces a file by an atomic rename. So the secret
+   scanner cannot be tricked into rewriting a host file, and capture cannot
+   hang.
+3. The capsule is marked tampered: `metadata.capture_tampered` in `capsule.yaml`,
+   `tampered_entries` in `capture-health.json`, and a `stream_tampered` entry in
+   `redaction-proof.json`. `nova verify` and `nova validate` fail it.
+
+Capture still exits with the workload's own exit code (NovaFabric never fails
+your workload, ADR-0021), and prints a `✗ capture integrity` line on stderr:
+
+```console
+$ nova capture --runner docker --runner-option image=my/agent -- python agent.py
+[novafabric] ✗ capture integrity: the workload replaced 1 capsule path(s) with a
+link or special file: model-calls.jsonl (symlink). None was followed; ...
+$ nova validate .novafabric/runs/<run-id>/
+✗ capsule.yaml: capture recorded tampering by the workload (metadata.capture_tampered: model-calls.jsonl (symlink)); see capture-health.json
+```
+
+Details: [Run Capsule anatomy](../architecture/run-capsule.md#after-the-workload-runs-the-capsule-is-untrusted-input).
+
 ---
 
 ## Extended event streams
@@ -283,7 +351,7 @@ stream today, honestly labeled:
 
 | Stream | Filled by | Status |
 |---|---|---|
-| `network_events.jsonl` | wire-level hooks — `requests`, `httpx`, and (since ADR-0209) `aiohttp` + `urllib3`, layering-guarded against double-recording | works today |
+| `network_events.jsonl` | wire-level hooks — `requests`, `httpx`, `httpx2` (the `openai` 3.x default client), and (since ADR-0209) `aiohttp` + `urllib3`, layering-guarded against double-recording | works today |
 | `human_approvals.jsonl` | `nova seal propose` maker-checker flow | works today |
 | `guardrail_events.jsonl` | OpenAI Agents adapter: SDK guardrail spans map to events automatically; or your own `record.guardrail(...)` calls | experimental |
 | `state_transitions.jsonl` | LangGraph adapter: one digest-chained event per `stream()` / `astream()` chunk, a start→end pair per `invoke()` / `ainvoke()`; or `record.state_transition(...)` | experimental |
@@ -314,7 +382,7 @@ registry. Pick by how you launch and control the agent:
 | Mode | How it works | When to use |
 |---|---|---|
 | `nova capture python agent.py` | Subprocess wrap + `sitecustomize.py` hook injection | You control process startup |
-| `nova api-proxy --listen 127.0.0.1:9900` | Transparent HTTP proxy in front of the LLM | Agent is a service, or a non-Python client |
+| `nova api-proxy --listen 127.0.0.1:9900 --upstream-url https://api.openai.com` | Transparent HTTP proxy in front of the LLM | Agent is a service, or a non-Python client |
 | `nova mcp-proxy -- python mcp_server.py` | Transparent stdio proxy in front of the MCP server | Agent uses MCP tools |
 | `@agent` decorator (`novafabric.sdk.agent`) | Direct hook installation from inside your process | Notebooks, embedded agents |
 
@@ -329,10 +397,11 @@ subprocess; under the hood it calls `install_all(writer, parent_span_id)`
 - LLM calls are HTTP requests; NovaFabric records both sides without answering them
   or blocking the workload.
 - It captures by **monkey-patching** wire-level HTTP libraries (`requests`,
-  `aiohttp`, `urllib3`, `httpx`, Bedrock) plus per-SDK and MCP hooks, injected via a
+  `aiohttp`, `urllib3`, `httpx`, `httpx2`; Bedrock via `urllib3`) plus per-SDK and MCP hooks, injected via a
   generated `sitecustomize.py` on `PYTHONPATH` — zero agent code changes.
 - A **URL registry** classifies which calls become `model-calls.jsonl` records; you
-  can override it at `~/.novafabric/url_registry.yaml`.
+  can replace it with `$NOVAFABRIC_HOME/url_registry.yaml` (not merged with the
+  vendored one).
 - Records use open OpenTelemetry GenAI semantic conventions, inside a portable Run
   Capsule you own — written on success and failure, with verifiable redaction.
 

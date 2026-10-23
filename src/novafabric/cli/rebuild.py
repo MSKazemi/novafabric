@@ -47,13 +47,18 @@ def rebuild_metadata_db(
     backend: Annotated[
         str,
         typer.Option(
-            help="Storage backend: local | s3 | minio | ceph_rgw | azure_blob.",
+            help="Storage backend: local | s3 | minio | ceph_rgw | azure_blob | gcs.",
             envvar="NOVA_OCS_BACKEND",
         ),
     ] = "local",
     data_dir: Annotated[
         Optional[str],
-        typer.Option(help="Local backend: path to the object store root directory."),
+        typer.Option(
+            help="Not supported: no object-store backend reads a local directory "
+            "(the `local` backend is in-memory). Exits 2; kept so older scripts "
+            "fail loudly instead of rebuilding nothing.",
+            hidden=True,
+        ),
     ] = None,
 ) -> None:
     """Rebuild the metadata database from the manifest chain log.
@@ -63,24 +68,44 @@ def rebuild_metadata_db(
 
     Scope: global (affects the whole metadata store).
 
+    The source must be the WORM store that holds the chain log; the default
+    `local` backend is an in-memory test adapter and is refused (exit 2).
+
     \b
     Examples:
-      nova rebuild-metadata-db
+      # Rebuild every tenant from an S3 Object Lock bucket
+      NOVA_OCS_BACKEND=s3 nova rebuild-metadata-db --target-db recovered.db
 
-      # Override data directory
-      nova rebuild-metadata-db --data-dir /data/nova/
+      # One tenant from MinIO
+      nova rebuild-metadata-db --backend minio --prefix acme --target-db acme.db
     """
     from novafabric.object_capsule_store.backend_router import make_adapter
+    from novafabric.object_capsule_store.rebuild import (
+        RebuildSourceError,
+        require_durable_source,
+    )
     from novafabric.object_capsule_store.rebuild import rebuild_metadata_db as _rebuild
 
-    kwargs = {}
     if data_dir is not None:
-        kwargs["data_dir"] = data_dir
+        # It used to be forwarded as make_adapter(data_dir=...): ignored by the
+        # in-memory `local` adapter (an empty "Done") and a TypeError everywhere else.
+        console.print(
+            "[red]Error:[/red] --data-dir is not supported: no object-store backend "
+            "reads a local directory. Rebuild from the WORM store that holds the chain "
+            "log (--backend s3|minio|ceph_rgw|azure_blob|gcs).",
+            highlight=False,
+        )
+        raise typer.Exit(code=2)
     try:
-        adapter = make_adapter(backend=backend, **kwargs)
+        adapter = make_adapter(backend=backend)
     except Exception as exc:
         console.print(f"[red]Error initialising backend {backend!r}: {exc}[/red]")
         raise typer.Exit(code=1) from exc
+    try:
+        require_durable_source(adapter)
+    except RebuildSourceError as exc:
+        console.print(f"[red]Error:[/red] {exc}", highlight=False)
+        raise typer.Exit(code=2) from exc
 
     target_path = Path(target_db)
     prefix_display = prefix or "(all)"

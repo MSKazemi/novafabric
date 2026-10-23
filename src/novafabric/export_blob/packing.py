@@ -20,6 +20,11 @@ ownership, normalized modes). Determinism is what makes the export idempotent:
 re-packing an unchanged capsule reproduces byte-identical output and therefore
 the same CAS address, so the blob is skipped on re-run. Packing is strictly
 read-only over the capsule directory — the source is never mutated.
+
+A capsule that holds a symbolic link is refused (:class:`CapsulePackLinkError`):
+packing used to follow links and store the *target* as a capsule file, so
+``inputs/x -> ~/.ssh/id_rsa`` exported the key. Every read goes through
+:mod:`novafabric._capsule_fs`, which never follows a link.
 """
 
 from __future__ import annotations
@@ -30,17 +35,34 @@ from pathlib import Path
 
 import yaml
 
+from novafabric import _capsule_fs
+from novafabric._capsule_fs import (
+    CapsuleLinkError,
+    read_capsule_file,
+    read_required_capsule_member,
+)
+
+_OPERATION = "a blob export"
+
 
 class CapsulePackError(Exception):
     """The capsule directory cannot be packed for export."""
 
 
+class CapsulePackLinkError(CapsulePackError, CapsuleLinkError):
+    """The capsule holds a symbolic link; packing never follows one."""
+
+
 def capsule_identifier(capsule_dir: Path) -> str:
     """The capsule's id: ``run_id`` from ``capsule.yaml``, else the dir name."""
-    capsule_yaml = capsule_dir / "capsule.yaml"
-    if capsule_yaml.is_file():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
+    # never the directory name standing in for the recorded run id.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="nova export-blob"
+    )
+    if capsule_text is not None:
         try:
-            meta = yaml.safe_load(capsule_yaml.read_text())
+            meta = yaml.safe_load(capsule_text)
         except yaml.YAMLError:
             meta = None
         if isinstance(meta, dict) and meta.get("run_id"):
@@ -52,33 +74,42 @@ def pack_capsule(capsule_dir: Path) -> bytes:
     """Deterministic tar bytes of *capsule_dir* (read-only over the source).
 
     Entries are sorted by relative POSIX path; mtime/uid/gid are zeroed,
-    uname/gname emptied, modes normalized (0644 files, 0755 dirs). Symlinks are
-    followed and stored as regular files so the archive is self-contained.
+    uname/gname emptied, modes normalized (0644 files, 0755 dirs). Sockets and
+    FIFOs are skipped: they are not capsule content.
+
+    Raises:
+        CapsulePackLinkError: the capsule holds a symlink, including one planted
+            while it is being packed. Nothing is returned.
+        CapsulePackError: *capsule_dir* is not a directory.
     """
     if not capsule_dir.is_dir():
         raise CapsulePackError(f"not a capsule directory: {capsule_dir}")
 
+    listing = _capsule_fs.list_capsule(
+        capsule_dir, operation=_OPERATION, error=CapsulePackLinkError
+    )
+    entries = sorted(
+        [(rel, True) for rel in listing.dirs] + [(rel, False) for rel in listing.files]
+    )
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w", format=tarfile.PAX_FORMAT) as tf:
-        entries = sorted(
-            capsule_dir.rglob("*"), key=lambda p: p.relative_to(capsule_dir).as_posix()
-        )
-        for path in entries:
-            rel = path.relative_to(capsule_dir).as_posix()
+        for rel, is_dir in entries:
             info = tarfile.TarInfo(name=rel)
             info.mtime = 0
             info.uid = 0
             info.gid = 0
             info.uname = ""
             info.gname = ""
-            if path.is_dir():
+            if is_dir:
                 info.type = tarfile.DIRTYPE
                 info.mode = 0o755
                 tf.addfile(info)
-            elif path.is_file():
-                data = path.read_bytes()
-                info.size = len(data)
-                info.mode = 0o644
-                tf.addfile(info, io.BytesIO(data))
-            # Sockets/FIFOs/broken symlinks are skipped: not capsule content.
+                continue
+            data = read_capsule_file(
+                listing.root, rel, operation=_OPERATION, error=CapsulePackLinkError
+            )
+            info.size = len(data)
+            info.mode = 0o644
+            tf.addfile(info, io.BytesIO(data))
     return buf.getvalue()
+

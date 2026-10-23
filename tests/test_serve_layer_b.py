@@ -311,10 +311,12 @@ def test_promote_blocked_records_error(
 
     monkeypatch.setattr(reg_service_mod, "promote_asset", _blocked)
 
+    # staging, not production: production is refused earlier, by the ADR-0312
+    # promote_direct gate (403), and this test is about the eval-gate branch.
     res = client.post(
         f"/api/assets/pytest-model/1.0.0/promote?token={VALID_TOKEN}",
         headers=HEADERS,
-        json={"to_status": "production", "confirmed": True},
+        json={"to_status": "staging", "confirmed": True},
     )
     assert res.status_code == 412
     entries = audit.read_recent(10)
@@ -334,5 +336,8 @@ def test_audit_records_token_fingerprint_not_full_token(client: TestClient) -> N
     assert res.status_code == 200
     entries = audit.read_recent(5)
     assert all(VALID_TOKEN not in json.dumps(e) for e in entries)
-    # The fingerprint should be the first 8 chars of the token.
-    assert any(e.get("actor_token_fp") == VALID_TOKEN[:8] for e in entries)
+    # The fingerprint is a digest of the token, never a prefix of it.
+    from novafabric.serve.auth import token_fingerprint
+
+    assert any(e.get("actor_token_fp") == token_fingerprint(VALID_TOKEN) for e in entries)
+    assert all(VALID_TOKEN[:8] not in json.dumps(e) for e in entries)

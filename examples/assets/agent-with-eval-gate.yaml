@@ -2,7 +2,7 @@ novafabric_spec_version: "1"
 asset_type: agent
 name: support-triage-agent
 version: v1.1.0
-status: staging
+status: development  # new assets always register as development; promote with `nova promote`
 description: "Support triage agent — promoted after passing eval gate"
 tags:
   team: support-platform

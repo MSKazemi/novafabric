@@ -80,7 +80,7 @@ export NOVA_OBJECT_STORE_KEK_PATH=/secure/nova-kek.bin
 ```
 
 With both set, `make_adapter` wraps whichever WORM backend you configured
-(`s3`, `minio`, `ceph_rgw`, `azure_blob`, or `local` — an in-memory test adapter, not WORM) in the encrypting adapter,
+(`s3`, `minio`, `ceph_rgw`, `azure_blob`, `gcs`, or `local` — an in-memory test adapter, not WORM) in the encrypting adapter,
 and every capsule payload is envelope-encrypted before the WORM write. Absent
 that configuration, behavior is **byte-for-byte unchanged**.
 

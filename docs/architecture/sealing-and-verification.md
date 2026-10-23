@@ -37,7 +37,8 @@ flowchart LR
 ## Turning sealing on
 
 Sealing is **opt-in**. `trust/novaseal/config.py:load_signing_profile` looks for
-`NOVAFABRIC_SEAL_CONFIG` and then for `~/.novafabric/novaseal.yaml`. If neither
+`NOVAFABRIC_SEAL_CONFIG` and then for `$NOVAFABRIC_HOME/novaseal.yaml`
+(`~/.novafabric/novaseal.yaml` when `NOVAFABRIC_HOME` is unset). If neither
 exists, capture skips sealing. Sealing never blocks a capture: on any error,
 `capture/finalize.py:seal_capsule` prints a warning and the capsule is kept,
 without `.seal/`. `create_envelope` refuses to sign with a key that does not match
@@ -67,7 +68,9 @@ backend, so the private key never leaves the KMS. See
    file in the capsule except `capsule.yaml` (which carries the result) and
    `.seal/` (which does not exist yet). It records `sha256` and `size_bytes` for
    each, writes the map into the manifest as `evidence_digests`, and rewrites
-   `capsule.yaml`.
+   `capsule.yaml`. The signed payload also names the manifest file it binds,
+   `_novaseal.manifest: capsule.yaml` (reserved seal metadata, never part of
+   `capsule.yaml`), so a verifier knows which file must exist.
 2. **Canonical payload.** `trust/novaseal/__init__.py:NovaSeal.seal` serialises
    the manifest as sorted-key compact JSON. The **`capsule_id`** is the SHA-256 of
    those bytes.
@@ -105,6 +108,28 @@ that behaviour, set it explicitly. The timestamp covers the signed envelope,
 signature included, so it sits outside the signature by design; `nova verify`
 checks that the token's message imprint matches this envelope.
 
+**An intact token is not a trusted time (works today).** Checking the token proves
+it is bound to this envelope and was not edited. It does not prove *who* the TSA
+is: anyone can mint a TSA certificate and sign any `genTime`, for example a
+backdated one. Only a TSA chain that reaches a TSA trust anchor you supply
+(`nova verify --tsa-ca-bundle`, or `tsa_ca_certs` in `novaseal.yaml`) makes the
+time trusted. There is no built-in default TSA trust bundle, and `tsa_url` anchors
+nothing (it is only where seals request tokens). The verifier reports this as
+`timestamp_trust`, separate from `timestamp_ok`:
+
+| `timestamp_trust` | Meaning | `timestamp_ok` |
+|---|---|---|
+| `anchored` | token intact, and its TSA chain reached your TSA anchor at its `genTime` | `true` |
+| `unanchored` | token intact and bound to this envelope; the TSA is not validated, so its time is a claim | `true` |
+| `absent` | no token (timestamping is opt-in) | `null` |
+| `invalid` | the token failed integrity, or failed the anchored chain check | `false` |
+
+`timestamp_ok` keeps its meaning (token integrity) and an unanchored token does
+not change the exit code, because failing every timestamped capsule for every
+verifier without a TSA CA bundle would be a breaking change. Instead the text report
+prints `UNANCHORED` with the claimed `genTime` and TSA name, never `OK`, and
+`nova verify --strict` fails on it.
+
 ## The Merkle log
 
 `trust/novaseal/merkle.py` keeps an **append-only log of seal events**. It is
@@ -115,13 +140,25 @@ not a tree over the files of one capsule.
 - Hashing is SHA-256 with domain separation: `leaf = H(0x00 ‖ entry)` and
   `node = H(0x01 ‖ left ‖ right)`.
 - The tree head is stored in a local SQLite database, by default
-  `~/.novafabric/novaseal-merkle.db` (set with `merkle_db`). A Postgres backend
-  is experimental.
+  `$NOVAFABRIC_HOME/novaseal-merkle.db` (set with `merkle_db`, or override
+  process-wide with `NOVAFABRIC_SEAL_DB_PATH`). A Postgres backend (a
+  `postgresql://` DSN in either place) is experimental.
 - `.seal/log-entry.json` records `leaf_index`, `leaf_hash`, `root_hash`,
   `tree_size` and `entry` for this capsule. New seals also carry the Merkle
   inclusion proof in this file, and the entry is bound to the sealed capsule.
 - `nova seal log verify` checks the log, and `--consistency N` checks a
   consistency proof between tree sizes.
+- `GET /api/seal/log/verify` in `nova serve` checks the same SQLite log
+  read-only: a missing log is a 404 (nothing is created), a Postgres log a 501
+  (use `nova seal log verify`; the DSN is shown without its password), and
+  `capsule_included` is an exact `capsule_id` match, never a pattern. It creates
+  no file: a cleanly closed log (no `-wal`/`-shm` beside it) is opened with
+  SQLite's `immutable=1`, because a plain read-only open of a WAL-mode database
+  leaves both side files behind. While a writer is connected the side files exist
+  and the open uses normal locking instead, since `immutable=1` would ignore leaves
+  committed only to the WAL. Residual: a writer that connects after that check and
+  checkpoints during the read can make the immutable read fail or report an
+  inconsistency (a false alarm, never a hidden leaf).
 
 **The root is versioned (works today, ADR-0313).** A log has one root version for
 its whole life, recorded in the log database and next to every root it hands out
@@ -143,6 +180,12 @@ log's own leaves. A v1 carried proof alone cannot detect a wrong `tree_size`; th
 report notes this. Existing v1 logs stay v1 and keep verifying. NovaFabric
 releases older than ADR-0313 cannot verify a v2 seal's carried proof.
 
+**Moving a host to v2 roots.** Start a new log file (`merkle_db`) and list the
+retired v1 log under `previous_merkle_dbs` in `novaseal.yaml`. Verification then
+checks v1-era capsules against the log that sealed them; nothing is appended to a
+previous log. If you leave it out, a v1 capsule verified on the host reports
+`sealer_log: unverifiable-other-version` (see check 3 below).
+
 A second Merkle construction belongs to the Evidence Bundle.
 `evidence/merkle.py:capsule_merkle_root` computes an RFC 6962-style root over
 **all files** in a capsule (the same tree shape as a v2 log root, over different
@@ -162,26 +205,81 @@ in turn:
 | # | Check | Passes when |
 |---|---|---|
 | 1 | DSSE signature | The envelope signature verifies against the embedded certificate. The signing intent is reported as `signed` only when the copy inside the signed payload (`_novaseal.signing_intent`, ADR-0309) agrees with the entry's label; an edited label fails. A seal made before ADR-0309 reports `label-only`. |
-| 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. If no token is present, the output says `NOT PRESENT`, `timestamp_ok` is `None` (absent, not passed) and the seal stays valid, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly is reported as a structural check only, never as OK. |
-| 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root at its `tree_size` (under its `root_version`) and the entry names this capsule. If a local log is configured, it is checked as well, including that the log's leaves reproduce the recorded tree head (size and root). |
-| 4 | Manifest binding | `capsule.yaml` on disk equals the signed payload, and `capsule_id` matches |
-| 5 | Per-file digests | Every file listed in `evidence_digests` exists and matches its SHA-256. Extra files are listed but do not fail the check. |
+| 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. This is integrity, not trusted time: without a TSA CA bundle the line reads `UNANCHORED` and `timestamp_trust` is `unanchored` (see [RFC 3161 timestamp](#rfc-3161-timestamp)). If no token is present, the output says `NOT PRESENT`, `timestamp_ok` is `None` (absent, not passed) and the seal stays valid, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly (a BER encoding) is reported as a structural check only, never as OK, and still must prove the same bindings: the CMS signature verifies, the signed `messageDigest` equals the hash of the TSTInfo, and the TSTInfo `messageImprint` is this envelope's hash. A signature that cannot be extracted or checked fails (`timestamp_ok` False). |
+| 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root at its `tree_size` (under its `root_version`) and the entry names this capsule. If a local log is configured, it is checked as well: the recorded index must hold this leaf (a manifest sealed twice has the same leaf twice; each copy verifies at its own index), and the log's leaves must reproduce the recorded tree head (size and root). A log that holds other seals by the same signer is the signer's log, whatever its root version. An entry missing from the signer's log of the record's root version **fails**, carried proof or not, and so does a record claiming a newer root version than every signer's log (a v2 record against a v1 log: v2 logs came later). A v1 record on a host whose signer's log is v2 is checked against `previous_merkle_dbs`; without them it keeps its carried-proof result but reports `sealer_log: unverifiable-other-version`. Another signer's log, a fresh log, or no log keeps the carried-proof result. |
+| 4 | Manifest binding | The manifest the capsule was sealed with (`_novaseal.manifest`; `capsule.yaml` for any seal that carries `evidence_digests`) exists and equals the signed payload, and `capsule_id` matches. A missing sealed manifest **fails**. Any other manifest-named file (`capsule.yaml`, `capsule.json`) that the seal does not cover and that differs from the payload **fails**: readers accept `capsule.json` as a manifest, so it is a substitute, not an extra file. Only a seal that names no file (made before `evidence_digests`) reports a missing manifest as `NOT PRESENT`. |
+| 5 | Per-file digests | Every file listed in `evidence_digests` exists and matches its SHA-256. A file that a signed `*_ref` field names (for example `tool_calls_ref: tool-calls.jsonl`) but that was added after sealing **fails**. Other extra files, such as `c2pa-manifest.json` from `nova export-c2pa`, are listed as "not covered by the seal" and do not fail (ADR-0251 §5). |
 
-The exit code is `0` when every check passes and `1` otherwise. Optional
+The exit code is `0` when every check passes, `1` otherwise, and `2` on a usage
+error (an incompatible flag combination, such as `--crl-dir` with no CA bundle). Optional
 hardening flags are experimental:
 
 - `--ca-bundle` validates the signer certificate chain (and raises the reported
   signer trust level, below);
 - `--crl-dir` and `--crl-strict` add offline revocation checks;
-- `--tsa-ca-bundle` validates the TSA chain.
+- `--tsa-ca-bundle` validates the TSA chain (`timestamp_trust: anchored`);
+- `--strict` exits `1` when a passing check rests on an unanchored claim, listed
+  in `unanchored_claims`: a self-asserted signer, an unanchored timestamp,
+  inclusion shown only by the carried proof (or not checked), or
+  `sealer_log: unverifiable-other-version`. A pass under `--strict` needs
+  `--ca-bundle`, a TSA anchor (or no token), and the sealer's log.
+
+**What the sealer's log check can and cannot decide (`sealer_log`).** The record's
+`root_version` lives in `log-entry.json`, which whoever wrote the capsule controls,
+and it is not inside the signature (the log entry is appended after signing; and a
+key holder could sign any value anyway). So the verifier never lets that field
+decide whether a log counts:
+
+| `sealer_log` | Meaning |
+|---|---|
+| `entry-found` | a supplied log holds the entry (`log_inclusion` is `local-log`, or `failed` on a mismatch) |
+| `missing` | the signer's log lacks the entry, or the record claims a newer root version than it — fails |
+| `unverifiable-other-version` | only a newer-version signer's log is available. A genuine pre-migration v1 capsule and a key holder's forgery claiming v1 look the same here. Not a failure by default; `--strict` fails |
+| `not-sealer-log` | the supplied logs hold no seals by this signer (another sealer's log, or a fresh one) |
+| `no-log` | no log on this machine |
+| `not-consulted` | the capsule's own log metadata failed first |
+
+Library callers pass the earlier logs as `verify_seal_dir(..., previous_logs=[...])`,
+or use `verify_with_profile(seal_dir, profile)`, which opens `merkle_db`,
+`previous_merkle_dbs` and `tsa_ca_certs` from `novaseal.yaml` the way
+`nova verify` does. `POST /api/runs/{id}/verify` and the trust radar use
+`trust/novaseal/capsule_verify.verify_capsule`, the same function as `nova verify`. The
+radar shows an unanchored timestamp as a warning, not a passed axis. Verification opens
+a SQLite log read-only (`mode=ro`): it never creates, migrates or writes it. SQLite may
+add its `-wal`/`-shm` files next to a WAL-mode log.
+
+**Readers use the sealed manifest.** The query indexer (`nova query`, `nova trend`, the
+runs list), the in-toto statement builder, the agent graph and
+`GET /api/runs/{id}/children` read a sealed capsule's manifest from the signed payload of
+`.seal/manifest.dsse` (`novafabric/_capsule_manifest.read_capsule_manifest`), never from
+an on-disk `capsule.yaml` or `capsule.json`. A substituted manifest therefore cannot change
+the status, asset or run id they report. They do not check the signature; `nova verify`
+does. The in-toto builder refuses (`UnsealedManifestError`) to attest a sealed capsule
+that carries an unsealed manifest file or signed-ref target.
 
 `nova verify` also accepts an Evidence Bundle `.zip`, and runs the whole recipe
 below: `manifest_hash`, every artifact digest, every attestation's DSSE signature and
 each statement's subject (`evidence/bundle_verify.py`). Because `manifest.json` is not
 signed, the run subject is recomputed from the bundle's `run-capsule/` copy and the lineage
-subject from `edges.jsonl`, rather than read from the manifest. The verifying key ships inside
+subject from `edges.jsonl`, rather than read from the manifest. For the same reason, the
+runs a bundle reports are exactly the runs its verified run statements sign: every
+`subject` entry must match a verified run statement (capsule hash, `run_id` and
+`capsule_path_in_bundle`), no entry may repeat, a legacy top-level `run_id` must be a signed
+run, and a signed run the manifest omits fails. A run statement must sign its
+`predicate.run_id` for a `subject.run_id` label to pass. `manifest.json` is read with a
+64 MiB bound. The verifying key ships inside
 the bundle, so pass `--public-key` to pin the signer; without it the report says the
 signer is not pinned. It also accepts an `export-manifest.json` from a batch export.
+`POST /api/evidence/{bundle_id}/verify` in `nova serve` calls the same
+`verify_bundle_archive`, so the dashboard and the CLI cannot disagree. Its anchor is the
+operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default
+`$NOVAFABRIC_HOME/evidence-trusted-keys.pem`, PEM public keys), never a key in the request:
+`signer_trust` is `anchored`, `unanchored` (no list: consistency only), `untrusted` (fails)
+or `none`. A configured list that cannot be used is an error, not "unanchored". The route
+reports `run_ids` (every signed run) and `run_id` (the signed run when exactly one
+verified, else `null`), never a label from the unsigned manifest. `GET /api/evidence` and
+`GET /api/evidence/{bundle_id}` report the same verifier's verdict as `verified`, cached per
+file identity (device, inode, size, mtime, ctime) and trust list.
 
 **Signer trust level (experimental, ADR-0301).** Besides the pass/fail checks,
 `nova verify` reports what *the verifier* established about who signed, as
@@ -214,8 +312,14 @@ checks that chain. `nova seal bypass` creates a time-limited, audited exception.
 Every promote signer must chain to a pinned CA (`--ca-bundle` or
 `NOVAFABRIC_PROMOTE_CA_BUNDLE`, ADR-0315); with none configured, verification refuses
 (exit 3) unless `--insecure-self-signed` is given for development. A bypass counts
-only when it is signed by an approver in the latest policy, names this capsule and is
-unexpired by its **signed** `valid_until`.
+only when it is signed by an approver in the latest policy, names this capsule, is
+unexpired by its **signed** `valid_until`, and the hash-chained audit log holds its
+`seal.bypass.create` entry and no `seal.bypass.abort` (review r8; opt out with
+`NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1` for a store copied without its log). A
+bypass whose file cannot be stored after its entry was written is withdrawn with a
+`seal.bypass.abort` entry. Appends to the audit log are serialised across threads and
+processes (`fcntl.flock` on the log plus an in-process lock), so concurrent writers
+never fork its hash chain ([NovaSeal configuration §4.1](../novaseal-configuration.md#41-maker-checker-bypass-notifications)).
 `nova seal ratchet` is an opt-in forward-secure per-node key ratchet. All of
 these live in `cli/seal_propose.py`.
 
@@ -224,12 +328,20 @@ these live in `cli/seal_propose.py`.
 `nova export-evidence <capsule> -o bundle.zip` runs
 `evidence/bundle.py:EvidenceBundleBuilder`:
 
-1. **Check the capsule.** The required files, including `redaction-proof.json`,
-   and the `inputs/` and `outputs/` directories must exist. Otherwise the export
-   is refused.
+1. **Check the capsule.** The capsule must hold no symbolic link, and the
+   required files, including `redaction-proof.json`, and the `inputs/` and
+   `outputs/` directories must exist. Otherwise the export is refused, before
+   anything is written. A link would put its *target* (for example
+   `~/.ssh/id_rsa`) into the bundle as capsule content, signed and past
+   redaction; NovaFabric never writes one into a capsule, and a ZIP entry and
+   the capsule Merkle root cannot represent one. The refusal names each link
+   and whether it points inside or outside the capsule, or dangles. The path
+   used to reach the capsule may itself be a link (`runs/latest`).
 2. **Policy gate.** The export decision is recorded in the audit log.
 3. **Stage the contents:** `run-capsule/`, `lineage-subgraph/edges.jsonl`,
-   `schemas/` and a `README.md`.
+   `schemas/` and a `README.md`. The capsule is copied with links kept as links
+   and checked again, so a link that appears after step 1 is refused, never
+   followed.
 4. **Sign attestations.** It writes in-toto Statement v1 envelopes
    (`attestations/run.intoto.json`, `redaction.intoto.json`,
    `lineage.intoto.json`), signed with Ed25519 (`evidence/intoto.py`), each with
@@ -249,7 +361,7 @@ against the ZIP.
 | `run-capsule/` | A copy of the whole capsule directory: `capsule.yaml`, the record streams, `env.lock`, `redaction-proof.json` (the secret-scan record), `inputs/`, `outputs/` and, when the capsule was sealed at capture, `.seal/` |
 | `lineage-subgraph/edges.jsonl` | The capsule's lineage edges (empty when it recorded none) |
 | `schemas/` | The JSON Schemas shipped with the exporting `novafabric` version |
-| `attestations/` | Ed25519-signed in-toto Statement v1 DSSE envelopes: `run` (subject: the capsule Merkle root), `redaction` (subject: the redaction proof's chain hash), `lineage`, and `energy` when the capsule has `energy-receipts.jsonl` (experimental, ADR-0093) |
+| `attestations/` | Ed25519-signed in-toto Statement v1 DSSE envelopes: `run` (subject: the capsule Merkle root), `redaction` (subject: the redaction proof's chain hash), `lineage`, `bundle` (the members statement: the SHA-256 of every other file and of the manifest's fields), and `energy` when the capsule has `energy-receipts.jsonl` (experimental, ADR-0093) |
 | `signatures/` | Each envelope's raw signature (`.sig`) and the signer's public key (`.cert`, PEM) |
 | `manifest.json` | SHA-256 and size of every other file, the attestation and signature index, `subject.capsule_hash`, the verification recipe and `manifest_hash`; with `--with-custody`, the chain-of-custody blocks (experimental, ADR-0095) |
 | `README.md` | The verification recipe in plain text; with `--timestamp`, also the OpenSSL steps for the token. Its digest in `manifest.json` is recorded after that section is added |
@@ -262,19 +374,55 @@ The recipe needs only a SHA-256 tool and an Ed25519 verifier:
 1. Recompute the manifest hash.
 2. Recompute each artifact's SHA-256.
 3. Verify each DSSE envelope over its pre-authentication encoding.
-4. Check that each statement's subject matches `subject.capsule_hash`, and recompute
-   that root from the files under `run-capsule/`.
+4. Check each statement's subject against what its predicate type covers: the run
+   statement's subject is `subject.capsule_hash`, recomputed as the root of the files
+   under `run-capsule/`; the lineage statement's is the SHA-256 of
+   `lineage-subgraph/edges.jsonl`; the redaction statement's is the `chain_hash` in
+   `run-capsule/redaction-proof.json`; an energy-receipts statement (present only when
+   the run recorded energy) covers `run-capsule/energy-receipts.jsonl`. The bundle's
+   own `README.md` carries the same recipe (`evidence/bundle.py`).
+5. Check the members statement (`attestations/bundle.intoto.json`): every file except
+   `manifest.json` and the statement's own three files has the digest it signs, and
+   the manifest's fields hash to its `manifest_core_sha256`.
+
+#### Every member is signed (works today; review r8)
+
+Before the members statement, nothing signed `README.md`, the vendored `schemas/` or
+the manifest's own fields (`verifier_instructions`, `schemas[]`). `manifest.json` is
+not signed and its `manifest_hash` is a self-hash anyone can recompute, so a recipient
+holding a bundle whose README said "Verified by the EU AI Office" and whose
+`run-capsule.schema.json` accepted anything got `PASSED` from `nova verify
+--public-key`. Now:
+
+- **Bundles with a members statement** (every bundle `nova export-evidence`, `nova
+  serve` and `nova server` build from this version on): a rewritten, added or removed
+  member, or an edited manifest field, fails verification. The run statement signs a
+  pointer to the members statement (`members_statement`), so removing the statement
+  fails too. `nova export-evidence --timestamp` re-signs the statement after it adds
+  the token and the README section.
+- **Legacy bundles** (exported before this version; no members statement and no
+  pointer) still pass when their signed content verifies, because rejecting every
+  archived bundle would break ADR-0011's promise that an old bundle stays verifiable.
+  They are never reported as fully verified: `nova verify` prints `PASSED — signed
+  content only` and names the members no signature covers; the API reports
+  `members_signed: false` and `unsigned_members`. Treat those members (always
+  `README.md`, `schemas/` and `manifest.json`'s fields) as unverified. An anchored
+  verification (`--public-key`, or the operator trust list) behaves the same way: the
+  anchor pins who signed the run, lineage and redaction statements, not the files no
+  statement covers.
 
 Optional additions: `--timestamp` (an RFC 3161 token for the bundle), Rekor
-publication when `NOVA_REKOR_URL` is set, and an outer DSSE envelope.
+publication of the run envelope with `--sigstore` when `NOVA_REKOR_URL` is also set
+(skipped with a warning otherwise), and an outer DSSE envelope.
 
 ## Other trust surfaces
 
 | Surface | Maturity | Where |
 |---|---|---|
 | Sigstore keyless signing, `nova seal sign --backend sigstore` and `nova verify --backend sigstore` | experimental, needs the `[sigstore]` extra | `cli/seal_propose.py`, `cli/verify.py` |
-| Rekor transparency-log publication | opt-in (`NOVA_REKOR_URL`), best effort | `promote/rekor_client.py` |
+| Rekor transparency-log publication | opt-in, best effort: `nova seal approve` / `nova seal bypass` publish when `NOVA_REKOR_URL` is set; an evidence bundle also needs `nova export-evidence --sigstore` | `promote/rekor_client.py` |
 | Witness cosigning of tree heads | experimental, library only | `trust/novaseal/witness.py` |
+| Ledger checkpoint Merkle inclusion, `nova ledger verify --merkle-db` | experimental | `trust/ledger/_verify.py` — without `--merkle-db`, exit 0 only means the checkpoint's (unsigned) `merkle` block is self-consistent; a fabricated one-leaf tree passes. With it, the log must hold the checkpoint and reproduce the recorded tree head |
 | PII redaction manifest (`RedactionManifest`, with its `legal_hold_mode` field; there is no capture flag for it) | experimental, library only | `compliance/pii/manifest.py` |
 | Signed subject-proof reports (`nova verify --check-redaction`) | experimental | `cli/redact.py` |
 

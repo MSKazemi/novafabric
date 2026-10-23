@@ -54,18 +54,26 @@ from __future__ import annotations
 
 import enum
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, Final
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DERIVED_ROUTE_BASES",
     "ROUTE_SCOPES",
+    "HeldCredential",
     "Scope",
+    "at_least",
     "build_authz_dependency",
+    "effective_scope",
+    "held_credential",
     "grantable_scopes",
     "identity_source_for",
     "parse_scope",
+    "record_scope",
+    "require_held_scope",
     "required_scope",
     "satisfies",
 ]
@@ -103,27 +111,48 @@ def grantable_scopes() -> frozenset[Scope]:
     return _GRANTABLE
 
 
-def parse_scope(value: str | None, *, default: Scope = Scope.admin) -> Scope:
-    """Coerce a stored or user-supplied scope string to a grantable :class:`Scope`.
+def parse_scope(value: object) -> Scope | None:
+    """Map a stored scope value to a grantable :class:`Scope`, or ``None``.
 
-    An unrecognised value returns *default* rather than raising, because this
-    runs on the request path against data on disk: a hand-edited or
-    future-versioned ``tokens.jsonl`` record must not take the server down. The
-    default is ``admin`` only where the caller is reading a *legacy* record, for
-    which admin is the truthful reading of what that credential could already
-    do (D4). Anywhere a narrower default is correct, pass it.
+    ``None`` means **no scope at all**: the credential authenticates but every
+    non-public route denies it. This runs on the request path against data on
+    disk, so it never raises. It also never *grants* on doubt. It used to fall
+    back to ``admin`` for any unrecognised value, which made a typo such as
+    ``"admn"`` in a hand-edited ``tokens.jsonl`` record a full admin credential.
+
+    Matching is exact: ``"Admin"`` and ``" admin"`` are not ``admin``. ``public``
+    is a route classification, never a held scope, so it maps to ``None`` too.
+
+    A record with **no** ``scope`` key is a different case. It predates
+    ADR-0228 and is legacy ``admin`` (D4); :func:`record_scope` handles that.
     """
-    if not value:
-        return default
+    if not isinstance(value, str):
+        if value is not None:
+            logger.warning("serve authz: non-string scope %r; holding no scope", value)
+        return None
     try:
         scope = Scope(value)
     except ValueError:
-        logger.warning("serve authz: unrecognised scope %r; using %s", value, default.value)
-        return default
+        logger.warning("serve authz: unrecognised scope %r; holding no scope", value)
+        return None
     if scope not in _GRANTABLE:
-        logger.warning("serve authz: scope %r is not grantable; using %s", value, default.value)
-        return default
+        logger.warning("serve authz: scope %r is not grantable; holding no scope", value)
+        return None
     return scope
+
+
+def record_scope(record: Mapping[str, Any]) -> Scope | None:
+    """The scope an issued-token record actually holds.
+
+    * no ``scope`` key: a record written before ADR-0228, so it is legacy
+      ``admin`` (D4). That is the truthful reading of what it could already do;
+    * a ``scope`` key whose value :func:`parse_scope` recognises: that scope;
+    * any other value, including ``null`` or ``""``: ``None``, which grants no
+      scope at all (fail closed).
+    """
+    if "scope" not in record:
+        return LEGACY_SCOPE
+    return parse_scope(record["scope"])
 
 
 def satisfies(held: Scope, required: Scope) -> bool:
@@ -166,8 +195,8 @@ def satisfies(held: Scope, required: Scope) -> bool:
 #
 # Every HTTP route this app can mount, keyed by ``(method, path_template)`` —
 # the template exactly as FastAPI reports it on ``request.scope["route"].path``,
-# router prefixes included. 225 entries at the time of writing: 151 ``read``,
-# 30 ``admin``, 32 ``operate``, 7 ``public``, 5 ``audit``.
+# router prefixes included. 225 entries at the time of writing: 150 ``read``,
+# 31 ``admin``, 31 ``operate``, 7 ``public``, 6 ``audit``.
 #
 # How a route earned its classification, so the next person can apply the same
 # rule instead of guessing:
@@ -197,6 +226,15 @@ def satisfies(held: Scope, required: Scope) -> bool:
 #   ``TemporaryDirectory`` and returns the bytes — checked, not assumed) change
 #   nothing. Classifying them ``operate`` would have locked an auditor out of
 #   the exports that are the point of the auditor persona.
+#   ``POST /api/policy/check`` is ``read`` for the *packaged* policies only:
+#   a request that carries its own Rego (``policy_source``) is refused below
+#   ``admin`` inside the route (:func:`require_held_scope`, serve-01).
+# * **a derived route is never weaker than its base.** An ``/export``,
+#   ``/download`` or format variant returns the same rows as the route it is
+#   derived from, so it needs at least that route's scope. Where one template
+#   stands for many bases (``/api/reports/{report_id}/export`` renders *any*
+#   report), :data:`DERIVED_ROUTE_BASES` resolves the base per request
+#   (serve-02: a read token exported the audit-scoped reports).
 #
 # A route absent from this table is denied to everyone (D3). That is not a
 # failure mode to design around — ``tests/serve/test_authz_route_table.py``
@@ -288,7 +326,8 @@ ROUTE_SCOPES: Final[dict[tuple[str, str], Scope]] = {
     ("GET", "/api/health"): Scope.public,
     ("GET", "/api/holds"): Scope.read,
     ("POST", "/api/holds"): Scope.operate,
-    ("POST", "/api/holds/{hold_id}/release"): Scope.operate,
+    # Release is admin (ADR-0031 §3): once a delete follows it, it is not reversible.
+    ("POST", "/api/holds/{hold_id}/release"): Scope.admin,
     ("GET", "/api/incidents"): Scope.read,
     ("POST", "/api/incidents"): Scope.operate,
     ("GET", "/api/incidents/{incident_id}"): Scope.read,
@@ -330,7 +369,7 @@ ROUTE_SCOPES: Final[dict[tuple[str, str], Scope]] = {
     ("GET", "/api/policy/capture-level"): Scope.read,
     ("POST", "/api/policy/capture-level"): Scope.read,
     ("POST", "/api/policy/check"): Scope.read,
-    ("GET", "/api/policy/explain"): Scope.read,
+    ("GET", "/api/policy/explain"): Scope.audit,
     ("GET", "/api/policy/list"): Scope.read,
     ("GET", "/api/policy/recent-decisions"): Scope.audit,
     ("POST", "/api/policy/sign"): Scope.admin,
@@ -373,6 +412,8 @@ ROUTE_SCOPES: Final[dict[tuple[str, str], Scope]] = {
     ("GET", "/api/reports/run-history"): Scope.read,
     ("GET", "/api/reports/seal-verification"): Scope.read,
     ("GET", "/api/reports/throughput"): Scope.read,
+    # Floor only: the effective scope is the exported report's own — see
+    # DERIVED_ROUTE_BASES and effective_scope().
     ("GET", "/api/reports/{report_id}/export"): Scope.read,
     ("GET", "/api/runs"): Scope.read,
     ("GET", "/api/runs/cost-summary"): Scope.read,
@@ -451,6 +492,64 @@ def required_scope(method: str, path_template: str) -> Scope | None:
     return ROUTE_SCOPES.get((method.upper(), path_template))
 
 
+#: Templates whose capability depends on a path parameter: ``(param, base_fmt)``.
+#: ``GET /api/reports/{report_id}/export`` renders whichever report the id
+#: names, so one table row would grant every report at one scope. That is how a
+#: read token exported the ``audit``-scoped ``dashboard-audit`` and
+#: ``policy-audit`` reports and the ``admin``-scoped ``api-key-inventory``
+#: (serve-02). The export instead needs the scope of ``base_fmt.format(value)``.
+DERIVED_ROUTE_BASES: Final[dict[tuple[str, str], tuple[str, str]]] = {
+    ("GET", "/api/reports/{report_id}/export"): ("report_id", "/api/reports/{}"),
+}
+
+
+def at_least(stronger: Scope, weaker: Scope) -> bool:
+    """True if every credential satisfying *stronger* also satisfies *weaker*."""
+    return all(
+        satisfies(held, weaker) for held in _GRANTABLE if satisfies(held, stronger)
+    )
+
+
+def _join(a: Scope, b: Scope) -> Scope:
+    """The weakest scope that is at least both *a* and *b*.
+
+    ``audit`` and ``operate`` are incomparable, and only ``admin`` is at least
+    both, so the join of an incomparable pair is ``admin``.
+    """
+    if at_least(a, b):
+        return a
+    if at_least(b, a):
+        return b
+    return Scope.admin
+
+
+def effective_scope(
+    method: str, path_template: str, path_params: Mapping[str, Any]
+) -> Scope | None:
+    """The scope this request needs: the table's, raised to a derived route's base.
+
+    For a template in :data:`DERIVED_ROUTE_BASES` the result is the join of the
+    template's own scope and the base route's scope. A base that is **not
+    classified** (an unknown report id, or a report added without a base route)
+    yields ``admin``: a forgotten classification breaks the export for
+    non-admins rather than disclosing it (D3's rule, applied per value).
+    """
+    required = required_scope(method, path_template)
+    rule = DERIVED_ROUTE_BASES.get((method.upper(), path_template))
+    if required is None or rule is None:
+        return required
+    param, base_fmt = rule
+    value = path_params.get(param)
+    if not isinstance(value, str) or not value or "/" in value:
+        return _join(required, Scope.admin)
+    base = required_scope(method, base_fmt.format(value))
+    if base is None:
+        return _join(required, Scope.admin)
+    if base is Scope.public:
+        return required
+    return _join(required, base)
+
+
 # ---------------------------------------------------------------------------
 # Enforcement (D2 hook, D3 deny, D7 audit)
 # ---------------------------------------------------------------------------
@@ -462,14 +561,21 @@ def required_scope(method: str, path_template: str) -> Scope | None:
 LEGACY_SCOPE: Final[Scope] = Scope.admin
 
 
-def resolve_scope(candidate: str, *, server_token: str) -> tuple[str, Scope] | None:
+#: Audit subject for a request that presented no credential this server knows.
+ANONYMOUS_SUBJECT: Final[str] = "anonymous"
+
+
+def resolve_scope(candidate: str, *, server_token: str) -> tuple[str, Scope | None] | None:
     """Map a presented credential to ``(subject, scope)``, or ``None`` if unknown.
 
-    ``None`` means "this is not a credential I recognise" and the caller must
-    **defer**, not deny: the route's own ``verify_token`` will answer 401. A 403
-    from here for an unauthenticated request would be a worse answer to the
-    question the client actually asked (AC6), and it would also leak that the
-    route exists.
+    ``None`` means "this is not a credential I recognise". On a *classified*
+    route the caller must then **defer**, not deny: the route's own
+    ``verify_token`` answers 401. A 403 there would answer the wrong question
+    (AC6). An *unclassified* route is denied whatever this returns (D3).
+
+    A recognised credential whose record carries an unrecognised scope resolves
+    to ``(subject, None)``. It is authenticated and holds **no** scope, so every
+    non-public route denies it (see :func:`record_scope`).
     """
     from novafabric.serve import token_store
     from novafabric.serve.auth import token_matches
@@ -480,7 +586,7 @@ def resolve_scope(candidate: str, *, server_token: str) -> tuple[str, Scope] | N
     if record is None:
         return None
     subject = str(record.get("fingerprint", "")) or "issued"
-    return subject, parse_scope(record.get("scope"), default=LEGACY_SCOPE)
+    return subject, record_scope(record)
 
 
 def identity_source_for(subject: str) -> str:
@@ -489,13 +595,15 @@ def identity_source_for(subject: str) -> str:
     ``local`` is the one shared ``.serve-token`` that every operator pastes into
     a browser, so it identifies a *session*, never a person — the honest answer
     is ``shared-token``. An issued token is minted deliberately, per-holder, with
-    its own fingerprint and scope, so it is ``credential``.
+    its own fingerprint and scope, so it is ``credential``. An anonymous caller is
+    known even less well than a shared token; ``shared-token`` is the weakest grade
+    the audit vocabulary has, so it is recorded as that rather than inventing one.
 
     The distinction is the whole point: an audit log that says ``shared-token``
     is honestly weak evidence, while the same fingerprint under a field named
     ``user`` is dishonestly strong evidence.
     """
-    return "shared-token" if subject == "local" else "credential"
+    return "shared-token" if subject in ("local", ANONYMOUS_SUBJECT) else "credential"
 
 
 def _audit_denial(
@@ -504,7 +612,7 @@ def _audit_denial(
     method: str,
     path: str,
     required: Scope | None,
-    held: Scope,
+    held: Scope | None,
     identity_source: str = "shared-token",
 ) -> None:
     """Record one 403 (D7). Never raises — a failed audit must not mask the denial.
@@ -529,13 +637,71 @@ def _audit_denial(
             # has to reach into a free-form payload to find the scopes is a rule
             # that breaks the next time the payload shape changes.
             required_scope=required.value if required else "unclassified",
-            held_scope=held.value,
+            held_scope=held.value if held else "none",
             resource=f"{method} {path}",
             identity_source=identity_source,
             actor_id=subject if identity_source != "shared-token" else None,
         )
     except Exception:  # noqa: BLE001 — an audit failure must never grant access
         logger.exception("serve authz: failed to record a 403; the denial still stands")
+
+
+@dataclass(frozen=True)
+class HeldCredential:
+    """What the app-level dependency established about an *admitted* request."""
+
+    subject: str
+    scope: Scope
+
+
+def held_credential(connection: Any) -> HeldCredential | None:
+    """The credential :func:`build_authz_dependency` admitted, or ``None``.
+
+    ``None`` means the dependency recorded nothing — a public route, or a
+    request it deferred to the route's own 401. Callers treat that as holding
+    no scope.
+    """
+    held = getattr(getattr(connection, "state", None), "nova_authz", None)
+    return held if isinstance(held, HeldCredential) else None
+
+
+def require_held_scope(connection: Any, required: Scope, *, capability: str) -> None:
+    """Refuse (403, audited) unless the request's credential satisfies *required*.
+
+    For a capability that a route's table scope does not cover on its own:
+    ``POST /api/policy/check`` is ``read`` for the packaged policies, but
+    evaluating the caller's own Rego is ``admin`` (serve-01). The route stays
+    one table row; the stronger requirement is checked here, after the body is
+    known, and denied exactly like a table denial (D7).
+    """
+    from fastapi import HTTPException, status
+
+    held = held_credential(connection)
+    if held is not None and satisfies(held.scope, required):
+        return
+    subject = held.subject if held is not None else ANONYMOUS_SUBJECT
+    scope = getattr(connection, "scope", {}) or {}
+    method = str(scope.get("method", "")).upper()
+    route = getattr(scope.get("route"), "path", None) or "<unmatched>"
+    _audit_denial(
+        subject=subject,
+        method=method,
+        path=f"{route} [{capability}]",
+        required=required,
+        held=held.scope if held is not None else None,
+        identity_source=identity_source_for(subject),
+    )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            f"scope '{required.value}' required to {capability}; "
+            + (
+                f"credential holds '{held.scope.value}'"
+                if held is not None
+                else "credential holds no recognised scope"
+            )
+        ),
+    )
 
 
 def build_authz_dependency(server_token: str) -> Callable[..., Any]:
@@ -548,8 +714,12 @@ def build_authz_dependency(server_token: str) -> Callable[..., Any]:
     into a loud failure.
 
     It runs before each route's own ``Depends(verify_token)`` and is careful not
-    to pre-empt it: an absent or unrecognised credential returns silently so the
-    route answers 401.
+    to pre-empt it on a *classified* route: an absent or unrecognised credential
+    returns silently so the route answers 401. An *unclassified* route is the
+    exception. It is denied to every caller, anonymous ones included (D3),
+    because a route nobody classified may also be a route nobody gave
+    ``verify_token``, and deferring to a dependency that is not there would
+    serve it to the world.
     """
     from fastapi import Header, HTTPException, Query, status
     from starlette.requests import HTTPConnection
@@ -571,9 +741,14 @@ def build_authz_dependency(server_token: str) -> Callable[..., Any]:
         if scope.get("type") != "http":
             # ADR-0228 OQ-2: scope on a long-lived subscription is an open
             # question — mid-stream revocation has no agreed semantics yet — so
-            # WebSockets keep exactly the guard they had: `/api/tv5/ws` and
-            # `/topology/stream` re-check host and token inline before accept.
-            # Standing aside here is the deferral, not an oversight.
+            # WebSockets keep exactly the guard they had. Each WebSocket route
+            # checks the Host header and the server token inline, before
+            # accept(): `/topology/stream` (create_app, `--topology`) and the
+            # TV-5 router's `/api/tv5/ws` (passed to create_app by `nova serve`
+            # via `extra_routers`); the `/{ws_path:path}` catch-all closes every
+            # other socket with 1011. Standing aside here is the deferral, not an
+            # oversight; tests/serve/test_websocket_routes_require_token.py pins
+            # that every mounted WebSocket route rejects a missing or wrong token.
             return
 
         route = scope.get("route")
@@ -582,15 +757,13 @@ def build_authz_dependency(server_token: str) -> Callable[..., Any]:
 
         candidate = extract_bearer(authorization) or t
         resolved = resolve_scope(candidate, server_token=server_token) if candidate else None
+        subject, held = resolved if resolved is not None else (ANONYMOUS_SUBJECT, None)
 
         if path is None:
             # No matched route means no classification is possible. Nothing
             # should reach a dependency without one, so this is a "cannot
             # happen" — which is exactly the branch that must fail closed
-            # rather than fall through to allow.
-            if resolved is None:
-                return
-            subject, held = resolved
+            # rather than fall through to allow, for every caller (D3).
             _audit_denial(
                 subject=subject,
                 method=method,
@@ -603,18 +776,22 @@ def build_authz_dependency(server_token: str) -> Callable[..., Any]:
                 status_code=status.HTTP_403_FORBIDDEN, detail="unclassified route"
             )
 
-        required = required_scope(method, path)
+        required = effective_scope(method, path, scope.get("path_params") or {})
 
         if required is Scope.public:
             return
 
-        if resolved is None:
-            # Unauthenticated, or a credential we do not recognise. Defer: the
-            # route's own auth dependency owns the 401.
+        if required is not None and resolved is None:
+            # A classified route, and no credential we recognise. Defer: the
+            # route's own auth dependency owns the 401 (AC6). An *unclassified*
+            # route does not get this courtesy: it falls through to the D3
+            # denial below, because it may have no auth dependency at all.
             return
 
-        subject, held = resolved
-        if required is not None and satisfies(held, required):
+        if required is not None and held is not None and satisfies(held, required):
+            # Routes that gate a capability *inside* the handler (caller-supplied
+            # Rego on /api/policy/check) read this through require_held_scope.
+            connection.state.nova_authz = HeldCredential(subject=subject, scope=held)
             return
 
         _audit_denial(
@@ -637,7 +814,11 @@ def build_authz_dependency(server_token: str) -> Callable[..., Any]:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 f"scope '{required.value}' required for {method} {path}; "
-                f"credential holds '{held.value}'"
+                + (
+                    f"credential holds '{held.value}'"
+                    if held is not None
+                    else "credential holds no recognised scope"
+                )
             ),
         )
 

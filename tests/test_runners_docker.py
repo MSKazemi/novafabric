@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from _docker_container_env import container_env
 
 from novafabric.runners import ContainerEvalError, DockerRunner, RunnerJobSpec, RunnerSpec
 from novafabric.runners._docker import _coerce_str_dict, _coerce_str_list
@@ -87,6 +88,8 @@ class TestDockerRunnerArgvConstruction:
 
         def _record(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
             captured.append(argv)
+            if argv[1:2] == ["run"]:
+                self._client_env = kwargs.get("env")  # type: ignore[assignment]
             return completed
 
         with patch("subprocess.run", side_effect=_record):
@@ -100,6 +103,13 @@ class TestDockerRunnerArgvConstruction:
         assert captured.index(runs[0]) == 1, "inspect, run, inspect — in that order"
         return runs[0]
 
+    def _container_env(self, spec: RunnerJobSpec) -> dict[str, str]:
+        """What the container receives: ``-e NAME`` resolved against the docker
+        client's environment, ``-e NAME=VALUE`` literally (as docker does)."""
+        self._client_env: dict[str, str] | None = None
+        argv = self._run_with_recorded_argv(spec)
+        return container_env(argv, self._client_env)
+
     def test_includes_run_rm_image_and_command(self, tmp_path: Path) -> None:
         argv = self._run_with_recorded_argv(_spec(
             tmp_path, ["python", "agent.py"],
@@ -112,38 +122,30 @@ class TestDockerRunnerArgvConstruction:
         assert argv[image_idx + 1:] == ["python", "agent.py"]
 
     def test_passes_novafabric_env_into_container(self, tmp_path: Path) -> None:
-        argv = self._run_with_recorded_argv(_spec(
+        env = self._container_env(_spec(
             tmp_path, ["python", "agent.py"],
             runner_options={"image": "x"},
         ))
         # NOVAFABRIC_CAPSULE_DIR is rewritten to the in-container path,
         # not the host path. NOVAFABRIC_SPAN_ID is passed through.
-        assert any(
-            a.startswith("NOVAFABRIC_CAPSULE_DIR=/novafabric/capsule")
-            for a in argv
-        ), f"expected -e NOVAFABRIC_CAPSULE_DIR=/novafabric/capsule, got {argv}"
-        assert any(
-            a == "NOVAFABRIC_SPAN_ID=" + "0" * 16
-            for a in argv
-        )
+        assert env["NOVAFABRIC_CAPSULE_DIR"] == "/novafabric/capsule", env
+        assert env["NOVAFABRIC_SPAN_ID"] == "0" * 16
 
     def test_does_not_leak_arbitrary_host_env(self, tmp_path: Path) -> None:
         """PATH and other host env vars must NOT be auto-forwarded to the
         container — only NOVAFABRIC_* and explicit extra_env."""
-        argv = self._run_with_recorded_argv(_spec(
+        env = self._container_env(_spec(
             tmp_path, ["python", "agent.py"],
             runner_options={"image": "x"},
         ))
-        assert not any(a.startswith("PATH=") for a in argv), (
-            f"PATH leaked into docker env: {[a for a in argv if a.startswith('PATH=')]}"
-        )
+        assert "PATH" not in env, f"PATH leaked into the container: {env}"
 
     def test_extra_env_is_passed(self, tmp_path: Path) -> None:
-        argv = self._run_with_recorded_argv(_spec(
+        spec = _spec(
             tmp_path, ["python", "agent.py"],
             runner_options={"image": "x", "extra_env": {"DEBUG": "1"}},
-        ))
-        assert any(a == "DEBUG=1" for a in argv)
+        )
+        assert self._container_env(spec)["DEBUG"] == "1"
 
     def test_capsule_volume_mounted(self, tmp_path: Path) -> None:
         spec = _spec(
@@ -373,6 +375,7 @@ class TestRunEvalContainer:
             nonlocal call_count
             call_count += 1
             calls.append(argv)
+            self._client_env = kwargs.get("env")
             # First call is supports() → docker info; subsequent call is docker run.
             if call_count == 1:
                 return subprocess.CompletedProcess(
@@ -450,8 +453,9 @@ class TestRunEvalContainer:
     def test_extra_env_passed_as_e_flags(self, tmp_path: Path) -> None:
         calls, _ = self._run(tmp_path, env={"SUITE_LEVEL": "2", "DEBUG": "1"})
         run_argv = calls[1]
-        assert "SUITE_LEVEL=2" in run_argv
-        assert "DEBUG=1" in run_argv
+        # Named on the command line, valued in the docker client's environment.
+        assert container_env(run_argv, self._client_env) == {"SUITE_LEVEL": "2", "DEBUG": "1"}
+        assert "SUITE_LEVEL=2" not in run_argv and "DEBUG=1" not in run_argv
 
     def test_command_appended_after_image(self, tmp_path: Path) -> None:
         cmd = ["python", "-m", "gaia_eval", "--level", "1"]

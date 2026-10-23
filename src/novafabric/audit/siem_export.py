@@ -175,6 +175,15 @@ OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     # ADR-0184 D3: the server started with authentication disabled
     # (anonymous admin) — an application-lifecycle event, not an API call.
     "server.insecure_no_auth": (_APP_LIFECYCLE, "Application Lifecycle", _ACTIVITY_OTHER),
+    # Audit H3: one entry per maker-checker bypass notification attempt (an
+    # outbound delivery through the product surface — mirror alert.delivery).
+    "seal.bypass.notify": (_API_ACTIVITY, "API Activity", 1),
+    # Review r6: a maker-checker bypass was stored (an emergency override of the
+    # two-person rule) — API Activity, Create.
+    "seal.bypass.create": (_API_ACTIVITY, "API Activity", 1),
+    # Review r8: the stored bypass a seal.bypass.create announced could not be
+    # written, so it is withdrawn (compensating entry) — API Activity, Delete.
+    "seal.bypass.abort": (_API_ACTIVITY, "API Activity", 4),
 }
 
 #: Conservative fallback for event types not (yet) in the map: API Activity,
@@ -399,8 +408,11 @@ def _ocsf_actor(
     """Render the actor without overstating how well it is known (ADR-0231 D3).
 
     This function exists because the previous mapping put ``actor_token_fp`` —
-    the first 8 characters of the **one shared token** every operator pastes into
-    a browser — directly into ``actor.user.name``. A SIEM renders that in a
+    a fingerprint of the **one shared token** every operator pastes into a
+    browser — directly into ``actor.user.name``. (That fingerprint was once the
+    token's first 8 characters; ``nova serve`` now writes a domain-separated
+    digest, ``serve.auth.token_fingerprint``, so ``uid`` never carries any part
+    of a secret.) A SIEM renders that in a
     column headed *User*, and an analyst reads it as a person. It is not: with a
     shared token every record carries the same fingerprint, so the log proves
     *something happened* and can never prove *who*.

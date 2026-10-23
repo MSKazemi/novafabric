@@ -10,6 +10,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from novafabric._safe_path import atomic_write_bytes, write_private_file
+
 
 class LocalSigner:
     """Local ed25519 signer that satisfies the dsse_sign signer protocol."""
@@ -37,12 +39,7 @@ class LocalSigner:
         return self._public_pem
 
 
-def generate_keypair(out_dir: Path) -> tuple[Path, Path]:
-    """Generate a fresh ed25519 keypair into out_dir.
-
-    Returns (private_pem_path, public_pem_path).
-    """
-    out_dir.mkdir(parents=True, exist_ok=True)
+def _new_keypair_pem() -> tuple[bytes, bytes]:
     key = Ed25519PrivateKey.generate()
     private_pem = key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -53,12 +50,50 @@ def generate_keypair(out_dir: Path) -> tuple[Path, Path]:
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
+    return private_pem, public_pem
+
+
+def generate_keypair(out_dir: Path) -> tuple[Path, Path]:
+    """Generate a fresh ed25519 keypair into out_dir.
+
+    The private key is written mode ``0o600`` from its first byte, atomically,
+    and never through a link planted at its name.
+
+    Returns (private_pem_path, public_pem_path).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    private_pem, public_pem = _new_keypair_pem()
     priv_path = out_dir / "ed25519.pem"
     pub_path = out_dir / "ed25519.pub.pem"
-    priv_path.write_bytes(private_pem)
-    pub_path.write_bytes(public_pem)
-    priv_path.chmod(0o600)
+    write_private_file(priv_path, private_pem)
+    atomic_write_bytes(pub_path, public_pem)
     return priv_path, pub_path
+
+
+def public_key_path_for(private_key_path: Path) -> Path:
+    """``signing_key.pem`` -> ``signing_key.pub.pem`` (the public half beside a key)."""
+    stem = private_key_path.name.removesuffix(".pem")
+    return private_key_path.with_name(f"{stem}.pub.pem")
+
+
+def ensure_signing_key(private_key_path: Path) -> Path:
+    """Return *private_key_path*, creating an ed25519 key there first if none exists.
+
+    The key is created mode ``0o600`` with an exclusive, atomic, no-follow write,
+    so two concurrent callers never overwrite each other's key and a link planted
+    at the name is never written through. The public half is written beside it
+    (:func:`public_key_path_for`). An existing key is used as it is.
+    """
+    if private_key_path.exists():
+        return private_key_path
+    private_key_path.parent.mkdir(parents=True, exist_ok=True)
+    private_pem, public_pem = _new_keypair_pem()
+    try:
+        write_private_file(private_key_path, private_pem, exclusive=True)
+    except FileExistsError:
+        return private_key_path  # a concurrent caller created it first
+    atomic_write_bytes(public_key_path_for(private_key_path), public_pem)
+    return private_key_path
 
 
 def verify_with_pem(public_pem: bytes, pae_bytes: bytes, signature: bytes) -> bool:

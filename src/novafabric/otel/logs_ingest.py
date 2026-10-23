@@ -564,9 +564,19 @@ def register_otlp_logs_route(app: Any, *, capsule_dir: Path, verify_token: Any) 
 
     async def otlp_ingest_logs(request: Request) -> dict[str, Any]:
         """Ingest an OTLP logs export into the sidecar log store (ADR-0293, experimental)."""
+        import asyncio  # noqa: PLC0415
+
+        from novafabric.serve.body_limits import read_body_capped  # noqa: PLC0415
+
+        # Bounded read, 413 past the cap: ``await request.body()`` buffered the
+        # whole body before the size check in ingest_otlp_logs_body could run.
+        # The module global is read per request so the cap stays patchable.
+        body = await read_body_capped(request, MAX_REQUEST_BYTES)
         try:
-            return ingest_otlp_logs_body(
-                await request.body(),
+            # Off the event loop: decoding and the sidecar-store appends are sync IO.
+            return await asyncio.to_thread(
+                ingest_otlp_logs_body,
+                body,
                 request.headers.get("content-type", ""),
                 capsule_dir=capsule_dir,
             )

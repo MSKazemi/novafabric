@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import get_current_writer
+from novafabric.capture.hooks._fail_open import MODEL_CALLS_STREAM, fail_open
 from novafabric.capture.hooks._finish_reason import (
     attach_provider_finish_reasons,
     canonical_finish_reason,
@@ -28,6 +29,7 @@ from novafabric.capture.hooks._sdk_streams import (
     RESPONSE_STATUS_EXT,
     STREAM_ERROR_EVENT_EXT,
     AsyncRecordingStream,
+    CaptureBinding,
     OpenAIChatStreamAccumulator,
     OpenAIResponsesStreamAccumulator,
     RecordingStream,
@@ -48,6 +50,10 @@ from novafabric.cost.usage_types import usage_from_openai
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
+
+
+#: The hook name in fail-open warnings and drop accounting.
+_HOOK = "openai"
 
 
 def _now() -> str:
@@ -153,6 +159,9 @@ class OpenAIHook:
         #: The sync ``chat.completions.create`` original (kept for callers).
         self._original: Any = None
         self._patched: list[tuple[Any, str, Any]] = []
+        #: Set by :meth:`uninstall`: the capture this hook served has ended, so a
+        #: stream it opened outside any capture scope records nothing after it.
+        self._torn_down = False
 
     def install(self) -> None:
         for module_name, class_name, attr, surface, is_async in _TARGETS:
@@ -173,6 +182,8 @@ class OpenAIHook:
             @functools.wraps(original)
             async def patched_async(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
                 bound = original.__get__(inner_self, type(inner_self))
+                if args:  # see the sync wrapper: the SDK gets the call as written
+                    return await bound(*args, **kwargs)
                 return await hook_self._intercept_async(
                     surface, bound, _base_url(inner_self), kwargs
                 )
@@ -182,13 +193,24 @@ class OpenAIHook:
         @functools.wraps(original)
         def patched(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
             bound = original.__get__(inner_self, type(inner_self))
+            if args:
+                # The SDK methods are keyword-only, so a positional call is the
+                # SDK's to reject. It used to be recorded with the positional
+                # arguments silently DROPPED -- a call the SDK refuses succeeded
+                # under capture. Pass it through exactly as written, unrecorded.
+                return bound(*args, **kwargs)
             return hook_self._intercept_surface(
                 surface, bound, _base_url(inner_self), kwargs
             )
 
         return patched
 
+    def is_live(self) -> bool:
+        """False once :meth:`uninstall` has run (see ``CaptureBinding``)."""
+        return not self._torn_down
+
     def uninstall(self) -> None:
+        self._torn_down = True
         while self._patched:
             owner, attr, original = self._patched.pop()
             try:
@@ -212,17 +234,24 @@ class OpenAIHook:
             with sdk_call_scope(call_id):
                 response = original_bound(**kwargs)
         except Exception as exc:
-            self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
-                               kwargs, exc, endpoint, surface=surface, call_id=call_id)
+            # Fail-open: a failed error record must not replace the SDK's own
+            # exception, which re-raises unchanged (same object, no chaining).
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
+                                   kwargs, exc, endpoint, surface=surface, call_id=call_id)
             raise
         if kwargs.get("stream") is True and is_sync_stream(response):
-            acc = self._accumulator(surface)
-            return RecordingStream(
-                response, acc,
-                self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id, acc),
-            )
-        self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
-                         kwargs, response, endpoint, call_id=call_id)
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                acc = self._accumulator(surface)
+                return RecordingStream(
+                    response, acc,
+                    self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id, acc),
+                    CaptureBinding.capture(self.is_live),
+                )
+            return response  # the recording wrapper failed: hand back the raw stream
+        with fail_open(_HOOK, MODEL_CALLS_STREAM):
+            self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
+                             kwargs, response, endpoint, call_id=call_id)
         return response
 
     async def _intercept_async(
@@ -235,17 +264,22 @@ class OpenAIHook:
             with sdk_call_scope(call_id):
                 response = await original_bound(**kwargs)
         except Exception as exc:
-            self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
-                               kwargs, exc, endpoint, surface=surface, call_id=call_id)
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
+                                   kwargs, exc, endpoint, surface=surface, call_id=call_id)
             raise
         if kwargs.get("stream") is True and is_async_stream(response):
-            acc = self._accumulator(surface)
-            return AsyncRecordingStream(
-                response, acc,
-                self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id, acc),
-            )
-        self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
-                         kwargs, response, endpoint, call_id=call_id)
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                acc = self._accumulator(surface)
+                return AsyncRecordingStream(
+                    response, acc,
+                    self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id, acc),
+                    CaptureBinding.capture(self.is_live),
+                )
+            return response
+        with fail_open(_HOOK, MODEL_CALLS_STREAM):
+            self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
+                             kwargs, response, endpoint, call_id=call_id)
         return response
 
     @staticmethod
@@ -262,12 +296,13 @@ class OpenAIHook:
             response: Any, count: int, first_ms: int | None, complete: bool,
             error: BaseException | None = None,
         ) -> None:
-            self._record_for(
-                surface, started, _now(), int((time.monotonic() - t0) * 1000),
-                kwargs, response, endpoint, stream_info=(count, first_ms, complete),
-                call_id=call_id, stream_error=error,
-                error_event=getattr(accumulator, "error_event", None),
-            )
+            with fail_open(_HOOK, MODEL_CALLS_STREAM):
+                self._record_for(
+                    surface, started, _now(), int((time.monotonic() - t0) * 1000),
+                    kwargs, response, endpoint, stream_info=(count, first_ms, complete),
+                    call_id=call_id, stream_error=error,
+                    error_event=getattr(accumulator, "error_event", None),
+                )
 
         return done
 

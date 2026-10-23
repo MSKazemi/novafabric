@@ -16,11 +16,11 @@ What a NovaFabric deployment consists of, and who owns its durability:
 
 | Data | Where | Durability owner |
 |---|---|---|
-| Registry + local capsules | `~/.novafabric/` (SQLite `registry.db`, `runs/`) | this runbook |
+| Registry + local capsules | `$NOVAFABRIC_HOME` (`~/.novafabric/`: SQLite `registry.db`, `capsules/`, legacy `runs/`) and `$NOVAFABRIC_CAPSULE_DIR` when set | this runbook |
 | Server/metadata DB | Postgres (or SQLite in local mode) | Postgres tooling + this runbook |
 | Capsule objects (WORM) | S3/Azure/GCS/local object store | bucket versioning/replication |
-| Signing keys | HSM / KMS / `~/.novafabric/keys/` | [NovaSeal Key Management](../novaseal-key-management.md) — **never** part of a data backup |
-| Config | `nova-server.yaml` + env secrets | this runbook (config yes, secrets via your secret manager) |
+| Signing keys | Cloud KMS (AWS KMS, Azure Key Vault, GCP KMS) / `$NOVAFABRIC_HOME/keys/` | [NovaSeal Key Management](../novaseal-key-management.md) — **never** part of a data backup by default |
+| Config | `~/.config/novafabric/server.yaml` (or the `--config` path) + env secrets | this runbook (config yes, secrets via your secret manager) |
 
 ---
 
@@ -36,8 +36,14 @@ SQLite files must not be copied while a writer is active. Stop `nova serve` /
 ```bash
 tar czf novafabric-local-$(date +%F).tar.gz \
     ~/.novafabric/registry.db \
+    ~/.novafabric/capsules/ \
     ~/.novafabric/runs/
 ```
+
+`capsules/` is where `nova capture` writes; `runs/` is the other capsule directory
+`nova backup` archives (`backup/create.py::_CAPSULE_DIRS`). If `NOVAFABRIC_CAPSULE_DIR` is set, add that directory too: capture writes
+there instead of `~/.novafabric/capsules/`. `nova backup create` (Part 2) covers both
+automatically.
 
 Restore = untar to the same paths, then verify (see §1.5). If you cannot stop
 the writer, use SQLite's online backup (`sqlite3 ~/.novafabric/registry.db
@@ -71,9 +77,10 @@ which first takes a `db.pre-restore.pgdump` safety dump) →
 `pg_restore --clean --if-exists --single-transaction` (failure rolls back —
 target unchanged) → `alembic upgrade head` → verification (row counts vs the
 manifest, RLS re-applied and proven, schema-skew
-comparator `ok`, storage check). Exit codes: `0` success · `1` a step failed
-· `2` usage error · `3` set invalid/wrong profile · `4` tooling
-missing/incompatible · `5` target-state refusal. The DSN is treated as a
+comparator `ok`, storage check). Exit codes: `0` success · `1` any failure (an
+invalid set, missing tooling, a refused non-empty target, or a failed step — the
+message and per-step receipts say which) · `2` a manifest-only set whose bucket is
+unreachable, or a usage error (`cli/backup.py`). The DSN is treated as a
 secret throughout — never logged, scrubbed from any surfaced stderr.
 
 Home members in the set (registry snapshot, capsules) are restored only when
@@ -111,7 +118,7 @@ tier. Two properties matter for restore:
 ### 1.4 Keys — backed up separately, never with data
 
 **Status: works today.** Follow the
-[NovaSeal Key Management Guide](../novaseal-key-management.md) (HSM-backed or
+[NovaSeal Key Management Guide](../novaseal-key-management.md) (cloud KMS or
 software keystore). Two rules this runbook enforces:
 
 1. **No private key ever enters a data backup.** A restored deployment
@@ -121,6 +128,11 @@ software keystore). Two rules this runbook enforces:
    ([ADR-0134](../decisions.md)),
    restoring an older key escrow must not resurrect shredded data — check the
    retention decision log before re-importing any archived key material.
+   (Retention `crypto-shred` is **experimental**. It destroys a key only for capsules
+   captured with `nova capture --pii-subject`, when the policy sets
+   `include_capture_capsules: true` and `NOVA_PII_PEPPER` is set; otherwise it records
+   `no_dek` or `skipped` — see [Retention scheduler](../cli-reference.md#retention-scheduler-adr-0134).
+   Keys destroyed that way or by `nova pii erase` are what this rule protects.)
 
 ### 1.5 Verify after restore — restore is not done until this passes
 
@@ -130,7 +142,7 @@ is *checkable*:
 ```bash
 nova doctor --check-storage        # backend, schema revision, migration state
 nova seal log verify               # Merkle log integrity
-nova ledger verify                 # accountability ledger chains (ADR-0094)
+nova ledger verify <run-dir>       # accountability ledger chains, per capsule (ADR-0094)
 nova validate <restored-run-dir>   # spot-check capsules
 ```
 
@@ -164,7 +176,9 @@ nova import ./exports/dr-2026-07 --public-key export.pub.pem --dry-run
 nova import ./exports/dr-2026-07 --public-key export.pub.pem
 ```
 
-The import is fail-closed (a tampered or incomplete batch refuses whole),
+The import is fail-closed (a tampered or incomplete batch refuses whole, and so
+does a member `capsule_id` that is not one plain directory name, so no member can
+land outside the store),
 idempotent by content address (interrupted imports resume on re-run), never
 overwrites a diverged local capsule (collisions are reported, exit 5), and
 reindexes lineage + the dashboard runs cache automatically. Every run — dry
@@ -210,6 +224,18 @@ Governed by [ADR-0181](../decisions.md)
   cannot be resurrected from an older backup) → the §1.5 verification chain
   (doctor storage check + `seal log verify` when a Merkle log exists). The
   restore reports ok **only when verification passes**; exit 1 otherwise.
+
+  The replay destroys a key only on evidence it can check (works today). A
+  decision log whose audit hash chain does not verify contributes no record, and
+  the step fails. The chain is unkeyed: it catches an edited or appended line,
+  not a writer who rewrites the whole chain. A record's erasure receipt must be a
+  regular file named `<item_id>.receipt.json` for that record; a symbolic link
+  or another item's receipt makes the record unresolvable, and the step fails.
+  **Legal holds win.** If any hold is active, in the deployment's hold store or
+  in the restored home's `registries/`, no resurrected key is destroyed and the
+  step fails, naming the holds. Destruction cannot be undone, and only a person
+  can decide what the hold requires. Release the hold, or establish that it does
+  not cover those subjects, then restore again.
 - `nova restore <set.tar.gz> --dsn <target> [--force] [--home PATH]` —
   **pg-dump profile (experimental, ADR-0217)**: the automated §1.2 restore,
   auto-detected from the manifest — verified set, pre-flight + safety dump,
@@ -228,6 +254,17 @@ log is skipped with a signed coverage row and covered by the server backup),
 hash-chained audit log, and a secret-redacted config. The signed manifest
 carries a **coverage table** — absences and skips are recorded evidence,
 never silence.
+
+**Capsule store outside the home (works today):** `nova backup create` finds
+capsules the way `nova capture` writes them — `$NOVAFABRIC_CAPSULE_DIR` when
+set, else `<home>/capsules`. A store outside the home (the Docker layout keeps
+capsules in `/data/capsules`) is archived under `external/capsule-dir/`
+(member origin `capsule-dir`, manifest schema 0.2.1), and the `capsules`
+coverage row names the directory. `nova restore` puts those capsules back by
+the same rule on the target: into `$NOVAFABRIC_CAPSULE_DIR` when set there,
+else `<target home>/capsules`. An existing capsule file is never overwritten
+without `--force`, which moves it aside under `.pre-restore-…/external/capsule-dir/`.
+Before this fix a Docker deployment's set recorded `capsules: absent`.
 
 > **Custody note:** because `dek.db` (raw per-subject DEKs) travels in the
 > default set, a backup set is a **sensitive artifact** — store it encrypted

@@ -35,16 +35,22 @@ Production TSA configuration (ADR-0070):
 
 Degraded mode:
   A token the strict parser rejects (BER encodings, unusual structures) falls
-  back to the pre-v0.103 structural check — the hash appears in the token and
-  any CMS signature found verifies — and is reported with ``strict=False``
-  (``nova verify`` prints "structural check only"), never as a plain OK. Until
-  v0.103 *every* token took that path, which accepted a genuine token whose
+  back to a lenient-encoding check and is reported with ``strict=False``
+  (``nova verify`` prints "structural check only"), never as a plain OK. It is
+  lenient about encoding only: the CMS signature must verify, the signed
+  ``messageDigest`` must equal the hash of the TSTInfo, and the TSTInfo
+  ``messageImprint`` (read positionally) must be SHA-256(dsse_bytes). A
+  signature that cannot be extracted or checked fails. Until v0.103 *every*
+  token took a weaker form of that path, which accepted a genuine token whose
   TSTInfo imprint had been swapped and a response with no TSA signature at all
-  (audit finding S3, 2026-10-01).
+  (audit finding S3, 2026-10-01); through v0.106.0 the fallback still treated
+  an unverifiable signature as valid and still scanned for the imprint, so a
+  single BER byte reopened both.
 """
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import logging
 import secrets
@@ -229,6 +235,12 @@ class TimestampCheck:
     ok: bool
     strict: bool
     reason: str
+    # Additive: what the token *claims* — its genTime and the subject of the
+    # embedded TSA certificate. Unverified claims of the token unless a TSA trust
+    # anchor validated the chain (``verify_tsa_trust_chain``); a self-made TSA can
+    # put any time and any name here. None when the token was not strictly parsed.
+    gen_time: datetime.datetime | None = None
+    tsa_subject: str | None = None
 
 
 def check_timestamp(tsr_bytes: bytes, dsse_bytes: bytes) -> TimestampCheck:
@@ -278,27 +290,180 @@ def check_timestamp(tsr_bytes: bytes, dsse_bytes: bytes) -> TimestampCheck:
     try:
         integrity = verify_tsa_token_integrity(tsr_bytes, expected_hash)
     except TsaTokenError as exc:
-        legacy_ok = _legacy_structural_check(tsr_bytes, expected_hash)
+        legacy = _legacy_structural_check(tsr_bytes, expected_hash)
         return TimestampCheck(
-            legacy_ok,
+            legacy.ok,
             False,
             f"token not strictly parseable ({exc}); structural check only "
-            f"({'imprint found' if legacy_ok else 'failed'})",
+            f"({legacy.reason})",
         )
-    return TimestampCheck(integrity.valid, True, integrity.reason)
+    return TimestampCheck(
+        integrity.valid,
+        True,
+        integrity.reason,
+        gen_time=integrity.gen_time,
+        tsa_subject=integrity.signer_subject,
+    )
 
 
-def _legacy_structural_check(tsr_bytes: bytes, expected_hash: bytes) -> bool:
-    """Pre-v0.103 best-effort check, kept only for tokens the strict parser rejects."""
-    if not _extract_message_imprint(tsr_bytes, expected_hash):
-        return False
+@dataclass(frozen=True)
+class _LegacyCheck:
+    """Outcome of :func:`_legacy_structural_check`: verdict plus a one-line reason."""
+
+    ok: bool
+    reason: str
+
+
+#: DER TLVs the degraded path matches positionally (tag + length + OID content).
+_OID_TST_INFO_TLV = b"\x06\x0b\x2a\x86\x48\x86\xf7\x0d\x01\x09\x10\x01\x04"  # id-ct-TSTInfo
+_OID_MESSAGE_DIGEST_TLV = b"\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x09\x04"  # messageDigest
+_OID_SHA256_TLV = b"\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01"
+_DIGEST_ALGORITHMS: dict[bytes, str] = {
+    _OID_SHA256_TLV: "sha256",
+    b"\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x02": "sha384",
+    b"\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x03": "sha512",
+}
+
+
+def _legacy_structural_check(tsr_bytes: bytes, expected_hash: bytes) -> _LegacyCheck:
+    """Degraded check for a token the strict parser rejects (ADR-0297 §S3).
+
+    Kept so a genuine token with a BER-only encoding still verifies, reported
+    ``strict=False``. It is lenient about *encoding* only, never about what is
+    bound to what. Every link of the chain must hold, or the token fails:
+
+    1. the TSA's CMS signature over the signed attributes **verifies** — a
+       signature that cannot be extracted or checked (no certificate, unknown
+       algorithm, truncated structure) is a failure, not a pass;
+    2. the signed ``messageDigest`` attribute equals the hash of the
+       ``TSTInfo`` the token carries (so the TSTInfo is the one the TSA signed);
+    3. that ``TSTInfo``'s ``messageImprint`` — read positionally, never found by
+       scanning — is SHA-256 of *these* envelope bytes.
+
+    Until this was tightened, (1) accepted "could not extract" as valid and
+    (2)–(3) were a scan for the hash anywhere in the response, so any BER byte
+    re-opened audit finding S3: a genuine token for envelope A, its imprint
+    swapped to B, verified as a timestamp of B.
+    """
+    token_raw = _extract_token_raw(tsr_bytes)
+    sd_value = _extract_signed_data_value(token_raw) if token_raw is not None else None
+    if sd_value is None:
+        return _LegacyCheck(False, "failed: no CMS SignedData in the token")
+    tst_der = _extract_tst_info(sd_value)
+    if tst_der is None:
+        return _LegacyCheck(False, "failed: no id-ct-TSTInfo content in the token")
+    imprint_ok = _tst_imprint_matches(tst_der, expected_hash)
+    if not imprint_ok:
+        return _LegacyCheck(
+            False, "failed: TSTInfo messageImprint is not SHA-256 of these envelope bytes"
+        )
+    si_value = _extract_signer_info_value(sd_value)
+    md_check = _message_digest_matches(si_value, tst_der) if si_value is not None else None
+    if md_check is None:
+        return _LegacyCheck(
+            False, "failed: no messageDigest signed attribute could be read from SignerInfo"
+        )
+    if not md_check:
+        return _LegacyCheck(
+            False, "failed: signed messageDigest does not match the TSTInfo in the token"
+        )
     sig_ok = _verify_tsa_signature(tsr_bytes)
     if sig_ok is None:
-        logger.debug(
-            "verify_timestamp: CMS SignerInfo extraction failed; "
-            "falling back to structural + hash checks only"
+        return _LegacyCheck(
+            False,
+            "failed: the TSA signature could not be verified (no usable signer "
+            "certificate, unsupported algorithm, or malformed SignerInfo)",
         )
-    return sig_ok is not False
+    if not sig_ok:
+        return _LegacyCheck(False, "failed: TSA signature is invalid")
+    return _LegacyCheck(True, "signature, messageDigest and imprint verified")
+
+
+def _extract_tst_info(sd_value: bytes) -> bytes | None:
+    """Return the ``TSTInfo`` DER from ``SignedData.encapContentInfo``, positionally.
+
+    SignedData ::= SEQUENCE { version, digestAlgorithms SET,
+                              encapContentInfo SEQUENCE { eContentType, [0] eContent },
+                              ... }
+    """
+    children = _iter_children(sd_value)
+    if len(children) < 3 or children[0][0] != 0x02 or children[1][0] != 0x31:
+        return None
+    eci_tag, _, _, eci_value = children[2]
+    if eci_tag != 0x30:
+        return None
+    eci = _iter_children(eci_value)
+    if len(eci) != 2:
+        return None
+    oid_tag, oid_start, oid_end, _ = eci[0]
+    if oid_tag != 0x06 or eci_value[oid_start:oid_end] != _OID_TST_INFO_TLV:
+        return None
+    explicit_tag, _, _, explicit_value = eci[1]
+    if explicit_tag != 0xA0:
+        return None
+    inner = _iter_children(explicit_value)
+    if len(inner) != 1 or inner[0][0] != 0x04:
+        return None
+    return inner[0][3]
+
+
+def _tst_imprint_matches(tst_der: bytes, expected_hash: bytes) -> bool:
+    """TSTInfo ::= SEQUENCE { version, policy, messageImprint {alg, hashedMessage}, ... }."""
+    try:
+        tag, _, tst_value = _read_tlv(tst_der, 0)
+    except (IndexError, ValueError):
+        return False
+    fields = _iter_children(tst_value) if tag == 0x30 else []
+    if len(fields) < 3 or fields[0][0] != 0x02 or fields[1][0] != 0x06 or fields[2][0] != 0x30:
+        return False
+    imprint = _iter_children(fields[2][3])
+    if len(imprint) != 2 or imprint[0][0] != 0x30 or imprint[1][0] != 0x04:
+        return False
+    alg_value = imprint[0][3]
+    alg_kids = _iter_children(alg_value)
+    if not alg_kids or alg_value[alg_kids[0][1] : alg_kids[0][2]] != _OID_SHA256_TLV:
+        return False
+    return imprint[1][3] == expected_hash
+
+
+def _message_digest_matches(si_value: bytes, tst_der: bytes) -> bool | None:
+    """Compare SignerInfo's signed ``messageDigest`` with the hash of *tst_der*.
+
+    Reads the same signed attributes :func:`_verify_tsa_signature` verifies
+    (via :func:`_parse_signer_info`) and the SignerInfo ``digestAlgorithm``
+    positionally. Returns None when either cannot be read, or when the
+    attribute is absent, repeated, or multi-valued.
+    """
+    si = _iter_children(si_value)
+    if len(si) < 3 or si[0][0] != 0x02 or si[1][0] not in (0x30, 0x80) or si[2][0] != 0x30:
+        return None
+    alg_value = si[2][3]
+    alg_kids = _iter_children(alg_value)
+    if not alg_kids:
+        return None
+    hash_name = _DIGEST_ALGORITHMS.get(alg_value[alg_kids[0][1] : alg_kids[0][2]])
+    parsed = _parse_signer_info(si_value)
+    if hash_name is None or parsed is None:
+        return None
+    signed_attrs_raw = parsed[0]
+    try:
+        _, _, attrs_value = _read_tlv(signed_attrs_raw, 0)
+    except (IndexError, ValueError):
+        return None
+    digests: list[bytes] = []
+    for tag, _, _, attr_value in _iter_children(attrs_value):
+        if tag != 0x30:
+            return None
+        attr = _iter_children(attr_value)
+        if len(attr) != 2 or attr_value[attr[0][1] : attr[0][2]] != _OID_MESSAGE_DIGEST_TLV:
+            continue
+        values = _iter_children(attr[1][3]) if attr[1][0] == 0x31 else []
+        if len(values) != 1 or values[0][0] != 0x04:
+            return None
+        digests.append(values[0][3])
+    if len(digests) != 1:
+        return None
+    return digests[0] == hashlib.new(hash_name, tst_der).digest()
 
 
 def verify_timestamp(tsr_bytes: bytes, dsse_bytes: bytes) -> bool:

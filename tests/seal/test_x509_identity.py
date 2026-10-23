@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import datetime
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -34,6 +35,8 @@ from cryptography.hazmat.primitives.serialization import (
 from cryptography.x509.oid import NameOID
 
 from novafabric.trust.novaseal.x509_identity import (
+    X509IdentityError,
+    X509Signature,
     X509SigningIdentity,
     verify_x509_signature,
 )
@@ -121,3 +124,68 @@ def test_empty_pinned_set_rejects_everything() -> None:
     sig = identity.sign(b"payload")
     result = verify_x509_signature(b"payload", sig, pinned_fingerprints=set())
     assert result.valid is False
+
+
+# ---------------------------------------------------------------------------
+# Audit L16 (2026-10-22): from_pem accepted any EC curve and any RSA size, and
+# sign() labelled every EC signature "ecdsa-p256-sha256" — a P-384 signature was
+# published as P-256. Unsupported keys are refused at load, and the verifier no
+# longer accepts a label that does not match the certificate's key.
+# ---------------------------------------------------------------------------
+
+
+def _pem(key: object) -> bytes:
+    return key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())  # type: ignore[attr-defined]
+
+
+class TestUnsupportedKeysAreRefused:
+    def test_a_p384_key_is_refused_not_mislabelled(self) -> None:
+        key = ec.generate_private_key(ec.SECP384R1())
+        with pytest.raises(X509IdentityError, match="secp384r1"):
+            X509SigningIdentity.from_pem(_pem(key), _self_signed(key))
+
+    def test_an_rsa_key_under_2048_bits_is_refused(self) -> None:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        with pytest.raises(X509IdentityError, match="1024"):
+            X509SigningIdentity.from_pem(_pem(key), _self_signed(key))
+
+    def test_a_certificate_for_another_key_is_refused(self) -> None:
+        key = ec.generate_private_key(ec.SECP256R1())
+        other = ec.generate_private_key(ec.SECP256R1())
+        with pytest.raises(X509IdentityError, match="does not match"):
+            X509SigningIdentity.from_pem(_pem(key), _self_signed(other))
+
+
+class TestVerifierRefusesAMislabelledSignature:
+    def test_ecdsa_p256_label_over_a_p384_certificate_fails(self) -> None:
+        from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
+
+        key = ec.generate_private_key(ec.SECP384R1())
+        cert_pem = _self_signed(key)
+        cert = x509.load_pem_x509_certificate(cert_pem)
+        sig = X509Signature(
+            algorithm="ecdsa-p256-sha256",
+            signature=key.sign(b"payload", ECDSA(hashes.SHA256())),
+            certificate_pem=cert_pem.decode(),
+        )
+        fingerprint = "sha256:" + cert.fingerprint(hashes.SHA256()).hex()
+        result = verify_x509_signature(b"payload", sig, pinned_fingerprints={fingerprint})
+        assert result.valid is False
+
+    def test_rsa_pss_label_over_a_1024_bit_certificate_fails(self) -> None:
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        cert_pem = _self_signed(key)
+        cert = x509.load_pem_x509_certificate(cert_pem)
+        signature = key.sign(
+            b"payload",
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            hashes.SHA256(),
+        )
+        sig = X509Signature(
+            algorithm="rsa-pss-sha256", signature=signature, certificate_pem=cert_pem.decode()
+        )
+        fingerprint = "sha256:" + cert.fingerprint(hashes.SHA256()).hex()
+        result = verify_x509_signature(b"payload", sig, pinned_fingerprints={fingerprint})
+        assert result.valid is False

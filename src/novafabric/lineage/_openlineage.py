@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_required_capsule_member
+
 _log = logging.getLogger(__name__)
 
 _NOVAFABRIC_NS = uuid.UUID("7b3f4e2a-1c0d-5b8e-9f6a-4d2e1a0c3b7f")
@@ -106,9 +108,12 @@ def build_complete_event(
     inputs: list[dict[str, Any]] = []
     outputs: list[dict[str, Any]] = []
 
-    lineage_path = capsule_dir / "lineage.jsonl"
-    if lineage_path.exists():
-        for line in lineage_path.read_text().splitlines():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "lineage.jsonl", operation="OpenLineage export"
+    )
+    if capsule_text is not None:
+        for line in capsule_text.splitlines():
             if not line.strip():
                 continue
             try:
@@ -167,11 +172,15 @@ def build_events_from_capsule(
     with_facets: bool = False,
     with_otel_correlation: bool = False,
 ) -> list[dict[str, Any]]:
-    capsule_yaml = capsule_dir / "capsule.yaml"
-    if not capsule_yaml.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
+    # never an empty OpenLineage export.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="OpenLineage export"
+    )
+    if capsule_text is None:
         return []
     try:
-        manifest: dict[str, Any] = yaml.safe_load(capsule_yaml.read_text()) or {}
+        manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
     except Exception as exc:
         _log.warning("Failed to parse capsule.yaml in %s: %s", capsule_dir, exc)
         return []

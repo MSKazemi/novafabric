@@ -5,11 +5,13 @@ import json
 import logging
 import os
 import re
+import stat
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
+from novafabric._capsule_fs import CapsuleEntryError, open_capsule_file, replace_capsule_file
 from novafabric.capture._ulid import new_ulid
 
 logger = logging.getLogger(__name__)
@@ -420,12 +422,15 @@ def _is_binary(data: bytes) -> bool:
     return False
 
 
-def _file_hash(path: Path) -> str:
+def _stream_hash(fh: BinaryIO) -> str:
     h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
+    for chunk in iter(lambda: fh.read(1 << 20), b""):
+        h.update(chunk)
     return "sha256:" + h.hexdigest()
+
+
+#: The scanner's ``operation`` name in a ``_capsule_fs`` refusal.
+_SCAN_OPERATION = "the secret scanner"
 
 
 def merge_scan_results(
@@ -604,10 +609,15 @@ class SecretScannerV0:
         return safe_ref, findings
 
     def _drop_named(
-        self, path: Path, safe_ref: str, kind: str, findings: list[dict[str, Any]]
+        self,
+        path: Path,
+        fh: BinaryIO,
+        safe_ref: str,
+        kind: str,
+        findings: list[dict[str, Any]],
     ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
-        size = path.stat().st_size
-        digest = _file_hash(path)
+        size = os.fstat(fh.fileno()).st_size
+        digest = _stream_hash(fh)
         path.unlink()
         logger.warning(
             "novafabric.secrets: artifact %s has a secret in its file name and was "
@@ -628,16 +638,58 @@ class SecretScannerV0:
 
     # -- per-file scanning ----------------------------------------------------
 
+    def _open(self, ref: str) -> BinaryIO:
+        """Open capsule file *ref* for reading: no link followed, no FIFO opened.
+
+        The capsule is untrusted input once the workload has run (it may be
+        bind-mounted into a container), so a symlink planted at a stream is
+        refused here rather than read -- and therefore never rewritten through.
+        """
+        return open_capsule_file(self._dir, ref, operation=_SCAN_OPERATION)
+
+    def _refused(
+        self, ref: str, kind: str, exc: BaseException
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+        """A skipped target for a file that is not a regular file: never read or rewritten."""
+        reason = f"stream_tampered: {ref} is not a regular file and was not read ({exc})"
+        logger.warning("novafabric.secrets: %s", reason)
+        return (
+            self._target(
+                kind, ref,
+                bytes_scanned=0,
+                findings_count=0,
+                hash_before=_EMPTY_HASH,
+                hash_after=_EMPTY_HASH,
+                skip_reason=reason[:500],
+            ),
+            [],
+            0,
+        )
+
     def _scan_structured(
         self, path: Path, ref: str, kind: str
     ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
-        original = path.read_bytes()
+        try:
+            with self._open(ref) as fh:
+                file_mode = stat.S_IMODE(os.fstat(fh.fileno()).st_mode)
+                original = fh.read()
+        except (CapsuleEntryError, IsADirectoryError, NotADirectoryError) as exc:
+            return self._refused(ref, kind, exc)
+        return self._scan_text_bytes(ref, kind, original, file_mode)
+
+    def _scan_text_bytes(
+        self, ref: str, kind: str, original: bytes, file_mode: int
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
         content = original.decode("utf-8", errors="replace")
         findings = self._text_findings(content, kind, ref)
         redacted = self._redact_text(content).encode("utf-8")
         removed = 0
         if redacted != original:
-            path.write_bytes(redacted)
+            # An atomic rename: whatever is at *ref* now (a link swapped in
+            # after the read included) is replaced, never written through.
+            replace_capsule_file(
+                self._dir, ref, redacted, operation=_SCAN_OPERATION, file_mode=file_mode
+            )
             removed = max(0, len(original) - len(redacted))
         return (
             self._target(
@@ -654,12 +706,23 @@ class SecretScannerV0:
     def _scan_artifact(
         self, path: Path, ref: str, kind: str
     ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+        try:
+            fh = self._open(ref)
+        except (CapsuleEntryError, IsADirectoryError, NotADirectoryError) as exc:
+            return self._refused(ref, kind, exc)
+        with fh:
+            return self._scan_open_artifact(path, fh, ref, kind)
+
+    def _scan_open_artifact(
+        self, path: Path, fh: BinaryIO, ref: str, kind: str
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
         safe_ref, name_findings = self._name_findings(ref, kind)
         if name_findings:
-            return self._drop_named(path, safe_ref, kind, name_findings)
-        size = path.stat().st_size
+            return self._drop_named(path, fh, safe_ref, kind, name_findings)
+        st = os.fstat(fh.fileno())
+        size = st.st_size
         if size > MAX_ARTIFACT_SCAN_BYTES:
-            digest = _file_hash(path)
+            digest = _stream_hash(fh)
             logger.warning(
                 "novafabric.secrets: %s is %d bytes, over the %d-byte scan limit; "
                 "recorded as skipped in redaction-proof.json",
@@ -680,9 +743,9 @@ class SecretScannerV0:
                 [],
                 0,
             )
-        original = path.read_bytes()
+        original = fh.read()
         if not _is_binary(original):
-            return self._scan_structured(path, ref, kind)
+            return self._scan_text_bytes(ref, kind, original, stat.S_IMODE(st.st_mode))
 
         # Binary: scan extracted strings; a binary cannot be redacted in place,
         # so one that carries a secret is dropped from the capsule (ADR-0009).
@@ -936,7 +999,7 @@ class SecretScannerV0:
 
         for filename, kind in _SCAN_TARGETS:
             path = self._dir / filename
-            if not path.exists():
+            if not os.path.lexists(path):
                 continue
             target, file_findings, removed = self._scan_structured(path, filename, kind)
             targets.append(target)

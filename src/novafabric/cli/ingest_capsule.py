@@ -35,13 +35,25 @@ def ingest_capsule_cmd(
         typer.Option("--watch", help="Run foreground watcher loop (Ctrl+C to stop)"),
     ] = False,
     interval: Annotated[
-        float,
-        typer.Option("--interval", help="Watcher poll interval in seconds (--watch only)"),
-    ] = 2.0,
+        Optional[float],
+        typer.Option(
+            "--interval",
+            help=(
+                "Watcher poll interval in seconds (--watch only). "
+                "Default: NOVA_WATCHER_INTERVAL, else 2.0."
+            ),
+        ),
+    ] = None,
     backend: Annotated[
-        str,
-        typer.Option("--backend", help="Backend: auto, polling, watchdog"),
-    ] = "auto",
+        Optional[str],
+        typer.Option(
+            "--backend",
+            help=(
+                "Backend: auto, polling, watchdog. "
+                "Default: NOVA_WATCHER_BACKEND, else auto. Unknown values are refused."
+            ),
+        ),
+    ] = None,
     capsule_dir: Annotated[
         Optional[Path],
         typer.Option("--capsule-dir", help="Override NOVAFABRIC_CAPSULE_DIR"),
@@ -71,7 +83,10 @@ def ingest_capsule_cmd(
       # Watch for new capsules and ingest them automatically
       nova ingest-capsule --watch --interval 5
     """
-    from novafabric.serve.capsule_watcher import CapsuleWatcher  # noqa: PLC0415
+    from novafabric.serve.capsule_watcher import (  # noqa: PLC0415
+        CapsuleWatcher,
+        WatcherConfigError,
+    )
 
     resolved_dir = (capsule_dir or default_capsule_dir()).resolve()
     resolved_db = db_path or registry_db_path()
@@ -83,9 +98,13 @@ def ingest_capsule_cmd(
         if not watch:
             raise typer.Exit(code=0)
 
-    watcher = CapsuleWatcher(
-        resolved_dir, db_path=resolved_db, interval=interval, backend=backend
-    )
+    try:
+        watcher = CapsuleWatcher(
+            resolved_dir, db_path=resolved_db, interval=interval, backend=backend
+        )
+    except WatcherConfigError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
 
     # ── --watch mode ─────────────────────────────────────────────────────
     if watch:
@@ -96,7 +115,7 @@ def ingest_capsule_cmd(
 
         console.print(
             f"watching [bold]{resolved_dir}[/bold]  "
-            f"[dim][backend: {watcher.backend_name()}, interval: {interval} s][/dim]"
+            f"[dim]\\[backend: {watcher.backend_name()}, interval: {watcher.interval} s][/dim]"
         )
         console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
 
@@ -125,7 +144,7 @@ def ingest_capsule_cmd(
                                 f"run_id=[bold]{_row['run_id']}[/bold]  [new]"
                             )
                     _prev_ids |= _new_ids
-                time.sleep(interval)
+                time.sleep(watcher.interval)
         except KeyboardInterrupt:
             pass
         console.print("\nstopped.")

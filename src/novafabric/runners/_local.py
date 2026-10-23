@@ -20,6 +20,10 @@ from pathlib import Path
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
+#: Wall-clock deadline when the caller passes none (``nova capture`` without
+#: ``--timeout``; the GitHub Action's empty ``timeout`` input).
+DEFAULT_TIMEOUT_S = 600.0
+
 
 class LocalRunner:
     """Runs the captured workload as a local subprocess.
@@ -49,7 +53,7 @@ class LocalRunner:
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = f"{site_dir}:{existing}" if existing else site_dir
 
-            timeout = spec.timeout_s if spec.timeout_s is not None else 600.0
+            timeout = spec.timeout_s if spec.timeout_s is not None else DEFAULT_TIMEOUT_S
 
             try:
                 # start_new_session=True creates a new process group so that
