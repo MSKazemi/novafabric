@@ -145,6 +145,68 @@ def hold_roots(extra_roots: Iterable[Path] = ()) -> list[Path]:
 
 
 RETENTION_POLICY_FILENAME = "retention-policy.yaml"
+WORM_DB_FILENAME = "worm.db"
+
+
+def canonical_registry_file(registry: str, filename: str) -> Path:
+    """Where a per-registry file belongs: ``$NOVAFABRIC_HOME/registries/<r>/<filename>``.
+
+    The path a new file is written to. It is not created here.
+    """
+    return canonical_holds_root() / validate_registry_name(registry) / filename
+
+
+def registry_file_paths(
+    registry: str, filename: str, *, extra_roots: Iterable[Path] = ()
+) -> list[Path]:
+    """Every existing ``<root>/<registry>/<filename>``, canonical first.
+
+    Resolved like holds (:func:`hold_roots`): ``$NOVAFABRIC_HOME/registries/<r>/``,
+    then the legacy ``./.novafabric/registries/<r>/`` under the working directory,
+    then any caller-known root.
+    """
+    validate_registry_name(registry)
+    return [
+        path
+        for root in hold_roots(extra_roots)
+        if (path := root / registry / filename).is_file()
+    ]
+
+
+def warn_legacy_registry_file(path: Path, canonical: Path, *, used: bool) -> None:
+    """Log that a per-registry file outside ``$NOVAFABRIC_HOME/registries`` was found.
+
+    *used* says whether the caller reads it (no canonical copy, or a fail-closed
+    gate that consults every copy) or ignores it because the canonical copy wins.
+    """
+    logger.warning(
+        "%s: legacy per-registry file %s, %s; move it to %s",
+        path.name,
+        path,
+        "read" if used else "ignored because the canonical copy takes precedence",
+        canonical,
+        extra={"legacy_path": str(path), "canonical_path": str(canonical), "used": used},
+    )
+
+
+def preferred_registry_file(registry: str, filename: str) -> Path:
+    """The one copy of a per-registry file to read, or where a new one belongs.
+
+    The canonical copy when it exists; otherwise the legacy working-directory copy
+    when that exists (logged as a warning); otherwise the canonical path. A legacy
+    copy shadowed by a canonical one is logged too, so a stale file is never
+    silently ignored. Fail-closed gates that must honour *every* copy use
+    :func:`registry_file_paths` instead.
+    """
+    canonical = canonical_registry_file(registry, filename)
+    found = registry_file_paths(registry, filename)
+    if not found:
+        return canonical
+    chosen = found[0]
+    for path in found:
+        if path != canonical:
+            warn_legacy_registry_file(path, canonical, used=path == chosen)
+    return chosen
 
 
 def retention_policy_paths(
@@ -152,17 +214,11 @@ def retention_policy_paths(
 ) -> list[Path]:
     """Every existing ``retention-policy.yaml`` for *registry*, canonical first.
 
-    Resolved like holds (:func:`hold_roots`): ``$NOVAFABRIC_HOME/registries/<r>/``,
-    then the legacy ``./.novafabric/registries/<r>/`` under the working directory,
-    then any caller-known root. A deletion gate must apply **every** file found,
-    so the stricter one wins and a stale legacy policy is never silently ignored.
+    Resolved by :func:`registry_file_paths`. A deletion gate must apply **every**
+    file found, so the stricter one wins and a stale legacy policy is never
+    silently ignored.
     """
-    validate_registry_name(registry)
-    return [
-        path
-        for root in hold_roots(extra_roots)
-        if (path := root / registry / RETENTION_POLICY_FILENAME).is_file()
-    ]
+    return registry_file_paths(registry, RETENTION_POLICY_FILENAME, extra_roots=extra_roots)
 
 
 def validate_registry_name(registry: str) -> str:

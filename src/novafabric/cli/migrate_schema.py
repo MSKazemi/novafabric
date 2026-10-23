@@ -255,16 +255,18 @@ def migrate_capsule_dir(
 
 def migrate_schema_cmd(
     capsule_dir: Annotated[
-        Path,
+        Path | None,
         typer.Option(
             "--capsule-dir",
             help=(
                 "Root directory that contains one sub-directory per capsule. "
-                "Default: ~/.novafabric/capsules/"
+                "Default: where `nova capture` writes — $NOVAFABRIC_CAPSULE_DIR, "
+                "else $NOVAFABRIC_HOME/capsules/ (~/.novafabric/capsules/ when "
+                "NOVAFABRIC_HOME is unset)."
             ),
             show_default=False,
         ),
-    ] = _nf_paths.default_capsule_dir(),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -299,6 +301,8 @@ def migrate_schema_cmd(
       # Apply with backup copies preserved
       nova migrate-schema --backup --capsule-dir capsules/
     """
+    if capsule_dir is None:
+        capsule_dir = _nf_paths.default_capsule_dir()
     if dry_run:
         console.print(
             f"[bold yellow]Dry run[/bold yellow] — reading from "

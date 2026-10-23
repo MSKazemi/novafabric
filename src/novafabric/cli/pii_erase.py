@@ -103,8 +103,9 @@ def erase_cmd(
         dir_okay=True,
         help=(
             "Directory to scan for redaction_manifest.json files associated "
-            "with the data subject. Defaults to $NOVAFABRIC_HOME/capsules/ or "
-            "~/.novafabric/capsules/."
+            "with the data subject. Defaults to where `nova capture` writes: "
+            "$NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules/ "
+            "(~/.novafabric/capsules/ when NOVAFABRIC_HOME is unset)."
         ),
     ),
     retention_months: int = typer.Option(
@@ -157,10 +158,10 @@ def erase_cmd(
       nova pii erase user@example.com --retention-months 120 --output receipt.json
       NOVAFABRIC_HOME=/srv/nova nova pii erase user@example.com
     """
-    # Resolve capsule directory.
+    # Resolve capsule directory: flag > NOVAFABRIC_CAPSULE_DIR > <home>/capsules.
     nova_home = _nf_paths.nova_home()
     if capsule_dir is None:
-        capsule_dir = nova_home / "capsules"
+        capsule_dir = _nf_paths.capsule_dir_for_home(nova_home)
 
     # Find capsule IDs associated with this subject.
     capsule_ids = _find_capsule_ids_for_subject(subject_id, capsule_dir)
@@ -279,8 +280,9 @@ def status_cmd(
         dir_okay=True,
         help=(
             "Directory scanned for the capsule's redaction_manifest.json when a "
-            "bare capsule ID is given. Defaults to $NOVAFABRIC_HOME/capsules/ or "
-            "~/.novafabric/capsules/."
+            "bare capsule ID is given. Defaults to where `nova capture` writes: "
+            "$NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules/ "
+            "(~/.novafabric/capsules/ when NOVAFABRIC_HOME is unset)."
         ),
     ),
     json_output: bool = typer.Option(

@@ -77,7 +77,10 @@ def serve_cmd(
         Path | None,
         typer.Option(
             "--capsule-dir",
-            help="Directory of capsules to browse. Defaults to $NOVAFABRIC_HOME/capsules.",
+            help=(
+                "Directory of capsules to browse. Defaults to where `nova capture` "
+                "writes: $NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules."
+            ),
         ),
     ] = None,
     db_path: Annotated[

@@ -4944,7 +4944,7 @@ nova pii erase "user@example.com" --retention-months 6
 
 Options:
 - `--output, -o PATH` — path to write the `ErasureReceipt` JSON (default: stdout)
-- `--capsule-dir PATH` — search for redaction manifests here (default: `$NOVAFABRIC_HOME/capsules/`)
+- `--capsule-dir PATH` — search for redaction manifests here (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules/`; before 2026-10-23 the env var was ignored, so an erasure in the Docker layout scanned an empty directory)
 - `--retention-months INT` — Art.17(3)(b) retention floor in months (default: `6`; provider mode: `120`)
 
 Exit codes: `0` (erased or deferred; receipt written), `1` (subject not found or error),
@@ -4968,7 +4968,7 @@ NOVA_PII_PEPPER=secret nova pii status 01HX...      # pepper enables DEK correla
 ```
 
 Options:
-- `--capsule-dir PATH` — directory scanned for the capsule's `redaction_manifest.json` when a bare capsule ID is given (default: `$NOVAFABRIC_HOME/capsules/`)
+- `--capsule-dir PATH` — directory scanned for the capsule's `redaction_manifest.json` when a bare capsule ID is given (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules/`; before 2026-10-23 the env var was ignored)
 - `--json` — emit the status report as JSON instead of human-readable text
 
 Per-subject `dek_state`:
@@ -5329,7 +5329,7 @@ Options:
   endpoint via `NOVA_S3_ENDPOINT_URL`). `azure://` / `gcs://` are **planned**
   (ADR-0141 P2) and report a clear error.
 - `--capsule, -c ID|PATH` — explicit member (repeatable); records `query: null`.
-- `--capsule-dir PATH` — scan root (default `$NOVAFABRIC_HOME/capsules`).
+- `--capsule-dir PATH` — scan root (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules`).
 - `--since / --until RFC3339` — inclusive `created_at` window for the scan;
   recorded as the manifest `query` for reproducibility.
 - `--query EXPR` — select members with an [ADR-0129](./decisions.md)
@@ -5413,7 +5413,7 @@ Options:
   recorded permanently as `verification.mode: "unsigned"` in the receipt and
   audit log). All content-hash/size/consistency checks still run — tamper
   still refuses.
-- `--capsule-dir PATH` — target store root (default `$NOVAFABRIC_HOME/capsules`).
+- `--capsule-dir PATH` — target store root (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules`).
 - `--dry-run` — verify + classify (would-import / would-skip / collision),
   write nothing to the store or indexes; the receipt is still written.
 - `--no-reindex` — unpack only; skip lineage + runs-cache updates.
@@ -7158,7 +7158,7 @@ What the migration does for each capsule whose `manifest.json` is below v1:
 3. Adds `format_version: "1"` to the metadata block when absent
 
 Options:
-- `--capsule-dir PATH` — root directory containing one sub-directory per capsule (default: `~/.novafabric/capsules/`)
+- `--capsule-dir PATH` — root directory containing one sub-directory per capsule (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules/`, resolved when the command runs)
 - `--dry-run` — preview what would change; no files are written
 - `--backup` — copy original files to `<file>.v0.bak` before overwriting; allows manual rollback
 
@@ -8461,10 +8461,28 @@ Before this release the command printed "Deleted capsule", exited 0 and audited
 **Experimental.** Applies the [ADR-0031](./decisions.md) retention
 windows *over time*: a WORM-aware, crypto-shred-integrated, audited sweep.
 Bindings live in a new **optional** `bindings:` block inside the existing
-`.novafabric/registries/<registry>/retention-policy.yaml`
+`$NOVAFABRIC_HOME/registries/<registry>/retention-policy.yaml`
 (schema: `schemas/retention-binding.schema.json`); a registry with no bindings
 is swept for nothing. NovaFabric embeds **no daemon** — run the sweep manually
 or wire `nova retention apply --yes` into `cron`/`systemd`.
+
+**Where the per-registry files are read (works today).** `retention-policy.yaml` and
+`worm.db` are resolved like the legal-hold store, independent of the working directory:
+
+- **Bindings and sweep switches** come from `$NOVAFABRIC_HOME/registries/<registry>/retention-policy.yaml`.
+  When only the legacy `./.novafabric/registries/<registry>/retention-policy.yaml` exists
+  under the working directory, it is still read, and a warning on stderr names it and the
+  path to move it to. When both exist, the `$NOVAFABRIC_HOME` copy wins and the shadowed
+  legacy copy is reported the same way. A new policy belongs under `$NOVAFABRIC_HOME/registries/`.
+- **`deletion_mode`** — `prohibited` in *any* copy found (the two locations above plus the
+  swept capsule base's `<capsule-dir>/../registries/<registry>/`) holds every `purge`
+  (`deletion_prohibited`), as `nova capsule delete` does.
+- **WORM locks** — without `--worm-db`, every `worm.db` found in those locations is read (a
+  legacy copy with a warning), and a lock in any of them holds the item. `--worm-db PATH`
+  reads only that file.
+
+Releases before 2026-10-23 read both files relative to the working directory only, so a
+`cron` or container sweep started elsewhere found no bindings and no WORM database.
 
 ```yaml
 # retention-policy.yaml (ADR-0031 fields unchanged; bindings are additive)
@@ -8571,7 +8589,10 @@ Options:
 - `--yes / -y` — skip the confirmation prompt (for cron/CI)
 - `--capsule-dir PATH` — capsule directory to sweep (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules`; before 2026-10-23 the env var was ignored, so a Docker-layout sweep scanned an empty directory)
 - `--worm-db PATH` — local WORM adapter DB consulted for `locked_until`
-  (default: `.novafabric/registries/<registry>/worm.db`)
+  (default: every `worm.db` found — `$NOVAFABRIC_HOME/registries/<registry>/worm.db`, the
+  legacy `./.novafabric/registries/<registry>/worm.db` (read with a warning) and the swept
+  capsule base's `../registries/<registry>/worm.db`; a lock in any of them holds — see
+  [where the per-registry files are read](#retention-scheduler-adr-0134))
 - `--action NAME` — only consider bindings with this action
 - `--limit N` — bound the number of applied actions per pass (the rest carries over)
 - `--principal TEXT` — acting identity recorded in evidence entries (default: `cli-user`)
@@ -8684,7 +8705,7 @@ Mandatory flag: `--experimental`. Without it the command prints the gate banner 
 | `--experimental` | (required) | Acknowledges the experimental gate. |
 | `--port` | `4321` | TCP port. |
 | `--host` | `127.0.0.1` | Bind address. Refuses non-localhost without `--insecure`. |
-| `--capsule-dir` | `$NOVAFABRIC_HOME/capsules/` | Where to look for capsules. |
+| `--capsule-dir` | `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules/` | Where to look for capsules (the store `nova capture` writes to). |
 | `--db-path` | `~/.novafabric/registry.db` | Registry/lineage SQLite path. |
 | `--no-browser` | off | Don't auto-open a browser tab. |
 
