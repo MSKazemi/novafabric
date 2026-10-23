@@ -8,7 +8,7 @@
 # Two-stage build: wheel compiled in builder, runtime image stays slim.
 
 # ── stage 1: build wheel ─────────────────────────────────────────────────────
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -44,7 +44,7 @@ COPY scripts/pypi_readme_hook.py scripts/pypi_readme_hook.py
 RUN uv build --wheel --no-sources
 
 # ── stage 2: runtime ─────────────────────────────────────────────────────────
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 

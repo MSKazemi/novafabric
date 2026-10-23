@@ -30,6 +30,11 @@ concurrency:
   group: sdk-ts-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: every job here only reads the repository. Without this the
+# token inherits the repository default (OpenSSF Scorecard TokenPermissions).
+permissions:
+  contents: read
+
 jobs:
   sdk-ts:
     runs-on: ubuntu-latest
@@ -41,12 +46,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # CI must satisfy the devDependency engines (vitest 5 needs
           # "^22.12.0 || ^24.0.0 || >=26.0.0"). This is deliberately NOT the
