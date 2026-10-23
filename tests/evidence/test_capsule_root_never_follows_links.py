@@ -355,6 +355,77 @@ def test_experiment_item_with_a_linked_capsule_is_an_error_not_a_score(
     assert not (Path(run.capsule_ref) / "scores.jsonl").exists()
 
 
+def test_annotation_queue_populate_refuses_a_linked_capsule_and_enqueues_nothing(
+    tmp_path: Path, secret: Path
+) -> None:
+    from novafabric.eval.annotation_queue import AnnotationError
+    from novafabric.eval.annotation_store import create_queue, list_items, populate_queue
+    from novafabric.eval.score_config import ScoreRange, ScoreValueType
+    from novafabric.eval.score_config_catalog import register_config
+
+    db = tmp_path / "registry.db"
+    register_config(
+        "factuality", ScoreValueType.NUMERIC, "Higher is better.",
+        range_=ScoreRange(min=0, max=1), db_path=db,
+    )
+    create_queue(name="q1", criteria=["factuality"], subject_selector=None, db_path=db)
+    store = tmp_path / "caps"
+    _dir_link(_write_capsule(store / RUN_ID), secret)
+    with pytest.raises(AnnotationError, match="symlink"):
+        populate_queue("q1", store, db_path=db)
+    assert list_items("q1", db_path=db) == []
+
+
+def _consent_capsule(tmp_path: Path) -> tuple[Path, Path, Path]:
+    from novafabric.evidence.signing import generate_keypair
+
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures" / "conversation" / "p3-accountability-capsule.json"
+    )
+    cap = tmp_path / "consent-cap"
+    (cap / "inputs").mkdir(parents=True)
+    (cap / "capsule.yaml").write_text(
+        yaml.safe_dump(json.loads(fixture.read_text()), sort_keys=False)
+    )
+    priv, pub = generate_keypair(tmp_path / "keys")
+    return cap, priv, pub
+
+
+def test_cli_consent_attest_refuses_a_linked_capsule(
+    tmp_path: Path, secret: Path, iso_home: Path
+) -> None:
+    cap, priv, _ = _consent_capsule(tmp_path)
+    _file_link(cap, secret)
+    out = tmp_path / "c.intoto.json"
+    result = _cli(["consent", "attest", "--capsule", str(cap), "--key", str(priv), "-o", str(out)])
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == 1, result.output
+    assert "symlink" in result.output
+    assert not out.exists()
+
+
+def test_cli_consent_verify_fails_closed_on_a_link_planted_after_attestation(
+    tmp_path: Path, secret: Path, iso_home: Path
+) -> None:
+    """Not "stale" (exit 3): the root cannot be recomputed, so the check fails (exit 1)."""
+    cap, priv, pub = _consent_capsule(tmp_path)
+    out = tmp_path / "c.intoto.json"
+    attested = _cli(["consent", "attest", "--capsule", str(cap), "--key", str(priv), "-o", str(out)])
+    assert attested.exit_code == 0, attested.output
+    _file_link(cap, secret)
+    result = _cli([
+        "consent", "verify-attestation", "--capsule", str(cap), "--attestation", str(out),
+        "--public-key", str(pub), "--json",
+    ])
+    assert result.exit_code == 1, result.output
+    report = json.loads(result.stdout)
+    assert report["status"] == "invalid"
+    assert report["capsule_root_matches"] is None
+    failed = {c["name"] for c in report["checks"] if not c["ok"]}
+    assert failed == {"capsule_merkle_root"}
+
+
 # -- CLI surfaces: one error line, exit 2, nothing written --------------------------
 
 runner = CliRunner()
