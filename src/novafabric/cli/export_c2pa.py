@@ -19,7 +19,11 @@ def export_c2pa_cmd(
         typer.Option(
             "--output",
             "-o",
-            help="Output JSON file path (default: <capsule_dir>/c2pa-manifest.json)",
+            help=(
+                "Output JSON file path (default: <capsule_dir>/c2pa-manifest.json). "
+                "Never written through a symlink; inside the capsule a planted link "
+                "or hard link is replaced."
+            ),
         ),
     ] = None,
     training_mining: Annotated[
@@ -43,6 +47,7 @@ def export_c2pa_cmd(
       nova export-c2pa path/to/my-capsule/
       nova export-c2pa path/to/my-capsule/ --output manifest.c2pa.json
     """
+    from novafabric._capsule_fs import CapsuleEntryError
     from novafabric.evidence.c2pa_exporter import export_c2pa
 
     out_path = Path(output) if output else capsule_dir / "c2pa-manifest.json"
@@ -51,7 +56,9 @@ def export_c2pa_cmd(
         written = export_c2pa(
             capsule_dir, out_path, include_training_mining=training_mining
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, ValueError, CapsuleEntryError) as exc:
+        # CapsuleEntryError: a link or special file at the output, or a linked
+        # directory on its path inside the capsule -- never written through.
         console.print(f"[red]x[/red] {exc}")
         raise typer.Exit(code=1) from exc
 

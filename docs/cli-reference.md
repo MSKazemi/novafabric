@@ -3557,6 +3557,14 @@ are not invalid, they are unbound — and a check that did not run is never repo
 instance — are listed as `not covered by the seal` but never fail the capsule. Adding a
 derived artifact next to a capsule is normal; failing on it would make the check unusable.
 
+**A link or special file anywhere in the capsule fails it** (exit 1), whenever it was
+planted, including after sealing: a symlink (to a file or a directory, dangling, or
+pointing inside the capsule), a FIFO, a socket or a device, at any depth. NovaFabric
+never writes one, so each was planted. Each is named in the report (`✗ No links or
+special files in the capsule`, then one line per entry; the first 20, then a count) and,
+with `--json`, under `special_entries` and in `errors`. Nothing is followed or opened, so
+a FIFO cannot hang `nova verify`. A hard link is a regular file and is not reported.
+
 Capsules produced without a NovaSeal config have no `.seal/` directory; `nova verify`
 exits 1 with an informational message pointing at `nova seal init` (not an error —
 unsigned capsules are valid; sealing is opt-in).
@@ -5186,6 +5194,14 @@ Options:
 - `--output, -o PATH` — output JSON file (default: `<capsule_dir>/c2pa-manifest.json`)
 - `--training-mining` — include `c2pa.training-mining: notAllowed` assertion (opt-in)
 
+The output is never written through a link (works today). Inside the capsule (the
+default, or any `--output` under the capsule directory) the file is replaced by an atomic
+rename after an `O_NOFOLLOW` walk, so a symlink or hard link planted at
+`c2pa-manifest.json` is replaced and its target is untouched; a linked directory on the
+way (say `outputs -> /elsewhere`) is refused. An explicit `--output` outside the capsule
+is written in place, but a symlink, FIFO or device there is refused. A refusal prints one
+`x` line and exits 1; nothing is written.
+
 Note: the manifest is structurally valid for TSP signing. Hard-binding C2PA verification
 requires operator enrollment with a C2PA-certified Trust Service Provider (TSP signing
 path deferred to a future release).
@@ -6787,7 +6803,11 @@ Smart routing:
   against `run-capsule.schema.json`, `environment.schema.json`, and `secret-redaction.schema.json`,
   and checks all required files exist. A capsule whose manifest carries
   `metadata.capture_tampered` (the recorded workload replaced a capsule path with
-  a link or special file during `nova capture`) fails validation (exit 1).
+  a link or special file during `nova capture`) fails validation (exit 1). So
+  does a capsule that holds a symlink, FIFO, socket or device anywhere in its
+  tree, at any depth and whenever it was planted: each is named on its own
+  `✗ <path>: a <kind> inside the capsule` line (the first 20, then a count).
+  Nothing is followed or opened, so a FIFO cannot hang `nova validate`.
 - If `path` does not exist but is a **run id**, the capsule of that id is validated,
   resolved in `$NOVAFABRIC_CAPSULE_DIR` (default `~/.novafabric/capsules/`).
 - Otherwise: validates `path` as an asset YAML spec (v0.1 behavior).

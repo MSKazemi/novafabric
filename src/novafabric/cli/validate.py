@@ -11,6 +11,7 @@ from rich.console import Console
 
 from novafabric._capsule_fs import (
     CapsuleRequiredFileError,
+    find_capsule_special_entries,
     is_capsule_regular_file,
     read_capsule_member_or_none,
     read_required_capsule_member,
@@ -137,6 +138,30 @@ def _capture_tamper_error(capsule_dir: Path) -> str | None:
     )
 
 
+#: Most planted entries named one by one; the count is always given.
+_MAX_SPECIAL_REPORTED = 20
+
+
+def _special_entry_errors(capsule_dir: Path) -> list[str]:
+    """An error per symlink, FIFO, socket or device anywhere in the capsule.
+
+    NovaFabric never writes one into a capsule, so each was planted -- during
+    capture past the post-workload sweep, or afterwards. The walk never follows
+    or opens an entry, so a FIFO cannot hang it.
+    """
+    entries = find_capsule_special_entries(capsule_dir)
+    errors = [
+        f"{rel}: a {kind} inside the capsule (NovaFabric never writes one; never followed)"
+        for rel, kind in entries[:_MAX_SPECIAL_REPORTED]
+    ]
+    if len(entries) > _MAX_SPECIAL_REPORTED:
+        errors.append(
+            f"and {len(entries) - _MAX_SPECIAL_REPORTED} more link(s) or special "
+            f"file(s) ({len(entries)} in total)"
+        )
+    return errors
+
+
 def _validate_capsule(capsule_dir: Path) -> None:
     errors: list[str] = []
 
@@ -144,6 +169,7 @@ def _validate_capsule(capsule_dir: Path) -> None:
     tamper_error = _capture_tamper_error(capsule_dir)
     if tamper_error is not None:
         errors.append(tamper_error)
+    errors.extend(_special_entry_errors(capsule_dir))
 
     for fname in ("trace.jsonl", "model-calls.jsonl", "tool-calls.jsonl", "assets.jsonl"):
         if not os.path.lexists(capsule_dir / fname):

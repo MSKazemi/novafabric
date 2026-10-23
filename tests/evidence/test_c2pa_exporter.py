@@ -150,6 +150,75 @@ class TestExportC2PACli:
         assert "TSP" in result.output or "Trust Service" in result.output
 
 
+class TestExportC2PANeverWritesThroughALink:
+    """The default output is inside the capsule, where anyone who wrote the capsule
+    could have planted a link at ``c2pa-manifest.json``."""
+
+    ORIGINAL = "OUTSIDE-ORIGINAL\n"
+
+    def _outside(self, tmp_path: Path) -> Path:
+        path = tmp_path / "outside.txt"
+        path.write_text(self.ORIGINAL)
+        return path
+
+    def test_default_output_replaces_a_planted_symlink(
+        self, capsule_dir: Path, tmp_path: Path
+    ) -> None:
+        outside = self._outside(tmp_path)
+        (capsule_dir / "c2pa-manifest.json").symlink_to(outside)
+        result = CliRunner().invoke(app, ["export-c2pa", str(capsule_dir)])
+        assert result.exit_code == 0, result.output
+        assert outside.read_text() == self.ORIGINAL
+        out = capsule_dir / "c2pa-manifest.json"
+        assert not out.is_symlink()
+        assert "manifests" in json.loads(out.read_text())
+
+    def test_default_output_replaces_a_planted_hard_link(
+        self, capsule_dir: Path, tmp_path: Path
+    ) -> None:
+        import os
+
+        outside = self._outside(tmp_path)
+        os.link(outside, capsule_dir / "c2pa-manifest.json")
+        result = CliRunner().invoke(app, ["export-c2pa", str(capsule_dir)])
+        assert result.exit_code == 0, result.output
+        assert outside.read_text() == self.ORIGINAL
+
+    def test_output_inside_the_capsule_through_a_linked_dir_is_refused(
+        self, capsule_dir: Path, tmp_path: Path
+    ) -> None:
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (capsule_dir / "outputs").symlink_to(elsewhere, target_is_directory=True)
+        out = capsule_dir / "outputs" / "c2pa.json"
+        result = CliRunner().invoke(app, ["export-c2pa", str(capsule_dir), "-o", str(out)])
+        assert result.exit_code == 1, result.output
+        assert list(elsewhere.iterdir()) == []
+
+    def test_explicit_output_outside_the_capsule_refuses_a_symlink(
+        self, capsule_dir: Path, tmp_path: Path
+    ) -> None:
+        outside = self._outside(tmp_path)
+        link = tmp_path / "manifest.json"
+        link.symlink_to(outside)
+        result = CliRunner().invoke(app, ["export-c2pa", str(capsule_dir), "-o", str(link)])
+        assert result.exit_code == 1, result.output
+        assert "symlink" in result.output
+        assert outside.read_text() == self.ORIGINAL
+
+    def test_library_export_refuses_a_symlinked_output(
+        self, capsule_dir: Path, tmp_path: Path
+    ) -> None:
+        from novafabric._capsule_fs import CapsuleLinkError
+
+        outside = self._outside(tmp_path)
+        link = tmp_path / "manifest.json"
+        link.symlink_to(outside)
+        with pytest.raises(CapsuleLinkError):
+            export_c2pa(capsule_dir, link)
+        assert outside.read_text() == self.ORIGINAL
+
+
 def test_claim_generator_is_the_installed_novafabric_version(capsule_dir: Path) -> None:
     """L6: the generator is the NovaFabric that built the manifest, not a stale constant.
 

@@ -27,15 +27,23 @@ Spec reference:
 
 from __future__ import annotations
 
+import errno
 import json
+import os
+import stat
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_required_capsule_member
+from novafabric._capsule_fs import (
+    CapsuleLinkError,
+    CapsuleSpecialFileError,
+    read_required_capsule_member,
+    replace_capsule_file,
+)
 
 _CLAIM_GENERATOR = "NovaFabric"
 
@@ -214,15 +222,85 @@ class C2PAManifestExporter:
         }
 
     def export(self, capsule_dir: Path, output_path: Path) -> Path:
-        """Write the C2PA manifest JSON to *output_path*.
+        """Write the C2PA manifest JSON to *output_path*, never through a link.
+
+        The default output (``nova export-c2pa``) is ``<capsule>/c2pa-manifest.json``,
+        inside a directory whoever wrote the capsule controls. An *output_path*
+        inside the capsule is therefore written with
+        :func:`~novafabric._capsule_fs.replace_capsule_file`: an ``O_NOFOLLOW``
+        walk (a linked directory on the way is refused) and an atomic rename, so a
+        symlink or hard link planted at the name is replaced, never written
+        through. An *output_path* outside the capsule is the caller's own choice of
+        file and is written in place, but never through a symlink (as the AI-BOM
+        export) and never into a FIFO or device.
 
         Returns:
             *output_path* (the written file).
+
+        Raises:
+            CapsuleLinkError: a link at *output_path* or on its path in the capsule.
+            CapsuleSpecialFileError: *output_path* is a FIFO, socket or device.
         """
         doc = self.build_manifest(capsule_dir)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        data = json.dumps(doc, indent=2).encode("utf-8")
+        inside = _capsule_relative(capsule_dir, output_path)
+        if inside is not None:
+            replace_capsule_file(inside[0], inside[1], data, operation=_EXPORT_OPERATION)
+        else:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_outside_capsule(output_path, data)
         return output_path
+
+
+#: The ``operation`` named in a ``_capsule_fs`` refusal.
+_EXPORT_OPERATION = "nova export-c2pa"
+
+
+def _capsule_relative(capsule_dir: Path, output_path: Path) -> tuple[Path, PurePosixPath] | None:
+    """``(capsule root, relative path)`` when *output_path* is inside the capsule.
+
+    Lexically first (``<capsule>/x.json``, the default), then by the resolved
+    parent directory, so another name for the same capsule (``runs/latest/...``)
+    is recognised too.
+    """
+    cap = os.path.abspath(capsule_dir)
+    out = os.path.abspath(output_path)
+    if out.startswith(cap.rstrip(os.sep) + os.sep):
+        return Path(cap), PurePosixPath(Path(os.path.relpath(out, cap)).as_posix())
+    try:
+        cap_real = Path(cap).resolve(strict=True)
+        parent_real = Path(out).parent.resolve()
+    except OSError:
+        return None
+    if parent_real == cap_real or cap_real in parent_real.parents:
+        rel = (parent_real / Path(out).name).relative_to(cap_real)
+        return cap_real, PurePosixPath(rel.as_posix())
+    return None
+
+
+def _write_outside_capsule(path: Path, data: bytes) -> None:
+    """Write *data* to the caller-named *path*: never through a symlink, never a FIFO."""
+    flags = (
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    )
+    try:
+        fd = os.open(path, flags, 0o666)
+    except OSError as exc:
+        if path.is_symlink():
+            raise CapsuleLinkError(
+                f"{path} is a symlink; a C2PA manifest is never written through one",
+                links=(path.name,),
+            ) from exc
+        if exc.errno == errno.ENXIO:
+            raise CapsuleSpecialFileError(f"{path} is not a regular file") from exc
+        raise
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise CapsuleSpecialFileError(f"{path} is not a regular file")
+    os.set_blocking(fd, True)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
 
 
 def export_c2pa(

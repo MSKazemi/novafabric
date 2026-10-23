@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import resource
+import stat
 import subprocess
 import sys
 import textwrap
@@ -48,7 +49,13 @@ def _cap_memory() -> None:  # pragma: no cover - runs in the child
     resource.setrlimit(resource.RLIMIT_AS, (CAPTURE_MEMORY_BYTES, CAPTURE_MEMORY_BYTES))
 
 
-def _capture(tmp_path: Path, source: str, *args: str) -> tuple[subprocess.CompletedProcess[str], Path]:
+def _capture(
+    tmp_path: Path,
+    source: str,
+    *args: str,
+    capture_args: tuple[str, ...] = (),
+    extra_env: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
     """Run ``nova capture`` of *source*; return the process and the one capsule."""
     script = tmp_path / "workload.py"
     script.write_text(textwrap.dedent(source))
@@ -56,11 +63,13 @@ def _capture(tmp_path: Path, source: str, *args: str) -> tuple[subprocess.Comple
     env = dict(os.environ)
     for var in ("NOVAFABRIC_CAPSULE_DIR", "NOVA_DATA_DIR", "FORCE_COLOR", "COLORTERM"):
         env.pop(var, None)
+    env.update(extra_env or {})
     started = time.monotonic()
     proc = subprocess.run(
         [
             sys.executable, "-m", "novafabric.cli.main", "capture", "--no-daemon",
-            "--output-dir", str(out), "--", sys.executable, str(script), *args,
+            "--output-dir", str(out), *capture_args,
+            "--", sys.executable, str(script), *args,
         ],
         env=env,
         cwd=tmp_path,
@@ -365,3 +374,176 @@ def test_streams_module_covers_every_scanned_stream() -> None:
     scanned = {n for n, _kind in SCAN_TARGETS if n.endswith(".jsonl")}
     assert scanned <= CAPSULE_STREAMS
     assert {"assets.jsonl", "tool-permission-events.jsonl"} <= CAPSULE_STREAMS
+
+
+# ── residual holes (attack round 4) ─────────────────────────────────────────
+
+
+def _special_entries(capsule: Path) -> list[str]:
+    """Every entry under *capsule* that is neither a directory nor a regular file."""
+    found: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(capsule, followlinks=False):
+        for name in dirnames + filenames:
+            path = Path(dirpath) / name
+            mode = path.lstat().st_mode
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                found.append(path.relative_to(capsule).as_posix())
+    return sorted(found)
+
+
+def _nova(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run a ``nova`` sub-command as a bounded subprocess (a FIFO can never hang it)."""
+    env = {k: v for k, v in os.environ.items() if k not in ("FORCE_COLOR", "COLORTERM")}
+    env.pop("NOVAFABRIC_CAPSULE_DIR", None)
+    env["COLUMNS"] = "400"  # keep long paths on one line in the rich output
+    return subprocess.run(
+        [sys.executable, "-m", "novafabric.cli.main", *args],
+        env=env, capture_output=True, text=True,
+        timeout=CAPTURE_TIMEOUT_S, preexec_fn=_cap_memory,
+    )
+
+
+_PII_SUBJECT = "alice@example.com"
+
+_PLANT_PII_LINKS = """
+    import os, sys
+    from pathlib import Path
+    cap = Path(os.environ["NOVAFABRIC_CAPSULE_DIR"])
+    outside = Path(sys.argv[1])
+    os.symlink(outside / "victim_manifest.txt", cap / "redaction_manifest.json")
+    os.link(outside / "victim_hard.txt", cap / "outputs" / "notes.txt")
+    print("subject alice@example.com email alice@example.com")
+"""
+
+
+def test_pii_stage_never_writes_outside_the_capsule(tmp_path: Path) -> None:
+    """Hole 1: ``--pii-subject`` wrote its manifest through a link and rewrote a hard link."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "victim_manifest.txt").write_text("VICTIM-MANIFEST-ORIGINAL\n")
+    (outside / "victim_hard.txt").write_text(f"contact {_PII_SUBJECT} about the bill\n")
+    before = {p.name: p.read_bytes() for p in outside.iterdir()}
+
+    proc, capsule = _capture(
+        tmp_path, _PLANT_PII_LINKS, str(outside),
+        capture_args=("--pii-subject", _PII_SUBJECT),
+        extra_env={"NOVA_PII_PEPPER": "pepper-for-tests"},
+    )
+
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    after = {p.name: p.read_bytes() for p in outside.iterdir()}
+    assert after == before, "the PII stage wrote outside the capsule"
+    assert _special_entries(capsule) == []
+    _assert_recorded(capsule, "redaction_manifest.json", "symlink")
+    # The stage's own manifest is a regular file inside the capsule.
+    manifest = json.loads((capsule / "redaction_manifest.json").read_text())
+    assert manifest["entries"], manifest
+    # The hard-linked file was protected by replacing it, never written through.
+    notes = capsule / "outputs" / "notes.txt"
+    assert notes.stat().st_nlink == 1
+    assert _PII_SUBJECT not in notes.read_text()
+    assert "outputs/notes.txt" not in _tampered_paths(capsule)  # a hard link is not tampering
+
+
+_PLANT_NESTED = """
+    import os, sys
+    from pathlib import Path
+    cap = Path(os.environ["NOVAFABRIC_CAPSULE_DIR"])
+    outside = Path(sys.argv[1])
+    os.symlink(outside / "secret.txt", cap / "inputs" / "data.csv")
+    (cap / "outputs" / "media").mkdir(parents=True, exist_ok=True)
+    os.symlink(outside / "secret.txt", cap / "outputs" / "media" / "blob.bin")
+    (cap / "extensions" / "deep").mkdir(parents=True)
+    os.symlink(outside / "secret.txt", cap / "extensions" / "deep" / "ext.json")
+    os.symlink(outside, cap / "outputs" / "dirlink")
+    os.mkfifo(cap / "inputs" / "pipe")
+    os.link(outside / "hard.txt", cap / "inputs" / "hard.txt")
+    os.symlink(outside / "secret.txt", cap / "scores.jsonl")
+    os.symlink(outside / "secret.txt", cap / "trace.extra.jsonl")
+    print("planted")
+"""
+
+_NESTED_PLANTED = {
+    "inputs/data.csv": "symlink",
+    "outputs/media/blob.bin": "symlink",
+    "extensions/deep/ext.json": "symlink",
+    "outputs/dirlink": "symlink",
+    "inputs/pipe": "fifo",
+    "scores.jsonl": "symlink",
+    "trace.extra.jsonl": "symlink",
+}
+
+
+def test_nested_links_and_fifos_are_swept_and_recorded(tmp_path: Path) -> None:
+    """Hole 2a: the sweep never descended, so nested links and FIFOs survived."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("TOPSECRET " + _SECRETS)
+    (outside / "hard.txt").write_text(_SECRETS)
+    before = {p.name: p.read_bytes() for p in outside.iterdir()}
+
+    proc, capsule = _capture(tmp_path, _PLANT_NESTED, str(outside))
+
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert {p.name: p.read_bytes() for p in outside.iterdir()} == before
+    assert _special_entries(capsule) == [], "a nested link or FIFO survived the sweep"
+    for path, kind in _NESTED_PLANTED.items():
+        _assert_recorded(capsule, path, kind)
+    # A hard link is a regular file: kept, scanned and redacted by replacement
+    # (the outside file is unchanged, above), and not recorded as tampering.
+    hard = capsule / "inputs" / "hard.txt"
+    assert hard.stat().st_nlink == 1
+    assert "AKIAIOSFODNN7EXAMPLE" not in hard.read_text()
+    assert "inputs/hard.txt" not in _tampered_paths(capsule)
+    validated = _nova("validate", str(capsule))
+    assert validated.returncode == 1, validated.stdout
+
+
+def test_validate_and_verify_fail_a_link_planted_after_sealing(tmp_path: Path) -> None:
+    """Hole 2b: a link or FIFO added to a sealed capsule left verify and validate green."""
+    home = Path(os.environ["NOVAFABRIC_HOME"])
+    init = _nova("seal", "init", "--home", str(home))
+    assert init.returncode == 0, init.stdout + init.stderr
+    outside = tmp_path / "outside-secret"
+    outside.write_text("TOPSECRET\n")
+    proc, capsule = _capture(tmp_path, "print('clean')\n")
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert _nova("validate", str(capsule)).returncode == 0
+    clean = _nova("verify", "--json", str(capsule))
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+
+    (capsule / "inputs" / "nested").mkdir()
+    os.symlink(outside, capsule / "inputs" / "nested" / "data.csv")
+    os.mkfifo(capsule / "outputs" / "pipe")
+
+    validated = _nova("validate", str(capsule))
+    assert validated.returncode == 1, validated.stdout
+    assert "inputs/nested/data.csv" in validated.stdout
+    assert "outputs/pipe" in validated.stdout
+    verified = _nova("verify", "--json", str(capsule))
+    assert verified.returncode == 1, verified.stdout
+    data = json.loads(verified.stdout)
+    assert data["valid"] is False
+    assert any("inputs/nested/data.csv" in e and "symlink" in e for e in data["errors"])
+    assert any("outputs/pipe" in e and "fifo" in e for e in data["errors"])
+    assert outside.read_text() == "TOPSECRET\n"
+
+
+def test_a_clean_capture_has_no_special_entries(tmp_path: Path) -> None:
+    proc, capsule = _capture(
+        tmp_path,
+        """
+        import os
+        from pathlib import Path
+        cap = Path(os.environ["NOVAFABRIC_CAPSULE_DIR"])
+        (cap / "inputs" / "a" / "b").mkdir(parents=True)
+        (cap / "inputs" / "a" / "b" / "data.txt").write_text("plain\\n")
+        (cap / "outputs" / "notes.txt").write_text("notes\\n")
+        print("clean")
+        """,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "capture integrity" not in proc.stderr
+    assert _special_entries(capsule) == []
+    assert "metadata" not in _manifest(capsule)
+    assert (capsule / "inputs" / "a" / "b" / "data.txt").read_text() == "plain\n"

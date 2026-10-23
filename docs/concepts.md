@@ -177,11 +177,19 @@ follows one. They all share one module (`novafabric._capsule_fs`):
 - **Writers into a finished capsule** never write through a link either:
   `nova energy attest` and the SLURM runner's sacct receipt
   (`energy-receipts.jsonl`), `nova validate --write` (`tool-calls.jsonl`), the
-  registry's asset-consumption append (`assets.jsonl`), and the `nova capture`
-  workload's capture-health hand-off all open the file with `O_NOFOLLOW`
+  registry's asset-consumption append (`assets.jsonl`), every score append to
+  `scores.jsonl` (`nova eval offline`, the annotation queue, score submission,
+  `nova experiment run`), and the `nova capture` workload's capture-health
+  hand-off all open the file with `O_NOFOLLOW`
   (`_capsule_fs.open_capsule_file_for_write`). A link, a dangling link or a FIFO
   at that path is refused with a named error (`nova energy attest` exits 2; the
   SLURM receipt is skipped with a warning) and its target is left untouched.
+  Whole-file writers replace the entry by an atomic rename instead, so a link
+  or hard link planted at the name is replaced, never written through: the
+  dataset-provenance facets (`extensions/dev.novafabric.dataset-provenance/`;
+  a linked `extensions/` directory is refused), `nova export-c2pa`'s default
+  `c2pa-manifest.json`, and `nova capture --emit-otel-genai`'s
+  `otel-genai-spans.json`.
 - **`nova capture` itself, once the workload has run.** The workload writes into
   its own capsule, and with `--runner docker` the capsule directory is mounted
   read-write into the container (with `--runner kubernetes` it is copied back by
@@ -193,39 +201,65 @@ follows one. They all share one module (`novafabric._capsule_fs`):
   write, capture checks every capsule-managed path (the JSONL streams,
   `capsule.yaml`, `env.lock`, `replay.yaml`, `redaction-proof.json`,
   `capture-health.json`, `lineage.jsonl`, `c2pa-manifest.json`,
-  `outputs/stdout.txt`, `outputs/stderr.txt`, the `inputs/` and `outputs/`
-  directories, and `.seal/`, which cannot exist yet) with `lstat` and never
-  opens it. A link, FIFO, socket or device there, a directory where a file
-  belongs, or any `.seal/` is removed without being followed (removing a link
-  never touches its target), the empty stream or directory is recreated, and
-  the capsule is marked **tampered**: `metadata.capture_tampered` in the signed
-  manifest, `tampered_entries` in `capture-health.json`, and a skipped
+  `redaction_manifest.json`, `outputs/stdout.txt`, `outputs/stderr.txt`, the
+  `inputs/` and `outputs/` directories, and `.seal/`, which cannot exist yet)
+  with `lstat` and never opens it. A link, FIFO, socket or device there, a
+  directory where a file belongs, or any `.seal/` is removed without being
+  followed (removing a link never touches its target), and the empty stream or
+  directory is recreated. Capture then walks the **whole** capsule tree, one
+  `O_NOFOLLOW` directory at a time, and removes every symlink, FIFO, socket and
+  device at any depth: `inputs/data.csv -> ~/.ssh/id_rsa`,
+  `outputs/media/blob.bin`, `extensions/...`, a linked `outputs/dirlink`, a
+  FIFO at `inputs/pipe`, a link at `scores.jsonl`. NovaFabric never writes any
+  of these, so each one was planted, including one that points inside the
+  capsule (for example `outputs/latest -> model.bin`). A directory nested more
+  than 64 levels deep is not descended and is recorded as `not-swept`. Each
+  entry found marks the capsule **tampered**: `metadata.capture_tampered` in the
+  signed manifest, `tampered_entries` in `capture-health.json`, and a skipped
   `<path>#tampered` target (`skip_reason: "stream_tampered: ..."`) in
-  `redaction-proof.json`. Every later write is an atomic rename or an
+  `redaction-proof.json` (the first 1,000 entries are listed one by one; the
+  summary always gives the total). Every later write is an atomic rename or an
   `O_NOFOLLOW` append, and every later read is a no-follow, non-blocking open,
-  so an entry planted *after* that check is refused or replaced, never followed.
-  Capture stays fail-open (ADR-0021): it exits with the workload's own exit code
-  and prints `✗ capture integrity: ...` on stderr. `nova verify` and `nova
-  validate` fail a tampered capsule (exit 1). If the capsule directory itself
-  was moved and replaced (possible only with the local runner), capture writes
-  nothing more and says so. Links the workload leaves elsewhere (for example
-  `outputs/latest -> model.bin`) are not tampering: they are never followed,
-  and the exporters above refuse them as before.
+  so an entry planted *after* the sweep (by a process the workload left
+  running, which only the local runner allows) is refused or replaced, never
+  followed. That covers the `--pii-subject` stage too: it reads and rewrites
+  every target, and writes `redaction_manifest.json`, the same way. When the
+  evidence digests are computed, any link or special file found anyway is added
+  to `metadata.capture_tampered` ("planted after the sweep: ...") before the
+  manifest is sealed. After the sweep the capsule directory is pinned by its
+  device and inode: if it is then swapped for a link or another directory, every
+  read and write refuses (`CapsuleRootChangedError`) and `nova capture` prints
+  `✗ capture integrity: ...` and exits 1. Otherwise capture stays fail-open
+  (ADR-0021): it exits with the workload's own exit code and prints `✗ capture
+  integrity: ...` on stderr. `nova verify` and `nova validate` fail a tampered
+  capsule (exit 1). If the capsule directory itself was moved and replaced
+  while the workload ran, capture writes nothing more and says so.
+- **`nova verify` and `nova validate` fail any link or special file**, wherever
+  it is in the capsule and whenever it was planted, including after sealing:
+  each is named in the output (`nova verify --json` lists them under
+  `special_entries` and in `errors`) and the command exits 1. The walk never
+  follows or opens an entry, so a FIFO cannot hang either command.
 
 The capsule *path you pass* to a CLI command may itself be a link
 (`runs/latest`); only links inside it are refused. That one link is followed
 because you named it. A scan never follows one it finds, and `nova serve`
 follows one only into its read roots.
 
-**Known limit: hard links are not refused.** A hard link is an ordinary
-directory entry for a regular file, so it is exported like any other file.
-Under Linux's default `fs.protected_hardlinks = 1`, a user can only hard-link a
-file they own or can already read and write, so a planted hard link exposes
-nothing the planter could not read already. NovaFabric never creates hard links.
-Refusing every file with more than one link would break capsule trees kept in
-`rsync --link-dest` or `cp -al` snapshots. On a system with
-`fs.protected_hardlinks = 0`, do not export capsules from a directory other
-users can write to.
+**Hard links are read, never written through.** A hard link is an ordinary
+directory entry for a regular file, so it is read and exported like any other
+file, and capture does not record it as tampering. Under Linux's default
+`fs.protected_hardlinks = 1`, a user can only hard-link a file they own or can
+already read and write, so a planted hard link exposes nothing the planter
+could not read already. NovaFabric never creates hard links. Refusing every
+file with more than one link would break capsule trees kept in
+`rsync --link-dest` or `cp -al` snapshots, and workloads that build a
+virtualenv in `outputs/` with a hard-linking installer. What a hard link can no
+longer do is carry a *write* out of the capsule: a whole-file rewrite (the
+secret scanner, the maskers, the `--pii-subject` stage, the facet and C2PA
+writers) replaces the entry by a rename, and an append or truncate first gives
+the file a private copy, so the file's other names are never modified. On a
+system with `fs.protected_hardlinks = 0`, do not export capsules from a
+directory other users can write to.
 
 ### Sessions vs parent/child (two different groupings)
 

@@ -11,15 +11,34 @@ hang the capture forever. A recording must never be redirected, corrupted or
 hung by the thing it records.
 
 :func:`inspect_capsule_after_workload` runs once, right after the runner
-returns and before the orchestrator reads or writes any capsule path. For each
-*capsule-managed* path -- the streams, the files finalisation writes,
-``outputs/stdout.txt`` / ``outputs/stderr.txt``, the ``inputs/`` and
-``outputs/`` directories, and ``.seal/`` -- it ``lstat``\\ s the entry and never
-opens it. An entry that is not what NovaFabric puts there (a symlink, FIFO,
-socket or device; a directory where a file belongs or the reverse; any
-``.seal/`` before sealing) is removed without being followed, the empty stream
-or directory NovaFabric needs is recreated, and a :class:`TamperFinding` is
-recorded. Removing a link never touches its target.
+returns and before the orchestrator reads or writes any capsule path. It makes
+two passes and never opens an entry it inspects:
+
+1. For each *capsule-managed* path -- the streams, the files finalisation
+   writes (``redaction_manifest.json`` included), ``outputs/stdout.txt`` /
+   ``outputs/stderr.txt``, the ``inputs/`` and ``outputs/`` directories, and
+   ``.seal/`` -- it ``lstat``\\ s the entry. An entry that is not what NovaFabric
+   puts there (a symlink, FIFO, socket or device; a directory where a file
+   belongs or the reverse; any ``.seal/`` before sealing) is removed, and the
+   empty stream or directory NovaFabric needs is recreated.
+2. It then walks the **whole** capsule tree, one ``openat(2)`` + ``O_NOFOLLOW``
+   directory at a time, and removes every symlink, FIFO, socket and device it
+   finds at any depth (``inputs/data.csv -> ~/.ssh/id_rsa``,
+   ``outputs/media/blob.bin``, ``extensions/...``, a FIFO at ``inputs/pipe``).
+   NovaFabric never writes any of them into a capsule, so each was planted.
+   A directory nested deeper than :data:`MAX_SWEEP_DEPTH` is not descended and
+   is recorded as ``not-swept``.
+
+Each removal is recorded as a :class:`TamperFinding`; removing a link never
+touches its target.
+
+**Hard links are not tampering.** A regular file with ``st_nlink > 1`` is kept:
+it is a regular file whose bytes the workload could read anyway (Linux's
+``fs.protected_hardlinks``), and hard links are legitimate in workload output
+(a virtualenv built with a hard-linking installer). What a hard link must never
+do is carry a write out of the capsule, and it cannot: every host-side rewrite
+replaces the entry by a rename and every append first gives the file a private
+copy (:mod:`novafabric._capsule_fs`).
 
 A finding is evidence, recorded three ways: ``capture-health.json``
 ``tampered_entries``; a ``<path>#tampered`` target in ``redaction-proof.json``
@@ -53,6 +72,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from novafabric._capsule_fs import entry_kind
 from novafabric.capture.secrets import (
     ARTIFACT_SCAN_DIRS,
     ARTIFACT_SCAN_TARGETS,
@@ -65,10 +85,12 @@ from novafabric.capture.streams import CAPSULE_STREAMS
 
 __all__ = [
     "CAPSULE_STREAMS",
+    "MAX_SWEEP_DEPTH",
     "TAMPER_METADATA_KEY",
     "TamperFinding",
     "TamperReport",
     "inspect_capsule_after_workload",
+    "record_planted_entries_in_manifest",
     "record_tamper_in_manifest",
     "record_tamper_in_proof",
     "tamper_message",
@@ -96,6 +118,8 @@ _MANAGED_FILES: Final[frozenset[str]] = frozenset(
         "redaction-proof.json",
         "capture-health.json",
         "c2pa-manifest.json",
+        # Written by the ``--pii-subject`` capture stage (pii/capture_stage.py).
+        "redaction_manifest.json",
     }
 )
 
@@ -110,6 +134,17 @@ _OPTIONAL_OUTPUT_DIRS: Final[tuple[str, ...]] = ("media",)
 
 #: Does not exist until the seal is written; any entry here was planted.
 _SEAL_DIR: Final[str] = ".seal"
+
+#: Directories nested deeper than this are not descended by the tree sweep; each
+#: is recorded as ``not-swept`` (NovaFabric writes nothing that deep).
+MAX_SWEEP_DEPTH: Final[int] = 64
+
+#: Findings recorded one by one; past this only the count is kept, so a workload
+#: planting a million links cannot inflate the manifest or the proof.
+_MAX_FINDINGS_RECORDED: Final[int] = 1000
+
+#: Findings named in the one-line summary (``metadata.capture_tampered``).
+_SUMMARY_SHOWN: Final[int] = 20
 
 _MAX_LINK_TARGET: Final[int] = 256
 _EMPTY_HASH: Final[str] = "sha256:" + hashlib.sha256(b"").hexdigest()
@@ -126,8 +161,8 @@ class TamperFinding:
     ``kind`` is what was found (``symlink``, ``fifo``, ``socket``,
     ``char-device``, ``block-device``, ``directory``, ``regular-file``,
     ``unknown``); ``action`` what capture did (``removed``,
-    ``removed-and-recreated``, ``not-removed``). ``link_target`` is where a
-    symlink pointed, redacted and truncated, never resolved.
+    ``removed-and-recreated``, ``not-removed``, ``not-swept``). ``link_target``
+    is where a symlink pointed, redacted and truncated, never resolved.
     """
 
     path: str
@@ -144,41 +179,35 @@ class TamperFinding:
 
 @dataclass(frozen=True)
 class TamperReport:
-    """What :func:`inspect_capsule_after_workload` found."""
+    """What :func:`inspect_capsule_after_workload` found.
+
+    ``findings`` holds at most ``_MAX_FINDINGS_RECORDED`` entries; ``omitted``
+    counts the rest (removed all the same).
+    """
 
     findings: tuple[TamperFinding, ...] = ()
     root_replaced: bool = False
+    omitted: int = 0
 
     @property
     def tampered(self) -> bool:
         return self.root_replaced or bool(self.findings)
 
+    @property
+    def total(self) -> int:
+        """How many entries were found, recorded or not."""
+        return len(self.findings) + self.omitted
+
     def summary(self) -> str:
         """One line, e.g. ``model-calls.jsonl (symlink); tool-calls.jsonl (fifo)``."""
         if self.root_replaced:
             return "capsule directory replaced by the workload"
-        return "; ".join(f"{f.path} ({f.kind})" for f in self.findings)
+        shown = "; ".join(f"{f.path} ({f.kind})" for f in self.findings[:_SUMMARY_SHOWN])
+        more = self.total - min(len(self.findings), _SUMMARY_SHOWN)
+        return shown + (f"; and {more} more ({self.total} in total)" if more > 0 else "")
 
     def health_entries(self) -> list[dict[str, str]]:
         return [f.as_dict() for f in self.findings]
-
-
-def _kind(mode: int) -> str:
-    if stat.S_ISLNK(mode):
-        return "symlink"
-    if stat.S_ISFIFO(mode):
-        return "fifo"
-    if stat.S_ISSOCK(mode):
-        return "socket"
-    if stat.S_ISCHR(mode):
-        return "char-device"
-    if stat.S_ISBLK(mode):
-        return "block-device"
-    if stat.S_ISDIR(mode):
-        return "directory"
-    if stat.S_ISREG(mode):
-        return "regular-file"
-    return "unknown"
 
 
 def _lstat_at(name: str, dir_fd: int) -> os.stat_result | None:
@@ -257,7 +286,19 @@ class _Sweep:
                 return
             if not want_dir and stat.S_ISREG(mode):
                 return
-        kind = _kind(mode)
+        self.remove(name, rel, dir_fd, mode, recreate=recreate, want_dir=want_dir)
+
+    def remove(
+        self,
+        name: str,
+        rel: str,
+        dir_fd: int,
+        mode: int,
+        *,
+        recreate: bool = False,
+        want_dir: bool = False,
+    ) -> None:
+        """Remove entry *name* (never followed), optionally recreate it, record it."""
         target = _link_target(name, dir_fd) if stat.S_ISLNK(mode) else None
         if not _remove_at(name, dir_fd, mode):
             action = "not-removed"
@@ -265,7 +306,7 @@ class _Sweep:
             action = "removed-and-recreated"
         else:
             action = "removed"
-        self.findings.append(TamperFinding(rel, kind, action, target))
+        self.findings.append(TamperFinding(rel, entry_kind(mode), action, target))
 
 
 def _open_dir_nofollow(name: str, dir_fd: int) -> int | None:
@@ -278,6 +319,53 @@ def _open_dir_nofollow(name: str, dir_fd: int) -> int | None:
                 extra={"entry": name, "error_type": type(exc).__name__},
             )
         return None
+
+
+def _open_rel_dir(root_fd: int, parts: tuple[str, ...]) -> int | None:
+    """An fd on directory *parts* below *root_fd*, every component ``O_NOFOLLOW``."""
+    fd = os.dup(root_fd)
+    for part in parts:
+        next_fd = _open_dir_nofollow(part, fd)
+        os.close(fd)
+        if next_fd is None:
+            return None  # replaced by a link or removed since it was listed
+        fd = next_fd
+    return fd
+
+
+def _sweep_tree(root_fd: int) -> list[TamperFinding]:
+    """Remove every symlink, FIFO, socket and device anywhere below *root_fd*.
+
+    Directories are re-opened from the root one ``O_NOFOLLOW`` component at a
+    time instead of being held open, so a wide tree never exhausts descriptors.
+    Nothing is opened but directories, so a FIFO or device never blocks.
+    """
+    sweep = _Sweep()
+    pending: list[tuple[str, ...]] = [()]
+    while pending:
+        parts = pending.pop()
+        fd = _open_rel_dir(root_fd, parts)
+        if fd is None:
+            continue
+        try:
+            try:
+                names = sorted(os.listdir(fd))
+            except OSError:
+                continue
+            for name in names:
+                rel = "/".join((*parts, name))
+                st = _lstat_at(name, fd)
+                if st is None or stat.S_ISREG(st.st_mode):
+                    continue  # a hard link is a regular file: kept (module docstring)
+                if not stat.S_ISDIR(st.st_mode):
+                    sweep.remove(name, rel, fd, st.st_mode)
+                elif len(parts) + 1 >= MAX_SWEEP_DEPTH:
+                    sweep.findings.append(TamperFinding(rel, "directory", "not-swept"))
+                else:
+                    pending.append((*parts, name))
+        finally:
+            os.close(fd)
+    return sorted(sweep.findings, key=lambda f: f.path)
 
 
 def _sweep_root(root_fd: int) -> list[TamperFinding]:
@@ -296,7 +384,7 @@ def _sweep_root(root_fd: int) -> list[TamperFinding]:
                 sweep.check(name, f"outputs/{name}", outputs_fd, want_dir=False, recreate=False)
         finally:
             os.close(outputs_fd)
-    return sweep.findings
+    return sweep.findings + _sweep_tree(root_fd)
 
 
 def inspect_capsule_after_workload(
@@ -305,7 +393,8 @@ def inspect_capsule_after_workload(
     """Neutralise and report what the workload planted at capsule-managed paths.
 
     Call once, after the runner returns and before any other host-side read or
-    write of *capsule_dir*. *expected_root* is
+    write of *capsule_dir*. Checks the managed paths, then every entry of the
+    tree (module docstring). *expected_root* is
     :attr:`~novafabric.capture.capsule.CapsuleWriter.root_identity`; when the
     directory now at *capsule_dir* is a different one (or a link), nothing is
     touched and the report says ``root_replaced``. Never follows a link, never
@@ -339,7 +428,10 @@ def inspect_capsule_after_workload(
                 "paths": [f.path for f in findings],
             },
         )
-    return TamperReport(findings=tuple(findings))
+    return TamperReport(
+        findings=tuple(findings[:_MAX_FINDINGS_RECORDED]),
+        omitted=max(0, len(findings) - _MAX_FINDINGS_RECORDED),
+    )
 
 
 def _proof_kind(path: str) -> str:
@@ -389,6 +481,32 @@ def record_tamper_in_manifest(manifest: dict[str, Any], report: TamperReport) ->
     manifest["metadata"] = metadata
 
 
+def record_planted_entries_in_manifest(
+    manifest: dict[str, Any], entries: list[tuple[str, str]]
+) -> None:
+    """Add links / special files met at finalisation to ``metadata.capture_tampered``.
+
+    *entries* are ``(rel, kind)`` pairs (:func:`novafabric._capsule_fs.
+    find_capsule_special_entries`). They were planted after the post-workload
+    sweep -- by a process the workload left running -- so finalisation never
+    followed them; they are recorded in the manifest, which is the signed
+    payload, so ``nova verify`` and ``nova validate`` fail the capsule.
+    """
+    if not entries:
+        return
+    shown = "; ".join(f"{rel} ({kind})" for rel, kind in entries[:_SUMMARY_SHOWN])
+    more = len(entries) - _SUMMARY_SHOWN
+    late = "planted after the sweep: " + shown + (f"; and {more} more" if more > 0 else "")
+    metadata = dict(manifest.get("metadata") or {})
+    previous = metadata.get(TAMPER_METADATA_KEY)
+    metadata[TAMPER_METADATA_KEY] = f"{previous}; {late}" if previous else late
+    manifest["metadata"] = metadata
+    _log.warning(
+        "capture_tampered_after_sweep",
+        extra={"count": len(entries), "paths": [rel for rel, _ in entries[:_SUMMARY_SHOWN]]},
+    )
+
+
 def tamper_message(report: TamperReport) -> str:
     """The stderr line ``nova capture`` prints for a tampered capsule."""
     if report.root_replaced:
@@ -399,7 +517,7 @@ def tamper_message(report: TamperReport) -> str:
         )
     return (
         f"[novafabric] ✗ capture integrity: the workload replaced "
-        f"{len(report.findings)} capsule path(s) with a link or special file: "
+        f"{report.total} capsule path(s) with a link or special file: "
         f"{report.summary()}. None was followed; each was removed and is recorded "
         f"as tampered (metadata.{TAMPER_METADATA_KEY}, capture-health.json, "
         "redaction-proof.json). `nova verify` and `nova validate` fail this capsule."

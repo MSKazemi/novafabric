@@ -494,6 +494,7 @@ def _verify_capsule_dir(
     # evidence, however good its seal: the seal signs that record.
     from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415
         capture_tampered_error,
+        special_entry_errors,
     )
 
     tamper_errors = (
@@ -503,7 +504,12 @@ def _verify_capsule_dir(
     )
     if report.capture_tampered is not None:
         _print_check("Capture integrity (no workload tampering recorded)", False)
-    all_errors = [*result.errors, *report.errors, *tamper_errors]
+    # A link or special file in the directory now: planted after the capture's
+    # sweep or after sealing. Never followed, and never valid.
+    special_errors = special_entry_errors(report.special_entries)
+    if report.special_entries:
+        _print_check("No links or special files in the capsule", False)
+    all_errors = [*result.errors, *report.errors, *tamper_errors, *special_errors]
     if all_errors:
         console.print()
         for err in all_errors:
@@ -556,6 +562,7 @@ def _verify_capsule_dir(
                     result.signing_intent.value if result.signing_intent is not None else None
                 ),
                 "capture_tampered": report.capture_tampered,
+                "special_entries": list(report.special_entries),
                 "errors": all_errors,
             }
         )

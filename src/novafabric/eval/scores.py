@@ -42,7 +42,12 @@ from typing import Iterable, Iterator
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from novafabric._capsule_fs import CapsuleEntryError, read_capsule_text
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    open_capsule_member_for_write,
+    read_capsule_text,
+    replace_capsule_file,
+)
 from novafabric.capture._ulid import new_ulid
 
 SCORE_SCHEMA_VERSION = "1.0.0"
@@ -218,17 +223,29 @@ def boolean_metric_outcomes(scores: Iterable[Score], metric: str) -> list[int]:
 
 
 def append_score(path: str | Path, score: Score) -> None:
-    """Append one ``Score`` as a JSONL line, creating the file if needed."""
+    """Append one ``Score`` as a JSONL line, creating the file if needed.
+
+    *path* is usually ``<capsule>/scores.jsonl``. The file itself is opened
+    ``O_NOFOLLOW | O_NONBLOCK``: a symlink or FIFO planted there is refused
+    (:class:`~novafabric._capsule_fs.CapsuleLinkError` /
+    :class:`~novafabric._capsule_fs.CapsuleSpecialFileError`), never written
+    through, and a hard-linked file gets a private copy before the append. The
+    parent directory may be a link the caller named.
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as fh:
-        fh.write(score.model_dump_json(exclude_none=True) + "\n")
+    line = (score.model_dump_json(exclude_none=True) + "\n").encode("utf-8")
+    with open_capsule_member_for_write(p, mode="a", operation="append_score") as fh:
+        fh.write(line)
 
 
 def write_scores(path: str | Path, scores: Iterable[Score]) -> None:
-    """Write (overwrite) a ``scores.jsonl`` file from an iterable of scores."""
+    """Write (overwrite) a ``scores.jsonl`` file from an iterable of scores.
+
+    The file is replaced by an atomic rename, so a link or hard link at *path*
+    is replaced, never written through.
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8") as fh:
-        for score in scores:
-            fh.write(score.model_dump_json(exclude_none=True) + "\n")
+    data = "".join(s.model_dump_json(exclude_none=True) + "\n" for s in scores)
+    replace_capsule_file(p.parent, p.name, data.encode("utf-8"), operation="write_scores")
