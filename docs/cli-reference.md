@@ -353,6 +353,13 @@ Options:
     `extra_env` for `docker`/`kubernetes`/`slurm`/`lsf` (ADR-0270, ADR-0311), e.g.
     `--runner-option extra_env=LOG_LEVEL=debug`. `local` runs as you, on your
     machine, and keeps your full environment.
+  - `extra_env` (and `kubernetes`'s `node_selector`) takes either
+    `K=V,K2=V2` or a JSON object of strings,
+    `--runner-option extra_env='{"LOG_LEVEL":"debug","HF_HOME":"/a,b"}'`; use the
+    JSON form when a value contains a comma. A malformed JSON object (invalid JSON, a
+    non-string value, an empty or repeated name) fails the run at setup with
+    `failed_setup`, before anything is submitted. (Earlier releases silently ignored
+    the JSON form, so the job ran without those variables.)
   - **The capsule is untrusted once the workload has run.** With `docker` the
     capsule directory is mounted read-write into the container. Before any
     host-side read or write, capture removes (never follows) a link, FIFO or

@@ -214,6 +214,12 @@ class DockerRunner:
                     ".novafabric/runners.yaml"
                 ),
             )
+        try:
+            extra_env = _coerce_str_dict(opts.get("extra_env"), name="extra_env")
+        except ValueError as exc:
+            return RunnerJobResult(
+                exit_code=127, runner_status="failed_setup", runner_error=str(exc)
+            )
 
         # In-container capsule path. The orchestrator's host capsule_dir is
         # mounted at this path, so NOVAFABRIC_CAPSULE_DIR inside the
@@ -245,8 +251,7 @@ class DockerRunner:
             if _existing_pp
             else in_container_capsule
         )
-        for k, v in _coerce_str_dict(opts.get("extra_env")).items():
-            env[k] = v
+        env.update(extra_env)
 
         # docker run argv. Order matters: --rm, env, volumes, image-level
         # options, then image, then command.
@@ -266,7 +271,7 @@ class DockerRunner:
         env_flags, client_env = docker_env_args(
             forwardable_env(
                 env,
-                also_allow={"PYTHONPATH", *_coerce_str_dict(opts.get("extra_env"))},
+                also_allow={"PYTHONPATH", *extra_env},
             ),
             os.environ,
         )

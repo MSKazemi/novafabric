@@ -467,7 +467,7 @@ Pass via `--runner-option key=value` on the CLI or via `.novafabric/runners.yaml
 | `constraint` | no | Node feature constraint (`--constraint`) |
 | `poll_interval_s` | no | How often to poll for job state, in seconds. Default 5.0 |
 | `output_dir` | no | Where to write `slurm-<jobid>.out/.err`. Default: capsule directory |
-| `extra_env` | no | Variables to export in the job, e.g. `extra_env=LOG_LEVEL=debug,HF_HOME=/scratch/hf`. The job receives only these, `NOVAFABRIC_*` (minus credentials) and `PATH` (ADR-0270, ADR-0311). Names must be shell identifiers |
+| `extra_env` | no | Variables to export in the job, e.g. `extra_env=LOG_LEVEL=debug,HF_HOME=/scratch/hf`, or as a JSON object of strings, `extra_env='{"LOG_LEVEL":"debug"}'` (needed when a value contains a comma; a malformed one fails setup). The job receives only these, `NOVAFABRIC_*` (minus credentials) and `PATH` (ADR-0270, ADR-0311). Names must be shell identifiers |
 
 #### How the job is submitted
 

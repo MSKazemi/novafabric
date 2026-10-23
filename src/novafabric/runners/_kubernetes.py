@@ -206,7 +206,15 @@ class KubernetesRunner:
         # environment; a Job object is readable by anyone with `get job` in the
         # namespace and is persisted in etcd, so only NOVAFABRIC_* and the
         # operator's explicit extra_env may cross into it. Defect B2.
-        extra_env = _coerce_str_dict(opts.get("extra_env"))
+        try:
+            extra_env = _coerce_str_dict(opts.get("extra_env"), name="extra_env")
+            node_selector = (
+                _coerce_str_dict(opts.get("node_selector"), name="node_selector") or None
+            )
+        except ValueError as exc:
+            return RunnerJobResult(
+                exit_code=127, runner_status="failed_setup", runner_error=str(exc)
+            )
         env = forwardable_env(spec.env, also_allow=extra_env)
         env.update(extra_env)
         env["NOVAFABRIC_CAPSULE_DIR"] = in_pod_capsule
@@ -218,7 +226,6 @@ class KubernetesRunner:
         service_account = opts.get("service_account")
         if not isinstance(service_account, str):
             service_account = None
-        node_selector = _coerce_str_dict(opts.get("node_selector")) or None
         resources = opts.get("resources") if isinstance(opts.get("resources"), dict) else None
 
         manifest = _build_job_manifest(
