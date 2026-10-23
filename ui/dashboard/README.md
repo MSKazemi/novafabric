@@ -76,7 +76,7 @@ reports.
 ## Develop
 
 ```bash
-nvm use                 # Node >=22.12 (matches package.json engines and CI)
+nvm use                 # Node >=22.23.4 (matches package.json engines and CI)
 npm ci
 npm run dev             # localhost:4321 — open /dashboard/
 ```
