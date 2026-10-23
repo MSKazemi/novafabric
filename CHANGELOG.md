@@ -11,6 +11,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+## [0.106.1] - 2026-10-23
+
+**The release image builds again, the collector clears a new Go advisory, and a release now
+publishes only from a commit whose CI passed.** A release-pipeline patch: no library or CLI
+change. Full notes:
+[docs/releases/v0.106.1.md](docs/releases/v0.106.1.md).
+
 ### Changed
 
 - **CI runs the unit suite as six duration-balanced shards** (ADR-0316). The single `unit`
@@ -32,6 +39,14 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **The container image builds.** `deploy/docker/Dockerfile` did not copy
+  `scripts/pypi_readme_hook.py`, the hatch metadata hook that produces the PyPI long
+  description, so the v0.106.0 image build failed with "Build script does not exist" and no
+  v0.106.0 image was published (the PyPI release and the Helm chart were). The packaging guard
+  now checks every hatch hook script as well as every `force-include` source.
+- **Collector CI on Go 1.26.10.** GO-2026-6809 (`crypto/x509`: distrust compromised
+  intermediate certificates) is fixed only in Go 1.26.10 and failed the v0.106.0 tag's
+  `govulncheck` run on 1.26.9.
 - **Two promote CLI tests failed only in CI.** Typer forces a colour terminal when
   `GITHUB_ACTIONS` is set, and Rich then wrote escape codes inside `--identity`. The test
   session now pins its colour environment (`tests/conftest.py`), closing the whole class
@@ -41,23 +56,8 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 - **pillow ≥ 13.0.0** (18 advisories in 12.3.0, one CRITICAL; via `weasyprint`) and
   **certifi ≥ 2026.10.19** (PYSEC-2026-4320, CRITICAL), both pinned as transitive floors
-  in `[tool.uv] constraint-dependencies`.
-
-## [0.106.1] - 2026-10-22
-
-**The release image builds again, and the collector clears a new Go advisory.** A release-pipeline patch: no library or CLI change. Full notes:
-[docs/releases/v0.106.1.md](docs/releases/v0.106.1.md).
-
-### Fixed
-
-- **The container image builds.** `deploy/docker/Dockerfile` did not copy
-  `scripts/pypi_readme_hook.py`, the hatch metadata hook that produces the PyPI long
-  description, so the v0.106.0 image build failed with "Build script does not exist" and no
-  v0.106.0 image was published (the PyPI release and the Helm chart were). The packaging guard
-  now checks every hatch hook script as well as every `force-include` source.
-- **Collector CI on Go 1.26.10.** GO-2026-6809 (`crypto/x509`: distrust compromised
-  intermediate certificates) is fixed only in Go 1.26.10 and failed the v0.106.0 tag's
-  `govulncheck` run on 1.26.9.
+  in `[tool.uv] constraint-dependencies`. This raises them in `uv.lock`, which CI and
+  development environments install from; the package's own requirements are unchanged.
 
 ## [0.106.0] - 2026-10-22
 
