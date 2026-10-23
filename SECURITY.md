@@ -155,6 +155,18 @@ STRIDE analysis in the project's internal threat model:
   If you run `nova serve` or `nova server` with non-admin credentials, review the
   registry for assets in `production` with no promotion history.
 
+  Also fixed in the next release, in capture and verification: with
+  `--runner docker` or Kubernetes, links a containerised workload planted in its
+  capsule directory could make host-side finalisation write host files (the
+  secret scanner, `capsule.yaml`, `env.lock`, health and proof files); a capsule
+  whose `capsule.yaml` was swapped for an edited `capsule.json` passed `nova
+  verify` and the trust radar; the radar and run-verify API could show a tampered
+  capsule as attested; `POST /api/evidence/{id}/verify` accepted tampered or
+  re-signed bundles; and a Postgres `merkle_db` DSN was written to disk as a
+  directory name, password included. **Re-verify capsules and bundles you relied
+  on from these surfaces, rotate a Postgres password you put in `merkle_db`, and
+  delete any stray `postgres:`/`postgresql:` directory where you ran `nova`.**
+
 If you find a way to make any disabled-by-default surface reachable without
 explicit opt-in, that is a vulnerability — please report it.
 

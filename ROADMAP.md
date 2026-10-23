@@ -120,6 +120,13 @@ These are known limits left after the defect batch in CHANGELOG `[Unreleased]`. 
 | Opt-in dual-approval hold release | ADR-0031 §3 promises "dual-approval if configured"; nothing implements it (release is `admin` now) | planned |
 | Erasure replay on restore | `nova pii erase` / the erasure queue write no `RETENTION_ACTION`, so a restore never replays those erasures; receipt paths are absolute | planned |
 | Rollback evidence survives a SQLite→Postgres migration | `storage/_migration.py` does not copy `asset_status_history` | planned |
+| Per-track Alembic version table (ADR-0317, proposed) | Containers share one `alembic_version` table for the metadata and registry tracks, so `nova server start` can refuse with E-SKEW-AHEAD | owner decision |
+| Capture tamper sweep under a live child | A process the workload leaves running can re-plant a link after the sweep (refused, never followed; capture may stop with an error) | documented limit |
+| Readers verify signatures | List and query views show a re-sealed capsule's own payload; only `nova verify` and the radar reject it | planned |
+| `nova seal log verify` CLI read-only | The CLI still opens the log read-write and creates one if missing | planned |
+| `nova seal bypass --notify <email>` | No email transport exists; the signed status is honest (`pending`) | planned |
+| Promote-bundle `--data-dir` default | The CLI defaults to `~/.local/share/novafabric`, `nova serve` to `$NOVAFABRIC_HOME` | planned |
+| `capsule_migration` edge type | Writes `migration_source`, which the lineage schema rejects | planned |
 | Writers never write through a link | `registry/service.py` (`assets.jsonl`) and `energy/_attribution.py` open a capsule path for writing | planned |
 | Collector 500 on an event without `event_type` | The DuckDB accumulator raises instead of returning 422 | planned |
 
