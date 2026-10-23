@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from novafabric._capsule_fs import CapsuleLinkError, copy_capsule_tree, refuse_capsule_links
+from novafabric._hashutil import sha256_file_prefixed
 from novafabric.capture._ulid import new_ulid
 from novafabric.lineage._types import LineageEdge
 
@@ -241,21 +242,21 @@ class CapsuleMigrator:
             capsule = yaml.safe_load(f)
         run_id: str = (capsule or {}).get("run_id", new_ulid())
 
+        # Both endpoints are the same run in two formats (ADR-0034 §6). The source
+        # is identified by run id plus a digest of its capsule.yaml, never by a
+        # filesystem path: a path is operator layout, not evidence. The edge is
+        # written after the JSONL bump, so it carries the target version itself.
         edge = LineageEdge(
             edge_type="migration_source",
-            source={
-                "kind": "capsule",
-                "ref": str(source.resolve()),
-                "schema_version": SOURCE_VERSION,
-            },
-            target={
-                "kind": "capsule",
-                "ref": str(output.resolve()),
-                "schema_version": TARGET_VERSION,
-            },
-            confidence="high",
+            source={"kind": "run", "run_id": run_id, "schema_version": SOURCE_VERSION},
+            target={"kind": "run", "run_id": run_id, "schema_version": TARGET_VERSION},
+            confidence="declared",
             capsule_run_id=run_id,
-            facets={"from_schema_version": SOURCE_VERSION},
+            schema_version=TARGET_VERSION,
+            facets={
+                "from_schema_version": SOURCE_VERSION,
+                "source_capsule_sha256": sha256_file_prefixed(source / "capsule.yaml"),
+            },
         )
 
         lineage_path = output / "lineage.jsonl"

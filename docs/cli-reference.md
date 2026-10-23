@@ -2649,7 +2649,7 @@ Options:
   those edge types reaches it, so `spawned,delegated_to` follows a spawn and then a delegation. Valid values
   are every edge type the lineage store holds: the edges `nova capture` writes — `consumed` (run → asset),
   `produced_by` (artifact → run), `replayed_from` — plus `attested_by`, `depends_on`, `derived_from`,
-  `evaluated_by`, and the typed vocabulary `contains`, `spawned`, `delegated_to`, `member_of_session`,
+  `evaluated_by`, `migration_source` (written by `nova migrate`), and the typed vocabulary `contains`, `spawned`, `delegated_to`, `member_of_session`,
   `wrote_memory`, `read_memory`. Omit for all edge types; an unknown type exits 1 and lists the valid ones.
   (Fixed 2026-10-22: before this, any `--edge-type` returned an empty result; and `consumed`/`produced_by`
   were rejected as unknown although capture writes them.)

@@ -23,6 +23,7 @@ IN_FORCE_SCHEMA_EDGE_TYPES: frozenset[str] = frozenset(
         "evaluated_by",
         "attested_by",
         "depends_on",
+        "migration_source",
     }
 )
 
