@@ -34,7 +34,12 @@ from typer.testing import CliRunner
 
 from novafabric.capture.orchestrator import CaptureOrchestrator
 from novafabric.cli.main import app as cli_app
-from novafabric.evidence.bundle import PREDICATE_RUN, _canonical_manifest_hash
+from novafabric.evidence.bundle import (
+    MEMBERS_STATEMENT_FILES,
+    PREDICATE_RUN,
+    _canonical_manifest_hash,
+    sign_members_statement,
+)
 from novafabric.evidence.intoto import DSSE_PAYLOAD_TYPE, dsse_sign_payload
 from novafabric.evidence.merkle import ROOT_VERSIONS, root_over_files
 from novafabric.evidence.signing import LocalSigner, generate_keypair
@@ -170,6 +175,8 @@ def resign_tampered_capsule(files: Files, manifest: Manifest, attacker: LocalSig
     root = _capsule_root(files, version)
     for att in manifest["attestations"]:
         path = att["path"]
+        if path in MEMBERS_STATEMENT_FILES:
+            continue  # re-signed last, over the final bytes
         stmt = _statement(files, path)
         if stmt["predicateType"] == PREDICATE_RUN:
             stmt["subject"][0]["digest"]["sha256"] = root
@@ -177,6 +184,12 @@ def resign_tampered_capsule(files: Files, manifest: Manifest, attacker: LocalSig
             manifest["subject"]["capsule_hash"] = "sha256:" + root
         _sign_into(files, manifest, path, stmt, attacker)
     _repair(files, manifest)
+    digests = {
+        n: "sha256:" + hashlib.sha256(d).hexdigest()
+        for n, d in files.items()
+        if n != "manifest.json" and n not in MEMBERS_STATEMENT_FILES
+    }
+    files.update(sign_members_statement(manifest, digests, attacker))
 
 
 def swap_subjects(files: Files, manifest: Manifest, _a: LocalSigner) -> None:
