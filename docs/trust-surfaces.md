@@ -196,3 +196,8 @@ broader ADR-0149 interop facets (NF-171..178, NF-180) are **future design**.
   timestamps
 - [Assurance cases](assurance-cases.md) — binding sealed evidence into a
   machine-checkable argument
+- [Human-oversight evidence](human-oversight.md) — what a human reviewer was
+  shown and whether they corrected the agent, as sealed capsule evidence
+  (experimental)
+- [Frontier-safety evidence](frontier-safety.md) — threshold evals, indicators
+  and AI-control decisions recorded in `facets.frontier_safety` (experimental)

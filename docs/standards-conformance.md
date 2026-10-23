@@ -187,3 +187,5 @@ in [SECURITY.md](../SECURITY.md).
 - [Benchmarks](benchmarks.md) — measured overhead, every number with its command and hardware
 - [Architecture decisions](decisions.md) — the reasoning ledger
 - [Trust surfaces](trust-surfaces.md) — what is signed, by whom, and what that proves
+- [Human-oversight evidence](human-oversight.md) — EU AI Act Art. 14 and Art. 86 facts as capsule evidence (experimental)
+- [Frontier-safety evidence](frontier-safety.md) — runtime events behind frontier-safety framework commitments (experimental)

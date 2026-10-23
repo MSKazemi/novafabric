@@ -5,6 +5,9 @@ is labelled with its current implementation status per the [docs honesty
 rule](../../CONTRIBUTING.md#documentation-status-labels): **works today**, **experimental**, **planned**, or
 **future design**.
 
+Sizing the host first? The [capacity planning & sizing guide](sizing-guide.md) covers
+storage, memory and CPU from a single laptop to a shared Postgres server.
+
 ---
 
 ## Scenario 1 — Default local install (SQLite, no server)
