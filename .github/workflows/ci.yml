@@ -472,7 +472,12 @@ jobs:
           # this job pinned 20 — so the `web` job failed on every run until
           # 2026-08-05. package.json also *claimed* >=20.0.0, so the pin looked
           # correct; the declaration was the thing that was wrong.
+          # Astro 7.4.2 raised its floor to >=22.23.4 (the October 2026 Node
+          # security release) and refuses to start below it. Without
+          # check-latest, setup-node takes whatever 22.x the runner image has
+          # cached, which can lag a fresh security release by days.
           node-version: "22"
+          check-latest: true
           cache: "npm"
           cache-dependency-path: ui/dashboard/package-lock.json
 

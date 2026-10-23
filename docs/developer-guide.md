@@ -2293,8 +2293,8 @@ site change:
   GitHub, because no site route exists for them.
 - `docs/releases/` and `docs/whitepaper/` are excluded.
 
-Run `cd ui/dashboard && npm run build` after a structural docs change. It needs **Node ≥ 22.12**
-(Astro 7).
+Run `cd ui/dashboard && npm run build` after a structural docs change. It needs **Node ≥ 22.23.4**
+(Astro 7.4.2 raised its floor to the October 2026 Node security release).
 
 ---
 
