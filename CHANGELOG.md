@@ -11,6 +11,22 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Security
+
+- **Deletion now fails closed on unreadable WORM state (PR #158, ADR-0318).** A configured `worm.db` that cannot be
+  read (corrupt, truncated, missing table, directory, dangling link, permission denied, locked) refuses
+  `nova capsule delete`, `DELETE /v0/capsules`, bulk delete, the dashboard delete, metadata-index delete and
+  `nova retention plan/apply/status/explain` with `worm_state_unavailable` (409 on the server). Previously the delete
+  went ahead, and a truncated `worm.db` was silently recreated empty. The delete core now also reads `worm.db` from
+  `$NOVAFABRIC_HOME/registries` and the legacy `./.novafabric/registries` location. `--worm-db` must name a file that
+  exists. An unreadable `retention-policy.yaml` refuses with `retention_policy_unavailable`. With no `worm.db`
+  anywhere, behaviour is unchanged. Recovery: [docs/ops/backup-restore.md](docs/ops/backup-restore.md).
+
+### Changed
+
+- Dependencies: setup-uv v10.3.2, sbom-action v0.24.3, hypothesis 6.170.8, pyarrow 26.0.0, astro 7.4.2 and
+  lucide-react 1.61.0. The dashboard now needs Node 22.23.4 or newer.
+
 ## [0.107.0] - 2026-10-23
 
 **Capture that a workload cannot turn against its host, one verifier behind every trust surface,
