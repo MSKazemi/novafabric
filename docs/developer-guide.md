@@ -1511,10 +1511,10 @@ complete manifest around it: `dspy.py`, `crewai.py`, `llamaindex.py`,
 `pydantic_ai.py`, `haystack.py`.
 
 New capsule-writing adapters should use the shared core rather than copying a
-manifest literal — the eight adapters written before it (`a2a`, `autogen`,
+manifest literal. Eight of the adapters were written before it (`a2a`, `autogen`,
 `bedrock_agentcore`, `crewai`, `dspy`, `google_adk`, `langgraph`,
-`openai_agents`) each carry their own copy, which is how all eight of them once
-drifted into writing a `tags` key the schema rejects:
+`openai_agents`), and each carries its own copy, which is how all eight of them
+once drifted into writing a `tags` key the schema rejects:
 
 ```python
 from novafabric.adapters._capsule import begin_capture, require
