@@ -40,8 +40,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from novafabric.registry.store import get_connection, init_schema
-from novafabric.spec.models import AssetStatus
+from novafabric.registry.store import (
+    get_connection,
+    init_schema,
+    record_status_change,
+    spec_digest,
+)
 from novafabric.spec.prompt_asset import (
     CompositionRef,
     PromptAsset,
@@ -103,6 +107,30 @@ def _prompt_version_rows(
     return versioned
 
 
+def _next_prompt_version(
+    conn: sqlite3.Connection,
+    prompt_id: str,
+    existing: list[tuple[int, sqlite3.Row]],
+) -> int:
+    """One past the highest version the registry has *ever* issued for ``prompt_id``.
+
+    Counts the live rows **and** every ``asset_status_history`` row, so a version
+    that was unregistered (its row deleted) is never handed to new content. Before
+    review r6 this counted live rows only, and a retired production version number
+    was reissued with different content.
+    """
+    issued = [version for version, _ in existing]
+    for (raw,) in conn.execute(
+        "SELECT DISTINCT version FROM asset_status_history WHERE asset_name = ?",
+        (prompt_id,),
+    ).fetchall():
+        try:
+            issued.append(int(raw))
+        except (TypeError, ValueError):
+            continue  # a legacy SemVer prompt asset is not a managed version
+    return max(issued, default=0) + 1
+
+
 def register_prompt_version(
     prompt_id: str,
     template: PromptTemplate,
@@ -110,6 +138,8 @@ def register_prompt_version(
     config: dict[str, Any] | None = None,
     commit_message: str = "",
     db_path: Path | None = None,
+    *,
+    actor: str = "",
 ) -> tuple[dict[str, Any], bool]:
     """Register a new immutable prompt version (or return the existing one).
 
@@ -123,7 +153,19 @@ def register_prompt_version(
     ``CompositionError`` and the version never enters the registry. Each
     direct reference is snapshotted (version + content hash it resolved to
     now) into the frozen ``composition`` block.
+
+    Version numbers are immutable (ADR-0312 Amendment 3, applied to prompts in
+    review r6): the new number skips every version the status history ever
+    recorded, a version that was in production is refused with
+    :class:`~novafabric.registry.service.VersionReuseError`, and the insert writes
+    a ``register`` history row bound to the new row id and spec digest, with
+    *actor* as ``changed_by``, in the same transaction.
     """
+    from novafabric.registry.service import (  # noqa: PLC0415 — service is heavy
+        REGISTRATION_STATUS,
+        _require_unused_production_version,
+    )
+
     template = validate_template(template)
     content_hash = compute_content_hash(template, variables, config)
     conn = get_connection(db_path)
@@ -142,8 +184,9 @@ def register_prompt_version(
 
             composition = validate_composition(template, db_path=db_path)
 
-        next_version = (existing[-1][0] if existing else 0) + 1
+        next_version = _next_prompt_version(conn, prompt_id, existing)
         for _ in range(_REGISTER_RETRIES):
+            _require_unused_production_version(conn, prompt_id, str(next_version))
             asset = PromptAsset(
                 prompt_id=prompt_id,
                 version=next_version,
@@ -154,11 +197,13 @@ def register_prompt_version(
                 composition=composition,
                 commit_message=commit_message,
                 created_at=_now(),
-                status=AssetStatus.development,
+                status=REGISTRATION_STATUS,
             )
             # A prompt with no references omits the block entirely (spec
             # §Data model) — the stored record is unchanged from ADR-0112.
             dump_exclude = None if composition else {"composition"}
+            asset_id = str(uuid.uuid4())
+            spec_json = asset.model_dump_json(exclude=dump_exclude)
             try:
                 conn.execute(
                     """
@@ -168,19 +213,33 @@ def register_prompt_version(
                     VALUES (?, ?, 'prompt', ?, ?, ?, NULL, ?, 0)
                     """,
                     (
-                        str(uuid.uuid4()),
+                        asset_id,
                         prompt_id,
                         str(asset.version),
                         asset.status.value,
-                        asset.model_dump_json(exclude=dump_exclude),
+                        spec_json,
                         asset.created_at,
                     ),
                 )
-                conn.commit()
-                return asset.model_dump(mode="json", exclude=dump_exclude), True
             except sqlite3.IntegrityError:
                 # Concurrent writer claimed this version — retry with the next.
+                conn.rollback()
                 next_version += 1
+                continue
+            record_status_change(
+                conn,
+                asset_name=prompt_id,
+                version=str(asset.version),
+                from_status=None,
+                to_status=asset.status.value,
+                changed_at=asset.created_at,
+                changed_by=actor,
+                via="register",
+                asset_id=asset_id,
+                spec_sha256=spec_digest(spec_json),
+            )
+            conn.commit()
+            return asset.model_dump(mode="json", exclude=dump_exclude), True
         raise PromptRegistrationError(
             f"Could not register prompt '{prompt_id}' after "
             f"{_REGISTER_RETRIES} attempts (concurrent writers)."
