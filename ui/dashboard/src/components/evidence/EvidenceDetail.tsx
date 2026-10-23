@@ -3,8 +3,12 @@ import { api, getConnection } from '../../lib/api';
 import type { EvidenceDetail } from '../../lib/api';
 
 interface VerifyState {
-  status: 'idle' | 'running' | 'pass' | 'fail' | 'keyless' | 'no-subtle-crypto';
+  // The verdict of the server's verifier (POST /api/evidence/{id}/verify) -- the same
+  // recipe as `nova verify <bundle>.zip`. The browser never verifies on its own: a
+  // single DSSE signature check here would ignore every member digest.
+  status: 'idle' | 'running' | 'pass' | 'warn' | 'fail';
   message: string;
+  details: string[];
 }
 
 function formatBytes(n: number): string {
@@ -26,13 +30,13 @@ export default function EvidenceDetailPanel({ bundleId, onBack }: Props) {
   const [detail, setDetail] = useState<EvidenceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [verify, setVerify] = useState<VerifyState>({ status: 'idle', message: '' });
+  const [verify, setVerify] = useState<VerifyState>({ status: 'idle', message: '', details: [] });
   const [showFiles, setShowFiles] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    setVerify({ status: 'idle', message: '' });
+    setVerify({ status: 'idle', message: '', details: [] });
     api.getEvidenceDetail(bundleId)
       .then(setDetail)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
@@ -41,94 +45,37 @@ export default function EvidenceDetailPanel({ bundleId, onBack }: Props) {
 
   async function handleVerify() {
     if (!detail) return;
-    if (!window.crypto?.subtle) {
-      setVerify({ status: 'no-subtle-crypto', message: 'SubtleCrypto requires a secure context (HTTPS or localhost). Use cosign verify-blob instead.' });
-      return;
-    }
-    if (!detail.signing_key_fingerprint) {
-      setVerify({ status: 'keyless', message: '' });
-      return;
-    }
-
-    setVerify({ status: 'running', message: '' });
-
+    setVerify({ status: 'running', message: '', details: [] });
     try {
-      const { base, token } = getConnection();
-      // Fetch the raw ZIP
-      const resp = await fetch(`${base}/api/evidence/${encodeURIComponent(bundleId)}/download?token=${encodeURIComponent(token ?? '')}`);
-      if (!resp.ok) throw new Error(`Download failed: ${resp.status}`);
-      const zipBytes = new Uint8Array(await resp.arrayBuffer());
-
-      // Simple ZIP local-file-header scan to extract stored (method=0) entries by name
-      const findZipEntry = (name: string): Uint8Array | null => {
-        const enc = new TextEncoder();
-        const nameBytes = enc.encode(name);
-        for (let i = 0; i < zipBytes.length - 30; i++) {
-          if (zipBytes[i] === 0x50 && zipBytes[i + 1] === 0x4b &&
-              zipBytes[i + 2] === 0x03 && zipBytes[i + 3] === 0x04) {
-            const compMethod = zipBytes[i + 8] | (zipBytes[i + 9] << 8);
-            const fnLen = zipBytes[i + 26] | (zipBytes[i + 27] << 8);
-            const extraLen = zipBytes[i + 28] | (zipBytes[i + 29] << 8);
-            const fn = zipBytes.slice(i + 30, i + 30 + fnLen);
-            if (fn.length === nameBytes.length && fn.every((b, j) => b === nameBytes[j])) {
-              if (compMethod !== 0) return null; // deflate — not extractable here
-              const compSize = zipBytes[i + 18] | (zipBytes[i + 19] << 8) |
-                               (zipBytes[i + 20] << 16) | (zipBytes[i + 21] << 24);
-              const dataOffset = i + 30 + fnLen + extraLen;
-              return zipBytes.slice(dataOffset, dataOffset + compSize);
-            }
-          }
-        }
-        return null;
-      };
-
-      // Get cert bytes
-      const certPath = 'signatures/run.intoto.json.cert';
-      const certBytes = findZipEntry(certPath);
-      if (!certBytes) {
-        setVerify({ status: 'keyless', message: '' });
-        return;
-      }
-
-      // Import public key from PEM — Ed25519 SubjectPublicKeyInfo DER
-      const pemStr = new TextDecoder().decode(certBytes);
-      const b64 = pemStr.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
-      const derBytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-      // Ed25519 SubjectPublicKeyInfo: last 32 bytes are the raw key
-      const rawKey = derBytes.slice(derBytes.length - 32);
-      const cryptoKey = await window.crypto.subtle.importKey(
-        'raw', rawKey, { name: 'Ed25519' }, false, ['verify'],
-      );
-
-      // Build DSSE PAE message
-      const envelope = detail.dsse_envelope as Record<string, unknown>;
-      const payloadType = (envelope.payloadType as string) ?? 'application/vnd.in-toto+json';
-      const payloadB64 = (envelope.payload as string) ?? '';
-      const payloadBytes = Uint8Array.from(atob(payloadB64 + '=='), c => c.charCodeAt(0));
-      const enc = new TextEncoder();
-      const paeType = enc.encode(payloadType);
-      const paeHeader = enc.encode(`DSSEv1 ${paeType.length} `);
-      const paeMiddle = enc.encode(` ${payloadBytes.length} `);
-      const pae = new Uint8Array(paeHeader.length + paeType.length + paeMiddle.length + payloadBytes.length);
-      let off = 0;
-      pae.set(paeHeader, off); off += paeHeader.length;
-      pae.set(paeType, off); off += paeType.length;
-      pae.set(paeMiddle, off); off += paeMiddle.length;
-      pae.set(payloadBytes, off);
-
-      // Get signature
-      const sigs = (envelope.signatures as Array<Record<string, string>>) ?? [];
-      if (!sigs[0]?.sig) throw new Error('No signature found in DSSE envelope');
-      const sigBytes = Uint8Array.from(atob(sigs[0].sig + '=='), c => c.charCodeAt(0));
-
-      const valid = await window.crypto.subtle.verify('Ed25519', cryptoKey, sigBytes, pae);
-      if (valid) {
-        setVerify({ status: 'pass', message: `Signed by key [${detail.signing_key_fingerprint}]` });
+      const r = await api.verifyEvidence(bundleId);
+      const unsigned = r.unsigned_members ?? [];
+      if (!r.valid) {
+        setVerify({
+          status: 'fail',
+          message: 'Verification FAILED — this bundle may have been tampered with.',
+          details: r.errors ?? [],
+        });
+      } else if (r.members_signed === false) {
+        setVerify({
+          status: 'warn',
+          message: `Signed content verifies, but ${unsigned.length} member(s) are not covered by any signature (legacy bundle).`,
+          details: unsigned,
+        });
+      } else if (r.signer_trust === 'anchored') {
+        setVerify({
+          status: 'pass',
+          message: 'Every member verifies and the signer is an operator-trusted key.',
+          details: r.signer_fingerprints ?? [],
+        });
       } else {
-        setVerify({ status: 'fail', message: 'Signature INVALID — this bundle may have been tampered with.' });
+        setVerify({
+          status: 'warn',
+          message: 'The bundle is consistent, but its signer is not pinned (no evidence trust list) — this proves consistency, not who signed it.',
+          details: r.signer_fingerprints ?? [],
+        });
       }
     } catch (e) {
-      setVerify({ status: 'fail', message: `Verification error: ${e instanceof Error ? e.message : String(e)}` });
+      setVerify({ status: 'fail', message: `Verification error: ${e instanceof Error ? e.message : String(e)}`, details: [] });
     }
   }
 
@@ -150,7 +97,6 @@ export default function EvidenceDetailPanel({ bundleId, onBack }: Props) {
 
   const { base, token } = getConnection();
   const downloadUrl = `${base}/api/evidence/${encodeURIComponent(bundleId)}/download?token=${encodeURIComponent(token ?? '')}`;
-  const cosignCmd = `cosign verify-blob \\\n  --bundle signatures/run.intoto.json.bundle \\\n  attestations/run.intoto.json`;
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -200,13 +146,13 @@ export default function EvidenceDetailPanel({ bundleId, onBack }: Props) {
             Cryptographic Verification
           </div>
 
-          {/* Signing key fingerprint */}
+          {/* Signing key fingerprint: the key whose signature verified, per the server. */}
           {detail.signing_key_fingerprint ? (
             <div className="flex items-center gap-2 text-xs">
-              <span className="text-[var(--color-text-faint)]">Key fingerprint:</span>
+              <span className="text-[var(--color-text-faint)]">Signer key:</span>
               <code
                 className="font-mono bg-[var(--color-bg-raised)] px-1.5 py-0.5 rounded text-[var(--color-text)]"
-                title="First 16 hex chars of SHA-256(public key bytes)"
+                title="SHA-256 of the public key whose signature verified"
               >
                 {detail.signing_key_fingerprint}
               </code>
@@ -219,13 +165,17 @@ export default function EvidenceDetailPanel({ bundleId, onBack }: Props) {
               </button>
             </div>
           ) : (
-            <p className="text-xs text-[var(--color-text-faint)]">No local signing key found — keyless Sigstore bundle.</p>
+            <p className="text-xs text-[var(--color-text-faint)]">No signature verified for this bundle.</p>
           )}
 
-          {/* Verify result banner */}
           {verify.status === 'pass' && (
             <div className="rounded p-2 bg-[color-mix(in_oklab,var(--color-status-success)_12%,transparent)] text-[var(--color-status-success)] text-xs">
-              ✓ Signature valid — {verify.message}
+              ✓ {verify.message}
+            </div>
+          )}
+          {verify.status === 'warn' && (
+            <div className="rounded p-2 bg-[color-mix(in_oklab,var(--color-status-pending)_12%,transparent)] text-[var(--color-status-pending)] text-xs">
+              ⚠ {verify.message}
             </div>
           )}
           {verify.status === 'fail' && (
@@ -233,38 +183,19 @@ export default function EvidenceDetailPanel({ bundleId, onBack }: Props) {
               ✗ {verify.message}
             </div>
           )}
-          {verify.status === 'no-subtle-crypto' && (
-            <div className="rounded p-2 bg-[color-mix(in_oklab,var(--color-status-pending)_12%,transparent)] text-[var(--color-status-pending)] text-xs">
-              ⚠ {verify.message}
-            </div>
-          )}
-          {verify.status === 'keyless' && (
-            <div className="text-xs text-[var(--color-text-muted)] space-y-1">
-              <p>Keyless Sigstore bundle — browser verification is not applicable.</p>
-              <p>To verify:</p>
-              <div className="relative">
-                <pre className="bg-[var(--color-bg-raised)] p-2 rounded font-mono text-[11px] overflow-x-auto">
-                  {cosignCmd}
-                </pre>
-                <button
-                  onClick={() => copyToClipboard(cosignCmd)}
-                  className="absolute top-1 right-1 text-[10px] text-[var(--color-text-faint)] hover:text-[var(--color-text)] bg-[var(--color-bg-raised)] px-1 rounded"
-                  title="Copy cosign command"
-                >
-                  ⎘
-                </button>
-              </div>
-            </div>
+          {verify.details.length > 0 && (
+            <ul className="text-[11px] font-mono text-[var(--color-text-muted)] list-disc pl-5 max-h-32 overflow-auto">
+              {verify.details.map((d) => <li key={d}>{d}</li>)}
+            </ul>
           )}
 
-          {/* Verify button */}
-          {(verify.status === 'idle' || verify.status === 'running') && detail.signing_key_fingerprint && (
+          {(verify.status === 'idle' || verify.status === 'running') && (
             <button
               onClick={handleVerify}
               disabled={verify.status === 'running'}
               className="text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-raised)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              {verify.status === 'running' ? 'Verifying…' : '⊛ Verify signature'}
+              {verify.status === 'running' ? 'Verifying…' : '⊛ Verify bundle'}
             </button>
           )}
         </div>

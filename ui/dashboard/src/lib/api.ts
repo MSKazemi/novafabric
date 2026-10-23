@@ -525,6 +525,10 @@ export interface VerifyResult {
   attestations_verified?: number;
   signer_trust?: 'anchored' | 'unanchored' | 'untrusted' | 'none';
   signer_fingerprints?: string[];
+  // r8: false for a legacy bundle whose members no signature covers.
+  members_signed?: boolean;
+  unsigned_members?: string[];
+  run_ids?: string[];
 }
 
 export interface EvalHistoryResponse {
