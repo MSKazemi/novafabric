@@ -212,20 +212,20 @@ class _NotResolvable(Exception):
     """A cart kind with no resolver in this slice."""
 
 
-def _refusal_detail(refused: list[CapsuleEntryError]) -> str:
-    """One 422 detail for capsules whose Merkle root was refused; no server paths."""
-    links = sorted({link for exc in refused if isinstance(exc, CapsuleLinkError)
-                    for link in exc.links})
-    if links:
-        shown = ", ".join(links[:20])
-        return (
-            f"{len(refused)} cart capsule(s) cannot be exported: they hold "
-            f"{len(links)} symlink(s), which are never followed: {shown}. Replace "
-            "them with regular files or remove them, then export again."
-        )
+def _refusal_reason(exc: CapsuleEntryError) -> str:
+    """Why a capsule's Merkle root was refused, naming capsule-relative links only."""
+    if isinstance(exc, CapsuleLinkError) and exc.links:
+        shown = ", ".join(exc.links[:20])
+        return f"holds {len(exc.links)} symlink(s), which are never followed: {shown}"
+    return "a capsule file is not a regular file (a FIFO, socket or device)"
+
+
+def _refusal_detail(refused: list[str]) -> str:
+    """One 422 detail listing every refused cart capsule; no server paths."""
     return (
-        f"{len(refused)} cart capsule(s) cannot be exported: a capsule file is "
-        "not a regular file (a FIFO, socket or device) or holds a symlink"
+        f"{len(refused)} cart capsule(s) cannot be exported: "
+        + "; ".join(refused[:20])
+        + ". Replace links with regular files or remove them, then export again."
     )
 
 
@@ -298,10 +298,12 @@ def build_evidence_cart_router(
             )
 
         dirs: dict[tuple[str, str], Path] = {}
-        #: Capsules whose root was refused (a link inside, a file swapped for a
-        #: FIFO). Not "unresolved": the reference resolved to a capsule that no
-        #: export may carry, so ``accept_unresolved`` must not wave it through.
-        refused: list[CapsuleEntryError] = []
+        #: Why each refused capsule was refused: a link or special file inside
+        #: it (the Merkle root never follows one), or a 403 from resolution (a
+        #: top-level link, a root linked out of the read roots). Not
+        #: "unresolved": the reference names a capsule that no export may carry,
+        #: so ``accept_unresolved`` must not turn it into a recorded omission.
+        refused: list[str] = []
 
         def _digest_for(item: CartItem) -> str | None:
             from novafabric.evidence.merkle import capsule_merkle_root
@@ -314,11 +316,13 @@ def build_evidence_cart_router(
             try:
                 cdir = resolve_capsule(item.ref, capsule_dir)
             except HTTPException as exc:
+                if exc.status_code == 403:
+                    refused.append(f"{item.ref}: {exc.detail}")
                 raise LookupError(str(exc.detail)) from exc
             try:
                 digest = capsule_merkle_root(cdir)
             except CapsuleEntryError as exc:
-                refused.append(exc)
+                refused.append(f"{item.ref}: {_refusal_reason(exc)}")
                 raise
             dirs[item.identity()] = cdir
             return digest
