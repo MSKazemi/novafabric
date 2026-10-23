@@ -9,7 +9,40 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
+
+# The tables ``migrate-to-postgres`` creates. Its DDL (``metadata_store/cli.py``
+# ``_PG_DDL``) declares ``tenant_id TEXT``, while ``PostgresMetadataStore.bootstrap``
+# declares ``UUID`` and applies a ``::uuid`` RLS policy. The ``postgres_url`` database
+# is shared by every ``tests/metadata_store`` test on a worker, and both bootstraps use
+# ``CREATE TABLE IF NOT EXISTS``, so whichever runs first fixes the column type for
+# every later test. A migration test followed by any ``bootstrap()`` test then failed
+# with ``operator does not exist: text = uuid``. It stayed hidden until a change to the
+# set of test files moved the two into one CI shard (2026-10-24).
+_MIGRATION_TABLES = ("runs", "capsules", "signatures", "retention_policies")
+
+
+def _drop_migration_tables(dsn: str) -> None:
+    import psycopg
+
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        for table in _MIGRATION_TABLES:
+            conn.execute(f"DROP TABLE IF EXISTS {table} CASCADE")  # noqa: S608
+
+
+@pytest.fixture(autouse=True)
+def _isolate_shared_postgres_schema(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Give each Postgres migration test a clean slate and leave one behind."""
+    if "postgres_url" not in request.fixturenames:
+        yield
+        return
+    dsn = request.getfixturevalue("postgres_url")
+    _drop_migration_tables(dsn)
+    yield
+    _drop_migration_tables(dsn)
 
 # ---------------------------------------------------------------------------
 # Helpers
