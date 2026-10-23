@@ -35,7 +35,7 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_required_capsule_member
+from novafabric._capsule_fs import list_capsule, open_capsule_file, read_required_capsule_member
 from novafabric.evidence.intoto import INTOTO_STATEMENT_TYPE
 
 CAPSULE_PREDICATE_TYPE = "novafabric.dev/capsule/v1"
@@ -47,9 +47,30 @@ class SubjectDigestMismatch(Exception):
     """Raised when a subject's recomputed digest disagrees with an expected one."""
 
 
-def _capsule_files(capsule_dir: Path) -> list[Path]:
-    """All capsule files, sorted by relative path (matches ``capsule_merkle_root``)."""
-    return [p for p in sorted(capsule_dir.rglob("*")) if p.is_file()]
+#: The ``operation`` named in a ``_capsule_fs`` refusal.
+_OPERATION = "an in-toto statement"
+
+
+def _capsule_files(capsule_dir: Path) -> list[str]:
+    """Every regular file's capsule-relative path, in ``capsule_merkle_root`` order.
+
+    Walks without following a link and raises
+    :class:`~novafabric._capsule_fs.CapsuleLinkError` naming every symlink, as
+    the evidence export does: a link cannot be a subject, and hashing its
+    target would attest a file outside the capsule. FIFOs, sockets and devices
+    are not capsule content and are left out, as every exporter leaves them out.
+    """
+    listing = list_capsule(capsule_dir, operation=_OPERATION)
+    return sorted(listing.files, key=lambda rel: rel.split("/"))
+
+
+def _sha256_file(capsule_dir: Path, rel: str) -> str:
+    """Streamed sha256 of *rel*, opened without following a link or blocking."""
+    digest = hashlib.sha256()
+    with open_capsule_file(capsule_dir, rel, operation=_OPERATION) as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _read_run_id(capsule_dir: Path) -> str:
@@ -65,15 +86,18 @@ def _read_run_id(capsule_dir: Path) -> str:
 
 
 def capsule_subjects(capsule_dir: str | Path) -> list[dict[str, Any]]:
-    """in-toto ``subject[]`` for a capsule: one ``{name, digest.sha256}`` per file."""
+    """in-toto ``subject[]`` for a capsule: one ``{name, digest.sha256}`` per file.
+
+    Raises :class:`~novafabric._capsule_fs.CapsuleLinkError` when the capsule
+    holds a symlink (never followed), and
+    :class:`~novafabric._capsule_fs.CapsuleSpecialFileError` when a listed file
+    was swapped for a FIFO or device before it was read (never blocked on).
+    """
     capsule_dir = Path(capsule_dir)
-    subjects: list[dict[str, Any]] = []
-    for path in _capsule_files(capsule_dir):
-        rel = path.relative_to(capsule_dir).as_posix()
-        subjects.append(
-            {"name": rel, "digest": {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()}}
-        )
-    return subjects
+    return [
+        {"name": rel, "digest": {"sha256": _sha256_file(capsule_dir, rel)}}
+        for rel in _capsule_files(capsule_dir)
+    ]
 
 
 def capsule_statement(

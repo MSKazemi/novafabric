@@ -353,6 +353,15 @@ Options:
     `extra_env` for `docker`/`kubernetes`/`slurm`/`lsf` (ADR-0270, ADR-0311), e.g.
     `--runner-option extra_env=LOG_LEVEL=debug`. `local` runs as you, on your
     machine, and keeps your full environment.
+  - **The capsule is untrusted once the workload has run.** With `docker` the
+    capsule directory is mounted read-write into the container. Before any
+    host-side read or write, capture removes (never follows) a link, FIFO or
+    other special file the workload planted at a capsule-managed path, and marks
+    the capsule tampered (`metadata.capture_tampered`, `capture-health.json`
+    `tampered_entries`, a `stream_tampered` proof target). Capture still exits
+    with the workload's exit code and prints `✗ capture integrity: ...`;
+    `nova verify` and `nova validate` fail such a capsule. See
+    [Run Capsule anatomy](./architecture/run-capsule.md#after-the-workload-runs-the-capsule-is-untrusted-input).
   - **Where an `extra_env` value is visible.** A value typed on the command line is in
     `nova capture`'s own argv, which every user on the host can read with `ps` for as
     long as the run lasts — including the whole time a batch job is queued and running.
@@ -3471,7 +3480,7 @@ original checks green.
 
 Options:
 - `--seal-config PATH` — path to `novaseal.yaml` (default: `$NOVAFABRIC_HOME/novaseal.yaml`, i.e. `~/.novafabric/novaseal.yaml` only when `NOVAFABRIC_HOME` is unset; env: `NOVAFABRIC_SEAL_CONFIG`)
-- `--json` — **experimental** (ADR-0301). Print one JSON object instead of the text report; exit code unchanged. Capsule directories with the local backend only (otherwise exit 2). Fields: `valid`, `sealed`, `signature_ok`, `pae_encoding`, `timestamp_ok` (`null` when the capsule carries no RFC 3161 token), `timestamp_present`, `timestamp_strict`, `log_integrity_ok`, `log_inclusion`, `log_notes`, `capsule_binding_ok`, `capsule_id_ok`, `ca_chain_checked`, `ca_chain_ok` (`null` when no CA bundle was used), `tsa_chain_checked`, `tsa_chain_ok`, `identity_trust` (`none` · `self-asserted` · `local-ca-pinned` · `ca-anchored`), `identity_statement`, `signer_subject`, `local_seal_identity`, `signing_intent`, `errors`; additive (ADR-0297 Amendment 2): `timestamp_trust` (`anchored` · `unanchored` · `absent` · `invalid` — only `anchored` is trusted time; `timestamp_ok` stays token integrity), `timestamp_gen_time` and `tsa_subject` (the token's own claims, unverified unless anchored), `sealer_log` (`entry-found` · `missing` · `unverifiable-other-version` · `not-sealer-log` · `no-log` · `not-consulted`), `unanchored_claims`, `strict`
+- `--json` — **experimental** (ADR-0301). Print one JSON object instead of the text report; exit code unchanged. Capsule directories with the local backend only (otherwise exit 2). Fields: `valid`, `sealed`, `signature_ok`, `pae_encoding`, `timestamp_ok` (`null` when the capsule carries no RFC 3161 token), `timestamp_present`, `timestamp_strict`, `log_integrity_ok`, `log_inclusion`, `log_notes`, `capsule_binding_ok`, `capsule_id_ok`, `ca_chain_checked`, `ca_chain_ok` (`null` when no CA bundle was used), `tsa_chain_checked`, `tsa_chain_ok`, `identity_trust` (`none` · `self-asserted` · `local-ca-pinned` · `ca-anchored`), `identity_statement`, `signer_subject`, `local_seal_identity`, `signing_intent`, `errors`; additive (ADR-0297 Amendment 2): `timestamp_trust` (`anchored` · `unanchored` · `absent` · `invalid` — only `anchored` is trusted time; `timestamp_ok` stays token integrity), `timestamp_gen_time` and `tsa_subject` (the token's own claims, unverified unless anchored), `sealer_log` (`entry-found` · `missing` · `unverifiable-other-version` · `not-sealer-log` · `no-log` · `not-consulted`), `unanchored_claims`, `strict`; additive: `capture_tampered` (`null`, or the signed manifest's `metadata.capture_tampered` — the recorded workload replaced capsule paths with links or special files during capture; such a capsule is never `valid`, exit 1)
 - `--strict` — **experimental**. Also exit 1 when a passing check rests on a claim no anchor you trust vouches for, listed in `unanchored_claims`: `identity-self-asserted` (no `--ca-bundle`), `timestamp-unanchored` (a token without `--tsa-ca-bundle` / `tsa_ca_certs`), `log-head-unanchored` (inclusion shown only by the carried proof), `log-inclusion-not-checked`, `sealer-log-other-version`. A pass needs a CA-validated signer, a TSA-anchored timestamp or none, and the entry found in the sealer's log. Capsule directories with the local backend only (otherwise exit 2). Not an evidence failure: no seal-verify alert is raised
 - `--backend [local|sigstore]` — verification backend (default: `local`). Use `sigstore` to verify a Sigstore bundle stored alongside the capsule; requires `pip install novafabric[sigstore]`
 - `--capsule-id TEXT` — capsule ID for Sigstore bundle lookup (required when `--backend sigstore`)
@@ -6772,7 +6781,9 @@ Smart routing:
 
 - If `path` is a **directory containing `capsule.yaml`**: validates the run capsule
   against `run-capsule.schema.json`, `environment.schema.json`, and `secret-redaction.schema.json`,
-  and checks all required files exist.
+  and checks all required files exist. A capsule whose manifest carries
+  `metadata.capture_tampered` (the recorded workload replaced a capsule path with
+  a link or special file during `nova capture`) fails validation (exit 1).
 - If `path` does not exist but is a **run id**, the capsule of that id is validated,
   resolved in `$NOVAFABRIC_CAPSULE_DIR` (default `~/.novafabric/capsules/`).
 - Otherwise: validates `path` as an asset YAML spec (v0.1 behavior).

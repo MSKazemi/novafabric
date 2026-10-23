@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 from typing import Any, Union
 
+from novafabric._capsule_fs import read_capsule_text_or_none
 from novafabric.capture._ulid import new_span_id, new_ulid
 from novafabric.capture.record_roles import read_logical_model_calls
 from novafabric.collector_cffi.spool import NovaPySpool
@@ -147,7 +148,10 @@ def emit_call_events_from_capsule(
         pass  # fail-open: model-calls.jsonl missing/unreadable is not fatal
 
     try:
-        for line in (capsule_dir / "tool-calls.jsonl").read_text().splitlines():
+        tool_text = read_capsule_text_or_none(
+            capsule_dir, "tool-calls.jsonl", operation="spool re-emission"
+        )
+        for line in (tool_text or "").splitlines():
             line = line.strip()
             if not line:
                 continue

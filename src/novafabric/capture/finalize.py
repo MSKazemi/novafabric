@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
 import sys
 from collections.abc import Callable
@@ -35,6 +36,12 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    is_capsule_regular_file,
+    open_capsule_file,
+    replace_capsule_file,
+)
 from novafabric.capture.secrets import (
     ResidualSecretError,
     SecretScannerV0,
@@ -100,6 +107,10 @@ def evidence_digests(capsule_dir: Path) -> dict[str, Any]:
     filesystems.  Entry shape matches the Evidence Bundle's ``ArtifactEntry``
     (``sha256`` in ``sha256:<hex>`` form, ``size_bytes``) so the two tamper-evidence
     layers read alike.
+
+    Every file is opened without following a link and never blocks on a FIFO
+    (:func:`novafabric._capsule_fs.open_capsule_file`): a link or special file is
+    not capsule content, so it is left out and logged, never hashed through.
     """
     digests: dict[str, Any] = {}
     for path in sorted(capsule_dir.rglob("*")):
@@ -108,9 +119,25 @@ def evidence_digests(capsule_dir: Path) -> dict[str, Any]:
         rel = path.relative_to(capsule_dir)
         if rel.parts[0] in _DIGEST_EXCLUDED_TOP:
             continue
-        data = path.read_bytes()
-        digests[rel.as_posix()] = {"sha256": _sha256(data), "size_bytes": len(data)}
+        entry = _digest_entry(capsule_dir, rel.as_posix())
+        if entry is not None:
+            digests[rel.as_posix()] = entry
     return digests
+
+
+def _digest_entry(capsule_dir: Path, rel: str) -> dict[str, Any] | None:
+    """``{sha256, size_bytes}`` of *rel*, streamed; None when it is not a regular file."""
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with open_capsule_file(capsule_dir, rel, operation="evidence digests") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+                size += len(chunk)
+    except (CapsuleEntryError, FileNotFoundError, IsADirectoryError, NotADirectoryError) as exc:
+        logger.warning("novafabric: %s left out of evidence_digests: %s", rel, exc)
+        return None
+    return {"sha256": "sha256:" + digest.hexdigest(), "size_bytes": size}
 
 
 def seal_capsule(capsule_dir: Path, manifest: dict[str, Any]) -> str | None:
@@ -151,14 +178,7 @@ def seal_capsule(capsule_dir: Path, manifest: dict[str, Any]) -> str | None:
             backend=backend,
         )
         bundle = seal.seal(manifest)
-
-        seal_dir = capsule_dir / ".seal"
-        seal_dir.mkdir(exist_ok=True)
-        (seal_dir / "manifest.dsse").write_bytes(bundle.dsse_envelope)
-        (seal_dir / "manifest.dsse.tsr").write_bytes(bundle.tsr)
-        (seal_dir / "log-entry.json").write_text(
-            json.dumps(bundle.log_entry, indent=2), encoding="utf-8"
-        )
+        _write_seal_files(capsule_dir, bundle)
         return None
 
     except SealConfigError as exc:
@@ -168,6 +188,29 @@ def seal_capsule(capsule_dir: Path, manifest: dict[str, Any]) -> str | None:
         print(f"[novafabric] ⚠ NovaSeal sealing failed (capsule is still valid): {exc}",
               file=sys.stderr)
         return f"NovaSeal sealing failed: {type(exc).__name__}: {exc}"
+
+
+def _write_seal_files(capsule_dir: Path, bundle: Any) -> None:
+    """Write ``.seal/`` without following a link the workload may have planted.
+
+    ``mkdir`` never follows a link at ``.seal``, and each file is replaced by an
+    atomic rename through an ``O_NOFOLLOW`` walk, so a ``.seal`` link is refused
+    (the seal then fails, and the capsule is reported unsealed) instead of the
+    envelope being written wherever it points.
+    """
+    try:
+        os.mkdir(capsule_dir / ".seal")
+    except FileExistsError:
+        pass
+    op = "NovaSeal"
+    replace_capsule_file(capsule_dir, ".seal/manifest.dsse", bundle.dsse_envelope, operation=op)
+    replace_capsule_file(capsule_dir, ".seal/manifest.dsse.tsr", bundle.tsr, operation=op)
+    replace_capsule_file(
+        capsule_dir,
+        ".seal/log-entry.json",
+        json.dumps(bundle.log_entry, indent=2).encode("utf-8"),
+        operation=op,
+    )
 
 
 def write_redacted_manifest(
@@ -307,7 +350,7 @@ def finalize_capsule(
     # --- NovaSeal (opt-in, non-blocking) ---
     reason = (seal or seal_capsule)(capsule_dir, manifest)
     # A seal that reported a failure is not a seal, whatever it left on disk.
-    sealed = reason is None and (capsule_dir / ".seal" / "manifest.dsse").is_file()
+    sealed = reason is None and is_capsule_regular_file(capsule_dir, ".seal/manifest.dsse")
     return FinalizeResult(
         manifest=manifest,
         sealed=sealed,

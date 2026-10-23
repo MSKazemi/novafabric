@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric._capsule_fs import open_capsule_file_for_write, replace_capsule_file
 from novafabric.capture.events import (
     EvaluatorEvent,
     FileEvent,
@@ -423,6 +424,9 @@ class EventRecorder:
         # Bounded: one key per source, one per stream within it.
         self._merged: dict[str, dict[str, int]] = {}
         self._warned: set[str] = set()
+        # Capsule paths the workload replaced with a link or special file
+        # (capture.tamper); written to capture-health.json as evidence.
+        self._tampered: list[dict[str, str]] = []
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -453,11 +457,14 @@ class EventRecorder:
     def _append(self, filename: str, data: dict) -> None:  # type: ignore[type-arg]
         """Append a JSON record to a JSONL file. Never raises."""
         try:
-            path = self._capsule_dir / filename
             line = json.dumps(data, separators=(",", ":")) + "\n"
             with self._lock:
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(line)
+                # O_NOFOLLOW | O_NONBLOCK: a link or FIFO planted at the stream
+                # is refused (counted as a drop), never written through.
+                with open_capsule_file_for_write(
+                    self._capsule_dir, filename, mode="a", operation="the event recorder"
+                ) as f:
+                    f.write(line.encode("utf-8"))
         except Exception:
             # fail-open: never block the agent workflow — but never lose
             # the fact that an event was lost, either.
@@ -492,6 +499,19 @@ class EventRecorder:
         except Exception:  # pragma: no cover — last-resort guard
             pass
 
+    def record_tampered(self, entries: list[dict[str, str]]) -> None:
+        """Record capsule paths the workload tampered with (``capture.tamper``).
+
+        They are written to ``capture-health.json`` as ``tampered_entries`` by
+        :meth:`finalize_health`, which then writes a report even with no drops.
+        Never raises.
+        """
+        try:
+            with self._lock:
+                self._tampered.extend(dict(e) for e in entries)
+        except Exception:  # pragma: no cover — last-resort guard
+            pass
+
     def _sources_block(self) -> dict[str, dict[str, int]] | None:
         """``{"orchestrator": own, <source>: merged}``, or None when nothing was merged."""
         with self._lock:
@@ -515,13 +535,18 @@ class EventRecorder:
         """Write ``capture-health.json`` if any events were dropped.
 
         Clean runs write nothing, so capsules without capture loss are
-        byte-identical to earlier versions. Fail-open like everything else.
+        byte-identical to earlier versions. A run whose workload tampered with
+        capsule paths writes a report even with no drops. The file is replaced
+        by an atomic rename, never written through a planted link. Fail-open
+        like everything else.
         """
         try:
             drops = self.drop_counts
-            if not drops:
+            with self._lock:
+                tampered = [dict(e) for e in self._tampered]
+            if not drops and not tampered:
                 return
-            target = (capsule_dir or self._capsule_dir) / "capture-health.json"
+            target_dir = capsule_dir or self._capsule_dir
             report: dict[str, Any] = {
                 "run_id": self._run_id,
                 "capsule_id": self._capsule_id,
@@ -533,11 +558,24 @@ class EventRecorder:
             sources = self._sources_block()
             if sources is not None:
                 report["sources"] = sources
+                report["sources_note"] = (
+                    "Counts under sources other than 'orchestrator' were reported "
+                    "by the recorded process itself and are not verified."
+                )
+            if tampered:
+                # Additive, optional: present only when the workload replaced a
+                # capsule-managed path with a link or special file.
+                report["tampered_entries"] = tampered
             report["note"] = (
                 "Counts of events the fail-open capture layer could not "
                 "persist; the workload was never blocked (ADR-0021)."
             )
-            target.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            replace_capsule_file(
+                target_dir,
+                "capture-health.json",
+                (json.dumps(report, indent=2) + "\n").encode("utf-8"),
+                operation="the capture-health report",
+            )
         except Exception:
             pass  # fail-open
 

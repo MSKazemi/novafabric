@@ -23,6 +23,12 @@ The rules:
   :func:`list_capsule` ran is still never followed. ``O_NONBLOCK`` plus an
   ``fstat`` check refuses a FIFO or device that was swapped in, so an export
   can never hang on one.
+* :func:`replace_capsule_file` rewrites one file by writing a fresh
+  ``O_EXCL | O_NOFOLLOW`` temporary file beside it and renaming it into place,
+  so a link, FIFO or hard link planted at the name is replaced, never written
+  through. :func:`open_capsule_file_for_write` is the append-side twin (it
+  refuses a link or special file instead). Capture finalisation writes through
+  these two only: once the workload has run, the capsule is untrusted input.
 * :func:`copy_capsule_tree` copies through :func:`open_capsule_file` and creates
   each destination file with ``O_CREAT | O_EXCL | O_NOFOLLOW``. It never calls
   ``shutil.copytree``, which re-resolves each path between its symlink check and
@@ -98,6 +104,7 @@ __all__ = [
     "read_required_capsule_member",
     "read_required_capsule_text",
     "refuse_capsule_links",
+    "replace_capsule_file",
 ]
 
 _log = logging.getLogger(__name__)
@@ -551,6 +558,83 @@ def open_capsule_member_for_write(
     return open_capsule_file_for_write(
         path.parent, path.name, mode=mode, operation=operation, error=error
     )
+
+
+def _parent_dir_fd(
+    root: Path, parts: tuple[str, ...], rel_s: str, operation: str, error: type[CapsuleLinkError]
+) -> int:
+    """An fd on the parent directory of *parts*, every component opened ``O_NOFOLLOW``."""
+    dir_fd = os.open(root, _DIR_FLAGS)
+    try:
+        for part in parts[:-1]:
+            next_fd = _open_at(part, _DIR_FLAGS | _NOFOLLOW, dir_fd, rel_s, operation, error)
+            os.close(dir_fd)
+            dir_fd = next_fd
+    except BaseException:
+        os.close(dir_fd)
+        raise
+    return dir_fd
+
+
+def replace_capsule_file(
+    root: Path,
+    rel: str | PurePosixPath,
+    data: bytes,
+    *,
+    operation: str = "this operation",
+    error: type[CapsuleLinkError] = CapsuleLinkError,
+    file_mode: int | None = None,
+) -> None:
+    """Replace capsule file *rel* with *data* atomically, following no link.
+
+    The write-side helper for a file whose whole content is (re)written
+    (``capsule.yaml``, the redaction proof, a redacted stream). *data* goes to a
+    new temporary file in the same directory, created ``O_CREAT | O_EXCL |
+    O_NOFOLLOW``, which is then renamed over *rel*. ``rename(2)`` replaces the
+    directory entry itself, so whatever was planted at *rel* (a symlink, a FIFO,
+    a hard link to a file elsewhere) is replaced and never written through,
+    opened or blocked on. Parent directories are walked with ``openat(2)`` +
+    ``O_NOFOLLOW`` and must already exist. The new file gets ``0o666 & ~umask``,
+    or *file_mode* when given (a redaction rewrite keeps the original's mode).
+
+    Raises:
+        ValueError: *rel* is absolute, empty or holds ``..``.
+        CapsuleLinkError: a parent directory of *rel* is a symlink (as *error*).
+        IsADirectoryError: *rel* is a directory.
+        FileNotFoundError: a parent directory does not exist.
+    """
+    parts = _split_rel(rel)
+    rel_s = "/".join(parts)
+    name = parts[-1]
+    if os.open not in os.supports_dir_fd:  # pragma: no cover - non-POSIX fallback
+        parent = root.joinpath(*parts[:-1])
+        tmp_path = parent / f".{name}.nf-tmp-{os.urandom(6).hex()}"
+        fd = os.open(
+            tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _CLOEXEC, 0o666
+        )
+        with os.fdopen(fd, "wb") as out:
+            out.write(data)
+        os.replace(tmp_path, parent / name)
+        return
+    dir_fd = _parent_dir_fd(root, parts, rel_s, operation, error)
+    try:
+        tmp = f".{name}.nf-tmp-{os.urandom(6).hex()}"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _CLOEXEC
+        fd = os.open(tmp, flags, 0o666, dir_fd=dir_fd)
+        try:
+            with os.fdopen(fd, "wb") as out:
+                if file_mode is not None:
+                    os.fchmod(out.fileno(), file_mode)
+                out.write(data)
+            os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=dir_fd)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(dir_fd)
 
 
 def _required_file_error(

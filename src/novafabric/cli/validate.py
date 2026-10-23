@@ -114,10 +114,36 @@ def _validate_artifacts(
             errors.append(f"{filename}: {exc}")
 
 
+def _capture_tamper_error(capsule_dir: Path) -> str | None:
+    """An error when capture recorded that the workload tampered with the capsule.
+
+    ``metadata.capture_tampered`` is written by ``nova capture`` when the
+    recorded workload replaced a capsule-managed path (a stream, a manifest
+    file, ``.seal/``) with a link or special file. Nothing was followed, but the
+    evidence is incomplete, so the capsule is not valid.
+    """
+    try:
+        text = read_required_capsule_member(capsule_dir / "capsule.yaml", operation="nova validate")
+        manifest = yaml.safe_load(text or "")
+    except Exception:  # noqa: BLE001 — a bad manifest is reported by the schema check
+        return None
+    metadata = manifest.get("metadata") if isinstance(manifest, dict) else None
+    value = metadata.get("capture_tampered") if isinstance(metadata, dict) else None
+    if not value:
+        return None
+    return (
+        f"capsule.yaml: capture recorded tampering by the workload "
+        f"(metadata.capture_tampered: {value}); see capture-health.json"
+    )
+
+
 def _validate_capsule(capsule_dir: Path) -> None:
     errors: list[str] = []
 
     _validate_artifacts(capsule_dir, _CAPSULE_SCHEMAS, errors)
+    tamper_error = _capture_tamper_error(capsule_dir)
+    if tamper_error is not None:
+        errors.append(tamper_error)
 
     for fname in ("trace.jsonl", "model-calls.jsonl", "tool-calls.jsonl", "assets.jsonl"):
         if not os.path.lexists(capsule_dir / fname):

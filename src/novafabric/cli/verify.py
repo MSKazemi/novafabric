@@ -490,9 +490,23 @@ def _verify_capsule_dir(
 
     _print_identity(result)
 
-    if result.errors or report.errors:
+    # A capture that recorded tampering by its workload is not trustworthy
+    # evidence, however good its seal: the seal signs that record.
+    from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415
+        capture_tampered_error,
+    )
+
+    tamper_errors = (
+        [capture_tampered_error(report.capture_tampered)]
+        if report.capture_tampered is not None
+        else []
+    )
+    if report.capture_tampered is not None:
+        _print_check("Capture integrity (no workload tampering recorded)", False)
+    all_errors = [*result.errors, *report.errors, *tamper_errors]
+    if all_errors:
         console.print()
-        for err in [*result.errors, *report.errors]:
+        for err in all_errors:
             console.print(f"  [red]✗[/red] {err}")
 
     console.print()
@@ -535,7 +549,8 @@ def _verify_capsule_dir(
                 "signing_intent": (
                     result.signing_intent.value if result.signing_intent is not None else None
                 ),
-                "errors": [*result.errors, *report.errors],
+                "capture_tampered": report.capture_tampered,
+                "errors": all_errors,
             }
         )
 
@@ -552,7 +567,7 @@ def _verify_capsule_dir(
 
         emit_seal_verify_failed_alert(
             capsule_id=capsule_id,
-            errors=[*result.errors, *report.errors],
+            errors=all_errors,
             signature_ok=result.signature_ok,
         )
         raise typer.Exit(code=1)

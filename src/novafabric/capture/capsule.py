@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 
+from novafabric._capsule_fs import open_capsule_file_for_write, replace_capsule_file
 from novafabric.capture._jsonable import json_default, to_jsonable
 from novafabric.capture._tool_scope import mark_nested
 from novafabric.capture.log_level import validate_severity_fields
@@ -27,6 +29,17 @@ def _dumps(record: dict) -> str:  # type: ignore[type-arg]
 
 
 class CapsuleWriter:
+    """Writes one capsule's files, and never follows a link while doing so.
+
+    Under ``nova capture`` the workload writes into its own capsule, and with a
+    container runner the capsule directory is bind-mounted into the container.
+    So every write goes through :mod:`novafabric._capsule_fs`: an append opens
+    the stream ``O_NOFOLLOW | O_NONBLOCK`` and refuses a link or a FIFO
+    (``CapsuleEntryError``), and a whole-file write replaces the entry by an
+    atomic rename, so a link, FIFO or hard link planted at the name is replaced,
+    never written through. A writer added later inherits this by default.
+    """
+
     def __init__(self, run_id: str, base_dir: Path) -> None:
         # Guard against an empty/blank run_id: ``base_dir / "" == base_dir`` would
         # write capsule files (model-calls.jsonl, tool-calls.jsonl, …) directly
@@ -37,6 +50,7 @@ class CapsuleWriter:
         self._run_id = run_id
         self._base_dir = base_dir
         self._dir: Path | None = None
+        self._root_identity: tuple[int, int] | None = None
         self._lock = threading.Lock()
 
     def open(self) -> None:
@@ -48,6 +62,18 @@ class CapsuleWriter:
         (self._dir / "tool-calls.jsonl").touch()
         (self._dir / "trace.jsonl").touch()
         (self._dir / "assets.jsonl").touch()
+        st = os.lstat(self._dir)
+        self._root_identity = (st.st_dev, st.st_ino)
+
+    @property
+    def root_identity(self) -> tuple[int, int] | None:
+        """``(st_dev, st_ino)`` of the capsule directory as :meth:`open` created it.
+
+        Lets capture finalisation tell that the directory it is about to write
+        into is still the one it created, not a link the workload put in its
+        place.
+        """
+        return self._root_identity
 
     @property
     def capsule_dir(self) -> Path:
@@ -58,8 +84,10 @@ class CapsuleWriter:
     def _append(self, filename: str, record: dict) -> None:  # type: ignore[type-arg]
         line = _dumps(record)
         with self._lock:
-            with open(self.capsule_dir / filename, "a") as f:
-                f.write(line + "\n")
+            with open_capsule_file_for_write(
+                self.capsule_dir, filename, mode="a", operation="the capsule writer"
+            ) as f:
+                f.write((line + "\n").encode("utf-8"))
 
     def append_model_call(self, record: dict) -> None:  # type: ignore[type-arg]
         # ADR-0127: reject an out-of-domain severity at write; absent fields
@@ -97,12 +125,19 @@ class CapsuleWriter:
         self._append("trace.jsonl", record)
 
     def write_text(self, filename: str, content: str) -> None:
-        with self._lock:
-            (self.capsule_dir / filename).write_text(content)
+        """Replace capsule file *filename* (capsule-relative) with UTF-8 *content*."""
+        self.write_bytes(filename, content.encode("utf-8"))
 
     def write_bytes(self, filename: str, content: bytes) -> None:
+        """Replace capsule file *filename* (capsule-relative) with *content*.
+
+        An atomic rename that never follows a link planted at *filename* or in
+        a parent directory (see the class docstring).
+        """
         with self._lock:
-            (self.capsule_dir / filename).write_bytes(content)
+            replace_capsule_file(
+                self.capsule_dir, filename, content, operation="the capsule writer"
+            )
 
     def append_tool_permission_event(self, event_dict: dict) -> None:  # type: ignore[type-arg]
         """Append a ToolPermissionEvent to the DSSE signing scope.
