@@ -560,11 +560,15 @@ def _list_evidence_bundles(
                         trusted_public_pems=anchors,
                         tsa_chain_check=_bundle_tsa_chain_ok,
                     )
-                handle.seek(0)
-                with zipfile.ZipFile(handle, "r") as zf:
-                    manifest = read_bundle_manifest(zf)
-                    created = manifest.get("created_at") or manifest.get("timestamp")
-                    timestamp = created if isinstance(created, str) else None
+                if verdict.created_at is not None:
+                    # From the very bytes the verdict covers (review r8), not a re-read.
+                    timestamp = verdict.created_at
+                else:
+                    handle.seek(0)
+                    with zipfile.ZipFile(handle, "r") as zf:
+                        manifest = read_bundle_manifest(zf)
+                        created = manifest.get("created_at") or manifest.get("timestamp")
+                        timestamp = created if isinstance(created, str) else None
         except (OSError, CapsuleEntryError, zipfile.BadZipFile, BundleArchiveError) as exc:
             logger.info(
                 "evidence_bundle_unreadable",
@@ -579,6 +583,7 @@ def _list_evidence_bundles(
             "size_bytes": size_bytes,
             "verified": verdict.verified,
             "signer_trust": verdict.signer_trust,
+            "members_signed": verdict.members_signed,
         })
 
     return results, total
@@ -2427,12 +2432,19 @@ def create_app(
     async def get_evidence_detail_endpoint(bundle_id: str) -> dict[str, Any]:
         """Show one bundle: its manifest and run attestation as data, plus the verdict.
 
-        ``manifest``, ``dsse_statement`` and ``dsse_envelope`` are the bundle's own,
-        unverified content. ``verified``, ``run_id`` and ``run_ids`` come from the
-        shared verifier (as ``POST …/verify``, cached per file): ``run_id`` is the
-        signed run when exactly one verifies, else the bundle id — never the
-        manifest's unsigned label. Every member is read with a size bound; a
-        ``manifest.json`` over the limit is a 413.
+        ``manifest``, ``dsse_statement`` and ``dsse_envelope`` are the bundle's own
+        content, shown as data. ``verified``, ``run_id`` and ``run_ids`` come from the
+        shared verifier (as ``POST …/verify``, cached per archive SHA-256): ``run_id``
+        is the signed run when exactly one verifies, else the bundle id — never the
+        manifest's unsigned label. The archive is copied once into a private snapshot
+        and both the verdict and everything shown come from that copy, so an in-place
+        rewrite can never put forged content beside ``verified: true`` (review r8).
+        ``signing_key_fingerprint`` is the ``sha256:`` SPKI fingerprint of the key
+        whose signatures verified (``signer_fingerprints`` lists every one), null when
+        none did or more than one key signed. ``members_signed`` /
+        ``unsigned_members`` report member coverage (ADR-0011 Amendment 7). Every
+        member is read with a size bound; a ``manifest.json`` over the limit, or an
+        archive over the snapshot bound, is a 413.
         """
         from novafabric.evidence.bundle_verify import TrustedKeysError  # noqa: PLC0415
         from novafabric.serve.evidence_verify import evidence_trust_anchors  # noqa: PLC0415
@@ -2460,7 +2472,6 @@ def create_app(
         return bytes(data)
 
     def _evidence_detail(bundle_id: str, handle: Any, anchors: list[bytes]) -> dict[str, Any]:
-        import hashlib
         import json as _json
         import zipfile
 
@@ -2470,23 +2481,28 @@ def create_app(
             read_bundle_manifest,
         )
 
-        size_bytes = os.fstat(handle.fileno()).st_size
         manifest: dict[str, Any] = {}
         dsse_statement: dict[str, Any] = {}
         dsse_envelope: dict[str, Any] = {}
-        signing_key_fingerprint: str | None = None
         files: list[dict[str, Any]] = []
 
-        try:
-            with handle:
-                verdict = _evidence_verdicts.verdict(
+        with handle:
+            try:
+                verdict, snapshot = _evidence_verdicts.snapshot_verdict(
                     handle,
                     bundle_id,
                     trusted_public_pems=anchors,
                     tsa_chain_check=_bundle_tsa_chain_ok,
                 )
-                handle.seek(0)
-                zf = zipfile.ZipFile(handle, "r")
+            except BundleTooLargeError as exc:
+                raise HTTPException(status_code=413, detail=str(exc)) from exc
+        size_bytes = os.fstat(snapshot.fileno()).st_size
+        fingerprints = list(verdict.signer_fingerprints)
+        signing_key_fingerprint = fingerprints[0] if len(fingerprints) == 1 else None
+
+        try:
+            with snapshot:
+                zf = zipfile.ZipFile(snapshot, "r")
                 names = zf.namelist()
 
                 # Manifest (bounded; absent → {})
@@ -2513,12 +2529,6 @@ def create_app(
                         except Exception:  # noqa: BLE001
                             dsse_statement = {}
 
-                # Signing key fingerprint from cert
-                cert_path = "signatures/run.intoto.json.cert"
-                if cert_path in names:
-                    cert_bytes = _bounded_member(zf, cert_path, _EVIDENCE_MEMBER_MAX_BYTES)
-                    signing_key_fingerprint = hashlib.sha256(cert_bytes).hexdigest()[:16]
-
                 # File list
                 files = sorted(
                     [
@@ -2544,6 +2554,9 @@ def create_app(
             "dsse_statement": dsse_statement,
             "dsse_envelope": dsse_envelope,
             "signing_key_fingerprint": signing_key_fingerprint,
+            "signer_fingerprints": fingerprints,
+            "members_signed": verdict.members_signed,
+            "unsigned_members": list(verdict.unsigned_members),
             "files": files,
         }
 
