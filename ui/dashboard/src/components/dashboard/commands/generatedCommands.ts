@@ -5403,7 +5403,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "output",
         "label": "--output",
         "type": "text",
-        "hint": "Output JSON file path (default: <capsule_dir>/c2pa-manifest.json)",
+        "hint": "Output JSON file path (default: <capsule_dir>/c2pa-manifest.json). Never written through a symlink; inside the capsule a planted link or hard link is replaced.",
         "flag": "--output"
       },
       {
