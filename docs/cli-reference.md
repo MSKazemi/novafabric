@@ -8417,10 +8417,28 @@ Before this release the command printed "Deleted capsule", exited 0 and audited
 **Experimental.** Applies the [ADR-0031](./decisions.md) retention
 windows *over time*: a WORM-aware, crypto-shred-integrated, audited sweep.
 Bindings live in a new **optional** `bindings:` block inside the existing
-`.novafabric/registries/<registry>/retention-policy.yaml`
+`$NOVAFABRIC_HOME/registries/<registry>/retention-policy.yaml`
 (schema: `schemas/retention-binding.schema.json`); a registry with no bindings
 is swept for nothing. NovaFabric embeds **no daemon** — run the sweep manually
 or wire `nova retention apply --yes` into `cron`/`systemd`.
+
+**Where the per-registry files are read (works today).** `retention-policy.yaml` and
+`worm.db` are resolved like the legal-hold store, independent of the working directory:
+
+- **Bindings and sweep switches** come from `$NOVAFABRIC_HOME/registries/<registry>/retention-policy.yaml`.
+  When only the legacy `./.novafabric/registries/<registry>/retention-policy.yaml` exists
+  under the working directory, it is still read, and a warning on stderr names it and the
+  path to move it to. When both exist, the `$NOVAFABRIC_HOME` copy wins and the shadowed
+  legacy copy is reported the same way. A new policy belongs under `$NOVAFABRIC_HOME/registries/`.
+- **`deletion_mode`** — `prohibited` in *any* copy found (the two locations above plus the
+  swept capsule base's `<capsule-dir>/../registries/<registry>/`) holds every `purge`
+  (`deletion_prohibited`), as `nova capsule delete` does.
+- **WORM locks** — without `--worm-db`, every `worm.db` found in those locations is read (a
+  legacy copy with a warning), and a lock in any of them holds the item. `--worm-db PATH`
+  reads only that file.
+
+Releases before 2026-10-23 read both files relative to the working directory only, so a
+`cron` or container sweep started elsewhere found no bindings and no WORM database.
 
 ```yaml
 # retention-policy.yaml (ADR-0031 fields unchanged; bindings are additive)
@@ -8527,7 +8545,10 @@ Options:
 - `--yes / -y` — skip the confirmation prompt (for cron/CI)
 - `--capsule-dir PATH` — capsule directory to sweep (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules`; before 2026-10-23 the env var was ignored, so a Docker-layout sweep scanned an empty directory)
 - `--worm-db PATH` — local WORM adapter DB consulted for `locked_until`
-  (default: `.novafabric/registries/<registry>/worm.db`)
+  (default: every `worm.db` found — `$NOVAFABRIC_HOME/registries/<registry>/worm.db`, the
+  legacy `./.novafabric/registries/<registry>/worm.db` (read with a warning) and the swept
+  capsule base's `../registries/<registry>/worm.db`; a lock in any of them holds — see
+  [where the per-registry files are read](#retention-scheduler-adr-0134))
 - `--action NAME` — only consider bindings with this action
 - `--limit N` — bound the number of applied actions per pass (the rest carries over)
 - `--principal TEXT` — acting identity recorded in evidence entries (default: `cli-user`)

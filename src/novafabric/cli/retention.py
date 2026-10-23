@@ -37,7 +37,16 @@ from novafabric import _paths as _nf_paths
 from novafabric.audit import AuditLog, resolve_audit_log_path
 from novafabric.pii.dek import DEKStore, open_dek_store
 from novafabric.retention.actions import SweepExecutor
-from novafabric.retention.holds import capsule_base_holds_root
+from novafabric.retention.holds import (
+    RETENTION_POLICY_FILENAME,
+    WORM_DB_FILENAME,
+    canonical_registry_file,
+    capsule_base_holds_root,
+    preferred_registry_file,
+    registry_file_paths,
+    retention_policy_paths,
+    warn_legacy_registry_file,
+)
 from novafabric.retention.models import (
     Decision,
     PlannedDecision,
@@ -74,14 +83,60 @@ app = typer.Typer(
 
 _SCHEMA_VERSION = "0.1.0"
 
+_WORM_DB_HELP = (
+    "Local WORM adapter DB consulted for locked_until. Default: every worm.db found "
+    "for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy "
+    "./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept "
+    "capsule base's ../registries/<registry>/worm.db; a lock in any of them holds."
+)
+
 
 # ---------------------------------------------------------------------------
 # Context assembly (ground truth read fresh on every sweep — no cursor)
 # ---------------------------------------------------------------------------
 
 
-def _registry_dir(registry: str) -> Path:
-    return Path(".novafabric/registries") / registry
+@dataclass(frozen=True)
+class _RegistryFiles:
+    """One sweep's per-registry files, resolved once (ADR-0134; hold-store locations).
+
+    * ``policy`` — the ``retention-policy.yaml`` whose ``bindings:`` and sweep switches
+      are used: ``$NOVAFABRIC_HOME/registries/<r>/`` when it exists, else the legacy
+      ``./.novafabric/registries/<r>/`` under the working directory (logged), else the
+      canonical path (where a new file belongs; it need not exist).
+    * ``policies`` — every existing policy copy, including the swept capsule base's
+      ``<capsule_dir>/../registries/<r>/``; ``deletion_mode: prohibited`` in any of
+      them blocks a purge (fail closed, like ``nova capsule delete``).
+    * ``worm_dbs`` — ``--worm-db`` when given, else every existing ``worm.db`` in the
+      same locations; a lock in any of them holds the item (fail closed).
+    """
+
+    policy: Path
+    policies: tuple[Path, ...]
+    worm_dbs: tuple[Path, ...]
+
+
+def _resolve_registry_files(
+    registry: str, capsule_dir: Path, worm_db: Optional[Path]  # noqa: UP045
+) -> _RegistryFiles:
+    from novafabric.retention.holds import InvalidRegistryNameError
+
+    extra = (capsule_base_holds_root(capsule_dir),)
+    try:
+        policy = preferred_registry_file(registry, RETENTION_POLICY_FILENAME)
+        policies = tuple(retention_policy_paths(registry, extra_roots=extra))
+        if worm_db is not None:
+            worm_dbs: tuple[Path, ...] = (worm_db,)
+        else:
+            canonical_worm = canonical_registry_file(registry, WORM_DB_FILENAME)
+            worm_dbs = tuple(registry_file_paths(registry, WORM_DB_FILENAME, extra_roots=extra))
+            for path in worm_dbs:
+                if path != canonical_worm:
+                    warn_legacy_registry_file(path, canonical_worm, used=True)
+    except InvalidRegistryNameError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    return _RegistryFiles(policy=policy, policies=policies, worm_dbs=worm_dbs)
 
 
 def _default_capsule_dir() -> Path:
@@ -124,7 +179,7 @@ def _read_active_hold_ids(registry: str, capsule_dir: Path) -> list[str]:
 
 
 def _apply_time_hold_check(
-    registry: str, capsule_dir: Path, worm_db: Optional[Path]  # noqa: UP045
+    registry: str, capsule_dir: Path, worm_dbs: tuple[Path, ...]
 ) -> Callable[[PlannedDecision], Optional[str]]:  # noqa: UP045
     """Re-read holds and WORM locks right before each action (ADR-0134 D4).
 
@@ -137,7 +192,7 @@ def _apply_time_hold_check(
         ids = active_hold_ids(registry, extra_roots=(capsule_base_holds_root(capsule_dir),))
         if ids:
             return f"legal_hold_active: {', '.join(ids)}"
-        locked_until = _read_worm_locks(registry, worm_db).get(decision.item.item_id)
+        locked_until = _read_worm_locks(worm_dbs).get(decision.item.item_id)
         if locked_until is not None and locked_until > datetime.now(tz=timezone.utc):
             return "worm_hold"
         return None
@@ -145,38 +200,38 @@ def _apply_time_hold_check(
     return check
 
 
-def _read_deletion_mode(registry: str) -> str:
-    path = _policy_path(registry)
-    if not path.exists():
-        return "defensible"
-    return RetentionPolicy.from_yaml(path).deletion_mode
+def _read_deletion_mode(policies: tuple[Path, ...]) -> str:
+    """``prohibited`` if any policy copy says so, else ``defensible`` (fail closed)."""
+    modes = {RetentionPolicy.from_yaml(path).deletion_mode for path in policies}
+    return "prohibited" if "prohibited" in modes else "defensible"
 
 
-def _read_worm_locks(registry: str, worm_db: Optional[Path]) -> dict[str, datetime]:  # noqa: UP045
-    db_path = worm_db if worm_db is not None else _registry_dir(registry) / "worm.db"
-    if not db_path.exists():
-        return {}
+def _read_worm_locks(worm_dbs: tuple[Path, ...]) -> dict[str, datetime]:
+    """Every WORM lock across *worm_dbs*; the latest ``locked_until`` wins per capsule."""
     from novafabric.storage._local_worm import LocalWormAdapter
 
-    adapter = LocalWormAdapter(db_path)
-    return {e.capsule_id: e.locked_until for e in adapter.list()}
+    locks: dict[str, datetime] = {}
+    for db_path in worm_dbs:
+        if not db_path.exists():
+            continue
+        for entry in LocalWormAdapter(db_path).list():
+            current = locks.get(entry.capsule_id)
+            if current is None or entry.locked_until > current:
+                locks[entry.capsule_id] = entry.locked_until
+    return locks
 
 
-def _policy_path(registry: str) -> Path:
-    return _registry_dir(registry) / "retention-policy.yaml"
-
-
-def _load_bindings_or_exit(registry: str) -> list[RetentionBinding]:
+def _load_bindings_or_exit(policy: Path) -> list[RetentionBinding]:
     try:
-        return load_bindings(_policy_path(registry))
+        return load_bindings(policy)
     except ValueError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
 
-def _load_options_or_exit(registry: str) -> SweepOptions:
+def _load_options_or_exit(policy: Path) -> SweepOptions:
     try:
-        return load_sweep_options(_policy_path(registry))
+        return load_sweep_options(policy)
     except ValueError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -192,6 +247,7 @@ class _Sweep:
     options: SweepOptions
     acted: list[PlannedDecision]
     excluded: list[PlannedDecision]
+    files: _RegistryFiles
 
     @property
     def capture_capsules(self) -> int:
@@ -204,7 +260,7 @@ class _Sweep:
         if self.options.include_capture_capsules:
             return None
         return capture_exclusion_notice(
-            self.capture_capsules, len(self.excluded), _policy_path(registry)
+            self.capture_capsules, len(self.excluded), self.files.policy
         )
 
 
@@ -214,8 +270,9 @@ def _build_plan(
     worm_db: Optional[Path],  # noqa: UP045
     action_filter: Optional[str],  # noqa: UP045
 ) -> _Sweep:
-    bindings = _load_bindings_or_exit(registry)
-    options = _load_options_or_exit(registry)
+    files = _resolve_registry_files(registry, capsule_dir, worm_db)
+    bindings = _load_bindings_or_exit(files.policy)
+    options = _load_options_or_exit(files.policy)
     if action_filter is not None:
         try:
             wanted = RetentionAction(action_filter)
@@ -229,12 +286,12 @@ def _build_plan(
     items = enumerate_capsules(capsule_dir)
     holds = HoldContext(
         active_hold_ids=_read_active_hold_ids(registry, capsule_dir),
-        deletion_mode=_read_deletion_mode(registry),  # type: ignore[arg-type]
-        worm_locks=_read_worm_locks(registry, worm_db),
+        deletion_mode=_read_deletion_mode(files.policies),  # type: ignore[arg-type]
+        worm_locks=_read_worm_locks(files.worm_dbs),
     )
     plan = plan_sweep(items, bindings, holds)
     acted, excluded = split_by_scope(plan, options)
-    return _Sweep(plan, bindings, items, options, acted, excluded)
+    return _Sweep(plan, bindings, items, options, acted, excluded, files)
 
 
 # ---------------------------------------------------------------------------
@@ -332,8 +389,7 @@ def plan_cmd(
     worm_db: Optional[Path] = typer.Option(  # noqa: UP045
         None,
         "--worm-db",
-        help="Local WORM adapter DB consulted for locked_until "
-        "(default: .novafabric/registries/<registry>/worm.db).",
+        help=_WORM_DB_HELP,
     ),
     action: Optional[str] = typer.Option(  # noqa: UP045
         None, "--action", help="Only consider bindings with this action."
@@ -374,8 +430,7 @@ def apply_cmd(
     worm_db: Optional[Path] = typer.Option(  # noqa: UP045
         None,
         "--worm-db",
-        help="Local WORM adapter DB consulted for locked_until "
-        "(default: .novafabric/registries/<registry>/worm.db).",
+        help=_WORM_DB_HELP,
     ),
     action: Optional[str] = typer.Option(  # noqa: UP045
         None, "--action", help="Only consider bindings with this action."
@@ -456,7 +511,7 @@ def apply_cmd(
             dek_store=dek_store,
             receipt_dir=_nova_home() / "evidence" / "erasure",
             retention_months=retention_months,
-            hold_check=_apply_time_hold_check(registry, resolved_dir, worm_db),
+            hold_check=_apply_time_hold_check(registry, resolved_dir, sweep.files.worm_dbs),
             hold_roots=(capsule_base_holds_root(resolved_dir),),
             pepper=_pii_pepper(),
         )
@@ -492,7 +547,7 @@ def status_cmd(
         "$NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
     ),
     worm_db: Optional[Path] = typer.Option(  # noqa: UP045
-        None, "--worm-db", help="Local WORM adapter DB consulted for locked_until."
+        None, "--worm-db", help=_WORM_DB_HELP
     ),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
@@ -577,7 +632,7 @@ def explain_cmd(
         "$NOVAFABRIC_CAPSULE_DIR, else $NOVAFABRIC_HOME/capsules).",
     ),
     worm_db: Optional[Path] = typer.Option(  # noqa: UP045
-        None, "--worm-db", help="Local WORM adapter DB consulted for locked_until."
+        None, "--worm-db", help=_WORM_DB_HELP
     ),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
@@ -590,15 +645,16 @@ def explain_cmd(
       nova retention explain <capsule-id> --registry my-registry
     """
     resolved_dir = capsule_dir if capsule_dir is not None else _default_capsule_dir()
-    bindings = _load_bindings_or_exit(registry)
-    options = _load_options_or_exit(registry)
+    files = _resolve_registry_files(registry, resolved_dir, worm_db)
+    bindings = _load_bindings_or_exit(files.policy)
+    options = _load_options_or_exit(files.policy)
     items = enumerate_capsules(resolved_dir)
     item = next((i for i in items if i.item_id == capsule_id), None)
     if item is None:
         console.print(f"[red]✗[/red] capsule {capsule_id!r} not found in {resolved_dir}")
         raise typer.Exit(code=1)
     now = datetime.now(tz=timezone.utc)
-    locks = _read_worm_locks(registry, worm_db)
+    locks = _read_worm_locks(files.worm_dbs)
     hold_ids = _read_active_hold_ids(registry, resolved_dir)
     matched = [
         {
@@ -630,7 +686,7 @@ def explain_cmd(
     if not payload["swept_by_apply"]:
         console.print(
             "  [yellow]Not acted on by `nova retention apply`:[/yellow] capture capsule "
-            f"(capsule.yaml); set `include_capture_capsules: true` in {_policy_path(registry)}."
+            f"(capsule.yaml); set `include_capture_capsules: true` in {files.policy}."
         )
     if hold_ids:
         console.print(f"  [yellow]Active legal holds:[/yellow] {hold_ids} — deletion blocked")

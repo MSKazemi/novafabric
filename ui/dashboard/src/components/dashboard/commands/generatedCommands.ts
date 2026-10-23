@@ -11487,7 +11487,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until (default: .novafabric/registries/<registry>/worm.db).",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
         "flag": "--worm-db"
       },
       {
@@ -11578,7 +11578,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until.",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
         "flag": "--worm-db"
       },
       {
@@ -11617,7 +11617,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until (default: .novafabric/registries/<registry>/worm.db).",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
         "flag": "--worm-db"
       },
       {
@@ -11663,7 +11663,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until.",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
         "flag": "--worm-db"
       },
       {
