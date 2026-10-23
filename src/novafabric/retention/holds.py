@@ -209,16 +209,70 @@ def preferred_registry_file(registry: str, filename: str) -> Path:
     return chosen
 
 
+class RegistryStateUnreadableError(HoldStoreError):
+    """A per-registry location exists but cannot be inspected (fail closed)."""
+
+    def __init__(self, path: Path, reason: str) -> None:
+        super().__init__(f"{path}: {reason}")
+        self.path = path
+        self.reason = reason
+
+
+def entry_present(path: Path) -> bool:
+    """True when a directory entry exists at *path*, whatever it is.
+
+    A regular file, a directory, a special file and a dangling symbolic link all
+    count: each is configured state that a deletion gate must read, not skip.
+    ``Path.exists``/``is_file`` answer ``False`` for a dangling link and, since
+    Python 3.14, for any ``OSError`` (a registry directory without search
+    permission included), so they cannot tell "absent" from "cannot tell".
+
+    Raises:
+        RegistryStateUnreadableError: the entry cannot be examined (for example
+            permission denied on the directory holding it).
+    """
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:
+        raise RegistryStateUnreadableError(path, f"cannot be examined: {exc}") from exc
+    return True
+
+
+def registry_file_entries(
+    registry: str, filename: str, *, extra_roots: Iterable[Path] = ()
+) -> list[Path]:
+    """Every ``<root>/<registry>/<filename>`` entry present on disk, canonical first.
+
+    Like :func:`registry_file_paths`, but for fail-closed gates: an entry that is
+    not a readable regular file (a dangling link, a directory, an unreadable file)
+    is returned too, so that reading it fails and the gate refuses.
+
+    Raises:
+        RegistryStateUnreadableError: see :func:`entry_present`.
+    """
+    validate_registry_name(registry)
+    return [
+        path
+        for root in hold_roots(extra_roots)
+        if entry_present(path := root / registry / filename)
+    ]
+
+
 def retention_policy_paths(
     registry: str, *, extra_roots: Iterable[Path] = ()
 ) -> list[Path]:
-    """Every existing ``retention-policy.yaml`` for *registry*, canonical first.
+    """Every ``retention-policy.yaml`` entry for *registry*, canonical first.
 
-    Resolved by :func:`registry_file_paths`. A deletion gate must apply **every**
+    Resolved by :func:`registry_file_entries`. A deletion gate must apply **every**
     file found, so the stricter one wins and a stale legacy policy is never
-    silently ignored.
+    silently ignored; an entry that cannot be read must refuse, not be skipped.
+
+    Raises:
+        RegistryStateUnreadableError: see :func:`entry_present`.
     """
-    return registry_file_paths(registry, RETENTION_POLICY_FILENAME, extra_roots=extra_roots)
+    return registry_file_entries(registry, RETENTION_POLICY_FILENAME, extra_roots=extra_roots)
 
 
 def validate_registry_name(registry: str) -> str:

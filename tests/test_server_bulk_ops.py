@@ -662,13 +662,16 @@ class TestDeleteCoreEdges:
         locked = worm_locked_until(capsule_dir, "my-run")
         assert locked is not None and locked.tzinfo is not None
 
-    def test_unreadable_worm_db_is_skipped(self, capsule_dir: Path) -> None:
-        from novafabric.server.capsule_delete import worm_locked_until
+    def test_unreadable_worm_db_refuses(self, capsule_dir: Path) -> None:
+        """Fail closed (PR #158): unknown WORM state never reads as "unlocked"."""
+        from novafabric.server.capsule_delete import DeleteBlockedError, worm_locked_until
 
         reg = capsule_dir.parent / "registries" / "broken"
         reg.mkdir(parents=True, exist_ok=True)
         (reg / "worm.db").write_bytes(b"this is not sqlite")
-        assert worm_locked_until(capsule_dir, "any-run") is None
+        with pytest.raises(DeleteBlockedError) as ei:
+            worm_locked_until(capsule_dir, "any-run")
+        assert ei.value.code == "worm_state_unavailable"
 
     def test_upload_index_failure_never_blocks_upload(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch

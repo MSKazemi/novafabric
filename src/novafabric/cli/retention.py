@@ -27,10 +27,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import NoReturn, Optional
 
 import typer
+import yaml
+from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from novafabric import _paths as _nf_paths
@@ -40,10 +43,10 @@ from novafabric.retention.actions import SweepExecutor
 from novafabric.retention.holds import (
     RETENTION_POLICY_FILENAME,
     WORM_DB_FILENAME,
+    RegistryStateUnreadableError,
     canonical_registry_file,
     capsule_base_holds_root,
     preferred_registry_file,
-    registry_file_paths,
     retention_policy_paths,
     warn_legacy_registry_file,
 )
@@ -69,6 +72,11 @@ from novafabric.retention.sweep import (
     split_by_scope,
 )
 from novafabric.retention.windows import compute_due_at
+from novafabric.retention.worm_state import (
+    WormStateUnavailableError,
+    read_worm_locks,
+    worm_db_paths,
+)
 from novafabric.storage._retention import RetentionPolicy
 
 console = Console()
@@ -87,8 +95,14 @@ _WORM_DB_HELP = (
     "Local WORM adapter DB consulted for locked_until. Default: every worm.db found "
     "for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy "
     "./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept "
-    "capsule base's ../registries/<registry>/worm.db; a lock in any of them holds."
+    "capsule base's ../registries/<registry>/worm.db; a lock in any of them holds. "
+    "A worm.db that exists but cannot be read (or a --worm-db that does not exist) "
+    "refuses the whole command with worm_state_unavailable; no worm.db anywhere "
+    "means no local WORM is configured."
 )
+
+#: Refusal code for a retention-policy.yaml that exists but cannot be read.
+POLICY_UNAVAILABLE = "retention_policy_unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -107,13 +121,16 @@ class _RegistryFiles:
     * ``policies`` — every existing policy copy, including the swept capsule base's
       ``<capsule_dir>/../registries/<r>/``; ``deletion_mode: prohibited`` in any of
       them blocks a purge (fail closed, like ``nova capsule delete``).
-    * ``worm_dbs`` — ``--worm-db`` when given, else every existing ``worm.db`` in the
-      same locations; a lock in any of them holds the item (fail closed).
+    * ``worm_dbs`` — ``--worm-db`` when given, else every ``worm.db`` entry in the
+      same locations; a lock in any of them holds the item, and one that cannot be
+      read refuses the command (fail closed, :mod:`novafabric.retention.worm_state`).
+    * ``worm_required`` — ``--worm-db`` when given: it must exist.
     """
 
     policy: Path
     policies: tuple[Path, ...]
     worm_dbs: tuple[Path, ...]
+    worm_required: tuple[Path, ...] = ()
 
 
 def _resolve_registry_files(
@@ -125,18 +142,47 @@ def _resolve_registry_files(
     try:
         policy = preferred_registry_file(registry, RETENTION_POLICY_FILENAME)
         policies = tuple(retention_policy_paths(registry, extra_roots=extra))
-        if worm_db is not None:
-            worm_dbs: tuple[Path, ...] = (worm_db,)
-        else:
+        worm_dbs, worm_required = _discover_worm_dbs(registry, capsule_dir, worm_db)
+        if worm_db is None:
             canonical_worm = canonical_registry_file(registry, WORM_DB_FILENAME)
-            worm_dbs = tuple(registry_file_paths(registry, WORM_DB_FILENAME, extra_roots=extra))
             for path in worm_dbs:
                 if path != canonical_worm:
                     warn_legacy_registry_file(path, canonical_worm, used=True)
     except InvalidRegistryNameError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc
-    return _RegistryFiles(policy=policy, policies=policies, worm_dbs=worm_dbs)
+    except RegistryStateUnreadableError as exc:
+        _refuse(f"{POLICY_UNAVAILABLE}: {exc}")
+    except WormStateUnavailableError as exc:
+        _refuse(str(exc))
+    return _RegistryFiles(
+        policy=policy, policies=policies, worm_dbs=worm_dbs, worm_required=worm_required
+    )
+
+
+def _refuse(message: str) -> NoReturn:
+    """Print a fail-closed refusal and exit 1 before anything is acted on."""
+    console.print(
+        f"[red]✗[/red] {escape(message)}\n"
+        "  Nothing was planned or applied. Repair or restore the file "
+        "(docs/ops/backup-restore.md, 'Unreadable WORM or retention-policy files').",
+        soft_wrap=True,
+    )
+    raise typer.Exit(code=1)
+
+
+def _discover_worm_dbs(
+    registry: str, capsule_dir: Path, worm_db: Optional[Path]  # noqa: UP045
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """``(worm_dbs, required)``: ``--worm-db`` alone (and required), else every entry.
+
+    Raises:
+        WormStateUnavailableError: a registry location cannot be examined.
+    """
+    if worm_db is not None:
+        return (worm_db,), (worm_db,)
+    extra = (capsule_base_holds_root(capsule_dir),)
+    return tuple(worm_db_paths(registry, extra_roots=extra)), ()
 
 
 def _default_capsule_dir() -> Path:
@@ -179,12 +225,15 @@ def _read_active_hold_ids(registry: str, capsule_dir: Path) -> list[str]:
 
 
 def _apply_time_hold_check(
-    registry: str, capsule_dir: Path, worm_dbs: tuple[Path, ...]
+    registry: str, capsule_dir: Path, worm_db: Optional[Path]  # noqa: UP045
 ) -> Callable[[PlannedDecision], Optional[str]]:  # noqa: UP045
     """Re-read holds and WORM locks right before each action (ADR-0134 D4).
 
     The plan was built from a snapshot; the confirmation prompt and the sweep
-    itself take time, and a hold placed meanwhile must still win.
+    itself take time, and a hold placed meanwhile must still win. ``worm.db``
+    locations are re-discovered too, so a database that appeared, was emptied or
+    became unreadable since planning is seen: an unreadable one skips the item as
+    ``worm_state_unavailable`` (fail closed).
     """
     from novafabric.retention.holds import active_hold_ids
 
@@ -192,7 +241,12 @@ def _apply_time_hold_check(
         ids = active_hold_ids(registry, extra_roots=(capsule_base_holds_root(capsule_dir),))
         if ids:
             return f"legal_hold_active: {', '.join(ids)}"
-        locked_until = _read_worm_locks(worm_dbs).get(decision.item.item_id)
+        try:
+            paths, required = _discover_worm_dbs(registry, capsule_dir, worm_db)
+            locks = read_worm_locks(paths, required=required)
+        except WormStateUnavailableError as exc:
+            return f"{exc.code}: {exc.path}: {exc.reason}"
+        locked_until = locks.get(decision.item.item_id)
         if locked_until is not None and locked_until > datetime.now(tz=timezone.utc):
             return "worm_hold"
         return None
@@ -201,24 +255,28 @@ def _apply_time_hold_check(
 
 
 def _read_deletion_mode(policies: tuple[Path, ...]) -> str:
-    """``prohibited`` if any policy copy says so, else ``defensible`` (fail closed)."""
-    modes = {RetentionPolicy.from_yaml(path).deletion_mode for path in policies}
+    """``prohibited`` if any policy copy says so, else ``defensible`` (fail closed).
+
+    A copy that cannot be read or validated may be the one saying ``prohibited``,
+    so it refuses the command (:data:`POLICY_UNAVAILABLE`).
+    """
+    modes: set[str] = set()
+    for path in policies:
+        try:
+            modes.add(RetentionPolicy.from_yaml(path).deletion_mode)
+        except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
+            _refuse(
+                f"{POLICY_UNAVAILABLE}: retention policy {path} is unreadable or invalid: {exc}"
+            )
     return "prohibited" if "prohibited" in modes else "defensible"
 
 
-def _read_worm_locks(worm_dbs: tuple[Path, ...]) -> dict[str, datetime]:
-    """Every WORM lock across *worm_dbs*; the latest ``locked_until`` wins per capsule."""
-    from novafabric.storage._local_worm import LocalWormAdapter
-
-    locks: dict[str, datetime] = {}
-    for db_path in worm_dbs:
-        if not db_path.exists():
-            continue
-        for entry in LocalWormAdapter(db_path).list():
-            current = locks.get(entry.capsule_id)
-            if current is None or entry.locked_until > current:
-                locks[entry.capsule_id] = entry.locked_until
-    return locks
+def _read_worm_locks(files: _RegistryFiles) -> dict[str, datetime]:
+    """Every WORM lock across the sweep's databases; refuses if one cannot be read."""
+    try:
+        return read_worm_locks(files.worm_dbs, required=files.worm_required)
+    except WormStateUnavailableError as exc:
+        _refuse(str(exc))
 
 
 def _load_bindings_or_exit(policy: Path) -> list[RetentionBinding]:
@@ -227,6 +285,8 @@ def _load_bindings_or_exit(policy: Path) -> list[RetentionBinding]:
     except ValueError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc
+    except (OSError, yaml.YAMLError) as exc:
+        _refuse(f"{POLICY_UNAVAILABLE}: retention policy {policy} cannot be read: {exc}")
 
 
 def _load_options_or_exit(policy: Path) -> SweepOptions:
@@ -235,6 +295,8 @@ def _load_options_or_exit(policy: Path) -> SweepOptions:
     except ValueError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc
+    except (OSError, yaml.YAMLError) as exc:
+        _refuse(f"{POLICY_UNAVAILABLE}: retention policy {policy} cannot be read: {exc}")
 
 
 @dataclass(frozen=True)
@@ -287,7 +349,7 @@ def _build_plan(
     holds = HoldContext(
         active_hold_ids=_read_active_hold_ids(registry, capsule_dir),
         deletion_mode=_read_deletion_mode(files.policies),  # type: ignore[arg-type]
-        worm_locks=_read_worm_locks(files.worm_dbs),
+        worm_locks=_read_worm_locks(files),
     )
     plan = plan_sweep(items, bindings, holds)
     acted, excluded = split_by_scope(plan, options)
@@ -511,7 +573,7 @@ def apply_cmd(
             dek_store=dek_store,
             receipt_dir=_nova_home() / "evidence" / "erasure",
             retention_months=retention_months,
-            hold_check=_apply_time_hold_check(registry, resolved_dir, sweep.files.worm_dbs),
+            hold_check=_apply_time_hold_check(registry, resolved_dir, worm_db),
             hold_roots=(capsule_base_holds_root(resolved_dir),),
             pepper=_pii_pepper(),
         )
@@ -654,7 +716,7 @@ def explain_cmd(
         console.print(f"[red]✗[/red] capsule {capsule_id!r} not found in {resolved_dir}")
         raise typer.Exit(code=1)
     now = datetime.now(tz=timezone.utc)
-    locks = _read_worm_locks(files.worm_dbs)
+    locks = _read_worm_locks(files)
     hold_ids = _read_active_hold_ids(registry, resolved_dir)
     matched = [
         {
