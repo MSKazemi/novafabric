@@ -49,7 +49,8 @@
     },
     "notification_status": {
       "type": "string",
-      "enum": ["sent", "failed", "not_configured"]
+      "description": "What the signer knew at signing time. pending: at least one channel was configured; delivery follows the signature and its outcome is the seal.bypass.notify audit entry. not_configured: no channel. sent and failed are legacy values written before 2026-10-23; new bypasses never sign them.",
+      "enum": ["pending", "not_configured", "sent", "failed"]
     }
   }
 }

@@ -361,6 +361,29 @@ def build_approval_predicate(
     return predicate
 
 
+#: ``notification_status`` when at least one channel is configured at signing time.
+NOTIFICATION_PENDING = "pending"
+#: ``notification_status`` when no channel is configured.
+NOTIFICATION_NOT_CONFIGURED = "not_configured"
+
+
+def bypass_notification_fields(
+    channels: list[str], recipients: list[str] | None = None
+) -> dict[str, Any]:
+    """``notification_sent_to`` / ``notification_status`` for a bypass about to be signed.
+
+    The signature is made before delivery, so it covers the *configuration*, never
+    a delivery: ``pending`` when *channels* is non-empty, ``not_configured``
+    otherwise. Never ``sent`` — the outcome is recorded afterwards in the
+    ``seal.bypass.notify`` audit entry. *recipients* (``--notify`` addresses) are
+    listed as ``mailto:<addr>`` after the channels; they do not make the status
+    ``pending``, because NovaFabric sends no email itself.
+    """
+    sent_to = list(channels) + [f"mailto:{r}" for r in (recipients or [])]
+    status = NOTIFICATION_PENDING if channels else NOTIFICATION_NOT_CONFIGURED
+    return {"notification_sent_to": sent_to, "notification_status": status}
+
+
 def build_bypass_predicate(
     capsule_id: str,
     capsule_digest_hex: str,
