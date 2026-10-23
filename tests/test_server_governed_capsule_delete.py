@@ -246,6 +246,53 @@ def test_worm_locked_refused(
     assert _event_types(chain) == ["run.index_delete_refused"]
 
 
+def test_corrupt_worm_db_refuses_delete_and_preserves_indexes(
+    client: TestClient,
+    store: SQLiteMetadataStore,
+    capsule_dir: Path,
+    db_path: Path,
+    chain: Path,
+) -> None:
+    """PR #158: 409 worm_state_unavailable; capsule, runs-cache and store rows kept."""
+    rid = _seed(client, store, capsule_dir)
+    reg = capsule_dir.parent / "registries" / "default"
+    reg.mkdir(parents=True)
+    (reg / "worm.db").write_bytes(b"not a sqlite database")
+
+    resp = client.delete(f"/v0/capsules/{rid}")
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"]["code"] == "worm_state_unavailable"
+    assert (capsule_dir / rid / "capsule.yaml").exists()
+    assert _cache_count(db_path, rid) == 1 and _store_rows(store) == 1
+    assert _event_types(chain) == ["run.index_delete_refused"]
+    assert _audit_events(chain)[0]["details"]["refusals"][0]["code"] == "worm_state_unavailable"
+
+
+def test_worm_read_exception_refuses_even_with_sealed_delete_override(
+    capsule_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An I/O error inside the WORM read refuses; the seal opt-out does not bypass it."""
+    from novafabric.storage import _local_worm
+
+    _write_capsule(capsule_dir, "r1")
+    reg = capsule_dir.parent / "registries" / "default"
+    reg.mkdir(parents=True)
+    LocalWormAdapter(reg / "worm.db")
+    monkeypatch.setenv(capsule_delete.ALLOW_SEALED_ENV, "1")
+
+    def unreadable(*_: Any, **__: Any) -> Any:
+        raise OSError("injected WORM read error")
+
+    monkeypatch.setattr(_local_worm.sqlite3, "connect", unreadable)
+    with pytest.raises(capsule_delete.DeleteBlockedError) as ei:
+        capsule_delete.check_deletable(capsule_dir, "r1")
+    assert ei.value.code == "worm_state_unavailable"
+    assert ei.value.details["worm_db"] == str(reg / "worm.db")
+    assert "injected WORM read error" in str(ei.value.details["reason"])
+    assert (capsule_dir / "r1" / "capsule.yaml").exists()
+
+
 def test_missing_run_404_nothing_audited(client: TestClient, chain: Path) -> None:
     assert client.delete(f"/v0/capsules/{uuid4()}").status_code == 404
     assert _audit_events(chain) == []
@@ -319,6 +366,26 @@ def test_bulk_hold_refuses_every_item_and_deletes_nothing(
     assert _store_rows(store) == 2
     refused = [e for e in _audit_events(chain) if e["event_type"] == "run.index_delete_refused"]
     assert len(refused) == 1 and len(refused[0]["details"]["refusals"]) == 2
+
+
+def test_bulk_delete_corrupt_worm_db_refuses_every_run(
+    client: TestClient, store: SQLiteMetadataStore, capsule_dir: Path, chain: Path
+) -> None:
+    """PR #158: every bulk item is held with worm_state_unavailable; nothing deleted."""
+    ids = [_seed(client, store, capsule_dir) for _ in range(2)]
+    reg = capsule_dir.parent / "registries" / "default"
+    reg.mkdir(parents=True)
+    (reg / "worm.db").write_bytes(b"not a sqlite database")
+
+    resp = client.post("/v0/capsules/bulk-delete", json={"run_ids": ids})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["summary"]["held"] == 2 and body["summary"]["deleted"] == 0
+    assert {row["code"] for row in body["results"]} == {"worm_state_unavailable"}
+    assert all((capsule_dir / rid / "capsule.yaml").exists() for rid in ids)
+    assert _store_rows(store) == 2
+    assert _event_types(chain) == ["run.index_delete_refused"]
 
 
 def test_bulk_mixed_sealed_item_held_others_deleted(
@@ -639,6 +706,24 @@ def test_serve_delete_refuses_sealed_and_worm(
             assert r.status_code == 409, r.text
             assert (capsule_dir / rid).is_dir()
     assert _event_types(chain) == ["run.index_delete_refused"] * 2
+
+
+def test_serve_delete_corrupt_worm_db_refuses_even_with_force(
+    tmp_path: Path, capsule_dir: Path, chain: Path
+) -> None:
+    """PR #158: serve's 409 names worm_state_unavailable; force does not override it."""
+    _write_capsule(capsule_dir, "srv1")
+    reg = capsule_dir.parent / "registries" / "default"
+    reg.mkdir(parents=True)
+    (reg / "worm.db").write_bytes(b"not a sqlite database")
+    with _serve_client(tmp_path, capsule_dir) as tc:
+        resp = tc.delete(
+            "/api/runs/srv1", params={"token": VALID_TOKEN, "force": "true"}, headers=H
+        )
+    assert resp.status_code == 409, resp.text
+    assert "worm_state_unavailable" in resp.text
+    assert (capsule_dir / "srv1" / "capsule.yaml").exists()
+    assert _event_types(chain) == ["run.index_delete_refused"]
 
 
 # ---- residual gaps (ADR-0206 P2): plain tombstone safety + serve 409 ----

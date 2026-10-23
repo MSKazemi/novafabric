@@ -266,7 +266,14 @@ schema change).
   surface. Unexpired WORM locks refuse with 409 `worm_hold`. **NovaSeal-sealed
   capsules (`.seal/` present) refuse with 409 `sealed_capsule`** unless
   `NOVAFABRIC_ALLOW_SEALED_DELETE=1` (experimental; never overrides a hold or
-  WORM). Refusals append `run.index_delete_refused` to the chained audit log;
+  WORM). If a configured `worm.db` (any `registries/*/worm.db` under
+  `$NOVAFABRIC_HOME`, `./.novafabric` or the capsule store's parent) exists but cannot be
+  read, deletion refuses with 409 `worm_state_unavailable` instead of assuming the capsule
+  is unlocked; single, bulk, dashboard and metadata-index deletion all apply it, with no
+  override. Repair the file first ([runbook](backup-restore.md#unreadable-worm-or-retention-policy-files)).
+  No `worm.db` anywhere means no local WORM is configured. The `LocalWormAdapter` is
+  **dev/test-only** and is not compliance-grade immutability.
+  Refusals append `run.index_delete_refused` to the chained audit log;
   removed MetadataStore rows append `run.index_delete`.
   **Since v0.98.0 a corrupt line in `holds.jsonl` fails closed:** an
   unparseable line is treated as an *active, blocking* hold (and logged as a

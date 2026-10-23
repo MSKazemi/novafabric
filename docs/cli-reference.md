@@ -8468,8 +8468,8 @@ nova capsule delete cap-01JXXXXX --registry my-registry --force
 Options:
 - `--registry TEXT` — required; the registry whose retention policy applies
 - `--age-days N` — age of the capsule in days (used for retention window check; default: 0)
-- `--force` — skip the retention-window check **only** (holds, WORM, seals and
-  `deletion_mode: prohibited` still refuse)
+- `--force` — skip the retention-window check **only** (holds, WORM, seals,
+  `deletion_mode: prohibited` and unreadable WORM or policy files still refuse)
 - `--capsule-dir PATH` — capsule store (default: `NOVAFABRIC_CAPSULE_DIR`, else
   `$NOVAFABRIC_HOME/capsules`)
 
@@ -8478,15 +8478,37 @@ Deletion is refused (exit 1, nothing reported or audited as deleted) when:
   registry-global, as on the server delete routes; a damaged ledger counts as a hold)
 - an unexpired WORM lock or a NovaSeal seal protects the capsule
   (`NOVAFABRIC_ALLOW_SEALED_DELETE=1` lifts the seal refusal only)
-- a retention policy sets `deletion_mode: prohibited`
+- a configured `worm.db` cannot be read (`worm_state_unavailable`; see below)
+- a retention policy sets `deletion_mode: prohibited`, or a policy file cannot be read
+  (`retention_policy_unavailable`)
 - the capsule is within a policy's retention window (unless `--force`)
 - the capsule does not exist
 
-Retention policies are read from `$NOVAFABRIC_HOME/registries/<registry>/retention-policy.yaml`
-and the legacy `./.novafabric/registries/<registry>/retention-policy.yaml`; every file found
-applies, and an unreadable one refuses (fail closed). A refusal by a hold, WORM lock or seal is
-recorded as a `run.index_delete_refused` audit event. After the capsule is gone, a
-`capsule.delete` entry is appended to the hash-chained audit log.
+Retention policies are read from `$NOVAFABRIC_HOME/registries/<registry>/retention-policy.yaml`,
+the legacy `./.novafabric/registries/<registry>/retention-policy.yaml` and the capsule store's
+`../registries/<registry>/retention-policy.yaml`; every file found applies. A policy entry
+that cannot be read — malformed YAML, permission denied, a dangling symbolic link or a
+directory — refuses with `retention_policy_unavailable` (fail closed). A refusal by a hold,
+WORM lock, unreadable WORM state or seal is recorded as a `run.index_delete_refused` audit
+event. After the capsule is gone, a `capsule.delete` entry is appended to the hash-chained
+audit log.
+
+**WORM state (fail closed).** The delete checks every `worm.db` of **every** registry in the
+same three locations (`$NOVAFABRIC_HOME/registries/*/`, `./.novafabric/registries/*/` and the
+capsule store's `../registries/*/`), the same files `nova retention` reads. What happens:
+
+| On disk | Result |
+|---|---|
+| No `worm.db` in any location | No local WORM is configured; WORM does not block the delete |
+| A readable `worm.db` with an unexpired lock for the capsule | Refused, `worm_hold` |
+| A `worm.db` entry that cannot be read: not SQLite, empty, no `worm_capsules` table, a `locked_until` that does not parse, a directory, a dangling symbolic link, permission denied, or locked by another writer for 2 s | Refused, `worm_state_unavailable`; nothing is deleted. There is no override (`--force` included) |
+
+A damaged `worm.db` therefore blocks every delete until it is repaired or restored; see
+[Backup & Restore — unreadable WORM or retention-policy files](ops/backup-restore.md#unreadable-worm-or-retention-policy-files).
+The check reads `worm.db` read-only and never repairs it. The local WORM adapter is
+dev/test-only (ADR-0031): this guards against a damaged or misplaced file, not against an
+administrator who edits it. Before this change an unreadable `worm.db` was skipped with a
+warning, and a truncated one was silently recreated empty, so the delete went ahead.
 
 Before this release the command printed "Deleted capsule", exited 0 and audited
 `capsule.delete` without removing anything, and `--force` also skipped the hold check.
@@ -8516,7 +8538,13 @@ or wire `nova retention apply --yes` into `cron`/`systemd`.
   (`deletion_prohibited`), as `nova capsule delete` does.
 - **WORM locks** — without `--worm-db`, every `worm.db` found in those locations is read (a
   legacy copy with a warning), and a lock in any of them holds the item. `--worm-db PATH`
-  reads only that file.
+  reads only that file, and the file must exist.
+- **Fail closed** — a `worm.db` entry that cannot be read (the cases listed under
+  [`nova capsule delete`](#nova-capsule-delete-capsule-id)), a `--worm-db` path that does not
+  exist, or a `retention-policy.yaml` copy that cannot be read or validated stops `plan`,
+  `apply`, `status` and `explain` with exit 1 before anything is acted on, naming the file and
+  the code (`worm_state_unavailable` or `retention_policy_unavailable`). No `worm.db` anywhere
+  means no local WORM is configured, and the sweep runs as before.
 
 Releases before 2026-10-23 read both files relative to the working directory only, so a
 `cron` or container sweep started elsewhere found no bindings and no WORM database.
@@ -8610,8 +8638,10 @@ prints how many it excluded.
 
 Holds are re-read **immediately before every action**, not only while planning: a legal
 hold or WORM lock placed while the confirmation prompt waits, or during the sweep, still wins
-(recorded `skipped` with `legal_hold_active: <ids>` or `worm_hold`). If the re-check itself
-fails, the item is `skipped` (`hold_check_failed`). A `crypto-shred` that the DEK store
+(recorded `skipped` with `legal_hold_active: <ids>` or `worm_hold`). The re-check also finds
+`worm.db` files again, so one that was emptied, replaced or became unreadable after planning
+skips the item as `worm_state_unavailable: <path>: <reason>`. If the re-check itself fails
+in any other way, the item is `skipped` (`hold_check_failed`). A `crypto-shred` that the DEK store
 refuses under a hold is recorded `skipped` (`legal_hold_active`), never `applied`, so a later
 `nova restore` does not replay it.
 
@@ -8628,8 +8658,10 @@ Options:
 - `--worm-db PATH` — local WORM adapter DB consulted for `locked_until`
   (default: every `worm.db` found — `$NOVAFABRIC_HOME/registries/<registry>/worm.db`, the
   legacy `./.novafabric/registries/<registry>/worm.db` (read with a warning) and the swept
-  capsule base's `../registries/<registry>/worm.db`; a lock in any of them holds — see
-  [where the per-registry files are read](#retention-scheduler-adr-0134))
+  capsule base's `../registries/<registry>/worm.db`; a lock in any of them holds, and one
+  that cannot be read refuses the sweep — see
+  [where the per-registry files are read](#retention-scheduler-adr-0134)). A `--worm-db`
+  path that does not exist refuses with `worm_state_unavailable`
 - `--action NAME` — only consider bindings with this action
 - `--limit N` — bound the number of applied actions per pass (the rest carries over)
 - `--principal TEXT` — acting identity recorded in evidence entries (default: `cli-user`)

@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+import yaml
 from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
@@ -38,25 +40,35 @@ def _check_retention(
     """Apply every retention policy found for *registry*; return the files applied.
 
     ``deletion_mode: prohibited`` always refuses. The retention window refuses
-    unless *force*. An unreadable or invalid policy file refuses (fail closed).
+    unless *force*. A policy entry that cannot be read or is invalid -- malformed
+    YAML, permission denied, a dangling link or directory -- refuses with
+    ``retention_policy_unavailable`` (fail closed; ``--force`` does not skip it).
 
     Raises:
         RetentionRefusal: a policy refuses the deletion.
     """
     from novafabric.retention.holds import (
+        RegistryStateUnreadableError,
         capsule_base_holds_root,
         retention_policy_paths,
     )
 
     applied: list[str] = []
-    for path in retention_policy_paths(
-        registry, extra_roots=(capsule_base_holds_root(capsule_dir),)
-    ):
+    try:
+        paths = retention_policy_paths(
+            registry, extra_roots=(capsule_base_holds_root(capsule_dir),)
+        )
+    except RegistryStateUnreadableError as exc:
+        raise RetentionRefusal(
+            f"retention_policy_unavailable: {exc} (fail closed; --force does not skip this)"
+        ) from exc
+    for path in paths:
         try:
             policy = RetentionPolicy.from_yaml(path)
-        except (OSError, ValueError, ValidationError) as exc:
+        except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
             raise RetentionRefusal(
-                f"retention policy {path} is unreadable or invalid (fail closed): {exc}"
+                f"retention_policy_unavailable: retention policy {path} is unreadable or "
+                f"invalid (fail closed; --force does not skip this): {exc}"
             ) from exc
         applied.append(str(path))
         if policy.deletion_mode == "prohibited":
@@ -84,7 +96,8 @@ def capsule_delete(
         "--force",
         help=(
             "Skip the retention-window check only. Legal holds, WORM locks, NovaSeal "
-            "seals and deletion_mode=prohibited still refuse."
+            "seals, deletion_mode=prohibited and unreadable WORM or policy files "
+            "still refuse."
         ),
     ),
     capsule_dir: Optional[Path] = typer.Option(  # noqa: UP045
@@ -102,9 +115,15 @@ def capsule_delete(
     is gone. Deletion is refused when: any legal hold is active (holds are
     registry-global, and --force never overrides one); a WORM lock or NovaSeal
     seal protects the capsule; a retention policy sets deletion_mode=prohibited;
-    or the capsule is inside a policy's retention window (the only check --force
-    skips). Policies are read from $NOVAFABRIC_HOME/registries/<registry>/ and the
-    legacy ./.novafabric/registries/<registry>/; every one found applies.
+    a configured worm.db or retention-policy.yaml cannot be read
+    (worm_state_unavailable / retention_policy_unavailable: fail closed, repair
+    the file); or the capsule is inside a policy's retention window (the only
+    check --force skips). Policies are read from
+    $NOVAFABRIC_HOME/registries/<registry>/, the legacy
+    ./.novafabric/registries/<registry>/ and the capsule store's
+    ../registries/<registry>/; every one found applies. worm.db is read from
+    every registry in those same locations; no worm.db anywhere means no local
+    WORM lock is configured.
 
     Exit codes: 0 = deleted; 1 = refused, not found, or the delete failed (nothing
     is reported or audited as deleted).
@@ -138,8 +157,11 @@ def capsule_delete(
         core.check_deletable(store, capsule_id)
     except core.DeleteBlockedError as exc:
         what = "active legal hold(s)" if exc.code == "legal_hold_active" else exc.code
+        # The worm_state_unavailable message already names the file and the reason.
+        extra = "" if exc.code == "worm_state_unavailable" else f" {exc.details}"
         console.print(
-            f"[red]Deletion blocked ({what}):[/red] {exc} {exc.details}", soft_wrap=True
+            f"[red]Deletion blocked ({what}):[/red] {escape(str(exc))}{escape(extra)}",
+            soft_wrap=True,
         )
         core.audit_index_event(
             True,

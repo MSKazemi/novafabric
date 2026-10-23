@@ -99,6 +99,20 @@ def test_a_hold_on_another_registry_still_blocks(ws: WS) -> None:
     assert cap.is_dir()
 
 
+def test_force_with_an_unreadable_worm_db_is_refused(ws: WS) -> None:
+    """Unknown WORM state is not "unlocked" (ADR-0318), ``--force`` included."""
+    cap = ws.capsule()
+    reg = ws.home / "registries" / "default"
+    reg.mkdir(parents=True)
+    (reg / "worm.db").write_bytes(b"not a sqlite database")
+    res = _delete("--force")
+    assert res.exit_code == 1, res.output
+    assert "worm_state_unavailable" in res.output
+    assert "Deleted" not in res.output
+    assert cap.is_dir()
+    assert "capsule.delete" not in ws.audit_events()
+
+
 def test_a_successful_delete_removes_the_capsule(ws: WS) -> None:
     cap = ws.capsule()
     res = _delete()

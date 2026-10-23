@@ -205,6 +205,12 @@ A secret in a format the pack *claims* to detect that survives into a finished
 capsule is a vulnerability — please report it. A format on the "not detected"
 list is a feature request.
 
+**Local WORM locks fail closed (ADR-0318).** If a configured `worm.db` (`LocalWormAdapter`, dev/test-only) cannot be
+read, no capsule is deleted: every governed delete path and `nova retention` refuse with `worm_state_unavailable`.
+In v0.107.0 and earlier, an unreadable or truncated `worm.db` was treated as "no locks". This does not make the local
+adapter tamper-proof. For compliance retention, use object-store locks (S3 Object Lock, Azure immutable blob, GCS
+Bucket Lock).
+
 ### Escape hatches — every safety default that an environment variable can turn off
 
 These exist so an operator can make a deliberate, auditable exception. They were

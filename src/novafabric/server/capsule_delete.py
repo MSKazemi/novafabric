@@ -12,8 +12,9 @@ run this pipeline per item, so their semantics cannot drift (serve's
    override (parity with serve and ``retention/sweep.py`` D4). Honest limit:
    holds are registry-global today, so one active hold blocks all deletion;
 4. WORM refusal — an unexpired ``LocalWormAdapter`` lock for the item
-   refuses with ``worm_hold`` (best-effort: unreadable WORM DBs are skipped
-   with a warning, matching ``HoldContext``'s "where known" contract);
+   refuses with ``worm_hold``; a configured ``worm.db`` that cannot be read
+   refuses every item with ``worm_state_unavailable`` (fail closed, no override;
+   :mod:`novafabric.retention.worm_state`);
 5. sealed-capsule refusal — a NovaSeal-sealed capsule (``.seal/`` present)
    refuses with ``sealed_capsule`` unless ``NOVAFABRIC_ALLOW_SEALED_DELETE=1``
    (the same default as ``metadata_store.run_delete``);
@@ -73,7 +74,7 @@ INCONSISTENT_SUFFIX = ".inconsistent"
 
 
 class DeleteBlockedError(Exception):
-    """Deletion refused by a legal hold or WORM lock (→ 409 per item)."""
+    """Deletion refused by a legal hold, WORM lock, unreadable WORM state or seal (→ 409)."""
 
     def __init__(self, message: str, code: str, details: dict[str, object]) -> None:
         super().__init__(message)
@@ -183,29 +184,36 @@ def active_hold_ids(capsule_dir: Path) -> list[str]:
 def worm_locked_until(capsule_dir: Path, run_id: str) -> datetime | None:
     """Unexpired WORM lock expiry for *run_id*, or None.
 
-    Scans ``<capsule_dir>/../registries/*/worm.db`` (the retention CLI's
-    layout). Best-effort: a registry whose WORM DB cannot be read is skipped
-    with a warning — the check covers locks the machinery *knows*.
-    """
-    registries_base = capsule_dir.parent / "registries"
-    if not registries_base.exists():
-        return None
-    now = datetime.now(timezone.utc)
-    for reg_dir in sorted(registries_base.iterdir()):
-        worm_db = reg_dir / "worm.db"
-        if not reg_dir.is_dir() or not worm_db.exists():
-            continue
-        try:
-            from novafabric.storage._local_worm import LocalWormAdapter
+    Reads every configured ``worm.db`` in every registry, in the locations
+    ``nova retention`` uses (:func:`novafabric.retention.worm_state.worm_db_paths`):
+    ``$NOVAFABRIC_HOME/registries``, the legacy ``./.novafabric/registries`` and
+    ``<capsule_dir>/../registries``. No ``worm.db`` anywhere means no local WORM.
 
-            for entry in LocalWormAdapter(worm_db).list():
-                if entry.capsule_id != run_id:
-                    continue
-                # WormEntry.locked_until is tz-aware by model contract.
-                if entry.locked_until > now:
-                    return entry.locked_until
-        except Exception:  # noqa: BLE001 — best-effort scan, never blocks
-            logger.warning("WORM DB %s unreadable during delete check", worm_db)
+    Raises:
+        DeleteBlockedError: ``worm_state_unavailable`` — a configured WORM database
+            cannot be read, so unknown retention state never reads as "unlocked".
+    """
+    from novafabric.retention.holds import capsule_base_holds_root
+    from novafabric.retention.worm_state import (
+        WormStateUnavailableError,
+        read_worm_locks,
+        worm_db_paths,
+    )
+
+    try:
+        locks = read_worm_locks(
+            worm_db_paths(None, extra_roots=(capsule_base_holds_root(capsule_dir),))
+        )
+    except WormStateUnavailableError as exc:
+        raise DeleteBlockedError(
+            str(exc),
+            code=exc.code,
+            details={"worm_db": str(exc.path), "reason": exc.reason},
+        ) from exc
+    locked_until = locks.get(run_id)
+    # WormEntry.locked_until is tz-aware by model contract.
+    if locked_until is not None and locked_until > datetime.now(timezone.utc):
+        return locked_until
     return None
 
 

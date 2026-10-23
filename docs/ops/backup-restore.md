@@ -191,6 +191,47 @@ policies still travel via the database backup paths above.
 
 ---
 
+### Unreadable WORM or retention-policy files
+
+**Status: works today.** Deletion fails closed on local WORM state (see the
+[CLI reference](../cli-reference.md#nova-capsule-delete-capsule-id)). When a `worm.db` exists
+in any registry location — `$NOVAFABRIC_HOME/registries/<r>/`, the legacy
+`./.novafabric/registries/<r>/`, or a capsule store's `../registries/<r>/` — but cannot be
+read, **every** deletion refuses with `worm_state_unavailable`: `nova capsule delete`,
+`DELETE /v0/capsules/{id}` and bulk delete (HTTP 409), the dashboard's
+`DELETE /api/runs/{id}`, metadata-index delete, and `nova retention plan|apply|status|explain`.
+An unreadable `retention-policy.yaml` refuses `nova capsule delete` and `nova retention` with
+`retention_policy_unavailable`. Nothing is deleted, and there is no override flag.
+
+PII erasure (`nova pii erase`, the erasure queue, REST erasure) and the restore-time
+crypto-shred replay do not read `worm.db` at all: crypto-shred destroys a key, not the
+WORM-locked object (ADR-0134 D4, ADR-0062), so they are not blocked by it. The retention
+sweep's own `crypto-shred` action does honour WORM locks and is refused like `purge`.
+
+Recovery:
+
+1. **Find the file.** The refusal names it and the reason (also logged at ERROR by
+   `novafabric.retention.worm_state`).
+2. **Stop and keep evidence.** Copy the file (and any `worm.db-journal` beside it) aside
+   before changing anything: `cp -p worm.db worm.db.damaged-$(date +%F)`.
+3. **Fix the cause.**
+   - *Permission denied* — restore the owner/mode the NovaFabric process expects
+     (`chmod 600 worm.db`, correct owner).
+   - *Locked* — another process holds a write lock; let it finish or stop it, then retry.
+   - *Hot journal left by a crashed writer* — open it read-write once so SQLite rolls the
+     journal back: `python -c "import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute('PRAGMA integrity_check').fetchall()" worm.db`.
+   - *Corrupt, empty, wrong file, dangling symbolic link* — restore `worm.db` from the latest
+     verified backup set (`nova restore`, or copy the member out of the set and check its
+     hash against the manifest). Then re-apply any WORM lock recorded after that backup.
+4. **Verify.** `nova retention plan --registry <r>` exits 0 and shows the expected
+   `worm_hold` rows; then retry the delete.
+
+Removing the file is **not** a fix: with no `worm.db` anywhere, NovaFabric treats local WORM
+as not configured, and every lock that file held stops protecting its capsule. Do it only if
+the locks are recorded elsewhere and you have decided they no longer apply, and record that
+decision. The local WORM adapter is dev/test-only (ADR-0031); production immutability comes
+from the object store's own lock (S3 Object Lock, Azure immutable blob, GCS Bucket Lock).
+
 ## Part 2 — `nova backup` tooling
 
 Governed by [ADR-0181](../decisions.md)
