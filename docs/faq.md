@@ -230,6 +230,11 @@ feature carries exactly one of: **works today**, **experimental**, **planned**, 
 **future design**. Take the labels literally — they are maintained on purpose, and
 an over-claiming doc is treated here as a bug.
 
+### Where do I find facts, logos and descriptions for writing about NovaFabric?
+
+The [press & media kit](press-kit.md) collects them in one place, so an article, talk or
+listing can reference NovaFabric without asking first or guessing at the facts.
+
 ### Who pays for this?
 
 Nobody. There is no company, no funding, and no revenue. That is also why the most

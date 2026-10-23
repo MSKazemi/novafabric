@@ -273,6 +273,8 @@ it yet.
   key-management guide this feature extends
 - [Backup & restore runbook](backup-restore.md) — where the KEK availability
   trade lands
+- [Data residency](data-residency.md) — routing each tenant's capsules to the
+  storage backend for its jurisdiction (experimental)
 - [ADR-0185](../decisions.md) —
   the full decision record, including the encrypt-before-WORM invariant and
   the infra-gated cloud-KMS plan

@@ -28,6 +28,28 @@ What follows produces something better.
 
 ---
 
+The whole walkthrough, at a glance:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Eng as Engineer
+    participant Nova as NovaFabric
+    participant Arc as Archive
+    participant Aud as Auditor
+    Eng->>Nova: nova capture -- python triage_agent.py
+    Nova-->>Eng: Run Capsule, sealed as it is written (.seal/)
+    Eng->>Arc: tar the capsule and forget it
+    Note over Eng,Aud: six months later
+    Aud->>Eng: "Show us exactly what the system did"
+    Eng->>Arc: restore the capsule
+    Eng->>Nova: nova verify · nova validate
+    Eng->>Nova: nova export-evidence --key signing_key.pem
+    Nova-->>Eng: Evidence Bundle (ZIP)
+    Eng->>Aud: hand over the bundle
+    Note over Aud: sha256sum + Ed25519,<br/>no NovaFabric needed
+```
+
 ## 0. Once: give NovaFabric a signing key
 
 Sealing is **opt-in**: a capsule is only signed when a `novaseal.yaml` exists in your

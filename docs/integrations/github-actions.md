@@ -76,7 +76,7 @@ Every row matches `action.yml` exactly.
 | `upload-artifact` | no | `true` | Upload the capsule as a workflow artifact. |
 | `artifact-name` | no | `novafabric-capsule` | Name for the uploaded artifact. |
 | `retention-days` | no | `90` | How long to retain the artifact. |
-| `novafabric-version` | no | `""` (latest) | Version specifier passed to pip, e.g. `0.106.1`. **Pin it** for reproducible CI. |
+| `novafabric-version` | no | `""` (latest) | Version passed to the installer (uv), e.g. `0.106.1`. **Pin it** for reproducible CI. |
 | `python-version` | no | `3.12` | NovaFabric requires 3.12+. |
 | `extras` | no | `""` (core) | Extras to install, e.g. `all`. Core is ~113 MB; `all` is ~412 MB. |
 
@@ -147,6 +147,17 @@ capsule with `status: failure` for a command that crashed. So the action:
    exit code when the command failed (the error also says whether the capsule
    validated), otherwise with exit 1 and an `Invalid capsule` error naming the
    run id and the artifact when `nova validate` rejected the capsule.
+
+```mermaid
+flowchart TD
+    A["Set up Python · install NovaFabric"] --> B["Capture: run your command under nova capture<br/>record its exit code, never abort"]
+    B --> C{"validate: true?"}
+    C -- no --> U["Upload the capsule artifact"]
+    C -- yes --> V{"nova validate<br/>passes?"}
+    V -- yes --> U
+    V -- no --> X["step fails, upload skipped<br/>(known gap, fix tracked)"]
+    U --> E["Re-raise your command's exit code"]
+```
 
 The ordering is load-bearing. A composite action abandons its remaining steps
 once one of them fails — `always()` does not rescue them — so failing earlier

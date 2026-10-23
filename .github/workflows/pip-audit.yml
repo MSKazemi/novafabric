@@ -46,17 +46,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
 
       - name: Set up Python (matches requires-python in pyproject.toml)
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -77,8 +77,11 @@ jobs:
         # pip-audit exits non-zero when it finds anything; the severity +
         # waiver gate below decides what actually blocks, so findings are
         # not a failure of THIS step — a missing/empty report is.
+        # Run through uv (`uvx`, already installed above) at an EXACT version:
+        # `pipx run pip-audit` took whatever release was newest that day, so the
+        # auditor itself was the one unpinned tool in the gate. Bump deliberately.
         run: |
-          pipx run pip-audit -r requirements-audit.txt --no-deps \
+          uvx --from "pip-audit==2.10.1" pip-audit -r requirements-audit.txt --no-deps \
             --format json --output pip-audit-report.json \
             || echo "pip-audit reported findings; the gate step decides below"
           test -s pip-audit-report.json
@@ -93,7 +96,7 @@ jobs:
 
       - name: Upload audit report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pip-audit-${{ github.sha }}
           path: pip-audit-report.json

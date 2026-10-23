@@ -1,0 +1,42 @@
+name: Require green CI
+
+# Reusable release gate (ADR-0316). Every tag-triggered workflow — GitHub
+# Release, PyPI, container image, Helm chart — calls this first and makes all
+# of its jobs depend on it. It waits for ci.yml on the exact commit being
+# released and fails closed unless that run concluded `success`.
+#
+# Why: v0.106.0 was tagged, signed and published while CI's
+# `unit` job was red on the tagged commit. Nothing in the release path looked
+# at CI. Branch protection with required checks would also stop it, but would
+# block the maintainer's direct pushes to main; gating the release is the part
+# that matters for users.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  ci-green:
+    runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository.
+    if: github.repository == 'MSKazemi/novafabric'
+    # The script's own --timeout (100 min) fires first and names what it saw;
+    # this cap only bounds a hung runner. CI's sharded unit suite finishes in a
+    # fraction of that, so a release waits for the CI the tag push started.
+    timeout-minutes: 110
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          sparse-checkout: scripts/require_green_ci.py
+          sparse-checkout-cone-mode: false
+
+      - name: Wait for CI on this commit and require success
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/require_green_ci.py --sha "${{ github.sha }}"

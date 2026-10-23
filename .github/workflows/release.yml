@@ -11,13 +11,27 @@ on:
     tags:
       - "v*"
 
+# Read-only by default; only the job that creates the GitHub Release gets
+# `contents: write` (OpenSSF Scorecard TokenPermissions).
 permissions:
-  # Required to create the release. No write access to code.
-  contents: write
+  contents: read
 
 jobs:
+  ci-green:
+    # Nothing in this workflow publishes until CI has passed on this exact
+    # commit (ADR-0316) — v0.106.0 shipped while it was red.
+    if: github.repository == 'MSKazemi/novafabric'
+    uses: ./.github/workflows/require-green-ci.yml
+    permissions:
+      actions: read
+      contents: read
+
   github-release:
+    needs: ci-green
     runs-on: ubuntu-latest
+    permissions:
+      # Required to create the release. No write access to code.
+      contents: write
     timeout-minutes: 5
     # Release only from the public repo, matching publish-pypi/image/chart. A tag
     # reaches BOTH gitdirs by design, so without this the private mirror created a
@@ -28,7 +42,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 

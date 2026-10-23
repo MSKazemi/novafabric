@@ -153,6 +153,10 @@ for CI on that exact commit and fails closed otherwise. Fix CI (or re-run it if 
 cancelled), then re-run the failed tag workflows from the Actions tab — the gate
 re-checks and the publish proceeds.
 
+GitHub runs push CI only on the head of a push. If the tagged commit was not a head (it was
+pushed together with later commits), it has no CI run: start one with
+`gh workflow run ci.yml --ref vx.y.z`, then re-run the failed tag workflows.
+
 ## 8. GitHub release
 
 There is no manual step: pushing the tag runs `.github/workflows/release.yml`, which

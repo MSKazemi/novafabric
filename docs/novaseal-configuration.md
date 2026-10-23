@@ -322,6 +322,23 @@ see the troubleshooting note below), `nova seal log verify`, and the
 `key_rotation` entry `nova seal init --force` appends. So the log a capsule is sealed
 into is the log every verifier reads.
 
+```mermaid
+flowchart TD
+    subgraph SEAL["Sealing and verification"]
+        A["nova capture · serve sealing<br/>nova verify · trust radar"] --> Y["merkle_db in novaseal.yaml"]
+        Y -- "not set" --> H["$NOVAFABRIC_HOME/novaseal-merkle.db"]
+    end
+    subgraph DIAG["Diagnostics and policy store"]
+        B["nova doctor · SealTab<br/>nova seal log verify"] --> E{"NOVAFABRIC_SEAL_DB_PATH<br/>set?"}
+        E -- yes --> ENV["that path or DSN"]
+        E -- no --> Y2["merkle_db in novaseal.yaml"]
+        Y2 -- "not set" --> H2["$NOVAFABRIC_HOME/novaseal-merkle.db"]
+    end
+    subgraph PROMO["Promotion workflow"]
+        P["nova seal propose · approve · bypass"] --> DB["--db<br/>default ~/.local/share/novafabric/merkle.db"]
+    end
+```
+
 **Precedence (highest to lowest):**
 
 | Priority | Source | When to use |

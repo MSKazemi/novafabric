@@ -6,13 +6,19 @@ name: CI
 # 87 source files clean under mypy strict).
 #
 # Jobs:
-#   unit        — runs on every PR/push; no external services required.
+#   lint        — lockfile check, ruff, CLI smoke; the fast signal.
+#   unit        — six duration-balanced shards of the suite (ADR-0316).
+#   coverage    — combines the shards: 90% floor + proof every test ran once.
 #   integration — runs on every PR/push; spins up a Postgres 16 service.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  # GitHub runs push CI only on the pushed head. A tag on any other commit gets
+  # its CI run here (`gh workflow run ci.yml --ref <tag>`), which is what the
+  # release gate (require-green-ci.yml) waits for.
+  workflow_dispatch:
 
 # Cancel in-flight runs of the same ref when new commits land. Saves CI
 # minutes on rapid-fire pushes.
@@ -20,53 +26,37 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: every job here only reads the repository. Without this the
+# token inherits the repository default (OpenSSF Scorecard TokenPermissions).
+permissions:
+  contents: read
+
 jobs:
   # --------------------------------------------------------------------------
-  # Unit tests + quality gates
-  # No external services. Must pass without Postgres or any network access.
+  # Lint + packaging smoke — the fast signal (~1-2 min), independent of the
+  # suite so a lint or lockfile failure is reported without waiting for it.
   # --------------------------------------------------------------------------
-  unit:
+  lint:
     runs-on: ubuntu-latest
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
     if: github.repository == 'MSKazemi/novafabric'
-    # 15 minutes was not enough and had not been for weeks. This job hit the cap
-    # at ~15m15s on EVERY run from 2026-07-31 to 2026-08-05 — GitHub reports a
-    # timeout as `cancelled`, which reads like an interrupted run rather than a
-    # failure, so it never looked like the standing defect it was. The
-    # consequence: the ~11.6K-test suite and the 90% coverage gate have not
-    # actually executed in CI since BL-022 nominally fixed this job.
-    #
-    # The 205 s figure BL-022 recorded was measured on a developer machine with
-    # many cores. `-n auto` on a GitHub-hosted runner gets a handful, so that
-    # number never transferred — a local measurement is not a CI measurement.
-    # Raised to 40 to let the job finish and report a real duration; tighten it
-    # once there is a measured number from an actual green run.
-    #
-    # 2026-10-09, measured: with ~19.4K tests on a 4-CPU runner the unit step
-    # took 30.5 min (run 37961343086) and 37.4 min (run 37913910773) on normal
-    # runners, but two runs (0629ae6, df01f0c) were killed at the 40-min cap at
-    # 67% — not a hang: their progress timelines are uniformly ~1.8x slower at
-    # every checkpoint (10%->30% took 17 min vs 9), i.e. ~57 min for the suite on
-    # a slow runner. 75 leaves headroom for that measured spread; a run that
-    # still hits it is a real stall, not runner variance.
-    timeout-minutes: 75
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          # Keep the uv binary cached across runs.
           enable-cache: true
 
       - name: Set up Python (matches requires-python in pyproject.toml)
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -83,6 +73,67 @@ jobs:
         run: uv lock --check
 
       - name: Install project + dev deps
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests scripts
+
+      - name: Smoke-test the CLI
+        # Confirms the `nova` entry point installs cleanly and reports
+        # the version. Catches packaging regressions that pure unit
+        # tests miss.
+        run: |
+          uv run nova --version
+          uv run nova --help > /dev/null
+
+  # --------------------------------------------------------------------------
+  # Unit tests — six duration-balanced shards (ADR-0316)
+  # No external services beyond the testcontainers tier. Each shard runs a
+  # disjoint set of test FILES (tests/_shard.py), records which tests it ran,
+  # and uploads its coverage data; the `coverage` job below proves the shards
+  # partition the suite and enforces the 90% floor over their union.
+  #
+  # One job ran the whole ~20K-test suite until 2026-10-22: 31-57 min per run
+  # (measured on runs 39793113378 and 39787883698).
+  # --------------------------------------------------------------------------
+  unit:
+    name: unit (${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
+    # Sized from measurement, not hope: the single job took 30.5-37.4 min on a
+    # normal 4-CPU runner and ~57 min on a slow one (uniformly ~1.8x, not a
+    # hang). A sixth of that plus install and collection is ~10 min, ~17 on a
+    # slow runner; 30 leaves room for that spread, and a shard that still hits
+    # it is a real stall.
+    timeout-minutes: 30
+    strategy:
+      # Every shard reports even if another fails: a red run should name every
+      # failing test, not the first shard's.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          # Keep the uv binary cached across runs.
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install project + dev deps
         # --all-extras is REQUIRED, not a convenience.  Without it ~61 tests
         # ERROR instead of skipping (alembic, uvicorn, nats-py, a2a-sdk, mcp),
         # because those suites import the optional dependency at module scope.
@@ -91,9 +142,6 @@ jobs:
         # went red before it ever reported a test result.  Matches the
         # documented dev/release invocation in CONTRIBUTING.md.
         run: uv sync --frozen --all-extras
-
-      - name: Lint (ruff)
-        run: uv run ruff check src tests scripts
 
       - name: Record runner capacity and start a memory sampler
         # A runner that dies mid-job leaves NO evidence: GitHub surfaces
@@ -112,28 +160,37 @@ jobs:
             > "$RUNNER_TEMP/mem-trace.txt" 2>/dev/null &
           echo "sampler_pid=$!"
 
-      - name: Run unit tests with coverage
+      - name: Run unit tests with coverage (this shard)
         # Excludes tests/integration/ which requires optional external services.
-        # --cov-fail-under=90 enforces the project's coverage floor at the
-        # CI gate so a regression cannot land silently.
+        # Coverage is collected here and ENFORCED in the `coverage` job over the
+        # union of all shards — a per-shard floor would be meaningless.
         # --benchmark-disable skips the 100-round latency benchmark; that gate
         # runs in the dedicated seal-latency-gate job below.
-        # -n auto keeps the full-extras run inside the 15-minute timeout
-        # (measured 205 s vs. a serial run that no longer fits).  --dist=loadgroup
-        # is mandatory, not a tuning knob: tests/metadata_store/conftest.py pins
-        # its testcontainers Postgres to a single xdist_group, and plain
-        # --dist=load scatters that group across workers and makes the tier fail.
+        # --dist=loadgroup is mandatory, not a tuning knob:
+        # tests/metadata_store/conftest.py pins its testcontainers Postgres to a
+        # single xdist_group, and plain --dist=load scatters that group across
+        # workers and makes the tier fail. Sharding is by FILE for the same
+        # reason — a module's container and module fixtures stay in one shard.
         #
-        # This job runs the `container` tier in full, so its peak memory is the
-        # sum of the xdist workers AND every testcontainer alive at once. That is
-        # what killed it six times between 2026-09-04 and 2026-09-09: the grouping
-        # above was inert (a conftest hook without `tryfirst` adds its xdist_group
-        # mark after pytest-xdist has already read the marks), so a single module
-        # scattered across workers started one container per worker -- measured at
-        # three simultaneous JanusGraph JVMs, 3.4-4.4 GiB each. The runner died
+        # Peak memory is the sum of the xdist workers AND every testcontainer
+        # alive at once. That is what killed the single job six times between
+        # 2026-09-04 and 2026-09-09: the grouping above was inert (a conftest
+        # hook without `tryfirst` adds its xdist_group mark after pytest-xdist
+        # has already read the marks), so a single module scattered across
+        # workers started one container per worker -- measured at three
+        # simultaneous JanusGraph JVMs, 3.4-4.4 GiB each. The runner died
         # mid-run at exactly [ 38%] with zero FAILED tests, which reads as a
         # timeout rather than the resource exhaustion it was.
-        run: uv run pytest tests/ --ignore=tests/integration --benchmark-disable -n auto --dist=loadgroup --cov=novafabric --cov-report=term-missing --cov-fail-under=90
+        env:
+          COVERAGE_FILE: reports/coverage-shard-${{ matrix.shard }}.dat
+        run: >-
+          mkdir -p reports &&
+          uv run pytest tests/ --ignore=tests/integration --benchmark-disable
+          -n auto --dist=loadgroup
+          --cov=novafabric --cov-report=
+          --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+          --shard-manifest=reports/manifest-shard-${{ matrix.shard }}.txt
+          -o junit_family=xunit1 --junitxml=reports/junit-shard-${{ matrix.shard }}.xml
 
       - name: Peak memory during the test run
         # `always()` is the point: this matters most when the step above failed.
@@ -146,23 +203,100 @@ jobs:
           else
             echo "no trace captured"
           fi
+          cp "$RUNNER_TEMP/mem-trace.txt" reports/ 2>/dev/null || true
 
-      - name: Upload the memory trace
+      - name: Upload this shard's results
+        # Coverage data, the JUnit report and the manifest of tests this shard
+        # ran — the `coverage` job needs all three, from every shard.
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: unit-mem-trace
-          path: ${{ runner.temp }}/mem-trace.txt
-          if-no-files-found: ignore
+          name: unit-shard-${{ matrix.shard }}
+          path: reports/
+          if-no-files-found: error
           retention-days: 7
 
-      - name: Smoke-test the CLI
-        # Confirms the `nova` entry point installs cleanly and reports
-        # the version. Catches packaging regressions that pure unit
-        # tests miss.
+  # --------------------------------------------------------------------------
+  # Coverage + shard completeness (ADR-0316)
+  # The one place the 90% floor is enforced, over the union of the shards.
+  # Also proves the shards PARTITION the suite: a test that fell between
+  # shards would never run and never be reported, so the union of the shard
+  # manifests is compared with a fresh collection of the same scope.
+  # --------------------------------------------------------------------------
+  coverage:
+    runs-on: ubuntu-latest
+    needs: unit
+    # Runs even when a shard failed, so a red run still gets its summary and
+    # the completeness check; skipped only when the run was cancelled.
+    if: (!cancelled()) && github.repository == 'MSKazemi/novafabric'
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install project + dev deps
+        # --all-extras: the reference collection below must import exactly what
+        # the shards imported, or the comparison is between different suites.
+        run: uv sync --frozen --all-extras
+
+      - name: Download every shard's results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: unit-shard-*
+          path: reports
+          merge-multiple: true
+
+      - name: Test report (job summary)
+        if: always()
+        run: python3 scripts/ci_test_report.py summary reports/junit-shard-*.xml >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Every test ran in exactly one shard
         run: |
-          uv run nova --version
-          uv run nova --help > /dev/null
+          uv run pytest tests/ --ignore=tests/integration --collect-only -q \
+            --shard-manifest=reports/manifest-all.txt > /dev/null
+          python3 scripts/ci_test_report.py check-manifests \
+            --expected reports/manifest-all.txt reports/manifest-shard-*.txt
+
+      - name: Combined coverage (floor 90%)
+        # Independent of the partition check above: a red partition must not hide
+        # the coverage figure (the first sharded run reported neither).
+        if: (!cancelled())
+        run: |
+          uv run coverage combine --keep reports/coverage-shard-*.dat
+          uv run coverage report -m --skip-covered --fail-under=90
+
+      - name: Refresh per-file test durations
+        # Uploaded, not committed: `make test-durations` (docs/developer-guide.md)
+        # folds an artifact into tests/.test-durations.json when balance drifts.
+        if: always()
+        run: |
+          if [ -f tests/.test-durations.json ]; then
+            cp tests/.test-durations.json reports/test-durations.json
+          fi
+          python3 scripts/ci_test_report.py durations \
+            --out reports/test-durations.json reports/junit-shard-*.xml
+
+      - name: Upload refreshed durations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-durations
+          path: reports/test-durations.json
+          if-no-files-found: ignore
+          retention-days: 30
 
   # --------------------------------------------------------------------------
   # Type check (mypy strict) against the FULL dependency surface
@@ -187,17 +321,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
 
       - name: Set up Python (matches requires-python in pyproject.toml)
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -225,17 +359,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -254,7 +388,7 @@ jobs:
 
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: seal-latency-${{ github.sha }}
           path: bench-results/seal_latency.json
@@ -277,17 +411,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -305,7 +439,7 @@ jobs:
 
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: capture-overhead-${{ github.sha }}
           path: bench-results/capture_overhead.json
@@ -326,12 +460,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # Must satisfy ui/dashboard/package.json "engines". Astro 7 refuses to build on
           # Node 20 ("not supported by Astro! Please upgrade to >=22.12.0"), and
@@ -393,17 +527,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
 
       - name: Set up Python (matches requires-python in pyproject.toml)
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 

@@ -7,9 +7,22 @@ from pathlib import Path
 
 import _live_audit_guard
 import pytest
+from _shard import ShardPlugin, ShardSpec, ShardSpecError
 
 # Real shutil.which captured at import, before any test can monkeypatch it (TEST-OPA-1).
 _REAL_WHICH = shutil.which
+
+# One colour environment for the whole session, on every machine. Typer reads
+# GITHUB_ACTIONS / FORCE_COLOR / PY_COLORS once, when `typer.rich_utils` is first
+# imported, and forces a colour terminal if any is set. GitHub sets the first, so
+# Rich wrote ANSI escapes *inside* option names in CI only, and a plain
+# `"--flag" in result.output` failed there and passed everywhere else (issue #21;
+# again in v0.106.0). This must run before anything imports typer, which is why it
+# sits at module level in the root conftest. Tests that exercise colour set it
+# themselves. Guarded by tests/test_hermetic_colour_env.py.
+os.environ["_TYPER_FORCE_DISABLE_TERMINAL"] = "1"
+for _colour_var in ("FORCE_COLOR", "PY_COLORS", "COLORTERM"):
+    os.environ.pop(_colour_var, None)
 
 
 #: Fixtures that *start* a container. A test is a container test iff it requests
@@ -31,7 +44,33 @@ CONTAINER_FIXTURES = frozenset(
 )
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    group = parser.getgroup("shard", "split the suite across CI jobs (tests/_shard.py)")
+    group.addoption(
+        "--shard",
+        metavar="I/N",
+        default=None,
+        help="run only shard I of N (duration-balanced, by test file)",
+    )
+    group.addoption(
+        "--shard-manifest",
+        metavar="PATH",
+        default=None,
+        help="write the node ids this run selected to PATH, one per line",
+    )
+
+
 def pytest_configure(config: pytest.Config) -> None:
+    shard = config.getoption("--shard")
+    manifest = config.getoption("--shard-manifest")
+    if shard or manifest:
+        try:
+            spec = ShardSpec.parse(shard) if shard else None
+        except ShardSpecError as exc:
+            raise pytest.UsageError(str(exc)) from exc
+        config.pluginmanager.register(
+            ShardPlugin(spec, Path(manifest) if manifest else None), "novafabric-shard"
+        )
     config.addinivalue_line(
         "markers",
         "real_opa: do NOT force NoopEngine — let get_policy_engine() select the "

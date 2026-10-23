@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="360" viewBox="0 0 960 360" role="img" aria-label="NovaFabric lifecycle: a command is captured into a secret-scanned Run Capsule, optionally sealed, and the capsule is then replayed, diffed, traced for lineage, and verified and exported as a signed Evidence Bundle">
+<title>NovaFabric — capture once, then replay, diff, trace and verify</title>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#26262c"/></marker>
+<path fill="none" id="p-capture" d="M 224 180 L 330 180"/>
+<path fill="none" id="p-out0" d="M 580 180 C 635 180 635 63 690 63"/>
+<path fill="none" id="p-out1" d="M 580 180 C 635 180 635 141 690 141"/>
+<path fill="none" id="p-out2" d="M 580 180 C 635 180 635 219 690 219"/>
+<path fill="none" id="p-out3" d="M 580 180 C 635 180 635 297 690 297"/>
+</defs>
+<style>
+.t{font-family:-apple-system,'Segoe UI','DM Sans','Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:600;fill:#e6e6ea}
+.m{font-family:-apple-system,'Segoe UI','DM Sans','Helvetica Neue',Arial,sans-serif;font-size:13px;fill:#a8a8b3}
+.c{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',Menlo,monospace;font-size:12.5px;fill:#e6e6ea;white-space:pre}
+.g-cap{animation:g-cap 9.0s infinite}@keyframes g-cap{0%,15.56%{stroke:#26262c}18.56%,93.33%{stroke:#c4f0a8}100%{stroke:#26262c}}
+.f0{opacity:0;animation:f0 9.0s infinite}@keyframes f0{0%,17.78%{opacity:0}20.78%,93.33%{opacity:1}97.33%,100%{opacity:0}}
+.f1{opacity:0;animation:f1 9.0s infinite}@keyframes f1{0%,21.33%{opacity:0}24.33%,93.33%{opacity:1}97.33%,100%{opacity:0}}
+.f2{opacity:0;animation:f2 9.0s infinite}@keyframes f2{0%,24.89%{opacity:0}27.89%,93.33%{opacity:1}97.33%,100%{opacity:0}}
+.f3{opacity:0;animation:f3 9.0s infinite}@keyframes f3{0%,28.44%{opacity:0}31.44%,93.33%{opacity:1}97.33%,100%{opacity:0}}
+.f4{opacity:0;animation:f4 9.0s infinite}@keyframes f4{0%,32.00%{opacity:0}35.00%,93.33%{opacity:1}97.33%,100%{opacity:0}}
+.f5{opacity:0;animation:f5 9.0s infinite}@keyframes f5{0%,35.56%{opacity:0}38.56%,93.33%{opacity:1}97.33%,100%{opacity:0}}
+.seal{opacity:0;animation:seal 9.0s infinite}@keyframes seal{0%,42.44%{opacity:0}45.44%,93.33%{opacity:1}97.33%,100%{opacity:0}}
+.g-out0{animation:g-out0 9.0s infinite}@keyframes g-out0{0%,59.11%{stroke:#26262c}62.11%,93.33%{stroke:#c4f0a8}100%{stroke:#26262c}}
+.g-out1{animation:g-out1 9.0s infinite}@keyframes g-out1{0%,63.00%{stroke:#26262c}66.00%,93.33%{stroke:#c4f0a8}100%{stroke:#26262c}}
+.g-out2{animation:g-out2 9.0s infinite}@keyframes g-out2{0%,66.89%{stroke:#26262c}69.89%,93.33%{stroke:#c4f0a8}100%{stroke:#26262c}}
+.g-out3{animation:g-out3 9.0s infinite}@keyframes g-out3{0%,70.78%{stroke:#26262c}73.78%,93.33%{stroke:#c4f0a8}100%{stroke:#26262c}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;opacity:1!important}.pulse{display:none}}
+</style>
+<rect width="960" height="360" rx="14" fill="#0a0a0c"/>
+<circle class="pulse" r="4.5" fill="#c4f0a8" opacity="0"><animate attributeName="opacity" dur="9.0s" repeatCount="indefinite" keyTimes="0;0.0444;0.0454;0.1556;0.1566;1" values="0;0;1;1;0;0"/><animateMotion dur="9.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.0444;0.1556;1"><mpath href="#p-capture"/></animateMotion></circle>
+<rect x="28" y="132" width="196" height="96" rx="10" fill="#111114" stroke="#26262c" stroke-width="1.5"/><text x="44" y="162" class="t">Your agent</text><text x="44" y="184" class="m">any command,</text><text x="44" y="202" class="m">no code changes</text>
+<path d="M 224 180 L 324 180" stroke="#26262c" stroke-width="2" fill="none" marker-end="url(#arrow)"/><text x="277" y="168" class="c" text-anchor="middle">nova capture</text>
+<rect class="g-cap" x="330" y="46" width="250" height="268" rx="12" fill="#111114" stroke="#26262c" stroke-width="1.5"/><text x="348" y="78" class="t" style="fill:#c4f0a8">Run Capsule</text><text x="348" y="98" class="m">a folder you own</text>
+<text class="f0 c" x="352" y="130"><tspan fill="#a8a8b3">▸ </tspan>capsule.yaml</text>
+<text class="f1 c" x="352" y="156"><tspan fill="#a8a8b3">▸ </tspan>model-calls.jsonl</text>
+<text class="f2 c" x="352" y="182"><tspan fill="#a8a8b3">▸ </tspan>tool-calls.jsonl</text>
+<text class="f3 c" x="352" y="208"><tspan fill="#a8a8b3">▸ </tspan>env.lock</text>
+<text class="f4 c" x="352" y="234"><tspan fill="#a8a8b3">▸ </tspan>lineage.jsonl</text>
+<text class="f5 c" x="352" y="260"><tspan fill="#a8a8b3">▸ </tspan>redaction-proof.json</text>
+<g class="seal"><text x="352" y="286" class="c" style="fill:#63cad0">▸ .seal/  signed · logged</text></g>
+<text x="562" y="78" class="m" text-anchor="end">secret-scanned</text>
+<path d="M 580 180 C 635 180 635 63 684 63" stroke="#26262c" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect class="g-out0" x="690" y="31" width="244" height="64" rx="10" fill="#111114" stroke="#26262c" stroke-width="1.5"/><text x="706" y="57" class="t">Replay</text><text x="920" y="57" class="c" text-anchor="end" style="fill:#a8a8b3">nova replay</text><text x="706" y="78" class="m">inspect or re-run it</text>
+<circle class="pulse" r="4.5" fill="#c4f0a8" opacity="0"><animate attributeName="opacity" dur="9.0s" repeatCount="indefinite" keyTimes="0;0.4911;0.4921;0.5911;0.5921;1" values="0;0;1;1;0;0"/><animateMotion dur="9.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.4911;0.5911;1"><mpath href="#p-out0"/></animateMotion></circle>
+<path d="M 580 180 C 635 180 635 141 684 141" stroke="#26262c" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect class="g-out1" x="690" y="109" width="244" height="64" rx="10" fill="#111114" stroke="#26262c" stroke-width="1.5"/><text x="706" y="135" class="t">Diff</text><text x="920" y="135" class="c" text-anchor="end" style="fill:#a8a8b3">nova diff</text><text x="706" y="156" class="m">what changed between runs</text>
+<circle class="pulse" r="4.5" fill="#c4f0a8" opacity="0"><animate attributeName="opacity" dur="9.0s" repeatCount="indefinite" keyTimes="0;0.5300;0.5310;0.6300;0.6310;1" values="0;0;1;1;0;0"/><animateMotion dur="9.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.5300;0.6300;1"><mpath href="#p-out1"/></animateMotion></circle>
+<path d="M 580 180 C 635 180 635 219 684 219" stroke="#26262c" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect class="g-out2" x="690" y="187" width="244" height="64" rx="10" fill="#111114" stroke="#26262c" stroke-width="1.5"/><text x="706" y="213" class="t">Lineage</text><text x="920" y="213" class="c" text-anchor="end" style="fill:#a8a8b3">nova lineage</text><text x="706" y="234" class="m">what it depended on</text>
+<circle class="pulse" r="4.5" fill="#c4f0a8" opacity="0"><animate attributeName="opacity" dur="9.0s" repeatCount="indefinite" keyTimes="0;0.5689;0.5699;0.6689;0.6699;1" values="0;0;1;1;0;0"/><animateMotion dur="9.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.5689;0.6689;1"><mpath href="#p-out2"/></animateMotion></circle>
+<path d="M 580 180 C 635 180 635 297 684 297" stroke="#26262c" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect class="g-out3" x="690" y="265" width="244" height="64" rx="10" fill="#111114" stroke="#26262c" stroke-width="1.5"/><text x="706" y="291" class="t">Verify &amp; export</text><text x="920" y="291" class="c" text-anchor="end" style="fill:#a8a8b3">nova verify</text><text x="706" y="312" class="m">signed Evidence Bundle</text>
+<circle class="pulse" r="4.5" fill="#63cad0" opacity="0"><animate attributeName="opacity" dur="9.0s" repeatCount="indefinite" keyTimes="0;0.6078;0.6088;0.7078;0.7088;1" values="0;0;1;1;0;0"/><animateMotion dur="9.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.6078;0.7078;1"><mpath href="#p-out3"/></animateMotion></circle>
+</svg>

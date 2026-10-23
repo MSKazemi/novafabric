@@ -105,6 +105,21 @@ command (`--runner`, `--timeout`, `--asset`, `--require-asset-status`,
 argv/cwd/env). Note that invoking `nova capture` already pays its own import, so
 the full cold-start win comes from invoking `novacap` directly.
 
+How `nova capture` decides where a run executes (`--no-daemon` always takes the
+in-process branch):
+
+```mermaid
+flowchart TD
+    C["nova capture CMD"] --> P{"plain invocation?<br/>(no options)"}
+    P -- no --> IP["capture in-process"]
+    P -- yes --> R{"daemon socket<br/>reachable?"}
+    R -- no --> IP
+    R -- yes --> N["exec novacap → daemon"]
+    N --> B{"daemon accepts<br/>the run?"}
+    B -- yes --> W["warm worker captures<br/>the run"]
+    B -- "busy or error" --> F["novacap exits 1<br/>workload NOT run<br/>(known gap, fix tracked)"]
+```
+
 ## 4. What it does — and does not — speed up (honest boundary)
 
 There are **two** startup costs in a capture:

@@ -44,6 +44,13 @@ updates:
       # opentelemetry-api>=1.44.
       # opentelemetry-proto is independent of this cap and keeps flowing.
       #
+      # GHSA-xcq7-p3pf-p88h (opentelemetry-api <=1.45.0, unbounded tracestate
+      # parsing; fixed in 1.45.1) is held open by the same cap, so its security
+      # update fails too (2026-10-22). Exposure is limited to the lock and to
+      # novafabric[google-adk] installs: the core requirement has no upper bound,
+      # the published image resolves 1.45.1, and NovaFabric never parses an
+      # inbound tracestate. The Dependabot alert is dismissed as tolerable risk.
+      #
       # Drop these four entries when google-adk lifts its OpenTelemetry ceiling.
       # Check with:  uv lock --dry-run -P opentelemetry-sdk -P fastapi
       # — the cap is gone when that moves opentelemetry-sdk past 1.42.1 WITHOUT

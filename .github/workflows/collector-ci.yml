@@ -31,6 +31,11 @@ env:
   GO_VERSION: "1.26.10"
   GOPATH: ${{ github.workspace }}/.gopath
 
+# Least privilege: every job here only reads the repository. Without this the
+# token inherits the repository default (OpenSSF Scorecard TokenPermissions).
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint
@@ -43,8 +48,8 @@ jobs:
       run:
         working-directory: collector
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: collector/go.sum
@@ -78,8 +83,8 @@ jobs:
       run:
         working-directory: collector
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: collector/go.sum
@@ -98,9 +103,10 @@ jobs:
       # Pinned rather than @latest: the vulnerability *database* is fetched at
       # run time either way, so tracking the newest scanner buys nothing and
       # would let an upstream release change what this gate does without a
-      # commit. Bumped by Dependabot along with the rest of the Go module.
+      # commit. Dependabot does NOT bump a `go install` line (it sat at v1.6.0
+      # while v1.9.0 shipped) — bump it by hand, together with the security job.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
       - name: govulncheck ./...
         run: $(go env GOPATH)/bin/govulncheck ./...
 
@@ -115,8 +121,8 @@ jobs:
       run:
         working-directory: collector
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: collector/go.sum
@@ -139,8 +145,8 @@ jobs:
     # suite again on billable minutes and leaves that repo permanently red.
     if: github.repository == 'MSKazemi/novafabric'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Validate corpus
@@ -172,8 +178,8 @@ jobs:
       run:
         working-directory: collector
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: collector/go.sum
@@ -198,18 +204,18 @@ jobs:
       run:
         working-directory: collector
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: collector/go.sum
       - name: govulncheck
         run: |
-          GOPATH=${{ env.GOPATH }} go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOPATH=${{ env.GOPATH }} go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           ${{ env.GOPATH }}/bin/govulncheck ./... || echo "Vulnerabilities found — review required"
       - name: License check (no AGPL/GPL/BSL)
         run: |
-          GOPATH=${{ env.GOPATH }} go install github.com/google/go-licenses@latest
+          GOPATH=${{ env.GOPATH }} go install github.com/google/go-licenses@v1.6.0
           ${{ env.GOPATH }}/bin/go-licenses report ./... 2>/dev/null > /tmp/licenses.txt || true
           # Allowlisted MPL-2.0 transitive deps (see ADR-0024 amendment for
           # hashicorp/go-version — file-level copyleft, unmodified, pulled in

@@ -45,7 +45,7 @@ inputs:
     default: "90"
   novafabric-version:
     description: >-
-      Version specifier passed to pip, e.g. `0.100.1`. Empty installs the
+      Version passed to the installer (uv), e.g. `0.100.1`. Empty installs the
       latest release. **Pin this** if you want reproducible CI.
     required: false
     default: ""
@@ -88,9 +88,16 @@ runs:
   using: "composite"
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: ${{ inputs.python-version }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      with:
+        # The cache would key on files in the CALLER's repository, which says
+        # nothing about this install; keep the action's footprint to its job.
+        enable-cache: false
 
     - name: Install NovaFabric
       shell: bash
@@ -103,8 +110,9 @@ runs:
         if [ -n "${{ inputs.novafabric-version }}" ]; then
           spec="${spec}==${{ inputs.novafabric-version }}"
         fi
-        python -m pip install --quiet --upgrade pip
-        python -m pip install --quiet "${spec}"
+        # Into the interpreter set up above — the same environment pip used, so
+        # `nova` and `import novafabric` resolve exactly as before — via uv.
+        uv pip install --quiet --python "$(command -v python)" "${spec}"
         nova --version
 
     - name: Capture
@@ -204,7 +212,7 @@ runs:
 
     - name: Upload the capsule
       if: ${{ inputs.upload-artifact == 'true' }}
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ steps.capture.outputs.capsule-path }}
