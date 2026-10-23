@@ -43,6 +43,7 @@ No import-time IO, no module state.
 from __future__ import annotations
 
 import os
+import unicodedata
 from pathlib import Path
 from typing import Final
 
@@ -89,13 +90,18 @@ def _segment_problem(value: object) -> str | None:
         return "it contains a NUL byte"
     if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
         return "it contains a control character"
+    # Lone surrogates cannot be encoded as a file name, and format/control
+    # characters (bidi overrides such as U+202E, zero-width joiners) can make a
+    # name display as something it is not. Refuse both as unsafe.
+    if any(unicodedata.category(ch) in ("Cs", "Cc", "Cf") for ch in value):
+        return "it contains a surrogate, control or invisible formatting character"
     if "/" in value or "\\" in value:
         return "it contains a path separator"
     if value == "." or ".." in value:
         return "it contains '..' or is '.'"
     if os.path.isabs(value):
         return "it is an absolute path"
-    if len(value.encode("utf-8", "surrogateescape")) > MAX_SEGMENT_BYTES:
+    if len(value.encode("utf-8")) > MAX_SEGMENT_BYTES:
         return f"it is longer than {MAX_SEGMENT_BYTES} bytes"
     return None
 

@@ -188,3 +188,12 @@ def test_atomic_write_bytes_replaces_a_link_and_sets_the_mode(tmp_path: Path) ->
     assert victim.read_bytes() == b"precious"
     assert target.read_bytes() == b"PK"
     assert _mode(target) == 0o644
+
+
+@pytest.mark.parametrize("bad", ["\ud800", "a\udfffb", "evil\u202egpj.zip", "a\u200db"])
+def test_surrogates_and_invisible_format_characters_are_refused_not_crashed(bad: str) -> None:
+    """A lone surrogate used to raise UnicodeEncodeError (a 500 on server routes);
+    a bidi override can disguise a name. Both are a named refusal."""
+    with pytest.raises(UnsafePathSegmentError):
+        require_path_segment(bad, "run_id")
+    assert not is_safe_path_segment(bad)
