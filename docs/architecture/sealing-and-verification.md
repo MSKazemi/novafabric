@@ -149,7 +149,14 @@ not a tree over the files of one capsule.
 - `GET /api/seal/log/verify` in `nova serve` checks the same SQLite log
   read-only: a missing log is a 404 (nothing is created), a Postgres log a 501
   (use `nova seal log verify`; the DSN is shown without its password), and
-  `capsule_included` is an exact `capsule_id` match, never a pattern.
+  `capsule_included` is an exact `capsule_id` match, never a pattern. It creates
+  no file: a cleanly closed log (no `-wal`/`-shm` beside it) is opened with
+  SQLite's `immutable=1`, because a plain read-only open of a WAL-mode database
+  leaves both side files behind. While a writer is connected the side files exist
+  and the open uses normal locking instead, since `immutable=1` would ignore leaves
+  committed only to the WAL. Residual: a writer that connects after that check and
+  checkpoints during the read can make the immutable read fail or report an
+  inconsistency (a false alarm, never a hidden leaf).
 
 **The root is versioned (works today, ADR-0313).** A log has one root version for
 its whole life, recorded in the log database and next to every root it hands out
@@ -302,8 +309,14 @@ checks that chain. `nova seal bypass` creates a time-limited, audited exception.
 Every promote signer must chain to a pinned CA (`--ca-bundle` or
 `NOVAFABRIC_PROMOTE_CA_BUNDLE`, ADR-0315); with none configured, verification refuses
 (exit 3) unless `--insecure-self-signed` is given for development. A bypass counts
-only when it is signed by an approver in the latest policy, names this capsule and is
-unexpired by its **signed** `valid_until`.
+only when it is signed by an approver in the latest policy, names this capsule, is
+unexpired by its **signed** `valid_until`, and the hash-chained audit log holds its
+`seal.bypass.create` entry and no `seal.bypass.abort` (review r8; opt out with
+`NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1` for a store copied without its log). A
+bypass whose file cannot be stored after its entry was written is withdrawn with a
+`seal.bypass.abort` entry. Appends to the audit log are serialised across threads and
+processes (`fcntl.flock` on the log plus an in-process lock), so concurrent writers
+never fork its hash chain ([NovaSeal configuration §4.1](../novaseal-configuration.md#41-maker-checker-bypass-notifications)).
 `nova seal ratchet` is an opt-in forward-secure per-node key ratchet. All of
 these live in `cli/seal_propose.py`.
 
@@ -345,7 +358,7 @@ against the ZIP.
 | `run-capsule/` | A copy of the whole capsule directory: `capsule.yaml`, the record streams, `env.lock`, `redaction-proof.json` (the secret-scan record), `inputs/`, `outputs/` and, when the capsule was sealed at capture, `.seal/` |
 | `lineage-subgraph/edges.jsonl` | The capsule's lineage edges (empty when it recorded none) |
 | `schemas/` | The JSON Schemas shipped with the exporting `novafabric` version |
-| `attestations/` | Ed25519-signed in-toto Statement v1 DSSE envelopes: `run` (subject: the capsule Merkle root), `redaction` (subject: the redaction proof's chain hash), `lineage`, and `energy` when the capsule has `energy-receipts.jsonl` (experimental, ADR-0093) |
+| `attestations/` | Ed25519-signed in-toto Statement v1 DSSE envelopes: `run` (subject: the capsule Merkle root), `redaction` (subject: the redaction proof's chain hash), `lineage`, `bundle` (the members statement: the SHA-256 of every other file and of the manifest's fields), and `energy` when the capsule has `energy-receipts.jsonl` (experimental, ADR-0093) |
 | `signatures/` | Each envelope's raw signature (`.sig`) and the signer's public key (`.cert`, PEM) |
 | `manifest.json` | SHA-256 and size of every other file, the attestation and signature index, `subject.capsule_hash`, the verification recipe and `manifest_hash`; with `--with-custody`, the chain-of-custody blocks (experimental, ADR-0095) |
 | `README.md` | The verification recipe in plain text; with `--timestamp`, also the OpenSSL steps for the token. Its digest in `manifest.json` is recorded after that section is added |
@@ -360,6 +373,35 @@ The recipe needs only a SHA-256 tool and an Ed25519 verifier:
 3. Verify each DSSE envelope over its pre-authentication encoding.
 4. Check that each statement's subject matches `subject.capsule_hash`, and recompute
    that root from the files under `run-capsule/`.
+5. Check the members statement (`attestations/bundle.intoto.json`): every file except
+   `manifest.json` and the statement's own three files has the digest it signs, and
+   the manifest's fields hash to its `manifest_core_sha256`.
+
+#### Every member is signed (works today; review r8)
+
+Before the members statement, nothing signed `README.md`, the vendored `schemas/` or
+the manifest's own fields (`verifier_instructions`, `schemas[]`). `manifest.json` is
+not signed and its `manifest_hash` is a self-hash anyone can recompute, so a recipient
+holding a bundle whose README said "Verified by the EU AI Office" and whose
+`run-capsule.schema.json` accepted anything got `PASSED` from `nova verify
+--public-key`. Now:
+
+- **Bundles with a members statement** (every bundle `nova export-evidence`, `nova
+  serve` and `nova server` build from this version on): a rewritten, added or removed
+  member, or an edited manifest field, fails verification. The run statement signs a
+  pointer to the members statement (`members_statement`), so removing the statement
+  fails too. `nova export-evidence --timestamp` re-signs the statement after it adds
+  the token and the README section.
+- **Legacy bundles** (exported before this version; no members statement and no
+  pointer) still pass when their signed content verifies, because rejecting every
+  archived bundle would break ADR-0011's promise that an old bundle stays verifiable.
+  They are never reported as fully verified: `nova verify` prints `PASSED — signed
+  content only` and names the members no signature covers; the API reports
+  `members_signed: false` and `unsigned_members`. Treat those members (always
+  `README.md`, `schemas/` and `manifest.json`'s fields) as unverified. An anchored
+  verification (`--public-key`, or the operator trust list) behaves the same way: the
+  anchor pins who signed the run, lineage and redaction statements, not the files no
+  statement covers.
 
 Optional additions: `--timestamp` (an RFC 3161 token for the bundle), Rekor
 publication when `NOVA_REKOR_URL` is set, and an outer DSSE envelope.

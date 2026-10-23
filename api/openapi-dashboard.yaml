@@ -4906,17 +4906,31 @@ paths:
       description: 'Show one bundle: its manifest and run attestation as data, plus the verdict.
 
 
-        ``manifest``, ``dsse_statement`` and ``dsse_envelope`` are the bundle''s own,
+        ``manifest``, ``dsse_statement`` and ``dsse_envelope`` are the bundle''s own
 
-        unverified content. ``verified``, ``run_id`` and ``run_ids`` come from the
+        content, shown as data. ``verified``, ``run_id`` and ``run_ids`` come from the
 
-        shared verifier (as ``POST …/verify``, cached per file): ``run_id`` is the
+        shared verifier (as ``POST …/verify``, cached per archive SHA-256): ``run_id``
 
-        signed run when exactly one verifies, else the bundle id — never the
+        is the signed run when exactly one verifies, else the bundle id — never the
 
-        manifest''s unsigned label. Every member is read with a size bound; a
+        manifest''s unsigned label. The archive is copied once into a private snapshot
 
-        ``manifest.json`` over the limit is a 413.'
+        and both the verdict and everything shown come from that copy, so an in-place
+
+        rewrite can never put forged content beside ``verified: true`` (review r8).
+
+        ``signing_key_fingerprint`` is the ``sha256:`` SPKI fingerprint of the key
+
+        whose signatures verified (``signer_fingerprints`` lists every one), null when
+
+        none did or more than one key signed. ``members_signed`` /
+
+        ``unsigned_members`` report member coverage (ADR-0011 Amendment 7). Every
+
+        member is read with a size bound; a ``manifest.json`` over the limit, or an
+
+        archive over the snapshot bound, is a 413.'
       parameters:
       - in: path
         name: bundle_id
@@ -5043,7 +5057,16 @@ paths:
 
         subject, label or top-level ``run_id`` no verified statement signs fails the
 
-        bundle and is never reported; the local log is checked only for signed runs.'
+        bundle and is never reported; the local log is checked only for signed runs.
+
+
+        ``members_signed`` is true when the bundle''s members statement covers every
+
+        member and the manifest''s fields (ADR-0011 Amendment 7); a rewritten member
+
+        then fails ``valid``. A legacy bundle without one can be ``valid`` with
+
+        ``members_signed: false``: ``unsigned_members`` names what no signature covers.'
       parameters:
       - in: path
         name: bundle_id
@@ -10479,11 +10502,17 @@ paths:
 
         and is opened read-only: verification creates, migrates and writes nothing
 
-        (ADR-0297 S2). 404 when no log exists there; 501 when it is a Postgres log
+        (ADR-0297 S2). A cleanly closed log is opened ``immutable=1``, so not even
 
-        (verify that with ``nova seal log verify``; the DSN is shown without its
+        SQLite''s ``-wal``/``-shm`` side files appear; while a writer holds them, the
 
-        password); 422 when the file is not a NovaSeal log.
+        open uses normal locking and adds no file (review r8). 404 when no log
+
+        exists there; 501 when it is a Postgres log (verify that with ``nova seal
+
+        log verify``; the DSN is shown without its password); 422 when the file is
+
+        not a NovaSeal log.
 
 
         ``capsule_included`` (with ``capsule_id``): whether a seal entry''s
@@ -10828,7 +10857,11 @@ paths:
 
         ``seal.bypass.create`` entry is in the hash-chained audit log; if that
 
-        entry cannot be written the route answers 503 and stores nothing. Each
+        entry cannot be written the route answers 503 and stores nothing; if the
+
+        bundle cannot be stored after the entry was written, a ``seal.bypass.abort``
+
+        entry withdraws it and the route answers 503 (review r8). Each
 
         attempt that reaches the store is also recorded in the dashboard audit
 

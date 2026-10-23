@@ -217,7 +217,11 @@ def test_list_evidence_corrupt_zip_handled_gracefully(
 def test_get_evidence_detail_with_dsse_and_cert(
     evidence_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Detail endpoint parses DSSE envelope, decodes payload, and extracts cert fingerprint."""
+    """Detail endpoint parses DSSE envelope and decodes payload.
+
+    A cert file proves nothing: ``signing_key_fingerprint`` is the key whose signature
+    *verified* (review r8), so an unsigned envelope next to a fake cert reports none.
+    """
     import base64
 
     monkeypatch.setenv("NOVAFABRIC_EVIDENCE_DIR", str(evidence_dir))
@@ -244,7 +248,9 @@ def test_get_evidence_detail_with_dsse_and_cert(
     data = r.json()
     assert data["dsse_statement"]["_type"] == "https://in-toto.io/Statement/v0.1"
     assert data["dsse_envelope"]["payloadType"] == "application/vnd.in-toto+json"
-    assert data["signing_key_fingerprint"] is not None
+    assert data["signing_key_fingerprint"] is None
+    assert data["signer_fingerprints"] == []
+    assert data["verified"] is False
 
 
 def test_get_evidence_detail_dsse_invalid_payload(

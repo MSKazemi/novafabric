@@ -560,7 +560,9 @@ def seal_bypass_cmd(
 
     Fail closed: the bypass is stored only after its seal.bypass.create entry is
     in the hash-chained audit log. If that entry cannot be written, the bypass is
-    refused, nothing is stored, and the command exits 1.
+    refused, nothing is stored, and the command exits 1. If the bundle cannot be
+    stored after that entry was written, a seal.bypass.abort entry withdraws it and
+    the command exits 1.
 
     The signed predicate records the notification channels configured at signing
     time (notification_status pending or not_configured, never sent); delivery
@@ -570,7 +572,7 @@ def seal_bypass_cmd(
 
     from cryptography.x509 import NameOID, load_pem_x509_certificate
 
-    from novafabric.promote.exceptions import BypassAuditError, PredicateValidationError
+    from novafabric.promote.exceptions import BypassRefusedError, PredicateValidationError
     from novafabric.promote.predicates import (
         BYPASS_PAYLOAD_TYPE,
         build_bypass_predicate,
@@ -659,7 +661,7 @@ def seal_bypass_cmd(
             authorized_by=authorized_by,
             recipients=[f"mailto:{r}" for r in notify],
         )
-    except BypassAuditError as exc:
+    except BypassRefusedError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from None
 

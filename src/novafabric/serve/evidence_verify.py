@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
+import tempfile
 import threading
 import zipfile
 from collections import OrderedDict
@@ -32,6 +32,7 @@ from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import open_capsule_file
 from novafabric.evidence.bundle_verify import (
     BundleArchiveError,
+    BundleTooLargeError,
     BundleVerification,
     load_trusted_public_keys,
     verify_bundle_archive,
@@ -43,9 +44,11 @@ __all__ = [
     "BundleCheck",
     "BundleVerdict",
     "BundleVerdictCache",
+    "MAX_SNAPSHOT_BYTES",
     "evidence_trust_anchors",
     "iter_file_chunks",
     "open_bundle",
+    "snapshot_bundle",
     "verify_bundle_file",
     "verify_bundle_handle",
 ]
@@ -109,6 +112,9 @@ class BundleCheck:
             "signer_trust": o.signer_trust,
             "signer_fingerprints": list(o.signatures.signer_fingerprints),
             "timestamp_ok": self.timestamp_ok,
+            # ADR-0011 Amendment 7: a legacy bundle can be valid with unsigned members.
+            "members_signed": o.members_signed,
+            "unsigned_members": list(o.unsigned_members),
         }
 
 
@@ -271,6 +277,14 @@ class BundleVerdict:
     run_ids: tuple[str, ...] = ()
     signer_trust: str = "none"
     reason: str | None = None
+    #: Fingerprints (``sha256:`` of the SPKI DER) of the keys whose DSSE signatures
+    #: verified — the key that actually signed, never a path the bundle names.
+    signer_fingerprints: tuple[str, ...] = ()
+    #: Every member covered by a verified members statement (ADR-0011 Amendment 7).
+    members_signed: bool = False
+    unsigned_members: tuple[str, ...] = ()
+    #: ``created_at`` from the manifest of the very bytes that were verified.
+    created_at: str | None = None
 
     @property
     def run_id(self) -> str | None:
@@ -278,10 +292,63 @@ class BundleVerdict:
         return self.run_ids[0] if len(self.run_ids) == 1 else None
 
 
-#: The file identity a cached verdict is valid for. ``st_ctime_ns`` is in it because
-#: anyone who can rewrite a bundle in place can also restore its mtime (``utime``),
-#: but not its ctime.
-_VerdictKey = tuple[str, int, int, int, int, int, str]
+#: A cached verdict is valid for exactly the bytes it was computed over: the key is
+#: the SHA-256 of the archive (plus the trust anchors). File identity (inode, size,
+#: mtime, ctime) is not enough: on a filesystem with coarse timestamps (Lustre and
+#: others keep 1 s) an in-place same-size rewrite with the mtime restored inside one
+#: ctime tick left the identity unchanged and reused a stale ``verified: true``
+#: (review r8).
+_VerdictKey = tuple[str, str]
+
+#: Largest archive a list/detail verdict snapshots and verifies; the verifier's own
+#: uncompressed bound is the same, and a ZIP is never larger than what it inflates to
+#: by much.
+MAX_SNAPSHOT_BYTES: Final[int] = MAX_VERIFY_UNCOMPRESSED_BYTES
+
+_COPY_CHUNK: Final[int] = 1024 * 1024
+
+
+def _hash_stream(handle: BinaryIO) -> str:
+    """SHA-256 of *handle* from offset 0 (bounded by :data:`MAX_SNAPSHOT_BYTES`)."""
+    handle.seek(0)
+    digest = hashlib.sha256()
+    seen = 0
+    while chunk := handle.read(_COPY_CHUNK):
+        seen += len(chunk)
+        if seen > MAX_SNAPSHOT_BYTES:
+            raise BundleTooLargeError(f"the archive is larger than {MAX_SNAPSHOT_BYTES} bytes")
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def snapshot_bundle(handle: BinaryIO) -> tuple[BinaryIO, str]:
+    """Copy *handle* into a private anonymous temporary file; return it and its SHA-256.
+
+    Everything a verdict covers and everything shown next to it is read from this one
+    copy, so a bundle rewritten in place while it is verified can never put forged
+    content beside ``verified: true``. The caller closes the copy (it has no name).
+
+    Raises:
+        BundleTooLargeError: the archive is larger than :data:`MAX_SNAPSHOT_BYTES`.
+    """
+    handle.seek(0)
+    snapshot = tempfile.TemporaryFile()  # noqa: SIM115 — returned to the caller
+    digest = hashlib.sha256()
+    copied = 0
+    try:
+        while chunk := handle.read(_COPY_CHUNK):
+            copied += len(chunk)
+            if copied > MAX_SNAPSHOT_BYTES:
+                raise BundleTooLargeError(
+                    f"the archive is larger than {MAX_SNAPSHOT_BYTES} bytes"
+                )
+            digest.update(chunk)
+            snapshot.write(chunk)
+        snapshot.seek(0)
+    except BaseException:
+        snapshot.close()
+        raise
+    return snapshot, digest.hexdigest()
 
 
 class BundleVerdictCache:
@@ -289,16 +356,33 @@ class BundleVerdictCache:
 
     Verifying a typical bundle costs a few milliseconds (3.6 ms measured on a
     75 KB single-capsule bundle), too much to repeat for up to 500 bundles on every
-    list call but cheap once per file state. A verdict is cached under the opened
-    file's identity (device, inode, size, mtime, ctime) and the trust anchors, so a
-    replaced, rewritten or re-anchored bundle is verified again. Bounded (LRU) and
-    thread-safe; one per app, never module-global. ``POST …/verify`` never uses it.
+    list call but cheap once per content. A verdict is cached under the SHA-256 of
+    the archive bytes it was computed over and the trust anchors, so any rewrite or
+    re-anchoring is verified again; hashing is the only per-call cost. On a miss the
+    archive is first copied into a private snapshot (hashed while copying) and the
+    verifier reads only that copy, so the key always names the verified bytes.
+    Bounded (LRU) and thread-safe; one per app, never module-global. ``POST
+    …/verify`` never uses it.
     """
 
     def __init__(self, max_entries: int = 2048) -> None:
         self._max = max_entries
         self._entries: OrderedDict[_VerdictKey, BundleVerdict] = OrderedDict()
         self._lock = threading.Lock()
+
+    def _lookup(self, key: _VerdictKey) -> BundleVerdict | None:
+        with self._lock:
+            cached = self._entries.get(key)
+            if cached is not None:
+                self._entries.move_to_end(key)
+            return cached
+
+    def _store(self, key: _VerdictKey, verdict: BundleVerdict) -> None:
+        with self._lock:
+            self._entries[key] = verdict
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max:
+                self._entries.popitem(last=False)
 
     def verdict(
         self,
@@ -309,23 +393,64 @@ class BundleVerdictCache:
         tsa_chain_check: TsaChainCheck,
     ) -> BundleVerdict:
         """The verdict for the bundle open as *handle* (verified on a cache miss)."""
-        st = os.fstat(handle.fileno())
-        anchors = hashlib.sha256(b"\0".join(trusted_public_pems)).hexdigest()
-        key: _VerdictKey = (
-            bundle_id, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns, anchors
-        )
-        with self._lock:
-            cached = self._entries.get(key)
-            if cached is not None:
-                self._entries.move_to_end(key)
-                return cached
-        verdict = _compute_verdict(handle, trusted_public_pems, tsa_chain_check)
-        with self._lock:
-            self._entries[key] = verdict
-            self._entries.move_to_end(key)
-            while len(self._entries) > self._max:
-                self._entries.popitem(last=False)
+        anchors = _anchors_key(trusted_public_pems)
+        try:
+            cached = self._lookup((_hash_stream(handle), anchors))
+        except BundleTooLargeError as exc:
+            return BundleVerdict(False, reason=str(exc)[:300])
+        if cached is not None:
+            return cached
+        try:
+            snapshot, digest = snapshot_bundle(handle)
+        except BundleTooLargeError as exc:
+            return BundleVerdict(False, reason=str(exc)[:300])
+        with snapshot:
+            return self._verify_snapshot(
+                snapshot, (digest, anchors), trusted_public_pems, tsa_chain_check
+            )
+
+    def snapshot_verdict(
+        self,
+        handle: BinaryIO,
+        bundle_id: str,
+        *,
+        trusted_public_pems: Sequence[bytes],
+        tsa_chain_check: TsaChainCheck,
+    ) -> tuple[BundleVerdict, BinaryIO]:
+        """The verdict and the private snapshot it covers; the caller closes the snapshot.
+
+        For the detail route: what it shows next to the verdict must be read from the
+        returned snapshot, never from *handle* again.
+
+        Raises:
+            BundleTooLargeError: the archive is larger than :data:`MAX_SNAPSHOT_BYTES`.
+        """
+        snapshot, digest = snapshot_bundle(handle)
+        try:
+            key = (digest, _anchors_key(trusted_public_pems))
+            verdict = self._lookup(key) or self._verify_snapshot(
+                snapshot, key, trusted_public_pems, tsa_chain_check
+            )
+            snapshot.seek(0)
+        except BaseException:
+            snapshot.close()
+            raise
+        return verdict, snapshot
+
+    def _verify_snapshot(
+        self,
+        snapshot: BinaryIO,
+        key: _VerdictKey,
+        trusted_public_pems: Sequence[bytes],
+        tsa_chain_check: TsaChainCheck,
+    ) -> BundleVerdict:
+        verdict = _compute_verdict(snapshot, trusted_public_pems, tsa_chain_check)
+        self._store(key, verdict)
         return verdict
+
+
+def _anchors_key(trusted_public_pems: Sequence[bytes]) -> str:
+    return hashlib.sha256(b"\0".join(trusted_public_pems)).hexdigest()
 
 
 def _compute_verdict(
@@ -338,4 +463,14 @@ def _compute_verdict(
         )
     except (zipfile.BadZipFile, BundleArchiveError, OSError, EOFError, ValueError) as exc:
         return BundleVerdict(False, reason=f"{type(exc).__name__}: {exc}"[:300])
-    return BundleVerdict(check.ok, tuple(check.run_ids), check.outcome.signer_trust)
+    o = check.outcome
+    created = o.manifest.get("created_at") or o.manifest.get("timestamp")
+    return BundleVerdict(
+        check.ok,
+        tuple(check.run_ids),
+        o.signer_trust,
+        signer_fingerprints=tuple(o.signatures.signer_fingerprints),
+        members_signed=o.members_signed,
+        unsigned_members=tuple(o.unsigned_members),
+        created_at=created if isinstance(created, str) else None,
+    )

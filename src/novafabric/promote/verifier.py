@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -26,6 +27,10 @@ from novafabric.promote.predicates import (
 
 log = logging.getLogger(__name__)
 
+#: ``=1`` waives the bypass audit-entry check (review r8), for verifying a bundle
+#: store copied without the audit log it was written to. Never the default.
+PROMOTE_BYPASS_AUDIT_OPTIONAL_ENV = "NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL"
+
 
 @dataclass
 class VerifyResult:
@@ -42,6 +47,7 @@ def verify_sod(
     offline: bool = False,
     *,
     trust: PromoteTrust | None = None,
+    require_bypass_audit: bool | None = None,
 ) -> VerifyResult:
     """Run the five-check SoD verification for a capsule's promote bundles.
 
@@ -54,6 +60,11 @@ def verify_sod(
 
     Missing approval → exit 8
     Missing proposal → exit 9
+
+    A bypass skips the checks only under the conditions of :func:`_active_bypass`.
+    ``require_bypass_audit`` (default: on, unless
+    ``NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1``) also requires its
+    ``seal.bypass.create`` audit entry.
     """
     # ------------------------------------------------------------------
     # Trust root (ADR-0315): every envelope below is signed by a certificate the
@@ -70,7 +81,11 @@ def verify_sod(
     # ------------------------------------------------------------------
     # Bypass check — a valid, trusted, authorised, unexpired bypass skips SoD
     # ------------------------------------------------------------------
-    bypass_msg = _active_bypass(capsule_id, policy_store, bundle_store, trust)
+    if require_bypass_audit is None:
+        require_bypass_audit = os.environ.get(PROMOTE_BYPASS_AUDIT_OPTIONAL_ENV) != "1"
+    bypass_msg = _active_bypass(
+        capsule_id, policy_store, bundle_store, trust, require_audit=require_bypass_audit
+    )
     if bypass_msg is not None:
         return VerifyResult(passed=True, exit_code=0, message=bypass_msg, bypass_used=True)
 
@@ -222,11 +237,41 @@ def _parse_utc(value: object) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _bypass_audit_problem(capsule_id: str, bypass_uuid: str, envelope: bytes) -> str | None:
+    """Why the audit log does not vouch for this bypass, or ``None`` when it does.
+
+    It vouches when it holds a self-consistent ``seal.bypass.create`` entry for this
+    capsule, ``bypass_uuid`` and envelope SHA-256, and no ``seal.bypass.abort`` for
+    the same ``bypass_uuid``. An unreadable log vouches for nothing (fail closed).
+    """
+    from novafabric.audit import AuditLog, resolve_audit_log_path  # noqa: PLC0415
+
+    digest = hashlib.sha256(envelope).hexdigest()
+    try:
+        entries = AuditLog(resolve_audit_log_path()).select(
+            ("seal.bypass.create", "seal.bypass.abort")
+        )
+    except OSError as exc:
+        return f"audit log unreadable ({type(exc).__name__})"
+    created = False
+    for entry in entries:
+        details = entry.get("details")
+        if not isinstance(details, dict) or details.get("bypass_uuid") != bypass_uuid:
+            continue
+        if entry.get("event_type") == "seal.bypass.abort":
+            return "withdrawn by a seal.bypass.abort entry"
+        if entry.get("resource_id") == capsule_id and details.get("envelope_sha256") == digest:
+            created = True
+    return None if created else "no matching seal.bypass.create audit entry"
+
+
 def _active_bypass(
     capsule_id: str,
     policy_store: PolicyStore,
     bundle_store: PromoteBundleStore,
     trust: PromoteTrust,
+    *,
+    require_audit: bool = True,
 ) -> str | None:
     """Return a message for the first bypass that may skip SoD, else ``None``.
 
@@ -234,7 +279,12 @@ def _active_bypass(
     to the promote trust root; the signed predicate names this ``capsule_id``; it is
     unexpired by **both** the signed ``valid_until`` and the store's copy (the store
     file is unsigned, so it may shorten a bypass but never extend it); and its signer
-    is in the latest policy's ``approver_key_ids``. Anything else is skipped.
+    is in the latest policy's ``approver_key_ids``. With *require_audit* (the
+    default, review r8) the hash-chained audit log must also hold its
+    ``seal.bypass.create`` entry and no ``seal.bypass.abort``
+    (:func:`_bypass_audit_problem`), so a file planted in the store without
+    ``put_bypass`` — no audit entry, no notification — does not count. Anything
+    else is skipped.
     """
     now = datetime.now(UTC)
     approvers: list[str] | None = None
@@ -264,6 +314,12 @@ def _active_bypass(
         if subject not in approvers:
             log.warning("bypass %s signer %r is not a policy approver", bypass_uuid, subject)
             continue
+        if require_audit:
+            problem = _bypass_audit_problem(capsule_id, bypass_uuid, envelope)
+            if problem is not None:
+                log.warning("bypass %s for %s ignored: %s", bypass_uuid, capsule_id, problem)
+                continue
         until = min(signed_until, stored_until).isoformat()
-        return f"bypass active until {until} (authorized by {subject})"
+        note = "" if require_audit else "; audit entry not checked"
+        return f"bypass active until {until} (authorized by {subject}{note})"
     return None

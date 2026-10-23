@@ -24,6 +24,13 @@ proves the bundle is internally consistent and was signed as a whole — not who
 signed it. Passing ``trusted_public_pem`` (``nova verify --public-key``) pins the
 signer; without it the report names the key so the caller can compare it out of band.
 
+Step 6 (ADR-0011 Amendment 7): ``attestations/bundle.intoto.json`` signs the digest of
+every member and the manifest's fields, so ``README.md``, the vendored ``schemas/`` and
+``verifier_instructions`` cannot be rewritten. A bundle without it (exported before the
+statement existed) still verifies its signed content but reports ``members_signed:
+False`` and its ``unsigned_members``; one whose run statement names the statement but
+lacks it fails.
+
 :func:`verify_bundle_archive` runs the whole recipe (step 2's digests too) over an open
 ZIP. It is the one verifier behind both ``nova verify <bundle>.zip`` and ``nova serve``'s
 ``POST /api/evidence/{bundle_id}/verify``, whose anchor is the operator trust list read by
@@ -40,6 +47,7 @@ import os
 import re
 import stat
 import zipfile
+import zlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,9 +58,16 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from novafabric.evidence.bundle import (
+    MEMBERS_CERTIFICATE,
+    MEMBERS_ENVELOPE,
+    MEMBERS_SIGNATURE,
+    MEMBERS_STATEMENT_FILES,
+    PREDICATE_BUNDLE_MEMBERS,
     PREDICATE_LINEAGE,
     PREDICATE_RUN,
     _canonical_manifest_hash,
+    manifest_core,
+    members_digest,
 )
 from novafabric.evidence.intoto import dsse_verify
 from novafabric.evidence.merkle import ROOT_VERSIONS, root_over_files
@@ -73,6 +88,13 @@ class BundleSignatureReport:
     errors: list[str] = field(default_factory=list)
     #: ``predicate.run_id`` of every run statement whose signature and subject verified.
     signed_run_ids: list[str] = field(default_factory=list)
+    #: Members a verified legacy signature covers: capsule-copy files, lineage edges,
+    #: and each verified envelope with its detached signature and key (ADR-0011 Am. 7).
+    signed_members: set[str] = field(default_factory=set)
+    #: The verified members statement's predicate, when the bundle carries one.
+    members_predicate: dict[str, Any] | None = None
+    #: Whether a verified run statement names a members statement (``members_statement``).
+    members_statement_promised: bool = False
 
     @property
     def ok(self) -> bool:
@@ -229,22 +251,39 @@ def verify_bundle_signatures(
         report.attestations_checked += 1
         if fingerprint not in report.signer_fingerprints:
             report.signer_fingerprints.append(fingerprint)
-        if trusted_fps is not None and fingerprint not in trusted_fps:
+        trusted = trusted_fps is None or fingerprint in trusted_fps
+        if not trusted:
             report.signer_not_trusted.append(path)
         problem = (
             _subject_problem(statement, att, capsule_hashes)
             or _content_problem(statement, names, read, covered_copies)
             or _run_id_problem(statement, subject_run_ids)
+            or _members_statement_problem(statement, path, sig, report)
         )
         if problem:
             report.bad_subjects.append(f"{path} ({problem})")
-        elif isinstance(statement, dict) and statement.get("predicateType") == PREDICATE_RUN:
+            continue
+        if trusted:
+            report.signed_members.update(
+                m for m in (path, cert_path, detached) if isinstance(m, str)
+            )
+        if not isinstance(statement, dict):
+            continue
+        predicate_type = statement.get("predicateType")
+        if predicate_type == PREDICATE_RUN:
             run_id = _predicate_run_id(statement)
             signed_runs.append(
                 _SignedRun(run_id, frozenset(_statement_digests(statement)), covered_copies[-1])
             )
             if run_id and run_id not in report.signed_run_ids:
                 report.signed_run_ids.append(run_id)
+            predicate = statement.get("predicate")
+            if isinstance(predicate, dict) and "members_statement" in predicate:
+                report.members_statement_promised = True
+        elif predicate_type == PREDICATE_LINEAGE and trusted:
+            report.signed_members.update(_lineage_candidates(statement, names))
+        elif predicate_type == PREDICATE_BUNDLE_MEMBERS and trusted:
+            report.members_predicate = statement["predicate"]
     report.bad_subjects.extend(_unsigned_claims(manifest, signed_runs))
     uncovered = sorted(
         n
@@ -258,7 +297,56 @@ def verify_bundle_signatures(
             f"{len(uncovered)} file(s) under {_CAPSULE_COPY} are not in a capsule copy that a "
             f"verified run attestation signs (first: {uncovered[0]})"
         )
+    if not report.signer_not_trusted:
+        report.signed_members.update(
+            n for n in names if any(n.startswith(prefix) for prefix in covered_copies)
+        )
     return report
+
+
+def _lineage_candidates(statement: dict[str, Any], names: set[str]) -> set[str]:
+    run_id = _predicate_run_id(statement)
+    candidates = {"lineage-subgraph/edges.jsonl"}
+    if run_id:
+        candidates.add(f"lineage-subgraph/{run_id}/edges.jsonl")
+    return candidates & names
+
+
+def _members_statement_problem(
+    statement: object, path: str, sig: dict[str, Any], report: BundleSignatureReport
+) -> str:
+    """Why a verified members statement is malformed or misplaced; "" when it is fine.
+
+    The statement and its two files must sit at the fixed paths (never wherever the
+    unsigned manifest points), there is at most one, its subject must be the digest
+    of its ``members`` map, and ``members`` must map paths to ``sha256:`` digests.
+    """
+    if not isinstance(statement, dict):
+        return ""
+    if statement.get("predicateType") != PREDICATE_BUNDLE_MEMBERS:
+        return ""
+    if (path, sig.get("signature_path"), sig.get("certificate_path")) != (
+        MEMBERS_ENVELOPE, MEMBERS_SIGNATURE, MEMBERS_CERTIFICATE,
+    ):
+        return (
+            f"a members statement must be {MEMBERS_ENVELOPE} with {MEMBERS_SIGNATURE} "
+            f"and {MEMBERS_CERTIFICATE}"
+        )
+    if report.members_predicate is not None:
+        return "more than one members statement"
+    predicate = statement.get("predicate")
+    if not isinstance(predicate, dict):
+        return "members statement has no predicate object"
+    members = predicate.get("members")
+    if not isinstance(members, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in members.items()
+    ):
+        return "members statement has no {path: sha256} members map"
+    if not isinstance(predicate.get("manifest_core_sha256"), str):
+        return "members statement has no manifest_core_sha256"
+    if {_bare(members_digest(members))} != _statement_digests(statement):
+        return "members statement subject ≠ the digest of its members map"
+    return ""
 
 
 _CAPSULE_COPY = "run-capsule/"
@@ -453,6 +541,13 @@ class BundleVerification:
     anchored: bool
     has_timestamp_token: bool
     duplicate_members: list[str] = field(default_factory=list)
+    #: Failures of the members statement check (ADR-0011 Amendment 7).
+    member_problems: list[str] = field(default_factory=list)
+    #: True when a verified members statement covers every member and the manifest.
+    members_signed: bool = False
+    #: Members no verified signature covers (legacy bundles; ``[]`` when signed).
+    #: ``manifest.json`` is listed when its fields are not signed.
+    unsigned_members: list[str] = field(default_factory=list)
 
     @property
     def digests_ok(self) -> bool:
@@ -473,9 +568,23 @@ class BundleVerification:
         return s.attestations_checked > 0 and not s.bad_signatures and not s.unsigned
 
     @property
-    def ok(self) -> bool:
-        """Every recipe step passed (and, when anchored, every signer is trusted)."""
+    def signed_content_ok(self) -> bool:
+        """Every recipe step except the members statement check passed."""
         return self.digests_ok and self.complete and self.no_extras and self.signatures.ok
+
+    @property
+    def ok(self) -> bool:
+        """Every recipe step passed (and, when anchored, every signer is trusted).
+
+        A legacy bundle without a members statement can be ``ok`` with
+        ``members_signed`` False; :attr:`fully_verified` is the stronger verdict.
+        """
+        return self.signed_content_ok and not self.member_problems
+
+    @property
+    def fully_verified(self) -> bool:
+        """``ok`` and every member and manifest field is covered by a signature."""
+        return self.ok and self.members_signed
 
     @property
     def signer_trust(self) -> SignerTrust:
@@ -499,15 +608,89 @@ class BundleVerification:
         out += [f"subject: {p}" for p in s.bad_subjects]
         out += [f"signer is not a trusted key: {p}" for p in s.signer_not_trusted]
         out += list(s.errors)
+        out += [f"members: {p}" for p in self.member_problems]
         return out
 
 
+def _members_check(
+    manifest: dict[str, Any],
+    report: BundleSignatureReport,
+    digest_of: Callable[[str], str],
+    names: set[str],
+) -> tuple[list[str], bool, list[str]]:
+    """``(problems, members_signed, unsigned_members)`` for the members statement.
+
+    With a verified statement every member but ``manifest.json`` and the statement's
+    own three files must be listed with its digest, every listed member must be
+    present, and ``manifest_core_sha256`` must match. Without one, a run statement
+    that names one means it was stripped (a problem); otherwise the bundle is legacy
+    and the members no verified signature covers are reported, not failed.
+    """
+    files = {n for n in names if not n.endswith("/")}
+    predicate = report.members_predicate
+    if predicate is None:
+        if report.members_statement_promised:
+            return (
+                [
+                    f"the run statement names a members statement ({MEMBERS_ENVELOPE}) but "
+                    "no members statement verified — it was removed or replaced"
+                ],
+                False,
+                [],
+            )
+        unsigned = sorted(files - report.signed_members - {"manifest.json"})
+        return [], False, ["manifest.json", *unsigned]
+    members: dict[str, str] = predicate["members"]
+    expected = files - {"manifest.json"} - MEMBERS_STATEMENT_FILES
+    problems = [
+        f"{n} is not covered by the signed members statement"
+        for n in sorted(expected - members.keys())
+    ]
+    problems += [
+        f"{n} is listed in the signed members statement but missing from the bundle"
+        for n in sorted(members.keys() - expected)
+    ]
+    problems += [
+        f"{n} differs from the digest the members statement signs"
+        for n in sorted(expected & members.keys())
+        if digest_of(n) != members[n]
+    ]
+    if _canonical_manifest_hash(manifest_core(manifest)) != predicate["manifest_core_sha256"]:
+        problems.append(
+            "manifest.json fields differ from what the members statement signs "
+            "(manifest_core_sha256)"
+        )
+    return problems, not problems, []
+
+
+#: A damaged archive member (bad CRC, corrupt deflate stream, truncated entry)
+#: raises one of these; the verifier reports it, never crashes on it.
+_MEMBER_READ_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError)
+
+
 def _member_digest(zf: zipfile.ZipFile, name: str) -> str:
+    """``sha256:`` of a member, or ``unreadable:…`` (never a digest) when it is damaged."""
     digest = hashlib.sha256()
-    with zf.open(name) as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
+    try:
+        with zf.open(name) as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except _MEMBER_READ_ERRORS as exc:
+        return f"unreadable:{type(exc).__name__}"
     return "sha256:" + digest.hexdigest()
+
+
+def _member_reader(zf: zipfile.ZipFile) -> Callable[[str], bytes]:
+    """``zf.read`` that raises ``ValueError`` for a damaged member, which every
+    signature and subject check already reports as a problem."""
+
+    def read(name: str) -> bytes:
+        try:
+            return zf.read(name)
+        except _MEMBER_READ_ERRORS as exc:
+            raise ValueError(f"{name}: damaged archive member ({type(exc).__name__})") from exc
+
+    return read
 
 
 def _check_declared_size(
@@ -550,8 +733,11 @@ def read_bundle_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
         raise BundleTooLargeError(
             f"manifest.json declares {info.file_size} bytes (limit {limit})"
         )
-    with zf.open(info) as handle:
-        raw = handle.read(limit + 1)
+    try:
+        with zf.open(info) as handle:
+            raw = handle.read(limit + 1)
+    except _MEMBER_READ_ERRORS as exc:
+        raise BundleArchiveError(f"manifest.json is damaged: {type(exc).__name__}") from exc
     if len(raw) > limit:
         raise BundleTooLargeError(f"manifest.json is larger than {limit} bytes")
     try:
@@ -603,20 +789,31 @@ def verify_bundle_archive(
 
     raw_artifacts = _as_list(manifest.get("artifacts"))
     artifacts = [a for a in raw_artifacts if isinstance(a, dict)]
+    digests: dict[str, str] = {}
+
+    def digest_of(name: str) -> str:
+        # Each member is hashed once, for the artifact and the members checks alike.
+        if name not in digests:
+            digests[name] = _member_digest(zf, name)
+        return digests[name]
+
     modified: list[str] = []
     missing: list[str] = []
     for art in artifacts:
         rel = str(art.get("path", ""))
         if rel not in names:
             missing.append(rel)
-        elif _member_digest(zf, rel) != art.get("sha256", ""):
+        elif digest_of(rel) != art.get("sha256", ""):
             modified.append(rel)
     # An addition is a modification too: a file the manifest never accounted for fails.
     unlisted = sorted(names - {str(a.get("path", "")) for a in artifacts} - {"manifest.json"})
     signatures = verify_bundle_signatures(
-        manifest, zf.read, names, trusted_public_pems=trusted_public_pems
+        manifest, _member_reader(zf), names, trusted_public_pems=trusted_public_pems
     )
     has_token = "manifest.dsse.tsr" in names and zf.getinfo("manifest.dsse.tsr").file_size > 0
+    member_problems, members_signed, unsigned_members = _members_check(
+        manifest, signatures, digest_of, names
+    )
     return BundleVerification(
         manifest=manifest,
         artifact_count=len(raw_artifacts),
@@ -627,6 +824,9 @@ def verify_bundle_archive(
         anchored=bool(trusted_public_pems),
         has_timestamp_token=has_token,
         duplicate_members=_duplicates(listed),
+        member_problems=member_problems,
+        members_signed=members_signed,
+        unsigned_members=unsigned_members,
     )
 
 

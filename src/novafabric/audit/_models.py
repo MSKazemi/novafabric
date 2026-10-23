@@ -52,6 +52,10 @@ class AuditEventType(str, enum.Enum):
     # BEFORE the bypass becomes visible; if it cannot be written the bypass is
     # refused (promote/bundle_store.py, fail closed)
     SEAL_BYPASS_CREATE = "seal.bypass.create"
+    # Review r8 (2026-10-23): compensating entry for a seal.bypass.create whose
+    # bypass file could not then be stored — same bypass_uuid; such a bypass never
+    # counts (promote/bundle_store.py, promote/verifier.py)
+    SEAL_BYPASS_ABORT = "seal.bypass.abort"
 
 
 class AuditEntry(BaseModel):

@@ -51,6 +51,16 @@ PREDICATE_RUN = "https://novafabric.io/runcapsule/v0"
 PREDICATE_REDACTION = "https://novafabric.io/redaction-proof/v0"
 PREDICATE_LINEAGE = "https://novafabric.io/lineage/v0"
 PREDICATE_ENERGY = "https://novafabric.io/energy-receipts/v0"
+#: ADR-0011 Amendment 7 (review r8): one statement signing every member's digest.
+PREDICATE_BUNDLE_MEMBERS = "https://novafabric.io/evidence-bundle-members/v0"
+
+#: The members statement and its two companion files. They are the only members the
+#: statement cannot cover (it cannot sign its own envelope or signature); the
+#: verifier finds them at exactly these paths, never via the unsigned manifest.
+MEMBERS_ENVELOPE = "attestations/bundle.intoto.json"
+MEMBERS_SIGNATURE = "signatures/bundle.sig"
+MEMBERS_CERTIFICATE = "signatures/bundle.cert"
+MEMBERS_STATEMENT_FILES = frozenset({MEMBERS_ENVELOPE, MEMBERS_SIGNATURE, MEMBERS_CERTIFICATE})
 
 VERIFIER_INSTRUCTIONS = (
     "Verification recipe (no NovaFabric required):\n"
@@ -76,6 +86,15 @@ VERIFIER_INSTRUCTIONS = (
     "     sha256(0x01 || left || right), splitting at the largest power of two\n"
     "     below the count (RFC 6962). Bundles exported before v0.106.0 use\n"
     "     leaf = sha256(0x00 || content).\n"
+    "  6. attestations/bundle.intoto.json (evidence-bundle-members/v0) signs\n"
+    "     `members`: the sha256 of every file except manifest.json and its own\n"
+    "     three files (it, signatures/bundle.sig, signatures/bundle.cert). Every\n"
+    "     other file must be listed with that digest, and every listed file must\n"
+    "     be present. `manifest_core_sha256` is step 1's hash computed after also\n"
+    "     removing this statement's entries from artifacts[], attestations[] and\n"
+    "     signatures[]. If the run statement's predicate names this statement in\n"
+    "     `members_statement`, it must be present. Bundles exported before this\n"
+    "     statement existed carry neither: only steps 3-5 cover their files.\n"
 )
 
 
@@ -196,8 +215,155 @@ def _canonical_manifest_hash(manifest: dict[str, Any]) -> str:
     return _sha256_bytes(canonical.encode())
 
 
+# ---------------------------------------------------------------------------
+# ADR-0011 Amendment 7 — the members statement (review r8, hole 3)
+# ---------------------------------------------------------------------------
+
+
+class BundleResealError(Exception):
+    """A bundle's members statement was not re-signed: its signed content does not verify."""
+
+
+def manifest_core(manifest: dict[str, Any]) -> dict[str, Any]:
+    """*manifest* without ``manifest_hash`` and without the members statement's entries.
+
+    What the members statement's ``manifest_core_sha256`` signs: every manifest field
+    (``verifier_instructions``, ``subject``, ``schemas``, ...) except the entries the
+    statement adds about itself, which it cannot sign.
+    """
+    core = {k: v for k, v in manifest.items() if k != "manifest_hash"}
+    for key, field_name in (
+        ("artifacts", "path"),
+        ("attestations", "path"),
+        ("signatures", "envelope_path"),
+    ):
+        value = core.get(key)
+        if isinstance(value, list):
+            core[key] = [
+                e
+                for e in value
+                if not (isinstance(e, dict) and e.get(field_name) in MEMBERS_STATEMENT_FILES)
+            ]
+    return core
+
+
+def members_digest(members: dict[str, str]) -> str:
+    """``sha256:`` of the canonical JSON of a ``{path: sha256}`` members map."""
+    return _sha256_bytes(json.dumps(members, sort_keys=True, separators=(",", ":")).encode())
+
+
+def sign_members_statement(
+    manifest: dict[str, Any], member_digests: dict[str, str], signer: LocalSigner
+) -> dict[str, bytes]:
+    """Sign the members statement into *manifest*; return its three files' bytes.
+
+    *member_digests* maps every bundle member except ``manifest.json`` and
+    :data:`MEMBERS_STATEMENT_FILES` to its ``sha256:`` digest. Any earlier members
+    statement entries are dropped first, so this also re-signs a post-processed
+    bundle. *manifest* (changed in place) gains the three files' ``artifacts[]``
+    entries (kept sorted by path), an ``attestations[]`` and a ``signatures[]``
+    entry, and a fresh ``manifest_hash``.
+    """
+    members = {k: member_digests[k] for k in sorted(member_digests)}
+    stale = set(members) & (MEMBERS_STATEMENT_FILES | {"manifest.json"})
+    if stale:
+        raise ValueError(f"the members map may not list {sorted(stale)}")
+    core = manifest_core(manifest)
+    for key in ("artifacts", "attestations", "signatures"):
+        if key in core:
+            manifest[key] = core[key]
+    predicate = {
+        "bundle_id": manifest.get("bundle_id"),
+        "members": members,
+        "manifest_core_sha256": _canonical_manifest_hash(core),
+    }
+    statement = make_intoto_statement(
+        predicate_type=PREDICATE_BUNDLE_MEMBERS,
+        subject_name="evidence-bundle-members",
+        subject_sha256=members_digest(members),
+        predicate=predicate,
+    )
+    envelope = dsse_sign(statement, signer)
+    files = {
+        MEMBERS_ENVELOPE: json.dumps(envelope, indent=2, sort_keys=True).encode(),
+        MEMBERS_SIGNATURE: base64.b64decode(envelope["signatures"][0]["sig"]),
+        MEMBERS_CERTIFICATE: signer.public_pem,
+    }
+    artifacts: list[dict[str, Any]] = manifest.setdefault("artifacts", [])
+    for rel, data in files.items():
+        artifacts.append({
+            "path": rel,
+            "size_bytes": len(data),
+            "media_type": _media_type_for(rel),
+            "sha256": _sha256_bytes(data),
+        })
+    artifacts.sort(key=lambda a: str(a.get("path", "")))
+    manifest.setdefault("attestations", []).append({
+        "path": MEMBERS_ENVELOPE,
+        "predicate_type": PREDICATE_BUNDLE_MEMBERS,
+        "subject_count": 1,
+        "subject_hashes": [members_digest(members)],
+        "envelope_format": "DSSE",
+        "sha256": _sha256_bytes(files[MEMBERS_ENVELOPE]),
+        "signature_refs": [MEMBERS_SIGNATURE],
+    })
+    manifest.setdefault("signatures", []).append({
+        "envelope_path": MEMBERS_ENVELOPE,
+        "signature_path": MEMBERS_SIGNATURE,
+        "certificate_path": MEMBERS_CERTIFICATE,
+        "signer_identity": "local-key",
+        "signature_algorithm": "ed25519",
+        "signed_at": _now_iso(),
+    })
+    manifest["manifest_hash"] = _canonical_manifest_hash(manifest)
+    return files
+
+
+def reseal_bundle_members(bundle_path: Path, signer: LocalSigner) -> None:
+    """Re-sign the members statement of a bundle a post-processor just changed.
+
+    For ``nova export-evidence --timestamp``, which adds ``manifest.dsse.tsr`` and a
+    README section after the builder signed. The bundle's other attestations must
+    verify under *signer*'s key with every recipe step except the members check
+    passing, or :class:`BundleResealError` is raised and nothing is written. Every
+    other member is re-vouched for as it now is, so call this only on a bundle you
+    built. The archive is rewritten through a temporary file and renamed into place.
+    """
+    from novafabric.evidence.bundle_verify import verify_bundle_archive  # noqa: PLC0415
+
+    with zipfile.ZipFile(bundle_path) as zf:
+        outcome = verify_bundle_archive(zf, trusted_public_pems=[signer.public_pem])
+        if not outcome.signed_content_ok:
+            raise BundleResealError(
+                "refusing to re-sign the members statement: "
+                + "; ".join(outcome.problems()[:5])
+            )
+        data = {n: zf.read(n) for n in zf.namelist() if not n.endswith("/")}
+    manifest = json.loads(data.pop("manifest.json"))
+    for name in MEMBERS_STATEMENT_FILES:
+        data.pop(name, None)
+    files = sign_members_statement(
+        manifest, {n: _sha256_bytes(b) for n, b in data.items()}, signer
+    )
+    data.update(files)
+    tmp = bundle_path.with_name(f".{bundle_path.name}.reseal.tmp")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            zout.writestr("manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
+            for name in sorted(data):
+                zout.writestr(name, data[name])
+        tmp.replace(bundle_path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 class EvidenceBundleBuilder:
     """Assembles an Evidence Bundle ZIP per ADR-0011 (local-key mode)."""
+
+    #: Sign the members statement (ADR-0011 Amendment 7). Only tests turn this off,
+    #: to produce a bundle as builders before the statement existed wrote it.
+    _SIGN_MEMBERS: bool = True
 
     def __init__(
         self,
@@ -265,11 +431,25 @@ class EvidenceBundleBuilder:
             self._stage_readme(staging)
             attestations, signatures = self._stage_attestations_and_signatures(staging)
             manifest = self._build_manifest(staging, attestations, signatures)
+            self._seal_members(staging, manifest)
             (staging / "manifest.json").write_text(
                 json.dumps(manifest, indent=2, sort_keys=True)
             )
             self._zip_staging(staging)
         return self._output_path
+
+    def _seal_members(self, staging: Path, manifest: dict[str, Any]) -> None:
+        """Sign every staged member's digest into the members statement (Amendment 7).
+
+        Runs after the manifest is built, whose ``artifacts[]`` lists every staged
+        file with its digest, and writes the statement's three files into *staging*.
+        """
+        if not self._SIGN_MEMBERS:
+            return
+        digests = {str(a["path"]): str(a["sha256"]) for a in manifest["artifacts"]}
+        files = sign_members_statement(manifest, digests, self._signer)
+        for rel, data in files.items():
+            (staging / rel).write_bytes(data)
 
     def _run_policy_gate(self) -> None:
         """Evaluate the ADR-0019 export policy and record the decision.
@@ -389,11 +569,15 @@ class EvidenceBundleBuilder:
         lineage_src = staging / lineage_rel / "edges.jsonl"
         lineage_hash = _sha256_bytes(lineage_src.read_bytes())
 
-        run_predicate = {
+        run_predicate: dict[str, Any] = {
             "run_id": run_id,
             "capsule_hash": capsule_hash,
             "captured_by": {"name": "novafabric", "version": NF_VERSION},
         }
+        if self._SIGN_MEMBERS:
+            # Signed pointer: a verifier that finds it fails a bundle whose members
+            # statement was stripped, rather than treating it as a legacy bundle.
+            run_predicate["members_statement"] = MEMBERS_ENVELOPE
         redaction_predicate = {
             "proof_id": proof["proof_id"],
             "chain_hash": proof["chain_hash"],
@@ -738,6 +922,7 @@ class CapsuleSetBundleBuilder(EvidenceBundleBuilder):
                 )
 
             manifest = self._build_set_manifest(staging, subjects, attestations, signatures)
+            self._seal_members(staging, manifest)
             (staging / "manifest.json").write_text(
                 json.dumps(manifest, indent=2, sort_keys=True)
             )

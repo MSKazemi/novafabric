@@ -44,7 +44,13 @@ from typer.testing import CliRunner, Result
 
 from novafabric.capture.orchestrator import CaptureOrchestrator
 from novafabric.cli.main import app
-from novafabric.evidence.bundle import PREDICATE_RUN, _canonical_manifest_hash
+from novafabric.evidence.bundle import (
+    MEMBERS_ENVELOPE,
+    MEMBERS_STATEMENT_FILES,
+    PREDICATE_RUN,
+    _canonical_manifest_hash,
+    sign_members_statement,
+)
 from novafabric.evidence.bundle_verify import BundleSignatureReport, verify_bundle_signatures
 from novafabric.evidence.intoto import DSSE_PAYLOAD_TYPE, dsse_sign_payload
 from novafabric.evidence.signing import LocalSigner, generate_keypair
@@ -56,6 +62,8 @@ SIGNED_ATTESTATIONS = (
     "attestations/redaction.intoto.json",
     "attestations/lineage.intoto.json",
 )
+#: The members statement (ADR-0011 Amendment 7) is signed too; these tests tamper with
+#: the three statements above, and re-seal it where a full re-signing attack would.
 FAILURE_FIELDS = (
     "unsigned",
     "bad_signatures",
@@ -160,6 +168,17 @@ def _resign_all(files: Files, manifest: Manifest, signer: LocalSigner) -> None:
         _sign_into(files, manifest, path, json.dumps(_statement(files, path)).encode(), signer)
 
 
+def _reseal_members(files: Files, manifest: Manifest, signer: LocalSigner) -> None:
+    """Re-sign the members statement over the bundle as it now is — what a full
+    re-signing attacker does too (ADR-0011 Amendment 7)."""
+    digests = {
+        n: "sha256:" + hashlib.sha256(d).hexdigest()
+        for n, d in files.items()
+        if n != "manifest.json" and n not in MEMBERS_STATEMENT_FILES
+    }
+    files.update(sign_members_statement(manifest, digests, signer))
+
+
 def _write_zip(files: Files, manifest: Manifest, dst: Path) -> Path:
     files = {**files, "manifest.json": json.dumps(manifest, indent=2).encode()}
     with zipfile.ZipFile(dst, "w") as zf:
@@ -186,14 +205,14 @@ def test_the_exported_bundle_signs_exactly_the_attestations_these_tests_tamper_w
 ) -> None:
     listed = {a["path"] for a in exported.manifest["attestations"]}
     signed = {s["envelope_path"] for s in exported.manifest["signatures"]}
-    assert listed == signed == set(SIGNED_ATTESTATIONS)
+    assert listed == signed == set(SIGNED_ATTESTATIONS) | {MEMBERS_ENVELOPE}
 
 
 def test_the_intact_bundle_verifies_unpinned_and_pinned(exported: Exported) -> None:
     files, manifest = exported.copy()
     report = _check(files, manifest)
     assert report.ok, _failures(report)
-    assert report.attestations_checked == len(SIGNED_ATTESTATIONS)
+    assert report.attestations_checked == len(SIGNED_ATTESTATIONS) + 1  # + members
     assert len(report.signer_fingerprints) == 1
     pinned = _check(files, manifest, exported.public_key.read_bytes())
     assert pinned.ok, _failures(pinned)
@@ -507,6 +526,7 @@ def test_cli_a_resigned_bundle_fails_only_against_the_pinned_key(
     files, manifest = exported.copy()
     _resign_all(files, manifest, attacker)
     _repair(files, manifest)
+    _reseal_members(files, manifest, attacker)
     resigned = _write_zip(files, manifest, tmp_path / "r.zip")
     unpinned = _verify(resigned)
     assert unpinned.exit_code == 0, unpinned.output
