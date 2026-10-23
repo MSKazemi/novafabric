@@ -1910,8 +1910,8 @@ may change between minor versions.
 | `OPENLINEAGE_URL` | — | HTTP endpoint for automatic OpenLineage emission at capture time |
 | `OPENLINEAGE_FILE` | — | File path for OpenLineage emission (fallback if `OPENLINEAGE_URL` not set) |
 | `NOVAFABRIC_DASHBOARD_AUDIT_FILE` | `$NOVAFABRIC_HOME/dashboard-audit.jsonl` | Audit log destination for dashboard mutations. Overrides `NOVAFABRIC_HOME` for this path only. |
-| `NOVA_WATCHER_BACKEND` | `polling` | `nova serve` capsule-index watcher backend (`polling` or `watchdog`) |
-| `NOVA_WATCHER_INTERVAL` | — | Poll interval in seconds for the capsule-index watcher |
+| `NOVA_WATCHER_BACKEND` | `auto` | Capsule-index watcher backend (`auto`, `polling` or `watchdog`); an unknown value is refused. An explicit `--backend` flag wins. |
+| `NOVA_WATCHER_INTERVAL` | `2.0` | Poll interval in seconds for the capsule-index watcher; an explicit `--interval` flag wins. |
 | `NOVA_CONTENT_INDEX` | on | Set to `off` to disable content indexing at ingest (experimental, ADR-0204) |
 | `NOVA_CONTENT_INDEX_MAX_DOC_KB` | `64` | Per-doc text cap for the content index (operator tuning) |
 | `NOVA_CONTENT_INDEX_MAX_DOCS` | `10000` | Per-capsule doc cap for the content index (operator tuning) |

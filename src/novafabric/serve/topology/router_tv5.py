@@ -20,6 +20,7 @@ from fastapi import (
 from fastapi.responses import Response
 
 from novafabric.serve.auth import extract_bearer, is_localhost_host, token_matches
+from novafabric.serve.authz import Scope, resolve_scope, satisfies
 
 if TYPE_CHECKING:
     from novafabric.serve.topology.layout_pipeline_3d import LayoutPipeline3D
@@ -42,11 +43,26 @@ def make_tv5_router(
         t: str | None = Query(default=None, alias="token"),
         authorization: str | None = Header(default=None),
     ) -> None:
+        # The session token *or* an issued token (ADR-0252), exactly like every
+        # other serve route. Before audit L26 only the session token matched, so
+        # a minted read token passed the app-level scope check (ROUTE_SCOPES
+        # classifies these routes `read`) and then got 401 here. The scope check
+        # below repeats the app-level one so a router mounted on a bare app is
+        # not more permissive than one mounted by `create_app`.
         candidate = extract_bearer(authorization) or t
-        if not candidate or not token_matches(candidate, token):
+        resolved = (
+            resolve_scope(candidate, server_token=token) if candidate else None
+        )
+        if resolved is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="missing or invalid token",
+            )
+        _subject, held = resolved
+        if held is None or not satisfies(held, Scope.read):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient scope",
             )
 
     # Track connected WebSocket clients

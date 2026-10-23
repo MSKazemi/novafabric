@@ -887,6 +887,11 @@ bundle = seal.seal(capsule_manifest)
 # bundle.capsule_id     → str    (SHA-256 hex of the signed payload)
 ```
 
+A leading `~` in `key_path`, `cert_path` and a file `db_path` is expanded to the home directory
+(`MerkleLog` and `open_merkle_log` expand it too). A Postgres DSN `db_path` is used exactly as
+given. Up to v0.106.0 `NovaSeal(...)` and `MerkleLog(...)` did not expand `~`, so the example above
+created a literal `./~` directory in the working directory.
+
 `seal()` accepts an optional `intent` (a `SigningIntent`, default
 `SigningIntent.AUTHORED`) recorded in the DSSE envelope to support FDA 21 CFR
 §11.50 signing-intent semantics. Pass `intent=None` to omit it.

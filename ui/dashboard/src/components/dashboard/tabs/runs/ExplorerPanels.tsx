@@ -112,7 +112,12 @@ export function IntegrityPanel({
   }
 
   const r = state.result;
-  const checks: Check[] = r && r.sealed && r.configured
+  // A server that verified returns the check fields even without a local
+  // novaseal.yaml (`configured: false` = verified from the capsule alone, like
+  // `nova verify`). Only an older server answers `configured: false` with no
+  // checks at all — that one is "not verifiable here".
+  const verified = !!r && r.sealed && r.signature_ok !== undefined;
+  const checks: Check[] = r && verified
     ? [
         { label: 'DSSE signature', ok: r.signature_ok },
         {
@@ -149,7 +154,7 @@ export function IntegrityPanel({
             <strong>Not sealed.</strong> {r.message ?? 'This capsule carries no seal, so there is nothing to verify.'}
           </p>
         )}
-        {r && r.sealed && r.configured === false && (
+        {r && r.sealed && !verified && r.configured === false && (
           <p className="text-xs text-[var(--color-text-muted)]" data-testid="integrity-verdict">
             <strong>Sealed, but not verifiable here.</strong> {r.message}
           </p>
@@ -162,6 +167,12 @@ export function IntegrityPanel({
             >
               {r?.valid ? 'Seal verified' : 'Seal verification FAILED'}
             </p>
+            {r?.configured === false && (
+              <p className="text-[10px] text-[var(--color-text-faint)]" data-testid="integrity-scope">
+                Verified from the capsule alone: no novaseal.yaml on this host, so no local
+                Merkle log and no operator trust anchors were consulted.
+              </p>
+            )}
             <ul className="space-y-1">
               {checks.map(c => (
                 <li key={c.label} className="flex items-center gap-2 text-xs">

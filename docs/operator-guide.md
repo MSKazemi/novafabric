@@ -1489,8 +1489,8 @@ without any error.
 | `NOVAFABRIC_METADATA_DSN` | `postgresql://nova:nova@postgres:5432/nova` | *(SQLite file)* | DB connection string |
 | `NOVAFABRIC_SERVER_BACKEND` | `postgres` | *(sqlite)* | Server-mode Postgres DSN alias |
 | `NOVAFABRIC_POSTGRES_DSN` | same as above | — | Used by DB migration commands |
-| `NOVA_WATCHER_BACKEND` | `auto` | `auto` | `CapsuleWatcher` backend: `auto` (polling, or watchdog if installed), `polling`, `watchdog` |
-| `NOVA_WATCHER_INTERVAL` | `2.0` | `2.0` | Poll interval in seconds for `PollingBackend` and `nova ingest-capsule --watch` |
+| `NOVA_WATCHER_BACKEND` | `auto` | `auto` | `CapsuleWatcher` backend: `auto` (watchdog if installed, else polling), `polling`, `watchdog`. Any other value stops `nova serve` at startup (exit 2). An explicit `nova ingest-capsule --backend` wins. |
+| `NOVA_WATCHER_INTERVAL` | `2.0` | `2.0` | Poll interval in seconds for `PollingBackend` and `nova ingest-capsule --watch`; must be a finite number > 0. An explicit `--interval` wins. |
 
 > **Why `NOVAFABRIC_EVIDENCE_DIR` matters:** The serve app defaults to
 > `$HOME/.novafabric/evidence`, and inside the container that is a path that is

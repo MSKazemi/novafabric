@@ -31,7 +31,10 @@ def verify_cmd(
         typer.Option(
             "--seal-config",
             envvar="NOVAFABRIC_SEAL_CONFIG",
-            help="Path to novaseal.yaml config (default: ~/.novafabric/novaseal.yaml)",
+            help=(
+                "Path to novaseal.yaml config (default: $NOVAFABRIC_HOME/novaseal.yaml, "
+                "i.e. ~/.novafabric/novaseal.yaml only when NOVAFABRIC_HOME is unset)"
+            ),
         ),
     ] = None,
     check_redaction: Annotated[

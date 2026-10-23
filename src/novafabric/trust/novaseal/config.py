@@ -2,7 +2,7 @@
 
 Auto-discovery order:
   1. NOVAFABRIC_SEAL_CONFIG environment variable (path to YAML)
-  2. ~/.novafabric/novaseal.yaml
+  2. $NOVAFABRIC_HOME/novaseal.yaml (~/.novafabric/novaseal.yaml when NOVAFABRIC_HOME is unset)
   3. None — NovaSeal disabled
 
 novaseal.yaml schema (local profile):

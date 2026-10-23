@@ -3470,7 +3470,7 @@ in `model-calls.jsonl` — or the `status` field in `capsule.yaml` itself — le
 original checks green.
 
 Options:
-- `--seal-config PATH` — path to `novaseal.yaml` (default: `~/.novafabric/novaseal.yaml`; env: `NOVAFABRIC_SEAL_CONFIG`)
+- `--seal-config PATH` — path to `novaseal.yaml` (default: `$NOVAFABRIC_HOME/novaseal.yaml`, i.e. `~/.novafabric/novaseal.yaml` only when `NOVAFABRIC_HOME` is unset; env: `NOVAFABRIC_SEAL_CONFIG`)
 - `--json` — **experimental** (ADR-0301). Print one JSON object instead of the text report; exit code unchanged. Capsule directories with the local backend only (otherwise exit 2). Fields: `valid`, `sealed`, `signature_ok`, `pae_encoding`, `timestamp_ok` (`null` when the capsule carries no RFC 3161 token), `timestamp_present`, `timestamp_strict`, `log_integrity_ok`, `log_inclusion`, `log_notes`, `capsule_binding_ok`, `capsule_id_ok`, `ca_chain_checked`, `ca_chain_ok` (`null` when no CA bundle was used), `tsa_chain_checked`, `tsa_chain_ok`, `identity_trust` (`none` · `self-asserted` · `local-ca-pinned` · `ca-anchored`), `identity_statement`, `signer_subject`, `local_seal_identity`, `signing_intent`, `errors`; additive (ADR-0297 Amendment 2): `timestamp_trust` (`anchored` · `unanchored` · `absent` · `invalid` — only `anchored` is trusted time; `timestamp_ok` stays token integrity), `timestamp_gen_time` and `tsa_subject` (the token's own claims, unverified unless anchored), `sealer_log` (`entry-found` · `missing` · `unverifiable-other-version` · `not-sealer-log` · `no-log` · `not-consulted`), `unanchored_claims`, `strict`
 - `--strict` — **experimental**. Also exit 1 when a passing check rests on a claim no anchor you trust vouches for, listed in `unanchored_claims`: `identity-self-asserted` (no `--ca-bundle`), `timestamp-unanchored` (a token without `--tsa-ca-bundle` / `tsa_ca_certs`), `log-head-unanchored` (inclusion shown only by the carried proof), `log-inclusion-not-checked`, `sealer-log-other-version`. A pass needs a CA-validated signer, a TSA-anchored timestamp or none, and the entry found in the sealer's log. Capsule directories with the local backend only (otherwise exit 2). Not an evidence failure: no seal-verify alert is raised
 - `--backend [local|sigstore]` — verification backend (default: `local`). Use `sigstore` to verify a Sigstore bundle stored alongside the capsule; requires `pip install novafabric[sigstore]`
@@ -3556,7 +3556,7 @@ See [`nova export-blob`](#nova-export-blob---dest-uri) (experimental, ADR-0141).
 
 **Dashboard equivalent:** SealTab → Capsule Integrity Verify panel (run ID input + DSSE/TSA/Merkle result display).
 
-**NovaSeal configuration (`~/.novafabric/novaseal.yaml`):**
+**NovaSeal configuration (`$NOVAFABRIC_HOME/novaseal.yaml`, default `~/.novafabric/novaseal.yaml`):**
 
 ```yaml
 profile: local        # "local" | "aws_kms" | "azure_kv" | "gcp_kms"
@@ -5681,7 +5681,7 @@ Options:
 - `--proposer-subjects TEXT` — comma-separated list of certificate CN values allowed to propose
 - `--approver-subjects TEXT` — comma-separated list of CN values allowed to approve
 - `--bypass-valid-hours N` — bypass validity window in hours (default: 24; range: 1–168)
-- `--db PATH` — SQLite Merkle log DB path (default: resolved by `resolve_merkle_db_path()` — see [NovaSeal Configuration Reference](novaseal-configuration.md#31-path-resolution-order))
+- `--db PATH` — promotion-policy SQLite DB (default: the NovaSeal Merkle log file — `NOVAFABRIC_SEAL_DB_PATH`, then `merkle_db` in `novaseal.yaml`, then `$NOVAFABRIC_HOME/novaseal-merkle.db`; see [NovaSeal Configuration Reference](novaseal-configuration.md#31-path-resolution-order)). This is the store the dashboard SealTab reads. **Default changed:** up to v0.106.0 the code defaulted to `~/.local/share/novafabric/merkle.db` although this reference already named the resolved log; pass that path with `--db` to use a policy signed there.
 
 Prints `Policy signed and stored: version N` on success.
 
@@ -5753,7 +5753,7 @@ Options:
 - `--key PATH` — ECDSA P-256 PEM private key (proposer key)
 - `--cert PATH` — X.509 PEM certificate matching `--key`
 - `--target-env TEXT` — target deployment environment (default: `staging`)
-- `--db PATH` — Merkle log DB path (default: resolved by `resolve_merkle_db_path()` — see [NovaSeal Configuration Reference](novaseal-configuration.md#31-path-resolution-order))
+- `--db PATH` — promotion-policy SQLite DB (default: the NovaSeal Merkle log file — `NOVAFABRIC_SEAL_DB_PATH`, then `merkle_db` in `novaseal.yaml`, then `$NOVAFABRIC_HOME/novaseal-merkle.db`; see [NovaSeal Configuration Reference](novaseal-configuration.md#31-path-resolution-order)). This is the store the dashboard SealTab reads. **Default changed:** up to v0.106.0 the code defaulted to `~/.local/share/novafabric/merkle.db` although this reference already named the resolved log; pass that path with `--db` to use a policy signed there.
 - `--data-dir PATH` — root directory for bundle storage (default: `~/.novafabric`)
 
 Exit codes: `0` (proposal created), `1` (validation error, signing error, or no policy found).
@@ -5785,7 +5785,7 @@ Options:
 - `--capsule-id TEXT` — capsule ID (required; must match the proposal's `capsule_id` field)
 - `--key PATH` — ECDSA P-256 PEM private key (approver key)
 - `--cert PATH` — X.509 PEM certificate matching `--key`
-- `--db PATH` — Merkle log DB path
+- `--db PATH` — accepted for compatibility and ignored: this command does not read the policy (`nova seal propose` and `nova seal verify` do).
 - `--data-dir PATH` — bundle storage root
 - `--ca-bundle PATH` — PEM CA bundle the proposer's certificate must chain to before its
   details are shown (default: `$NOVAFABRIC_PROMOTE_CA_BUNDLE`; see *Promote trust root* below)
@@ -5842,7 +5842,7 @@ Additional exit codes:
 Options:
 
 - `--offline` — skip any network calls (accepted; fully functional in v0.1 since no Rekor calls are made at verify time)
-- `--db PATH` — Merkle log DB path
+- `--db PATH` — promotion-policy SQLite DB (default: the NovaSeal Merkle log file — `NOVAFABRIC_SEAL_DB_PATH`, then `merkle_db` in `novaseal.yaml`, then `$NOVAFABRIC_HOME/novaseal-merkle.db`; see [NovaSeal Configuration Reference](novaseal-configuration.md#31-path-resolution-order)). This is the store the dashboard SealTab reads. **Default changed:** up to v0.106.0 the code defaulted to `~/.local/share/novafabric/merkle.db` although this reference already named the resolved log; pass that path with `--db` to use a policy signed there.
 - `--data-dir PATH` — bundle storage root
 - `--ca-bundle PATH` — PEM CA bundle every promote signer must chain to (default:
   `$NOVAFABRIC_PROMOTE_CA_BUNDLE`)
@@ -5876,7 +5876,8 @@ Options:
 - `--duration TEXT` — validity window, e.g. `24h`, `7d` (default: `24h`, maximum `168h`)
 - `--target-env TEXT` — target environment (default: `production`)
 - `--notify EMAIL` — address to notify (repeatable)
-- `--db PATH`, `--data-dir PATH` — Merkle log database and data directory overrides
+- `--data-dir PATH` — promote-bundle data directory override
+- `--db PATH` — accepted for compatibility and ignored: this command does not read the policy (`nova seal propose` and `nova seal verify` do).
 
 The bypass is recorded in the NovaSeal bypass log. The dashboard **SealTab** shows all active and expired bypasses with approver identity.
 
@@ -6995,8 +6996,8 @@ nova ingest-capsule [RUN_ID] [OPTIONS]
 |---|---|---|
 | `--all` | off | Re-index all capsules in `capsule-dir` |
 | `--watch` | off | Foreground watcher loop (Ctrl+C to stop) |
-| `--interval FLOAT` | 2.0 | Poll interval in seconds (`--watch` only) |
-| `--backend TEXT` | auto | `auto` \| `polling` \| `watchdog` |
+| `--interval FLOAT` | `$NOVA_WATCHER_INTERVAL`, else 2.0 | Poll interval in seconds (`--watch` only). Must be a finite number > 0. |
+| `--backend TEXT` | `$NOVA_WATCHER_BACKEND`, else auto | `auto` \| `polling` \| `watchdog`. Any other value is refused (exit 2). |
 | `--capsule-dir PATH` | `$NOVAFABRIC_CAPSULE_DIR` | Override capsule directory |
 | `--db-path PATH` | `$NOVAFABRIC_DB_PATH` | Override registry DB path |
 
@@ -7004,8 +7005,15 @@ nova ingest-capsule [RUN_ID] [OPTIONS]
 
 | Variable | Default | Effect |
 |---|---|---|
-| `NOVA_WATCHER_BACKEND` | `auto` | Override backend selection globally |
-| `NOVA_WATCHER_INTERVAL` | `2.0` | Override poll interval globally |
+| `NOVA_WATCHER_BACKEND` | `auto` | Backend when `--backend` is not given (also used by `nova serve`) |
+| `NOVA_WATCHER_INTERVAL` | `2.0` | Poll interval when `--interval` is not given (also used by `nova serve`) |
+
+Precedence is **explicit flag, then environment, then default**. An unknown backend or an
+unusable interval (non-numeric, `0`, negative, `nan`, `inf`) is refused with exit code 2 and a
+message naming the flag or variable it came from; `nova serve` refuses to start on a bad
+`NOVA_WATCHER_*` value instead of binding its port. The `--watch` banner prints the effective
+backend and interval. Up to v0.106.0 an unknown backend silently became `auto`, and the
+environment overrode an explicit flag while the banner printed the flag value.
 
 **Examples:**
 ```bash
@@ -8252,12 +8260,12 @@ List Rego policy files in the built-in bundle and any signed promotion policies 
 nova policy list
 nova policy list --namespace staging
 nova policy list --bundle /path/to/custom-bundle
-nova policy list --db ~/.local/share/novafabric/merkle.db
+nova policy list --db ~/.local/share/novafabric/merkle.db   # a store signed before the default changed
 ```
 
 Options:
 - `--bundle PATH` — Rego bundle directory to scan (default: built-in bundle; also: `NOVAFABRIC_POLICY_BUNDLE_PATH`)
-- `--db PATH` — PolicyStore SQLite DB path (default: `NOVAFABRIC_HOME/promote/policy.db`, falling back to `~/.local/share/novafabric/merkle.db`)
+- `--db PATH` — PolicyStore SQLite DB path (default: the NovaSeal Merkle log — `NOVAFABRIC_SEAL_DB_PATH`, then `merkle_db` in `novaseal.yaml`, then `$NOVAFABRIC_HOME/novaseal-merkle.db`, the store `nova policy sign` writes and the dashboard reads; up to v0.106.0 the default was `$NOVAFABRIC_HOME/promote/policy.db`, falling back to `~/.local/share/novafabric/merkle.db` — the command names that old file when it holds a store and the default does not)
 - `--namespace / -n TEXT` — filter signed policies to this namespace (default: show all namespaces)
 
 Output has two sections:
@@ -8538,7 +8546,7 @@ Start the experimental local dashboard. Read-only browsing of capsules, registry
 | `POST /api/holds/{hold_id}/release` | Release a hold by ID wherever it is stored (CLI- or API-placed). Needs the **`admin`** scope (ADR-0031); placing a hold needs `operate`. Returns `{released, hold_id, registry}`. 404 if unknown or already released. Audited as `hold.release`. |
 | `POST /api/runs/{run_id}/replay/semantic` | Semantic similarity analysis: computes pairwise difflib similarity across model call responses. Returns `{similarity_score, matched_run_id, …}`. Read-only. |
 | `POST /api/runs/{run_id}/replay/exact` | Exact replay eligibility check: validates `env.lock.lock_mode=deterministic` and `seed` on all model calls. Returns `{exact_eligible, exact_reasons[], exact_hash_count, …}`. Read-only. |
-| `POST /api/runs/{run_id}/verify` | Full NovaSeal check on a capsule: DSSE signature + RFC 3161 timestamp + Merkle log inclusion (mirrors `nova verify`). Returns `{sealed, configured, signature_ok, timestamp_ok, log_integrity_ok, valid, errors[]}`. Returns `sealed=false` if capsule was not sealed; `configured=false` if NovaSeal profile missing. |
+| `POST /api/runs/{run_id}/verify` | Full NovaSeal check on a capsule: DSSE signature + RFC 3161 timestamp + Merkle log inclusion (mirrors `nova verify`). Returns `{sealed, configured, signature_ok, timestamp_ok, log_integrity_ok, valid, errors[]}`. Returns `sealed=false` if capsule was not sealed. `configured=false` means no `novaseal.yaml` on this host: the capsule is then verified from its own files (no local log, no operator anchors), exactly as `nova verify` does, and every check is returned. An unusable `novaseal.yaml` returns `valid=false`. |
 | `GET /api/lineage/{run_id}/emit-openlineage` | Emit OpenLineage events for a capsule run to the configured transport (mirrors `nova lineage emit-openlineage`). Returns `{ok, run_id, event_count, events[]}`. |
 | `POST /api/assets/register-from-yaml` | Register an asset directly from a YAML spec string (mirrors `nova register`). Body: `{spec_yaml: "<yaml string>"}`. Returns `{ok, name?, error?}`. |
 | `GET /api/reports/run-history` | Run history report; query params: `from`, `to` (ISO dates), `status` (`all\|ok\|error\|failed`), `agent` (name filter), `format` (`json\|csv`). Returns `{rows[], columns[], generated_at, report_type}`. |
@@ -8695,6 +8703,10 @@ nova serve --experimental --tv5 --port 8080
 
 - TV-5 is experimental (ADR-0068). Server-side layout uses `networkx.spring_layout` as an FA2 approximation (OQ-030: Python fa2 is blocked at 100K nodes).
 - `msgpack` is an optional runtime dependency; the server falls back to JSON automatically.
+- Authentication: the three HTTP routes are `read`-scope routes. They accept the session token or any active
+  issued token whose scope satisfies `read` (`read`, `audit`, `operate`, `admin`), sent as
+  `Authorization: Bearer …` or `?token=`. Up to v0.106.0 they accepted only the session token, so an issued read
+  token got 401. The WebSocket `WS /api/tv5/ws` still accepts only the session token (ADR-0228 OQ-2).
 - TV-5 does NOT require `--topology`, but `--topology` automatically implies `--tv5`. Both flags may be passed together without conflict.
 
 **Environment variable:** `NOVA_DASHBOARD_DUCKDB_PATH` (default `~/.novafabric/dashboard.duckdb`) — path to the DuckDB database holding the cluster-layer topology.

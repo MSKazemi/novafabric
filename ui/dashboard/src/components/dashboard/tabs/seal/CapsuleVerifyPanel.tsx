@@ -58,7 +58,8 @@ export default function CapsuleVerifyPanel({ runIds }: { runIds: string[] }) {
       </p>
       <p className="text-xs text-[var(--color-text-muted)]">
         Verify a capsule's cryptographic seal — DSSE signature (ECDSA P-256), RFC 3161 timestamp, and
-        Merkle log inclusion. Requires NovaSeal to be configured. (ADR-0041)
+        Merkle log inclusion. Without a local novaseal.yaml the capsule is verified from its own
+        files, as `nova verify` does. (ADR-0041)
       </p>
 
       <div className="flex items-end gap-2">
@@ -107,7 +108,7 @@ export default function CapsuleVerifyPanel({ runIds }: { runIds: string[] }) {
           'rounded border p-3 space-y-2',
           result.sealed === false
             ? 'border-[color-mix(in_oklab,var(--color-status-pending)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-status-pending)_6%,transparent)]'
-            : result.configured === false
+            : result.configured === false && result.signature_ok === undefined
               ? 'border-[color-mix(in_oklab,var(--color-status-pending)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-status-pending)_6%,transparent)]'
               : result.valid
                 ? 'border-[color-mix(in_oklab,var(--color-status-success)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-status-success)_8%,transparent)]'
@@ -115,10 +116,13 @@ export default function CapsuleVerifyPanel({ runIds }: { runIds: string[] }) {
         )}>
           {result.sealed === false ? (
             <p className="text-xs text-[var(--color-status-pending)]">Not sealed — {result.message}</p>
-          ) : result.configured === false ? (
+          ) : result.configured === false && result.signature_ok === undefined ? (
             <p className="text-xs text-[var(--color-status-pending)]">{result.message}</p>
           ) : (
             <>
+              {result.configured === false && result.message && (
+                <p className="text-[10px] text-[var(--color-text-faint)]">{result.message}</p>
+              )}
               <div className="space-y-1">
                 <CheckRow label="Signature (DSSE ECDSA P-256)" ok={result.signature_ok} />
                 <CheckRow
