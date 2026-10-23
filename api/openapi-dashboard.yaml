@@ -7571,9 +7571,20 @@ paths:
       description: 'Evaluate a policy check interactively.
 
 
-        Body: PolicyInput JSON
+        Body: PolicyInput JSON, optionally with ``explain`` and ``policy_source``.
 
-        Response: PolicyDecision JSON'
+        Response: PolicyDecision JSON
+
+
+        The packaged policies are evaluated for any ``read`` credential. A
+
+        non-blank ``policy_source`` (the caller''s own Rego) needs ``admin``
+
+        (403 otherwise). Either way ``opa`` runs sandboxed — no server
+
+        environment, no ``opa.runtime``/``http.send``/``net.lookup_ip_addr``,
+
+        no network — in a worker thread with a timeout.'
       parameters:
       - in: query
         name: token
@@ -7631,12 +7642,22 @@ paths:
 
         history with the byte-offset ``next_cursor`` (same contract as
 
-        /api/audit). ``truncated`` is true when the scan stopped early.'
+        /api/audit). ``truncated`` is true when the scan stopped early.
+
+
+        Requires the ``audit`` scope (it reads the audit trail). ``decision_id``
+
+        is matched **exactly** against the entry''s audit id or recorded
+
+        decision id; an empty or wildcard id is rejected with 422.'
       parameters:
-      - in: query
+      - description: The exact decision id (or audit id) to look up; no prefixes
+        in: query
         name: decision_id
         required: true
         schema:
+          description: The exact decision id (or audit id) to look up; no prefixes
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$
           title: Decision Id
           type: string
       - in: query
@@ -7852,7 +7873,16 @@ paths:
       x-nova-contract: pending
   /api/policy/test:
     post:
-      description: Run the Rego test suite for the policy bundle (nova policy test).
+      description: 'Run the Rego test suite for the policy bundle (nova policy test).
+
+
+        The packaged bundle is testable by any ``read`` credential. A
+
+        request-chosen ``bundle_path`` is Rego the server did not ship, so it
+
+        needs ``admin``, like ``policy_source`` on /api/policy/check.
+
+        ``opa test`` runs sandboxed, in a worker thread, with a timeout.'
       parameters:
       - in: query
         name: token

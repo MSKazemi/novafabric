@@ -1866,7 +1866,7 @@ unchanged.)
 - **Lineage tab** — interactive DAG rendered with React Flow; provenance, blast-radius, and replay-chain highlight modes; ancestry breadcrumb; click or double-click a node to select it.
 - **Diff tab** — structural diff; 2-run or N-run (up to 5) comparison; stacked collapsible cards in N-run mode; URL-persistent `?run_ids=a,b,c` for sharing.
 - **Audit tab** — unified mutation audit log (every dashboard write action with equivalent `nova` command); action-type filter.
-- **Policy tab** — interactive OPA/Rego policy tester; ALLOW/DENY badge; explain toggle for full OPA trace output.
+- **Policy tab** — interactive OPA/Rego policy tester; ALLOW/DENY badge; explain toggle for full OPA trace output. Checking the packaged policies needs a `read` token; submitting your own Rego needs `admin`, and `opa` always runs sandboxed (no server environment, no `opa.runtime`/`http.send`/`net.lookup_ip_addr`).
 - **Commands tab** — live command builders across journey tracks with copy buttons.
 - **Home tab** — staleness indicator (amber border on resume cards > 24 h).
 - **Capture tab** — recent capsules panel with "Open folder" links for local paths.

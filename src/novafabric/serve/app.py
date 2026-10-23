@@ -485,6 +485,16 @@ _INCIDENT_LIST_MAX = 500
 #: of audit-log size; callers resume with the byte-offset ``cursor``.
 _POLICY_SCAN_CAP = 10_000
 
+#: Wall-clock bound on one ``opa`` subprocess started for a request
+#: (/api/policy/check, /api/policy/test). It runs in a worker thread, so the
+#: bound protects the thread pool, not the event loop.
+_POLICY_OPA_TIMEOUT_S = 10.0
+
+#: A decision id or audit id as written by NovaFabric (UUID / ULID / ``aud-…``).
+#: /api/policy/explain matches it exactly; a pattern keeps wildcards and empty
+#: strings out of the query entirely.
+_DECISION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+
 
 def _list_evidence_bundles(
     limit: int | None = None, verdicts: "BundleVerdictCache | None" = None
@@ -4174,19 +4184,39 @@ def create_app(
 
     @app.post("/api/policy/check", dependencies=[Depends(verify_token)])
     async def policy_check_endpoint(
+        request: Request,
         body: dict = Body(...),  # type: ignore[type-arg]
     ) -> dict[str, Any]:
         """Evaluate a policy check interactively.
 
-        Body: PolicyInput JSON
+        Body: PolicyInput JSON, optionally with ``explain`` and ``policy_source``.
         Response: PolicyDecision JSON
+
+        The packaged policies are evaluated for any ``read`` credential. A
+        non-blank ``policy_source`` (the caller's own Rego) needs ``admin``
+        (403 otherwise). Either way ``opa`` runs sandboxed — no server
+        environment, no ``opa.runtime``/``http.send``/``net.lookup_ip_addr``,
+        no network — in a worker thread with a timeout.
         """
+        # serve-01: this route was read-scoped and evaluated caller Rego with
+        # the server's environment, so opa.runtime().env returned the admin
+        # session token to a read token.
         import uuid as _uuid
 
         from novafabric.policy import OpaEngine, OpaNotFoundError, PolicyInput
+        from novafabric.serve.authz import Scope, require_held_scope
 
         explain = bool(body.pop("explain", False))
-        policy_source: str | None = body.pop("policy_source", None) or None
+        raw_source = body.pop("policy_source", None)
+        if raw_source is not None and not isinstance(raw_source, str):
+            raise HTTPException(status_code=422, detail="policy_source must be a string")
+        policy_source: str | None = raw_source if raw_source and raw_source.strip() else None
+        if policy_source is not None:
+            # Checked before anything else touches the body: a refused caller
+            # learns nothing about how its Rego or input would have fared.
+            require_held_scope(
+                request, Scope.admin, capability="evaluate caller-supplied Rego (policy_source)"
+            )
 
         try:
             policy_input = PolicyInput.model_validate(body)
@@ -4194,8 +4224,10 @@ def create_app(
             raise HTTPException(status_code=422, detail=f"invalid policy input: {exc}")
 
         try:
-            engine = OpaEngine()
-            decision = engine.evaluate(policy_input, explain=explain, policy_source=policy_source)
+            engine = OpaEngine(timeout_s=_POLICY_OPA_TIMEOUT_S)
+            decision = await asyncio.to_thread(
+                engine.evaluate, policy_input, explain=explain, policy_source=policy_source
+            )
         except OpaNotFoundError:
             from novafabric.policy import PolicyDecision
             decision = PolicyDecision(
@@ -7479,24 +7511,34 @@ def create_app(
         return {"ok": all(c["ok"] for c in checks), "checks": checks}
 
     @app.post("/api/policy/test", dependencies=[Depends(verify_token)])
-    async def policy_test_endpoint(body: dict[str, Any]) -> dict[str, Any]:
-        """Run the Rego test suite for the policy bundle (nova policy test)."""
-        import shutil
+    async def policy_test_endpoint(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+        """Run the Rego test suite for the policy bundle (nova policy test).
+
+        The packaged bundle is testable by any ``read`` credential. A
+        request-chosen ``bundle_path`` is Rego the server did not ship, so it
+        needs ``admin``, like ``policy_source`` on /api/policy/check.
+        ``opa test`` runs sandboxed, in a worker thread, with a timeout.
+        """
         import subprocess
+
+        from novafabric.policy._opa_sandbox import (
+            OpaNotFoundError,
+            OpaSandboxError,
+            prepare,
+            run_opa,
+        )
+        from novafabric.serve.authz import Scope, require_held_scope
 
         # A request-supplied bundle is confined to the read roots (serve.paths)
         # and passed on as an absolute resolved path, so it can never be read
         # by `opa` as a command-line flag either.
         requested = body.get("bundle_path")
+        if requested:
+            require_held_scope(
+                request, Scope.admin, capability="run Rego tests from a chosen bundle_path"
+            )
         confined_bundle = str(_confine_read(requested)) if requested else None
 
-        opa_bin = shutil.which("opa")
-        if not opa_bin:
-            return {
-                "ok": False, "backend": "stub",
-                "reason": "OPA binary not found — install opa to run policy tests",
-                "output": "",
-            }
         try:
             from novafabric.policy._opa_engine import _get_bundle_default
             default_bundle = str(_get_bundle_default())
@@ -7505,9 +7547,22 @@ def create_app(
 
         bundle_path = confined_bundle or default_bundle
         try:
-            proc = subprocess.run(
-                [opa_bin, "test", bundle_path, "--verbose"],
-                capture_output=True, text=True, timeout=30,
+            sandbox = await asyncio.to_thread(prepare)
+        except OpaNotFoundError:
+            return {
+                "ok": False, "backend": "stub",
+                "reason": "OPA binary not found — install opa to run policy tests",
+                "output": "",
+            }
+        except OpaSandboxError as exc:
+            return {
+                "ok": False, "exit_code": -1, "bundle_path": bundle_path,
+                "output": f"opa sandbox unavailable, refusing to run: {exc}",
+            }
+        try:
+            proc = await asyncio.to_thread(
+                run_opa, sandbox, "test", [bundle_path, "--verbose"],
+                timeout=_POLICY_OPA_TIMEOUT_S,
             )
             return {
                 "ok": proc.returncode == 0,
@@ -7518,7 +7573,7 @@ def create_app(
         except subprocess.TimeoutExpired:
             return {
                 "ok": False, "exit_code": -1, "bundle_path": bundle_path,
-                "output": "timed out after 30s",
+                "output": f"timed out after {_POLICY_OPA_TIMEOUT_S:g}s",
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "exit_code": -1, "bundle_path": bundle_path, "output": str(exc)}
@@ -7576,7 +7631,11 @@ def create_app(
 
     @app.get("/api/policy/explain", dependencies=[Depends(verify_token)])
     async def policy_explain_endpoint(
-        decision_id: str,
+        decision_id: str = Query(
+            ...,
+            pattern=_DECISION_ID_PATTERN,
+            description="The exact decision id (or audit id) to look up; no prefixes",
+        ),
         limit: int = Query(default=100, ge=1, le=1000),
         cursor: int | None = Query(
             default=None,
@@ -7592,7 +7651,13 @@ def create_app(
         most ``_POLICY_SCAN_CAP`` scanned lines per request; resume older
         history with the byte-offset ``next_cursor`` (same contract as
         /api/audit). ``truncated`` is true when the scan stopped early.
+
+        Requires the ``audit`` scope (it reads the audit trail). ``decision_id``
+        is matched **exactly** against the entry's audit id or recorded
+        decision id; an empty or wildcard id is rejected with 422.
         """
+        # serve-03: a prefix match let ``?decision_id=`` return the whole log,
+        # on a route that was classified ``read``.
         import json as _json
 
         from novafabric._paths import dashboard_audit_path  # noqa: PLC0415
@@ -7615,11 +7680,10 @@ def create_app(
                 entry = _json.loads(raw.decode("utf-8"))
                 args = entry.get("args") or {}
                 extra = entry.get("extra") or {}
-                if (
-                    entry.get("audit_id") == decision_id
-                    or args.get("decision_id") == decision_id
-                    or extra.get("decision_id") == decision_id
-                    or str(args.get("decision_id", "")).startswith(decision_id)
+                if decision_id in (
+                    entry.get("audit_id"),
+                    args.get("decision_id"),
+                    extra.get("decision_id"),
                 ):
                     matches.append(entry)
             except Exception:  # noqa: BLE001

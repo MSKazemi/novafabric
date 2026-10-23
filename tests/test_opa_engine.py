@@ -17,6 +17,16 @@ from novafabric.policy import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_sandbox(opa_sandbox_stub: object) -> None:
+    """These tests mock ``subprocess.run`` as ``opa eval``; skip the real resolution.
+
+    The sandbox itself (scrubbed env, restricted capabilities) is tested in
+    ``tests/policy/test_opa_sandbox.py`` and end to end in
+    ``tests/serve/test_policy_rego_sandbox.py``.
+    """
+
+
 def _make_input(action: str = "promote") -> PolicyInput:
     return PolicyInput(
         action=action,

@@ -179,7 +179,7 @@ def test_example_policy_conditions_on_environment() -> None:
     assert (_FIXTURES / "production_export_gate_test.rego").is_file()
 
 
-def test_custom_policy_receives_environment_in_input() -> None:
+def test_custom_policy_receives_environment_in_input(opa_sandbox_stub: object) -> None:
     """The OPA subprocess sees ``input.resource.deployment_environment``."""
     completed = MagicMock(
         returncode=0,

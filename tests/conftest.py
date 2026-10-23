@@ -321,6 +321,25 @@ def _default_noop_policy_engine(
 
 
 @pytest.fixture
+def opa_sandbox_stub(monkeypatch: pytest.MonkeyPatch) -> Iterator[object]:
+    """Stand in for ``_opa_sandbox.prepare()`` in tests that mock ``subprocess.run``.
+
+    Every ``opa`` NovaFabric starts is resolved and restricted first (serve-01),
+    which itself runs ``opa capabilities``. A test that mocks ``subprocess.run``
+    to play ``opa eval`` uses this so its mock sees only the evaluation call.
+    The stub executable is the bare name ``opa``, so a mocked
+    ``FileNotFoundError`` still maps to ``OpaNotFoundError``.
+    """
+    from novafabric.policy import _opa_sandbox
+
+    stub = _opa_sandbox.OpaSandbox(
+        executable="opa", capabilities=Path("/nonexistent/opa-capabilities.json")
+    )
+    monkeypatch.setattr(_opa_sandbox, "prepare", lambda: stub)
+    yield stub
+
+
+@pytest.fixture
 def tmp_db(tmp_path: Path) -> Path:
     return tmp_path / "test_registry.db"
 

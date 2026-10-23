@@ -11,15 +11,22 @@ enforced by a single declarative table (`src/novafabric/serve/authz.py`):
 
 | Scope | Reaches | ADR-0027 layer |
 |---|---|---|
-| `read` | every read-only endpoint, **including the `POST` routes that only compute and return** — `/api/query`, `/api/policy/check`, `/api/mcp/scan`, `/api/kg/blast-radius`, and the whole `/api/compliance/export/*` family | Layer A |
+| `read` | every read-only endpoint, **including the `POST` routes that only compute and return** — `/api/query`, `/api/policy/check` (packaged policies only), `/api/mcp/scan`, `/api/kg/blast-radius`, and the whole `/api/compliance/export/*` family | Layer A |
 | `operate` | bounded, reversible mutations — register, promote, score, placing a hold, incident, ingest | Layer B |
 | `admin` | irreversible or privilege-affecting — capsule/run deletion, releasing a legal hold, PII erase, seal bypass, signing, key ratchet, role and token management, and the `forensic`/`semantic`/`exact` replay routes (none of the three re-executes the workload; each writes a replay result beside the capsule) | Layer C |
-| `audit` | everything `read` reaches **plus** `GET /api/audit`, `GET /api/reports/dashboard-audit`, `GET /api/reports/policy-audit`, `GET /api/policy/recent-decisions`, `GET /v1/kg/audit` — and **never** `operate` or `admin` | orthogonal |
+| `audit` | everything `read` reaches **plus** `GET /api/audit`, `GET /api/reports/dashboard-audit`, `GET /api/reports/policy-audit` (and their `/export`), `GET /api/policy/recent-decisions`, `GET /api/policy/explain`, `GET /v1/kg/audit` — and **never** `operate` or `admin` | orthogonal |
 
 `admin` ⊇ `operate` ⊇ `read`, and `admin` also reaches `audit`. Insufficient scope returns
 **403** with the required and held scope in `detail`, and appends an `authz.denied` record to
 the dashboard audit log. A missing or unrecognised credential on a classified route still
 returns **401**, and writes nothing.
+
+Two rules sit on top of the table:
+
+- **A derived route is never weaker than its base.** `GET /api/reports/{report_id}/export` needs the scope of `GET /api/reports/{report_id}`: exporting `dashboard-audit` or `policy-audit` needs `audit`, exporting `api-key-inventory` needs `admin`, and an unknown report id needs `admin` (so a non-admin gets 403, not 404).
+- **Rego the server did not ship needs `admin`.** `POST /api/policy/check` with a non-blank `policy_source`, and `POST /api/policy/test` with a `bundle_path`, return **403** below `admin` (audited like any other denial). A `read` credential evaluates and tests the packaged policies only.
+
+Whoever asks, every `opa` that `nova serve` (or the CLI) starts is **sandboxed**: it gets no environment from the server except a fixed `PATH`, and runs with an OPA capabilities file derived from the installed binary minus `opa.runtime`, `http.send` and `net.lookup_ip_addr`, with no network allowed. Rego that calls one of those fails to compile and the decision is a deny whose `reason` names the undefined function. If the capabilities cannot be derived (an `opa` too old for `opa capabilities --current`), nothing is evaluated and the decision is a deny. Request-path evaluations run in a worker thread with a 10 s timeout per `opa` call.
 
 **The default is unchanged:** the `.serve-token` holds `admin`, as does any token issued before
 this landed (a `tokens.jsonl` record with no `scope` field). Mint a narrower one with
@@ -379,12 +386,12 @@ the generic `{kind}` route is registered last so it never shadows them
 |---|---|---|
 | `GET` | `/api/policy/capture-level` | Return the current capture level, each tier's designed field allowlist (`tiers` — **not enforced**, `allowlist_enforced: false`), and per tier `enforcement.<level>.{enforced, effect}`: whether selecting it changes capture today (only `forensic` and `air_gapped`). DB-CAP-1, cap-004, ADR-0066 Am.1. |
 | `POST` | `/api/policy/capture-level` | Validate a capture-level value and return restart instructions (DB-CAP-1). |
-| `POST` | `/api/policy/check` | Evaluate a policy check interactively. |
-| `GET` | `/api/policy/explain` | Look up a past policy decision from the audit log (nova policy explain). Bounded O(page) tail read, **newest-first**; `limit` (default 100, max 1000) + byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). |
+| `POST` | `/api/policy/check` | Evaluate a policy check interactively. Body: a `PolicyInput` plus optional `explain` and `policy_source`. `read` for the packaged policies; a non-blank `policy_source` needs `admin` (403 otherwise; 422 if it is not a string). `opa` runs sandboxed (see Authorization). |
+| `GET` | `/api/policy/explain` | Look up a past policy decision from the audit log (nova policy explain). **`audit` scope.** `decision_id` is matched **exactly** against an entry's audit id or recorded decision id (no prefixes); an empty or wildcard id is **422**. Bounded O(page) tail read, **newest-first**; `limit` (default 100, max 1000) + byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). |
 | `GET` | `/api/policy/list` | List Rego bundle files and signed promotion policies — nova policy list. |
 | `GET` | `/api/policy/recent-decisions` | Return recent decision IDs from the audit log for autocomplete. Bounded O(page) tail read; byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). |
 | `POST` | `/api/policy/sign` | Sign and store a new promotion policy — nova policy sign. |
-| `POST` | `/api/policy/test` | Run the Rego test suite for the policy bundle (nova policy test). |
+| `POST` | `/api/policy/test` | Run the Rego test suite for the policy bundle (nova policy test). `read` for the packaged bundle; a `bundle_path` needs `admin` and is confined to the read roots. `opa test` runs sandboxed. |
 
 ## Sealing & trust  (10)
 
@@ -483,7 +490,7 @@ caller-supplied numbers isn't a mutating or boundary-crossing action).
 | `GET` | `/api/reports/run-history` | report run history |
 | `GET` | `/api/reports/seal-verification` | report seal verification |
 | `GET` | `/api/reports/throughput` | report throughput |
-| `GET` | `/api/reports/{report_id}/export?format=html\|pdf` | Export a self-contained report artifact with an inline-SVG chart where the registry declares one (ADR-0201: server-side chart rendering). HTML needs nothing; PDF lazily imports the optional WeasyPrint extra and degrades to `501` + install hint when absent (`pip install 'novafabric[compliance]'`). |
+| `GET` | `/api/reports/{report_id}/export?format=html\|pdf` | Export a self-contained report artifact with an inline-SVG chart where the registry declares one (ADR-0201: server-side chart rendering). HTML needs nothing; PDF lazily imports the optional WeasyPrint extra and degrades to `501` + install hint when absent (`pip install 'novafabric[compliance]'`). Scope is the exported report's own (`audit` for `dashboard-audit`/`policy-audit`, `admin` for `api-key-inventory` and unknown ids, otherwise `read`). |
 
 ## Legal holds  (3)
 
