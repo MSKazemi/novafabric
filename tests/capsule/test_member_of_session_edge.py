@@ -79,5 +79,10 @@ def test_cli_edge_type_filter_accepts_it() -> None:
     from novafabric.cli.lineage import _VALID_EDGE_TYPES
 
     assert "member_of_session" in _VALID_EDGE_TYPES
-    # ...and the filter stays in step with the vocabulary.
-    assert _VALID_EDGE_TYPES == {et.value for et in EdgeType}
+    # ...and the filter stays in step with the vocabulary: every EdgeType is
+    # accepted, and the set is the shared one (schema edge types plus the enum,
+    # so edges capture writes such as consumed/produced_by filter too).
+    from novafabric.lineage._types import LINEAGE_EDGE_TYPES
+
+    assert {et.value for et in EdgeType} <= _VALID_EDGE_TYPES
+    assert _VALID_EDGE_TYPES == LINEAGE_EDGE_TYPES
