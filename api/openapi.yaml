@@ -2046,15 +2046,12 @@ paths:
                   default: false
                   title: Allow Unsafe Skips
                   type: boolean
-                output_path:
-                  anyOf:
-                  - type: string
-                  - type: 'null'
-                  description: Optional override for the output ZIP path (server-side
-                    path).
-                  title: Output Path
                 run_id:
-                  description: The capsule run_id to export as evidence.
+                  description: 'The capsule run_id to export as evidence: one path
+                    segment (no ''/'', ''\'', ''..'', NUL or absolute path), else
+                    400. The server writes the bundle to <evidence dir>/<run_id>.zip
+                    and returns that path as bundle_path; a request naming an output_path
+                    is refused with 400.'
                   title: Run Id
                   type: string
               required:

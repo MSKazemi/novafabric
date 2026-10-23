@@ -69,7 +69,8 @@ never returns.
 Values a route joins onto a server directory as one name (`node_id` on `/api/seal/ratchet/*`,
 `capsule_id` on `/api/seal/sigstore/*` and `/api/seal/{capsule_id}/...`, `run_id` on
 `/children` and `/validate-distributed`) are refused with **400** if they contain `/`, `\`,
-`..` or a NUL byte, or are absolute; an evidence-cart `cart_id` must match `[A-Za-z0-9_-]+`
+`..`, a NUL or other control character, are absolute, or are longer than 255 bytes (one rule,
+shared with `nova server`'s `/v0` routes and `nova import`); an evidence-cart `cart_id` must match `[A-Za-z0-9_-]+`
 (**422** otherwise). Ratchet responses never include the chain key.
 
 ### Capsule files and symbolic links

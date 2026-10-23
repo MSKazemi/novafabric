@@ -40,6 +40,12 @@ from pathlib import Path
 from typing import Literal
 
 from novafabric._paths import default_capsule_dir, nova_home
+from novafabric._safe_path import (
+    PathEscapeError,
+    UnsafePathSegmentError,
+    is_safe_path_segment,
+    safe_child,
+)
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
 from novafabric.export_blob.destinations import LocalDirDestination
@@ -185,6 +191,17 @@ def _verify_unsigned(manifest: ExportManifest, src_dir: Path) -> tuple[_Status, 
     if problems:
         return "INCOMPLETE", problems
     return "VALID", problems
+
+
+def _unsafe_capsule_id_errors(manifest: ExportManifest, store_root: Path) -> list[str]:
+    """One problem per member whose ``capsule_id`` is not a safe directory name in the store."""
+    errors: list[str] = []
+    for member in manifest.members:
+        try:
+            safe_child(store_root, member.capsule_id, field="capsule_id")
+        except (UnsafePathSegmentError, PathEscapeError) as exc:
+            errors.append(f"member {member.capsule_id!r}: {exc}")
+    return errors
 
 
 def _staged_parent_run_id(staged_dir: Path) -> str | None:
@@ -443,6 +460,14 @@ def import_batch(
             return _refuse("INVALID", schema_errors, EXIT_INVALID)
         manifest = ExportManifest.model_validate(raw)
 
+        # Every capsule_id becomes a directory name in the store. A courier (or
+        # a crafted capsule.yaml carried through a signed export) once used an
+        # absolute or ``..`` id to unpack a capsule anywhere on disk
+        # (review storage-backup-01). Refuse the whole manifest before any write.
+        id_errors = _unsafe_capsule_id_errors(manifest, resolved_root)
+        if id_errors:
+            return _refuse("INVALID", id_errors, EXIT_INVALID, manifest)
+
         # Steps 3–5 — signature (signed mode: verify_export_manifest, whole —
         # not a reimplementation), internal consistency, member bytes.
         if public_key_pem is not None:
@@ -550,7 +575,9 @@ def import_batch(
                     if (
                         parent is not None
                         and parent not in batch_ids
-                        and not (resolved_root / parent).is_dir()
+                        and not (
+                            is_safe_path_segment(parent) and (resolved_root / parent).is_dir()
+                        )
                     ):
                         record.detail = (
                             f"orphan parent_run_id: {parent} (in neither the batch nor the store)"

@@ -265,10 +265,13 @@ class ScoreSubmissionResult(BaseModel):
 class EvidenceExportRequest(BaseModel):
     """``POST /v0/evidence`` request body."""
 
-    run_id: str = Field(description="The capsule run_id to export as evidence.")
-    output_path: str | None = Field(
-        default=None,
-        description="Optional override for the output ZIP path (server-side path).",
+    run_id: str = Field(
+        description=(
+            "The capsule run_id to export as evidence: one path segment (no '/', "
+            "'\\', '..', NUL or absolute path), else 400. The server writes the "
+            "bundle to <evidence dir>/<run_id>.zip and returns that path as "
+            "bundle_path; a request naming an output_path is refused with 400."
+        )
     )
     allow_unsafe_skips: bool = False
 

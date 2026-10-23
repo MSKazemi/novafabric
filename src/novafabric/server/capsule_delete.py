@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from novafabric._safe_path import is_safe_path_segment
 from novafabric.server import capsule_index
 
 if TYPE_CHECKING:
@@ -153,8 +154,8 @@ def audit_index_event(
 
 
 def is_valid_run_id(run_id: str) -> bool:
-    """True when *run_id* is non-empty and can never traverse the store."""
-    return bool(run_id) and "/" not in run_id and "\\" not in run_id and ".." not in run_id
+    """True when *run_id* is one safe path segment, so it can never traverse the store."""
+    return is_safe_path_segment(run_id)
 
 
 def capsule_exists(capsule_dir: Path, run_id: str) -> bool:

@@ -30,6 +30,8 @@ from typing import IO
 
 from pydantic import BaseModel, Field
 
+from novafabric._safe_path import is_safe_path_segment
+
 
 class RebuildError(Exception):
     """Raised when the buffer cannot be drained or the target is invalid."""
@@ -42,6 +44,10 @@ class RunDigest(BaseModel):
     events: int
     sha256: str
     order_preserved: bool
+    #: File under the target directory holding this run's events. Equal to
+    #: ``<run_id>.jsonl`` unless the run_id is not a safe file name (see
+    #: :func:`partition_file_name`). Optional, so older reports still load.
+    partition_file: str | None = None
 
 
 class RebuildReport(BaseModel):
@@ -60,6 +66,47 @@ class RebuildReport(BaseModel):
         return {r.run_id: r.sha256 for r in self.runs}
 
 
+#: Partition for events that are not JSON objects or carry no ``run_id``.
+UNATTRIBUTED = "_unattributed"
+
+
+def partition_file_name(run_id: str) -> str:
+    """The file name a run's events are written to, always one safe name in the target.
+
+    ``run_id`` comes from the event, i.e. from whoever published to the broker.
+    It is used as ``<run_id>.jsonl`` only when that is one safe path segment
+    that does not start with ``.``; otherwise (absolute, ``..``, a separator,
+    NUL, ...) the events go to ``_unsafe-<sha256(run_id)[:32]>.jsonl`` and the
+    record keeps the original ``run_id`` inside it. An absolute or ``../``
+    run_id once appended attacker JSON to any ``*.jsonl`` the user could write,
+    such as the audit log (review trust-evidence-07).
+    """
+    name = f"{run_id}.jsonl"
+    if is_safe_path_segment(name) and not name.startswith("."):
+        return name
+    digest = hashlib.sha256(run_id.encode("utf-8", "surrogateescape")).hexdigest()
+    return f"_unsafe-{digest[:32]}.jsonl"
+
+
+def _open_partition(target_dir: Path, name: str) -> IO[bytes]:
+    """Create *name* in *target_dir* exclusively, never following a link."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(target_dir / name, flags, 0o644)
+    except FileExistsError as exc:
+        raise RebuildError(
+            f"{target_dir / name} already exists: rebuild into an empty directory, "
+            "so each file holds exactly the events its digest describes"
+        ) from exc
+    return os.fdopen(fd, "wb")
+
+
+def _existing_partitions(target_dir: Path) -> list[str]:
+    if not target_dir.is_dir():
+        return []
+    return sorted(p.name for p in target_dir.iterdir() if p.name.endswith(".jsonl"))
+
+
 def rebuild_from_events(
     events: Iterable[bytes],
     target_dir: Path,
@@ -73,6 +120,10 @@ def rebuild_from_events(
     are not JSON objects or carry no ``run_id`` are routed to the
     ``_unattributed`` partition rather than dropped (an auditor must see
     them). ``seq`` fields, when present, must be strictly increasing per run.
+
+    Each run's file name comes from :func:`partition_file_name`, and every file
+    is created exclusively: a target that already holds one raises
+    :class:`RebuildError` rather than appending a second pass to it.
     """
     target_dir.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
@@ -80,23 +131,28 @@ def rebuild_from_events(
     ordered: dict[str, bool] = {}
     last_seq: dict[str, int] = {}
     handles: dict[str, IO[bytes]] = {}
+    files: dict[str, str] = {}
 
     try:
         for payload in events:
-            run_id = "_unattributed"
+            run_id = UNATTRIBUTED
             seq: int | None = None
             try:
                 record = json.loads(payload)
                 if isinstance(record, dict):
-                    run_id = str(record.get("run_id") or "_unattributed")
+                    run_id = str(record.get("run_id") or UNATTRIBUTED)
                     raw_seq = record.get("seq")
                     seq = int(raw_seq) if isinstance(raw_seq, int) else None
             except json.JSONDecodeError:
                 pass
             fh = handles.get(run_id)
             if fh is None:
-                fh = open(target_dir / f"{run_id}.jsonl", "ab")
+                name = partition_file_name(run_id)
+                if name in files.values():  # pragma: no cover - a sha256 prefix collision
+                    raise RebuildError(f"two run_ids map to partition {name}")
+                fh = _open_partition(target_dir, name)
                 handles[run_id] = fh
+                files[run_id] = name
                 counts[run_id] = 0
                 hashers[run_id] = hashlib.sha256()
                 ordered[run_id] = True
@@ -118,6 +174,7 @@ def rebuild_from_events(
             events=counts[run_id],
             sha256=hashers[run_id].hexdigest(),
             order_preserved=ordered[run_id],
+            partition_file=files[run_id],
         )
         for run_id in sorted(counts)
     ]
@@ -196,7 +253,17 @@ class OffsetReplayRebuilder:
         return payloads
 
     async def rebuild(self, target_dir: Path) -> RebuildReport:
-        """Drain the buffer and materialize it under *target_dir*."""
+        """Drain the buffer and materialize it under *target_dir*.
+
+        Refuses (:class:`RebuildError`) a target that already holds ``*.jsonl``
+        files before touching the broker.
+        """
+        existing = _existing_partitions(target_dir)
+        if existing:
+            raise RebuildError(
+                f"{target_dir} already holds {len(existing)} partition file(s) "
+                f"({existing[0]}, ...): rebuild into an empty directory"
+            )
         events = await self.drain()
         return rebuild_from_events(
             events, target_dir, stream=self._stream, subject=self._subject

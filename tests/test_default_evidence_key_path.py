@@ -60,3 +60,45 @@ def test_serve_evidence_cart_default_follows(home: Path) -> None:
     from novafabric.serve.routers.evidence_cart import _default_key_path
 
     assert _default_key_path() == home / "keys" / "signing_key.pem"
+
+
+def test_auto_generated_keys_are_private_from_the_first_byte(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review server-01: the server's auto-generated key was written 0o664.
+
+    Every auto-generation path (``nova server``'s evidence export, ``nova serve``'s
+    export and cart export) goes through ``ensure_signing_key``: mode 0o600 even
+    under a permissive umask, the public half beside it, an existing key reused,
+    and a link at the name never written through.
+    """
+    import os
+    import stat
+
+    from novafabric.evidence.signing import LocalSigner, ensure_signing_key
+    from novafabric.serve.routers.evidence_cart import _ensure_signing_key
+
+    old = os.umask(0o000)
+    try:
+        key = home / "keys" / "signing_key.pem"
+        assert _ensure_signing_key(key) is True
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(key.stat().st_mode) == 0o600
+    assert (home / "keys" / "signing_key.pub.pem").is_file()
+    assert LocalSigner(key).keyid.startswith("sha256:")
+    first = key.read_bytes()
+    assert _ensure_signing_key(key) is False
+    assert ensure_signing_key(key) == key
+    assert key.read_bytes() == first
+
+    victim = home / "victim.txt"
+    victim.write_bytes(b"precious")
+    planted = home / "keys" / "planted.pem"
+    planted.symlink_to(victim)
+    ensure_signing_key(planted)  # exists (via the link): used as-is, never rewritten
+    assert victim.read_bytes() == b"precious"
+    dangling = home / "keys" / "dangling.pem"
+    dangling.symlink_to(home / "nowhere.pem")
+    ensure_signing_key(dangling)  # exclusive create refuses the link entry
+    assert not (home / "nowhere.pem").exists()

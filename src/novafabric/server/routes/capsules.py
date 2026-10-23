@@ -32,6 +32,7 @@ from novafabric._capsule_fs import (
     read_capsule_member_or_none,
     read_required_capsule_member,
 )
+from novafabric._safe_path import PathEscapeError, UnsafePathSegmentError, safe_child
 
 # Imported eagerly, unlike the rest of this module's novafabric.eval imports:
 # the route decorator needs the model at import time to describe the request
@@ -423,14 +424,15 @@ def _unpack_and_publish(
             if not run_id:
                 raise BadRequestError("capsule.yaml is missing run_id.")
             run_id = str(run_id)
-            if "/" in run_id or "\\" in run_id or ".." in run_id:
-                # The run_id becomes a path component of the capsule store —
-                # never let it traverse (mirrors the read-route guard).
-                raise BadRequestError("capsule.yaml has an invalid run_id.")
+            # The run_id becomes a path component of the capsule store —
+            # never let it traverse (the same rule as the read routes).
+            try:
+                dest = safe_child(capsule_dir, run_id, field="run_id")
+            except (UnsafePathSegmentError, PathEscapeError) as exc:
+                raise BadRequestError(f"capsule.yaml has an invalid run_id: {exc}") from exc
 
             _check_parent_exists(manifest, capsule_dir)
 
-            dest = capsule_dir / run_id
             if dest.exists():
                 raise ConflictError(f"Capsule '{run_id}' already exists.")
 
@@ -943,7 +945,10 @@ def _check_parent_exists(manifest: dict[str, Any], capsule_dir: Path) -> None:
     parent_run_id = manifest.get("parent_run_id")
     if not parent_run_id:
         return
-    parent_dest = capsule_dir / str(parent_run_id)
+    try:
+        parent_dest = safe_child(capsule_dir, str(parent_run_id), field="parent_run_id")
+    except (UnsafePathSegmentError, PathEscapeError) as exc:
+        raise BadRequestError(f"capsule.yaml has an invalid parent_run_id: {exc}") from exc
     parent_exists = parent_dest.is_dir() and (parent_dest / "capsule.yaml").exists()
     if parent_exists:
         return
@@ -1018,9 +1023,10 @@ def _collect_summaries(capsule_dir: Path) -> list[dict[str, Any]]:
 
 
 def _resolve(run_id: str, capsule_dir: Path) -> Path:
-    if "/" in run_id or ".." in run_id:
-        raise BadRequestError("invalid run_id")
-    candidate = capsule_dir / run_id
+    try:
+        candidate = safe_child(capsule_dir, run_id, field="run_id")
+    except (UnsafePathSegmentError, PathEscapeError) as exc:
+        raise BadRequestError(str(exc)) from exc
     if candidate.is_dir() and (candidate / "capsule.yaml").exists():
         return candidate
     raise NotFoundError(f"Capsule '{run_id}' not found.")

@@ -57,7 +57,7 @@ import json
 import re
 import tempfile
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -66,6 +66,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from novafabric._capsule_fs import read_required_capsule_member
 from novafabric._hashutil import sha256_prefixed
+from novafabric._safe_path import (
+    PathEscapeError,
+    UnsafePathSegmentError,
+    atomic_write_bytes,
+    require_path_segment,
+    safe_child,
+)
 from novafabric.science.provenance import (
     ScienceNode,
     ScienceProvenanceError,
@@ -99,6 +106,7 @@ __all__ = [
     "ScienceCrateExport",
     "ScienceMaterialMissingError",
     "TamperedReceiptError",
+    "UnsafeOutputNameError",
     "UnsupportedProfileError",
     "build_science_metadata",
     "export_science_rocrate",
@@ -172,6 +180,10 @@ class TamperedReceiptError(FairRocrateError):
 
 class CrateCarrierError(FairRocrateError):
     """The NF-040 carrier produced an archive this module cannot compose over."""
+
+
+class UnsafeOutputNameError(FairRocrateError):
+    """The capsule's ``run_id`` cannot name an output file inside ``out_dir``."""
 
 
 class InvalidPersistentIdentifierError(FairRocrateError):
@@ -580,7 +592,31 @@ def _write_deterministic_zip(path: Path, members: dict[str, bytes]) -> None:
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
             zf.writestr(info, members[name])
-    path.write_bytes(buf.getvalue())
+    atomic_write_bytes(path, buf.getvalue())
+
+
+def _output_stem(manifest: Mapping[str, Any], capsule_dir: Path) -> str:
+    """The capsule's ``run_id`` (or directory name) as a safe output file stem.
+
+    ``run_id`` comes from the capsule's own ``capsule.yaml``, which is untrusted
+    once the capsule was received from elsewhere: ``../../escaped`` once wrote
+    the crate two directories above ``out_dir`` (review misc-3-04).
+
+    Raises:
+        UnsafeOutputNameError: the ``run_id`` is not one safe path segment.
+    """
+    raw = manifest.get("run_id") or capsule_dir.name
+    try:
+        return require_path_segment(str(raw), "run_id")
+    except UnsafePathSegmentError as exc:
+        raise UnsafeOutputNameError(str(exc)) from exc
+
+
+def _confined_output(out_dir: Path, stem: str, suffix: str) -> Path:
+    try:
+        return safe_child(out_dir, stem, field="run_id", suffix=suffix)
+    except (UnsafePathSegmentError, PathEscapeError) as exc:
+        raise UnsafeOutputNameError(str(exc)) from exc
 
 
 def _carrier_members(capsule_dir: Path) -> dict[str, bytes]:
@@ -649,8 +685,9 @@ def export_science_rocrate(
     metadata_bytes = _canonical_bytes(doc)
     members[_METADATA_NAME] = metadata_bytes
 
-    run_id = str(manifest.get("run_id") or capsule_dir.name)
-    crate_path = out_dir / f"{run_id}.science.rocrate.zip"
+    run_id = _output_stem(manifest, capsule_dir)
+    crate_path = _confined_output(out_dir, run_id, ".science.rocrate.zip")
+    binding_path = _confined_output(out_dir, run_id, BINDING_SUFFIX)
     _write_deterministic_zip(crate_path, members)
 
     unbound: list[str] = []
@@ -669,6 +706,5 @@ def export_science_rocrate(
         ror_refs=list(pids.ror_refs),
         unbound=unbound,
     )
-    binding_path = out_dir / f"{run_id}{BINDING_SUFFIX}"
-    binding_path.write_bytes(_canonical_bytes(binding.model_dump(mode="json")))
+    atomic_write_bytes(binding_path, _canonical_bytes(binding.model_dump(mode="json")))
     return ScienceCrateExport(crate_path=crate_path, binding_path=binding_path, binding=binding)

@@ -28,6 +28,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
+from novafabric._safe_path import PathEscapeError, UnsafePathSegmentError, safe_child
 from novafabric.jobs import Job, JobNotFoundError, JobState, JobStore, StaleWorkerError
 from novafabric.server.auth import AuthContext
 from novafabric.server.deps import get_capsule_dir, get_db_path
@@ -94,8 +95,12 @@ async def schedule_replay(
     if mode not in valid_modes:
         raise BadRequestError(f"mode must be one of {sorted(valid_modes)}")
 
-    # Verify the capsule exists
-    capsule_path = capsule_dir / run_id
+    # Verify the capsule exists. run_id must be one safe path segment: an
+    # absolute or ``..`` value once named a directory outside the store.
+    try:
+        capsule_path = safe_child(capsule_dir, run_id, field="run_id")
+    except (UnsafePathSegmentError, PathEscapeError) as exc:
+        raise BadRequestError(str(exc)) from exc
     if not capsule_path.is_dir() or not (capsule_path / "capsule.yaml").exists():
         raise NotFoundError(f"Capsule '{run_id}' not found.")
 

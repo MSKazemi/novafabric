@@ -18,6 +18,12 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
 from novafabric import _paths as _nf_paths
+from novafabric._safe_path import (
+    PathEscapeError,
+    UnsafePathSegmentError,
+    require_path_segment,
+    safe_child,
+)
 from novafabric.server.auth import AuthContext
 from novafabric.server.deps import get_capsule_dir, get_db_path
 from novafabric.server.errors import BadRequestError, ConflictError, NotFoundError
@@ -71,20 +77,9 @@ async def export_evidence(
     db_path: Annotated[Path | None, Depends(get_db_path)] = None,
     _auth: Annotated[AuthContext, Depends(require_role(Role.writer))] = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    run_id = body.get("run_id")
-    if not run_id:
-        raise BadRequestError("run_id is required")
-    output_path_override = body.get("output_path")
+    run_id, capsule_path, out_path = _export_paths(body, capsule_dir)
     allow_unsafe_skips = bool(body.get("allow_unsafe_skips", False))
-
-    # Validate capsule exists
-    capsule_path = capsule_dir / run_id
-    if not capsule_path.is_dir() or not (capsule_path / "capsule.yaml").exists():
-        raise NotFoundError(f"Capsule '{run_id}' not found.")
-
     bundle_id = str(uuid.uuid4())
-    out_default = _evidence_dir() / f"{run_id}.zip"
-    out_path = Path(output_path_override) if output_path_override else out_default
 
     # Check for an existing bundle for this run_id
     with _BUNDLES_LOCK:
@@ -111,16 +106,9 @@ async def export_evidence(
             EvidenceBundleBuilder,
             UnsafeSkipsError,
         )
-        from novafabric.evidence.signing import LocalSigner
+        from novafabric.evidence.signing import LocalSigner, ensure_signing_key
 
-        key_pem = _nf_paths.local_key_path()
-        if not key_pem.exists():
-            from novafabric.evidence.signing import generate_keypair
-
-            priv_path, _pub_path = generate_keypair(key_pem.parent)
-            if priv_path != key_pem:
-                key_pem.write_bytes(priv_path.read_bytes())
-
+        key_pem = ensure_signing_key(_nf_paths.local_key_path())
         out_path.parent.mkdir(parents=True, exist_ok=True)
         signer = LocalSigner(key_pem)
         builder = EvidenceBundleBuilder(
@@ -220,6 +208,35 @@ async def download_evidence_bundle(
 
 
 # ---------- helpers ----------
+
+
+def _export_paths(body: dict[str, Any], capsule_dir: Path) -> tuple[str, Path, Path]:
+    """Validate an export request; return ``(run_id, capsule_path, bundle_path)``.
+
+    ``run_id`` must be one safe path segment (no ``/``, ``\\``, ``..``, NUL, not
+    absolute), so it can only name a capsule directly inside the server's capsule
+    directory, and the server alone picks where the bundle is written: the
+    evidence directory, ``<run_id>.zip``. A request that names an output path is
+    refused (400): a ``writer`` once used it to overwrite any file the server
+    could write (review server-01).
+    """
+    if body.get("output_path") is not None:
+        raise BadRequestError(
+            "output_path is not accepted: the server writes the bundle to its own "
+            "evidence directory and returns the path as bundle_path"
+        )
+    raw = body.get("run_id")
+    if raw is None or raw == "":
+        raise BadRequestError("run_id is required")
+    try:
+        run_id = require_path_segment(raw, "run_id")
+        capsule_path = safe_child(capsule_dir, run_id, field="run_id")
+        out_path = safe_child(_evidence_dir(), run_id, field="run_id", suffix=".zip")
+    except (UnsafePathSegmentError, PathEscapeError) as exc:
+        raise BadRequestError(str(exc)) from exc
+    if not capsule_path.is_dir() or not (capsule_path / "capsule.yaml").is_file():
+        raise NotFoundError(f"Capsule '{run_id}' not found.")
+    return run_id, capsule_path, out_path
 
 
 def _bundle_summary(meta: dict[str, Any]) -> dict[str, Any]:

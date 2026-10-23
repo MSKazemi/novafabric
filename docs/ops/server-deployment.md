@@ -509,7 +509,7 @@ The four built-in roles are:
 | Role | Permissions |
 |---|---|
 | `reader` | Read capsules, assets, lineage, replays |
-| `writer` | Reader + create/upload capsules and assets |
+| `writer` | Reader + create/upload capsules and assets, export evidence bundles (written only inside the server's evidence directory) |
 | `admin` | Writer + manage roles, tokens, server config |
 | `auditor` | Read audit logs and evidence bundles; cannot read raw capsule content |
 
