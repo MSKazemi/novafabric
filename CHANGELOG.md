@@ -205,6 +205,27 @@ entries below change behaviour** — read *Changed — BREAKING* before upgradin
   file; the OTLP traces and logs routes refuse bodies over 16 MiB before buffering them; prompt version
   numbers are never reused; concurrent admin revokes cannot leave zero admins.
 
+- **Capture sweeps the whole capsule, and nothing downstream writes through a planted link.** The
+  post-workload sweep removes and records every symlink, FIFO, socket and device at any depth; `nova
+  verify` and `nova validate` fail a capsule holding one anywhere, even if it was planted after sealing
+  (`special_entries`); the capsule directory is pinned after the sweep (a swap stops capture with
+  `✗ capture integrity`). With `--pii-subject`, the PII stage wrote `redaction_manifest.json` through a
+  planted link and rewrote hard-linked files in place; it now writes only by rename, and an append to a
+  hard-linked file copies it first. Score appends, dataset-provenance facets, `nova export-c2pa` and
+  `--emit-otel-genai` never write through a link; the C2PA binder reads only inside the capsule.
+- **Every Evidence Bundle member is signed.** A signed members statement
+  (`attestations/bundle.intoto.json`) covers every file and the manifest's fields, so rewriting
+  `README.md`, the bundled schemas or `verifier_instructions` fails `nova verify`, `--public-key`
+  included. Bundles built before this verify as "signed content only" (`members_signed: false`,
+  `unsigned_members`) and are never shown as fully verified; the dashboard's Verify button now shows
+  the server's verdict instead of a partial in-browser signature check.
+- **The audit log's hash chain cannot fork.** Concurrent appends (8 threads × 5 bypasses gave 12
+  `prev_hash` mismatches) are serialised with `flock` plus an in-process lock. A seal bypass counts only
+  while its `seal.bypass.create` entry exists; a bypass audited but not stored is withdrawn with
+  `seal.bypass.abort`.
+- **The cluster collector refuses a malformed event with 422** instead of failing with 500, and stores
+  nothing from that batch.
+
 ### Fixed
 
 - **Capture hooks are fail-open.** A recorder failure — an SDK object passed back in `messages`,
@@ -266,6 +287,19 @@ entries below change behaviour** — read *Changed — BREAKING* before upgradin
   complete; a malformed audit profile is a clear error; `--help` keeps `[extra]` hints; lineage,
   C2PA and safety-case records carry the installed version; `nova eval agent` exits 1 on FAIL.
 - `POST /api/ingest-capsule` no longer leaks a file watcher per request.
+- `--runner-option extra_env='{"K":"V"}'` — the JSON form the upgrade notes recommend — reaches the job
+  for `docker`, `kubernetes`, `slurm` and `lsf` (it was silently ignored); a malformed object fails the run
+  at setup, naming the key, never the value; the same applies to `kubernetes`'s `node_selector`.
+- `nova pii erase`/`status` and `nova migrate-schema` default `--capsule-dir` to where `nova capture`
+  writes; `nova retention` reads `retention-policy.yaml` and `worm.db` from
+  `$NOVAFABRIC_HOME/registries/<registry>/` wherever it runs (a legacy working-directory copy is still
+  read, with a warning), and `deletion_mode: prohibited` or a WORM lock in any copy holds the item.
+- `nova migrate-to-postgres` copies `asset_status_history`, so rollback evidence survives the move.
+- `nova migrate` writes a `migration_source` lineage edge that passes `nova validate` (every migrated
+  capsule failed validation); `migration_source` is a new additive `edge_type` value (ADR-0034 §6), and
+  the edge names the original by run id and `capsule.yaml` digest instead of absolute paths.
+- `GET /api/seal/log/verify` creates no `-wal`/`-shm` files; the evidence detail route verifies and shows
+  one snapshot and reports the real signer-key fingerprint; verdicts are cached by archive SHA-256.
 - **`nova replay --help` states that a timeout exits 124** (`ReplayTimeout`), not 1, and the CLI
   prints why it stopped.
 
@@ -325,6 +359,12 @@ entries below change behaviour** — read *Changed — BREAKING* before upgradin
 - A bypass fails when the audit log is unwritable; `nova seal bypass --notify` no longer signs `sent`.
 - `nova safety tripwire list --framework <typo>` exits 2; `nova eval agent` exits 1 on FAIL;
   `rebuild-metadata-db` refuses the in-memory `local` backend and `--data-dir`.
+
+- Any symbolic link a workload leaves in its capsule — even one pointing inside it — marks the capsule
+  tampered (`nova verify`/`nova validate` fail).
+- A seal bypass created before this release stops counting until re-created (bypasses expire within
+  168 h); `NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1` skips the audit check for a copied store.
+- A malformed `extra_env`/`node_selector` JSON object fails the run instead of being dropped.
 
 ### Documentation
 

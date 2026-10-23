@@ -167,6 +167,18 @@ STRIDE analysis in the project's internal threat model:
   on from these surfaces, rotate a Postgres password you put in `merkle_db`, and
   delete any stray `postgres:`/`postgresql:` directory where you ran `nova`.**
 
+  Also fixed in the next release: with `--pii-subject`, a workload could make
+  capture overwrite a host file through a planted `redaction_manifest.json` link
+  or a hard link; links and FIFOs nested below the capsule root survived capture
+  and passed `nova verify` and `nova validate`; concurrent appends could fork the
+  audit log's hash chain; and Evidence Bundle members no signature covered
+  (`README.md`, the bundled schemas, `verifier_instructions`) could be rewritten
+  without failing verification. **Re-run `nova validate`/`nova verify` on capsules
+  captured from untrusted workloads, and treat Evidence Bundles exported before
+  this release as "signed content only".** Known limits: audit-log locking uses
+  advisory `flock`, which NFS without lock support and Lustre without `-o flock`
+  do not honour; the audit chain is unkeyed.
+
 If you find a way to make any disabled-by-default surface reachable without
 explicit opt-in, that is a vulnerability — please report it.
 
