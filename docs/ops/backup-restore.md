@@ -176,7 +176,9 @@ nova import ./exports/dr-2026-07 --public-key export.pub.pem --dry-run
 nova import ./exports/dr-2026-07 --public-key export.pub.pem
 ```
 
-The import is fail-closed (a tampered or incomplete batch refuses whole),
+The import is fail-closed (a tampered or incomplete batch refuses whole, and so
+does a member `capsule_id` that is not one plain directory name, so no member can
+land outside the store),
 idempotent by content address (interrupted imports resume on re-run), never
 overwrites a diverged local capsule (collisions are reported, exit 5), and
 reindexes lineage + the dashboard runs cache automatically. Every run — dry

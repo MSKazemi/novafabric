@@ -71,7 +71,6 @@ import hashlib
 import json
 import logging
 import os
-import stat
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -174,18 +173,10 @@ def _ensure_signing_key(key_path: Path) -> bool:
     per-run export: a missing *default* key is auto-generated and disclosed)."""
     if key_path.exists():
         return False
-    from novafabric.evidence.signing import generate_keypair
+    from novafabric.evidence.signing import ensure_signing_key
 
-    priv_path, pub_path = generate_keypair(key_path.parent)
-    if priv_path != key_path:
-        key_path.write_bytes(priv_path.read_bytes())
-        try:
-            os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
-        except OSError:
-            pass
-        pub_alias = key_path.with_suffix(".pub.pem")
-        if not pub_alias.exists():
-            pub_alias.write_bytes(pub_path.read_bytes())
+    # Mode 0600 from the first byte, atomic, never through a link (review server-01).
+    ensure_signing_key(key_path)
     return True
 
 

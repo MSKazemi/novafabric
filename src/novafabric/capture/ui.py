@@ -414,17 +414,33 @@ def unresolved_observations(
 
     A reference-metadata-only observation (``blob_ref`` absent) is **not** unresolved — there
     is nothing to resolve, which is the documented default, not a failure.
+
+    ``blob_ref`` comes from the capsule, so it is opened only *inside* the capsule, never
+    through a link, never a FIFO or device, and never above the media byte cap
+    (``NOVAFABRIC_MEDIA_MAX_BYTES``). An absolute or ``..`` reference, a link, a special
+    file or an over-size file is unresolved and is not read. Before this, the command
+    hashed any file the caller could read (``/home/u/.ssh/id_rsa``), so it was an oracle
+    for "does file X hash to H", and a FIFO hung it.
     """
     from pathlib import Path
 
+    from novafabric._capsule_fs import CapsuleRequiredFileError, read_required_capsule_file
+    from novafabric.capture.media import media_max_bytes
+
     root = Path(capsule_dir)
+    cap = media_max_bytes()
     bad: list[UiObservation] = []
     for obs in facet.observations:
         if not obs.blob_ref:
             continue
         try:
-            raw = (root / obs.blob_ref).read_bytes()
-        except OSError:
+            raw = read_required_capsule_file(
+                root, obs.blob_ref, operation="capture-ui verify", max_bytes=cap
+            )
+        except (CapsuleRequiredFileError, OSError, ValueError):
+            bad.append(obs)
+            continue
+        if raw is None:
             bad.append(obs)
             continue
         if "sha256:" + hashlib.sha256(raw).hexdigest() != obs.content_hash:

@@ -146,6 +146,19 @@ is **no** organization/workspace/team hierarchy yet — that is
   is [`api/openapi.yaml`](../../api/openapi.yaml). A formal deprecation/sunset
   policy is proposed in [ADR-0188](../decisions.md)
   (`future design`).
+- **Ids in requests are names, never paths** (**works today**): a `run_id`
+  in a request (`POST /v0/evidence`, `POST /v0/replays`, `GET|DELETE
+  /v0/capsules/{run_id}`) and a `run_id`/`parent_run_id` in an uploaded
+  `capsule.yaml` must be one path segment: no `/`, `\`, `..`, NUL or other
+  control character, not absolute, at most 255 bytes, else **400**. An entry of
+  the capsule store that is a symbolic link is refused with **400** by the read,
+  evidence and replay routes, not followed. `POST /v0/evidence` writes the bundle only to
+  `<evidence dir>/<run_id>.zip` (`NOVAFABRIC_EVIDENCE_DIR`, default
+  `$NOVAFABRIC_HOME/evidence`), written to a new file and renamed into place, and
+  returns that path as `bundle_path`. A request that names an `output_path` is
+  refused with **400**: before v0.107.0 a `writer` used it to overwrite any file
+  the server could write (review server-01). The signing key the server creates on
+  first export (`$NOVAFABRIC_HOME/keys/signing_key.pem`) is written mode `0600`.
 - **Pagination:** cursor-based, default 50 / max 500 per page (**works
   today**). `GET /v0/capsules` and `GET /v0/assets` now serve **keyset**
   cursors — see 6a (**experimental**).

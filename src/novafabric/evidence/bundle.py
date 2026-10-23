@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import tempfile
 import zipfile
 from collections.abc import Sequence
@@ -21,6 +22,7 @@ from novafabric._capsule_fs import (
     refuse_capsule_links,
 )
 from novafabric._hashutil import sha256_file_prefixed, sha256_prefixed
+from novafabric._safe_path import UnsafePathSegmentError, require_path_segment
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
 from novafabric.evidence.admissibility import Custodian, admissibility_block
@@ -770,11 +772,63 @@ class EvidenceBundleBuilder:
         return manifest
 
     def _zip_staging(self, staging: Path) -> None:
-        self._output_path.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(self._output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for path in sorted(staging.rglob("*")):
-                if path.is_file():
-                    zf.write(path, path.relative_to(staging).as_posix())
+        """Zip *staging* to the output path: a fresh file renamed into place.
+
+        The archive is written to a new ``O_EXCL | O_NOFOLLOW`` temporary file
+        beside the output and renamed over it, so a link or hard link already at
+        the output name is replaced, never written through.
+        """
+        out = self._output_path
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=out.parent, prefix=f".{out.name}.", suffix=".tmp", delete=False
+        ) as handle:
+            tmp = Path(handle.name)
+            try:
+                with zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for path in sorted(staging.rglob("*")):
+                        if path.is_file():
+                            zf.write(path, path.relative_to(staging).as_posix())
+                handle.flush()
+                os.fsync(handle.fileno())
+                os.fchmod(handle.fileno(), 0o644)
+            except BaseException:
+                handle.close()
+                tmp.unlink(missing_ok=True)
+                raise
+        try:
+            os.replace(tmp, out)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+
+
+def _set_member_run_ids(capsule_dirs: Sequence[Path]) -> list[str]:
+    """Each capsule's ``run_id``, refused unless it is one safe, unique path segment.
+
+    A capsule-set bundle stages every member under ``run-capsule/<run_id>/``,
+    ``lineage-subgraph/<run_id>/`` and ``attestations/<run_id>/``. The
+    ``run_id`` comes from the capsule's own ``capsule.yaml``, which the workload
+    wrote, so a ``../`` value once wrote capsule files and signatures outside
+    the staging directory (review trust-evidence-02). Two members with one
+    ``run_id`` would also overwrite each other.
+
+    Raises:
+        CapsuleValidationError: a ``run_id`` is missing, unsafe or repeated.
+    """
+    run_ids: list[str] = []
+    for capsule_dir in capsule_dirs:
+        raw = yaml.safe_load(_capsule_text(capsule_dir, "capsule.yaml")).get("run_id")
+        try:
+            run_id = require_path_segment(str(raw) if raw is not None else "", "run_id")
+        except UnsafePathSegmentError as exc:
+            raise CapsuleValidationError(f"{capsule_dir}: {exc}") from exc
+        if run_id in run_ids:
+            raise CapsuleValidationError(
+                f"{capsule_dir}: run_id {run_id!r} appears twice in the capsule set"
+            )
+        run_ids.append(run_id)
+    return run_ids
 
 
 def _count_lines(path: Path) -> int:
@@ -883,6 +937,7 @@ class CapsuleSetBundleBuilder(EvidenceBundleBuilder):
         # contents do not match what the operator asked to export.
         for capsule_dir in self._capsule_dirs:
             self._validate_capsule(capsule_dir)
+        run_ids = _set_member_run_ids(self._capsule_dirs)
 
         self._run_policy_gate()
 
@@ -894,10 +949,7 @@ class CapsuleSetBundleBuilder(EvidenceBundleBuilder):
             signatures: list[dict[str, Any]] = []
             subjects: list[dict[str, Any]] = []
 
-            for capsule_dir in self._capsule_dirs:
-                run_id = str(
-                    yaml.safe_load(_capsule_text(capsule_dir, "capsule.yaml"))["run_id"]
-                )
+            for capsule_dir, run_id in zip(self._capsule_dirs, run_ids, strict=True):
                 capsule_rel = f"run-capsule/{run_id}"
                 lineage_rel = f"lineage-subgraph/{run_id}"
                 self._stage_capsule_copy(staging, capsule_dir, capsule_rel)

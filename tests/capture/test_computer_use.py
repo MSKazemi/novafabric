@@ -335,3 +335,52 @@ def test_a_capsule_carrying_both_facets_validates_against_the_real_schema() -> N
 
     jsonschema.Draft202012Validator(schema).validate(capsule)
     assert set(capsule["facets"]) == {ACTIONS_FACET_NAME, OBSERVATIONS_FACET_NAME}
+
+
+# --- blob_ref is confined to the capsule (review capture-runners-20) ----------
+
+
+@pytest.mark.parametrize(
+    "blob_ref",
+    ["/etc/hostname", "../outside.png", "outputs/../../outside.png", "outputs/link.png"],
+)
+def test_a_blob_ref_outside_the_capsule_is_unresolved_and_never_read(
+    tmp_path: Path, blob_ref: str
+) -> None:
+    """Before the fix, ``capture-ui verify`` hashed any readable file: an oracle."""
+    capsule = tmp_path / "capsule"
+    (capsule / "outputs").mkdir(parents=True)
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"secret bytes")
+    (capsule / "outputs" / "link.png").symlink_to(outside)
+    if blob_ref == "/etc/hostname":
+        blob_ref = str(outside)
+    rec = UiRecorder(capture_raw=True)
+    # The recorded hash MATCHES the outside file, so only confinement can say "unresolved".
+    rec.record_observation("screenshot", b"secret bytes", blob_ref=blob_ref)
+    facet = rec.observations_facet()
+    assert facet is not None
+    assert len(unresolved_observations(facet, capsule)) == 1
+
+
+def test_a_fifo_blob_ref_is_unresolved_without_blocking(tmp_path: Path) -> None:
+    import os
+
+    (tmp_path / "outputs").mkdir()
+    os.mkfifo(tmp_path / "outputs" / "pipe.png")
+    rec = UiRecorder(capture_raw=True)
+    rec.record_observation("screenshot", b"x", blob_ref="outputs/pipe.png")
+    facet = rec.observations_facet()
+    assert facet is not None
+    assert len(unresolved_observations(facet, tmp_path)) == 1
+
+
+def test_an_oversize_blob_is_unresolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOVAFABRIC_MEDIA_MAX_BYTES", "4")
+    (tmp_path / "outputs").mkdir()
+    (tmp_path / "outputs" / "big.png").write_bytes(b"0123456789")
+    rec = UiRecorder(capture_raw=True)
+    rec.record_observation("screenshot", b"0123456789", blob_ref="outputs/big.png")
+    facet = rec.observations_facet()
+    assert facet is not None
+    assert len(unresolved_observations(facet, tmp_path)) == 1

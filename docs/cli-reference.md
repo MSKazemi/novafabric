@@ -821,11 +821,19 @@ Options:
 - `--subject FILTER` — subject filter (default: `$NOVA_NATS_SUBJECT` or `nova.evidence.>`)
 - `--report PATH` — write the `RebuildReport` JSON (per-run sha256 digests, order flags)
 
-Exit codes: 0 — rebuilt, order preserved · 1 — broker unreachable / drain error ·
-2 — rebuilt but a per-run `seq` order violation was detected.
+Exit codes: 0 — rebuilt, order preserved · 1 — broker unreachable / drain error,
+or `--target` already holds `*.jsonl` partitions · 2 — rebuilt but a per-run `seq`
+order violation was detected.
 
 Events without a parseable `run_id` are routed to the `_unattributed`
-partition, never dropped. See also `deploy/collector-arrow/` for the
+partition, never dropped. A `run_id` comes from whoever published the event, so it
+names a file only when it is one plain file name (`<run_id>.jsonl`); an absolute,
+`..`, separator-holding or control-character `run_id` goes to
+`_unsafe-<sha256 prefix>.jsonl` inside the target, with the original `run_id` kept
+in each record and in the report's `partition_file`. Each partition is created
+fresh (never appended, never through a link): rebuild into an empty directory, so a
+file holds exactly the events its digest describes. Before v0.107.0 an absolute
+`run_id` appended to any `*.jsonl` the user could write (review trust-evidence-07). See also `deploy/collector-arrow/` for the
 OTel-Arrow wire profile (31.5 % measured egress reduction).
 
 ---
@@ -2390,7 +2398,10 @@ nova capture-ui verify --capsule ./capsules/run-42 --strict
 
 Subcommands:
 - `show` — the recorded `ui_actions` and `ui_observations`
-- `verify` — check that stored observation bytes still hash to their `content_hash`
+- `verify` — check that stored observation bytes still hash to their `content_hash`.
+  A `blob_ref` is read only inside the capsule, never through a link, a FIFO or a device,
+  and never above `NOVAFABRIC_MEDIA_MAX_BYTES`; an absolute or `..` reference, or any of
+  those, is reported unresolved and is not read
 
 Options: `--capsule PATH` (required) · `--json` · `--strict` (`verify` only)
 
@@ -5024,7 +5035,9 @@ nova export-rocrate-science --capsule .novafabric/runs/01HX.../ --out ./crates
 nova export-rocrate-science --capsule 01HX... --orcid 0000-0002-1825-0097 --ror 03yrm5c26 --json
 ```
 
-Writes `<run_id>.science.rocrate.zip` and `<run_id>.fair-binding.json` (the NF-324
+Writes `<run_id>.science.rocrate.zip` and `<run_id>.fair-binding.json` into `--out` (a
+`run_id` that is not one plain file name, or a link at either output name, is refused with exit
+1 and nothing written; each file is written to a new file and renamed into place) (the NF-324
 `fair_binding` record: profile URIs, `rocrate_digest`, `prov_alignment: "w3c-prov"`,
 `sealed_root`, `receipt_root`, persistent identifiers, `unbound`, `verdict: null`).
 
@@ -5384,7 +5397,13 @@ directory containing `export-manifest.json` + `objects/`, or a single
 **Verification-first, fail-closed:** before any byte enters the store the
 manifest must verify (`VALID` — DSSE signature via the supplied public key,
 `count`/`batch_digest` consistency, and every member's bytes re-hashed).
-`INVALID` or `INCOMPLETE` refuses the **whole** import. Unpacking is hardened
+`INVALID` or `INCOMPLETE` refuses the **whole** import. Each member's
+`capsule_id` becomes a directory name in the store, so it must be one path
+segment: an id that is absolute, contains `/`, `\`, `..`, a NUL or other control
+character, or names a symbolic link already in the store makes the whole manifest
+`INVALID` (exit 3) before any byte is written, in signed and `--allow-unsigned`
+mode alike. Before v0.107.0 such an id unpacked a capsule outside the store
+(review storage-backup-01). Unpacking is hardened
 against hostile archives (absolute paths, `..`, links, devices — refused) and
 staged: members extract to a scratch directory and are atomically renamed into
 place, so a crash never leaves a half-written capsule. After unpack, lineage
