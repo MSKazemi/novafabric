@@ -283,7 +283,11 @@ class EvidenceBundleBuilder:
             ),
         )
         decision = engine.evaluate(inp)
-        audit_path = resolve_audit_log_path()
+        # The caller's audit log (resolved at construction when none was given).
+        # This used to call resolve_audit_log_path() again, so a caller that passed
+        # its own path had the bundle's audit section read one log while the policy
+        # decision was appended to another — the global one (review r6).
+        audit_path = self._audit_log_path
         try:
             AuditLog(audit_path).append(
                 event_type=(

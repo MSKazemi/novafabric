@@ -17,3 +17,12 @@ class BundleNotFoundError(Exception):
 
 class SoDError(Exception):
     """Raised on Separation-of-Duties violations during verification."""
+
+
+class BypassAuditError(Exception):
+    """A seal bypass was refused because its audit entry could not be written.
+
+    A bypass skips the two-person rule; the hash-chained ``seal.bypass.create``
+    entry is its compensating control. With no entry there is no bypass: nothing
+    is stored and nothing is announced (fail closed).
+    """

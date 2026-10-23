@@ -16,9 +16,12 @@ query may carry a token.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
+import socket
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -49,6 +52,9 @@ class BypassEvent:
     requester_keyid: str | None = None
     reason: str | None = None
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    #: ``nova seal bypass --notify`` addresses, as ``mailto:<addr>``. NovaFabric
+    #: sends no email itself; a configured channel's receiver may relay to them.
+    recipients: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -59,6 +65,7 @@ class BypassEvent:
             "requester_keyid": self.requester_keyid,
             "reason": self.reason,
             "timestamp": self.timestamp,
+            "recipients": list(self.recipients),
         }
 
 
@@ -135,12 +142,92 @@ class FileBypassNotifier:
 # ---------------------------------------------------------------------------
 
 
+class _DeadlineSockets:
+    """The sockets one webhook delivery opened, so a watchdog can cut them off.
+
+    ``urllib``'s ``timeout`` bounds each socket operation, not the request: a peer
+    that sends one byte inside every timeout window holds the caller indefinitely
+    (review r6 measured 24 s against a 5 s timeout). When the total deadline
+    passes, the watchdog shuts down every socket the delivery opened, which
+    unblocks the pending read.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sockets: list[socket.socket] = []
+        self._expired = False
+
+    def register(self, sock: socket.socket | None) -> None:
+        if sock is None:
+            return
+        with self._lock:
+            self._sockets.append(sock)
+            expired = self._expired
+        if expired:  # connected after the deadline fired: cut it off at once
+            _shutdown(sock)
+
+    def expire(self) -> None:
+        with self._lock:
+            self._expired = True
+            sockets = list(self._sockets)
+        for sock in sockets:
+            _shutdown(sock)
+
+    @property
+    def expired(self) -> bool:
+        with self._lock:
+            return self._expired
+
+
+def _shutdown(sock: socket.socket) -> None:
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass  # already closed or never connected
+
+
+def _deadline_opener(sockets: _DeadlineSockets) -> urllib.request.OpenerDirector:
+    """An opener whose HTTP(S) connections register their socket with *sockets*.
+
+    Built on the stock handlers, so proxies (``HTTP(S)_PROXY``) and redirects
+    behave exactly as they do under ``urllib.request.urlopen``.
+    """
+
+    class _HTTPConnection(http.client.HTTPConnection):
+        def connect(self) -> None:
+            super().connect()
+            sockets.register(self.sock)
+
+    class _HTTPSConnection(http.client.HTTPSConnection):
+        def connect(self) -> None:
+            super().connect()
+            sockets.register(self.sock)
+
+    class _HTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+            return self.do_open(_HTTPConnection, req)
+
+    class _HTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+            context = getattr(self, "_context", None)
+            return self.do_open(_HTTPSConnection, req, context=context)
+
+    return urllib.request.build_opener(_HTTPHandler(), _HTTPSHandler())
+
+
+#: Upper bound on how much of a webhook's reply body is read.
+_MAX_RESPONSE_BYTES = 64 * 1024
+
+
 class WebhookBypassNotifier:
     """POSTs bypass events as JSON to a configured ``http(s)://`` URL.
 
-    Raises :class:`BypassNotifyError` when the POST fails or the endpoint answers
-    with an error status. :func:`dispatch_bypass_event` contains it, so a failure
-    never blocks a bypass, but it is no longer swallowed where nobody sees it.
+    ``timeout_s`` is a **total wall-clock deadline** for one delivery (connect,
+    send, and reading the reply), not a per-read socket timeout. Raises
+    :class:`BypassNotifyError` when the POST fails, the endpoint answers with an
+    error status, or the deadline passes. :func:`dispatch_bypass_event` contains
+    it, so a failure never blocks a bypass, but it is no longer swallowed where
+    nobody sees it.
     """
 
     def __init__(self, url: str, timeout_s: float = 5.0) -> None:
@@ -163,14 +250,27 @@ class WebhookBypassNotifier:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
+        deadline_exceeded = f"webhook {origin}: deadline of {self._timeout:g}s exceeded"
+        sockets = _DeadlineSockets()
+        watchdog = threading.Timer(self._timeout, sockets.expire)
+        watchdog.daemon = True
+        watchdog.start()
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout):  # noqa: S310 — http(s) only
-                pass
+            # http(s) only (checked above); the opener is urlopen's, plus the watchdog.
+            with _deadline_opener(sockets).open(req, timeout=self._timeout) as resp:
+                resp.read(_MAX_RESPONSE_BYTES)
         except urllib.error.HTTPError as exc:
             raise BypassNotifyError(channel, [f"webhook {origin}: HTTP {exc.code}"]) from None
-        except (urllib.error.URLError, OSError, ValueError) as exc:
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
+            if sockets.expired:
+                raise BypassNotifyError(channel, [deadline_exceeded]) from None
             reason = getattr(exc, "reason", None) or type(exc).__name__
             raise BypassNotifyError(channel, [f"webhook {origin}: {reason}"]) from None
+        finally:
+            watchdog.cancel()
+        if sockets.expired:
+            # The reply finished just as the watchdog fired: still past the deadline.
+            raise BypassNotifyError(channel, [deadline_exceeded])
 
 
 # ---------------------------------------------------------------------------

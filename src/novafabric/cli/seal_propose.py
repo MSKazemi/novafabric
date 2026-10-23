@@ -541,7 +541,15 @@ def seal_bypass_cmd(
     key: Path = typer.Option(..., "--key", help="ECDSA P-256 private key PEM"),
     cert: Path = typer.Option(..., "--cert", help="X.509 certificate PEM"),
     target_env: str = typer.Option("production", "--target-env"),
-    notify: list[str] = typer.Option([], "--notify", help="Email to notify (repeatable)"),
+    notify: list[str] = typer.Option(
+        [],
+        "--notify",
+        help=(
+            "Address to notify (repeatable). Signed into the bypass as mailto:<addr> "
+            "and passed to the configured channel's receiver to relay; NovaFabric "
+            "itself sends no email."
+        ),
+    ),
     db_path: Path | None = typer.Option(None, "--db", help=_DB_UNUSED_HELP),
     data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir"),
 ) -> None:
@@ -549,15 +557,24 @@ def seal_bypass_cmd(
 
     The bypass is signed with the operator's key and stored locally.
     Use sparingly — every bypass creates a permanent audit trail.
+
+    Fail closed: the bypass is stored only after its seal.bypass.create entry is
+    in the hash-chained audit log. If that entry cannot be written, the bypass is
+    refused, nothing is stored, and the command exits 1.
+
+    The signed predicate records the notification channels configured at signing
+    time (notification_status pending or not_configured, never sent); delivery
+    follows and its outcome is the seal.bypass.notify audit entry.
     """
     from datetime import UTC, datetime, timedelta
 
     from cryptography.x509 import NameOID, load_pem_x509_certificate
 
-    from novafabric.promote.exceptions import PredicateValidationError
+    from novafabric.promote.exceptions import BypassAuditError, PredicateValidationError
     from novafabric.promote.predicates import (
         BYPASS_PAYLOAD_TYPE,
         build_bypass_predicate,
+        bypass_notification_fields,
         sign_promote_envelope,
         validate_predicate,
     )
@@ -595,6 +612,19 @@ def seal_bypass_cmd(
 
     capsule_digest_hex = hashlib.sha256(capsule_id.encode()).hexdigest()
 
+    # The store's channels are what put_bypass delivers to: sign that configuration
+    # (pending / not_configured), never a claimed "sent" (review r6).
+    bundle_store = PromoteBundleStore(data_dir)
+    notification = bypass_notification_fields(
+        bundle_store.notification_channels(), list(notify)
+    )
+    if notify and notification["notification_status"] == "not_configured":
+        err_console.print(
+            "[yellow]Warning:[/yellow] --notify addresses are recorded, but NovaFabric "
+            "sends no email and no notification channel is configured. Set "
+            "NOVA_BYPASS_NOTIFY_WEBHOOK (or NOVA_BYPASS_NOTIFY_FILE) to relay them."
+        )
+
     predicate = build_bypass_predicate(
         capsule_id=capsule_id,
         capsule_digest_hex=capsule_digest_hex,
@@ -602,8 +632,8 @@ def seal_bypass_cmd(
         bypass_reason=reason,
         bypass_authorized_by=authorized_by,
         valid_until=valid_until_str,
-        notification_sent_to=list(notify),
-        notification_status="sent" if notify else "not_configured",
+        notification_sent_to=notification["notification_sent_to"],
+        notification_status=notification["notification_status"],
     )
 
     try:
@@ -619,8 +649,19 @@ def seal_bypass_cmd(
         err_console.print(f"[red]Signing error:[/red] {exc}")
         raise typer.Exit(code=1)
 
-    bundle_store = PromoteBundleStore(data_dir)
-    bypass_uuid = bundle_store.put_bypass(capsule_id, envelope, valid_until_str)
+    try:
+        bypass_uuid = bundle_store.put_bypass(
+            capsule_id,
+            envelope,
+            valid_until_str,
+            actor="cli-user",
+            surface="cli",
+            authorized_by=authorized_by,
+            recipients=[f"mailto:{r}" for r in notify],
+        )
+    except BypassAuditError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from None
 
     # Record bypass event in the active capsule, if one is running (fail-open).
     try:

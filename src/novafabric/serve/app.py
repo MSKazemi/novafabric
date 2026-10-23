@@ -5209,9 +5209,20 @@ def create_app(
             "check_results": check_results,
         }
 
-    @app.post("/api/seal/{capsule_id}/bypass", dependencies=[Depends(verify_token)])
-    async def seal_bypass_endpoint(capsule_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Create a time-limited SoD bypass, DSSE-signed and permanently logged (ADR-0059)."""
+    @app.post("/api/seal/{capsule_id}/bypass")
+    async def seal_bypass_endpoint(
+        capsule_id: str,
+        body: dict[str, Any],
+        actor_fp: str = Depends(verify_token),
+    ) -> dict[str, Any]:
+        """Create a time-limited SoD bypass, DSSE-signed and permanently logged (ADR-0059).
+
+        Fail closed (review r6): the bypass is stored only after its
+        ``seal.bypass.create`` entry is in the hash-chained audit log; if that
+        entry cannot be written the route answers 503 and stores nothing. Each
+        attempt that reaches the store is also recorded in the dashboard audit
+        log, as the CLI's is in the chained log.
+        """
         capsule_id = _require_path_segment(capsule_id, "capsule_id")
         import hashlib
         from datetime import UTC, datetime, timedelta
@@ -5219,10 +5230,11 @@ def create_app(
         from cryptography.x509 import NameOID, load_pem_x509_certificate
 
         from novafabric.promote.bundle_store import PromoteBundleStore
-        from novafabric.promote.exceptions import PredicateValidationError
+        from novafabric.promote.exceptions import BypassAuditError, PredicateValidationError
         from novafabric.promote.predicates import (
             BYPASS_PAYLOAD_TYPE,
             build_bypass_predicate,
+            bypass_notification_fields,
             sign_promote_envelope,
             validate_predicate,
         )
@@ -5262,6 +5274,11 @@ def create_app(
         valid_until_str = valid_until.isoformat()
         capsule_digest_hex = hashlib.sha256(capsule_id.encode()).hexdigest()
 
+        # Sign the channels put_bypass will deliver to (pending / not_configured);
+        # the delivery outcome is audited afterwards (review r6).
+        bundle_store = PromoteBundleStore(_nf_paths.nova_home())
+        notification = bypass_notification_fields(bundle_store.notification_channels())
+
         predicate = build_bypass_predicate(
             capsule_id=capsule_id,
             capsule_digest_hex=capsule_digest_hex,
@@ -5269,8 +5286,8 @@ def create_app(
             bypass_reason=reason,
             bypass_authorized_by=authorized_by,
             valid_until=valid_until_str,
-            notification_sent_to=[],
-            notification_status="not_configured",
+            notification_sent_to=notification["notification_sent_to"],
+            notification_status=notification["notification_status"],
         )
 
         try:
@@ -5299,22 +5316,68 @@ def create_app(
             key_path.unlink(missing_ok=True)
             cert_path.unlink(missing_ok=True)
 
-        nova_data = _nf_paths.nova_home()
-        bundle_store = PromoteBundleStore(nova_data)
-        # Off the event loop: put_bypass notifies synchronously, and a
-        # NOVA_BYPASS_NOTIFY_WEBHOOK POST may block for up to its 5 s timeout.
-        # Inline, that froze every other request on this server meanwhile.
-        bypass_uuid = await asyncio.to_thread(
-            bundle_store.put_bypass, capsule_id, envelope, valid_until_str
+        audit_args: dict[str, Any] = {
+            "capsule_id": capsule_id,
+            "authorized_by": authorized_by,
+            "valid_until": valid_until_str,
+            "target_env": target_env,
+            "duration_hours": duration_hours,
+        }
+        cli_equivalent = (
+            f"nova seal bypass {capsule_id} --duration {duration_hours}h "
+            "--key <pem> --cert <pem> --reason <reason>"
         )
+        # Off the event loop: put_bypass notifies synchronously, and a
+        # NOVA_BYPASS_NOTIFY_WEBHOOK POST may block for up to its 5 s deadline.
+        # Inline, that froze every other request on this server meanwhile.
+        try:
+            bypass_uuid = await asyncio.to_thread(
+                bundle_store.put_bypass,
+                capsule_id,
+                envelope,
+                valid_until_str,
+                actor=f"serve:{actor_fp}",
+                surface="serve",
+                authorized_by=authorized_by,
+            )
+        except BypassAuditError as exc:
+            _record_bypass_attempt(audit_args, cli_equivalent, actor_fp, error=str(exc))
+            raise HTTPException(status_code=503, detail=str(exc)) from None
 
+        _record_bypass_attempt(
+            {**audit_args, "bypass_uuid": bypass_uuid}, cli_equivalent, actor_fp
+        )
         return {
             "bypass_uuid": bypass_uuid,
             "capsule_id": capsule_id,
             "authorized_by": authorized_by,
             "valid_until": valid_until_str,
             "target_env": target_env,
+            "notification_status": notification["notification_status"],
+            "notification_sent_to": notification["notification_sent_to"],
         }
+
+    def _record_bypass_attempt(
+        args: dict[str, Any], cli_equivalent: str, actor_fp: str, error: str | None = None
+    ) -> None:
+        """Dashboard-audit one bypass attempt; a failure here is logged, not raised.
+
+        The chained ``seal.bypass.create`` entry (written by ``put_bypass``, fail
+        closed) is the control; this record is the dashboard's own trail.
+        """
+        try:
+            audit.append(
+                action="seal_bypass",
+                args=args,
+                cli_equivalent=cli_equivalent,
+                actor_token_fp=actor_fp,
+                result="error" if error else "ok",
+                error=error,
+            )
+        except OSError as exc:
+            logger.warning(
+                "dashboard audit append failed for seal_bypass: %s", type(exc).__name__
+            )
 
     @app.get("/api/seal/log/verify", dependencies=[Depends(verify_token)])
     async def seal_log_verify_endpoint(
@@ -8402,24 +8465,33 @@ def create_app(
         all_capsules = bool(body.get("all", False))
         if not all_capsules and not run_id:
             raise HTTPException(status_code=400, detail="provide run_id or all=true")
-        watcher = CapsuleWatcher(
-            capsule_dir,
-            db_path=_db_path,
-            backend=_watcher_settings.backend,
-            interval=_watcher_settings.interval,
-        )
-        if all_capsules:
-            indexed = watcher.ingest_all()
-            return {"ok": True, "indexed": indexed}
         # A bare id names a capsule under the server's capsule dir; anything with
         # a separator is a path and goes through the read confinement. The
         # watcher used to take an absolute path as-is.
-        target = str(run_id)
-        if "/" in target or "\\" in target:
-            target = str(_confine_read(target))
-        else:
-            target = _require_path_segment(target, "run_id")
-        found, is_new = watcher.ingest_one(target)
+        target = ""
+        if not all_capsules:
+            target = str(run_id)
+            if "/" in target or "\\" in target:
+                target = str(_confine_read(target))
+            else:
+                target = _require_path_segment(target, "run_id")
+        # Index only: ingest_all / ingest_one never read the watch backend, so this
+        # indexer opens no OS watch. With the configured backend (watchdog under
+        # "auto") every request started an inotify instance plus observer threads
+        # that nothing closed — about 128 requests exhausted the user's inotify
+        # instances (review r6). Closed deterministically all the same.
+        watcher = CapsuleWatcher(
+            capsule_dir,
+            db_path=_db_path,
+            backend="polling",
+            interval=_watcher_settings.interval,
+        )
+        try:
+            if all_capsules:
+                return {"ok": True, "indexed": watcher.ingest_all()}
+            found, is_new = watcher.ingest_one(target)
+        finally:
+            watcher.close()
         if not found:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
         return {"ok": True, "found": True, "is_new": is_new}

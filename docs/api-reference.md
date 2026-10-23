@@ -386,6 +386,8 @@ the generic `{kind}` route is registered last so it never shadows them
 | `GET` | `/api/seal/{capsule_id}/proposals` | List all proposals for a capsule with their approval status. |
 | `POST` | `/api/seal/{capsule_id}/verify` | Run the five-check SoD verifier for a capsule's promote bundles. |
 
+`POST /api/seal/{capsule_id}/bypass` fails closed: the bypass is stored only after its `seal.bypass.create` entry (actor `serve:<token fingerprint>`) is in the hash-chained audit log. If that entry cannot be written, the route answers **503** and stores nothing. Every attempt that reaches the store also writes a `seal_bypass` record to the dashboard audit log. The response adds `notification_status` (`pending` or `not_configured`) and `notification_sent_to`, the channel configuration the signed predicate records; the delivery outcome is the `seal.bypass.notify` audit entry ([NovaSeal configuration §4.1](novaseal-configuration.md#41-maker-checker-bypass-notifications)).
+
 ## Knowledge graph  (18)
 
 | Method | Path | Summary |
@@ -535,6 +537,8 @@ caller-supplied numbers isn't a mutating or boundary-crossing action).
 | Method | Path | Summary |
 |---|---|---|
 | `POST` | `/api/ingest-capsule` | Index capsule(s) into the runs metadata store — nova ingest-capsule. |
+
+The route indexes without opening a file watcher. Before 2026-10-23 each request started an inotify instance and watcher threads that were never closed, so about 128 requests could exhaust the user's inotify instances.
 
 ## lineage-store  (1)
 

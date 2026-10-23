@@ -502,19 +502,43 @@ configure, read when the bypass is created:
 
 | Variable | Channel |
 |---|---|
-| `NOVA_BYPASS_NOTIFY_FILE` | appends one JSON line (`event_type: bypass_created`, `capsule_id`, `bypass_uuid`, `valid_until`, `timestamp`) |
-| `NOVA_BYPASS_NOTIFY_WEBHOOK` | POSTs the same JSON object (`Content-Type: application/json`, 5 s timeout, no retry) |
+| `NOVA_BYPASS_NOTIFY_FILE` | appends one JSON line (`event_type: bypass_created`, `capsule_id`, `bypass_uuid`, `valid_until`, `requester_keyid`, `recipients`, `timestamp`) |
+| `NOVA_BYPASS_NOTIFY_WEBHOOK` | POSTs the same JSON object (`Content-Type: application/json`, no retry). The 5 s limit is a **total** deadline for the whole delivery, not a per-read timeout |
 
-Set both to use both. The bypass is stored first and notified after, and **a
-failing channel never blocks the bypass**. A failure is logged as a warning
-(`bypass notification failed`). Every bypass is also recorded in the hash-chained
-audit log as a `seal.bypass.notify` entry, with `outcome` set to `delivered`,
-`failed` (with `failed_channels`) or `not_configured`. So a bypass that nobody was
-told about is still on the record. A webhook is recorded as `scheme://host:port`
-only, because its path or query may carry a token.
+Set both to use both.
+
+**A bypass is refused unless it is audited (fail closed).** A bypass skips the
+two-person rule, and the audit trail is its compensating control. Before the
+bypass is stored, a `seal.bypass.create` entry goes into the hash-chained audit log.
+It records the actor (`cli-user`, or `serve:<token fingerprint>` for the dashboard),
+the signer's certificate name (`authorized_by`), `bypass_uuid`, `valid_until`, the
+SHA-256 of the signed envelope, the configured `notification_channels` and the
+`surface` (`cli` or `serve`). If that entry cannot be written, the bypass is refused
+and nothing is stored or announced: `nova seal bypass` exits 1, and the route answers
+`503`. The dashboard route also writes a `seal_bypass` record to the dashboard audit
+log (`result` `ok` or `error`).
+
+**The signature covers the configuration, not the delivery.** The bypass is signed
+*before* anything is sent, so the signed predicate cannot honestly say "sent". It
+records what was configured when it was signed:
+
+| Field | Value |
+|---|---|
+| `notification_sent_to` | the configured channels (`file`, `webhook:scheme://host:port`), then each `--notify` address as `mailto:<addr>` |
+| `notification_status` | `pending` when at least one channel is configured, `not_configured` otherwise. Never `sent` |
+
+The outcome of the delivery that follows is a `seal.bypass.notify` audit entry with
+`outcome` `delivered`, `failed` (with `failed_channels`) or `not_configured`. A
+failing channel never blocks the bypass, because the bypass is already stored and
+audited by then; the failure is logged as a warning (`bypass notification failed`).
+A webhook is recorded as `scheme://host:port` only, because its path or query may
+carry a token. Bypasses signed before 2026-10-23 may carry the legacy values `sent`
+(from `--notify`, although no email was ever sent) or `not_configured` (always, from
+the dashboard). For those, trust the audit log over the predicate.
 
 Not done: email delivery. `nova seal bypass --notify <email>` records the addresses
-in the signed bypass predicate, but NovaFabric sends no email. Use the webhook to
+in the signed predicate and in the event's `recipients`, but NovaFabric sends no
+email. A `--notify` address does not make the status `pending`; use the webhook to
 reach a mail or chat relay.
 
 Before 2026-10-22 neither variable had any effect: nothing read them, and no

@@ -5875,11 +5875,17 @@ Options:
 - `--key PATH`, `--cert PATH` (required) — ECDSA P-256 private key PEM and X.509 certificate PEM that sign the bypass
 - `--duration TEXT` — validity window, e.g. `24h`, `7d` (default: `24h`, maximum `168h`)
 - `--target-env TEXT` — target environment (default: `production`)
-- `--notify EMAIL` — address to notify (repeatable)
+- `--notify EMAIL` — address to notify (repeatable). Signed into the bypass as `mailto:<addr>` and passed to the configured channel in the event's `recipients`; NovaFabric itself sends no email, and a warning says so when no channel is configured
 - `--data-dir PATH` — promote-bundle data directory override
 - `--db PATH` — accepted for compatibility and ignored: this command does not read the policy (`nova seal propose` and `nova seal verify` do).
 
 The bypass is recorded in the NovaSeal bypass log. The dashboard **SealTab** shows all active and expired bypasses with approver identity.
+
+**Fail closed (works today).** The bypass is stored only after its `seal.bypass.create` entry is in the hash-chained audit log (actor `cli-user`, the certificate's name as `authorized_by`, the envelope's SHA-256, the configured notification channels). If that entry cannot be written, the bypass is refused, nothing is stored or announced, and the command exits 1.
+
+**Notifications.** The signed predicate records the channels configured at signing time: `notification_status` is `pending` when `NOVA_BYPASS_NOTIFY_FILE` or `NOVA_BYPASS_NOTIFY_WEBHOOK` is set, `not_configured` otherwise, never `sent`. Delivery happens after signing and its outcome is the `seal.bypass.notify` audit entry. The webhook has a 5 s total deadline. See [NovaSeal configuration §4.1](novaseal-configuration.md#41-maker-checker-bypass-notifications).
+
+Exit codes: `0` bypass stored; `1` invalid input, signing error, or the audit entry could not be written (nothing stored).
 
 ---
 
@@ -6453,6 +6459,13 @@ records prompt evidence; it never renders templates or serves prompts to inferen
 Register a new immutable prompt version. The version number auto-increments per `prompt_id`;
 re-registering identical content is idempotent (the existing version is returned, no new row).
 Prints the replay-verifiable frozen reference.
+
+A version number is never reused. The next number is one past the highest the registry has
+ever issued for that `prompt_id`, counting unregistered versions from the status history, so
+`prompt:<id>@<n>` keeps naming the content it named when it was first registered. A number
+that was in production is refused outright (`VersionReuseError`, exit 1), the same guard
+`nova register` applies to assets (ADR-0312). Each registration writes a `register` row to
+the status history, bound to the new row's id and spec digest, with `cli-user` as the actor.
 
 ```bash
 nova prompt register triage -t "You triage {ticket_body}." --var ticket_body -m "first cut"
@@ -7472,6 +7485,9 @@ OIDC (`oidc.issuer_url` + `oidc.audience` in the YAML read via `--config`, defau
 `~/.config/novafabric/server.yaml`), the command refuses with exit code 2. With
 OIDC configured, JWT-claim admins can still log in, so the revoke is allowed. (The
 guard used to key on a `NOVA_OIDC_ISSUER` env var that the server never reads.)
+The count and the delete run in one write transaction (`BEGIN IMMEDIATE`), so two
+concurrent revokes of the last two admins can no longer both succeed: the second one
+waits for the first to commit, then is refused.
 
 ```bash
 nova server revoke-role user@example.com writer
@@ -8137,7 +8153,7 @@ failed).
 | `NOVAFABRIC_SPOOL_STREAM` | `NOVA_EVIDENCE` | JetStream stream the spool forwarder publishes to (`novafabric-spool-forwarder --stream`) |
 | `NOVAFABRIC_SPOOL_SUBJECT` | `nova.evidence` | JetStream subject prefix for the spool forwarder; per-run subject is `<prefix>.<run_id>` |
 | `NOVA_BYPASS_NOTIFY_FILE` | — | Path to JSONL file for maker-checker bypass notifications; a failure is logged and audited (`seal.bypass.notify`), never blocking |
-| `NOVA_BYPASS_NOTIFY_WEBHOOK` | — | HTTP(S) URL for maker-checker bypass webhook notifications; a failure is logged and audited (`seal.bypass.notify`), never blocking |
+| `NOVA_BYPASS_NOTIFY_WEBHOOK` | — | HTTP(S) URL for maker-checker bypass webhook notifications (5 s total deadline); a failure is logged and audited (`seal.bypass.notify`), never blocking |
 | `NOVA_EVENTS_LOG` | — | Path of the local append-only lifecycle-event log (`events.jsonl`); enables the file sink (ADR-0137, experimental) |
 | `NOVA_EVENTS_WEBHOOK` | — | Lifecycle-event webhook URL(s), comma-separated; user-configured only, no default destination (ADR-0137, experimental) |
 | `NOVA_EVENTS_MAX_RETRIES` | `2` | Bounded webhook retry count for lifecycle-event delivery (ADR-0137) |

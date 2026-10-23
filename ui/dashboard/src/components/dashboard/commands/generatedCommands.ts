@@ -12489,7 +12489,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "notify",
         "label": "--notify",
         "type": "text",
-        "hint": "Email to notify (repeatable) (repeatable — add more in your terminal)",
+        "hint": "Address to notify (repeatable). Signed into the bypass as mailto:<addr> and passed to the configured channel's receiver to relay; NovaFabric itself sends no email. (repeatable — add more in your terminal)",
         "flag": "--notify"
       },
       {

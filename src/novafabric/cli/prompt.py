@@ -196,7 +196,9 @@ def prompt_register_cmd(
 
     Auto-increments the version and computes the content hash over the
     canonical body. Re-registering identical content is idempotent — the
-    existing version is returned and no new row is written.
+    existing version is returned and no new row is written. A version number
+    is never reused: one the registry has issued before, even if since
+    unregistered, is skipped, and one that was in production is refused.
 
     Scope: one prompt version.
 
@@ -211,6 +213,7 @@ def prompt_register_cmd(
         frozen_ref,
         register_prompt_version,
     )
+    from novafabric.registry.service import DuplicateAssetError
 
     body = _load_template(template, file)
     cfg = _parse_config(config)
@@ -223,11 +226,15 @@ def prompt_register_cmd(
             variables=variables,
             config=cfg,
             commit_message=message,
+            actor="cli-user",
         )
     # pydantic.ValidationError subclasses ValueError, so both a malformed
     # template/slug and an empty chat form land here. CompositionError is
     # the ADR-0115 register-time gate (cycle / depth / unknown ref).
-    except (ValueError, PromptRegistrationError, CompositionError) as exc:
+    # DuplicateAssetError covers VersionReuseError (a production version number).
+    except (
+        ValueError, PromptRegistrationError, CompositionError, DuplicateAssetError
+    ) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
 

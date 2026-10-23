@@ -48,6 +48,10 @@ class AuditEventType(str, enum.Enum):
     # Audit H3 (2026-10-22): one entry per maker-checker bypass notification —
     # outcome delivered / failed / not_configured (promote/bypass_notify.py)
     SEAL_BYPASS_NOTIFY = "seal.bypass.notify"
+    # Review r6 (2026-10-23): one entry per stored maker-checker bypass, written
+    # BEFORE the bypass becomes visible; if it cannot be written the bypass is
+    # refused (promote/bundle_store.py, fail closed)
+    SEAL_BYPASS_CREATE = "seal.bypass.create"
 
 
 class AuditEntry(BaseModel):
