@@ -64,7 +64,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric._hashutil import sha256_prefixed
 from novafabric.science.provenance import (
     ScienceNode,
@@ -552,12 +552,13 @@ def build_science_metadata(
 
 
 def _read_manifest(capsule_dir: Path) -> dict[str, Any]:
-    path = capsule_dir / "capsule.yaml"
-    if not path.is_file():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    text = read_required_capsule_member(capsule_dir / "capsule.yaml", operation="FAIR RO-Crate")
+    if text is None:
         raise ScienceMaterialMissingError(f"capsule.yaml not found in {capsule_dir}")
     try:
-        data = yaml.safe_load((read_capsule_member_or_none(path, operation="FAIR RO-Crate") or ""))
-    except (OSError, yaml.YAMLError) as exc:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
         raise CrateCarrierError(f"could not read capsule.yaml: {exc}") from exc
     if not isinstance(data, dict):
         raise CrateCarrierError("capsule.yaml is not a mapping")

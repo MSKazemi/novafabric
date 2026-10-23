@@ -22,7 +22,7 @@ from typing import Annotated, Optional
 import typer
 from rich.console import Console
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import CapsuleRequiredFileError, read_required_capsule_member
 
 console = Console()
 err_console = Console(stderr=True)
@@ -93,10 +93,10 @@ def redaction_xray_cmd(
             raise typer.Exit(2)
         try:
             capsule_text = (
-                read_capsule_member_or_none(proof, operation="nova redaction-xray") or ""
+                read_required_capsule_member(proof, operation="nova redaction-xray") or ""
             )
             doc = json.loads(capsule_text)
-        except (json.JSONDecodeError, OSError) as exc:
+        except (json.JSONDecodeError, OSError, CapsuleRequiredFileError) as exc:
             err_console.print(f"[red]Could not read redaction proof:[/red] {exc}")
             raise typer.Exit(2) from exc
         # Read the authoritative id from the proof BEFORE narrowing `doc` —

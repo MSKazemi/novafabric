@@ -30,7 +30,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric import _paths as _nf_paths
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.governance import AISystemRecord, ClassificationResult, RiskTierClassifier
 from novafabric.governance.classifier import _DEFAULT_VOCAB_DIR
 
@@ -281,14 +281,16 @@ def from_capsule(
         console.print(f"[red]x[/red] Capsule directory not found: {capsule_dir}")
         raise typer.Exit(code=2)
 
-    manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError
+    # (exit 2 with an error line), never a classification of an empty manifest.
+    manifest_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="nova classify"
+    )
+    if manifest_text is None:
         console.print(f"[red]x[/red] capsule.yaml not found in: {capsule_dir}")
         raise typer.Exit(code=2)
 
-    manifest = yaml.safe_load(
-        read_capsule_member_or_none(manifest_path, operation="nova classify") or ""
-    )
+    manifest = yaml.safe_load(manifest_text)
 
     if not isinstance(manifest, dict):
         console.print("[red]x[/red] capsule.yaml did not parse as a mapping.")

@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric import _capsule_fs
-from novafabric._capsule_fs import read_capsule_file, read_capsule_member_or_none
+from novafabric._capsule_fs import read_capsule_file, read_required_capsule_member
 
 _OPERATION = "an RO-Crate export"
 
@@ -146,14 +146,16 @@ def export_ro_crate(capsule_dir: Path, output_path: Path) -> Path:
     # compares the exported document against the capsule's own manifest rather than
     # against a list of required keys (ADR-0256).
     run_id = capsule_dir.name
-    manifest_path = capsule_dir / "capsule.yaml"
-    if manifest_path.is_file() and not manifest_path.is_symlink():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
+    # never a crate that silently lacks its manifest. Unparseable YAML is still
+    # tolerated below.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="compliance export"
+    )
+    if capsule_text is not None:
         try:
             import yaml
 
-            capsule_text = (
-                read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
-            )
             manifest = yaml.safe_load(capsule_text) or {}
             if isinstance(manifest, dict) and manifest.get("run_id"):
                 run_id = str(manifest["run_id"])

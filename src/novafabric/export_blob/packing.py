@@ -36,7 +36,11 @@ from pathlib import Path
 import yaml
 
 from novafabric import _capsule_fs
-from novafabric._capsule_fs import CapsuleLinkError, read_capsule_file, read_capsule_member_or_none
+from novafabric._capsule_fs import (
+    CapsuleLinkError,
+    read_capsule_file,
+    read_required_capsule_member,
+)
 
 _OPERATION = "a blob export"
 
@@ -51,12 +55,13 @@ class CapsulePackLinkError(CapsulePackError, CapsuleLinkError):
 
 def capsule_identifier(capsule_dir: Path) -> str:
     """The capsule's id: ``run_id`` from ``capsule.yaml``, else the dir name."""
-    capsule_yaml = capsule_dir / "capsule.yaml"
-    if capsule_yaml.is_file():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
+    # never the directory name standing in for the recorded run id.
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="nova export-blob"
+    )
+    if capsule_text is not None:
         try:
-            capsule_text = (
-                read_capsule_member_or_none(capsule_yaml, operation="nova export-blob") or ""
-            )
             meta = yaml.safe_load(capsule_text)
         except yaml.YAMLError:
             meta = None

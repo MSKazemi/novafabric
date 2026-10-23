@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.assure.models import AssuranceResult, CheckStatus
 from novafabric.capture.record_roles import logical_model_calls
 
@@ -26,19 +26,23 @@ class BaseCheck(ABC):
     def run(self, capsule_dir: Path) -> AssuranceResult:
         ...
 
+    # Each reader returns "no data" only for an ABSENT file. A file that is
+    # present but unusable (a link, FIFO, directory) raises
+    # CapsuleRequiredFileError: a check never passes on evidence nobody read
+    # (a FIFO redaction-proof.json used to read as "no secrets detected").
+
     def _read_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
+        text = read_required_capsule_member(path, operation="nova assure")
+        if text is None:
             return {}
-        raw = yaml.safe_load((read_capsule_member_or_none(path, operation="nova assure") or ""))
+        raw = yaml.safe_load(text)
         if not isinstance(raw, dict):
             return {}
         return raw
 
     def _read_json(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        text = read_capsule_member_or_none(path, operation="nova assure")
-        if not text:  # a link or special file is never followed: treated as absent
+        text = read_required_capsule_member(path, operation="nova assure")
+        if not text:
             return {}
         raw = json.loads(text)
         if not isinstance(raw, dict):
@@ -46,10 +50,9 @@ class BaseCheck(ABC):
         return raw
 
     def _read_jsonl(self, path: Path) -> list[dict[str, Any]]:
-        if not path.exists():
-            return []
         lines = []
-        for line in (read_capsule_member_or_none(path, operation="nova assure") or "").splitlines():
+        text = read_required_capsule_member(path, operation="nova assure")
+        for line in (text or "").splitlines():
             line = line.strip()
             if line:
                 try:
@@ -208,7 +211,9 @@ class LLM05Check(BaseCheck):
                 "No tool calls recorded — improper output handling not applicable",
                 {"tool_call_count": 0},
             )
-        if not tool_path.exists():
+        # Read, not just stat'ed: a link, FIFO or directory raises
+        # CapsuleRequiredFileError instead of passing as "captured".
+        if read_required_capsule_member(tool_path, operation="nova assure") is None:
             return self._fail(
                 f"tool-calls.jsonl missing despite"
                 f" tool_call_count={tool_count} in manifest",

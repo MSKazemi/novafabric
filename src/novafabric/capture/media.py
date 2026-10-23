@@ -40,6 +40,12 @@ import re
 from pathlib import Path
 from typing import Any, Iterator
 
+from novafabric._capsule_fs import (
+    CapsuleRequiredFileError,
+    read_required_capsule_file,
+    read_required_capsule_member,
+)
+
 #: Opt-in gate for byte capture (ADR-0125 D2). Set by the orchestrator when
 #: ``nova capture --capture-media`` is passed; read in the workload subprocess
 #: where the hooks (and therefore the CapsuleWriter funnel) run.
@@ -336,12 +342,16 @@ def iter_media_parts(capsule_dir: Path) -> Iterator[tuple[str | None, dict[str, 
     """Yield ``(model_call_id, media_block)`` for every MediaPart in a capsule.
 
     Read surface over ``model-calls.jsonl``; tolerant of malformed lines
-    (skipped — this is a reader, not a validator).
+    (skipped — this is a reader, not a validator). The stream is never read
+    through a link and never blocks on a FIFO: one that is present but
+    unusable raises :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`.
     """
-    path = capsule_dir / "model-calls.jsonl"
-    if not path.exists():
+    text = read_required_capsule_member(
+        capsule_dir / "model-calls.jsonl", operation="reading media parts"
+    )
+    if text is None:
         return
-    for line in path.read_text().splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -405,12 +415,20 @@ def verify_media_blobs(capsule_dir: Path) -> list[str]:
         blob_ref = media.get("blob_ref")
         if not isinstance(blob_ref, str):
             continue
-        blob_path = capsule_dir / blob_ref
-        if not blob_path.is_file():
+        # blob_ref comes from the capsule: opened inside it only, never through
+        # a link and never a FIFO (a present-but-unusable blob is an error).
+        try:
+            blob = read_required_capsule_file(
+                capsule_dir, blob_ref, operation="media integrity check"
+            )
+        except CapsuleRequiredFileError as exc:
+            errors.append(f"{where}: unusable media blob: {blob_ref} ({exc.reason})")
+            continue
+        if blob is None:
             errors.append(f"{where}: missing media blob: {blob_ref}")
             continue
         recorded = media.get("content_hash")
-        actual = "sha256:" + hashlib.sha256(blob_path.read_bytes()).hexdigest()
+        actual = "sha256:" + hashlib.sha256(blob).hexdigest()
         if recorded != actual:
             errors.append(
                 f"{where}: media blob integrity error: {blob_ref} "

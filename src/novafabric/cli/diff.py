@@ -327,7 +327,12 @@ def _resolve_scores(path: Path) -> Path:
 
 def _read_outcomes(path: Path, metric: str) -> list[int]:
     """Read a boolean metric from a scores.jsonl (or capsule dir) as a 0/1 sequence."""
-    scores = [s for s in read_scores(_resolve_scores(path)) if s.name == metric]
+    # A capsule dir's scores.jsonl is a capsule member: never through a link.
+    try:
+        all_scores = read_scores(_resolve_scores(path), capsule_member=path.is_dir())
+    except ValueError as exc:  # unreadable (a link, FIFO) or invalid score log
+        raise typer.BadParameter(str(exc)) from exc
+    scores = [s for s in all_scores if s.name == metric]
     if not scores:
         raise typer.BadParameter(f"no scores named {metric!r} in {path}")
     outcomes: list[int] = []

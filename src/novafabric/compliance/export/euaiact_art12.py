@@ -35,7 +35,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 
 from .models import (
     COMPLETENESS_COMPLETE,
@@ -128,13 +128,14 @@ def build_art12_report(
 
     Raises:
         FileNotFoundError: if ``capsule.yaml`` is absent.
+        CapsuleRequiredFileError: ``capsule.yaml`` is present but unusable (a
+            link, FIFO, directory). Never an Art.12 record with empty fields.
     """
-    manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}")
-    capsule_text = (
-        read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="compliance export"
     )
+    if capsule_text is None:
+        raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}")
     manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
 
     generated_at = _now()

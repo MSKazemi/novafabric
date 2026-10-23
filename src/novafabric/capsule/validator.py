@@ -33,6 +33,7 @@ from typing import Any, Callable
 
 import jsonschema  # type: ignore[import-untyped]
 
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.capsule.schema import FailMode, ParentStatus
 
 logger = logging.getLogger(__name__)
@@ -116,10 +117,14 @@ class DistributedCapsuleValidator:
         self._time_fn = monotonic_time_fn or time.monotonic
 
     def _read_manifest(self) -> dict[str, Any]:
-        manifest_path = self._dir / "capsule.json"
-        if not manifest_path.exists():
+        # Never through a link or into a FIFO: present but unusable raises
+        # CapsuleRequiredFileError instead of a verdict on a stand-in.
+        text = read_required_capsule_member(
+            self._dir / "capsule.json", operation="distributed capsule validation"
+        )
+        if text is None:
             raise FileNotFoundError(f"capsule.json not found in {self._dir}")
-        result: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
+        result: dict[str, Any] = json.loads(text)
         return result
 
     def validate_distributed(

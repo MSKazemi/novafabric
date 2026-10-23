@@ -41,7 +41,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.trust.keyring import sign_payload, verify_sig
 
 CARD_SCHEMA_VERSION = "dataset-provenance-card/1"
@@ -149,11 +149,14 @@ def transforms_from_capsule(capsule_dir: str | Path) -> list[Transform]:
     the recorded operation. Only metadata (op type, edge id) is copied; never values.
     """
     capsule_dir = Path(capsule_dir)
-    lineage = capsule_dir / "lineage.jsonl"
     transforms: list[Transform] = []
-    if not lineage.exists():
+    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+    lineage_text = read_required_capsule_member(
+        capsule_dir / "lineage.jsonl", operation="dataset card"
+    )
+    if lineage_text is None:
         return transforms
-    for line in (read_capsule_member_or_none(lineage, operation="dataset card") or "").splitlines():
+    for line in lineage_text.splitlines():
         line = line.strip()
         if not line:
             continue

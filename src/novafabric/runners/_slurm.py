@@ -346,8 +346,9 @@ class SlurmRunner:
                 energy_counter_available=self._energy_counter_available(),
             )
         except (OSError, CapsuleEntryError) as exc:
-            # CapsuleEntryError: a link/FIFO planted at the receipts path is
-            # refused, never written through (fail-open: the run is unaffected).
+            # CapsuleEntryError: a link/FIFO planted at the receipts path, or a
+            # required capsule file that is present but unusable, is refused --
+            # never written through or over. Fail-open: the job result stands.
             logger.warning("could not write energy receipt for job %s: %s", jobid, exc)
             return False
         return receipt is not None

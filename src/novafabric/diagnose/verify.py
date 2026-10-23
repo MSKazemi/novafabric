@@ -46,7 +46,7 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric._paths import default_replays_dir
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.diagnose.attribution import (
@@ -271,7 +271,7 @@ def _verify_step(
 def _load_model_calls(capsule_dir: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     model_calls_ref = str(manifest.get("model_calls_ref", "model-calls.jsonl"))
     # ADR-0305: logical calls only (transport records are wire attempts).
-    return logical_model_calls(_read_jsonl(capsule_dir / model_calls_ref))
+    return logical_model_calls(_read_jsonl(capsule_dir, model_calls_ref))
 
 
 def verify_hypothesis(
@@ -317,7 +317,7 @@ def verify_hypothesis(
             taxonomy=attribution.responsible.taxonomy,
         )
 
-    manifest_text = read_capsule_member_or_none(
+    manifest_text = read_required_capsule_member(
         capsule_dir / "capsule.yaml", operation="nova diagnose"
     )
     manifest = yaml.safe_load(manifest_text or "") or {}
@@ -419,7 +419,7 @@ def search_root_cause(
             note="no failing causal-root candidate found; nothing to search",
         )
 
-    manifest_text = read_capsule_member_or_none(
+    manifest_text = read_required_capsule_member(
         capsule_dir / "capsule.yaml", operation="nova diagnose"
     )
     manifest = yaml.safe_load(manifest_text or "") or {}

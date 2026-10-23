@@ -31,6 +31,7 @@ Invariants (ADR-0197):
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Iterable, Sequence
 from enum import Enum
 from pathlib import Path
@@ -38,7 +39,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from novafabric._capsule_fs import read_capsule_file, read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_file, read_required_capsule_member
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .models import CompletenessSummaryEntry
@@ -137,17 +138,19 @@ def build_capsule_ref(
     import yaml  # local import: yaml is only needed on the capsule-verified path
 
     manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
+    if not os.path.lexists(manifest_path):
         return None
     h = hashlib.sha256()
     for name in files or _DEFAULT_REF_FILES:
-        p = capsule_dir / name
-        if p.exists():
+        # Never through a link or into a FIFO (novafabric._capsule_fs). An absent
+        # stream is left out of the digest; one that is present but unusable
+        # raises CapsuleRequiredFileError instead of silently dropping out.
+        data = read_required_capsule_file(capsule_dir, name, operation="compliance export")
+        if data is not None:
             h.update(name.encode())
-            # Never through a link or into a FIFO (novafabric._capsule_fs).
-            h.update(read_capsule_file(capsule_dir, name, operation="compliance export"))
+            h.update(data)
     capsule_text = (
-        read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+        read_required_capsule_member(manifest_path, operation="compliance export") or ""
     )
     manifest = yaml.safe_load(capsule_text) or {}
     capsule_id = (

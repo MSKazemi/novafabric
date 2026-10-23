@@ -35,6 +35,7 @@ from typing import Any
 
 import yaml
 
+from novafabric._capsule_fs import read_required_capsule_member
 from novafabric.evidence.intoto import INTOTO_STATEMENT_TYPE
 
 CAPSULE_PREDICATE_TYPE = "novafabric.dev/capsule/v1"
@@ -52,10 +53,12 @@ def _capsule_files(capsule_dir: Path) -> list[Path]:
 
 
 def _read_run_id(capsule_dir: Path) -> str:
+    # Never through a link or into a FIFO; a manifest that is present but
+    # unusable raises CapsuleRequiredFileError instead of an empty run id.
     for name in ("capsule.yaml", "capsule.json"):
-        path = capsule_dir / name
-        if path.exists():
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        text = read_required_capsule_member(capsule_dir / name, operation="an in-toto statement")
+        if text is not None:
+            data = yaml.safe_load(text) or {}
             if isinstance(data, dict) and data.get("run_id"):
                 return str(data["run_id"])
     return ""

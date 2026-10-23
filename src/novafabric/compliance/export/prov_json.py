@@ -39,7 +39,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_required_capsule_member
 
 # Namespace prefix used for all NovaFabric identifiers
 _NF_PREFIX = "nf"
@@ -100,18 +100,19 @@ def _seed_from_manifest(doc: dict[str, Any], capsule_dir: Path) -> None:
     A capsule always knows that run ``R`` produced evidence files ``E1..En``
     between two timestamps. Encoding only ``lineage.jsonl`` discards that, so
     this seeds the activity/entity/wasGeneratedBy core before lineage edges are
-    layered on top. A missing or unreadable manifest is not an error — the
-    documented skeleton-document behaviour is preserved.
+    layered on top. A missing or unparseable manifest is not an error — the
+    documented skeleton-document behaviour is preserved. A manifest that is
+    present but unusable (a link, FIFO, directory) raises
+    :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`.
     """
-    manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.exists():
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "capsule.yaml", operation="compliance export"
+    )
+    if capsule_text is None:
         return
     try:
         import yaml
 
-        capsule_text = (
-            read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
-        )
         manifest = yaml.safe_load(capsule_text) or {}
     except Exception:
         return
@@ -195,14 +196,13 @@ def export_prov_json(capsule_dir: Path) -> dict[str, Any]:
 
     _seed_from_manifest(doc, capsule_dir)
 
-    lineage_path = capsule_dir / "lineage.jsonl"
-    if not lineage_path.exists():
+    capsule_text = read_required_capsule_member(
+        capsule_dir / "lineage.jsonl", operation="compliance export"
+    )
+    if capsule_text is None:
         return doc
 
     edges = []
-    capsule_text = (
-        read_capsule_member_or_none(lineage_path, operation="compliance export") or ""
-    )
     for line in capsule_text.splitlines():
         line = line.strip()
         if line:

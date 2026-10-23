@@ -191,7 +191,9 @@ def replay_cmd(
       1  replay failed or was aborted (incl. CapsuleNotReplayable, a
          divergence under the fail-closed default, a replayed command that
          could not be launched: error.type ReplayLaunchError)
-      2  --environment did not match the capsule's recorded environment
+      2  --environment did not match the capsule's recorded environment, or
+         a file the replay needs (capsule.yaml, replay.yaml, env.lock, a call
+         stream) is present but unusable (a link, FIFO, directory): nothing ran
       3  mocked: refused to start (also under --dry-run) because a replay.yaml
          `allow: false` override names a tool recorded on a transport replay
          cannot intercept (error.type ToolOverrideUnenforceable); --permissive

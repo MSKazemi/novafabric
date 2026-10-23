@@ -31,7 +31,7 @@ from typing import Any
 
 import yaml
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
 
 from .models import (
     COMPLETENESS_COMPLETE,
@@ -345,10 +345,9 @@ class NIS2Exporter:
         )
 
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
-        manifest_path = capsule_dir / "capsule.yaml"
-        if not manifest_path.exists():
-            return {}
-        data = yaml.safe_load(
-            read_capsule_member_or_none(manifest_path, operation="compliance export") or ""
+        # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError.
+        text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="compliance export"
         )
+        data = yaml.safe_load(text) if text is not None else None
         return data if isinstance(data, dict) else {}

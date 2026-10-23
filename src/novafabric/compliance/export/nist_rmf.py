@@ -23,7 +23,6 @@ Reference: NIST AI 100-1 (January 2023) — AI Risk Management Framework.
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -33,7 +32,7 @@ from pydantic import BaseModel, Field
 from novafabric._capsule_fs import (
     is_capsule_regular_file,
     read_capsule_member_or_none,
-    read_capsule_text,
+    read_required_capsule_member,
 )
 from novafabric.compliance.capture_coverage import (
     NOT_CAPTURED_REASON,
@@ -471,11 +470,12 @@ class NISTAIRMFReporter:
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
         # Absent manifest = no data. A manifest that is present but is not a
         # readable regular file (a directory, link, FIFO) is an error, never an
-        # empty export: read_capsule_text raises for it.
-        if not os.path.lexists(capsule_dir / "capsule.yaml"):
+        # empty export: read_required_capsule_member raises for it.
+        text = read_required_capsule_member(
+            capsule_dir / "capsule.yaml", operation="compliance export"
+        )
+        if text is None:
             return {}
         import yaml
 
-        return yaml.safe_load(
-            read_capsule_text(capsule_dir, "capsule.yaml", operation="compliance export")
-        ) or {}
+        return yaml.safe_load(text) or {}
