@@ -63,8 +63,12 @@ and a secret-scan record (rule-based scanning for known key and token patterns).
 Capsules are identified by a [ULID](https://github.com/ulid/spec) — a
 lexicographically sortable, time-prefixed unique identifier.
 
+Capture writes each capsule to `$NOVAFABRIC_CAPSULE_DIR/<ulid>/` when that
+variable is set, otherwise to `$NOVAFABRIC_HOME/capsules/<ulid>/`
+(`~/.novafabric/capsules/<ulid>/` by default; `_paths.default_capsule_dir`).
+
 ```
-.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
+~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
   capsule.yaml          ← run manifest
   trace.jsonl           ← execution spans (OTel)
   model-calls.jsonl     ← LLM API calls (OTel GenAI semconv)
@@ -282,8 +286,9 @@ A session member may itself be a distributed-run PARENT. A capsule that belongs
 to a session carries two additive optional back-reference fields (`session_id`,
 `sequence`); absence means a standalone run, byte-identical to before.
 
-> **Related:** [Replay Modes](#replay-modes) (a replay is itself a new capsule
-> you can diff), [Lineage Graph](#lineage-graph), and
+> **Related:** [Replay Modes](#replay-modes) (a replay writes a
+> `replay_result.yaml` report; only `intervention` also writes a counterfactual
+> capsule you can diff), [Lineage Graph](#lineage-graph), and
 > [Evidence Bundle](#evidence-bundle).
 
 ---
@@ -409,7 +414,9 @@ Choose one with `nova capture --runner <name>`:
 | **`local`** | v0.5.x | Runs the workload as a local subprocess. Default; no remote infrastructure needed. | — |
 | **`docker`** | v0.6 | Runs the workload inside a Docker container. The image must already have NovaFabric installed. Capsule directory is mounted as a volume so artifacts land on the host. | `image` |
 | **`kubernetes`** | v0.6.1 | Runs the workload as a Kubernetes `Job` via `kubectl` shell-out. Artifacts are pulled back via `kubectl cp`. | `image`, `namespace` |
-| **`slurm`** | v0.6.1 | Runs the workload as a SLURM batch job via `sbatch` + `sacct`. Trusts a shared filesystem for artifacts (no rsync). | `partition` |
+| **`slurm`** | v0.6.1 | Runs the workload as a SLURM batch job: the generated script goes to `sbatch` on stdin (never `--wrap`), polled with `sacct`. Trusts a shared filesystem for artifacts (no rsync). | `partition` |
+| **`lsf`** | — | Runs the workload as an IBM LSF batch job: the script goes to `bsub` on stdin, polled with `bjobs`. Shared filesystem, no rsync. | — (`queue` defaults to `normal`) |
+| **`pbs`** | — | Runs the workload as a PBS batch job: `qsub <capsule>/nova-<run>.pbs`, polled with `qstat`. Shared filesystem, no rsync. | — (`queue` defaults to `default`) |
 
 Runner details:
 
@@ -835,7 +842,8 @@ The lineage graph is a directed graph stored in SQLite — a rebuildable cache
 derived from each capsule's `lineage.jsonl`. It has two table types:
 
 - **`lineage_nodes`** — runs, assets, and artifacts. Each node has a
-  deterministic ID (SHA-256 of `kind:ref`).
+  deterministic ID: the first 26 hex characters of SHA-256(`kind:ref`)
+  (`lineage/_types.py::node_id_for`).
 - **`lineage_edges`** — typed, directional edges between nodes.
 
 Because the graph is derived from the capsules, it can always be rebuilt from
@@ -852,18 +860,33 @@ DESIGN**, not implemented.
 
 ### Edge types
 
-| Edge type | Meaning |
-|---|---|
-| `consumed` | The run read/used this asset or artifact |
-| `produced_by` | This artifact was produced by the run |
-| `replayed_from` | This run is a replay of the referenced run |
+The capsule's `lineage.jsonl` vocabulary (`src/novafabric/schemas/lineage-edge.schema.json`),
+labelled by who writes each type today:
+
+| Edge type | Meaning | Written by |
+|---|---|---|
+| `consumed` | The run read/used this asset | `nova capture`, from `assets.jsonl` |
+| `produced_by` | This artifact was produced by the run | `nova capture`, from the capsule's outputs (or `produced.jsonl`) |
+| `replayed_from` | This run is a replay of the referenced run | `nova capture`, from `replay_of_run_id` in `capsule.yaml` |
+| `depends_on` | This asset depends on another asset | the registry, from an asset's declared dependencies |
+| `migration_source` | This v1.0.0 capsule was upgraded from a v0.1.x capsule (same run) | `nova migrate` (ADR-0034 §6) |
+| `derived_from`, `evaluated_by`, `attested_by` | Reserved by the schema | no NovaFabric writer emits them today |
+
+Two further vocabularies share the lineage store
+(`lineage/_types.py::LINEAGE_EDGE_TYPES`): the typed parent/child and session edges
+(`contains`, `spawned`, `delegated_to`, `member_of_session`; ADR-0044, ADR-0122) and
+the memory-provenance pair `wrote_memory` / `read_memory` (ADR-0143). The memory
+edges are **derived on demand** from a capsule's memory-operation events
+(`lineage/memory.py`), keyed by memory key only; capture does not write them to
+`lineage.jsonl`.
 
 ### Confidence levels
 
 | Confidence | Meaning |
 |---|---|
-| `observed` | Directly recorded at runtime (e.g., explicit API call) |
+| `observed` | Directly recorded at runtime (e.g., an explicit asset reference in `assets.jsonl`) |
 | `inferred` | Derived from capsule structure (e.g., output file presence) |
+| `declared` | Stated by a record the run or capsule carries (e.g., `produced.jsonl`, `replay_of_run_id`) |
 
 ### Graph queries
 
@@ -1135,10 +1158,12 @@ The registry is a local SQLite database at `~/.novafabric/registry.db`
 The registry is entirely local. There is no server, no credentials, and no
 network dependency for local mode.
 
-In server mode (`nova serve`, v0.7, experimental), the same data lives in
-Postgres 16 and is accessible via the REST API at `/api/v1/assets`, guarded by
-OIDC and an RBAC model (`reader < writer < admin`, plus an orthogonal
-`auditor`). Server mode is strictly additive: **local mode never requires it.**
+In server mode (`nova server start`, experimental — not the single-user
+`nova serve` dashboard), the same data lives in the server's database (SQLite by
+default, Postgres via `backend: postgres`) and is accessible via the REST API
+under `/v0/assets`, guarded by bearer-token auth (OIDC, offline tokens, API keys
+or the local token) and an RBAC model (`reader < writer < admin`, plus an
+orthogonal `auditor`). Server mode is strictly additive: **local mode never requires it.**
 
 ---
 
@@ -1155,7 +1180,8 @@ in `nova inspect` output and the audit log — the escape hatch is visible,
 not silent.
 
 Standard eval suites ship OCI-pinned for reproducibility: **GAIA, SWE-bench,
-AgentBench, MMLU, and a Smoke suite** (v0.9). Promotion can be Rego-gated to
+AgentBench, MMLU, TruthfulQA, and a Smoke suite** (v0.9; the `novafabric.evals`
+entry points in `pyproject.toml`). Promotion can be Rego-gated to
 block on a regression against a prior result.
 
 ---
@@ -1201,10 +1227,11 @@ so a reader can tell what was actually observed from what an operator merely
 declared.
 
 > **Experimental — NovaSeal signing core.** The in-process NovaSeal core
-> shipped in v0.10+ (`experimental`): DSSE signing (ECDSA P-256), best-effort
-> **RFC 3161 trusted timestamps**, and an append-only SQLite Merkle log,
+> shipped in v0.10+ (`experimental`): DSSE signing (ECDSA P-256), opt-in
+> **RFC 3161 trusted timestamps** (no default TSA and no network call unless
+> `tsa_url` is set — ADR-0292), and an append-only SQLite Merkle log,
 > verified offline by `nova verify` (`signature_ok` / `timestamp_ok` /
-> `log_integrity_ok`), plus the maker-checker `nova seal propose/approve/verify`
+> `log_integrity_ok`, plus `timestamp_trust`), plus the maker-checker `nova seal propose/approve/verify`
 > chain (ADR-0059). Still **PLANNED / FUTURE DESIGN** per
 > [ADR-0041](./decisions.md): the
 > dedicated network signing *service*, qualified timestamps, Sigstore-keyless

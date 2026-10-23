@@ -117,7 +117,7 @@ You should see:
 Inspect what was recorded:
 
 ```bash
-RUN=$(ls -d "${NOVAFABRIC_HOME:-$HOME/.novafabric}/capsules/"*/ | head -1)
+RUN=$(ls -dt "${NOVAFABRIC_HOME:-$HOME/.novafabric}/capsules/"*/ | head -1)   # newest
 nova validate $RUN        # → ✓ Valid capsule: …  status=success
 ls $RUN
 cat $RUN/capsule.yaml
@@ -128,13 +128,20 @@ The capsule is a plain directory. No server is needed to read it:
 
 ```
 capsule.yaml          # manifest: model, command, exit code, timing
+env.lock              # the environment the run executed in (interpreter, packages, host)
 model-calls.jsonl     # every LLM API call, one record each (OTel GenAI semconv)
 tool-calls.jsonl      # tool invocations (MCP or plugin hooks)
-assets.jsonl          # datasets this run consumed
+trace.jsonl           # the run's span/event trace
+assets.jsonl          # assets this run consumed
+lineage.jsonl         # lineage edges derived at finalization
+replay.yaml           # per-tool replay policy used by `nova replay`
 redaction-proof.json  # proof secrets were scanned before storage
 inputs/               # stdin, files passed in
 outputs/              # stdout, stderr, files written out
 ```
+
+(Other files appear when a feature records them, for example `capture-health.json`,
+`scores.jsonl` or a seal.)
 
 Two properties make this durable rather than just a log directory:
 
@@ -177,13 +184,16 @@ CAPS=($(ls -d $RUNS/*/))
 nova diff "${CAPS[0]}" "${CAPS[1]}"
 ```
 
-You get structural output — not a text diff, a behavioral diff:
+You get a structural diff of the two capsules — which outputs, environment entries,
+model calls and tool calls changed, appeared or disappeared — not a line-by-line text
+diff. For this example (only the printed score differs) the real output is:
 
 ```
-model:          same  (qwen3:35b)
-tools_called:   same
-output_score:   CHANGED — 0.85 → 0.62
-output_length:  CHANGED — 420 tokens → 310 tokens
+Diff: 01M5KZR9DSKYKFN68BX9T43B8X → 01M5KZRCZWQNNVXN6CGVQ99MMX
+  changed=1  added=0  removed=0
+
+Outputs:
+  ~ outputs/stdout.txt
 ```
 
 Wire it into CI to fail the build on any structural change — an output file (nested ones
@@ -203,17 +213,20 @@ changes, so a flaky prod agent that "worked yesterday, fails today" is caught be
 
 **Primitive:** Replay · **Maturity:** works today (v0.3)
 
-Replay re-executes or inspects a capsule with external calls controlled, in four
+Replay re-executes or inspects a capsule with external calls controlled, in five
 honest, falsifiable modes. This section uses `forensic` (read-only, no subprocess, no
 network — the mode for audit and post-incident work):
 
 ```bash
-nova replay capsules/01KR9Q2AD… --mode forensic
+nova replay ~/.novafabric/capsules/01KR9Q2AD… --mode forensic
+# ✓ Replay written: /home/me/.novafabric/replays/01KRB0…  (replay_id=01KRB0…  mode=forensic)
 ```
 
-The agent sees the same log content, same model responses, and same tool results as
-the original run. If it produces the same output, the run is reproducible. If it does
-not, something drifted — a model update, a tool change, or non-determinism.
+Forensic replay executes nothing: it reads the capsule and records what it holds in a
+`replay_result.yaml` under `$NOVAFABRIC_HOME/replays/<replay-id>/` (`--output-dir` to
+change it). To check whether the agent reproduces its behaviour, re-run it under
+`mocked` replay (recorded model replies served back) or capture it again and diff the
+two capsules.
 
 The five modes, and when to reach for each:
 
@@ -247,44 +260,56 @@ Lineage is a directed provenance graph — a rebuildable SQLite cache derived fr
 capsule's `lineage.jsonl`. Declare what data an agent consumed during capture:
 
 ```python
-# inside your agent, before it runs
-from nova_assets import record_consumed
-record_consumed("datasets/training-set@1.0.0")
+# inside your agent, while it runs under `nova capture`
+import os
+from pathlib import Path
+from novafabric.registry.service import record_asset_consumption
+
+record_asset_consumption(
+    "training-set@1.0.0",          # name@version
+    "production",                  # the asset's status when this run used it
+    Path(os.environ["NOVAFABRIC_CAPSULE_DIR"]),  # set by `nova capture` for the workload
+)
 ```
 
-Then run `nova lineage import` after capture to write the edges:
+This appends a record to the capsule's `assets.jsonl`; at finalization it becomes a
+`consumed` edge in `lineage.jsonl`. Run `nova lineage import` after capture to index
+the edges:
 
 ```bash
 nova capture --output-dir runs python agent.py
 nova lineage import runs/01K…
+# ok indexed 01K… (1 edges, 2 nodes)
 ```
 
-Now query the graph. **"Which runs depended on this dataset?"**
+Now query the graph. **"Which runs depended on this dataset?"** A bare `name@version`
+is read as the `local` registry, so the output names it `local:training-set@1.0.0`:
 
 ```bash
-nova lineage blast-radius datasets/training-set@1.0.0
+nova lineage blast-radius training-set@1.0.0
 ```
 
-Output:
+Output (one run consumed it here):
 
 ```
-Blast radius of datasets/training-set@1.0.0
-├── run:01K…  (train-v1)
-├── run:01K…  (eval-v1)
-└── run:01K…  (promote-v1)
+Blast radius of local:training-set@1.0.0
+└── run:01M5KZT6CRQ61B87NESHRPTF32
 ```
 
 **"What did this specific run depend on?"**
 
 ```bash
-nova lineage provenance 01KR9Q2AD…
+nova lineage provenance 01M5KZT6CRQ61B87NESHRPTF32
+# Provenance of 01M5KZT6CRQ61B87NESHRPTF32
+# └── asset:local:training-set@1.0.0
 ```
 
 When a dataset is found corrupt or wrong, blast radius tells you exactly which runs to
 re-validate — no manual tracking, no grep. The graph is built automatically from what
 each run declared it consumed, with mechanical edge types (`consumed`, `produced_by`,
-`replayed_from`) and two confidence levels (`observed` at runtime vs `inferred` from
-structure).
+`replayed_from`, among others) and three confidence levels (`observed` at runtime,
+`inferred` from structure, `declared` from a field the capsule states, such as
+`replay_of_run_id`).
 
 NovaFabric also emits **OpenLineage 2.0.2** START/COMPLETE/FAIL events, so these edges
 flow into Marquez, Atlan, or OpenMetadata without a NovaFabric-specific integration.
@@ -326,15 +351,28 @@ OLLAMA_HOST=http://localhost:9900 python your_agent.py
 nova mcp-proxy -- python mcp_server.py
 ```
 
+Both proxies record into `--capsule-dir` if given, else `$NOVAFABRIC_CAPSULE_DIR`,
+else a fresh `./.novafabric/runs/<ulid>/` under the current directory (the start-up
+line prints the path). Note the different meaning: for the proxies
+`NOVAFABRIC_CAPSULE_DIR` names the capsule itself, while for `nova capture` it names
+the store that holds one capsule per run. If your shell exports it as a capture-store
+override, pass `--capsule-dir` to the proxy explicitly, or its records land in the
+store's root directory.
+
 **In-process** — for notebooks or embedded agents:
 
 ```python
-from novafabric.capture.hooks import install_hooks
-install_hooks()
-# now all requests/aiohttp calls in this process are captured
+from novafabric.sdk.agent import agent
+
+@agent(name="my-agent", version="0.1.0", capsule_dir="capsules/")
+def run():
+    ...  # requests/httpx/aiohttp and SDK calls made here are captured
+
+run()  # each call writes its own capsule under capsules/<run_id>/
 ```
 
-Wire-level hooks cover `httpx`, `requests`, `aiohttp`, `urllib3`, Bedrock, and MCP
+Wire-level hooks cover `httpx`, `httpx2`, `requests`, `aiohttp`, `urllib3` (which also
+carries `boto3`, so Bedrock runtime calls), and MCP
 (`ClientSession.call_tool`); per-SDK hooks cover OpenAI (`Completions.create`) and
 Anthropic (`Messages.create`). Missing SDK hooks are silently skipped — a capsule is
 still written even when no AI SDK is present. To capture a provider NovaFabric does
@@ -411,7 +449,7 @@ For compliance, audits, or any situation where you need to keep evidence of what
 agent did — and verify the recorded run has not been altered since it was signed:
 
 ```bash
-nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem
+nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ~/.novafabric/keys/signing_key.pem
 # → bundle.zip  (ed25519-signed)
 ```
 
@@ -430,13 +468,14 @@ To also publish the DSSE envelope to the Rekor transparency log (requires
 
 ```bash
 export NOVA_REKOR_URL=https://rekor.sigstore.dev
-nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem --sigstore
+nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ~/.novafabric/keys/signing_key.pem --sigstore
 # ✓ evidence bundle written: bundle.zip
 # ✓ Rekor transparency log entry: 24296fb24b3c…
 ```
 
-If `NOVA_REKOR_URL` is not set the step is silently skipped (exit 0) — nothing reaches
-the network unless you point it there.
+If `NOVA_REKOR_URL` is not set the step is skipped with a warning
+(`⚠ Rekor publish skipped (set NOVA_REKOR_URL to enable)`) and the command still exits
+0 — nothing reaches the network unless you point it there.
 
 ### Standard outer envelopes — DSSE / SLSA (experimental)
 
@@ -448,7 +487,7 @@ opt-in; the bundle output is byte-for-byte unchanged without the flag):
 
 ```bash
 # Emit <bundle>.dsse.json alongside the ZIP (wraps the bundle manifest)
-nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem --dsse
+nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ~/.novafabric/keys/signing_key.pem --dsse
 
 # Emit a SLSA v1 provenance attestation on a successful promotion
 nova promote direct my-model@1.0.0 --to staging --slsa-provenance --slsa-out my-model.slsa.json
@@ -578,9 +617,9 @@ For the human review queue:
 
 ```bash
 nova kg entity-queue list                         # pending review items
-nova kg entity-queue approve ITEM_ID              # resolve to canonical entity
+nova kg entity-queue approve ITEM_ID --canonical openai/gpt-4   # resolve to canonical entity
 nova kg entity-queue reject ITEM_ID               # discard ambiguous candidate
-nova kg alias register gpt4 openai/gpt-4 model    # register an alias
+nova kg alias register gpt4 openai/gpt-4 --type model   # register an alias
 ```
 
 ---
@@ -743,7 +782,8 @@ curl "http://127.0.0.1:4321/api/reports/evidence-inventory?token=<TOKEN>"
 > pipeline. It is not a hosted UI. Reports are read-only (Layer A); the write actions
 > the dashboard does expose (Layer B — register, eval, promote, forensic replay,
 > redact, export evidence) are confirm-gated and audit-logged to
-> `~/.novafabric/dashboard-audit.jsonl`.
+> `$NOVAFABRIC_HOME/dashboard-audit.jsonl` (`~/.novafabric/dashboard-audit.jsonl` by
+> default; `NOVAFABRIC_DASHBOARD_AUDIT_FILE` overrides it).
 
 ---
 
@@ -847,7 +887,8 @@ nova dataset provenance-card dataset:gaia@2026-05 \
 
 Use `--from-capsule ./my-capsule` to derive the `transformHistory[]` from that capsule's
 `lineage.jsonl` derivation edges. The card is Ed25519-signed over its canonical body
-(reusing the same keyring as the Evidence Bundle), so **an unsigned card is
+with a per-user keyring key (`~/.config/novafabric/keyring/<identity>.pem`, created on
+first use; this is not the Evidence Bundle's `signing_key.pem`), so **an unsigned card is
 schema-invalid** — a signed card is evidence. It feeds the AI-BOM (`nova export-aibom`)
 and the SLSA-for-ML attestation below.
 
@@ -999,7 +1040,10 @@ a consistency regression caught without re-running anything.
 ### A score is a signed record (`nova eval card`, NF-002/010)
 
 Every score names its evaluator. An **eval card** pins the evaluator identity and is
-Ed25519-signed with the local keyring (`nova init` created it):
+Ed25519-signed with a per-user keyring key. The keyring lives in
+`~/.config/novafabric/keyring/` — outside `NOVAFABRIC_HOME`, so it survives a throwaway
+home — and `nova init` does not create it: `nova eval card sign` generates the key for
+its identity on first use:
 
 ```bash
 nova eval card new --source code --card-id exact-match --name "Exact Match" --out card.json
@@ -1303,10 +1347,10 @@ capsule that honesty is the whole story:
 ```bash
 nova safety-case build $BASE --template clymer-generic-v0 --output /tmp/nova-tour/case.json
 nova safety-case export /tmp/nova-tour/case.json --format markdown
-# - C-record-integrity [UNSUPPORTED] — The recorded run is faithfully reproducible…
-# - C-harm-avoidance   [UNSUPPORTED] — The agent avoids unsafe actions…
-# - C-logging          [UNSUPPORTED] — The run's process logging is complete…
-# - C-root             [UNSUPPORTED] — Deployment presents acceptable residual risk.
+# - **C-record-integrity** [UNSUPPORTED] — The recorded run is faithfully reproducible (record integrity).
+# - **C-harm-avoidance** [UNSUPPORTED] — The agent avoids unsafe actions on the evaluated task set.
+# - **C-logging** [UNSUPPORTED] — The run's process logging is complete (Art. 12-style record).
+# - **C-root** [UNSUPPORTED] — Deployment of the agent presents acceptable residual risk.
 ```
 
 Claims flip to `SUPPORTED` only when evidence artifacts exist in the capsule. Two of
@@ -1319,8 +1363,8 @@ nova evidence completeness $BASE -o $BASE/completeness.json
 # C-record-integrity ← DSSE-signed re-performance attestation (replays the run)
 mkdir -p $BASE/attestations
 nova evidence attest-replay $BASE --key $KEY --mode mocked \
-    -o $BASE/attestations/reperformance.intoto.json
-# ✓ Re-performance attestation: … (mode=mocked, match=semantic-match)
+    -o $BASE/attestations/reperformance.json
+# ✓ Re-performance attestation: …/attestations/reperformance.json (mode=mocked, match=semantic-match)
 
 # C-harm-avoidance ← a judge-aggregate eval result (from your eval harness)
 mkdir -p $BASE/eval-results
@@ -1331,26 +1375,24 @@ cat > $BASE/eval-results/harm-avoidance.json <<'EOF'
 EOF
 ```
 
-> **Integration seam (real, as of v0.59):** `nova safety-case build` reads a *raw*
-> attestation JSON at `attestations/reperformance.json`, while `nova evidence
-> attest-replay` emits a DSSE-*wrapped* envelope. Feed the compiler the envelope's
-> payload predicate (one line of Python) or it will bind the envelope file and mark
-> the claim `CONTESTED` with reason `Replay match == ''`:
->
-> ```bash
-> python3 -c "import base64, json; env = json.load(open('$BASE/attestations/reperformance.intoto.json')); \
-> json.dump(json.loads(base64.b64decode(env['payload']))['predicate'], \
-> open('$BASE/attestations/reperformance.json', 'w'), indent=2)"
-> ```
+`nova safety-case build` reads the re-performance attestation from
+`attestations/reperformance.json` and unwraps the DSSE envelope `attest-replay` writes,
+so no conversion step is needed.
 
-Rebuild, verify, and export — including the regulatory renderers:
+Rebuild, then read the claims with `export --format markdown` (`build` itself prints
+only the output path), verify, and render the regulatory views:
 
 ```bash
 nova safety-case build $BASE --template clymer-generic-v0 --output /tmp/nova-tour/case.json
-# - C-record-integrity [SUPPORTED] — evidence E-replay-1 (replay_attestation): attestations/reperformance.json sha256:68081594…
-# - C-harm-avoidance   [SUPPORTED] — evidence E-eval-2 (judge_aggregate): eval-results/harm-avoidance.json sha256:5dac5045…
-# - C-logging          [SUPPORTED] — evidence E-completeness-3 (completeness_assertion): completeness.json sha256:62ef4a29…
-# - C-root             [SUPPORTED]
+# ✓ Safety case (clymer-generic-v0) → /tmp/nova-tour/case.json
+nova safety-case export /tmp/nova-tour/case.json --format markdown
+# - **C-record-integrity** [SUPPORTED] — The recorded run is faithfully reproducible (record integrity).
+#   - evidence `E-replay-1` (replay_attestation): `attestations/reperformance.json` `sha256:343f6a1d…`
+# - **C-harm-avoidance** [SUPPORTED] — The agent avoids unsafe actions on the evaluated task set.
+#   - evidence `E-eval-2` (judge_aggregate): `eval-results/harm-avoidance.json` `sha256:1da87dac…`
+# - **C-logging** [SUPPORTED] — The run's process logging is complete (Art. 12-style record).
+#   - evidence `E-completeness-3` (completeness_assertion): `completeness.json` `sha256:a7527146…`
+# - **C-root** [SUPPORTED] — Deployment of the agent presents acceptable residual risk.
 
 nova safety-case verify /tmp/nova-tour/case.json --capsule $BASE
 # ✓ safety case OK: artifacts verified, case_hash matches, I1 holds
@@ -1406,11 +1448,16 @@ status:         open
 occurred_at:    2026-07-14T08:00:00+00:00
 aware_at:       2026-07-15T09:30:00+00:00
 run_ids:        01KXK4ABQ7Z09MJZ22CVRQ8VDQ
+attestation:    (none)
 
 Art. 73 reporting deadlines:
-  art73_2_standard    2026-07-30T09:30:00+00:00  14 day(s) remaining
+  art73_2_standard                         2026-07-30T09:30:00+00:00  OVERDUE
       basis: Art. 73(2) — standard serious incident: report no later than 15 days after awareness
 ```
+
+The clock is computed against the current time, so with these July 2026 example dates
+every deadline already reads `OVERDUE`. Use an `--aware-at` close to today to see
+`N day(s) remaining` instead.
 
 Deadlines anchor at `--aware-at` (fallback `--occurred-at`). The classification
 selects the clock: 15 days standard (Art. 73(2)), 10 days for a death (Art. 73(4)),
@@ -1425,8 +1472,8 @@ nova incident open --title "Outage touching grid SCADA agent" \
     --occurred-at 2026-07-15T02:00:00+00:00 --aware-at 2026-07-15T06:00:00+00:00
 
 nova incident list
-# inc-3d1fe5161939  [open    ]  critical     1d left  Outage touching grid SCADA agent
-# inc-2104c5d09bfd  [open    ]  high        14d left  Tool misuse in prod agent
+# inc-3d1fe5161939  [open    ]  critical     OVERDUE  Outage touching grid SCADA agent
+# inc-2104c5d09bfd  [open    ]  high         OVERDUE  Tool misuse in prod agent
 ```
 
 Exporting renders the stored record in a standard reporting shape — **OECD AIM**
@@ -1437,7 +1484,8 @@ nova incident export inc-2104c5d09bfd --format aim  --output /tmp/nova-tour/inci
 nova incident export inc-2104c5d09bfd --format nis2 --output /tmp/nova-tour/incident-nis2.json
 
 nova incident list
-# inc-2104c5d09bfd  [reported]  high        14d left  Tool misuse in prod agent
+# inc-3d1fe5161939  [open    ]  critical     OVERDUE  Outage touching grid SCADA agent
+# inc-2104c5d09bfd  [reported]  high         OVERDUE  Tool misuse in prod agent
 ```
 
 The AIM export carries the linked run capsules, the full deadline table, and (when
@@ -1462,7 +1510,9 @@ This and the next three sections tour the **Langfuse-parity cohort** (ADRs
 0112–0141) — the prompt lifecycle, offline analytics, sessions, and team-evaluation
 surfaces. Everything stays local-first: prompts live as versioned assets in the same
 registry (`$NOVAFABRIC_HOME/registry.db`) the Asset Registry has used since v0.1, and
-the two-principal flows reuse the Ed25519 keyring `nova init` created. See
+the two-principal flows reuse the per-user Ed25519 keyring
+(`~/.config/novafabric/keyring/`, outside `NOVAFABRIC_HOME`; `nova init` does not create
+it). See
 [NovaFabric vs Langfuse](novafabric-vs-langfuse.md) for the honest comparison.
 
 ### Register immutable versions (`nova prompt`, ADR-0112)
@@ -1592,6 +1642,26 @@ For a label like `production`, one person should not be able to move it alone.
 Protect it, and every move becomes a two-principal flow (Ed25519-signed; each
 `--identity` must name an existing keyring key — `nova promote keygen --identity NAME` —
 that the ADR-0312 signer trust list binds to that identity):
+
+First create a key for each principal and bind it in the signer trust list
+(`$NOVAFABRIC_HOME/promote-signers.yaml`, or `NOVAFABRIC_PROMOTE_SIGNERS`). Keys go to
+the per-user keyring (`~/.config/novafabric/keyring/`); naming an identity with no key
+never mints one on the fly:
+
+```bash
+nova promote keygen --identity alice
+# Key for 'alice' created: ~/.config/novafabric/keyring/alice.pem (fingerprint 2a32bfe1c4f251d1)
+# To bind it, an operator adds this entry under `signers:` in ~/.novafabric/promote-signers.yaml:
+#   - identity: "alice"
+#     public_key: pkdB6p3Zc0wI/0mJ0dGK+vGRfRuiNpEKLRSYI7vF5yU=
+#     fingerprint: 2a32bfe1c4f251d1
+#     roles: [proposer, approver]
+nova promote keygen --identity bob
+# …add both printed entries under `signers:` in promote-signers.yaml
+```
+
+The trust list is the trust anchor (whoever can write it decides who may approve), so
+keep it operator-owned. Then protect the label:
 
 ```bash
 nova label protect prompt:support-reply production
@@ -1959,17 +2029,19 @@ nova session replay $SID --mode mocked --output-dir session-replays
 
 ```
            Session replay: 01KXMZ5H2HXSSC2ZTDEJXPQZCS (mode: mocked)
- seq  source run                  mode    status      replay capsule
-   0  01KXMZ5HH677Z09ZNARA68Y5X6  mocked  reproduced  01KXMZ5NHN3K772VJZGNH3SYGM
-   1  01KXMZ5J3VPGTZ4ADSB3QDBWZW  mocked  reproduced  01KXMZ5NK570CBXE675PANN4W2
-   2  01KXMZ5JNZVQS88WTEKQ089H6P  mocked  reproduced  01KXMZ5NM9VRMCD96TKHNP2D2R
+ seq  source run                  mode    status      replay capsule              detail
+   0  01KXMZ5HH677Z09ZNARA68Y5X6  mocked  reproduced  01KXMZ5NHN3K772VJZGNH3SYGM  -
+   1  01KXMZ5J3VPGTZ4ADSB3QDBWZW  mocked  reproduced  01KXMZ5NK570CBXE675PANN4W2  -
+   2  01KXMZ5JNZVQS88WTEKQ089H6P  mocked  reproduced  01KXMZ5NM9VRMCD96TKHNP2D2R  -
 whole_session_verdict: reproduced
 Session replay result written: session-replays/session-replay-…/session_replay_result.json
 ```
 
 Each turn runs through the single-capsule replay engine from
-[§3](#3-replay-a-past-run) (any of the five modes via `--mode`), produces its own
-replay capsule, and the session gets one `SessionReplayResult` with ordered per-turn
+[§3](#3-replay-a-past-run) (any of the five modes via `--mode`) and writes its own
+`replay_result.yaml` under `--output-dir`; the `replay capsule` column shows that
+replay's id (a replay is a result record, not a new capsule, except in the
+experimental `intervention` mode). The session gets one `SessionReplayResult` with ordered per-turn
 verdicts plus a whole-session verdict. Exit code is `0` only when the whole session
 is `reproduced`; `--on-divergence continue` records drift and keeps going, and a
 missing or tampered member is an honest per-turn **refusal**, never a silent skip.

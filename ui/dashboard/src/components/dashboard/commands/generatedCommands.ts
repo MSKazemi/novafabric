@@ -1969,7 +1969,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "kind",
         "label": "--kind",
         "type": "text",
-        "hint": "What the subject digest addresses: capsule | span | run | score.",
+        "hint": "What the subject addresses: capsule | span | run | score | asset.",
         "flag": "--kind",
         "defaultValue": "capsule"
       },

@@ -28,14 +28,17 @@ nova server start                       # 127.0.0.1:7433 by default
 nova server start --host 0.0.0.0 --port 8080
 ```
 
-Configuration lives in `nova-server.yaml` (`$NOVA_SERVER_CONFIG`); secrets are
-**environment-only** and stripped from YAML (`NOVA_DSN`, `NOVAFABRIC_SCIM_TOKEN`,
-…). See [Server Deployment Guide — Scenario 2](server-deployment.md) for the
+Configuration lives in `~/.config/novafabric/server.yaml`; only `--config <path>`
+points the server at another file (for example `/etc/novafabric/server.yaml`).
+`NOVAFABRIC_SERVER_*` environment variables override individual settings. Secrets
+are **environment-only** and stripped from YAML: `NOVAFABRIC_POSTGRES_DSN`,
+`NOVAFABRIC_OFFLINE_KEY_PATH`, `NOVAFABRIC_SCIM_TOKEN` and `NOVAFABRIC_SERVER_TOKEN`
+(`server/config.py::load_config`). See [Server Deployment Guide — Scenario 2](server-deployment.md) for the
 Postgres backend and migration from SQLite.
 
 > **Local auth (ADR-0184, experimental — shipped 2026-07-16).** With OIDC
 > disabled, the server requires an auto-generated local bearer token (printed
-> at startup, stored at `~/.novafabric/.server-token` mode 0600, pinnable via
+> at startup, stored at `$NOVAFABRIC_HOME/.server-token` mode 0600, pinnable via
 > `NOVAFABRIC_SERVER_TOKEN`). The old anonymous-admin behavior needs the
 > explicit `--insecure-no-auth` opt-out and refuses non-loopback binds
 > without `--i-know-this-is-public`
@@ -54,7 +57,7 @@ Postgres backend and migration from SQLite.
 | OIDC (JWT Bearer + JWKS) | **experimental** | The primary team backend. Setup: [Server Deployment Guide — Scenario 3](server-deployment.md). JWKS cache flush: `nova server flush-jwks-cache`. [ADR-0018](../decisions.md) |
 | Offline ed25519 tokens | **experimental** | Air-gapped/CI/SLURM machine identity without an IdP. `nova server issue-token --subject worker-01 --roles reader,writer --expires-in 30d`; revoke with `nova server revoke-token <jti>`. Revocations are recorded in the `token_audit` table. |
 | SCIM 2.0 provisioning | **experimental** | Off by default (endpoints 404). Enable with `NOVAFABRIC_SERVER_SCIM_ENABLED=1` **and** `NOVAFABRIC_SCIM_TOKEN`. `/scim/v2/*` per RFC 7644; all provisioning actions land in the append-only `scim_audit_events` table. [ADR-0139](../decisions.md) |
-| SAML 2.0 SSO | **experimental, license-gated** | SP metadata via `nova server saml-metadata`. The ACS endpoint deliberately returns **501** until an XML-DSIG verification library clears the dependency-license gate ([ADR-0138](../decisions.md) §D5) — NovaFabric never skips assertion signature verification. |
+| SAML 2.0 SSO | **experimental, opt-in** | SP metadata via `nova server saml-metadata`. `POST /v0/auth/saml/acs` consumes assertions only when `saml.experimental_acs_enabled: true` is set in `server.yaml` **and** `novafabric[saml]` (signxml + lxml, cleared the license gate in v0.73.0) is installed; otherwise it returns **501**. NovaFabric never skips assertion signature verification. A Security-Architect review remains a pre-production blocking condition ([ADR-0138](../decisions.md) §D5). |
 | Device-grant demo flow | **off by default (endpoints 404)** | The RFC 8628 `/v0/auth/device/code\|token\|approve` flow is local/testing scaffolding whose HS256 tokens the real verifier never honours; `/approve` is unauthenticated. It stays unmounted unless you set `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1`. **Never enable it in production** — use OIDC or offline tokens instead. [ADR-0198](../decisions.md) |
 
 ## 3. Roles and authorization
@@ -154,11 +157,13 @@ is **no** organization/workspace/team hierarchy yet — that is
   ([ADR-0208](../decisions.md)).
   See [Quotas & rate limits](quotas-and-rate-limits.md); with the master
   switch off (the default), plan capacity accordingly.
-- **Health:** `GET /health` (unauthenticated). There is **no** Prometheus
-  `/metrics`, `/livez`/`/readyz` split, or version endpoint yet — proposed in
-  [ADR-0182](../decisions.md)
-  (`future design`). For diagnostics today use `nova doctor`
-  (add `--check-storage` for schema/migration state).
+- **Health and self-observability** (**experimental**,
+  [ADR-0182](../decisions.md)): `GET /health` and `GET /livez` (unauthenticated
+  liveness), `GET /readyz` (database, migration-head and object-store checks),
+  `GET /v0/version` (`reader` role) and Prometheus `GET /metrics` (`reader` role
+  unless `observability.metrics_exempt: true`; needs `prometheus-client` from the
+  `[server]` extra). All four are exempt from rate limiting. For deeper diagnostics
+  use `nova doctor` (add `--check-storage` for schema/migration state).
 
 ### 6a. Bulk capsule operations + keyset pagination (experimental, ADR-0206)
 
@@ -179,7 +184,7 @@ specified in the maintainers' private `design/` tree and is not published.
   longer silently restarts from the first page.
 - Legacy `{"offset": N}` cursors still work for one deprecation cycle
   (ADR-0188); those responses carry `Deprecation: true`. Set
-  `server.pagination.legacy_offset_cursors: false`
+  `pagination.legacy_offset_cursors: false` (a top-level `pagination:` block in `server.yaml`)
   (`NOVAFABRIC_SERVER_PAGINATION_LEGACY_OFFSET_CURSORS=false`) to refuse
   them early.
 
@@ -235,7 +240,7 @@ schema change).
   `{"run_ids": [...], "dry_run": false}`; per-item outcomes
   (`deleted | held | not_found | invalid_id | duplicate | error`) plus
   summary counts; no rollback — partial progress is reported, not undone.
-  Batch size is capped by `server.bulk.max_items`
+  Batch size is capped by `bulk.max_items` (top-level `bulk:` block)
   (`NOVAFABRIC_SERVER_BULK_MAX_ITEMS`, default 100, ceiling 1000);
   oversized batches are a 422 before any work. `dry_run: true` returns the
   identical report and deletes nothing.
@@ -332,7 +337,6 @@ enterprise-readiness plan:
 | Support bundle (`nova support-bundle`) | [0187](../decisions.md) | experimental |
 | Backup sets (`nova backup create/verify`, `nova restore` local profile) | [0181](../decisions.md) | experimental |
 | Automated pg restore (`nova restore`, manifest-driven — [0217](../decisions.md)) + startup schema-skew guard ([0211](../decisions.md) Part B) | 0217 / 0211 | experimental |
-| Backup sets (`nova backup create/verify`, local profile; restore planned) | [0181](../decisions.md) | experimental |
 
 ## 9. Webhook subscriptions (experimental)
 

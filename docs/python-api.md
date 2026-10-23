@@ -10,8 +10,9 @@ test harness, a CI script, an internal tool, or a notebook without shelling out.
 
 - How to capture a run in-process with the `@agent` decorator, or capture an
   arbitrary command with `CaptureOrchestrator`.
-- How to replay a capsule in any of the four honest modes (`forensic`,
-  `mocked`, `semantic`, `exact`) and read back a structured `ReplayResult`.
+- How to replay a capsule in any of the five honest modes (`forensic`,
+  `mocked`, `semantic`, `exact`, and the experimental `intervention`) and read
+  back a structured `ReplayResult`.
 - How to structurally diff two capsules and serialise the report for a CI gate.
 - How to build and query the lineage graph (`provenance`, `blast_radius`,
   `replay_chain`).
@@ -136,11 +137,24 @@ program** — hooks are injected via `sitecustomize.py` over `PYTHONPATH`. A
 capsule is written on both success and failure (a failed run sets
 `status: failure` and records an `error` block).
 
-### `CaptureOrchestrator(base_dir=None)`
+### `CaptureOrchestrator(base_dir=None, runner=None, ...)`
 
 | Parameter | Type | Default |
 |---|---|---|
 | `base_dir` | `Path \| None` | `./.novafabric/runs/` (relative to the working directory) |
+| `runner` | `RunnerSpec \| None` | `None` — run locally; a `RunnerSpec` dispatches to docker/kubernetes/slurm/lsf/pbs like `nova capture --runner` |
+| `pii_gate` | `Any \| None` | `None` |
+| `legal_hold` | `bool` | `False` — only acts with a `pii_gate`: the gate scans the manifest and, when it redacts anything, also writes the redacted copy to `<base_dir>/../legal_hold/<run_id>/`; a scan error exits 3. With a gate but no `legal_hold`, the scan is skipped. There is no `nova capture` flag for it |
+| `mark_provenance` | `bool` | `False` |
+| `fast_emit` | `bool` | `False` |
+| `emit_spool` | `bool` | `False` |
+| `spool_dir` | `Path \| None` | `None` |
+| `masking_pipeline` | `Any \| None` | `None` |
+| `capture_media` | `bool` | `False` |
+
+Only `base_dir` and `runner` are covered by examples here; the other keyword
+arguments mirror `nova capture` options — see `nova capture --help` and the
+constructor's docstring.
 
 ### `CaptureOrchestrator.run(command) → CaptureResult`
 
@@ -176,7 +190,14 @@ class CaptureResult:
     run_id: str
     capsule_dir: Path
     exit_code: int
+    runner_status: str | None = None   # e.g. "failed_setup": the workload never started
+    runner_error: str | None = None    # the runner's own reason, when it gave one
 ```
+
+`exit_code` alone cannot tell *the workload ran and failed* from *the workload
+never started* (a missing command and a program that exits 127 both give 127);
+only `runner_status == "failed_setup"` identifies the latter. `None` means the
+runner did not say, not "completed".
 
 ---
 
@@ -336,7 +357,10 @@ from novafabric.replay._result import ReplayResult
 ```
 
 Replay re-executes or inspects a capsule with external calls controlled. A
-replay is itself a new capsule, so you can `diff` a replay against its source.
+replay writes a `replay_result.yaml` report, not a capsule — only
+`intervention` mode also writes a minimal counterfactual Run Capsule
+(`capsule.yaml` marked `replay_mode: intervention` plus the model/tool call
+streams) that you can `nova diff` against its source.
 
 ### `ReplayFlags`
 
@@ -362,7 +386,7 @@ class ReplayFlags:
 | Mode | What it does | Typical use |
 |---|---|---|
 | `forensic` | Read-only inspection. No subprocess, no network. | Audit / post-incident |
-| `mocked` | Re-spawns the command (Python workloads). Serves recorded responses for OpenAI `chat.completions.create` and `responses.create` / Anthropic `messages.create` — **sync or async, streamed or not** (ADR-0304) — and recorded **MCP** `ClientSession.call_tool` results, one per call, plus — experimental — results of functions declared with [`record.tool`](#extended-event-recording-experimental) and of Google ADK tools run with `novafabric.adapters.google_adk.make_tool_plugin()` and OpenAI Agents function tools passed through `novafabric.adapters.openai_agents.wrap_tools()` (both unreleased, not in v0.105.0; the latter relies on an undocumented SDK seam). **Other tools run live** (HTTP, shell, files, other framework-native tools, undeclared functions); `replay_contract.network_connections_live` reports their connections. **Fails closed** (ADR-0300): an extra or unmatched call, an unsupported model surface (`parse`, legacy completions, `with_raw_response`), or an unconsumed recording makes the result `failure` with a `divergence_reason`; `permissive=True` only reports them. | CI / regression |
+| `mocked` | Re-spawns the command (Python workloads). Serves recorded responses for OpenAI `chat.completions.create` and `responses.create` / Anthropic `messages.create` — **sync or async, streamed or not** (ADR-0304) — and recorded **MCP** `ClientSession.call_tool` results, one per call, plus — experimental — results of functions declared with [`record.tool`](#extended-event-recording-experimental) and of Google ADK tools run with `novafabric.adapters.google_adk.make_tool_plugin()` and OpenAI Agents function tools passed through `novafabric.adapters.openai_agents.wrap_tools()` (both shipped in v0.106.0; the latter relies on an undocumented SDK seam). **Other tools run live** (HTTP, shell, files, other framework-native tools, undeclared functions); `replay_contract.network_connections_live` reports their connections. **Fails closed** (ADR-0300): an extra or unmatched call, an unsupported model surface (`parse`, legacy completions, `with_raw_response`), or an unconsumed recording makes the result `failure` with a `divergence_reason`; `permissive=True` only reports them. | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called; returns `similarity_score`. | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift. | Local / on-prem / compliance |
 | `intervention` | Re-executes with a spec-driven intervention overlay (experimental, ADR-0086). | What-if / counterfactual analysis |
@@ -384,12 +408,13 @@ cannot intercept returns `status: "aborted"` with `error["type"] ==
 sandbox tools that `mocked` mode does not intercept — run such replays in a
 sandbox or against test credentials.
 
-### `ReplayEngine(capsule_dir, flags, base_dir=None)`
+### `ReplayEngine(capsule_dir, flags, base_dir=None, actor="cli")`
 
 | Parameter | Type |
 |---|---|
 | `capsule_dir` | `Path` |
 | `flags` | `ReplayFlags` |
+| `actor` | `str` — the identity the `replay_mutating` policy gate evaluates (`subject.user`, consulted when a write-permitting flag is set) and the audit log records; default `"cli"` |
 | `base_dir` | `Path \| None` — defaults to `$NOVAFABRIC_HOME/replays/` (`_paths.default_replays_dir()`; `./.novafabric/replays/` under the current directory up to v0.106.0) |
 
 ### `ReplayEngine.run() → ReplayResult`
@@ -485,6 +510,8 @@ class ReplayResult:
     exact_eligible: bool | None = None      # set when mode="exact"
     exact_hash_count: int | None = None
     exact_reasons: list[str] | None = None
+    # tool-call schema drift findings (ADR-0128; additive, optional)
+    schema_drift: list[dict] | None = None
 
     def as_dict(self) -> dict: ...
 ```
@@ -602,7 +629,8 @@ from novafabric.lineage import (
 
 Lineage is a directed provenance graph in SQLite — a rebuildable cache derived
 from each capsule's `lineage.jsonl`. Use `LineageWriter` to infer edges,
-`import_capsule_dir` to index them, and `LineageStore` to query the graph.
+`index_capsule_lineage` (one capsule) or `import_capsule_dir` (a directory of
+capsules) to index them, and `LineageStore` to query the graph.
 
 ### `LineageWriter(capsule_dir, run_id, version=None)`
 
@@ -626,7 +654,8 @@ path = writer.write(edges)  # writes lineage.jsonl, returns Path
 
 ### `LineageStore(db_path=None)`
 
-SQLite-backed graph store. Default: `~/.novafabric/registry.db`.
+SQLite-backed graph store. Default: `$NOVAFABRIC_HOME/registry.db` (`~/.novafabric/registry.db`
+unless `NOVAFABRIC_HOME` is set; `NOVAFABRIC_DB_PATH` overrides the file).
 
 ```python
 from novafabric.lineage import LineageStore
@@ -634,16 +663,18 @@ from novafabric.lineage import LineageStore
 store = LineageStore()
 
 # What did this run depend on? (ancestors)
+# A run node's ref is the bare run id; pass kind="run" to disambiguate.
 ancestors = store.provenance(
-    ref="run:01HXAY7M5JZ8R7K4P9DPBYK2WX",
-    kind=None,
+    ref="01HXAY7M5JZ8R7K4P9DPBYK2WX",
+    kind="run",
     depth=3,
 )
 
 # What runs consume this asset? (descendants / impact)
+# An asset node's ref is "<registry>:<name>@<version>" (registry "local" by default).
 dependents = store.blast_radius(
-    ref="registry:my-dataset@1.0.0",
-    kind=None,
+    ref="local:my-dataset@1.0.0",
+    kind="asset",
     depth=5,
 )
 
@@ -654,17 +685,34 @@ chain = store.replay_chain(run_id="01HXREPLAY...")
 Each result item is a dict: `{"kind": "run|asset|artifact", "ref": "..."}`.
 A `time_travel` query is also available for point-in-time graph reconstruction.
 
-### `import_capsule_dir(capsule_dir, db_path=None) → ImportResult`
+### `index_capsule_lineage(capsule_dir, db_path=None, *, run_id=None) → ImportResult`
 
-Index a capsule's `lineage.jsonl` into the graph store.
+Index one capsule's `lineage.jsonl` into the graph store. The run is keyed by
+`run_id` when given, else by the directory name (a `nova capture` capsule
+directory is named after its run id). A capsule without `lineage.jsonl` returns
+`skipped=True`; a `lineage.jsonl` that is present but unreadable (a symlink,
+FIFO or directory) raises instead of reporting zero edges.
+
+```python
+from pathlib import Path
+from novafabric.lineage import index_capsule_lineage
+
+result = index_capsule_lineage(Path("~/.novafabric/capsules/01HX...").expanduser())
+print(result.edges_indexed)  # int
+print(result.nodes_indexed)  # int
+```
+
+### `import_capsule_dir(runs_dir, db_path=None) → list[ImportResult]`
+
+Index every capsule directly under `runs_dir` (each subdirectory that holds a
+`capsule.yaml`), returning one `ImportResult` per capsule.
 
 ```python
 from pathlib import Path
 from novafabric.lineage import import_capsule_dir
 
-result = import_capsule_dir(Path(".novafabric/runs/01HX.../"))
-print(result.edges_indexed)  # int
-print(result.nodes_indexed)  # int
+for result in import_capsule_dir(Path("~/.novafabric/capsules").expanduser()):
+    print(result.capsule_run_id, result.edges_indexed, result.skipped)
 ```
 
 ### `ImportResult`
@@ -676,7 +724,7 @@ class ImportResult:
     edges_indexed: int
     nodes_indexed: int
     skipped: bool
-    warning: str | None
+    warning: str | None = None
 ```
 
 > The lineage store also emits **OpenLineage 2.0.2** START/COMPLETE/FAIL events
@@ -714,15 +762,17 @@ from novafabric.registry.service import (
     list_assets,
     get_asset,
     promote_asset,
+    promote_asset_direct,
 )
 from novafabric.spec.models import AssetStatus
 ```
 
-The registry is a local SQLite store (`~/.novafabric/registry.db`) of versioned
+The registry is a local SQLite store (`$NOVAFABRIC_HOME/registry.db`, overridable with
+`NOVAFABRIC_DB_PATH`) of versioned
 assets addressed as `name@version`. Promotion is **governance metadata only** —
 it updates one DB record and does not deploy, restart, or redeploy anything.
 
-### `register_asset(spec, spec_path, db_path=None) → dict`
+### `register_asset(spec, spec_path, db_path=None, *, actor="") → dict`
 
 ```python
 from pathlib import Path
@@ -734,9 +784,14 @@ asset = register_asset(spec, spec_path=Path("my-model.yaml"))
 print(asset["id"])   # UUID
 ```
 
+`actor` is the identity recorded for the registration in the audit trail.
+
 Raises `DuplicateAssetError` if `name@version` already exists.
 
-### `list_assets(asset_type=None, status=None, db_path=None) → list[dict]`
+### `list_assets(asset_type, status, db_path=None) → list[dict]`
+
+`asset_type` and `status` are required positional-or-keyword arguments with no
+default; pass `None` to leave a filter off.
 
 ```python
 from novafabric.registry.service import list_assets
@@ -746,21 +801,35 @@ for a in agents:
     print(a["name"], a["version"], a["status"])
 ```
 
-### `get_asset(name, version=None, db_path=None) → dict`
+### `get_asset(name, version, db_path=None) → dict`
 
 ```python
 from novafabric.registry.service import get_asset
 
 asset = get_asset("my-model", "1.0.0")
-# version=None (or "latest") returns the latest registered version
+# version is required; pass None (or "latest") for the latest registered version
 ```
 
 Raises `AssetNotFoundError` if not found.
 
-### `promote_asset(name, version, to_status, actor, force=False, db_path=None) → dict`
+### `promote_asset(name, version, to_status, actor, force=False, db_path=None, significance_gate=False, ...) → dict`
 
 Advances an asset through the six-state lifecycle. The `to_status` argument is
-an `AssetStatus` enum member.
+an `AssetStatus` enum member. The remaining keyword arguments (`sig_p0`, `sig_p1`,
+`sig_alpha`, `sig_beta`, `sig_scores_path`, `sig_scores_metric`) tune the opt-in
+significance gate (ADR-0080).
+
+> **Use `promote_asset_direct` for a single-actor promotion.** `promote_asset` is
+> the ungated core: it runs the lifecycle, `promote` policy, eval and significance
+> checks, but **not** the protected-stage gate. `promote_asset_direct(name, version,
+> to_status, actor, force=False, db_path=None, *, policy_subject=None, **gate_kwargs)`
+> is the one gate every single-actor route uses (`nova promote direct`,
+> `nova prompt promote`, the `nova serve` promote endpoints, `PUT
+> /v0/assets/{id}/promote`): a target in `PROTECTED_STAGES` (today `production`)
+> needs an explicit allow from the `promote_direct` policy action before
+> `promote_asset` runs — `force` does not bypass it and a no-OPA `NoopEngine`
+> decision is not an allow (ADR-0312 D1). It raises `DirectPromotionDeniedError`
+> (a `PromotionBlockedError` subclass) when refused.
 
 ```python
 from novafabric.registry.service import promote_asset
@@ -777,7 +846,10 @@ asset = promote_asset(
 Raises:
 - `InvalidLifecycleTransitionError` — the transition is not permitted by the
   lifecycle state machine.
-- `PromotionBlockedError` — the eval gate is not satisfied (agents only).
+- `PromotionBlockedError` — a gate refused and `force` does not override it: the
+  `promote` policy denied the promotion (any asset type), an `agent` has no
+  passing evaluation, or the opt-in significance gate found a significant
+  regression (agents only).
 
 > **Lifecycle:** `development → validated → pending_approval → staging →
 > production → archived`. Promotion of `agent` assets is eval-gated; the OPA/Rego
@@ -964,8 +1036,9 @@ subsequent seals to the new key.
 
 ### Load a signing profile from config
 
-Configuration can be discovered from `~/.novafabric/novaseal.yaml` or the
-`NOVAFABRIC_SEAL_CONFIG` environment variable:
+Configuration is read from `NOVAFABRIC_SEAL_CONFIG` when set (a missing file is an
+error), else from `$NOVAFABRIC_HOME/novaseal.yaml` (`~/.novafabric/novaseal.yaml` by
+default):
 
 ```python
 from novafabric.trust.novaseal.config import load_signing_profile
@@ -1178,8 +1251,10 @@ span_id = new_span_id()  # str — 16-char hex
   and default. Each Python API above has a CLI twin; when in doubt, run
   `nova <command> --help`.
 - **Developer guide** (`docs/developer-guide.md`) — how to add asset types, CLI
-  commands, report formats, and capture hooks (the `novafabric.hooks`
-  entry-point group).
+  commands and report formats. Third-party capture hooks (**experimental**) register
+  a `HookProtocol` class under the `novafabric.hooks` entry-point group; the
+  developer guide does not cover them yet — the contract is the
+  `novafabric.capture.hooks._plugin` module docstring (RFC-0001).
 - **The five primitives** — Asset Registry, Run Capsule, Replay, Lineage, and
   Evidence Bundle. Each has a public JSON Schema; the capsule is the source of
   truth and the registry/lineage graph are rebuildable indexes derived from it.

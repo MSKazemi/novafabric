@@ -355,7 +355,8 @@ constraints that do not exist for local or Docker runners.
 
 #### Overview
 
-The SlurmRunner submits the workload via `sbatch --wrap`, polls for completion
+The SlurmRunner submits a generated batch script on `sbatch`'s stdin (never
+`--wrap`; see [How the job is submitted](#how-the-job-is-submitted)), polls for completion
 using `scontrol show job` (primary) with `sacct` as a fallback, and reads
 stdout/stderr from per-job output files. Capsule artifacts accumulate on a
 shared filesystem, then the orchestrator reads them on the submit node after
@@ -423,7 +424,7 @@ This is how wire-level capture fires on compute nodes.
 
 Before submitting the job, `SlurmRunner` writes `sitecustomize.py` to the
 capsule directory. The capsule directory is on shared filesystem, so it is
-visible to the compute node. The `sbatch --wrap` script prepends the capsule
+visible to the compute node. The batch script (sent on `sbatch`'s stdin) prepends the capsule
 directory to `PYTHONPATH`. When the compute node's Python starts, it
 auto-loads `sitecustomize`, which installs NovaFabric's HTTP hooks before
 any user code runs.
@@ -856,7 +857,8 @@ export NOVAFABRIC_URL_REGISTRY=/lustre/scratch/myproject/nova-url-registry.yaml
 ```
 
 Source the env file before submitting jobs. The `SlurmRunner` forwards
-`NOVAFABRIC_URL_REGISTRY` to the compute node's environment via the wrap script,
+`NOVAFABRIC_URL_REGISTRY` to the compute node's environment via the batch script
+(the job receives `NOVAFABRIC_*` minus credentials),
 so the compute node's hooks load the site registry.
 
 ### Registry file format
@@ -993,10 +995,14 @@ kubectl get pods -n <namespace> -l job-name=nf-<run-id-lowercase>
 kubectl cp <namespace>/<pod>:/novafabric/capsule/. ~/.novafabric/capsules/<run-id>/
 ```
 
-### Wire-capture records classified as gen_ai.system=unknown
+### Wire calls to an unlisted endpoint are not recorded
 
-The URL being called does not match any entry in the active URL registry.
-The call is captured (hooks are working) but cannot be classified.
+The URL being called does not match any entry in the active URL registry, so the
+wire hooks skip it: no record is written at all (there is no
+`gen_ai.system=unknown` record — each hook records a request only when
+`UrlRegistry.is_known()` is true; `capture/hooks/_httpx.py`, `_requests.py`,
+`_urllib3.py`, `_aiohttp.py`). The symptom is a model call that is missing from
+`model-calls.jsonl`.
 
 Add an entry to your URL registry override (see section 4). Then check the
 active registry path:
@@ -1180,8 +1186,9 @@ inclusion proof in an append-only **Merkle log** (the proof is also carried in t
 since signing; a layer that was not requested prints `NOT PRESENT` rather than failing. This is what
 turns "here is a capsule" into "here is a capsule I can prove was not tampered with."
 
-NovaSeal is **opt-in** — if `~/.novafabric/novaseal.yaml` (or the
-`NOVAFABRIC_SEAL_CONFIG` environment variable) is absent, capture behaves exactly
+NovaSeal is **opt-in** — if `$NOVAFABRIC_HOME/novaseal.yaml`
+(`~/.novafabric/novaseal.yaml` when `NOVAFABRIC_HOME` is unset) and the
+`NOVAFABRIC_SEAL_CONFIG` environment variable are both absent, capture behaves exactly
 as before and no sealing occurs. This keeps the default path zero-dependency and
 air-gap friendly.
 
@@ -1225,14 +1232,19 @@ and configure `merkle_db:` inside it. See [novaseal-configuration.md §3.2](nova
 
 ```bash
 nova verify /path/to/capsule/
-# Checks three layers of integrity in the .seal/ directory:
+# Five checks over the capsule and its .seal/ directory:
 #   • ECDSA P-256 DSSE signature   → signature_ok=True
-#   • RFC 3161 timestamp           → timestamp_ok=True (None when no token: absent, not failed)
-#   • Merkle log inclusion proof   → log_integrity_ok=True
-#   • signer trust level           → identity_trust=self-asserted | local-ca-pinned | ca-anchored
-# Exits 0 if all checks pass, 1 otherwise. --json prints one JSON object.
+#   • RFC 3161 timestamp           → timestamp_ok=True (None when no token: absent, not failed);
+#                                    timestamp_trust=anchored | unanchored | absent | invalid
+#   • Merkle log inclusion proof   → log_integrity_ok=True (plus the sealer's own log when configured)
+#   • manifest binding             → capsule.yaml agrees with the signed payload
+#   • evidence binding             → every file's sha256 matches evidence_digests
+# It also reports the signer trust level (identity_trust=self-asserted | local-ca-pinned |
+# ca-anchored) and fails on recorded workload tampering or a link/special file in the capsule.
+# Exits 0 if all checks pass, 1 otherwise, 2 on a usage error (an incompatible flag
+# combination). --json prints one JSON object.
 
-# Explicit config path (instead of ~/.novafabric/novaseal.yaml):
+# Explicit config path (instead of $NOVAFABRIC_HOME/novaseal.yaml):
 nova verify --seal-config ~/configs/novaseal.yaml /path/to/capsule/
 ```
 
@@ -1476,7 +1488,7 @@ The `nova` service uses three mounts. All host paths default to
 
 **All testbench workloads must write capsules to the host path that maps to
 `/data/capsules`.** Do not use a relative `capsules/` path or a symlink inside
-the testbench; set `NOVAFABRIC_HOME` (or `NOVA_CAPSULE_DIR`) explicitly.
+the testbench; set `NOVAFABRIC_HOME` (or `NOVAFABRIC_CAPSULE_DIR`) explicitly.
 See `deploy/docker/docker-compose.yml` for the exact mount syntax.
 
 ### 7.3 Data-path environment variables
@@ -1488,22 +1500,21 @@ without any error.
 | Variable | Value in Docker | Default outside Docker | Effect |
 |----------|----------------|----------------------|--------|
 | `NOVAFABRIC_HOME` | `/data/nova` | `~/.novafabric` | Registry DB, serve token, audit log root |
-| `NOVAFABRIC_EVIDENCE_DIR` | `/data/capsules/evidence` | `~/.novafabric/evidence` | Where `nova export-evidence` writes ZIPs; where the Evidence tab reads them |
+| `NOVAFABRIC_EVIDENCE_DIR` | `/data/capsules/evidence` | `$NOVAFABRIC_HOME/evidence` (`~/.novafabric/evidence`) | Where `nova export-evidence` writes ZIPs; where the Evidence tab reads them |
 | `NOVAFABRIC_SERVE_PATH_ROOTS` | *(unset)* | *(unset)* | Extra absolute directories (`:`-separated) that `nova serve` may read and write when a request names a path. Without it, writes are confined to `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence` and `$NOVAFABRIC_EVIDENCE_DIR`, and reads also to `$NOVAFABRIC_HOME` and the capsule dir. Reads never reach the server's secrets (token stores, `.env`, `dek.db`, ratchet state, `config.yaml`, audit logs, and for source paths key material), even under a listed root. Replaces `NOVAFABRIC_SERVE_ALLOW_ANY_PATH`, which is no longer honoured |
 | `NOVAFABRIC_METADATA_BACKEND` | `postgres` | `sqlite` | MetadataStore backend |
 | `NOVAFABRIC_METADATA_DSN` | `postgresql://nova:nova@postgres:5432/nova` | *(SQLite file)* | DB connection string |
-| `NOVAFABRIC_SERVER_BACKEND` | `postgres` | *(sqlite)* | Server-mode Postgres DSN alias |
-| `NOVAFABRIC_POSTGRES_DSN` | same as above | — | Used by DB migration commands |
+| `NOVAFABRIC_SERVER_BACKEND` | `postgres` | `sqlite` | Server-mode (`nova server start`) backend selector: `sqlite` or `postgres` (overrides `backend:` in `server.yaml`) |
+| `NOVAFABRIC_POSTGRES_DSN` | `postgresql://nova:nova@postgres:5432/nova` | — | The Postgres DSN for server mode (when the backend is `postgres`), `nova db` and `nova migrate-to-postgres`, and the fallback DSN for `nova backup create --profile pg` and `nova restore` of a pg set when `NOVA_DSN` is unset |
 | `NOVA_WATCHER_BACKEND` | `auto` | `auto` | `CapsuleWatcher` backend: `auto` (watchdog if installed, else polling), `polling`, `watchdog`. Any other value stops `nova serve` at startup (exit 2). An explicit `nova ingest-capsule --backend` wins. |
 | `NOVA_WATCHER_INTERVAL` | `2.0` | `2.0` | Poll interval in seconds for `PollingBackend` and `nova ingest-capsule --watch`; must be a finite number > 0. An explicit `--interval` wins. |
 
-> **Why `NOVAFABRIC_EVIDENCE_DIR` matters:** The serve app defaults to
-> `$HOME/.novafabric/evidence`, and inside the container that is a path that is
-> not mounted anywhere — it disappears on restart, and since the image runs as
-> the non-root `nova` user (uid 1000) the home directory does not even exist to
-> be written. The correct path is `/data/capsules/evidence`
-> (inside the capsule volume), which persists across restarts and is written to
-> by the testbench export stage.
+> **Why `NOVAFABRIC_EVIDENCE_DIR` matters:** Without it the serve app uses
+> `$NOVAFABRIC_HOME/evidence` (`_paths.evidence_dir`) — in the compose stack
+> `/data/nova/evidence`, which is on the persistent volume, but is not where the
+> testbench export stage writes. The compose file sets `/data/capsules/evidence`
+> (inside the capsule volume) so the Evidence tab and the testbench export stage
+> share one directory.
 
 ### 7.4 Fresh deployment checklist
 

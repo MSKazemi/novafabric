@@ -65,8 +65,12 @@ current design — `nova capture` writes locally. The collector hierarchy above
 it is **also built now** (experimental, not yet proven at 1M-agent scale): a
 Go node-collector (`collector/`, Lustre-safe spool + NovaSeal batch signing,
 295K events/sec measured) and a lighter Python FastAPI receiver
-(`collector_app/`, `POST /capsule`) both exist and forward into the object
-store and event bus described below.
+(`collector_app/`, `POST /capsule`) both exist. They do different jobs: the Go
+spool forwarder publishes events over NATS (the event bus) to a hub that
+batch-signs them, while `collector_app` accumulates the events it receives into
+DuckDB (in-memory by default) or ClickHouse (when `NOVA_CLICKHOUSE_URL` is set).
+Neither writes capsules to the object store; that tier (`ObjectCapsuleStore`) is
+a separate library and server component.
 
 ### Running the Python collector receiver securely
 
@@ -155,7 +159,9 @@ Responsibility: pull, validate, and forward.
 
 - Polls compute nodes for completed capsules
 - Validates capsule schema
-- Deduplicates content (identical prompts/responses stored once)
+- Deduplicates content and repeated deliveries — **future design**: the shipped Go
+  forwarder delivers at least once, and nothing downstream deduplicates by `event_id`
+  yet (prompt-level content dedup: see below)
 - Forwards metadata to cluster server, raw events to object storage
 - Runs as a daemon process on a dedicated rack-level node
 
@@ -198,18 +204,16 @@ Small rows, fast queries, manageable volume.
 **Cold path** — object storage (any S3-compatible system) stores raw capsules:
 
 ```
-s3://novafabric-capsules/
-    01KR9Q2AD…/
-        events.jsonl      ← raw event stream, immutable
-        capsule.yaml
-        redaction-proof.json
+s3://<bucket>/
+    capsules/<tenant>/<sha256[0:4]>/<sha256>/data.zst   ← one whole capsule blob, immutable
 ```
 
-Raw events are write-once, content-addressed, and cheap to store at scale.
+The key is the SHA-256 of the whole capsule payload (`object_capsule_store/cas.py`,
+**experimental**), so blobs are write-once and an identical capsule is stored once.
 
-**Content deduplication** — a capsule stores a content hash, not the content.
-If 1,000 runs all use the same system prompt, it is stored once. The 1,000
-capsules each store only a hash pointer.
+**Content deduplication below the capsule level** — storing each distinct prompt or
+response once, with capsules holding only hash pointers — is **future design**. Today
+two capsules that share a system prompt each carry their own copy.
 
 ### 2. Lineage graph at billions of edges
 
@@ -261,7 +265,7 @@ access to the issuer.
 | `runs_cache` index — O(1) `/api/runs` at 100K capsules (Scale-S1) | ✓ shipped (v0.32.0) |
 | Background capsule watcher + `nova ingest-capsule` (Scale-S3) | ✓ shipped (v0.36.0) |
 | Postgres partition DDL for 10K-tenant MetadataStore (Scale-S2) | ✓ shipped (v0.32.0) |
-| Content-addressed capsule storage (identical content stored once, `cas.py`) | ✓ shipped experimental (Phase 4, v0.14.5) — SHA-256 CAS key `capsules/<tenant>/<sha[0:4]>/<sha>/data.zst`; event-level dedup by `event_id` at the collector forwarder |
+| Content-addressed capsule storage (an identical whole-capsule blob stored once, `cas.py`) | ✓ shipped experimental (Phase 4, v0.14.5) — SHA-256 CAS key `capsules/<tenant>/<sha[0:4]>/<sha>/data.zst`. Prompt-level dedup and `event_id` dedup of collector deliveries are future design |
 | Hot/cold storage split (Postgres metadata + object storage events) | ✓ shipped experimental (Phase 4, `object_capsule_store/`, v0.14.5) |
 | Rack/node-level collector daemon | ✓ shipped experimental (Phase 2, v0.14.3 — Go `collector/`, 295K events/sec p99 4.7ms; plus a lighter Python `collector_app/` FastAPI receiver, v0.29.0) |
 | Graph traversal indexes for lineage at scale | ✓ shipped experimental — all four at-scale backends (KuzuDB v0.17.0/Phase 6, Postgres recursive-CTE v0.68.0, Apache AGE v0.69.0, JanusGraph v0.70.0), all testcontainers-verified; zero remaining stub backends |

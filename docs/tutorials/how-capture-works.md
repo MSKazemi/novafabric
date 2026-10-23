@@ -90,7 +90,7 @@ multiple agents, streaming — and can't afford to freeze at each one.
 |---|---|---|
 | Style | synchronous (`def`) | async (`async def`) |
 | Good for | simple scripts, one call at a time | agents, servers, concurrent work |
-| Used by | older SDKs, simple tools | LangGraph, FastAPI, OpenAI SDK v1+ |
+| Used by | older SDKs, simple tools | async agents and tools (the OpenAI and Anthropic SDKs use `httpx`, covered below) |
 
 Both do the same job. NovaFabric captures both — and, because it also hooks the
 lower-level libraries described below, it captures calls that never touch either of
@@ -145,7 +145,10 @@ The same pattern applies across the wire-level surface NovaFabric ships hooks fo
 | `urllib3` | The lowest-level library that both `requests` and `boto3` use internally |
 | `httpx` | The client under the Anthropic SDK, `openai` before 3.x, and most other Python LLM clients |
 | `httpx2` | The client `openai` 3.x builds by default (`openai.OpenAI()` sends over `httpx2`, not `httpx`). Patched only when `httpx2` is installed; NovaFabric does not depend on it — **works today** |
-| Bedrock | AWS Bedrock runtime calls |
+
+AWS Bedrock has no dedicated hook: `boto3` sends over `urllib3`, so a Bedrock runtime
+call is captured by the `urllib3` hook and classified by the URL registry's
+`bedrock-runtime.` pattern.
 
 Alongside these wire-level hooks, NovaFabric also installs per-SDK hooks
 (OpenAI `Completions.create`, Anthropic `Messages.create`) and an MCP hook
@@ -163,7 +166,9 @@ is logged once as a `WARNING` (`nova_event=capture.record_dropped`, with the hoo
 the stream and the exception *type* — never its message, which may quote your
 prompt) and counted in the capsule's `capture-health.json` (under `nova capture`
 the workload process hands its counts over when it exits; `sources.workload`
-shows them). SDK objects you pass
+shows them, labelled unverified because the workload itself wrote them). A workload
+process that ends with `os._exit` or is killed runs no exit handler, so its drops are
+still lost. SDK objects you pass
 back into the next call — the common
 `messages.append(completion.choices[0].message)` pattern — are recorded the way
 the SDK sends them on the wire (`model_dump(mode="json", exclude_unset=True)`).
@@ -212,10 +217,12 @@ Only URLs that match a known LLM provider pattern are recorded into
 registry ships classifiers for providers including OpenAI, Anthropic, Cohere,
 Together, Mistral, Replicate, Bedrock, and Ollama.
 
-You can add your own entries by dropping a `~/.novafabric/url_registry.yaml` file,
-which the loader prefers over the vendored default (or point `$NOVAFABRIC_URL_REGISTRY`
-at an absolute path, which takes precedence over both) — useful for private LLM
-endpoints, mirrors, or internal gateways. Nothing calls out to a hardcoded external
+You can supply your own registry as `$NOVAFABRIC_HOME/url_registry.yaml`
+(`~/.novafabric/url_registry.yaml` by default), or point `$NOVAFABRIC_URL_REGISTRY`
+at an absolute path, which takes precedence over both. An override file
+**replaces** the vendored registry; it is not merged with it, so copy the provider
+entries you still need from `capture/hooks/url_registry.yaml` into your file. This is
+useful for private LLM endpoints, mirrors, or internal gateways. Nothing calls out to a hardcoded external
 service; every endpoint is configurable to a private one.
 
 ---
@@ -375,7 +382,7 @@ registry. Pick by how you launch and control the agent:
 | Mode | How it works | When to use |
 |---|---|---|
 | `nova capture python agent.py` | Subprocess wrap + `sitecustomize.py` hook injection | You control process startup |
-| `nova api-proxy --listen 127.0.0.1:9900` | Transparent HTTP proxy in front of the LLM | Agent is a service, or a non-Python client |
+| `nova api-proxy --listen 127.0.0.1:9900 --upstream-url https://api.openai.com` | Transparent HTTP proxy in front of the LLM | Agent is a service, or a non-Python client |
 | `nova mcp-proxy -- python mcp_server.py` | Transparent stdio proxy in front of the MCP server | Agent uses MCP tools |
 | `@agent` decorator (`novafabric.sdk.agent`) | Direct hook installation from inside your process | Notebooks, embedded agents |
 
@@ -390,10 +397,11 @@ subprocess; under the hood it calls `install_all(writer, parent_span_id)`
 - LLM calls are HTTP requests; NovaFabric records both sides without answering them
   or blocking the workload.
 - It captures by **monkey-patching** wire-level HTTP libraries (`requests`,
-  `aiohttp`, `urllib3`, `httpx`, Bedrock) plus per-SDK and MCP hooks, injected via a
+  `aiohttp`, `urllib3`, `httpx`, `httpx2`; Bedrock via `urllib3`) plus per-SDK and MCP hooks, injected via a
   generated `sitecustomize.py` on `PYTHONPATH` — zero agent code changes.
 - A **URL registry** classifies which calls become `model-calls.jsonl` records; you
-  can override it at `~/.novafabric/url_registry.yaml`.
+  can replace it with `$NOVAFABRIC_HOME/url_registry.yaml` (not merged with the
+  vendored one).
 - Records use open OpenTelemetry GenAI semantic conventions, inside a portable Run
   Capsule you own — written on success and failure, with verifiable redaction.
 
