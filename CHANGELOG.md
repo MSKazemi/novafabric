@@ -11,10 +11,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
-**Capture that never reaches the network or breaks your call, a `nova serve` that confines
-paths and gates promotion, and verifiers that refuse what they cannot check.** A security and
-correctness release from a line-by-line review of the documentation against the code. **Several
-entries below change behaviour** — read *Changed — BREAKING* before upgrading.
+## [0.107.0] - 2026-10-23
+
+**Capture that a workload cannot turn against its host, one verifier behind every trust surface,
+and documented behaviour that is true.** A security and correctness release from a line-by-line
+review of the documentation against the code, a docs-vs-code audit, and four attack reviews of
+the fixes. **Many entries below change behaviour** — read *Changed — BREAKING* before upgrading.
+Full notes: [docs/releases/v0.107.0.md](docs/releases/v0.107.0.md).
 
 ### Security
 

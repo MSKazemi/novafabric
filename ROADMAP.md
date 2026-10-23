@@ -15,7 +15,6 @@ and where an outside contributor fits.
 
 | | Where |
 |---|---|
-| **v0.107.0 — the code-vs-docs defect batch.** About 100 defects confirmed by a full code-vs-docs review and four rounds of attack review, each fixed with a test. It ships as one release; the breaking changes are listed in CHANGELOG `[Unreleased]`. | Known limits left after it: the open-items table under *Next* |
 | **Freeze the v1.0 capsule format** — blocked on **0 of 3** independent [design-partner](docs/governance/design-partners.md) sign-offs. No amount of engineering unblocks it. | The single largest gate on v1.0 |
 
 *(RFC-0001 — `runs` partition key vs. tenant idempotency — previously listed here as
@@ -84,6 +83,18 @@ Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-c
 | 0306 slice 1 | Python functions declared with `record.tool` are captured as `transport: python` tool records and served by mocked replay before the body runs, one-to-one, fail-closed (`tool_result_not_servable`), `--permissive` gated by the safety ladder; per-surface tool counters; indexed tool matcher | `novafabric.capture.record.tool`, `replay_contract.tool_calls_by_surface` / `tool_calls_refused`, `docs/architecture/replay-modes.md#support-matrix` | **experimental** (v0.105.0). Payloads kept only at `forensic`/`air_gapped`; non-JSON results not servable; nested boundaries not servable in v0.105.0 (served since slice 4, unreleased); ~~slice 2~~ shipped (row below), slice 3 (framework seams) planned, ~~slice 4~~ landed unreleased (row below) |
 | 0306 slice 2 | `replay.yaml` `tool_overrides` enforced inside the mocked replay on MCP and `record.tool` (one decision shared with `--dry-run`, pinned dry-run == replay over every override × surface × flag); a capsule's restriction holds even under `--permissive`, its permission needs the operator's ladder flag; a strict replay refuses to start when an `allow: false` cannot be enforced (`ToolOverrideUnenforceable`, exit 3); `--permissive` runs an unmatched MCP call live only with `--allow-unknown-mutation` (behaviour change) | `nova replay` (`--permissive`, `--allow-*`, `--dry-run`), `replay_contract.tool_overrides`, divergence `override_unenforceable` | **experimental** (v0.105.0). Overrides are not enforced in `--mode intervention` (no tool dispatcher); a capsule-supplied class is never used to permit; slice 3 (framework seams) planned; ~~nested coverage, echo check, redact-then-hash for MCP~~ landed unreleased as slice 4 (row below) |
 
+### Landed — v0.107.0 (2026-10-23)
+
+The code-vs-docs defect batch: about 100 defects confirmed by a line-by-line review of the
+documentation against the code, a docs-vs-code audit and four attack reviews, each fixed with a
+test that fails when the fix is reverted. Highlights: the capsule is untrusted input once the
+workload has run (whole-tree sweep, no-follow I/O, root pin); one verifier behind every capsule and
+Evidence Bundle surface; every bundle member signed; every route into production gated; legal
+holds that block erasure, deletion and retention at the moment of action; a fail-closed,
+fork-proof audit trail for seal bypasses. Full list: CHANGELOG `[0.107.0]` and
+[docs/releases/v0.107.0.md](docs/releases/v0.107.0.md). Known limits left after it: the
+open-items table under *Next*.
+
 ### Landed — v0.106.0 (2026-10-22)
 
 | ADR | Slice | Surface | Still open |
@@ -101,9 +112,9 @@ Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-c
 | 0315 | Promote signers must chain to a pinned CA; a seal bypass counts only from a policy approver, for its own capsule, by its signed expiry | `nova seal verify\|approve --ca-bundle` | requiring a signed policy when a trust root is pinned |
 | — | `nova verify <bundle>.zip` checks `manifest_hash`, DSSE signatures and subjects; `--public-key` pins the signer. `attest-replay --mode exact` refuses an ineligible run. Every write-permitting replay flag goes through the `replay_mutating` policy | `nova verify`, `nova evidence attest-replay`, `nova replay` | — |
 
-### Next — open items from the 2026-10 code-vs-docs defect batch (unreleased fixes on `main`)
+### Next — open items left after the v0.107.0 defect batch
 
-These are known limits left after the defect batch in CHANGELOG `[Unreleased]`. Each is
+These are known limits left after the defect batch in CHANGELOG `[0.107.0]`. Each is
 **planned** (no implementation yet) unless marked as an owner decision.
 
 | Item | Why it is open | Status |

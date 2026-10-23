@@ -36,7 +36,7 @@ authors:
 repository-code: "https://github.com/MSKazemi/novafabric"
 url: "https://novafabric.ai"
 license: Apache-2.0
-version: 0.106.1
+version: 0.107.0
 date-released: 2026-10-23
 # identifiers:                                          # see TODO 1 above
 #   - type: doi

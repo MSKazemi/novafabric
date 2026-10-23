@@ -9,7 +9,7 @@ The other three read the capsule and execute nothing.
 
 Every flag of these commands: [CLI reference — nova replay, diff and diagnose](../cli-reference.md#replay-commands-v03).
 
-> **Release scope.** This page describes **v0.106.1**, the current release. The following
+> **Release scope.** This page describes **v0.107.0**, the current release. The following
 > shipped in v0.105.0: recorded MCP `call_tool` results served (ADR-0300), the fail-closed
 > contract and `--permissive`, async / streamed / Responses API serving and live-network
 > reporting (ADR-0304), replay of recorded model errors (**experimental**), the

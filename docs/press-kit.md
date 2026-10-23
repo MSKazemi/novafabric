@@ -22,7 +22,7 @@ that as a real bug.
 | **What it is** | Open-source, self-hosted replay and evidence infrastructure for AI agents and agentic systems |
 | **License** | Apache-2.0 |
 | **Language** | Python 3.12+ |
-| **Current version** | v0.106.1 — **beta**; on-disk formats are not frozen until the v1.0 schema freeze |
+| **Current version** | v0.107.0 — **beta**; on-disk formats are not frozen until the v1.0 schema freeze |
 | **Repository** | <https://github.com/MSKazemi/novafabric> |
 | **Website** | <https://novafabric.ai> |
 | **Package** | `pip install novafabric` — <https://pypi.org/project/novafabric/> |

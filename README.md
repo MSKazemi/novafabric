@@ -251,7 +251,7 @@ W3C PROV · C2PA (experimental). Each claim is listed, with how to check it, in
 
 ## Status
 
-**Beta: v0.106.1.**
+**Beta: v0.107.0.**
 
 - **Usable today:** local capture, replay, diff, lineage (SQLite), the trust layer
   (signing, secret scanning, redaction), the asset registry, policy and approval gates,
@@ -352,7 +352,7 @@ To cite a specific software release:
   author  = {Seyedkazemi Ardebili, Mohsen},
   title   = {{NovaFabric}: replayable, verifiable execution evidence for {AI} agents},
   url     = {https://github.com/MSKazemi/novafabric},
-  version = {0.106.1},
+  version = {0.107.0},
   license = {Apache-2.0}
 }
 ```

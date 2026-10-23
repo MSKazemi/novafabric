@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**297 decisions recorded** — **281** accepted · **13** proposed · **3** superseded.
+**299 decisions recorded** — **282** accepted · **14** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -330,3 +330,5 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0313` | NovaSeal log roots are versioned; v2 commits to tree size; v1 verifies only with tree_size | accepted | 2026-10-22 |
 | `ADR-0314` | Per-subject DEK envelope encryption makes `nova pii erase` a real crypto-shred | accepted | 2026-10-22 |
 | `ADR-0315` | Promote signatures require a pinned trust root; a seal bypass counts only from a trusted policy approver, for its own capsule, by its signed expiry | accepted | 2026-10-22 |
+| `ADR-0316` | CI runs the unit suite as duration-balanced file shards with a proven partition; releases publish only from a commit whose CI passed | accepted | 2026-10-22 |
+| `ADR-0317` | Each Alembic track keeps its own version table | proposed | 2026-10-23 |
