@@ -518,6 +518,44 @@ and nothing is stored or announced: `nova seal bypass` exits 1, and the route an
 `503`. The dashboard route also writes a `seal_bypass` record to the dashboard audit
 log (`result` `ok` or `error`).
 
+**A bypass that cannot be stored is withdrawn (works today; review r8).** The entry is
+written before the bypass file is renamed into place. If that rename fails (disk full,
+I/O error), the staging file is removed, a `seal.bypass.abort` entry with the same
+`bypass_uuid` (`reason: store_failed`, the error type, the `surface`) is appended, and
+the bypass is refused: `nova seal bypass` exits 1, the route answers `503` and records
+the attempt. If even the abort entry cannot be written, the refusal says so and an
+ERROR is logged; the log then shows a `seal.bypass.create` for a bypass that does not
+exist, which verification never honours (below).
+
+**A bypass counts only while the audit log vouches for it (works today; review r8).**
+`nova seal verify`, `nova seal approve`, the `nova serve` / `nova server` seal routes
+and `nova export-model-independence` honour a stored bypass only when the audit log
+(`NOVAFABRIC_AUDIT_LOG_PATH`, as resolved where verification runs) holds a
+`seal.bypass.create` entry for the same capsule, `bypass_uuid` and envelope SHA-256
+whose own `entry_hash` recomputes, and no `seal.bypass.abort` for that `bypass_uuid`.
+This is on top of ADR-0315's checks (trusted signer, policy approver, this capsule,
+unexpired). A bypass file planted in the store without `nova seal bypass` — so with
+no audit entry and no notification — does not count, and neither does one whose
+envelope was swapped after it was audited. An unreadable audit log vouches for
+nothing.
+
+| Variable | Effect |
+|---|---|
+| `NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1` | skip the audit-entry check, for verifying a bundle store copied without the audit log it was written to. Not the default; the message then says `audit entry not checked` |
+
+Upgrading: a bypass created by a release before 2026-10-23 has no `seal.bypass.create`
+entry, so it stops counting after the upgrade. A bypass lasts at most 168 hours;
+create a new one, or set the variable above until the old one expires.
+
+**Concurrent writers keep the audit chain intact (works today; review r8).** Every
+append to the hash-chained audit log reads the last `entry_hash`, writes and fsyncs
+under an exclusive `fcntl.flock` on the log file plus an in-process lock, so threads
+(the dashboard runs bypasses in worker threads) and processes chain onto the true
+predecessor. Before, 8 threads creating 40 bypasses produced 12 `prev_hash`
+mismatches. `flock` is advisory and not honoured by every network filesystem (NFS
+without lock support, Lustre mounted without `-o flock`): keep the audit log on a
+local filesystem, or one that implements `flock`.
+
 **The signature covers the configuration, not the delivery.** The bypass is signed
 *before* anything is sent, so the signed predicate cannot honestly say "sent". It
 records what was configured when it was signed:

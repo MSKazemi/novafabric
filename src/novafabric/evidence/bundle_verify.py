@@ -321,16 +321,23 @@ def _members_statement_problem(
     unsigned manifest points), there is at most one, its subject must be the digest
     of its ``members`` map, and ``members`` must map paths to ``sha256:`` digests.
     """
-    if not isinstance(statement, dict) or statement.get("predicateType") != PREDICATE_BUNDLE_MEMBERS:
+    if not isinstance(statement, dict):
+        return ""
+    if statement.get("predicateType") != PREDICATE_BUNDLE_MEMBERS:
         return ""
     if (path, sig.get("signature_path"), sig.get("certificate_path")) != (
         MEMBERS_ENVELOPE, MEMBERS_SIGNATURE, MEMBERS_CERTIFICATE,
     ):
-        return f"a members statement must be {MEMBERS_ENVELOPE} with {MEMBERS_SIGNATURE} and {MEMBERS_CERTIFICATE}"
+        return (
+            f"a members statement must be {MEMBERS_ENVELOPE} with {MEMBERS_SIGNATURE} "
+            f"and {MEMBERS_CERTIFICATE}"
+        )
     if report.members_predicate is not None:
         return "more than one members statement"
     predicate = statement.get("predicate")
-    members = predicate.get("members") if isinstance(predicate, dict) else None
+    if not isinstance(predicate, dict):
+        return "members statement has no predicate object"
+    members = predicate.get("members")
     if not isinstance(members, dict) or not all(
         isinstance(k, str) and isinstance(v, str) for k, v in members.items()
     ):

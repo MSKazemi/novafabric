@@ -3514,6 +3514,18 @@ not a signed run, or the label of a run whose files and statements were stripped
 the manifest omits fails too. `manifest.json` is read with a 64 MiB bound. `POST /api/evidence/{bundle_id}/verify` in `nova serve` runs
 this same verifier, with the operator's trust list in place of `--public-key`.
 
+**Every member is signed (works today; review r8).** A bundle carries a members statement,
+`attestations/bundle.intoto.json`, signed by the same key: the SHA-256 of every member except
+`manifest.json` and the statement's own three files, and the hash of the manifest's fields.
+The check line `Every bundle member is covered by the signed members statement` fails on a
+rewritten, added or removed member (`README.md`, a vendored schema, anything) or an edited
+manifest field such as `verifier_instructions`, even with every digest and `manifest_hash`
+rewritten; so does a bundle whose run statement names a members statement it no longer has.
+A bundle exported before the statement existed passes only as
+`PASSED — signed content only (N member(s) not covered by any signature)` and lists those
+members (`README.md`, `schemas/`, `manifest.json`): treat them as unverified. `--public-key`
+does not change that; it pins who signed, not what nobody signed.
+
 Exit codes: `0` (all checks pass), `1` (any check fails or .seal/ missing).
 
 Example output (a capsule sealed after `nova seal init` — no TSA configured, so no
@@ -5864,9 +5876,14 @@ Options:
 **When a bypass counts.** An active bypass skips the five checks only if all of these hold:
 its signature verifies and its signer chains to the trust root; the signer's certificate
 subject is in the **latest** policy's `approver_key_ids`; the signed predicate names this
-capsule; and it is unexpired by its **signed** `valid_until`. The copy of `valid_until` in the
+capsule; it is unexpired by its **signed** `valid_until`; and the audit log holds its
+`seal.bypass.create` entry (same capsule, `bypass_uuid` and envelope SHA-256) and no
+`seal.bypass.abort` for it (review r8: a bypass file planted in the store without `nova seal
+bypass` has no entry and no notification). The copy of `valid_until` in the
 bundle store is not signed, so it can shorten a bypass but never extend it. A bypass that
 fails any condition is ignored and the five checks run as usual.
+`NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1` skips the audit-entry check, for a bundle store
+copied without its audit log; the message then says `audit entry not checked`.
 
 **Policy-time loading:** the verifier loads the policy version recorded in the Proposal's `policy_version` field, not the latest policy. A policy change after proposal creation does not retroactively invalidate in-flight proposals (ADR-0059 §Proposal-time policy).
 
@@ -5894,7 +5911,7 @@ Options:
 
 The bypass is recorded in the NovaSeal bypass log. The dashboard **SealTab** shows all active and expired bypasses with approver identity.
 
-**Fail closed (works today).** The bypass is stored only after its `seal.bypass.create` entry is in the hash-chained audit log (actor `cli-user`, the certificate's name as `authorized_by`, the envelope's SHA-256, the configured notification channels). If that entry cannot be written, the bypass is refused, nothing is stored or announced, and the command exits 1.
+**Fail closed (works today).** The bypass is stored only after its `seal.bypass.create` entry is in the hash-chained audit log (actor `cli-user`, the certificate's name as `authorized_by`, the envelope's SHA-256, the configured notification channels). If that entry cannot be written, the bypass is refused, nothing is stored or announced, and the command exits 1. If the entry was written but the bypass file cannot then be stored, a `seal.bypass.abort` entry withdraws it and the command exits 1 (review r8).
 
 **Notifications.** The signed predicate records the channels configured at signing time: `notification_status` is `pending` when `NOVA_BYPASS_NOTIFY_FILE` or `NOVA_BYPASS_NOTIFY_WEBHOOK` is set, `not_configured` otherwise, never `sent`. Delivery happens after signing and its outcome is the `seal.bypass.notify` audit entry. The webhook has a 5 s total deadline. See [NovaSeal configuration §4.1](novaseal-configuration.md#41-maker-checker-bypass-notifications).
 
@@ -8568,7 +8585,7 @@ Start the experimental local dashboard. Read-only browsing of capsules, registry
 
 | Endpoint | What it does |
 |---|---|
-| `POST /api/evidence/{bundle_id}/verify` | The same verifier as `nova verify <bundle>.zip` (artifact digests, `manifest_hash`, every DSSE signature, signed subjects recomputed from the bundle) + RFC 3161 TSR + NovaSeal Merkle log inclusion. Returns `{valid, signature_ok, manifest_hash_ok, artifacts_ok, complete, no_extras, subjects_ok, attestations_verified, signer_trust, signer_fingerprints, timestamp_ok, timestamp_trust, log_integrity_ok, seal_available, errors[]}`. `signer_trust` is `anchored` only when every signer is in the operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default `$NOVAFABRIC_HOME/evidence-trusted-keys.pem` — the server-side `--public-key`); without one it is `unanchored`: `valid` then proves consistency, not origin. |
+| `POST /api/evidence/{bundle_id}/verify` | The same verifier as `nova verify <bundle>.zip` (artifact digests, `manifest_hash`, every DSSE signature, signed subjects recomputed from the bundle) + RFC 3161 TSR + NovaSeal Merkle log inclusion. Returns `{valid, signature_ok, manifest_hash_ok, artifacts_ok, complete, no_extras, subjects_ok, attestations_verified, signer_trust, signer_fingerprints, members_signed, unsigned_members, timestamp_ok, timestamp_trust, log_integrity_ok, seal_available, errors[]}`. `signer_trust` is `anchored` only when every signer is in the operator's trust list (`NOVAFABRIC_EVIDENCE_TRUSTED_KEYS`, default `$NOVAFABRIC_HOME/evidence-trusted-keys.pem` — the server-side `--public-key`); without one it is `unanchored`: `valid` then proves consistency, not origin. |
 | `POST /api/runs/{run_id}/validate` | Capsule schema + required-file check. Returns `{valid, errors[], run_id}`. |
 | `GET /api/runs/{run_id}/redaction-proof` | Returns the full `redaction-proof.json` for a capsule (404 if not yet scanned). |
 | `GET /api/assets/{name}/diff` | Field-by-field diff of two asset spec versions (`?from_version=&to_version=`). Returns `{added, removed, changed, identical}`. |

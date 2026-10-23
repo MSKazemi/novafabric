@@ -2583,6 +2583,11 @@ def create_app(
         run when exactly one verified, else null. ``manifest.json`` is unsigned, so a
         subject, label or top-level ``run_id`` no verified statement signs fails the
         bundle and is never reported; the local log is checked only for signed runs.
+
+        ``members_signed`` is true when the bundle's members statement covers every
+        member and the manifest's fields (ADR-0011 Amendment 7); a rewritten member
+        then fails ``valid``. A legacy bundle without one can be ``valid`` with
+        ``members_signed: false``: ``unsigned_members`` names what no signature covers.
         """
         import zipfile  # noqa: PLC0415
 

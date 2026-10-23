@@ -149,7 +149,14 @@ not a tree over the files of one capsule.
 - `GET /api/seal/log/verify` in `nova serve` checks the same SQLite log
   read-only: a missing log is a 404 (nothing is created), a Postgres log a 501
   (use `nova seal log verify`; the DSN is shown without its password), and
-  `capsule_included` is an exact `capsule_id` match, never a pattern.
+  `capsule_included` is an exact `capsule_id` match, never a pattern. It creates
+  no file: a cleanly closed log (no `-wal`/`-shm` beside it) is opened with
+  SQLite's `immutable=1`, because a plain read-only open of a WAL-mode database
+  leaves both side files behind. While a writer is connected the side files exist
+  and the open uses normal locking instead, since `immutable=1` would ignore leaves
+  committed only to the WAL. Residual: a writer that connects after that check and
+  checkpoints during the read can make the immutable read fail or report an
+  inconsistency (a false alarm, never a hidden leaf).
 
 **The root is versioned (works today, ADR-0313).** A log has one root version for
 its whole life, recorded in the log database and next to every root it hands out
@@ -302,8 +309,14 @@ checks that chain. `nova seal bypass` creates a time-limited, audited exception.
 Every promote signer must chain to a pinned CA (`--ca-bundle` or
 `NOVAFABRIC_PROMOTE_CA_BUNDLE`, ADR-0315); with none configured, verification refuses
 (exit 3) unless `--insecure-self-signed` is given for development. A bypass counts
-only when it is signed by an approver in the latest policy, names this capsule and is
-unexpired by its **signed** `valid_until`.
+only when it is signed by an approver in the latest policy, names this capsule, is
+unexpired by its **signed** `valid_until`, and the hash-chained audit log holds its
+`seal.bypass.create` entry and no `seal.bypass.abort` (review r8; opt out with
+`NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1` for a store copied without its log). A
+bypass whose file cannot be stored after its entry was written is withdrawn with a
+`seal.bypass.abort` entry. Appends to the audit log are serialised across threads and
+processes (`fcntl.flock` on the log plus an in-process lock), so concurrent writers
+never fork its hash chain ([NovaSeal configuration §4.1](../novaseal-configuration.md#41-maker-checker-bypass-notifications)).
 `nova seal ratchet` is an opt-in forward-secure per-node key ratchet. All of
 these live in `cli/seal_propose.py`.
 

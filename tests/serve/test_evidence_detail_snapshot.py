@@ -103,7 +103,7 @@ def test_a_same_identity_rewrite_is_reverified_even_with_coarse_timestamps(
 ) -> None:
     """Freeze fstat — inode, size, mtime and ctime all unchanged, as on a 1 s-ctime FS."""
     frozen = os.stat(env["genuine"])
-    monkeypatch.setattr(evidence_verify.os, "fstat", lambda _fd: frozen)
+    monkeypatch.setattr(os, "fstat", lambda _fd: frozen)
     cache = evidence_verify.BundleVerdictCache()
     anchors = [env["pub"].read_bytes()]
 
