@@ -34,9 +34,11 @@ failure (spec §Edge cases).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Sequence
 
+from novafabric._capsule_fs import CapsuleEntryError
 from novafabric.eval.card import EvalCard, card_digest
 from novafabric.eval.dataset_provenance import DatasetProvenanceFacet, write_facet
 from novafabric.eval.experiment import (
@@ -59,6 +61,8 @@ from novafabric.eval.scores import (
     append_score,
 )
 from novafabric.eval.significance import wilson_interval
+
+_log = logging.getLogger(__name__)
 
 #: Default boolean metric emitted by the built-in exact-match scorer.
 DEFAULT_METRIC = "exact_match"
@@ -241,7 +245,23 @@ def run_experiment(
 
         score_ids: list[str] = []
         if item.expected is not None:
-            score = _score_exact_match(result.capsule_dir, result.run_id, item, metric)
+            try:
+                score = _score_exact_match(result.capsule_dir, result.run_id, item, metric)
+            except CapsuleEntryError as exc:
+                # The workload left a link (or FIFO) in its own capsule: the
+                # subject root is refused, so the item is an error, not a score.
+                _log.warning(
+                    "experiment item %s not scored: %s", item.item_id, exc
+                )
+                runs.append(
+                    ItemRun(
+                        item_id=item.item_id,
+                        capsule_ref=str(result.capsule_dir),
+                        score_ids=[],
+                        status=ItemRunStatus.ERROR,
+                    )
+                )
+                continue
             if pin is not None:
                 validate_score_against_config(score, pin)
             append_score(result.capsule_dir / SCORES_FILENAME, score)

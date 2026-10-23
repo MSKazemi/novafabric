@@ -108,6 +108,24 @@ follows one. They all share one module (`novafabric._capsule_fs`):
 - **Never followed, even when planted mid-export:** files are opened one path
   component at a time with `O_NOFOLLOW`, so a link swapped in after the check
   is refused at open time instead of copied.
+- **The capsule Merkle root:** the root (`capsule_merkle_root`, both the v1 and
+  v2 leaves) is the signed subject of Evidence Bundles, the `nova serve`
+  evidence cart, consent attestations, AI-BOM citations, OpenLineage capsule
+  facets, chain-of-custody blocks, session bundles, baseline pins, experiment and
+  offline-eval scores, and comment, annotation and score-submission subjects. It
+  walks the capsule without following a link and refuses a capsule holding one,
+  so it can never commit to a file outside the capsule. No root is computed
+  over the remaining files. The CLI prints one `error:` line and exits 2 (`nova
+  score submit` reports `capsule_unusable`, exit 2; `nova consent attest` exits
+  1, and `nova consent verify-attestation` reports the root check as failed,
+  exit 1, not stale). `nova serve` answers 422, also for the evidence cart even
+  with `accept_unresolved`, so a linked capsule never becomes a recorded
+  omission. Server-mode score submission answers 409. In `nova experiment run`
+  the item is recorded as an error, with no score. Each file is opened with
+  `O_NOFOLLOW` and read in chunks. A FIFO, socket or device in the capsule is
+  left out without being opened, as it always was, and a file swapped for one
+  mid-hash is refused. So the root never blocks. For a capsule without links,
+  the root is byte-identical to the one earlier releases computed.
 - **`nova serve`:** `GET /api/runs/{id}/file/{path}` answers 404 for a link (or
   a FIFO) and never returns its target. A run whose capsule holds a link or a
   special file (FIFO, socket, device) at its top level (`capsule.yaml`, a JSONL

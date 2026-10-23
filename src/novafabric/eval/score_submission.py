@@ -34,6 +34,8 @@ fail-closed — on any rejection **nothing is written**):
    server surfaces additionally bind the authenticated principal.
 4. **Subject exists** — the ``subject`` digest must be anchored in the target
    capsule (:class:`SubjectNotFoundError` otherwise; see :func:`capsule_known_digests`).
+   A capsule whose digests cannot be computed without following a link (or
+   opening a file swapped for a FIFO) is refused with :class:`CapsuleUnusableError`.
 5. **Append-only** — a correction is a *new* record whose ``supersedes`` names a
    ``score_id`` already present in the same log
    (:class:`SupersedesNotFoundError` otherwise); no line is ever mutated.
@@ -52,7 +54,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from novafabric._capsule_fs import read_capsule_file, read_capsule_text_or_none
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    read_capsule_file,
+    read_capsule_text_or_none,
+)
 from novafabric.eval.score_config import ScoreConfig, validate_score_against_config
 from novafabric.eval.score_config_catalog import find_config_for_score
 from novafabric.eval.scores import (
@@ -67,6 +73,7 @@ from novafabric.eval.scores import (
 
 __all__ = [
     "CapsuleNotFoundError",
+    "CapsuleUnusableError",
     "IdempotencyConflictError",
     "ScoreSubmissionError",
     "ScoreSubmissionRequest",
@@ -95,6 +102,14 @@ class ScoreSubmissionError(Exception):
 
 class CapsuleNotFoundError(ScoreSubmissionError):
     """The target capsule directory does not exist / has no ``capsule.yaml`` (404)."""
+
+
+class CapsuleUnusableError(ScoreSubmissionError):
+    """The capsule holds a symlink, or a file swapped for a FIFO or device (422).
+
+    Its Merkle roots cannot be computed without following the link, so no
+    subject can be checked against it and nothing is written.
+    """
 
 
 class SubmissionInvalidError(ScoreSubmissionError):
@@ -260,8 +275,16 @@ def submit_request(
             f"which is not present in {scores_path}"
         )
 
-    # Rule 4 — the subject must be anchored to captured evidence.
-    if score.subject not in capsule_known_digests(root):
+    # Rule 4 — the subject must be anchored to captured evidence. A capsule
+    # whose roots would have to follow a link is refused, never checked
+    # against a root computed over fewer files.
+    try:
+        known = capsule_known_digests(root)
+    except CapsuleEntryError as exc:
+        raise CapsuleUnusableError(
+            f"capsule {root.name} cannot be checked: {exc}"
+        ) from exc
+    if score.subject not in known:
         raise SubjectNotFoundError(
             f"subject {score.subject} is not a span/capsule digest of capsule {root.name}"
         )

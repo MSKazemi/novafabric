@@ -48,7 +48,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from novafabric._capsule_fs import CapsuleRequiredFileError, read_required_capsule_member
+from novafabric._capsule_fs import (
+    CapsuleEntryError,
+    CapsuleRequiredFileError,
+    read_required_capsule_member,
+)
 from novafabric.eval.annotation_queue import (
     AnnotationError,
     AnnotationQueue,
@@ -458,7 +462,15 @@ def populate_queue(
             continue
         matched += 1
 
-        subject = annotation_subject_digest(child)
+        try:
+            subject = annotation_subject_digest(child)
+        except CapsuleEntryError as exc:
+            # A link inside the capsule is never followed: no subject, no
+            # partial scan reported as complete.
+            raise AnnotationError(
+                f"cannot populate queue {queue_ref!r}: capsule {child.name} "
+                f"cannot be hashed: {exc}"
+            ) from exc
         if selector.sample is not None and _selector_sample_hash(subject) >= selector.sample:
             skipped_sample += 1
             continue

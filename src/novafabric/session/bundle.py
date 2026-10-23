@@ -166,9 +166,16 @@ def _canonical_hash(index: dict[str, Any]) -> str:
 
 
 def _merkle_root(capsule_dir: Path) -> str:
+    """The member's capsule root; a link or swapped-in FIFO is a :class:`SessionBundleError`."""
+    from novafabric._capsule_fs import CapsuleEntryError
     from novafabric.evidence.merkle import capsule_merkle_root
 
-    return capsule_merkle_root(capsule_dir)
+    try:
+        return capsule_merkle_root(capsule_dir)
+    except CapsuleEntryError as exc:
+        raise SessionBundleError(
+            f"capsule {capsule_dir.name} cannot be bundled: {exc}"
+        ) from exc
 
 
 def _zip_info(arcname: str) -> zipfile.ZipInfo:

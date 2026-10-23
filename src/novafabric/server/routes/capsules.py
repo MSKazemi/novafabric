@@ -859,6 +859,7 @@ async def submit_score(
     from novafabric.eval.score_config import ScoreConfigViolation
     from novafabric.eval.score_submission import (
         CapsuleNotFoundError,
+        CapsuleUnusableError,
         IdempotencyConflictError,
         ScoreSubmissionRequest,
         SubjectNotFoundError,
@@ -905,6 +906,10 @@ async def submit_score(
     except ScoreConfigViolation as exc:
         _audit("error", str(exc))
         raise ValidationError(str(exc), code="score_config_violation")
+    except CapsuleUnusableError as exc:
+        # Same code as a present-but-unusable capsule.yaml (_load_manifest).
+        _audit("error", str(exc))
+        raise ConflictError(str(exc), code="capsule_file_unusable")
     _audit("ok")
 
     import json as _json
