@@ -86,7 +86,68 @@ def test_migrate_adds_lineage_edge(src: Path, tmp_path: Path) -> None:
     assert edge["facets"]["from_schema_version"] == SOURCE_VERSION
     assert edge["source"]["schema_version"] == SOURCE_VERSION
     assert edge["target"]["schema_version"] == TARGET_VERSION
-    assert edge["confidence"] == "high"
+    assert edge["confidence"] == "declared"
+
+
+def test_migrated_capsule_lineage_validates_against_the_in_force_schema(
+    src: Path, tmp_path: Path
+) -> None:
+    """Every lineage.jsonl record of a migrated capsule passes the packaged lineage schema.
+
+    The packaged schema is what ``nova validate`` and ``nova lineage import`` check;
+    the migration edge used to fail it on edge_type, both endpoint kinds and
+    confidence, so every migrated capsule failed ``nova validate``.
+    """
+    import jsonschema  # type: ignore[import-untyped]  # noqa: PLC0415
+
+    from novafabric.lineage._importer import _SCHEMA, _validate_edge_record  # noqa: PLC0415
+
+    out = tmp_path / "out"
+    CapsuleMigrator().migrate(source=src, output=out)
+
+    records = [
+        json.loads(line)
+        for line in (out / "lineage.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert any(r["edge_type"] == "migration_source" for r in records)
+    validator = jsonschema.Draft202012Validator(_SCHEMA)
+    problems = [
+        f"line {i}: {'/'.join(map(str, e.absolute_path))}: {e.message}"
+        for i, record in enumerate(records, 1)
+        for e in validator.iter_errors(record)
+    ]
+    assert problems == []
+    for record in records:
+        _validate_edge_record(record)  # the importer's own check: raises on failure
+
+
+def test_migration_edge_identifies_the_source_by_run_and_digest_not_path(
+    src: Path, tmp_path: Path
+) -> None:
+    """No operator filesystem path is written into the migrated capsule's evidence."""
+    from novafabric._hashutil import sha256_file_prefixed  # noqa: PLC0415
+
+    source_digest = sha256_file_prefixed(src / "capsule.yaml")
+    run_id = yaml.safe_load((src / "capsule.yaml").read_text())["run_id"]
+    out = tmp_path / "out"
+    CapsuleMigrator().migrate(source=src, output=out)
+
+    text = (out / "lineage.jsonl").read_text()
+    assert str(src.resolve()) not in text
+    assert str(out.resolve()) not in text
+    edge = next(
+        json.loads(line) for line in text.splitlines()
+        if line.strip() and json.loads(line)["edge_type"] == "migration_source"
+    )
+    assert edge["schema_version"] == TARGET_VERSION
+    assert edge["source"] == {
+        "kind": "run", "run_id": run_id, "schema_version": SOURCE_VERSION,
+    }
+    assert edge["target"] == {
+        "kind": "run", "run_id": run_id, "schema_version": TARGET_VERSION,
+    }
+    assert edge["facets"]["source_capsule_sha256"] == source_digest
 
 
 def test_migrate_sets_lineage_ref_when_missing(src: Path, tmp_path: Path) -> None:

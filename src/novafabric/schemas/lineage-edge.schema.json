@@ -34,7 +34,8 @@
         "derived_from",
         "evaluated_by",
         "attested_by",
-        "depends_on"
+        "depends_on",
+        "migration_source"
       ]
     },
     "source": {
