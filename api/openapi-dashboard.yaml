@@ -10779,7 +10779,18 @@ paths:
       x-nova-contract: pending
   /api/seal/{capsule_id}/bypass:
     post:
-      description: Create a time-limited SoD bypass, DSSE-signed and permanently logged (ADR-0059).
+      description: 'Create a time-limited SoD bypass, DSSE-signed and permanently logged (ADR-0059).
+
+
+        Fail closed (review r6): the bypass is stored only after its
+
+        ``seal.bypass.create`` entry is in the hash-chained audit log; if that
+
+        entry cannot be written the route answers 503 and stores nothing. Each
+
+        attempt that reaches the store is also recorded in the dashboard audit
+
+        log, as the CLI''s is in the chained log.'
       parameters:
       - in: path
         name: capsule_id

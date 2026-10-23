@@ -1670,6 +1670,11 @@ Wire it via `PromoteBundleStore(notifier=SlackBypassNotifier())`. Without a
 store calls it through `dispatch_bypass_event()`, which never lets a failure block
 the bypass, logs it, and records a `seal.bypass.notify` audit entry
 ([novaseal-configuration §4.1](novaseal-configuration.md#41-maker-checker-bypass-notifications)).
+A custom notifier counts as a configured channel: its class name is signed into the
+bypass predicate's `notification_sent_to` (status `pending`). Build the predicate's
+notification fields from `PromoteBundleStore.notification_channels()` before signing, as
+`nova seal bypass` does. `put_bypass()` raises `BypassAuditError`, and stores nothing, when its
+`seal.bypass.create` audit entry cannot be written.
 
 ### SigningBackend — Cloud KMS signing
 
