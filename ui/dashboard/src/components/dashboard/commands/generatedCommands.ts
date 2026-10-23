@@ -8451,7 +8451,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "edge-type",
         "label": "--edge-type",
         "type": "text",
-        "hint": "Walk only edges of these types (comma-separated): attested_by,consumed,contains,delegated_to,depends_on,derived_from,evaluated_by,member_of_session,produced_by,read_memory,replayed_from,spawned,wrote_memory",
+        "hint": "Walk only edges of these types (comma-separated): attested_by,consumed,contains,delegated_to,depends_on,derived_from,evaluated_by,member_of_session,migration_source,produced_by,read_memory,replayed_from,spawned,wrote_memory",
         "flag": "--edge-type"
       },
       {
@@ -8733,7 +8733,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "edge-type",
         "label": "--edge-type",
         "type": "text",
-        "hint": "Walk only edges of these types (comma-separated): attested_by,consumed,contains,delegated_to,depends_on,derived_from,evaluated_by,member_of_session,produced_by,read_memory,replayed_from,spawned,wrote_memory",
+        "hint": "Walk only edges of these types (comma-separated): attested_by,consumed,contains,delegated_to,depends_on,derived_from,evaluated_by,member_of_session,migration_source,produced_by,read_memory,replayed_from,spawned,wrote_memory",
         "flag": "--edge-type"
       },
       {
