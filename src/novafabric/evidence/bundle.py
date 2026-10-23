@@ -123,6 +123,25 @@ def _refuse_symlinks(root: Path, capsule_name: str) -> None:
     )
 
 
+def _capsule_hash(capsule_dir: Path) -> str:
+    """The capsule's Merkle root, its refusals raised as :class:`CapsuleValidationError`.
+
+    ``_validate_capsule`` already refused any link, but a link or FIFO planted
+    after that check makes the root computation refuse too (it never follows
+    one). Raising it as :class:`CapsuleSymlinkError` / :class:`CapsuleValidationError`
+    lets every export surface report it as the malformed capsule it is (CLI
+    exit 1, serve 422, server 422), never as a crash.
+    """
+    try:
+        return capsule_merkle_root(capsule_dir)
+    except CapsuleSymlinkError:
+        raise
+    except CapsuleLinkError as exc:
+        raise CapsuleSymlinkError(str(exc), links=exc.links) from exc
+    except CapsuleSpecialFileError as exc:
+        raise CapsuleValidationError(f"capsule {capsule_dir.name}: {exc}") from exc
+
+
 def _read_regular_file(path: Path) -> bytes:
     """Read *path* only if it is a regular file, refusing to follow a symlink."""
     try:
@@ -360,7 +379,7 @@ class EvidenceBundleBuilder:
         the ADR-0011 layout put it.
         """
         capsule_dir = capsule_dir or self._capsule_dir
-        capsule_hash = capsule_merkle_root(capsule_dir)
+        capsule_hash = _capsule_hash(capsule_dir)
 
         manifest_yaml = yaml.safe_load(_capsule_text(capsule_dir, "capsule.yaml"))
         run_id = manifest_yaml["run_id"]
@@ -496,7 +515,7 @@ class EvidenceBundleBuilder:
     ) -> dict[str, Any]:
         manifest_yaml = yaml.safe_load(_capsule_text(self._capsule_dir, "capsule.yaml"))
         run_id = manifest_yaml["run_id"]
-        capsule_hash = capsule_merkle_root(self._capsule_dir)
+        capsule_hash = _capsule_hash(self._capsule_dir)
 
         artifacts: list[dict[str, Any]] = []
         for path in sorted(staging.rglob("*")):
@@ -707,7 +726,7 @@ class CapsuleSetBundleBuilder(EvidenceBundleBuilder):
                 subjects.append({
                     "kind": "run-capsule",
                     "run_id": run_id,
-                    "capsule_hash": capsule_merkle_root(capsule_dir),
+                    "capsule_hash": _capsule_hash(capsule_dir),
                     "capsule_path_in_bundle": f"{capsule_rel}/",
                 })
 

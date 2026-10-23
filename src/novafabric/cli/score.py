@@ -34,6 +34,7 @@ import typer
 from novafabric.eval.score_config import ScoreConfigViolation
 from novafabric.eval.score_submission import (
     CapsuleNotFoundError,
+    CapsuleUnusableError,
     IdempotencyConflictError,
     ScoreSubmissionError,
     SubjectNotFoundError,
@@ -55,6 +56,7 @@ score_app = typer.Typer(
 _ERROR_CODES: tuple[tuple[type[Exception], str], ...] = (
     (SubmissionInvalidError, "invalid_score"),
     (CapsuleNotFoundError, "capsule_not_found"),
+    (CapsuleUnusableError, "capsule_unusable"),
     (SubjectNotFoundError, "subject_not_found"),
     (IdempotencyConflictError, "idempotency_conflict"),
     (SupersedesNotFoundError, "supersedes_not_found"),
@@ -137,7 +139,8 @@ def score_submit(
     except (ScoreSubmissionError, ScoreConfigViolation) as exc:
         code = next(c for t, c in _ERROR_CODES if isinstance(exc, t))
         print(json.dumps({"error": code, "message": str(exc)}), file=sys.stderr)
-        raise typer.Exit(code=1) from exc
+        # A capsule holding a link exits 2, like every other unusable capsule.
+        raise typer.Exit(code=2 if isinstance(exc, CapsuleUnusableError) else 1) from exc
     if as_json:
         payload = result.model_dump(mode="json", exclude_none=True)
         payload["score"] = json.loads(result.score.model_dump_json(exclude_none=True))

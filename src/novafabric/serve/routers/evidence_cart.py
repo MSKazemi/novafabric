@@ -82,6 +82,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from novafabric import _paths as _nf_paths
+from novafabric._capsule_fs import CapsuleEntryError, CapsuleLinkError
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,23 @@ class _NotResolvable(Exception):
     """A cart kind with no resolver in this slice."""
 
 
+def _refusal_detail(refused: list[CapsuleEntryError]) -> str:
+    """One 422 detail for capsules whose Merkle root was refused; no server paths."""
+    links = sorted({link for exc in refused if isinstance(exc, CapsuleLinkError)
+                    for link in exc.links})
+    if links:
+        shown = ", ".join(links[:20])
+        return (
+            f"{len(refused)} cart capsule(s) cannot be exported: they hold "
+            f"{len(links)} symlink(s), which are never followed: {shown}. Replace "
+            "them with regular files or remove them, then export again."
+        )
+    return (
+        f"{len(refused)} cart capsule(s) cannot be exported: a capsule file is "
+        "not a regular file (a FIFO, socket or device) or holds a symlink"
+    )
+
+
 def build_evidence_cart_router(
     verify_token: Callable[..., Any],
     *,
@@ -280,6 +298,10 @@ def build_evidence_cart_router(
             )
 
         dirs: dict[tuple[str, str], Path] = {}
+        #: Capsules whose root was refused (a link inside, a file swapped for a
+        #: FIFO). Not "unresolved": the reference resolved to a capsule that no
+        #: export may carry, so ``accept_unresolved`` must not wave it through.
+        refused: list[CapsuleEntryError] = []
 
         def _digest_for(item: CartItem) -> str | None:
             from novafabric.evidence.merkle import capsule_merkle_root
@@ -293,8 +315,13 @@ def build_evidence_cart_router(
                 cdir = resolve_capsule(item.ref, capsule_dir)
             except HTTPException as exc:
                 raise LookupError(str(exc.detail)) from exc
+            try:
+                digest = capsule_merkle_root(cdir)
+            except CapsuleEntryError as exc:
+                refused.append(exc)
+                raise
             dirs[item.identity()] = cdir
-            return capsule_merkle_root(cdir)
+            return digest
 
         def _holds_for(item: CartItem) -> tuple[str, ...]:
             # Holds are registry-global (``<capsule base>/../registries/*``), so
@@ -312,6 +339,10 @@ def build_evidence_cart_router(
             digest_for=_digest_for,
             holds_for=_holds_for,
         )
+        if refused:
+            # The builder refuses such a capsule too (422); refusing here keeps
+            # a linked capsule from becoming a recorded "omission" in a bundle.
+            raise HTTPException(status_code=422, detail=_refusal_detail(refused))
         unresolved = [item.as_dict() for item in resolved.unresolved]
         if unresolved and not body.accept_unresolved:
             return JSONResponse(

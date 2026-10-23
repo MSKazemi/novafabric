@@ -7,7 +7,7 @@ from typing import Annotated, Any
 import typer
 from typer.core import TyperGroup
 
-from novafabric._capsule_fs import CapsuleRequiredFileError
+from novafabric._capsule_fs import CapsuleEntryError
 from novafabric.capsule.cli import capsule_phase3_app
 from novafabric.cli._community import VERSION_INVITE, hint_enabled
 from novafabric.cli.a2a_card import app as a2a_card_app
@@ -182,7 +182,8 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-#: Exit code of any command stopped by a capsule file that is present but unusable.
+#: Exit code of any command stopped by a capsule file that is present but unusable,
+#: or by a capsule that holds a link (never followed).
 EXIT_CAPSULE_FILE_UNUSABLE = 2
 
 
@@ -191,15 +192,20 @@ class _NovaGroup(TyperGroup):
 
     A required capsule file (``capsule.yaml``, ``capsule.json``, a primary
     stream) that is present but unusable raises
-    :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`. A command that
-    does not catch it ends here: one ``error:`` line on stderr and exit code
+    :class:`~novafabric._capsule_fs.CapsuleRequiredFileError`; a capsule whose
+    Merkle root, subjects or copy would have to follow a symbolic link raises
+    :class:`~novafabric._capsule_fs.CapsuleLinkError`; a capsule file swapped
+    for a FIFO or device raises
+    :class:`~novafabric._capsule_fs.CapsuleSpecialFileError`. All three are a
+    :class:`~novafabric._capsule_fs.CapsuleEntryError`. A command that does not
+    catch one ends here: one ``error:`` line on stderr and exit code
     :data:`EXIT_CAPSULE_FILE_UNUSABLE`, never a traceback and never exit 0.
     """
 
     def invoke(self, ctx: Any) -> Any:  # typer's vendored click Context
         try:
             return super().invoke(ctx)
-        except CapsuleRequiredFileError as exc:
+        except CapsuleEntryError as exc:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(code=EXIT_CAPSULE_FILE_UNUSABLE) from exc
 
@@ -211,8 +217,9 @@ app = typer.Typer(
     cls=_NovaGroup,
     epilog=(
         "A command whose output depends on a capsule file (capsule.yaml, a call "
-        "stream) that is present but unusable (a link, FIFO or directory) prints "
-        "one 'error:' line, writes nothing and exits 2."
+        "stream) that is present but unusable (a link, FIFO or directory), or on "
+        "a capsule that holds a link, prints one 'error:' line, writes nothing "
+        "and exits 2."
     ),
 )
 

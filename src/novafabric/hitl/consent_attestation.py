@@ -65,6 +65,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from novafabric._capsule_fs import CapsuleEntryError
 from novafabric.evidence.intoto import (
     DSSE_PAYLOAD_TYPE,
     INTOTO_STATEMENT_TYPE,
@@ -175,7 +176,13 @@ def build_consent_statement(
         "notice": CONSENT_NOTICE,
     }
     if capsule_dir is not None:
-        predicate["capsule_merkle_root"] = capsule_merkle_root(capsule_dir)
+        try:
+            predicate["capsule_merkle_root"] = capsule_merkle_root(capsule_dir)
+        except CapsuleEntryError as exc:
+            # A link inside the capsule is never followed; no root, no statement.
+            raise ConsentAttestationError(
+                f"cannot compute the capsule Merkle root ({exc}); refusing to attest"
+            ) from exc
     statement = make_intoto_statement(
         predicate_type=CONSENT_ATTESTATION_PREDICATE_TYPE,
         subject_name=f"consent/{entries[0]['consent_id']}",
@@ -347,7 +354,15 @@ def verify_consent_attestation(
 
     if capsule_dir is not None and isinstance(predicate.get("capsule_merkle_root"), str):
         # v2 or a pre-ADR-0310 v1 root (see evidence.merkle.capsule_root_matches)
-        result.capsule_root_matches = _root_matches(capsule_dir, predicate["capsule_merkle_root"])
+        try:
+            result.capsule_root_matches = _root_matches(
+                capsule_dir, predicate["capsule_merkle_root"]
+            )
+        except CapsuleEntryError as exc:
+            # The root cannot be recomputed without following a link: that is a
+            # failed check, not a stale one, and capsule_root_matches stays None.
+            result.fail("capsule_merkle_root", f"capsule root not recomputed: {exc}")
+            return result
         if not result.capsule_root_matches:
             # Informational: any later annotation (incl. a withdrawal) moves the root.
             result.stale("capsule Merkle root changed since attestation")

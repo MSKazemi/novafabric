@@ -42,6 +42,7 @@ from pydantic import BaseModel
 from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import (
     CapsuleEntryError,
+    CapsuleLinkError,
     CapsuleRequiredFileError,
     is_capsule_regular_file,
     iter_capsule_dirs,
@@ -831,6 +832,22 @@ def create_app(
                 "(a link, FIFO, directory or unreadable file); refused",
             },
         )
+
+    # Any other capsule refusal (a symlink inside the capsule, which the Merkle
+    # root, subjects and copies never follow; a file swapped for a FIFO or
+    # device) is also 422, never a 500 and never a root over fewer files. The
+    # detail names capsule-relative links only, never a server path.
+    @app.exception_handler(CapsuleEntryError)
+    async def capsule_entry_refused(request: Request, exc: CapsuleEntryError) -> JSONResponse:
+        if isinstance(exc, CapsuleLinkError):
+            shown = ", ".join(exc.links[:20]) or "a path component"
+            detail = (
+                f"the capsule holds {len(exc.links) or 1} symlink(s), which are never "
+                f"followed: {shown}; refused"
+            )
+        else:
+            detail = "a capsule file is not a regular file (a FIFO, socket or device); refused"
+        return JSONResponse(status_code=422, content={"detail": detail})
 
     # ---------- middleware ----------
 
@@ -3960,6 +3977,7 @@ def create_app(
         from novafabric.eval.score_config import ScoreConfigViolation  # noqa: PLC0415
         from novafabric.eval.score_submission import (  # noqa: PLC0415
             CapsuleNotFoundError,
+            CapsuleUnusableError,
             IdempotencyConflictError,
             ScoreSubmissionRequest,
             SubjectNotFoundError,
@@ -3998,6 +4016,9 @@ def create_app(
             _audit("error", error=str(exc))
             raise HTTPException(status_code=409, detail=str(exc))
         except (SupersedesNotFoundError, ScoreConfigViolation) as exc:
+            _audit("error", error=str(exc))
+            raise HTTPException(status_code=422, detail=str(exc))
+        except CapsuleUnusableError as exc:
             _audit("error", error=str(exc))
             raise HTTPException(status_code=422, detail=str(exc))
 
