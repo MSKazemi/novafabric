@@ -1,8 +1,52 @@
+"""RFC 6962-shaped Merkle root over a Run Capsule's files (ADR-0218, ADR-0310).
+
+This is the *evidence* construction. ``trust/novaseal/merkle.py`` is a different,
+incompatible one (ADR-0218); never mix leaves or combiners across the two.
+
+The capsule is walked through :mod:`novafabric._capsule_fs`, the no-follow layer every
+capsule exporter shares (ADR-0011 Amendments 3–5):
+
+* a symbolic link anywhere in the capsule raises
+  :class:`~novafabric._capsule_fs.CapsuleLinkError` naming every link. Following
+  one would make the root commit to a file *outside* the capsule (``inputs/x ->
+  ~/.ssh/id_rsa``), and that root is the signed subject of bundles, consent
+  attestations, AI-BOMs and baseline pins. No root is ever computed over the
+  remaining files;
+* FIFOs, sockets and devices are not capsule content: they are listed without
+  being opened and left out, as every exporter leaves them out and as the root
+  always left them out. A listed regular file that is swapped for one before it is
+  read raises :class:`~novafabric._capsule_fs.CapsuleSpecialFileError`, so the root
+  never blocks on a FIFO;
+* each file is opened with ``O_NOFOLLOW`` on every path component and read in
+  bounded chunks, so a link planted after the listing is refused, not followed.
+
+For a capsule without links the root is byte-identical to the one the earlier
+``rglob`` walk produced, for both leaf versions.
+"""
+
 from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Final
+
+from novafabric._capsule_fs import CapsuleLinkError, list_capsule, open_capsule_file
+
+__all__ = [
+    "ROOT_VERSIONS",
+    "CapsuleLinkError",
+    "capsule_merkle_root",
+    "capsule_root",
+    "capsule_root_matches",
+    "root_over_files",
+]
+
+#: The ``operation`` named in a ``_capsule_fs`` refusal.
+_OPERATION: Final[str] = "the capsule Merkle root"
+
+#: Read size when hashing one capsule file; a file is never held in memory whole.
+_CHUNK: Final[int] = 1 << 20
 
 
 def _h(data: bytes) -> bytes:
@@ -30,10 +74,31 @@ def _merkle_root(leaves: list[bytes]) -> bytes:
     return _inner(left, right)
 
 
-def _iter_capsule_files(capsule_dir: Path) -> Iterable[Path]:
-    for path in sorted(capsule_dir.rglob("*")):
-        if path.is_file():
-            yield path
+def _capsule_files(capsule_dir: Path) -> list[str]:
+    """Every regular file's capsule-relative POSIX path, in root order.
+
+    Ordered by path components, which is the order ``sorted(capsule_dir.rglob("*"))``
+    gave and :func:`root_over_files` uses. Raises
+    :class:`~novafabric._capsule_fs.CapsuleLinkError` when the capsule holds any link.
+    """
+    listing = list_capsule(capsule_dir, operation=_OPERATION)
+    return sorted(listing.files, key=lambda rel: rel.split("/"))
+
+
+def _content_digest(capsule_dir: Path, rel: str, prefix: bytes) -> bytes:
+    """``sha256(prefix || content)`` of capsule file *rel*, streamed, following no link."""
+    digest = hashlib.sha256(prefix)
+    with open_capsule_file(capsule_dir, rel, operation=_OPERATION) as handle:
+        for chunk in iter(lambda: handle.read(_CHUNK), b""):
+            digest.update(chunk)
+    return digest.digest()
+
+
+def _file_leaf(capsule_dir: Path, rel: str, version: int) -> bytes:
+    """The *version* leaf of capsule file *rel* (same bytes as :func:`_leaf` / :func:`_leaf_v2`)."""
+    if version == 2:
+        return _leaf_v2_from_digest(rel, _content_digest(capsule_dir, rel, b""))
+    return _content_digest(capsule_dir, rel, b"\x00")
 
 
 #: Root constructions, newest first. Verifiers accept any of them (ADR-0310).
@@ -51,8 +116,13 @@ def _leaf_v2(rel_path: str, data: bytes) -> bytes:
     with a shared prefix, a file whose *content* is a v2 leaf preimage gives a v1 leaf
     equal to that v2 leaf, so a v1 root over crafted files could equal a v2 root.
     """
+    return _leaf_v2_from_digest(rel_path, _h(data))
+
+
+def _leaf_v2_from_digest(rel_path: str, content_digest: bytes) -> bytes:
+    """:func:`_leaf_v2` given ``sha256(content)`` instead of the content itself."""
     path = rel_path.encode("utf-8")
-    return _h(_V2_LEAF_PREFIX + len(path).to_bytes(4, "big") + path + _h(data))
+    return _h(_V2_LEAF_PREFIX + len(path).to_bytes(4, "big") + path + content_digest)
 
 
 def capsule_root(
@@ -72,15 +142,29 @@ def capsule_root(
       sort order leaves a v1 root unchanged. Kept so roots recorded before ADR-0310
       still verify.
 
-    ``exclude`` drops files (e.g. annotation streams) before hashing.
+    ``exclude`` drops files (e.g. annotation streams) before hashing; it is called
+    with ``capsule_dir / <relative path>``.
+
+    The capsule is walked without following any link and each file is opened with
+    ``O_NOFOLLOW`` and read in bounded chunks. FIFOs, sockets and devices are left
+    out without being opened, as they always were.
+
+    Raises:
+        CapsuleLinkError: the capsule holds a symbolic link (never followed; no root
+            is computed over the other files).
+        CapsuleSpecialFileError: a listed file was swapped for a FIFO or device.
+        NotADirectoryError: *capsule_dir* is not a directory.
+        ValueError: *version* is unknown.
     """
-    files = [p for p in _iter_capsule_files(capsule_dir) if exclude is None or not exclude(p)]
-    if version == 2:
-        leaves = [_leaf_v2(p.relative_to(capsule_dir).as_posix(), p.read_bytes()) for p in files]
-    elif version == 1:
-        leaves = [_leaf(p.read_bytes()) for p in files]
-    else:
+    if version not in ROOT_VERSIONS:
         raise ValueError(f"unknown capsule root version {version!r}; known: {ROOT_VERSIONS}")
+    capsule_dir = Path(capsule_dir)
+    files = [
+        rel
+        for rel in _capsule_files(capsule_dir)
+        if exclude is None or not exclude(capsule_dir / rel)
+    ]
+    leaves = [_file_leaf(capsule_dir, rel, version) for rel in files]
     return "sha256:" + _merkle_root(leaves).hex()
 
 
