@@ -141,7 +141,10 @@ class TestEuAiActExporter:
         assert "run_id" in rec
         assert "logging_event_type" in rec
         assert "euaiact_compliance" in rec
-        assert rec["euaiact_compliance"]["art12_compliant"] is True
+        # Facts, never a verdict (review compliance-privacy-10).
+        assert "art12_compliant" not in rec["euaiact_compliance"]
+        assert "pii_redacted" not in rec["euaiact_compliance"]
+        assert rec["euaiact_compliance"]["pii_redaction_manifest"] in ("present", "absent")
 
     def test_skips_directories_without_capsule_yaml(self, tmp_path: Path) -> None:
         caps = tmp_path / "capsules"

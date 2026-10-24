@@ -208,14 +208,24 @@ class EuAiActExporter:
                 "model_call_count": meta.get("model_call_count", 0),
                 "tool_call_count": meta.get("tool_call_count", 0),
                 "novafabric_version": meta.get("novafabric_version"),
+                # Facts, never a verdict (review compliance-privacy-10): this block
+                # declared every run "art12_compliant: true" whatever it recorded,
+                # and "pii_redacted" from the secret scanner's proof, which is not
+                # PII redaction.
                 "euaiact_compliance": {
-                    "art12_compliant": True,
                     "logging_event_types": logging_event_types,
-                    "pii_redacted": bool(meta.get("redaction_proof_ref")),
+                    "secret_redaction_proof": _presence(capsule_dir, "redaction-proof.json"),
+                    "pii_redaction_manifest": _presence(capsule_dir, "redaction_manifest.json"),
                 },
             })
 
         return records
+
+
+def _presence(capsule_dir: Path, name: str) -> str:
+    """``"present"`` when *name* is a regular file in the capsule, else ``"absent"``."""
+    target = capsule_dir / name
+    return "present" if target.is_file() and not target.is_symlink() else "absent"
 
 
 def is_within_retention(capsule_created_at: datetime, retention_months: int) -> bool:
