@@ -18,7 +18,7 @@ import time
 import uuid
 import zipfile
 from contextlib import AbstractAsyncContextManager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
 import anyio
@@ -414,12 +414,13 @@ def _unpack_and_publish(
 
             # Step 4 — manifest peek (guarded read) + unchanged checks.
             names = zf.namelist()
-            yaml_candidates = [n for n in names if n.endswith("capsule.yaml")]
-            if not yaml_candidates:
+            if not any(PurePosixPath(n).name == "capsule.yaml" for n in names):
                 raise BadRequestError("ZIP does not contain a capsule.yaml file.")
 
+            # The member extraction publishes at the capsule root, not the
+            # first name that merely ends in capsule.yaml (review server-08).
             manifest_bytes = ingest.read_member_guarded(
-                zf, yaml_candidates[0], limits
+                zf, ingest.manifest_member(names), limits
             )
             try:
                 manifest = yaml.safe_load(manifest_bytes)

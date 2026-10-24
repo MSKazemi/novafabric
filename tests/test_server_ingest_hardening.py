@@ -1039,3 +1039,64 @@ def test_unpack_limiter_is_created_once_per_app() -> None:
     second = _unpack_slot(request, limits)  # type: ignore[arg-type]
     assert first is second
     assert first.value == 3
+
+
+class TestTheCheckedManifestIsThePublishedOne:
+    """review server-08: the run_id, parent and duplicate checks read the *first*
+    member whose name ended in ``capsule.yaml`` (``pkg/notes/capsule.yaml``, even
+    ``foocapsule.yaml``), while the published capsule is the one extracted to
+    the root. A decoy let a capsule with a missing parent in, and stored a
+    directory whose ``capsule.yaml`` named another run.
+    """
+
+    def test_a_decoy_cannot_carry_a_missing_parent_past_the_check(
+        self, client: TestClient, capsule_dir: Path
+    ) -> None:
+        real = _manifest(
+            "child-run", parent_run_id="no-such-parent",
+            created_at="2099-01-01T00:00:00+00:00",
+        )
+        data = _zip_bytes({
+            "pkg/notes/capsule.yaml": yaml.safe_dump(_manifest("innocent")).encode(),
+            "pkg/capsule.yaml": yaml.safe_dump(real).encode(),
+        })
+        resp = _upload(client, data)
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["error"]["code"] == "parent_not_found"
+        assert not any(p.name in {"innocent", "child-run"} for p in capsule_dir.iterdir())
+
+    def test_the_store_directory_is_named_by_the_published_manifest(
+        self, client: TestClient, capsule_dir: Path
+    ) -> None:
+        data = _zip_bytes({
+            "pkg/notes/capsule.yaml": yaml.safe_dump(_manifest("innocent")).encode(),
+            "pkg/capsule.yaml": yaml.safe_dump(_manifest("real-run")).encode(),
+        })
+        resp = _upload(client, data)
+        assert resp.status_code == 201, resp.text
+        assert not (capsule_dir / "innocent").exists()
+        published = yaml.safe_load((capsule_dir / "real-run" / "capsule.yaml").read_text())
+        assert published["run_id"] == "real-run"
+
+    def test_a_name_merely_ending_in_capsule_yaml_is_not_a_manifest(
+        self, client: TestClient, capsule_dir: Path
+    ) -> None:
+        data = _zip_bytes({"foocapsule.yaml": yaml.safe_dump(_manifest("foo")).encode()})
+        resp = _upload(client, data)
+        assert resp.status_code == 400, resp.text
+        assert "capsule.yaml" in resp.json()["error"]["message"]
+        assert not (capsule_dir / "foo").exists()
+
+    def test_two_members_extracting_to_the_manifest_are_refused(
+        self, client: TestClient, capsule_dir: Path
+    ) -> None:
+        data = _zip_bytes({
+            "capsule.yaml": yaml.safe_dump(_manifest("first")).encode(),
+            "./capsule.yaml": yaml.safe_dump(_manifest("second")).encode(),
+        })
+        resp = _upload(client, data)
+        # extraction would let the second silently overwrite the checked one
+        assert resp.status_code == 422, resp.text
+        assert "unsafe_member_name" in resp.text
+        assert not (capsule_dir / "first").exists()
+        assert not (capsule_dir / "second").exists()

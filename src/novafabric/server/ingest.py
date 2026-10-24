@@ -479,10 +479,41 @@ def assert_capsule_at_root(tmp_root: Path) -> None:
     """
     if (tmp_root / "capsule.yaml").is_file():
         return
-    raise _guard_violation(
+    raise _no_capsule_root()
+
+
+def _no_capsule_root() -> ValidationError:
+    return _guard_violation(
         REASON_NO_CAPSULE_ROOT,
         "Archive did not yield capsule.yaml at the capsule root: members must "
         "either sit at the archive root or share exactly one top-level directory.",
         0,
         0,
     )
+
+
+def manifest_member(names: list[str]) -> str:
+    """The one member that extraction writes to ``<capsule>/capsule.yaml``.
+
+    The manifest the ingest checks (run_id, parent, duplicate) must be the one
+    it publishes, so this maps names exactly as :func:`extract_archive` does —
+    never "the first name ending in ``capsule.yaml``", which a decoy such as
+    ``pkg/notes/capsule.yaml`` wins (review server-08). Raises the
+    ``no_capsule_root`` guard violation when no member lands at the root, and
+    ``unsafe_member_name`` when several do (``capsule.yaml`` and
+    ``./capsule.yaml``): extraction would let the last one silently overwrite
+    the one that was checked.
+    """
+    strip_top = archive_strip_top(names)
+    root = Path("capsule.yaml")
+    hits = [n for n in names if safe_member_relpath(n, strip_top=strip_top) == root]
+    if not hits:
+        raise _no_capsule_root()
+    if len(hits) > 1:
+        raise _guard_violation(
+            REASON_UNSAFE_MEMBER_NAME,
+            f"{len(hits)} archive members extract to capsule.yaml: {hits}",
+            0,
+            0,
+        )
+    return hits[0]

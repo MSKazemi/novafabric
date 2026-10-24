@@ -737,7 +737,13 @@ Env overrides: `NOVAFABRIC_SERVER_INGEST_MAX_UPLOAD_BYTES`,
   `payload_too_large` (body over the cap; `details` carries
   `limit_bytes`/`received_bytes`) and HTTP **422** `zip_guard_violation`
   (`details.reason` is one of `entry_count`, `total_uncompressed`,
-  `compression_ratio`, `unsafe_member_name`).
+  `compression_ratio`, `unsafe_member_name`, `no_capsule_root`).
+- The manifest the upload checks (`run_id`, parent, duplicate) is the one it
+  stores: the member that lands at the capsule root, either `capsule.yaml` or
+  `<dir>/capsule.yaml` when every member shares that one top-level directory.
+  An archive with no such member is `422 no_capsule_root`, one where two members
+  extract to `capsule.yaml` is `422 unsafe_member_name`, and one with no
+  `capsule.yaml` anywhere is `400`.
 - Uploads larger than 256 MiB now require explicit operator config — raise
   `max_upload_bytes`, or set any key to `0` to disable that limit
   (escape hatch, discouraged).
