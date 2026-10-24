@@ -301,15 +301,22 @@ def build_pii_status(
     active_by_hmac: dict[str, DEKSubjectRecord] = {}
     if dek_store_present and pepper is not None:
         active_by_hmac = _active_subject_hmacs(dek_db_path, pepper)
+    manifest_hmacs = {f.subject_id_hmac for f in fields}
+    # Review compliance-privacy-09: live DEKs exist, yet none matches any subject
+    # of this manifest — the pepper is wrong (rotated, mistyped, another
+    # deployment's) as likely as every subject being erased. Absence of a match
+    # then proves nothing: report "unknown", never an erasure confirmation. One
+    # match proves the pepper, and an unmatched subject really is erased.
+    pepper_unproven = bool(active_by_hmac) and not (manifest_hmacs & active_by_hmac.keys())
 
     subjects: list[SubjectDEKStatus] = []
-    for subject_hmac in sorted({f.subject_id_hmac for f in fields}):
+    for subject_hmac in sorted(manifest_hmacs):
         subject_fields = [f for f in fields if f.subject_id_hmac == subject_hmac]
         record = active_by_hmac.get(subject_hmac)
         state: Literal["active", "erased", "unknown"]
         if record is not None:
             state = "active"
-        elif dek_store_present and not pepper_available:
+        elif dek_store_present and (not pepper_available or pepper_unproven):
             state = "unknown"
         else:
             # Either the DEK was crypto-shredded, or dek.db is absent entirely —

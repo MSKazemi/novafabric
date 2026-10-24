@@ -5030,7 +5030,7 @@ Options:
 Per-subject `dek_state`:
 - `active` — a live DEK exists; ciphertext is still recoverable by the key holder
 - `erased` — no DEK exists (crypto-shredded via `nova pii erase`, or `dek.db` absent)
-- `unknown` — `dek.db` is present but `NOVA_PII_PEPPER` is not set, so manifest HMACs cannot be correlated
+- `unknown` — `dek.db` is present but `NOVA_PII_PEPPER` is not set, so manifest HMACs cannot be correlated; **or** `dek.db` holds live DEKs and none of them matches any subject of this capsule — the pepper may be wrong (rotated, mistyped, another deployment's), so absence of a match is not taken as erasure. Releases up to v0.107.0 reported `erased` here, an erasure confirmation for data that was still decryptable.
 
 Exit codes: `0` (report produced — including capsules with no redaction manifest), `1` (capsule not found or manifest unreadable).
 

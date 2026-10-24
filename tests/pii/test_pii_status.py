@@ -319,3 +319,37 @@ def test_report_json_round_trip(home: Path) -> None:
 
     assert restored.capsule_id == "01HXJSON"
     assert restored.encrypted_field_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Review compliance-privacy-09: a wrong pepper is not an erasure
+# ---------------------------------------------------------------------------
+
+
+def test_a_wrong_pepper_reports_unknown_not_erased(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With a rotated or mistyped NOVA_PII_PEPPER no manifest HMAC matches a live DEK,
+    and every subject read as erased: an erasure confirmation for decryptable data."""
+    store = DEKStore(home / "dek.db")
+    store.get_or_create_dek("alice@example.com")
+    store.close()
+    capsule_dir = home / "capsules" / "01HXPEPR"
+    _write_manifest(capsule_dir, "01HXPEPR", ["alice@example.com"])
+
+    monkeypatch.setenv("NOVA_PII_PEPPER", "not-the-pepper")
+    report = build_pii_status(str(capsule_dir))
+    assert [s.dek_state for s in report.subjects] == ["unknown"]
+
+    monkeypatch.setenv("NOVA_PII_PEPPER", PEPPER.decode("utf-8"))
+    assert [s.dek_state for s in build_pii_status(str(capsule_dir)).subjects] == ["active"]
+
+
+def test_with_no_live_dek_at_all_an_unmatched_subject_is_erased(home: Path) -> None:
+    store = DEKStore(home / "dek.db")
+    store.get_or_create_dek("gone@example.com")
+    store.erase_subject("gone@example.com", capsule_ids=[], retention_months=0)
+    store.close()
+    capsule_dir = home / "capsules" / "01HXNONE"
+    _write_manifest(capsule_dir, "01HXNONE", ["gone@example.com"])
+    assert [s.dek_state for s in build_pii_status(str(capsule_dir)).subjects] == ["erased"]
