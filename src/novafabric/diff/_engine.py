@@ -185,6 +185,20 @@ def _changed_params(a: dict[str, Any], b: dict[str, Any]) -> list[str]:
     return sorted(k for k in keys if (k in a) != (k in b) or a.get(k) != b.get(k))
 
 
+_RESULT_DIGEST = "io.novafabric.result_digest"
+_ARGUMENTS_DIGEST = "io.novafabric.arguments_digest"
+
+
+def _extension(record: dict[str, Any], key: str) -> object:
+    extensions = record.get("extensions")
+    return extensions.get(key) if isinstance(extensions, dict) else None
+
+
+def _error_type(record: dict[str, Any]) -> object:
+    error = record.get("error")
+    return error.get("type") if isinstance(error, dict) else None
+
+
 class DiffEngine:
     def compare(self, capsule_a: Path, capsule_b: Path) -> DiffReport:
         """Structural diff of two capsules.
@@ -313,17 +327,31 @@ class DiffEngine:
                     "tool_call_id_a": a.get("tool_call_id"),
                 })
             elif a is not None and b is not None:
-                result_changed = a.get("result") != b.get("result")
+                # Review replay-lineage-registry-06: at the default capture level a
+                # record holds only digests of its arguments and result, and a call
+                # that started failing differs in status/error — compare all three,
+                # or the --assert-no-regressions gate passes a tool that broke.
+                result_changed = a.get("result") != b.get("result") or (
+                    _extension(a, _RESULT_DIGEST) != _extension(b, _RESULT_DIGEST)
+                )
                 # Positional pairing (diff-report-v1) can pair a call whose
                 # arguments changed; that is a change too, not only the result.
-                arguments_changed = a.get("arguments") != b.get("arguments")
+                arguments_changed = a.get("arguments") != b.get("arguments") or (
+                    _extension(a, _ARGUMENTS_DIGEST) != _extension(b, _ARGUMENTS_DIGEST)
+                )
+                status_changed = a.get("status") != b.get("status") or (
+                    _error_type(a) != _error_type(b)
+                )
                 report.tool_call_pairs.append({
-                    "changed": result_changed or arguments_changed,
+                    "changed": result_changed or arguments_changed or status_changed,
                     "tool_name": a.get("tool_name"),
                     "tool_call_id_a": a.get("tool_call_id"),
                     "tool_call_id_b": b.get("tool_call_id"),
                     "result_changed": result_changed,
                     "arguments_changed": arguments_changed,
+                    "status_changed": status_changed,
+                    "status_a": a.get("status"),
+                    "status_b": b.get("status"),
                 })
 
     def _diff_outputs(

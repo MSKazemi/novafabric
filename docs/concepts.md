@@ -801,6 +801,11 @@ accountability claim checkable.
   and the response choices.
 - **Tool call alignment** — calls are matched by `tool_name` + argument hash,
   each call used once, then by position among calls with the same tool name.
+  A pair is changed when its arguments, result, `status` or `error.type` differ,
+  including the `io.novafabric.arguments_digest` / `result_digest` extensions
+  that are all a record holds at the default capture level (a digest on one
+  side only counts too). Releases up to v0.107.0 compared only `arguments` and
+  `result`, so a tool that started failing diffed as unchanged.
 - **Environment diff** — Python version, OS, architecture, interpreter path.
 - **Output diff** — every regular file under `outputs/`, recursively, by
   capsule-relative path and content hash. Symlinks are skipped, never followed.
