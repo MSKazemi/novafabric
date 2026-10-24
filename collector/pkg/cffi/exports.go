@@ -9,7 +9,8 @@
 // The exported C functions allow Python workloads (via cffi) to write events
 // directly to the local spool without spawning the Go collector binary.
 //
-// Thread-safety: SpoolWrite is goroutine-safe via the internal spool mutex.
+// Thread-safety: SpoolWrite is goroutine-safe via the internal spool mutex, and
+// safe across processes sharing a spool directory (link(2) commit).
 // SpoolLastError is NOT goroutine-safe (uses a module-level variable for
 // simplicity; suitable for demo / single-writer use cases).
 package main
@@ -22,12 +23,17 @@ import "C"
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"unsafe"
+
+	"github.com/MSKazemi/novafabric/collector/internal/spool"
 )
 
 // lastError stores the most recent error string from SpoolWrite / SpoolDrain.
@@ -35,13 +41,12 @@ import (
 // use and demonstration purposes.
 var lastError string
 
-// spoolSeq is a global monotonic sequence counter per process.  Each SpoolWrite
-// call increments it to produce unique segment filenames.  This mirrors the
-// per-Spool seqNum field in the Go spool package.
+// spoolSeq is this process's next sequence number: a floor, never trusted alone.
+// Each write takes the maximum of it, every committed segment in the directory
+// and the forwarder's checkpoint (review go-collector-ts-packages-03).
 var spoolSeq uint64
 
-// spoolMu serialises concurrent SpoolWrite calls so that sequence numbers are
-// assigned without gaps and file renames are atomic.
+// spoolMu serialises concurrent SpoolWrite calls in this process.
 var spoolMu sync.Mutex
 
 // headerSize is the fixed byte length of the segment header (mirrors spool/segment.go).
@@ -50,9 +55,12 @@ const headerSize = 16
 // headerVersion is the only supported segment format version.
 const headerVersion = 1
 
+// maxCommitAttempts bounds the retries when another process takes a sequence first.
+const maxCommitAttempts = 64
+
 // SpoolWrite writes a single JSON event to the local spool directory at
 // spoolDir.  The event is written to a new <seq>.jsonl file using the same
-// atomic-rename, 16-byte-header format as the Go spool package.
+// 16-byte-header format as the Go spool package.
 //
 // Returns 0 on success, -1 on error.  Call SpoolLastError to retrieve the
 // error string after a -1 return.
@@ -61,90 +69,161 @@ const headerVersion = 1
 func SpoolWrite(spoolDir *C.char, eventJSON *C.char, eventLen C.int) C.int {
 	dir := C.GoString(spoolDir)
 	data := C.GoBytes(unsafe.Pointer(eventJSON), eventLen)
+	if err := writeSegment(dir, data); err != nil {
+		lastError = err.Error()
+		return -1
+	}
+	return 0
+}
 
+// writeSegment commits one event as a new segment, never replacing another.
+//
+// The library is loaded into every Python capture process, so a per-process
+// counter starting at 0 replaced another run's undrained segment, and — once the
+// forwarder had acknowledged up to K — wrote events at seqs 0..K that the reader
+// skips and eviction deletes as already acknowledged. The sequence now starts
+// above every committed segment and the checkpoint, and the segment is committed
+// with link(2), which fails if the name exists, where rename(2) silently replaces
+// it; a collision with another process moves to the next sequence. link is a
+// POSIX commit primitive, not a lock, and works on NFS and Lustre.
+func writeSegment(dir string, data []byte) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
-		lastError = fmt.Sprintf("SpoolWrite: mkdir %s: %v", dir, err)
-		return -1
+		return fmt.Errorf("SpoolWrite: mkdir %s: %w", dir, err)
 	}
-
 	spoolMu.Lock()
-	seq := atomic.AddUint64(&spoolSeq, 1) - 1
-	spoolMu.Unlock()
+	defer spoolMu.Unlock()
 
-	tmpPath := filepath.Join(dir, fmt.Sprintf("%020d.jsonl.tmp", seq))
-	dstPath := filepath.Join(dir, fmt.Sprintf("%020d.jsonl", seq))
-
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	seq, err := nextSeq(dir)
 	if err != nil {
-		lastError = fmt.Sprintf("SpoolWrite: open tmp %s: %v", tmpPath, err)
-		return -1
+		return err
 	}
+	// The temp name carries the PID, so two processes never share one; it keeps
+	// the .jsonl.tmp suffix the spool's crash recovery looks for.
+	tmpPath := filepath.Join(dir, fmt.Sprintf("%020d.%d.jsonl.tmp", seq, os.Getpid()))
+	if err := writeTemp(tmpPath, seq, data); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	defer func() { _ = os.Remove(tmpPath) }()
 
-	// Write the 16-byte segment header (little-endian).
-	// Wire layout:
-	//   Bytes  0– 3   Writer PID   (uint32)
-	//   Bytes  4–11   Sequence     (uint64)
-	//   Byte  12      WriteComplete (0 = incomplete, will be set to 1 before rename)
-	//   Byte  13      Version      (always 1)
-	//   Bytes 14–15   Reserved     (0)
+	for attempt := 0; attempt < maxCommitAttempts; attempt++ {
+		dstPath := filepath.Join(dir, fmt.Sprintf("%020d.jsonl", seq))
+		err := os.Link(tmpPath, dstPath)
+		if err == nil {
+			spoolSeq = seq + 1
+			return syncDir(dir)
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("SpoolWrite: commit %s: %w", dstPath, err)
+		}
+		// Another process committed this sequence first. The header records the
+		// sequence, so rewrite it for the next one before retrying.
+		seq++
+		if err := setHeaderSeq(tmpPath, seq); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("SpoolWrite: no free sequence after %d attempts", maxCommitAttempts)
+}
+
+// nextSeq is one above the highest sequence in use: this process's floor, every
+// committed segment in dir, and the checkpoint's last acknowledged sequence.
+func nextSeq(dir string) (uint64, error) {
+	next := spoolSeq
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("SpoolWrite: read %s: %w", dir, err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		n, err := strconv.ParseUint(strings.TrimSuffix(name, ".jsonl"), 10, 64)
+		if err == nil && n+1 > next {
+			next = n + 1
+		}
+	}
+	cp, err := spool.LoadCheckpoint(dir)
+	if err != nil {
+		return 0, fmt.Errorf("SpoolWrite: %w", err)
+	}
+	if cp.HasAcked() && cp.LastAckSeq()+1 > next {
+		next = cp.LastAckSeq() + 1
+	}
+	return next, nil
+}
+
+// writeTemp writes the header, the event and the WriteComplete flag, and fsyncs.
+//
+// Wire layout (little-endian, mirrors spool/segment.go):
+//
+//	Bytes  0– 3   Writer PID   (uint32)
+//	Bytes  4–11   Sequence     (uint64)
+//	Byte  12      WriteComplete (0 = incomplete, set to 1 before commit)
+//	Byte  13      Version      (always 1)
+//	Bytes 14–15   Reserved     (0)
+func writeTemp(path string, seq uint64, data []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("SpoolWrite: open tmp %s: %w", path, err)
+	}
 	var hdr [headerSize]byte
 	binary.LittleEndian.PutUint32(hdr[0:4], uint32(os.Getpid()))
 	binary.LittleEndian.PutUint64(hdr[4:12], seq)
-	hdr[12] = 0 // WriteComplete = incomplete
 	hdr[13] = headerVersion
-
-	if _, err := f.Write(hdr[:]); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		lastError = fmt.Sprintf("SpoolWrite: write header: %v", err)
-		return -1
-	}
-
-	// Write the event JSON followed by a newline (same format as spool.writeEvent).
-	buf := make([]byte, len(data)+1)
-	copy(buf, data)
-	buf[len(data)] = '\n'
-	if _, err := f.Write(buf); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		lastError = fmt.Sprintf("SpoolWrite: write event: %v", err)
-		return -1
-	}
-
-	// Set WriteComplete = 1 by seeking to byte 12 and overwriting.
-	if _, err := f.Seek(12, 0); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		lastError = fmt.Sprintf("SpoolWrite: seek for complete flag: %v", err)
-		return -1
-	}
-	if _, err := f.Write([]byte{1}); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		lastError = fmt.Sprintf("SpoolWrite: write complete flag: %v", err)
-		return -1
-	}
-
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		lastError = fmt.Sprintf("SpoolWrite: fsync: %v", err)
-		return -1
+	body := make([]byte, 0, len(data)+1)
+	body = append(append(body, data...), '\n')
+	for _, step := range []struct {
+		what string
+		run  func() error
+	}{
+		{"write header", func() error { _, err := f.Write(hdr[:]); return err }},
+		{"write event", func() error { _, err := f.Write(body); return err }},
+		{"write complete flag", func() error { _, err := f.WriteAt([]byte{1}, 12); return err }},
+		{"fsync", f.Sync},
+	} {
+		if err := step.run(); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("SpoolWrite: %s: %w", step.what, err)
+		}
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		lastError = fmt.Sprintf("SpoolWrite: close: %v", err)
-		return -1
+		return fmt.Errorf("SpoolWrite: close: %w", err)
 	}
+	return nil
+}
 
-	// Atomic rename — the ONLY commit primitive (matches spool/segment.go).
-	if err := os.Rename(tmpPath, dstPath); err != nil {
-		_ = os.Remove(tmpPath)
-		lastError = fmt.Sprintf("SpoolWrite: rename: %v", err)
-		return -1
+// setHeaderSeq rewrites the sequence recorded in the temp file's header.
+func setHeaderSeq(path string, seq uint64) error {
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("SpoolWrite: reopen tmp: %w", err)
 	}
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], seq)
+	if _, err := f.WriteAt(b[:], 4); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("SpoolWrite: rewrite header seq: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("SpoolWrite: fsync: %w", err)
+	}
+	return f.Close()
+}
 
-	return 0
+// syncDir makes the new directory entry durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("SpoolWrite: open dir for fsync: %w", err)
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		return fmt.Errorf("SpoolWrite: fsync dir: %w", err)
+	}
+	return nil
 }
 
 // SpoolDrain signals the spool to flush all pending events.  In the current
