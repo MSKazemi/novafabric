@@ -587,3 +587,43 @@ class TestCLISmoke:
             ],
         )
         assert result.exit_code != 0
+
+
+# --- review compliance-privacy-20: the bag carries the capsule's evidence ------------
+
+
+def test_the_bag_carries_every_capsule_file(tmp_path: Path) -> None:
+    """Only capsule.yaml, top-level zips and audit-report.json were bagged; the streams,
+    inputs/, outputs/ and .seal/ were not, yet manifest-sha256.txt verified clean."""
+    import hashlib
+
+    cap = tmp_path / "cap-full"
+    (cap / "outputs").mkdir(parents=True)
+    (cap / ".seal").mkdir()
+    files = {
+        "capsule.yaml": b"run_id: cap-full\n",
+        "model-calls.jsonl": b'{"model": "m"}\n',
+        "tool-calls.jsonl": b"",
+        "trace.jsonl": b'{"span": 1}\n',
+        "outputs/stdout.txt": b"hello\n",
+        ".seal/manifest.dsse": b"{}",
+    }
+    for rel, data in files.items():
+        (cap / rel).write_bytes(data)
+    bag = BagItExporter(capsule_id="cap-full", data_dir=cap).export(output_dir=tmp_path / "bags")
+    with zipfile.ZipFile(bag) as zf:
+        names = set(zf.namelist())
+        manifest = zf.read("cap-full/manifest-sha256.txt").decode()
+        for rel, data in files.items():
+            assert f"cap-full/data/{rel}" in names, rel
+            assert zf.read(f"cap-full/data/{rel}") == data
+            assert f"{hashlib.sha256(data).hexdigest()}  {rel}" in manifest
+
+
+def test_the_bag_never_contains_itself(tmp_path: Path) -> None:
+    cap = tmp_path / "cap-self"
+    cap.mkdir()
+    (cap / "capsule.yaml").write_text("run_id: cap-self\n")
+    bag = BagItExporter(capsule_id="cap-self", data_dir=cap).export(output_dir=cap)
+    with zipfile.ZipFile(bag) as zf:
+        assert not [n for n in zf.namelist() if n.endswith("-bag.zip")]

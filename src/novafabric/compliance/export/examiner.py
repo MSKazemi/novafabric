@@ -25,7 +25,9 @@ database connection.  They operate on the local capsule data directory.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
 import stat
 import zipfile
 from datetime import datetime, timezone
@@ -35,7 +37,8 @@ from typing import Any
 import yaml
 
 from novafabric._capsule_fs import (
-    read_capsule_file,
+    list_capsule,
+    open_capsule_file,
     read_required_capsule_file,
     read_required_capsule_member,
     refuse_capsule_links,
@@ -151,42 +154,39 @@ class BagItExporter:
         # anything is written.
         refuse_capsule_links(self.data_dir, operation=_OPERATION)
 
-        # Collect payload files from the capsule directory
-        payload: dict[str, bytes] = {}  # filename (relative to data/) -> bytes
-
-        # Always include capsule manifest if present
-        # (absent: not bagged; present but not a regular file: CapsuleRequiredFileError,
-        # never a bag that silently lacks its manifest)
+        # A manifest that is present but unusable (a FIFO, a directory) refuses the
+        # export: never a bag that silently lacks it.
         for candidate in ["capsule.yaml", "capsule-manifest.json"]:
-            manifest_bytes = read_required_capsule_file(
-                self.data_dir, candidate, operation=_OPERATION
-            )
-            if manifest_bytes is not None:
-                payload[candidate] = manifest_bytes
+            read_required_capsule_file(self.data_dir, candidate, operation=_OPERATION)
 
-        # Include evidence bundle zip if present
-        for zip_path in sorted(self.data_dir.glob("*.zip")):
-            if zip_path != output_path:
-                payload[zip_path.name] = read_capsule_file(
-                    self.data_dir, zip_path.name, operation=_OPERATION
-                )
-
-        # Include audit report
-        if include_audit_report and (self.data_dir / "audit-report.json").is_file():
-            payload["audit-report.json"] = read_capsule_file(
-                self.data_dir, "audit-report.json", operation=_OPERATION
-            )
+        # Every regular capsule file is payload (review compliance-privacy-20): only
+        # capsule.yaml, top-level zips and audit-report.json used to be bagged — no
+        # streams, inputs/, outputs/ or .seal/ — while manifest-sha256.txt verified
+        # clean. Files are streamed, hashed first and copied second, never held
+        # whole in memory.
+        listing = list_capsule(self.data_dir, operation=_OPERATION)
+        output_resolved = output_path.resolve()
+        payload: dict[str, tuple[str, int]] = {}  # rel -> (sha256, size)
+        for rel in listing.files:
+            if (self.data_dir / rel).resolve() == output_resolved:
+                continue  # a bag written into its own capsule never contains itself
+            if rel == "audit-report.json" and not include_audit_report:
+                continue
+            hasher = hashlib.sha256()
+            size = 0
+            with open_capsule_file(self.data_dir, rel, operation=_OPERATION) as fh:
+                while chunk := fh.read(1 << 20):
+                    hasher.update(chunk)
+                    size += len(chunk)
+            payload[rel] = (hasher.hexdigest(), size)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Compute checksums
-        manifest_lines: list[str] = []
-        for filename, data in sorted(payload.items()):
-            digest = _sha256_bytes(data)
-            manifest_lines.append(f"{digest}  {filename}")
+        manifest_lines = [f"{digest}  {rel}" for rel, (digest, _size) in sorted(payload.items())]
         manifest_sha256_content = "\n".join(manifest_lines) + "\n" if manifest_lines else ""
 
         # Compute total payload size
-        total_bytes = sum(len(d) for d in payload.values())
+        total_bytes = sum(size for _digest, size in payload.values())
 
         # Build bag-info.txt
         bag_info_lines = [
@@ -198,6 +198,8 @@ class BagItExporter:
         ]
         if contact_email:
             bag_info_lines.append(f"Contact-Email: {contact_email}")
+        for rel in listing.skipped:  # FIFOs, sockets, devices: named, never bagged
+            bag_info_lines.append(f"Payload-Omitted: {rel} (not a regular file)")
         bag_info_content = "\n".join(bag_info_lines) + "\n"
 
         # Tag manifests (checksums of the tag files themselves)
@@ -230,9 +232,11 @@ class BagItExporter:
             ) << 16
             zf.writestr(verify_info, _VERIFY_SH)
 
-            # Payload data/ directory
-            for filename, data in sorted(payload.items()):
-                zf.writestr(f"{prefix}/data/{filename}", data)
+            # Payload data/ directory, streamed from the capsule (no link followed)
+            for rel in sorted(payload):
+                with open_capsule_file(self.data_dir, rel, operation=_OPERATION) as src, \
+                        zf.open(f"{prefix}/data/{rel}", "w", force_zip64=True) as dst:
+                    shutil.copyfileobj(src, dst, 1 << 20)
 
         return output_path
 

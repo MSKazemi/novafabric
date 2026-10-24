@@ -9400,7 +9400,7 @@ nova export-examiner bagit 01HXAY7M5JZ8R7K4P9DPBYK2WX \
 
 A capsule directory holding a symbolic link is refused (exit 1, no bag written).
 
-**Output:** BagIt ZIP containing `bagit.txt`, `bag-info.txt`, `manifest-sha256.txt`, `tagmanifest-sha256.txt`, and the capsule payload under `data/`.
+**Output:** BagIt ZIP containing `bagit.txt`, `bag-info.txt`, `manifest-sha256.txt`, `tagmanifest-sha256.txt`, and the capsule payload under `data/`. The payload is **every regular file of the capsule** — the streams, `inputs/`, `outputs/` and `.seal/` included — streamed and checksummed; a special file (FIFO, socket, device) is named in `bag-info.txt` as `Payload-Omitted`, and a capsule holding a symbolic link is refused. Releases up to v0.107.0 bagged only `capsule.yaml`, top-level ZIPs and `audit-report.json`, yet the checksums verified clean.
 
 ### nova export-examiner pccp
 
