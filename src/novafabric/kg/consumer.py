@@ -23,11 +23,15 @@ from novafabric._capsule_fs import (
     read_capsule_text_or_none,
 )
 from novafabric.capture.record_roles import non_counting_model_call_ids
+from novafabric.kg.capsule_ingest import (
+    FALLBACK_EVENT_FILE,
+    PREFERRED_EVENT_FILES,
+    capsule_event_files,
+)
 
 logger = logging.getLogger(__name__)
 
 # Files within a capsule that carry KG-relevant events
-_CAPSULE_EVENT_FILES = ("model-calls.jsonl", "tool-calls.jsonl", "events.jsonl")
 
 
 def _walk_no_follow(base: Path) -> list[Path]:
@@ -82,11 +86,12 @@ class CapsuleEventConsumer:
                     async for event in self._iter_from_zip(path):
                         yield event
                 continue
-            for fname in _CAPSULE_EVENT_FILES:
+            # Both model-calls.jsonl and tool-calls.jsonl; events.jsonl only when
+            # neither exists (the same selection as kg.capsule_ingest).
+            for fname in capsule_event_files(path):
                 if is_capsule_regular_file(path, fname):
                     async for event in self._iter_from_jsonl(path / fname):
                         yield event
-                    break  # yield from first found file only per directory
 
     async def _iter_from_jsonl(self, jsonl_path: Path) -> AsyncIterator[dict[str, Any]]:
         """Yield event dicts from a single .jsonl file (never through a link)."""
@@ -125,9 +130,16 @@ class CapsuleEventConsumer:
                 zipfile.ZipFile(raw, "r") as zf,
             ):
                 names = zf.namelist()
-                for fname in _CAPSULE_EVENT_FILES:
+
+                def _match(fname: str) -> list[str]:
                     # Accept the file at any path depth within the zip
-                    matches = [n for n in names if n.endswith("/" + fname) or n == fname]
+                    return [n for n in names if n.endswith("/" + fname) or n == fname]
+
+                wanted = [f for f in PREFERRED_EVENT_FILES if _match(f)] or [
+                    FALLBACK_EVENT_FILE
+                ]
+                for fname in wanted:
+                    matches = _match(fname)
                     if matches:
                         with zf.open(matches[0]) as fh:
                             for line in fh:
@@ -145,7 +157,6 @@ class CapsuleEventConsumer:
                                         matches[0],
                                         exc,
                                     )
-                        break  # first matching file only
         except zipfile.BadZipFile as exc:
             logger.warning("CapsuleEventConsumer: bad zip %s: %s", zip_path, exc)
         except CapsuleEntryError as exc:

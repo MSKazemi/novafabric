@@ -60,15 +60,6 @@ _QueueDBAr = Annotated[
 ]
 
 
-def _transport_ids(events_file: Path) -> set[str]:
-    """ADR-0305: ids of model-call records that are not calls (no KG edge)."""
-    if events_file.name != "model-calls.jsonl":
-        return set()
-    from novafabric.capture.record_roles import non_counting_model_call_ids
-
-    return non_counting_model_call_ids(events_file)
-
-
 kg_app = typer.Typer(
     name="kg",
     help="Capsule Knowledge Graph: ingest, query, and inspect (requires novafabric\\[scale-kg]).",
@@ -290,6 +281,7 @@ def kg_ingest_cmd(
             raise typer.Exit(1)
 
         try:
+            from novafabric.kg.capsule_ingest import ingest_capsule_dir  # noqa: PLC0415
             from novafabric.kg.pipeline import KGIngestionPipeline  # noqa: PLC0415
             from novafabric.kg.store import KGStore  # noqa: PLC0415
         except ImportError as exc:
@@ -324,35 +316,13 @@ def kg_ingest_cmd(
             for i, cdir in enumerate(dirs, 1):
                 progress.update(ptask, description=f"[{i}/{len(dirs)}] {cdir.name}")
                 try:
-                    ev_files: list[Path] = []
-                    for fname in ("model-calls.jsonl", "tool-calls.jsonl"):
-                        p = cdir / fname
-                        if p.exists():
-                            ev_files.append(p)
-                    if not ev_files:
-                        fallback = cdir / "events.jsonl"
-                        if fallback.exists():
-                            ev_files.append(fallback)
-                    cap_ingested = 0
-                    cap_skipped = 0
-                    for evf in ev_files:
-                        skip = _transport_ids(evf)
-                        for raw in evf.read_text(encoding="utf-8").splitlines():
-                            raw = raw.strip()
-                            if not raw:
-                                continue
-                            try:
-                                event = json.loads(raw)
-                                if skip and event.get("model_call_id") in skip:
-                                    continue
-                                pipeline.ingest_event(event, novaseal_valid=novaseal_verified)
-                                cap_ingested += 1
-                            except json.JSONDecodeError:
-                                cap_skipped += 1
-                    written = pipeline.flush_to_store()
-                    total_ingested += cap_ingested
-                    total_skipped += cap_skipped
-                    total_written += written
+                    result = ingest_capsule_dir(
+                        pipeline, cdir, novaseal_valid=novaseal_verified,
+                        operation="nova kg ingest",
+                    )
+                    total_ingested += result.ingested
+                    total_skipped += result.skipped + len(result.unreadable)
+                    total_written += result.written
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Failed to ingest %s: %s", cdir.name, exc)
                     failed += 1
@@ -432,19 +402,13 @@ def kg_ingest_cmd(
         )
         raise typer.Exit(1)
 
-    # Collect all event files: model-calls.jsonl + tool-calls.jsonl (preferred),
-    # fall back to events.jsonl when neither exists.
-    event_files: list[Path] = []
-    for candidate in ("model-calls.jsonl", "tool-calls.jsonl"):
-        p = capsule_dir / candidate
-        if p.exists():
-            event_files.append(p)
-    if not event_files:
-        fallback = capsule_dir / "events.jsonl"
-        if fallback.exists():
-            event_files.append(fallback)
+    from novafabric.kg.capsule_ingest import (  # noqa: PLC0415
+        capsule_event_files,
+        ingest_capsule_dir,
+    )
 
-    if not event_files:
+    # model-calls.jsonl + tool-calls.jsonl (preferred), events.jsonl when neither exists.
+    if not capsule_event_files(capsule_dir):
         console.print(
             f"[red]Error:[/red] No events file found in {capsule_dir} "
             "(expected model-calls.jsonl, tool-calls.jsonl, or events.jsonl).",
@@ -452,29 +416,18 @@ def kg_ingest_cmd(
         )
         raise typer.Exit(1)
 
-    ingested = 0
-    skipped = 0
-    for events_file in event_files:
-        skip = _transport_ids(events_file)
-        for raw_line in events_file.read_text(encoding="utf-8").splitlines():
-            raw_line = raw_line.strip()
-            if not raw_line:
-                continue
-            try:
-                event = json.loads(raw_line)
-                if skip and event.get("model_call_id") in skip:
-                    continue
-                pipeline.ingest_event(event, novaseal_valid=novaseal_verified)
-                ingested += 1
-            except json.JSONDecodeError as exc:
-                logger.debug("Skipping invalid JSON line: %s", exc)
-                skipped += 1
-
-    written = pipeline.flush_to_store()
+    result = ingest_capsule_dir(
+        pipeline, capsule_dir, novaseal_valid=novaseal_verified, operation="nova kg ingest"
+    )
+    for name in result.unreadable:
+        console.print(
+            f"[yellow]Warning:[/yellow] {name} is a link, FIFO or directory — not read.",
+            highlight=False,
+        )
     console.print(
-        f"Ingested [cyan]{ingested}[/cyan] events "
-        f"([yellow]{skipped}[/yellow] skipped) → "
-        f"wrote [green]{written}[/green] KG edges to {path}"
+        f"Ingested [cyan]{result.ingested}[/cyan] events "
+        f"([yellow]{result.skipped}[/yellow] skipped) → "
+        f"wrote [green]{result.written}[/green] KG edges to {path}"
     )
 
 

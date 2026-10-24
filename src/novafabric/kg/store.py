@@ -165,6 +165,12 @@ SCHEMA_DDL: list[str] = [
         "CREATE NODE TABLE IF NOT EXISTS MCPServer "
         "(id STRING PRIMARY KEY, name STRING, last_seen TIMESTAMP)"
     ),
+    # What one capsule added to one edge (id = "<REL>|<src>|<dst>|<capsule>"), so a
+    # re-ingest of that capsule replaces its contribution instead of adding it again.
+    (
+        "CREATE NODE TABLE IF NOT EXISTS EdgeContribution "
+        "(id STRING PRIMARY KEY, call_count INT64, verified_count INT64)"
+    ),
     # representative_capsule_ids: comma-separated list stored as STRING scalar.
     # KuzuDB 0.11.x does not support STRING[] on rel tables; upgrading to STRING[]
     # is tracked as a schema migration for KuzuDB ≥0.13 (OQ-031).
@@ -366,8 +372,14 @@ class KGStore:
         delta_cc: int,
         delta_vc: int,
         capsule_id: str,
+        contribution_key: str | None = None,
     ) -> None:
         """Read-then-write edge upsert.
+
+        With *contribution_key*, ``delta_cc``/``delta_vc`` are that key's whole
+        contribution to the edge: what the key contributed before is subtracted
+        and the new contribution recorded, so the same capsule ingested twice
+        counts once. Without it the deltas are added (a cross-capsule stream).
 
         KuzuDB 0.11.3 does not support mixed-type arithmetic (e.g. SERIAL*DOUBLE)
         inside Cypher SET clauses when parameters are involved.  We therefore:
@@ -400,8 +412,15 @@ class KGStore:
         existing_ids: str = str(row[2]) if row[2] else ""
         is_existing_edge = old_cc > 0
         # Step 3 — compute new totals in Python
-        new_cc = old_cc + delta_cc
-        new_vc = old_vc + delta_vc
+        prev_cc, prev_vc = (
+            self._swap_contribution(
+                f"{rel_table}|{src_id}|{dst_id}|{contribution_key}", delta_cc, delta_vc
+            )
+            if contribution_key
+            else (0, 0)
+        )
+        new_cc = max(old_cc - prev_cc, 0) + delta_cc
+        new_vc = min(max(old_vc - prev_vc, 0) + delta_vc, new_cc)
         new_conf = self._compute_confidence(new_vc, new_cc)
         # Merge capsule IDs — keep up to 10 unique IDs, newest first
         existing_list = [x for x in existing_ids.split(",") if x] if existing_ids else []
@@ -427,6 +446,27 @@ class KGStore:
         if is_existing_edge and self._metrics.crdt_merge_total is not None:
             self._metrics.crdt_merge_total.labels(edge_type=rel_table).inc()
 
+    def _swap_contribution(self, key: str, call_count: int, verified_count: int) -> tuple[int, int]:
+        """Record *key*'s new contribution; return its previous one (0, 0 if none).
+
+        Caller must hold _write_lock.
+        """
+        self._conn.execute(
+            "MERGE (c:EdgeContribution {id: $id}) "
+            "ON CREATE SET c.call_count = 0, c.verified_count = 0",
+            {"id": key},
+        )
+        res: Any = self._conn.execute(
+            "MATCH (c:EdgeContribution {id: $id}) RETURN c.call_count, c.verified_count",
+            {"id": key},
+        )
+        row: Any = res.get_next()
+        self._conn.execute(
+            "MATCH (c:EdgeContribution {id: $id}) SET c.call_count = $cc, c.verified_count = $vc",
+            {"id": key, "cc": call_count, "vc": verified_count},
+        )
+        return int(row[0] or 0), int(row[1] or 0)
+
     # ------------------------------------------------------------------
     # Edge upserts (acquire lock, call internal helpers inside same lock)
     # ------------------------------------------------------------------
@@ -441,6 +481,7 @@ class KGStore:
         capsule_id: str,
         provider: str = "",
         canonical_name: str = "",
+        contribution_key: str | None = None,
     ) -> None:
         """Upsert a CALLS edge with accumulated counts.  Thread-safe."""
         with self._write_lock:
@@ -455,6 +496,7 @@ class KGStore:
                 delta_cc=call_count,
                 delta_vc=verified_count,
                 capsule_id=capsule_id,
+                contribution_key=contribution_key,
             )
 
     def upsert_uses_tool_edge(
@@ -466,6 +508,7 @@ class KGStore:
         confidence: float,
         capsule_id: str,
         tool_name: str = "",
+        contribution_key: str | None = None,
     ) -> None:
         """Upsert a USES_TOOL edge with accumulated counts.  Thread-safe."""
         with self._write_lock:
@@ -480,6 +523,7 @@ class KGStore:
                 delta_cc=call_count,
                 delta_vc=verified_count,
                 capsule_id=capsule_id,
+                contribution_key=contribution_key,
             )
 
     def upsert_routes_to_edge(
@@ -491,6 +535,7 @@ class KGStore:
         confidence: float,
         capsule_id: str,
         url: str = "",
+        contribution_key: str | None = None,
     ) -> None:
         """Upsert a ROUTES_TO edge with accumulated counts.  Thread-safe."""
         with self._write_lock:
@@ -505,6 +550,7 @@ class KGStore:
                 delta_cc=call_count,
                 delta_vc=verified_count,
                 capsule_id=capsule_id,
+                contribution_key=contribution_key,
             )
 
     def upsert_served_by_edge(
@@ -516,6 +562,7 @@ class KGStore:
         confidence: float,
         capsule_id: str,
         server_name: str = "",
+        contribution_key: str | None = None,
     ) -> None:
         """Upsert a SERVED_BY edge (Tool → MCPServer) with accumulated counts.  Thread-safe."""
         with self._write_lock:
@@ -530,6 +577,7 @@ class KGStore:
                 delta_cc=call_count,
                 delta_vc=verified_count,
                 capsule_id=capsule_id,
+                contribution_key=contribution_key,
             )
 
     # ------------------------------------------------------------------

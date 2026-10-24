@@ -5768,59 +5768,20 @@ def create_app(
     ) -> dict[str, int]:
         """Ingest one capsule directory into *store* via *pipeline*.
 
-        Returns a dict with keys ``ingested``, ``skipped``, ``written``.
-        Raises exceptions on hard errors; individual parse failures are counted
-        in ``skipped`` rather than propagated.
+        Returns a dict with keys ``ingested``, ``skipped``, ``written``. A
+        present but unreadable event file (a link, FIFO or directory) counts as
+        skipped, never as an empty stream that ingested cleanly. Re-ingesting a
+        capsule replaces its contribution (:mod:`novafabric.kg.capsule_ingest`).
         """
-        import json as _json
+        from novafabric.kg.capsule_ingest import ingest_capsule_dir
 
-        # Read model-calls.jsonl and tool-calls.jsonl explicitly (preferred).
-        # Fall back to events.jsonl only when neither specialised file exists.
-        event_files: list[Path] = []
-        for fname in ("model-calls.jsonl", "tool-calls.jsonl"):
-            p = target / fname
-            if p.exists():
-                event_files.append(p)
-        if not event_files:
-            fallback = target / "events.jsonl"
-            if fallback.exists():
-                event_files.append(fallback)
-
-        if not event_files:
-            return {"ingested": 0, "skipped": 0, "written": 0}
-
-        from novafabric.capture.record_roles import non_counting_model_call_ids
-
-        ingested = 0
-        skipped = 0
-        for events_file in event_files:
-            # ADR-0305: transport records are not model calls -- no KG node.
-            transport = (
-                non_counting_model_call_ids(events_file)
-                if events_file.name == "model-calls.jsonl" else set()
-            )
-            events_text = read_capsule_text_or_none(
-                events_file.parent, events_file.name, operation="nova serve"
-            )
-            if events_text is None:
-                # Present (listed above) but a link, FIFO or directory: counted as
-                # skipped, never as an empty stream that ingested cleanly.
-                skipped += 1
-                continue
-            for raw in events_text.splitlines():
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    ev = _json.loads(raw)
-                    if transport and ev.get("model_call_id") in transport:
-                        continue
-                    pipeline.ingest_event(ev, novaseal_valid=False)
-                    ingested += 1
-                except Exception:  # noqa: BLE001
-                    skipped += 1
-        written = pipeline.flush_to_store()
-        return {"ingested": ingested, "skipped": skipped, "written": written}
+        del store  # the pipeline writes to it
+        result = ingest_capsule_dir(pipeline, target, operation="nova serve")
+        return {
+            "ingested": result.ingested,
+            "skipped": result.skipped + len(result.unreadable),
+            "written": result.written,
+        }
 
     async def _kg_auto_ingest_loop() -> None:
         """Background asyncio task: auto-ingest new capsules into the KG.
@@ -6659,59 +6620,41 @@ def create_app(
                 "note": "Install novafabric[scale-kg] to enable KG.",
             }
         try:
-            import json as _json
+            from novafabric.kg.capsule_ingest import (
+                capsule_event_files,
+                ingest_capsule_dir,
+            )
+
             store = KGStore(kg_path)
             store.init_schema()
             pipeline = KGIngestionPipeline(store)
-            events_file = None
-            for candidate in ("model-calls.jsonl", "events.jsonl"):
-                p = target / candidate
-                if p.exists():
-                    events_file = p
-                    break
-            if events_file is None:
+            if not capsule_event_files(target):
                 return {
                     "ok": False, "ingested": 0, "written": 0,
-                    "error": "No events file found (expected model-calls.jsonl or events.jsonl)",
+                    "error": "No events file found (expected model-calls.jsonl, "
+                    "tool-calls.jsonl or events.jsonl)",
                     "note": "",
                 }
-            from novafabric.capture.record_roles import non_counting_model_call_ids
-
-            # ADR-0305: transport records are not model calls -- no KG node.
-            transport = (
-                non_counting_model_call_ids(events_file)
-                if events_file.name == "model-calls.jsonl" else set()
+            result = ingest_capsule_dir(
+                pipeline, target, novaseal_valid=novaseal_verified, operation="nova serve"
             )
-            ingested = 0
-            skipped = 0
-            events_text = read_capsule_text_or_none(
-                events_file.parent, events_file.name, operation="nova serve"
-            )
-            if events_text is None:
-                # Present (found above) but a link, FIFO or directory: an error,
-                # never an empty stream that ingested cleanly.
+            if result.unreadable and len(result.unreadable) == len(result.files):
+                # Present but every one a link, FIFO or directory: an error, never
+                # an empty stream that ingested cleanly.
                 return {
                     "ok": False, "ingested": 0, "written": 0,
-                    "error": f"{events_file.name} is unreadable (a link, FIFO or "
-                    "directory); nothing was ingested",
+                    "error": f"{', '.join(result.unreadable)} unreadable (a link, FIFO "
+                    "or directory); nothing was ingested",
                     "note": "",
                 }
-            for raw in events_text.splitlines():
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    ev = _json.loads(raw)
-                    if transport and ev.get("model_call_id") in transport:
-                        continue
-                    pipeline.ingest_event(ev, novaseal_valid=novaseal_verified)
-                    ingested += 1
-                except Exception:  # noqa: BLE001
-                    skipped += 1
-            written = pipeline.flush_to_store()
             return {
-                "ok": True, "ingested": ingested, "skipped": skipped, "written": written,
-                "capsule_path": capsule_path_str, "kg_path": kg_path, "note": "",
+                "ok": True, "ingested": result.ingested,
+                "skipped": result.skipped + len(result.unreadable),
+                "written": result.written,
+                "capsule_path": capsule_path_str, "kg_path": kg_path,
+                "note": (
+                    f"not read: {', '.join(result.unreadable)}" if result.unreadable else ""
+                ),
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "ingested": 0, "written": 0, "error": str(exc), "note": ""}

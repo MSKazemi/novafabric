@@ -2,8 +2,9 @@
 
 Stores the set of capsule directory paths that have already been ingested so
 that the auto-ingest loop survives `nova serve` restarts without re-processing
-every capsule on each boot.  The underlying MERGE semantics in KuzuDB are
-idempotent, so re-ingest is safe but wasteful at scale.
+every capsule on each boot. Re-ingesting a capsule is safe without it — each
+capsule's contribution to an edge replaces its earlier one
+(:mod:`novafabric.kg.capsule_ingest`) — but wasteful at scale.
 
 Schema (single table, no migrations required):
   CREATE TABLE IF NOT EXISTS ingest_state (

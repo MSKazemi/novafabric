@@ -9924,6 +9924,25 @@ call, never a separate start event), so this ingestion path produces real
 `--all` read the same underlying `model-calls.jsonl`/`tool-calls.jsonl`
 files directly and were unaffected either way.
 
+**What a capsule ingest reads and counts.** `local-dir`, `--all`, `nova serve`'s
+`POST /api/kg/ingest` and its auto-ingest loop share one implementation
+(`novafabric.kg.capsule_ingest`). It reads `model-calls.jsonl` and `tool-calls.jsonl`
+(`events.jsonl` only when neither exists) and never through a link. Capture tool-call
+records become `USES_TOOL` (and, for an `mcp-server:tool` name, `SERVED_BY`) edges, with
+the same trace-scoped agent proxy (`parent_span_id`) model calls use. `ingested` counts
+events that added an edge observation; a malformed or non-object line, or an event with no
+usable agent/model/tool, is `skipped`; a present but unreadable event file is reported and
+not read.
+
+**Re-ingest is idempotent per capsule.** A capsule's events are written as one
+contribution keyed by its `run_id` (from `capsule.yaml`; the directory path when there is
+none), and ingesting it again replaces that contribution instead of adding to it, so
+`--all` twice, or a manual ingest after `nova serve` auto-ingested the same capsule, leaves
+every `call_count` unchanged. Two copies of one capsule are one contributor. `--source
+nats` streams events across capsules and still adds. A graph built before this change
+holds no contribution records, so its first re-ingest of an old capsule adds once more;
+for exact counts, rebuild it (remove the `--path` store and run `nova kg ingest --all`).
+
 ```bash
 # Single capsule
 nova kg ingest .novafabric/runs/01HXAY7M --path /data/nova/kg/nova_kg.kuzu

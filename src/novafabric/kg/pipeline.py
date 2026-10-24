@@ -158,6 +158,22 @@ def _normalise_otel_semconv(event: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _normalise_tool_call(event: dict[str, Any]) -> dict[str, Any]:
+    """Map a capture ``tool-calls.jsonl`` record to the internal KG event schema.
+
+    The twin of :func:`_normalise_otel_semconv` for tool calls: a capture record
+    (``tool-call.schema.json``) carries ``tool_call_id``, ``tool_name`` and
+    ``parent_span_id`` but no ``event_type`` or ``agent_id``. The agent proxy is
+    the same trace-scoped ``parent_span_id``, so a model call and a tool call
+    from one agent meet on one Agent node.
+    """
+    out: dict[str, Any] = dict(event)
+    out.setdefault("event_type", "ToolCallCompleted")
+    if not out.get("agent_id"):
+        out["agent_id"] = event.get("parent_span_id") or event.get("tool_call_id") or ""
+    return out
+
+
 class KGIngestionPipeline:
     """Five-stage pipeline: event → normalise → resolve → accumulate → aggregate."""
 
@@ -259,12 +275,17 @@ class KGIngestionPipeline:
     # Stage 1+2+3+4 — ingest one event
     # ------------------------------------------------------------------
 
-    def ingest_event(self, event: dict[str, Any], *, novaseal_valid: bool = False) -> None:
+    def ingest_event(self, event: dict[str, Any], *, novaseal_valid: bool = False) -> bool:
         """Process one capsule event dict and accumulate KG edges.
 
-        Accepts both the internal KG event schema (event_type + agent_id + model_id)
-        and the OTel GenAI semconv format produced by nova capture (gen_ai.request.model,
-        parent_span_id, endpoint).  Silently skips events with missing required fields.
+        Accepts the internal KG event schema (event_type + agent_id + model_id),
+        the OTel GenAI semconv model-call records nova capture writes
+        (gen_ai.request.model, parent_span_id, endpoint) and its tool-call records
+        (tool_call_id, tool_name, parent_span_id).
+
+        Returns ``True`` when the event added an edge observation and ``False``
+        when it was skipped (missing required fields, an unknown event type, a
+        transport record) — callers count the two apart.
 
         A model-call record marked ``transport`` (ADR-0305: the wire hook's copy
         of an HTTP attempt under an SDK call) is not a model call and adds no
@@ -272,10 +293,13 @@ class KGIngestionPipeline:
         duplicates via :func:`~novafabric.capture.record_roles.non_counting_model_call_ids`.
         """
         if is_transport_record(event):
-            return
-        # Normalise OTel GenAI semconv format (model-calls.jsonl) to internal schema.
-        if not event.get("event_type") and event.get("gen_ai.request.model"):
-            event = _normalise_otel_semconv(event)
+            return False
+        # Normalise the capture record formats to the internal schema.
+        if not event.get("event_type"):
+            if event.get("gen_ai.request.model"):
+                event = _normalise_otel_semconv(event)
+            elif event.get("tool_call_id") and event.get("tool_name"):
+                event = _normalise_tool_call(event)
 
         # ADR-0220 follow-up: a real Event Envelope v1 (from the NATS/spool
         # path) nests event-type-specific data under "payload" rather than at
@@ -289,7 +313,7 @@ class KGIngestionPipeline:
         raw_agent = str(event.get("agent_id", ""))
         if not raw_agent:
             logger.debug("Skipping event with no agent_id: %r", event.get("event_type"))
-            return
+            return False
 
         agent_id = self._normaliser.normalise("agent", raw_agent)
         agent_id = self._resolve_entity(agent_id, "agent", capsule_id)
@@ -305,7 +329,7 @@ class KGIngestionPipeline:
             )
             if not raw_model:
                 logger.debug("Skipping %s with no model_id/model field", event_type)
-                return
+                return False
             model_id = self._normaliser.normalise("model", raw_model)
             model_id = self._resolve_entity(model_id, "model", capsule_id)
             self._accumulator.accumulate(
@@ -323,7 +347,7 @@ class KGIngestionPipeline:
             )
             if not raw_tool:
                 logger.debug("Skipping %s with no tool_name/tool_id field", event_type)
-                return
+                return False
             # MCP server extraction: "filesystem:read_file" → server="filesystem", tool="read_file"
             mcp_server_raw: str | None = None
             if ":" in raw_tool:
@@ -354,7 +378,7 @@ class KGIngestionPipeline:
             )
             if not raw_url:
                 logger.debug("Skipping %s with no url/endpoint field", event_type)
-                return
+                return False
             endpoint_id = self._normaliser.normalise("endpoint", raw_url)
             endpoint_id = self._resolve_entity(endpoint_id, "endpoint", capsule_id)
             self._accumulator.accumulate(
@@ -366,12 +390,23 @@ class KGIngestionPipeline:
             )
             _incr_events(event_type)
 
+        else:
+            logger.debug("Skipping event of unknown type %r", event_type)
+            return False
+        return True
+
     # ------------------------------------------------------------------
     # Stage 5 — flush accumulated deltas to KGStore
     # ------------------------------------------------------------------
 
-    def flush_to_store(self) -> int:
-        """Flush accumulated deltas to KuzuDB.  Returns number of edges written."""
+    def flush_to_store(self, *, contribution_key: str | None = None) -> int:
+        """Flush accumulated deltas to KuzuDB.  Returns number of edges written.
+
+        With *contribution_key* (a capsule's identity) every delta is that one
+        capsule's whole contribution: it **replaces** what the same key added to
+        each edge before, so re-ingesting a capsule leaves the counts unchanged.
+        Without it (a stream that spans capsules, e.g. NATS) deltas are added.
+        """
         t0 = time.monotonic()
         deltas = self._accumulator.flush()
         if not deltas:
@@ -396,6 +431,7 @@ class KGIngestionPipeline:
                         verified_count=vc,
                         confidence=conf,
                         capsule_id=cid,
+                        contribution_key=contribution_key,
                     )
                 elif edge_type == "USES_TOOL":
                     self._store.upsert_uses_tool_edge(
@@ -405,6 +441,7 @@ class KGIngestionPipeline:
                         verified_count=vc,
                         confidence=conf,
                         capsule_id=cid,
+                        contribution_key=contribution_key,
                     )
                 elif edge_type == "ROUTES_TO":
                     self._store.upsert_routes_to_edge(
@@ -414,6 +451,7 @@ class KGIngestionPipeline:
                         verified_count=vc,
                         confidence=conf,
                         capsule_id=cid,
+                        contribution_key=contribution_key,
                     )
                 elif edge_type == "SERVED_BY":
                     self._store.upsert_served_by_edge(
@@ -423,6 +461,7 @@ class KGIngestionPipeline:
                         verified_count=vc,
                         confidence=conf,
                         capsule_id=cid,
+                        contribution_key=contribution_key,
                     )
                 else:
                     logger.warning("Unknown edge_type %r — skipping delta", edge_type)
