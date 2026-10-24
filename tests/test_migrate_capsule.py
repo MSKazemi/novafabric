@@ -262,6 +262,20 @@ def test_migrate_error_unsupported_version(src: Path, tmp_path: Path) -> None:
     assert exc_info.value.field == "capsule.yaml/schema_version"
 
 
+def test_migrate_refuses_a_later_0_1_x(src: Path, tmp_path: Path) -> None:
+    """Review storage-backup-06: 0.1.3 passed the 0.1.x check, nothing was bumped
+    (only 0.1.0 is), and a 0.1.0 -> 1.0.0 edge still reported a completed migration."""
+    cap = src / "capsule.yaml"
+    data = yaml.safe_load(cap.read_text())
+    data["schema_version"] = "0.1.3"
+    with open(cap, "w") as f:
+        yaml.safe_dump(data, f, sort_keys=False)
+
+    with pytest.raises(CapsuleMigrationError, match="0.1.3"):
+        CapsuleMigrator().migrate(source=src, output=tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
 def test_migration_error_as_dict_all_fields() -> None:
     err = CapsuleMigrationError(
         "something failed",

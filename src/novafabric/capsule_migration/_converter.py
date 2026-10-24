@@ -168,14 +168,18 @@ class CapsuleMigrator:
             raise CapsuleMigrationError(
                 f"Capsule is already at schema_version {TARGET_VERSION}",
                 field="capsule.yaml/schema_version",
-                rule="source schema_version must be 0.1.x",
+                rule=f"source schema_version must be {SOURCE_VERSION}",
                 spec_section="ADR-0034 §6",
             )
-        if not str(version).startswith("0.1."):
+        if version != SOURCE_VERSION:
+            # Only the 0.1.0 -> 1.0.0 mapping exists. Accepting any 0.1.x bumped
+            # nothing for a later one yet recorded a 0.1.0 -> 1.0.0 edge and
+            # reported success (review storage-backup-06).
             raise CapsuleMigrationError(
-                f"Unsupported source schema_version '{version}': expected 0.1.x",
+                f"Unsupported source schema_version '{version}': only "
+                f"{SOURCE_VERSION} can be migrated to {TARGET_VERSION}",
                 field="capsule.yaml/schema_version",
-                rule="source schema_version must be 0.1.x",
+                rule=f"source schema_version must be {SOURCE_VERSION}",
                 spec_section="ADR-0034 §6",
             )
 
