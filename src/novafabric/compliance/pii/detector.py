@@ -50,8 +50,13 @@ class PIIDetector(Protocol):
 _DEFAULT_PATTERNS: list[dict[str, Any]] = [
     {
         "entity_type": "EMAIL",
+        # Linear time: the look-behind lets a match start only at a token start, and
+        # the RFC caps (local part 64, domain 253, TLD 24) bound every attempt.
+        # Unguarded, a long @-less run (a hex dump) re-scanned to the end of the
+        # line from every position — minutes per 64 KiB line (compliance-privacy-07).
         "pattern": re.compile(
-            r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}",
+            r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]{1,64}"
+            r"@[A-Za-z0-9.\-]{1,253}\.[A-Za-z]{2,24}",
             re.IGNORECASE,
         ),
         "score": 0.85,

@@ -24,7 +24,10 @@ import re
 
 from novafabric.masking._models import UNCHANGED, MaskContext, MaskField, _Unchanged
 
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# Same linear-time shape as the cap-001 detector's EMAIL pattern (compliance-privacy-07).
+_EMAIL_RE = re.compile(
+    r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}"
+)
 
 _DEFAULT_REPLACEMENT = "[MASKED:email]"
 
