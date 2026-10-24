@@ -234,7 +234,9 @@ def _try_api_key(request: Request) -> AuthContext | None:
 
     from novafabric.server.api_keys import verify_key
 
-    ctx = verify_key(raw_token)
+    config = getattr(request.app.state, "config", None)
+    configured = getattr(config, "db_path", None)
+    ctx = verify_key(raw_token, db_path=Path(configured) if configured else None)
     if ctx is None:
         raise _unauthenticated("Invalid, revoked, or expired API key")
     # ADR-0294 D2 (experimental, opt-in): a bound key used outside its
@@ -281,7 +283,8 @@ def _try_offline_token(request: Request, config: ServerConfig) -> AuthContext | 
         from novafabric.server import workspace_store
 
         account = workspace_store.get_service_account_by_name(
-            ctx.subject.removeprefix("svc:")
+            ctx.subject.removeprefix("svc:"),
+            db_path=Path(config.db_path) if config.db_path else None,
         )
         if account is None or account["disabled"]:
             raise _unauthenticated(

@@ -458,7 +458,7 @@ class TestServiceAccounts:
         body = self._create(client)
         account_id = body["service_account"]["id"]
         token = body["token"]
-        rbac_store.assign_role("svc:ci-ingest", "reader", "test")
+        rbac_store.assign_role("svc:ci-ingest", "reader", "test", db_path=tmp_path / "test.db")
         assert client.get("/v0/assets", headers=_bearer(token)).status_code == 200
         resp = client.post(f"/v0/service-accounts/{account_id}/disable", headers=ADMIN)
         assert resp.status_code == 200

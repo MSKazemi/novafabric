@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from novafabric.serve import audit
 from novafabric.server import workspace_store
 from novafabric.server.auth import AuthContext
+from novafabric.server.deps import DbPath
 from novafabric.server.errors import BadRequestError, ConflictError, NotFoundError
 from novafabric.server.rbac import Role, require_role
 
@@ -73,6 +74,7 @@ async def create_service_account(
     body: CreateServiceAccountRequest,
     request: Request,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Create a service account and mint its offline token (admin only).
 
@@ -88,7 +90,7 @@ async def create_service_account(
 
     try:
         account = workspace_store.create_service_account(
-            body.name, body.description, auth.subject
+            body.name, body.description, auth.subject, db_path=db_path
         )
     except workspace_store.SlugConflictError as exc:
         raise ConflictError(str(exc)) from exc
@@ -96,7 +98,7 @@ async def create_service_account(
     subject = f"{workspace_store.SERVICE_ACCOUNT_SUBJECT_PREFIX}{body.name}"
     token = issue_token(subject, [], body.expires_in_days, key_path)
     token_id: str = jwt.decode(token, options={"verify_signature": False})["jti"]
-    workspace_store.set_service_account_token(account["id"], token_id)
+    workspace_store.set_service_account_token(account["id"], token_id, db_path=db_path)
     account["token_jti"] = token_id
 
     audit.append(
@@ -118,9 +120,10 @@ async def create_service_account(
 @router.get("")
 async def list_service_accounts(
     _auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """List service accounts (admin only). Tokens are never included."""
-    return {"service_accounts": workspace_store.list_service_accounts()}
+    return {"service_accounts": workspace_store.list_service_accounts(db_path=db_path)}
 
 
 @router.post("/{account_id}/disable")
@@ -128,6 +131,7 @@ async def disable_service_account(
     account_id: str,
     request: Request,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Disable a service account and revoke its outstanding token (admin only).
 
@@ -136,11 +140,11 @@ async def disable_service_account(
     """
     from novafabric.server.offline_tokens import revoke_token
 
-    account = workspace_store.get_service_account(account_id)
+    account = workspace_store.get_service_account(account_id, db_path=db_path)
     if account is None:
         raise NotFoundError(f"service account {account_id!r} not found")
 
-    account = workspace_store.disable_service_account(account_id)
+    account = workspace_store.disable_service_account(account_id, db_path=db_path)
 
     token_revoked = False
     key_path = request.app.state.config.offline_key_path

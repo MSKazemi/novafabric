@@ -629,7 +629,8 @@ their defaults:
 
 ```yaml
 backend: sqlite          # "sqlite" (default) or "postgres"
-db_path: null            # SQLite path; null = ~/.novafabric/registry.db
+db_path: null            # SQLite registry for every server table (orgs, workspaces, roles,
+                         # API keys, SCIM, usage, webhooks); null = ~/.novafabric/registry.db
 host: "127.0.0.1"
 port: 7433
 

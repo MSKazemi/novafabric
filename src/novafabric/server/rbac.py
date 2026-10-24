@@ -141,8 +141,19 @@ def _cap_unscoped(membership_roles: set[str]) -> set[str]:
 WORKSPACE_PATH_PARAM = "ws_id"
 
 
+def request_db_path(request: Request) -> Path | None:
+    """The registry this server was configured with (``server.db_path``), or None = default."""
+    config = getattr(request.app.state, "config", None)
+    configured = getattr(config, "db_path", None)
+    return Path(configured) if configured else None
+
+
 def _scoped_satisfies(
-    auth: AuthContext, minimum: Role, workspace_id: str | None = None
+    auth: AuthContext,
+    minimum: Role,
+    workspace_id: str | None = None,
+    *,
+    db_path: Path | None = None,
 ) -> bool:
     """ADR-0178 (experimental): global-assignment and membership fallback.
 
@@ -163,14 +174,16 @@ def _scoped_satisfies(
     try:
         from novafabric.server import rbac_store, workspace_store
 
-        if not workspace_store.feature_in_use():
+        if not workspace_store.feature_in_use(db_path=db_path):
             return False
-        global_roles = set(rbac_store.get_roles(auth.subject))
+        global_roles = set(rbac_store.get_roles(auth.subject, db_path=db_path))
         if workspace_id is not None:
-            scoped = workspace_store.effective_roles(auth.subject, workspace_id)
+            scoped = workspace_store.effective_roles(
+                auth.subject, workspace_id, db_path=db_path
+            )
         else:
             # effective_roles(None) = global rows + every membership, anywhere.
-            scoped = _cap_unscoped(workspace_store.effective_roles(auth.subject))
+            scoped = _cap_unscoped(workspace_store.effective_roles(auth.subject, db_path=db_path))
         effective = set(auth.roles) | global_roles | scoped
         return _satisfies(list(effective), minimum)
     except Exception:  # noqa: BLE001 — authorization fallback must fail closed
@@ -203,11 +216,14 @@ def check_role(request: Request, auth: AuthContext, minimum: Role) -> AuthContex
     """The :func:`require_role` gate as a plain call, for a dependency that adds its own rule.
 
     Same role sources and the same 403 as ``Depends(require_role(minimum))`` for
-    *request* (its target workspace).
+    *request* (its target workspace and configured registry).
     """
     workspace_id = request.path_params.get(WORKSPACE_PATH_PARAM)
     if not _satisfies(auth.roles, minimum) and not _scoped_satisfies(
-        auth, minimum, workspace_id if isinstance(workspace_id, str) else None
+        auth,
+        minimum,
+        workspace_id if isinstance(workspace_id, str) else None,
+        db_path=request_db_path(request),
     ):
         raise _Forbidden(
             f"Role '{minimum.value}' or higher required; token has {auth.roles!r}"

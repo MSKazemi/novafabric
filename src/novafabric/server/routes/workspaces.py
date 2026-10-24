@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from novafabric.serve import audit
 from novafabric.server import workspace_store
 from novafabric.server.auth import AuthContext
+from novafabric.server.deps import DbPath
 from novafabric.server.errors import ConflictError, NotFoundError
 from novafabric.server.rbac import Role, require_role
 
@@ -53,11 +54,12 @@ def _actor_fp(auth: AuthContext) -> str:
 async def create_workspace(
     body: CreateWorkspaceRequest,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Create a workspace in an organization (admin only)."""
     try:
         ws = workspace_store.create_workspace(
-            body.org_id, body.slug, body.name, auth.subject
+            body.org_id, body.slug, body.name, auth.subject, db_path=db_path
         )
     except workspace_store.UnknownScopeError as exc:
         raise NotFoundError(str(exc.args[0])) from exc
@@ -76,23 +78,25 @@ async def create_workspace(
 @router.get("")
 async def list_workspaces(
     _auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
     org_id: str | None = None,
 ) -> dict[str, Any]:
     """List workspaces, optionally filtered by org (admin only)."""
-    return {"workspaces": workspace_store.list_workspaces(org_id=org_id)}
+    return {"workspaces": workspace_store.list_workspaces(org_id=org_id, db_path=db_path)}
 
 
 @router.get("/{ws_id}")
 async def get_workspace(
     ws_id: str,
     _auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Fetch one workspace with its memberships (admin only)."""
-    ws = workspace_store.get_workspace(ws_id)
+    ws = workspace_store.get_workspace(ws_id, db_path=db_path)
     if ws is None:
         raise NotFoundError(f"workspace {ws_id!r} not found")
     memberships = workspace_store.list_memberships(
-        scope_type="workspace", scope_id=ws_id
+        scope_type="workspace", scope_id=ws_id, db_path=db_path
     )
     return {"workspace": ws, "memberships": memberships}
 
@@ -101,10 +105,11 @@ async def get_workspace(
 async def delete_workspace(
     ws_id: str,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Delete an empty workspace (admin only). 409 if it has memberships."""
     try:
-        workspace_store.delete_workspace(ws_id)
+        workspace_store.delete_workspace(ws_id, db_path=db_path)
     except workspace_store.UnknownScopeError as exc:
         raise NotFoundError(str(exc.args[0])) from exc
     except workspace_store.ScopeNotEmptyError as exc:
@@ -124,11 +129,12 @@ async def grant_membership(
     ws_id: str,
     body: MembershipRequest,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Grant a workspace-scoped role binding (admin only). Idempotent."""
     try:
         added = workspace_store.add_membership(
-            body.principal, "workspace", ws_id, body.role, auth.subject
+            body.principal, "workspace", ws_id, body.role, auth.subject, db_path=db_path
         )
     except workspace_store.UnknownScopeError as exc:
         raise NotFoundError(str(exc.args[0])) from exc
@@ -155,9 +161,12 @@ async def revoke_membership(
     principal: str,
     role: str,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Revoke a workspace-scoped role binding (admin only). 404 if absent."""
-    removed = workspace_store.remove_membership(principal, "workspace", ws_id, role)
+    removed = workspace_store.remove_membership(
+        principal, "workspace", ws_id, role, db_path=db_path
+    )
     if not removed:
         raise NotFoundError(
             f"no {role!r} membership for {principal!r} in workspace {ws_id!r}"

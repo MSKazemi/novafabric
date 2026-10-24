@@ -29,6 +29,12 @@ def get_db_path(
     return None
 
 
+#: Route parameter type for the registry database this server was configured with
+#: (``server.db_path`` / ``NOVAFABRIC_SERVER_DB_PATH``; ``None`` = the default
+#: registry). Every registry-store call in a route passes it on (review server-05).
+DbPath = Annotated[Path | None, Depends(get_db_path)]
+
+
 def get_capsule_dir(
     config: Annotated[ServerConfig, Depends(get_config)],
 ) -> Path:

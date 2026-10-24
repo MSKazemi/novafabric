@@ -153,7 +153,7 @@ def _workspace_exists(slug: str, db_path: Path | None) -> bool:
     from novafabric.server import workspace_store  # noqa: PLC0415
 
     try:
-        conn = workspace_store._get_conn(db_path)  # noqa: SLF001 — shared store helper
+        conn = workspace_store._get_conn(db_path=db_path)  # noqa: SLF001 — shared store helper
     except Exception:  # noqa: BLE001
         logger.warning("workspace store unavailable for binding check", exc_info=True)
         return False

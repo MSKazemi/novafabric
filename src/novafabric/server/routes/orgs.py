@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from novafabric.serve import audit
 from novafabric.server import workspace_store
 from novafabric.server.auth import AuthContext
+from novafabric.server.deps import DbPath
 from novafabric.server.errors import ConflictError, NotFoundError
 from novafabric.server.rbac import Role, require_role
 
@@ -37,10 +38,11 @@ def _actor_fp(auth: AuthContext) -> str:
 async def create_org(
     body: CreateOrgRequest,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Create an organization (admin only)."""
     try:
-        org = workspace_store.create_org(body.slug, body.name, auth.subject)
+        org = workspace_store.create_org(body.slug, body.name, auth.subject, db_path=db_path)
     except workspace_store.SlugConflictError as exc:
         raise ConflictError(str(exc)) from exc
     audit.append(
@@ -56,18 +58,20 @@ async def create_org(
 @router.get("")
 async def list_orgs(
     _auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """List all organizations (admin only)."""
-    return {"orgs": workspace_store.list_orgs()}
+    return {"orgs": workspace_store.list_orgs(db_path=db_path)}
 
 
 @router.get("/{org_id}")
 async def get_org(
     org_id: str,
     _auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Fetch one organization (admin only)."""
-    org = workspace_store.get_org(org_id)
+    org = workspace_store.get_org(org_id, db_path=db_path)
     if org is None:
         raise NotFoundError(f"organization {org_id!r} not found")
     return {"org": org}
@@ -77,13 +81,14 @@ async def get_org(
 async def delete_org(
     org_id: str,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Delete an empty organization (admin only).
 
     404 if unknown; 409 if it still contains workspaces or memberships.
     """
     try:
-        workspace_store.delete_org(org_id)
+        workspace_store.delete_org(org_id, db_path=db_path)
     except workspace_store.UnknownScopeError as exc:
         raise NotFoundError(str(exc.args[0])) from exc
     except workspace_store.ScopeNotEmptyError as exc:

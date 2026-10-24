@@ -394,7 +394,8 @@ class TestScannerRule:
 
 
 def _client(tmp_path: Path) -> TestClient:
-    cfg = ServerConfig(db_path=str(tmp_path / "server.db"), local_token=TEST_TOKEN)
+    # Default registry (per-test NOVAFABRIC_HOME): the keys below are created there.
+    cfg = ServerConfig(local_token=TEST_TOKEN)
     return TestClient(create_app(cfg), raise_server_exceptions=False)
 
 

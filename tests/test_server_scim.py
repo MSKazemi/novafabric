@@ -34,7 +34,7 @@ ERROR_URN = "urn:ietf:params:scim:api:messages:2.0:Error"
 
 
 def _make_client(tmp_path: Path, *, enabled: bool = True, token: str | None = SCIM_TOKEN) -> TestClient:
-    cfg = ServerConfig(db_path=str(tmp_path / "scim.db"), scim=ScimConfig(enabled=enabled))
+    cfg = ServerConfig(scim=ScimConfig(enabled=enabled))
     cfg.scim_token = token
     return TestClient(create_app(cfg), raise_server_exceptions=False)
 
@@ -74,7 +74,7 @@ def _deactivate_body() -> dict[str, Any]:
 
 class TestScimGating:
     def test_disabled_by_default_returns_404(self, tmp_path: Path) -> None:
-        cfg = ServerConfig(db_path=str(tmp_path / "scim.db"))
+        cfg = ServerConfig()
         assert cfg.scim.enabled is False
         client = TestClient(create_app(cfg), raise_server_exceptions=False)
         resp = client.get("/scim/v2/Users", headers=_hdrs())
@@ -107,7 +107,6 @@ class TestScimGating:
     def test_scim_token_grants_nothing_on_v0(self, tmp_path: Path) -> None:
         """The provisioning token is not a JWT: /v0 rejects it under OIDC."""
         cfg = ServerConfig(
-            db_path=str(tmp_path / "scim.db"),
             oidc=OidcConfig(issuer_url="https://oidc.example.com", audience="nova"),
             scim=ScimConfig(enabled=True),
         )
@@ -121,7 +120,7 @@ class TestScimGating:
     ) -> None:
         monkeypatch.setenv("NOVAFABRIC_SERVER_SCIM_ENABLED", "true")
         monkeypatch.setenv("NOVAFABRIC_SCIM_TOKEN", SCIM_TOKEN)
-        cfg = ServerConfig(db_path=str(tmp_path / "scim.db"))
+        cfg = ServerConfig()
         assert cfg.scim_active is True
         client = TestClient(create_app(cfg), raise_server_exceptions=False)
         resp = client.get("/scim/v2/ServiceProviderConfig", headers=_hdrs())

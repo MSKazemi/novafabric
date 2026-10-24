@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -36,6 +37,7 @@ from fastapi.responses import JSONResponse, Response
 
 from novafabric.server import rbac_store, scim_store
 from novafabric.server.config import ServerConfig
+from novafabric.server.deps import DbPath
 from novafabric.server.rbac_store import LastAdminError
 from novafabric.server.scim_store import DuplicateUserNameError, ScimUser
 
@@ -222,7 +224,7 @@ def _oidc_configured(request: Request) -> bool:
 
 
 def _revoke_all_roles(
-    user_name: str, *, oidc_configured: bool
+    user_name: str, *, oidc_configured: bool, db_path: Path | None
 ) -> tuple[list[str], list[str]]:
     """Revoke every role assignment for *user_name*.
 
@@ -230,18 +232,20 @@ def _revoke_all_roles(
     ADR-0060 last-admin lockout guard fires *before* any mutation — a refused
     deprovision leaves the role assignments untouched.
     """
-    roles_before = sorted(rbac_store.get_roles(user_name))
+    roles_before = sorted(rbac_store.get_roles(user_name, db_path=db_path))
     ordered = sorted(roles_before, key=lambda r: (r != "admin", r))
     for role in ordered:
         try:
-            rbac_store.revoke_role(user_name, role, oidc_configured=oidc_configured)
+            rbac_store.revoke_role(
+                user_name, role, oidc_configured=oidc_configured, db_path=db_path
+            )
         except LastAdminError as exc:
             raise _ScimError(409, str(exc), "mutability") from exc
-    return roles_before, sorted(rbac_store.get_roles(user_name))
+    return roles_before, sorted(rbac_store.get_roles(user_name, db_path=db_path))
 
 
-def _get_user_or_404(user_id: str) -> ScimUser:
-    user = scim_store.get_user(user_id)
+def _get_user_or_404(user_id: str, *, db_path: Path | None) -> ScimUser:
+    user = scim_store.get_user(user_id, db_path=db_path)
     if user is None:
         raise _ScimError(404, f"User {user_id} not found", "invalidValue")
     return user
@@ -352,7 +356,7 @@ async def schemas(_actor: _Actor) -> JSONResponse:
 
 
 @router.post("/Users")
-async def create_user(request: Request, actor: _Actor) -> JSONResponse:
+async def create_user(request: Request, actor: _Actor, db_path: DbPath) -> JSONResponse:
     try:
         payload = await request.json()
     except Exception as exc:  # noqa: BLE001 — malformed JSON body
@@ -365,10 +369,11 @@ async def create_user(request: Request, actor: _Actor) -> JSONResponse:
             external_id=fields["external_id"],
             display_name=fields["display_name"],
             emails=fields["emails"],
+            db_path=db_path,
         )
     except DuplicateUserNameError as exc:
         raise _ScimError(409, str(exc), "uniqueness") from exc
-    roles = sorted(rbac_store.get_roles(user.user_name))
+    roles = sorted(rbac_store.get_roles(user.user_name, db_path=db_path))
     scim_store.append_audit_event(
         actor=actor,
         operation="user.create",
@@ -376,12 +381,13 @@ async def create_user(request: Request, actor: _Actor) -> JSONResponse:
         subject=user.user_name,
         roles_before=roles,
         roles_after=roles,
+        db_path=db_path,
     )
     return _scim_response(_user_resource(user), status_code=201)
 
 
 @router.get("/Users")
-async def list_users(request: Request, _actor: _Actor) -> JSONResponse:
+async def list_users(request: Request, _actor: _Actor, db_path: DbPath) -> JSONResponse:
     params = request.query_params
     filter_attr: str | None = None
     filter_value: str | bool | None = None
@@ -418,6 +424,7 @@ async def list_users(request: Request, _actor: _Actor) -> JSONResponse:
         filter_value=filter_value,
         start_index=start_index,
         count=count,
+        db_path=db_path,
     )
     resources = [_user_resource(u) for u in users]
     return _scim_response(
@@ -432,8 +439,8 @@ async def list_users(request: Request, _actor: _Actor) -> JSONResponse:
 
 
 @router.get("/Users/{user_id}")
-async def get_user(user_id: str, _actor: _Actor) -> JSONResponse:
-    return _scim_response(_user_resource(_get_user_or_404(user_id)))
+async def get_user(user_id: str, _actor: _Actor, db_path: DbPath) -> JSONResponse:
+    return _scim_response(_user_resource(_get_user_or_404(user_id, db_path=db_path)))
 
 
 def _coerce_active(value: Any) -> bool:
@@ -498,8 +505,10 @@ def _parse_patch_operations(payload: Any) -> dict[str, Any]:
 
 
 @router.patch("/Users/{user_id}")
-async def patch_user(user_id: str, request: Request, actor: _Actor) -> JSONResponse:
-    user = _get_user_or_404(user_id)
+async def patch_user(
+    user_id: str, request: Request, actor: _Actor, db_path: DbPath
+) -> JSONResponse:
+    user = _get_user_or_404(user_id, db_path=db_path)
     try:
         payload = await request.json()
     except Exception as exc:  # noqa: BLE001 — malformed JSON body
@@ -513,11 +522,11 @@ async def patch_user(user_id: str, request: Request, actor: _Actor) -> JSONRespo
         # Revoke first: if the last-admin guard refuses, nothing has mutated
         # (neither role assignments nor the stored user).
         roles_before, roles_after = _revoke_all_roles(
-            user.user_name, oidc_configured=_oidc_configured(request)
+            user.user_name, oidc_configured=_oidc_configured(request), db_path=db_path
         )
         operation = "user.deactivate"
     else:
-        roles_before = sorted(rbac_store.get_roles(user.user_name))
+        roles_before = sorted(rbac_store.get_roles(user.user_name, db_path=db_path))
         roles_after = roles_before
 
     store_changes: dict[str, Any] = {}
@@ -527,13 +536,13 @@ async def patch_user(user_id: str, request: Request, actor: _Actor) -> JSONRespo
         store_changes["display_name"] = changes["displayName"]
     if "externalId" in changes:
         store_changes["external_id"] = changes["externalId"]
-    updated = scim_store.update_user(user_id, changes=store_changes)
+    updated = scim_store.update_user(user_id, changes=store_changes, db_path=db_path)
     if updated is None:  # pragma: no cover — row deleted between read and write
         raise _ScimError(404, f"User {user_id} not found", "invalidValue")
     if reactivating:
         # Group memberships granted nothing while inactive; restore them now.
-        _reconcile_member(request, user_id, actor)
-        roles_after = sorted(rbac_store.get_roles(updated.user_name))
+        _reconcile_member(request, user_id, actor, db_path=db_path)
+        roles_after = sorted(rbac_store.get_roles(updated.user_name, db_path=db_path))
 
     scim_store.append_audit_event(
         actor=actor,
@@ -542,19 +551,20 @@ async def patch_user(user_id: str, request: Request, actor: _Actor) -> JSONRespo
         subject=updated.user_name,
         roles_before=roles_before,
         roles_after=roles_after,
+        db_path=db_path,
     )
     return _scim_response(_user_resource(updated))
 
 
 @router.delete("/Users/{user_id}", status_code=204)
-async def delete_user(user_id: str, request: Request, actor: _Actor) -> Response:
-    user = _get_user_or_404(user_id)
+async def delete_user(user_id: str, request: Request, actor: _Actor, db_path: DbPath) -> Response:
+    user = _get_user_or_404(user_id, db_path=db_path)
     # De-provision before deleting: the last-admin guard can still refuse,
     # in which case the user row is untouched.
     roles_before, roles_after = _revoke_all_roles(
-        user.user_name, oidc_configured=_oidc_configured(request)
+        user.user_name, oidc_configured=_oidc_configured(request), db_path=db_path
     )
-    scim_store.delete_user(user_id)
+    scim_store.delete_user(user_id, db_path=db_path)
     scim_store.append_audit_event(
         actor=actor,
         operation="user.delete",
@@ -562,6 +572,7 @@ async def delete_user(user_id: str, request: Request, actor: _Actor) -> Response
         subject=user.user_name,
         roles_before=roles_before,
         roles_after=roles_after,
+        db_path=db_path,
     )
     return Response(status_code=204)
 
@@ -616,7 +627,7 @@ def _group_resource(group: scim_store.ScimGroup) -> dict[str, Any]:
     return resource
 
 
-def _reconcile_member(request: Request, user_id: str, actor: str) -> None:
+def _reconcile_member(request: Request, user_id: str, actor: str, *, db_path: Path | None) -> None:
     """Recompute and apply the RBAC roles a SCIM member should have from all groups.
 
     An inactive user should have none: de-provisioning (``active: false``) revoked
@@ -626,7 +637,7 @@ def _reconcile_member(request: Request, user_id: str, actor: str) -> None:
     Unknown member ids are ignored (SCIM allows references the server doesn't hold).
     A LastAdminError from the reconcile surfaces as a SCIM 409 with no mutation.
     """
-    user = scim_store.get_user(user_id)
+    user = scim_store.get_user(user_id, db_path=db_path)
     if user is None:
         return
     config: ServerConfig = request.app.state.config
@@ -634,18 +645,18 @@ def _reconcile_member(request: Request, user_id: str, actor: str) -> None:
 
     desired: set[str] = set()
     if user.active:
-        display_names = scim_store.group_display_names_for_user(user_id)
+        display_names = scim_store.group_display_names_for_user(user_id, db_path=db_path)
         desired = resolve_roles(display_names, config.scim.role_mapping())
     try:
         scim_store.reconcile_subject_roles(
-            user.user_name, desired, actor, oidc_configured=config.oidc.enabled
+            user.user_name, desired, actor, oidc_configured=config.oidc.enabled, db_path=db_path
         )
     except rbac_store.LastAdminError as exc:
         raise _ScimError(409, str(exc), "mutability") from exc
 
 
 @router.post("/Groups")
-async def create_group(request: Request, actor: _Actor) -> JSONResponse:
+async def create_group(request: Request, actor: _Actor, db_path: DbPath) -> JSONResponse:
     try:
         payload = await request.json()
     except Exception as exc:  # noqa: BLE001 — malformed JSON body
@@ -655,15 +666,16 @@ async def create_group(request: Request, actor: _Actor) -> JSONResponse:
         fields["display_name"],
         external_id=fields["external_id"],
         member_ids=fields["member_ids"],
+        db_path=db_path,
     )
     for uid in fields["member_ids"]:
-        _reconcile_member(request, uid, actor)
+        _reconcile_member(request, uid, actor, db_path=db_path)
     return _scim_response(_group_resource(group), status_code=201)
 
 
 @router.get("/Groups")
-async def list_groups(_actor: _Actor) -> JSONResponse:
-    groups = scim_store.list_groups()
+async def list_groups(_actor: _Actor, db_path: DbPath) -> JSONResponse:
+    groups = scim_store.list_groups(db_path=db_path)
     return _scim_response(
         {
             "schemas": [LIST_RESPONSE_URN],
@@ -676,16 +688,18 @@ async def list_groups(_actor: _Actor) -> JSONResponse:
 
 
 @router.get("/Groups/{group_id}")
-async def get_group(group_id: str, _actor: _Actor) -> JSONResponse:
-    group = scim_store.get_group(group_id)
+async def get_group(group_id: str, _actor: _Actor, db_path: DbPath) -> JSONResponse:
+    group = scim_store.get_group(group_id, db_path=db_path)
     if group is None:
         raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
     return _scim_response(_group_resource(group))
 
 
 @router.patch("/Groups/{group_id}")
-async def patch_group(group_id: str, request: Request, actor: _Actor) -> JSONResponse:
-    group = scim_store.get_group(group_id)
+async def patch_group(
+    group_id: str, request: Request, actor: _Actor, db_path: DbPath
+) -> JSONResponse:
+    group = scim_store.get_group(group_id, db_path=db_path)
     if group is None:
         raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
     try:
@@ -707,27 +721,29 @@ async def patch_group(group_id: str, request: Request, actor: _Actor) -> JSONRes
         if verb == "add" and path == "members":
             for entry in op.get("value") or []:
                 if isinstance(entry, dict) and isinstance(entry.get("value"), str):
-                    scim_store.add_group_member(group_id, entry["value"])
+                    scim_store.add_group_member(group_id, entry["value"], db_path=db_path)
                     affected.append(entry["value"])
         elif verb == "remove" and isinstance(path, str):
             match = _MEMBER_PATH_RE.match(path)
             if match is None:
                 raise _ScimError(400, f"unsupported patch path {path!r}", "invalidPath")
             uid = match.group("value")
-            scim_store.remove_group_member(group_id, uid)
+            scim_store.remove_group_member(group_id, uid, db_path=db_path)
             affected.append(uid)
         else:
             raise _ScimError(400, f"unsupported patch op {verb!r}", "invalidValue")
 
     for uid in affected:
-        _reconcile_member(request, uid, actor)
-    updated = scim_store.get_group(group_id)
+        _reconcile_member(request, uid, actor, db_path=db_path)
+    updated = scim_store.get_group(group_id, db_path=db_path)
     assert updated is not None  # just fetched/patched
     return _scim_response(_group_resource(updated))
 
 
 @router.put("/Groups/{group_id}")
-async def put_group(group_id: str, request: Request, actor: _Actor) -> JSONResponse:
+async def put_group(
+    group_id: str, request: Request, actor: _Actor, db_path: DbPath
+) -> JSONResponse:
     """RFC 7644 §3.5.1 full replace of a Group.
 
     ``displayName`` and ``members`` are replaced atomically (one transaction);
@@ -736,7 +752,7 @@ async def put_group(group_id: str, request: Request, actor: _Actor) -> JSONRespo
     members lose only SCIM-owned grants (ADR-0190), and a revoke that would
     remove the last admin surfaces as a SCIM 409 (ADR-0060).
     """
-    group = scim_store.get_group(group_id)
+    group = scim_store.get_group(group_id, db_path=db_path)
     if group is None:
         raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
     try:
@@ -751,6 +767,7 @@ async def put_group(group_id: str, request: Request, actor: _Actor) -> JSONRespo
         display_name=fields["display_name"],
         external_id=fields["external_id"],
         member_ids=fields["member_ids"],
+        db_path=db_path,
     )
     if updated is None:  # pragma: no cover — row deleted between read and write
         raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
@@ -758,19 +775,19 @@ async def put_group(group_id: str, request: Request, actor: _Actor) -> JSONRespo
     # Reconcile the union: removed members lose SCIM-owned grants, added
     # members gain them, and kept members are remapped on a displayName rename.
     for uid in sorted(old_members | set(fields["member_ids"])):
-        _reconcile_member(request, uid, actor)
+        _reconcile_member(request, uid, actor, db_path=db_path)
     return _scim_response(_group_resource(updated))
 
 
 @router.delete("/Groups/{group_id}", status_code=204)
-async def delete_group(group_id: str, request: Request, actor: _Actor) -> Response:
-    group = scim_store.get_group(group_id)
+async def delete_group(group_id: str, request: Request, actor: _Actor, db_path: DbPath) -> Response:
+    group = scim_store.get_group(group_id, db_path=db_path)
     if group is None:
         raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
     members = list(group.members)
-    scim_store.delete_group(group_id)
+    scim_store.delete_group(group_id, db_path=db_path)
     # After the group is gone, each member's role set is recomputed from the
     # groups that remain — dropping the role this group granted (if unique).
     for uid in members:
-        _reconcile_member(request, uid, actor)
+        _reconcile_member(request, uid, actor, db_path=db_path)
     return Response(status_code=204)

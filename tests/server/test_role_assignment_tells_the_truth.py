@@ -100,13 +100,13 @@ def test_v0_roles_list_reports_effective_now_truthfully(
     monkeypatch.delenv("NOVA_OIDC_CLIENT_ID", raising=False)
     rbac_store.assign_role("alice@example.com", "writer", "test")
 
-    body = roles_route._list_roles_response()
+    body = roles_route._list_roles_response(None)
     assert [r["effective_now"] for r in body["roles"]] == [False]
     assert "ADR-0178" in body["message"]
 
     org = workspace_store.create_org("acme", "Acme", "admin@example.com")
     workspace_store.add_membership("bob@example.com", "org", org["id"], "reader", "test")
-    body = roles_route._list_roles_response()
+    body = roles_route._list_roles_response(None)
     assert [r["effective_now"] for r in body["roles"]] == [True]
     assert body["message"] == ""
 

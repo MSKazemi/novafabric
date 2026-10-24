@@ -30,7 +30,6 @@ _MAP = {"Engineering": "writer", "SRE-Admins": "admin"}
 
 def _make_client(tmp_path: Path) -> TestClient:
     cfg = ServerConfig(
-        db_path=str(tmp_path / "scim.db"),
         scim=ScimConfig(enabled=True, group_role_map=_MAP),
     )
     cfg.scim_token = SCIM_TOKEN
@@ -73,7 +72,7 @@ def _create_group(
 
 
 def test_groups_disabled_returns_404(tmp_path: Path) -> None:
-    cfg = ServerConfig(db_path=str(tmp_path / "scim.db"))  # scim disabled
+    cfg = ServerConfig()  # scim disabled
     c = TestClient(create_app(cfg), raise_server_exceptions=False)
     assert c.get("/scim/v2/Groups", headers=_hdrs()).status_code == 404
 

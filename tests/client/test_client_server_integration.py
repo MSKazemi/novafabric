@@ -81,6 +81,11 @@ def _build_app(tmp_path: Path, capsule_store: Path, **config_kwargs: Any) -> Fas
     return app
 
 
+def _db_path(app: FastAPI) -> Path:
+    """The registry the app was configured with: keys must be created there (server-05)."""
+    return Path(app.state.config.db_path)
+
+
 @pytest.fixture
 def app(tmp_path: Path, capsule_store: Path) -> FastAPI:
     """Server app with the ADR-0184 insecure opt-out (no-auth paths)."""
@@ -318,7 +323,9 @@ class TestAuth:
     def test_api_key_authenticates_via_nvfk_dispatch(
         self, secured_app: FastAPI
     ) -> None:
-        key, _record = create_key("sdk-int@example.com", ["reader"], actor="test")
+        key, _record = create_key(
+            "sdk-int@example.com", ["reader"], actor="test", db_path=_db_path(secured_app)
+        )
         with self._client(secured_app, api_key=key) as nc:
             assert nc.list_capsules().meta.status == 200
 
@@ -330,7 +337,9 @@ class TestAuth:
     def test_reader_api_key_403_on_writer_route(
         self, secured_app: FastAPI, tmp_path: Path
     ) -> None:
-        key, _record = create_key("sdk-reader@example.com", ["reader"], actor="test")
+        key, _record = create_key(
+            "sdk-reader@example.com", ["reader"], actor="test", db_path=_db_path(secured_app)
+        )
         source = _make_capsule_source(tmp_path / "src", "run-int-rbac")
         with self._client(secured_app, api_key=key) as nc:
             with pytest.raises(AuthorizationError) as exc_info:
@@ -341,7 +350,9 @@ class TestAuth:
     def test_writer_api_key_can_upload(
         self, secured_app: FastAPI, tmp_path: Path
     ) -> None:
-        key, _record = create_key("sdk-writer@example.com", ["writer"], actor="test")
+        key, _record = create_key(
+            "sdk-writer@example.com", ["writer"], actor="test", db_path=_db_path(secured_app)
+        )
         source = _make_capsule_source(tmp_path / "src", "run-int-writer")
         with self._client(secured_app, api_key=key) as nc:
             assert nc.upload_capsule(source).meta.status == 201

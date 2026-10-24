@@ -11,6 +11,7 @@ verify_token, calling into the same rbac_store helpers below.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field
 from novafabric.serve import audit
 from novafabric.server import rbac_store
 from novafabric.server.auth import AuthContext
+from novafabric.server.deps import DbPath
 from novafabric.server.rbac import (
     NOT_IN_FORCE_EXPLANATION,
     Role,
@@ -70,7 +72,7 @@ def _server_oidc_configured(request: Request) -> bool:
     return bool(getattr(oidc, "enabled", False))
 
 
-def _list_roles_response() -> dict[str, Any]:
+def _list_roles_response(db_path: Path | None) -> dict[str, Any]:
     """Build the GET /admin/roles response.
 
     Adds an `effective_now` flag per assignment so callers can see the gap
@@ -82,8 +84,8 @@ def _list_roles_response() -> dict[str, Any]:
     # server-mode OIDC never reads (it uses YAML ``oidc.issuer_url``), so a stock
     # deployment reported every row effective while ``require_role`` ignored them.
     # It now asks the exact gate ``require_role`` applies.
-    in_force = role_assignments_in_force()
-    assignments = rbac_store.list_assignments()
+    in_force = role_assignments_in_force(db_path=db_path)
+    assignments = rbac_store.list_assignments(db_path=db_path)
     enriched = [{**row, "effective_now": in_force} for row in assignments]
     return {
         "server_mode": oidc,
@@ -95,9 +97,10 @@ def _list_roles_response() -> dict[str, Any]:
 @router.get("/roles")
 async def list_roles(
     _auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """List all role assignments (admin only)."""
-    return _list_roles_response()
+    return _list_roles_response(db_path)
 
 
 @router.post(
@@ -106,9 +109,10 @@ async def list_roles(
 async def assign_role(
     body: AssignRoleRequest,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Assign a role to a subject (idempotent). Admin only."""
-    rbac_store.assign_role(body.subject, body.role.value, auth.subject)
+    rbac_store.assign_role(body.subject, body.role.value, auth.subject, db_path=db_path)
     actor_fp = auth.subject[:8] if auth.subject else "anonymous"
     _chained_audit(
         "role.assign",
@@ -140,6 +144,7 @@ async def revoke_role(
     role: str,
     request: Request,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
+    db_path: DbPath,
 ) -> dict[str, Any]:
     """Revoke a role from a subject.
 
@@ -148,7 +153,7 @@ async def revoke_role(
     """
     try:
         deleted = rbac_store.revoke_role(
-            subject, role, oidc_configured=_server_oidc_configured(request)
+            subject, role, oidc_configured=_server_oidc_configured(request), db_path=db_path
         )
     except LastAdminError as e:
         actor_fp = auth.subject[:8] if auth.subject else "anonymous"
