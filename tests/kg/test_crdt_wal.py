@@ -161,3 +161,83 @@ def test_wal_multiple_flush_cycles(tmp_path: Path) -> None:
     # Only the second cycle's event should appear
     assert len(deltas) == 1
     assert deltas[0]["call_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Review eval-adapters-query-15: confirm only after the store write
+# ---------------------------------------------------------------------------
+
+
+class _FlakyStore:
+    """A store whose USES_TOOL upserts fail; CALLS upserts succeed."""
+
+    def __init__(self, crash: BaseException | None = None) -> None:
+        self.calls: list[tuple[str, str, int]] = []
+        self._crash = crash
+
+    def upsert_calls_edge(self, agent_id: str, model_id: str, call_count: int, **_: object) -> None:
+        if self._crash is not None:
+            raise self._crash
+        self.calls.append((agent_id, model_id, call_count))
+
+    def upsert_uses_tool_edge(self, **_: object) -> None:
+        raise RuntimeError("store unavailable")
+
+
+def _pipeline(store: object, wal: Path) -> object:
+    from novafabric.kg.pipeline import KGIngestionPipeline
+
+    return KGIngestionPipeline(store, wal_path=str(wal))  # type: ignore[arg-type]
+
+
+def _events(pipeline: object) -> None:
+    for _ in range(2):
+        pipeline.ingest_event(  # type: ignore[attr-defined]
+            {"event_type": "ModelCallCompleted", "agent_id": "a", "model_id": "m", "capsule_id": "c"}
+        )
+    pipeline.ingest_event(  # type: ignore[attr-defined]
+        {"event_type": "ToolCallCompleted", "agent_id": "a", "tool_name": "t", "capsule_id": "c"}
+    )
+
+
+def test_a_delta_the_store_refused_survives_a_restart(tmp_path: Path) -> None:
+    from novafabric.kg.crdt import CRDTAccumulator
+
+    wal = tmp_path / "kg.wal"
+    store = _FlakyStore()
+    pipeline = _pipeline(store, wal)
+    _events(pipeline)
+    assert pipeline.flush_to_store() == 1  # type: ignore[attr-defined]
+    assert store.calls == [("a", "m", 2)]
+    recovered = CRDTAccumulator(wal_path=wal).flush()
+    assert [(d["edge_type"], d["call_count"]) for d in recovered] == [("USES_TOOL", 1)]
+
+
+def test_a_crash_during_the_store_write_leaves_the_wal_unconfirmed(tmp_path: Path) -> None:
+    import pytest
+
+    from novafabric.kg.crdt import CRDTAccumulator
+
+    wal = tmp_path / "kg.wal"
+    pipeline = _pipeline(_FlakyStore(crash=KeyboardInterrupt()), wal)
+    _events(pipeline)
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.flush_to_store()  # type: ignore[attr-defined]
+    recovered = sorted(
+        (d["edge_type"], d["call_count"]) for d in CRDTAccumulator(wal_path=wal).flush()
+    )
+    assert recovered == [("CALLS", 2), ("USES_TOOL", 1)]
+
+
+def test_a_requeued_delta_keeps_its_counts_across_two_restarts(tmp_path: Path) -> None:
+    from novafabric.kg.crdt import CRDTAccumulator
+
+    wal = tmp_path / "kg.wal"
+    acc = CRDTAccumulator(wal_path=wal)
+    for verified in (True, True, False):
+        acc.accumulate("a", "t", "USES_TOOL", "cap-1", novaseal_valid=verified)
+    acc.confirm(requeue=acc.pending())
+    again = CRDTAccumulator(wal_path=wal)
+    again.confirm(requeue=again.pending())
+    (delta,) = CRDTAccumulator(wal_path=wal).flush()
+    assert (delta["call_count"], delta["verified_count"]) == (3, 2)

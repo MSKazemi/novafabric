@@ -408,11 +408,14 @@ class KGIngestionPipeline:
         Without it (a stream that spans capsules, e.g. NATS) deltas are added.
         """
         t0 = time.monotonic()
-        deltas = self._accumulator.flush()
+        # Confirmed only after the writes (eval-adapters-query-15): a crash in
+        # between replays the WAL, and a delta the store refused is re-queued.
+        deltas = self._accumulator.pending()
         if not deltas:
             return 0
 
         written = 0
+        failed: list[dict[str, Any]] = []
         for delta in deltas:
             try:
                 edge_type = str(delta["edge_type"])
@@ -470,12 +473,14 @@ class KGIngestionPipeline:
                 written += 1
             except Exception as exc:
                 _incr_merge_errors()
+                failed.append(delta)
                 logger.warning(
-                    "Failed to write KG edge %r → %r: %s",
+                    "Failed to write KG edge %r → %r (re-queued): %s",
                     delta.get("src"),
                     delta.get("dst"),
                     exc,
                 )
+        self._accumulator.confirm(requeue=failed)
 
         elapsed = time.monotonic() - t0
         if _nova_kg_flush_duration is not None:

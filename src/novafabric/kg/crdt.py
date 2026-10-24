@@ -18,9 +18,15 @@ WAL format (one JSON line per increment, then a sentinel on flush):
   {"k": ["src", "dst", "edge_type"], "d": 1, "cid": "cap-id", "v": 1}
   FLUSH_CONFIRMED
 
+A delta the store refused is written back after the sentinel as one counted
+line, ``{"k": [...], "cid": "cap-id", "n": 3, "nv": 2}`` (``n`` calls, ``nv``
+verified); a line without ``n`` is one increment.
+
 Recovery rule: replay all lines; after the last ``FLUSH_CONFIRMED`` line
 restart accumulation from zero (everything before was already flushed to
-KGStore).
+KGStore). The sentinel is written only after the store write
+(:meth:`CRDTAccumulator.confirm`), so a crash in between replays the
+unconfirmed deltas: delivery is at-least-once.
 """
 from __future__ import annotations
 
@@ -59,6 +65,13 @@ class GCounter:
             # Still record non-verified capsules (lower priority)
             if len(self.representative_capsule_ids) < 10:
                 self.representative_capsule_ids.append(capsule_id)
+
+    def absorb(self, *, call_count: int, verified_count: int, capsule_id: str) -> None:
+        """Add a whole delta back (a re-queued or replayed counted WAL line)."""
+        self.call_count += call_count
+        self.verified_count += min(verified_count, call_count)
+        if capsule_id and capsule_id not in self.representative_capsule_ids:
+            self.representative_capsule_ids.append(capsule_id)
 
     def merge(self, other: GCounter) -> GCounter:
         """Merge two G-Counters using elementwise max (CRDT join)."""
@@ -157,11 +170,17 @@ class CRDTAccumulator:
                 key = (str(k[0]), str(k[1]), str(k[2]))
                 if key not in self._counters:
                     self._counters[key] = GCounter()
-                novaseal_valid = bool(entry.get("v", 0))
                 capsule_id = str(entry.get("cid", ""))
-                self._counters[key].increment(
-                    novaseal_valid=novaseal_valid, capsule_id=capsule_id
-                )
+                if "n" in entry:  # a re-queued delta: one counted line
+                    self._counters[key].absorb(
+                        call_count=int(entry["n"]),
+                        verified_count=int(entry.get("nv", 0)),
+                        capsule_id=capsule_id,
+                    )
+                else:
+                    self._counters[key].increment(
+                        novaseal_valid=bool(entry.get("v", 0)), capsule_id=capsule_id
+                    )
             if pending:
                 logger.info("WAL: replayed %d pending increments after crash", len(pending))
         except Exception as exc:
@@ -187,13 +206,32 @@ class CRDTAccumulator:
             fh.flush()
             os.fsync(fh.fileno())
 
-    def _wal_confirm_flush(self) -> None:
-        """Truncate the WAL to just the FLUSH_CONFIRMED sentinel."""
+    def _wal_confirm_flush(self, requeue: list[dict[str, int | float | str]]) -> None:
+        """Replace the WAL with the sentinel plus one counted line per *requeue* delta.
+
+        Written to a sibling file and renamed over the WAL, so a crash leaves
+        either the old WAL (replayed in full) or the new one — never a WAL
+        truncated before the re-queued deltas reached it.
+        """
         assert self._wal_path is not None
-        with self._wal_path.open("wb") as fh:
-            fh.write(self.WAL_SENTINEL)
+        body = self.WAL_SENTINEL + b"".join(
+            json.dumps(
+                {
+                    "k": [d["src"], d["dst"], d["edge_type"]],
+                    "cid": d.get("representative_capsule_id", ""),
+                    "n": int(d["call_count"]),
+                    "nv": int(d["verified_count"]),
+                },
+                separators=(",", ":"),
+            ).encode() + b"\n"
+            for d in requeue
+        )
+        tmp = self._wal_path.with_name(self._wal_path.name + ".tmp")
+        with tmp.open("wb") as fh:
+            fh.write(body)
             fh.flush()
             os.fsync(fh.fileno())
+        os.replace(tmp, self._wal_path)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -218,28 +256,44 @@ class CRDTAccumulator:
             novaseal_valid=novaseal_valid, capsule_id=capsule_id
         )
 
-    def flush(self) -> list[dict[str, int | float | str]]:
-        """Return all accumulated deltas and reset internal state.
+    def pending(self) -> list[dict[str, int | float | str]]:
+        """The accumulated deltas, without resetting anything.
 
-        Each returned dict has keys: src, dst, edge_type, call_count,
-        verified_count, confidence, representative_capsule_id.
-
-        When WAL is enabled, writes a FLUSH_CONFIRMED sentinel *before*
-        resetting state so a crash during flush does not lose committed data.
+        Each dict has keys: src, dst, edge_type, call_count, verified_count,
+        confidence, representative_capsule_id. Write them to the store, then
+        call :meth:`confirm` — never the other way round.
         """
-        deltas: list[dict[str, int | float | str]] = []
-        for (src, dst, edge_type), counter in self._counters.items():
-            deltas.append(
-                {
-                    "src": src,
-                    "dst": dst,
-                    "edge_type": edge_type,
-                    **counter.to_dict(),
-                }
-            )
+        return [
+            {"src": src, "dst": dst, "edge_type": edge_type, **counter.to_dict()}
+            for (src, dst, edge_type), counter in self._counters.items()
+        ]
+
+    def confirm(self, requeue: list[dict[str, int | float | str]] | tuple[()] = ()) -> None:
+        """The store has the pending deltas except *requeue*: reset to just those.
+
+        With a WAL, the sentinel and the re-queued deltas replace the log
+        atomically, so a delta the store refused survives a restart.
+        """
+        requeued = list(requeue)
         if self._wal_path is not None:
-            self._wal_confirm_flush()
+            self._wal_confirm_flush(requeued)
         self._counters.clear()
+        for delta in requeued:
+            key = (str(delta["src"]), str(delta["dst"]), str(delta["edge_type"]))
+            self._counters.setdefault(key, GCounter()).absorb(
+                call_count=int(delta["call_count"]),
+                verified_count=int(delta["verified_count"]),
+                capsule_id=str(delta.get("representative_capsule_id", "")),
+            )
+
+    def flush(self) -> list[dict[str, int | float | str]]:
+        """Return all accumulated deltas and reset (:meth:`pending` + :meth:`confirm`).
+
+        For a caller with nowhere to fail; a store writer uses the two halves
+        so the WAL is confirmed only after the write.
+        """
+        deltas = self.pending()
+        self.confirm()
         return deltas
 
     def __len__(self) -> int:
