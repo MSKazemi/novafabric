@@ -187,8 +187,14 @@ class EuAiActExporter:
             try:
                 meta: dict[str, Any] = yaml.safe_load(manifest_text or "") or {}
             except yaml.YAMLError:
-                continue
+                meta = None  # type: ignore[assignment]
             if not isinstance(meta, dict):
+                # Listed, not dropped (review compliance-privacy-23): the run exists
+                # but its manifest cannot be read, which an Art. 12 log must show.
+                records.append({
+                    "run_id": capsule_dir.name,
+                    "manifest_error": "capsule.yaml is not a readable YAML mapping",
+                })
                 continue
 
             created_at = _parse_capsule_created_at(meta)

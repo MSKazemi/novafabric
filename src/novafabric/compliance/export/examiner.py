@@ -101,6 +101,16 @@ echo "All checksums verified OK"
 """
 
 
+def _aware(when: datetime) -> datetime:
+    """A ``created_at`` without an offset is UTC (capture writes UTC).
+
+    Compared with the aware audit period, a naive one raised ``TypeError`` — not
+    the ``ValueError`` caught — and aborted the ISO 42001 export (review
+    compliance-privacy-23).
+    """
+    return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
+
+
 class BagItExporter:
     """RFC 8493 BagIt packaging exporter.
 
@@ -615,9 +625,9 @@ class ISO42001Exporter:
             created_at_raw = data.get("created_at", "")
             if created_at_raw:
                 try:
-                    created_at = datetime.fromisoformat(
+                    created_at = _aware(datetime.fromisoformat(
                         str(created_at_raw).replace("Z", "+00:00")
-                    )
+                    ))
                     if self.period_start <= created_at <= self.period_end:
                         run_id = data.get("run_id", child.name)
                         refs.append(f"capsule:{run_id}")
@@ -648,9 +658,9 @@ class ISO42001Exporter:
             created_at_raw = data.get("created_at", "")
             if created_at_raw:
                 try:
-                    created_at = datetime.fromisoformat(
+                    created_at = _aware(datetime.fromisoformat(
                         str(created_at_raw).replace("Z", "+00:00")
-                    )
+                    ))
                     if self.period_start <= created_at <= self.period_end:
                         index.append({
                             "run_id": data.get("run_id", child.name),

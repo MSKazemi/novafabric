@@ -184,7 +184,9 @@ class AuditLog:
         """
         with _path_lock(self._path):
             for _ in range(_MAX_REOPEN):
-                fd = os.open(self._path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o666)
+                # Owner-only on creation: erasure, role and API-key events are not
+                # for every local user (review compliance-privacy-23).
+                fd = os.open(self._path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
                 try:
                     _flock(fd, exclusive=True)
                     try:

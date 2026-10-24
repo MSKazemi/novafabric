@@ -627,3 +627,23 @@ def test_the_bag_never_contains_itself(tmp_path: Path) -> None:
     bag = BagItExporter(capsule_id="cap-self", data_dir=cap).export(output_dir=cap)
     with zipfile.ZipFile(bag) as zf:
         assert not [n for n in zf.namelist() if n.endswith("-bag.zip")]
+
+
+def test_a_naive_created_at_does_not_abort_the_iso_export(tmp_path: Path) -> None:
+    """Review compliance-privacy-23: a created_at without an offset raised TypeError
+    against the aware audit period, aborting the ISO 42001 export."""
+    from datetime import datetime, timezone
+
+    from novafabric.compliance.export.examiner import ISO42001Exporter
+
+    caps = tmp_path / "caps"
+    (caps / "run-naive").mkdir(parents=True)
+    (caps / "run-naive" / "capsule.yaml").write_text(
+        "run_id: run-naive\ncreated_at: '2026-06-01T12:00:00'\n"
+    )
+    exporter = ISO42001Exporter(
+        data_dir=caps,
+        period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        period_end=datetime(2026, 12, 31, tzinfo=timezone.utc),
+    )
+    assert any("run-naive" in str(r) for r in exporter._build_capsule_index())

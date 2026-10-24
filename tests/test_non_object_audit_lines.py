@@ -33,3 +33,31 @@ def test_prov_json_skips_a_non_object_lineage_line(tmp_path: Path) -> None:
     (cap / "lineage.jsonl").write_text("[1]\n" + json.dumps(edge) + "\n")
     doc = prov_json.export_prov_json(cap)  # must not raise
     assert "wasDerivedFrom" in json.dumps(doc)
+
+
+def test_a_new_audit_log_is_owner_only(tmp_path: Path) -> None:
+    """Review compliance-privacy-23: created 0o666 (umask-filtered), world-readable."""
+    import os
+    import stat
+
+    old = os.umask(0o022)
+    try:
+        path = tmp_path / "audit.jsonl"
+        AuditLog(path).append(next(iter(AuditEventType)), "tester", "r1")
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_the_art12_log_lists_a_run_whose_manifest_cannot_be_read(tmp_path: Path) -> None:
+    from novafabric.compliance import euaiact
+
+    caps = tmp_path / "capsules"
+    (caps / "run-ok").mkdir(parents=True)
+    (caps / "run-ok" / "capsule.yaml").write_text("run_id: run-ok\ncreated_at: 2026-10-01T00:00:00Z\n")
+    (caps / "run-bad").mkdir()
+    (caps / "run-bad" / "capsule.yaml").write_text("run_id: [unclosed\n")
+    records = euaiact.EuAiActExporter(caps).export()
+    by_run = {r["run_id"]: r for r in records}
+    assert set(by_run) == {"run-ok", "run-bad"}  # the unreadable run is not dropped
+    assert "manifest_error" in by_run["run-bad"]
