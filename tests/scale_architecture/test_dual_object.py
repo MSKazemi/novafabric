@@ -76,6 +76,9 @@ class TestDualObjectSplitDisabled:
         assert result.pii_object_key is None
         assert result.pii_content_digest is None
         assert result.cap003_enabled is False
+        # Review storage-backup-13: the PII payload (prompt/output text) was written
+        # to disk anyway, while the result said there was none to track or erase.
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["run-xyz_audit.json"]
 
     def test_env_flag_defaults_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Changed to "true" in v0.44.0 on a mis-citation (ADR-0069 resolves a

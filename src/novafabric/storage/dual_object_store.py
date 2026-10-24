@@ -293,14 +293,24 @@ class DualObjectStore:
 
         audit_path.write_text(json.dumps(audit_record, indent=2), encoding="utf-8")
 
+        if not self.enabled:
+            # cap-003 off (the default): the PII payload — prompt and output text —
+            # is not stored at all. It used to be written anyway while the result
+            # reported no PII object, so nothing tracked it for erasure (review
+            # storage-backup-13).
+            return DualObjectResult(
+                run_id=run_id,
+                audit_object_key=str(audit_path),
+                pii_object_key=None,
+                pii_content_digest=None,
+                cap003_enabled=False,
+            )
         pii_bytes = json.dumps(pii_payload, indent=2).encode()
         pii_path.write_bytes(pii_bytes)
-        digest = self._compute_digest(pii_bytes)
-
         return DualObjectResult(
             run_id=run_id,
             audit_object_key=str(audit_path),
-            pii_object_key=str(pii_path) if self.enabled else None,
-            pii_content_digest=digest if self.enabled else None,
-            cap003_enabled=self.enabled,
+            pii_object_key=str(pii_path),
+            pii_content_digest=self._compute_digest(pii_bytes),
+            cap003_enabled=True,
         )
