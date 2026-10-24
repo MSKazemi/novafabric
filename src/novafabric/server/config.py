@@ -11,10 +11,11 @@ from __future__ import annotations
 import ipaddress
 import os
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, TypeAdapter, field_validator, model_validator
+from pydantic import ValidationError as PydanticValidationError
 
 from novafabric.server.saml import SamlConfig
 
@@ -644,7 +645,36 @@ class ServerConfig(BaseModel):
             self.local_token = val
         if val := os.environ.get("NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT"):
             self.demo_device_grant = val.lower() in ("1", "true", "yes", "on")
+        self._revalidate_after_overrides()
         return self
+
+    def _revalidate_after_overrides(self) -> None:
+        """Hold every overridden value to the bounds a ``server.yaml`` value meets.
+
+        The overrides above are plain assignments, which pydantic does not
+        validate, so ``NOVAFABRIC_SERVER_INGEST_SPOOL_CHUNK_BYTES=0`` or
+        ``…_MAX_CONCURRENT_UNPACK=0`` passed although YAML refuses both (review
+        server-14). Sub-models are re-validated from their fields, and each
+        top-level field against its own declared constraints; this never
+        re-enters this validator.
+        """
+        errors: list[str] = []
+        for name, info in type(self).model_fields.items():
+            value = getattr(self, name)
+            try:
+                if isinstance(value, BaseModel):
+                    type(value).model_validate(value.model_dump())
+                elif info.metadata:  # a bounded scalar such as port
+                    bounded: Any = Annotated[info.annotation, *info.metadata]
+                    TypeAdapter(bounded).validate_python(value)
+            except PydanticValidationError as exc:
+                for err in exc.errors():
+                    loc = ".".join(str(part) for part in (name, *err["loc"]))
+                    errors.append(f"{loc}: {err['msg']}")
+        if errors:
+            raise ValueError(
+                "server config from the environment is out of range: " + "; ".join(errors)
+            )
 
     @model_validator(mode="after")
     def _refuse_unconfirmed_public_insecure(self) -> "ServerConfig":

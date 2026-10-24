@@ -30,7 +30,10 @@ nova server start --host 0.0.0.0 --port 8080
 
 Configuration lives in `~/.config/novafabric/server.yaml`; only `--config <path>`
 points the server at another file (for example `/etc/novafabric/server.yaml`).
-`NOVAFABRIC_SERVER_*` environment variables override individual settings. Secrets
+`NOVAFABRIC_SERVER_*` environment variables override individual settings, and are held to the
+same bounds as the YAML keys: an out-of-range value (`NOVAFABRIC_SERVER_PORT=99999`,
+`NOVAFABRIC_SERVER_INGEST_MAX_CONCURRENT_UNPACK=0`) makes `nova server start` exit `2` with
+`Invalid server config`, naming the field. Secrets
 are **environment-only** and stripped from YAML: `NOVAFABRIC_POSTGRES_DSN`,
 `NOVAFABRIC_OFFLINE_KEY_PATH`, `NOVAFABRIC_SCIM_TOKEN` and `NOVAFABRIC_SERVER_TOKEN`
 (`server/config.py::load_config`). See [Server Deployment Guide — Scenario 2](server-deployment.md) for the
