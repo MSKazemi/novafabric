@@ -17,7 +17,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from novafabric._capsule_fs import read_capsule_file
+from novafabric._capsule_fs import (
+    CapsuleRequiredFileError,
+    read_capsule_file,
+    sha256_required_capsule_file,
+)
 from novafabric.compliance.audit.loader import load_profile
 from novafabric.compliance.audit.models import ControlProfile
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
@@ -27,6 +31,8 @@ BINDING_PREDICATE_TYPE = "https://novafabric.io/criterion-binding/v0"
 #: evidence_type → capsule-relative file evidencing it (mirrors the audit
 #: engine's checkers; a binding is only emitted when the file exists — and, for
 #: ``seal_signature``, only when the seal verifies)
+_OPERATION = "evidence binding"
+
 _EVIDENCE_FILES: dict[str, str] = {
     "model_calls": "model-calls.jsonl",
     "tool_permissions": "tool-permission-events.jsonl",
@@ -69,12 +75,14 @@ def _seal_verifies(capsule_dir: Path) -> bool:
 
 
 def _ref_for(capsule_dir: Path, rel_path: str) -> EvidenceRef | None:
-    path = capsule_dir / rel_path
-    if not path.exists():
-        return None
-    return EvidenceRef(
-        path=rel_path, sha256=hashlib.sha256(path.read_bytes()).hexdigest()
-    )
+    """The digest of a regular capsule file, or None when it is absent.
+
+    A link, FIFO or device at *rel_path* raises ``CapsuleRequiredFileError``:
+    a binding signed over a file outside the capsule, or a read that never
+    returns, is not evidence (review trust-evidence-05).
+    """
+    digest = sha256_required_capsule_file(capsule_dir, rel_path, operation=_OPERATION)
+    return None if digest is None else EvidenceRef(path=rel_path, sha256=digest)
 
 
 def build_bindings(
@@ -122,12 +130,19 @@ def build_bindings(
 
 
 def verify_binding(capsule_dir: Path, binding: CriterionBinding) -> bool:
-    """Re-check a binding: every evidence ref's digest must still match."""
+    """Re-check a binding: every evidence ref's digest must still match.
+
+    A ref naming anything but a regular file inside the capsule (an absolute
+    or ``..`` path, a link, a FIFO) does not match.
+    """
     for ref in binding.evidence_refs:
-        path = capsule_dir / ref.path
-        if not path.exists():
+        try:
+            digest = sha256_required_capsule_file(
+                capsule_dir, ref.path, operation=_OPERATION
+            )
+        except CapsuleRequiredFileError:
             return False
-        if hashlib.sha256(path.read_bytes()).hexdigest() != ref.sha256:
+        if digest is None or digest != ref.sha256:
             return False
     return True
 

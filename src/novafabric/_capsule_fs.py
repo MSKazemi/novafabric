@@ -86,6 +86,7 @@ from __future__ import annotations
 
 import errno
 import functools
+import hashlib
 import logging
 import os
 import shutil
@@ -129,6 +130,7 @@ __all__ = [
     "read_required_capsule_text",
     "refuse_capsule_links",
     "replace_capsule_file",
+    "sha256_required_capsule_file",
     "with_capsule_root_pins",
 ]
 
@@ -958,6 +960,29 @@ def read_required_capsule_file(
         return None
     except (CapsuleEntryError, OSError, ValueError) as exc:
         raise _required_file_error(root, rel_s, operation, exc) from exc
+
+
+def sha256_required_capsule_file(
+    root: Path, rel: str | PurePosixPath, *, operation: str
+) -> str | None:
+    """Streamed sha256 hex of capsule file *rel*; ``None`` only when it is **absent**.
+
+    The hashing counterpart of :func:`read_required_capsule_file`, for a digest
+    that is signed or compared: it never follows a link, opens a FIFO or
+    device, leaves the capsule, or holds the whole file in memory, and a file
+    that is present but unusable raises :class:`CapsuleRequiredFileError`.
+    """
+    rel_s = PurePosixPath(rel).as_posix()
+    digest = hashlib.sha256()
+    try:
+        with open_capsule_file(root, rel, operation=operation) as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except FileNotFoundError:
+        return None
+    except (CapsuleEntryError, OSError, ValueError) as exc:
+        raise _required_file_error(root, rel_s, operation, exc) from exc
+    return digest.hexdigest()
 
 
 def read_required_capsule_text(

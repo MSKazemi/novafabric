@@ -9784,7 +9784,7 @@ def create_app(
             from novafabric.evidence.completeness import compute_completeness
 
             cap = _resolve_capsule(run_id, capsule_dir)
-            assertion = compute_completeness(cap, run_id)
+            assertion = await asyncio.to_thread(compute_completeness, cap, run_id)
             return {"ok": True, "run_id": run_id, "assertion": _dump(assertion)}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "run_id": run_id, "error": str(exc)}
@@ -9799,7 +9799,8 @@ def create_app(
             from novafabric.evidence.binding import build_bindings
 
             cap = _resolve_capsule(run_id, capsule_dir)
-            bindings = build_bindings(cap, profile)
+            # Blocking capsule IO stays off the event loop (review trust-evidence-05).
+            bindings = await asyncio.to_thread(build_bindings, cap, profile)
             return {"ok": True, "run_id": run_id, "profile": profile,
                     "count": len(bindings), "bindings": [_dump(b) for b in bindings]}
         except Exception as exc:  # noqa: BLE001
