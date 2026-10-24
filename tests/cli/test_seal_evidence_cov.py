@@ -109,16 +109,17 @@ def capsule_dir(tmp_path: Path) -> Path:
 
 
 class TestSealSign:
-    def test_sign_local_backend_delegates_and_exits_0(self, tmp_path: Path) -> None:
+    def test_sign_local_backend_refuses_and_points_to_propose(self, tmp_path: Path) -> None:
+        """cli-b-04: exit 0 with nothing signed let callers publish unsigned manifests."""
         manifest = tmp_path / "manifest.json"
         manifest.write_text(json.dumps({"run_id": "r1"}))
         result = runner.invoke(seal_app, ["sign", str(manifest)])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 2, result.output
         assert "propose" in result.output.lower()
 
-    def test_sign_inline_json_local(self, tmp_path: Path) -> None:
+    def test_sign_inline_json_local_refuses(self, tmp_path: Path) -> None:
         result = runner.invoke(seal_app, ["sign", '{"run_id": "inline"}'])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 2, result.output
 
     def test_sign_invalid_path_and_invalid_json_exits_1(self) -> None:
         result = runner.invoke(seal_app, ["sign", "not a path and not json {"])
@@ -634,14 +635,20 @@ class TestSealVerify:
 
 class TestSealLogVerify:
     def test_log_verify_empty_sqlite_ok(self, tmp_path: Path) -> None:
+        from novafabric.trust.novaseal.merkle import MerkleLog
+
         db = tmp_path / "merkle.db"
+        MerkleLog(db).close()  # verify never creates the log (cli-b-05)
         result = runner.invoke(seal_app, ["log", "verify", "--db", str(db)])
         assert result.exit_code == 0, result.output
         assert "Consistency" in result.output
 
     def test_log_verify_consistency_proof_error_exits_2(self, tmp_path: Path) -> None:
         """Requesting a consistency proof on an empty log fails with exit code 2."""
+        from novafabric.trust.novaseal.merkle import MerkleLog
+
         db = tmp_path / "merkle.db"
+        MerkleLog(db).close()
         result = runner.invoke(
             seal_app, ["log", "verify", "--db", str(db), "--consistency", "5"]
         )
@@ -661,7 +668,7 @@ class TestSealLogVerify:
             seal_app, ["log", "verify", "--db", str(db), "--consistency", "1", "--verbose"]
         )
         assert result.exit_code == 0, result.output
-        assert "Append-only proof" in result.output
+        assert "Consistency proof" in result.output
 
 
 # ===========================================================================

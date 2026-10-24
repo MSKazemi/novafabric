@@ -125,8 +125,11 @@ def seal_sign_cmd(
 ) -> None:
     """Sign a capsule manifest directly (maker step, no checker required).
 
-    With ``--backend local`` (default), produces a NovaSeal DSSE envelope
-    using the local ECDSA P-256 key configured in ``novaseal.yaml``.
+    ``--backend local`` (the default) is **not implemented** here and exits 2
+    having signed nothing: a capsule is sealed with the local key by
+    ``nova capture`` (when ``novaseal.yaml`` exists), or through the maker-checker
+    workflow with ``nova seal propose``. It exited 0 before, so
+    ``nova seal sign m.json && publish`` published an unsigned manifest.
 
     With ``--backend sigstore``, performs Sigstore keyless signing via OIDC.
     Requires: pip install 'novafabric\\[sigstore]'.  The resulting Sigstore
@@ -136,9 +139,6 @@ def seal_sign_cmd(
 
     \b
     Examples:
-      # Sign with default local ECDSA backend
-      nova seal sign path/to/manifest.json
-
       # Sign with Sigstore keyless backend
       nova seal sign path/to/manifest.json --backend sigstore
 
@@ -171,12 +171,14 @@ def seal_sign_cmd(
 
     # -- Backend dispatch ---------------------------------------------------
     if backend == "local":
-        console.print(
-            "[yellow]nova seal sign --backend local[/yellow] delegates to "
-            "[bold]nova capture[/bold] + NovaSeal config.  "
-            "Use [bold]nova seal propose[/bold] for the maker-checker workflow."
+        # Review cli-b-04: exiting 0 here let a caller publish an unsigned manifest.
+        err_console.print(
+            "[red]Error:[/red] nova seal sign --backend local is not implemented — "
+            "nothing was signed. Seal with [bold]nova capture[/bold] (NovaSeal config), "
+            "or use [bold]nova seal propose[/bold] for the maker-checker workflow, or "
+            "--backend sigstore."
         )
-        raise typer.Exit(code=0)
+        raise typer.Exit(code=2)
 
     elif backend == "sigstore":
         try:
@@ -731,16 +733,32 @@ def log_verify_cmd(
         None,
         "--consistency",
         help=(
-            "Also emit + verify an append-only consistency proof from this older "
-            "tree size to the current head (ADR-0041 v0.2)"
+            "Also emit + verify a consistency proof from this older tree size to the "
+            "current head (ADR-0041 v0.2). Append-only only with --old-root."
+        ),
+    ),
+    old_root: str | None = typer.Option(
+        None,
+        "--old-root",
+        help=(
+            "With --consistency N: the root at size N as published or anchored "
+            "earlier (hex). Without it the old root is the log's own stored head, "
+            "which a rewritten log rewrites too — internal consistency only."
         ),
     ),
 ) -> None:
     """Verify the internal consistency of the Merkle log.
 
-    Supports both SQLite (default) and Postgres backends. With --consistency
-    N, additionally proves the current head is an append-only extension of
-    the log at size N.
+    Supports both SQLite (default) and Postgres backends. The log must exist:
+    verification never creates one (a mistyped --db used to create an empty log
+    and print OK). A SQLite log is opened read-only.
+
+    With --consistency N --old-root ROOT, proves the current head is an
+    append-only extension of the tree whose root at size N was ROOT. ROOT must
+    come from outside this log — a tree head you published, witnessed or
+    anchored earlier. Without --old-root the check uses the log's own stored
+    head at N, which proves internal consistency only: a log rewritten together
+    with its stored heads passes it.
 
     Verification recomputes the full Merkle root from every stored leaf
     hash on every run, so a clean result trusts nothing it did not
@@ -751,18 +769,31 @@ def log_verify_cmd(
     Exit codes:
       0 — log is consistent (or empty)
       1 — consistency errors found
-      2 — consistency proof failed (--consistency)
+      2 — consistency proof failed (--consistency), or --old-root without --consistency
+      3 — no log exists at that location (nothing was created)
     """
     from novafabric.trust.novaseal.config import resolve_merkle_db_uri
-    from novafabric.trust.novaseal.log_location import redact_location
+    from novafabric.trust.novaseal.log_location import is_postgres_dsn, redact_location
     from novafabric.trust.novaseal.merkle import (
         PostgresMerkleLog,
-        open_merkle_log,
+        open_existing_merkle_log,
         verify_consistency_proof,
     )
 
+    if old_root is not None and consistency is None:
+        err_console.print("[red]Error:[/red] --old-root needs --consistency N")
+        raise typer.Exit(code=2)
     resolved_db = db if db is not None else resolve_merkle_db_uri()
-    merkle_log = open_merkle_log(resolved_db)
+    # Review cli-b-05: verification must never create a log (ADR-0297 S2).
+    merkle_log = open_existing_merkle_log(
+        resolved_db, read_only=not is_postgres_dsn(str(resolved_db))
+    )
+    if merkle_log is None:
+        err_console.print(
+            f"[red]Error:[/red] no Merkle log at {redact_location(resolved_db)} "
+            "— nothing to verify, and nothing was created"
+        )
+        raise typer.Exit(code=3)
     backend = "postgres" if isinstance(merkle_log, PostgresMerkleLog) else "sqlite"
     if isinstance(merkle_log, PostgresMerkleLog):
         result = merkle_log.verify_consistency(full=full)
@@ -798,16 +829,31 @@ def log_verify_cmd(
         except MerkleError as exc:
             console.print(f"\n[red]Consistency proof error:[/red] {exc}")
             raise typer.Exit(code=2) from exc
-        old_root = merkle_log.root_at_size(consistency) or str(proof["old_root"])
+        # Review cli-b-06: the stored head is rewritten with the leaves, so only an
+        # old root obtained outside this log makes the proof an append-only proof.
+        independent = old_root is not None
+        claimed_old = (
+            old_root.strip().lower()
+            if old_root is not None
+            else merkle_log.root_at_size(consistency) or str(proof["old_root"])
+        )
         new_root = result.root_hash
         # ADR-0313: each root is compared together with its tree size.
         ok = verify_consistency_proof(
-            proof, old_root, new_root, old_size=consistency, new_size=result.leaf_count
+            proof, claimed_old, new_root, old_size=consistency, new_size=result.leaf_count
         )
+        label = "Append-only proof" if independent else "Consistency proof"
         console.print(
-            f"\n  Append-only proof {consistency} → {result.leaf_count}: "
+            f"\n  {label} {consistency} → {result.leaf_count}: "
             + ("[green]OK[/green]" if ok else "[red]FAILED[/red]")
         )
+        if not independent:
+            console.print(
+                "    [yellow]internal consistency only[/yellow]: the old root is this "
+                "log's own stored head; pass --old-root with a head published earlier "
+                "to prove append-only"
+            )
+        old_root = claimed_old
         console.print(
             f"    scheme:    {proof['scheme']}"
         )

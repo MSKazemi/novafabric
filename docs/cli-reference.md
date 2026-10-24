@@ -4936,7 +4936,7 @@ nova seal sign manifest.json --backend sigstore --capsule-id 01HX... --home /dat
 ```
 
 Options:
-- `--backend [local|sigstore]` — signing backend (default: `local`; `sigstore` requires `novafabric[sigstore]`)
+- `--backend [local|sigstore]` — signing backend (default: `local`; `sigstore` requires `novafabric[sigstore]`). `local` is **not implemented** in `nova seal sign`: it exits `2` and signs nothing — seal with `nova capture` (when `novaseal.yaml` exists) or `nova seal propose`. Releases up to v0.107.0 exited `0` there, so a `nova seal sign … && publish` script published an unsigned manifest.
 - `<capsule_manifest>` (required) — path to a capsule manifest JSON file, or an inline JSON string
 - `--capsule-id TEXT` — capsule ID for bundle storage (default: SHA-256 of the manifest)
 - `--home PATH` — `NOVAFABRIC_HOME` override for bundle storage path
@@ -5995,9 +5995,10 @@ Options:
 - `--db URI` — Merkle log path (SQLite file) **or** `postgresql://` DSN for Postgres backend.  Default: `$NOVAFABRIC_SEAL_DB_PATH` or `~/.novafabric/novaseal-merkle.db`.  Postgres requires `pip install novafabric[seal-postgres]`.
 - `--full` — also re-hash every stored entry against its leaf hash (Postgres; the SQLite backend always does this).  Default on Postgres: the entry re-hash is spot-checked on up to 1 000 random leaves.
 - `--verbose` / `-v` — show per-leaf details on failure.
-- `--consistency N` — additionally emit + verify an append-only consistency proof from tree size `N` to the current head (experimental, ADR-0041 v0.2). The proof follows the log's root version (ADR-0313; printed as `Root version:`): an RFC 9162 consistency path for a v2 log (every log created from ADR-0313 on), an aligned perfect-subtree decomposition for a v1 log (created earlier). Either is verified against both tree sizes, not only both roots.
+- `--consistency N` — additionally emit + verify a consistency proof from tree size `N` to the current head (experimental, ADR-0041 v0.2). Without `--old-root` the old root is the log's own stored head at `N`, which a log rewritten together with its stored heads also rewrites, so the output says `Consistency proof … internal consistency only`.
+- `--old-root HEX` — with `--consistency N`: the root at size `N` as you published, witnessed or anchored it earlier. Only then is the result an **append-only proof** (`Append-only proof N → M: OK`); a rewritten log fails it (exit `2`). The proof follows the log's root version (ADR-0313; printed as `Root version:`): an RFC 9162 consistency path for a v2 log (every log created from ADR-0313 on), an aligned perfect-subtree decomposition for a v1 log (created earlier). Either is verified against both tree sizes, not only both roots.
 
-Returns exit code 0 if the log is consistent, 1 if tampered or inconsistent, 2 if a `--consistency` proof fails.
+Returns exit code 0 if the log is consistent, 1 if tampered or inconsistent, 2 if a `--consistency` proof fails (or `--old-root` is given without `--consistency`), 3 if no log exists at the location. The log is opened read-only and is never created: releases up to v0.107.0 created an empty log at a mistyped `--db` and printed `Consistency: OK`.
 
 **What a clean result guarantees, and what it costs.** Every run — with or without `--full`, on either backend — recomputes the Merkle root from **every** stored leaf hash and compares it with the recorded tree head, so tampering with any leaf hash is detected. Nothing is trusted that is not re-derived from the stored data. The price is linear cost: the root pass is O(N). *Measured:* ~1.9 s end to end at 1 M entries (GitHub-hosted runner + Postgres 16, 2026-09); the hashing alone, in-process with no database, measured 1361 ms at 1 M (2026-09) and scales at roughly 1.2 µs per leaf (re-measured on a laptop, 2026-10). At millions of entries, schedule verification as an audit job rather than running it interactively. An earlier `p99 < 200 ms at 1M entries` target (Scale-S4) was never met and has been **withdrawn by decision** ([ADR-0268](decisions.md)): reaching it would mean checking only sampled leaves against a signed tree head, a weaker guarantee.
 
@@ -6012,6 +6013,9 @@ nova seal log verify --db postgresql://user:pass@db.example.com/nova
 
 # Full audit (slower — re-hashes every entry_json)
 nova seal log verify --db postgresql://... --full
+
+# Append-only since a tree head you published at size 1000
+nova seal log verify --consistency 1000 --old-root 3f9c…
 ```
 
 **Env var:** `NOVAFABRIC_SEAL_DB_PATH` — sets the default `--db` value; accepts both file paths and `postgresql://` DSNs.

@@ -139,7 +139,8 @@ class TestLogVerifyCli:
             seal_app, ["log", "verify", "--db", str(db), "--consistency", "3"]
         )
         assert result.exit_code == 0, result.output
-        assert "Append-only proof 3 → 5" in result.output
+        # No --old-root: checked against the log's own head (cli-b-06).
+        assert "Consistency proof 3 → 5" in result.output
         bad = runner.invoke(
             seal_app, ["log", "verify", "--db", str(db), "--consistency", "9"]
         )
