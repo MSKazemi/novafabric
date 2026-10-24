@@ -14,6 +14,7 @@ failure, 6 = self-approval by the same bound identity.
 from __future__ import annotations
 
 import base64
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -530,3 +531,24 @@ def test_g_legacy_open_proposal_reads_and_is_not_approvable(env: Env) -> None:
     states = dict(conn.execute("SELECT proposal_id, state FROM promotion_proposals").fetchall())
     conn.close()
     assert states["00000000-0000-4000-8000-000000000001"] == "superseded"
+
+
+def test_keyring_dir_is_resolved_when_called_never_at_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A HOME/env change after import must move the keyring (it was fixed at import)."""
+    from novafabric.trust import keyring as kr
+
+    monkeypatch.setattr(kr, "_KEYRING_DIR", None)
+    monkeypatch.setenv(kr.KEYRING_DIR_ENV, str(tmp_path / "configured"))
+    assert kr.keyring_dir() == tmp_path / "configured"
+    monkeypatch.delenv(kr.KEYRING_DIR_ENV)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert kr.keyring_dir() == tmp_path / "home" / ".config" / "novafabric" / "keyring"
+
+
+def test_hermetic_tests_never_reach_the_real_keyring() -> None:
+    from novafabric.trust import keyring as kr
+
+    real = Path(os.path.expanduser("~")).resolve() / ".config" / "novafabric" / "keyring"
+    assert kr.keyring_dir().resolve() != real

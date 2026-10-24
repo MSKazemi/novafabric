@@ -1132,7 +1132,7 @@ covers the registry, capsules, evidence, the keystore (`keys/`, which the health
 `keystore_ok` checks), tokens, the object-store WAL, the dashboard audit log and the
 NovaSeal config and nonce store. Unset `NOVAFABRIC_HOME` and the defaults are exactly the
 old `~/.novafabric` locations. Deliberately **not** under the home: the per-user keyring
-(`~/.config/novafabric`), the legacy seal stores (`~/.local/share/novafabric`), and
+(`~/.config/novafabric`; move it with `NOVAFABRIC_KEYRING_DIR`), the legacy seal stores (`~/.local/share/novafabric`), and
 project-local `./.novafabric/` directories — and the hash-chained audit log, which stays at
 `$XDG_DATA_HOME/novafabric/audit.jsonl`, or `~/.local/share/novafabric/audit.jsonl` when
 `XDG_DATA_HOME` is unset, whatever `NOVAFABRIC_HOME` says: pointing a shell at another data
@@ -1150,6 +1150,7 @@ explicitly with `NOVAFABRIC_AUDIT_LOG_PATH` (deployments put it on the data volu
 | `NOVA_OBJECT_STORE_REFUSE_V1_ENVELOPES` | off | Experimental strict mode (ADR-0295): refuse unbound v1 envelopes not pinned in the inventory (`LegacyEnvelopeRefusedError`) |
 | `NOVAFABRIC_BACKEND` | `sqlite` | Storage backend selector |
 | `NOVAFABRIC_JOBS_DB` | — | Jobs database path override |
+| `NOVAFABRIC_KEYRING_DIR` | `~/.config/novafabric/keyring` | Promote keyring directory (maker-checker signing keys); resolved when used, never at import |
 | `NOVAFABRIC_LOG_DIR` | — | Log directory the support bundle collects from |
 | `NOVA_EVIDENCE_DUCKDB_PATH` | — | Evidence DuckDB path |
 

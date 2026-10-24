@@ -195,9 +195,9 @@ def secret_paths() -> tuple[Path, ...]:
 
 def key_material_paths() -> tuple[Path, ...]:
     """Private-key stores, resolved: ``$NOVAFABRIC_HOME/keys`` and the NovaSeal keyring."""
-    from novafabric.trust.keyring import _KEYRING_DIR
+    from novafabric.trust.keyring import keyring_dir
 
-    return _resolved_unique([_nf_paths.keys_dir(), _KEYRING_DIR])
+    return _resolved_unique([_nf_paths.keys_dir(), keyring_dir()])
 
 
 def _denied(resolved: Path, deny: Sequence[Path], deny_suffixes: Sequence[str]) -> str | None:

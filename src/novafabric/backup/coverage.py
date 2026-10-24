@@ -149,9 +149,9 @@ def resolve_origin_root(
     if origin == "keyring":
         if keyring_dir is not None:
             return keyring_dir
-        from novafabric.trust.keyring import _KEYRING_DIR
+        from novafabric.trust.keyring import keyring_dir as _keyring_dir
 
-        return _KEYRING_DIR
+        return _keyring_dir()
     if origin == "seal-config":
         # novaseal.yaml + its PEMs restore next to the home by default; the
         # operator may need to re-point key_path/cert_path if they lived

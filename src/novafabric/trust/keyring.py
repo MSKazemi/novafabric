@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import getpass
 import hashlib
+import os
 import socket
 from pathlib import Path
 
@@ -14,9 +15,29 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from novafabric._safe_path import write_private_file
 
-# user-global: a per-user XDG config keyring (~/.config), deliberately NOT under
-# NOVAFABRIC_HOME, so it survives a throwaway or per-project home.
-_KEYRING_DIR = Path.home() / ".config" / "novafabric" / "keyring"
+#: Environment override for the keyring directory (operators, and the hermetic test env).
+KEYRING_DIR_ENV = "NOVAFABRIC_KEYRING_DIR"
+
+#: In-process override (tests); ``None`` = resolve with :func:`keyring_dir`.
+_KEYRING_DIR: Path | None = None
+
+
+def keyring_dir() -> Path:
+    """The promote keyring directory, resolved when called — never at import.
+
+    User-global by design: ``~/.config/novafabric/keyring``, deliberately NOT under
+    ``NOVAFABRIC_HOME``, so it survives a throwaway or per-project home.
+    ``NOVAFABRIC_KEYRING_DIR`` relocates it. It used to be computed from
+    ``Path.home()`` at import, so a test (or tool) that redirected ``HOME``
+    afterwards still wrote keys into the developer's real keyring (review: eval
+    reviewer's repro wrote two keys there).
+    """
+    if _KEYRING_DIR is not None:
+        return _KEYRING_DIR
+    configured = os.environ.get(KEYRING_DIR_ENV, "").strip()
+    if configured:
+        return Path(configured)
+    return Path.home() / ".config" / "novafabric" / "keyring"
 
 
 def _default_identity() -> str:
@@ -25,7 +46,7 @@ def _default_identity() -> str:
 
 def _key_path(identity: str) -> Path:
     safe = identity.replace("/", "_").replace("@", "_at_")
-    return _KEYRING_DIR / f"{safe}.pem"
+    return keyring_dir() / f"{safe}.pem"
 
 
 def _fingerprint(public_key: Ed25519PublicKey) -> str:

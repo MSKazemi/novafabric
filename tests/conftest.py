@@ -152,6 +152,9 @@ def _apply_hermetic_env(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
         str(home / ".nova-home-hermetic" / "audit-hermetic.jsonl"),
     )
     monkeypatch.setenv("XDG_DATA_HOME", str(home / ".xdg-data-hermetic"))
+    # The promote keyring is user-global (~/.config), not under NOVAFABRIC_HOME:
+    # without this a test that mints a key writes the developer's real keyring.
+    monkeypatch.setenv("NOVAFABRIC_KEYRING_DIR", str(home / ".keyring-hermetic"))
 
 
 @pytest.fixture(scope="session", autouse=True)
