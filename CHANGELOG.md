@@ -213,6 +213,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 - `nova annotate confirm` refuses (exit 1) a checker identity with no keyring key; create it once with
   `nova promote keygen --identity NAME`.
+- `nova validate --fail-on-schema-violation` / `--write` without `--schemas` exit `2` (they were ignored);
+  `server issue-token` / `api-key create --expires-in` accept only a positive number of days (exit `2`).
+- `POST /api/seal/sigstore/sign` signs the capsule's own manifest (`manifest.json`, `capsule.json` or
+  `capsule.yaml`) and refuses a caller-supplied `manifest_json`; `nova verify --backend sigstore` checks the same
+  file. Bundles made by the route before this release cannot verify (they signed `{"capsule_id": ...}`).
+- `POST /api/kg/ingest` reads NovaSeal verification from the capsule's seal; the request's `verified` flag is
+  ignored.
 - `nova mcp scan` / `risk-report` exit `2` for a document with no `tools` list (and read a saved `tools/list`
   response's `result.tools`); they reported `LOW, 0 findings` and exited `0` for a manifest they did not scan.
 - `nova pii erase` names in `capsule_ids_affected` only the capsules whose redaction manifest carries the subject's
@@ -345,6 +352,16 @@ longer forwards the submitting shell's environment (ADR-0270).
     a query error (exit 2). The query cache no longer evicts every other capsule directory's rows on each query;
   - the KG CRDT write-ahead log was confirmed before the store write and a refused delta was dropped; it is now
     confirmed after the write and a refused delta is re-queued (at-least-once);
+  - the serve audit report scanned `<store>/capsules` (0 capsules, score 0.0) and coverage/bundle scanned
+    `<parent>/capsules`; they now scan the requested capsule and the server's own store. A lineage import by
+    run id imported 0 edges with `ok: true`, and an edge whose artifact endpoint omits `capsule_run_id` failed
+    the whole capsule's import with a foreign-key error;
+  - `nova serve` with TLS printed and opened `http://` URLs (and an unbracketed IPv6 host);
+    register-from-yaml left no audit entry; the stats refresh loop swallowed its errors silently; a miss on
+    `{run_id}` parsed every manifest on the event loop;
+  - `nova report` piped through the Rich console (wrapped HTML/JSON), six commands printed a traceback on bad
+    input, `migrate-schema` counted a failed capsule as migrated, the `nova migrate --help` example could not
+    run;
   - `nova prompt get` / `diff` / `history` rendered prompt text as Rich markup: `[tool_a]` vanished, a diff of
     two versions differing in brackets showed identical lines, and `[/end]` raised a traceback;
   - the CrewAI, AutoGen and DSPy wrappers changed the framework's call signature (`crew.kickoff({...})`,
