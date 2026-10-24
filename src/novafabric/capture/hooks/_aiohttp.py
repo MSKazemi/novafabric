@@ -147,7 +147,9 @@ class AiohttpHook:
         try:
             if original is not None:
                 response = await original(method, str_or_url, **kwargs)
-        except Exception:
+        except BaseException:
+            # BaseException: a cancelled task (CancelledError) or Ctrl-C never got a
+            # response either; recording it as a success is review capture-runners-05.
             # Record the attempt even if the call failed, then re-raise.
             error_status = 599
             raise
@@ -168,7 +170,7 @@ class AiohttpHook:
             status_code = (
                 error_status
                 if error_status is not None
-                else getattr(response, "status", 200)
+                else getattr(response, "status", 200) if response is not None else 0
             )
             record = build_record_envelope(
                 model_call_id=new_ulid(),
@@ -176,7 +178,7 @@ class AiohttpHook:
                 started_at=started,
                 finished_at=_now(),
                 duration_ms=duration_ms,
-                status="success" if status_code < 400 else "error",
+                status="success" if 0 < status_code < 400 else "error",
             )
             record.update(extract_request_attributes(
                 body, url=url, gen_ai_system=self._registry.gen_ai_system(url),

@@ -126,7 +126,9 @@ class RequestsHook:
         try:
             with claim_higher_layer():
                 response = original(prepared_request, **kwargs) if original else None
-        except Exception:
+        except BaseException:
+            # BaseException: a cancelled task (CancelledError) or Ctrl-C never got a
+            # response either; recording it as a success is review capture-runners-05.
             # Connection failures, timeouts, TLS errors — record the attempt
             # so the audit trail is complete, then re-raise. Mirrors the
             # try/finally pattern in _aiohttp.py and _urllib3.py.
@@ -166,7 +168,7 @@ class RequestsHook:
                 started_at=started,
                 finished_at=_now(),
                 duration_ms=duration_ms,
-                status="success" if status_code < 400 else "error",
+                status="success" if 0 < status_code < 400 else "error",
             )
             record.update(extract_request_attributes(
                 body, url=url, gen_ai_system=self._registry.gen_ai_system(url),

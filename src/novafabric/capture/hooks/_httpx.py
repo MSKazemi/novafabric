@@ -201,7 +201,7 @@ class HttpxHook:
             started_at=started,
             finished_at=_now(),
             duration_ms=duration_ms,
-            status="success" if status_code < 400 else "error",
+            status="success" if 0 < status_code < 400 else "error",
         )
         record.update(extract_request_attributes(
             body, url=url, gen_ai_system=self._registry.gen_ai_system(url),
@@ -250,7 +250,9 @@ class HttpxHook:
         try:
             with _owning_send():
                 response = original(request, **kwargs)
-        except Exception:
+        except BaseException:
+            # BaseException: a cancelled task (CancelledError) or Ctrl-C never got a
+            # response either; recording it as a success is review capture-runners-05.
             error_status = 599
             raise
         finally:
@@ -273,7 +275,9 @@ class HttpxHook:
         try:
             with _owning_send():
                 response = await original(request, **kwargs)
-        except Exception:
+        except BaseException:
+            # BaseException: a cancelled task (CancelledError) or Ctrl-C never got a
+            # response either; recording it as a success is review capture-runners-05.
             error_status = 599
             raise
         finally:
