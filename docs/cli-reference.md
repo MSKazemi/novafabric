@@ -8122,7 +8122,11 @@ allowlisted members: `doctor.json`, `versions.json`, `env.txt`
 (`NOVAFABRIC_*`/`NOVA_*` variable **names** only — never values),
 `health.json`, `config.redacted.yaml` (if a server config exists, with
 secret-keyed values redacted), and a `manifest.json` with the SHA-256 of every
-member plus the redaction ruleset version. No tokens, keys, credentials,
+member plus the redaction ruleset version. Since ruleset `v4` every string value is
+also scanned — known credential shapes and the password of a URL's userinfo
+(`postgresql://nova:[REDACTED]@db/nova`) are redacted whatever key holds them;
+`v3` and earlier went by key names only, so a `database_url` with a password
+shipped verbatim. No tokens, keys, credentials,
 capsule payloads, prompts, or responses are ever included. Scope: global
 (snapshots the whole installation).
 

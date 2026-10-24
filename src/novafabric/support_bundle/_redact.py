@@ -18,7 +18,11 @@ from typing import Any
 #: v2 adds line-level redaction (:func:`redact_line`) for log members.
 #: v3 adds credential *value* patterns (:data:`_VALUE_SECRET_PATTERNS`), so a
 #: bare token in free text is caught even when no key names it.
-REDACTION_RULESET_VERSION = "v3"
+#: v4 applies the line rules to every string *value* of a structured payload, not
+#: only to log lines, and adds URL userinfo (``scheme://user:password@``): a
+#: ``database_url`` or an OTLP endpoint with a password shipped verbatim under a
+#: key that names no secret (review storage-backup-14).
+REDACTION_RULESET_VERSION = "v4"
 
 #: Placeholder written in place of any redacted value.
 REDACTED = "[REDACTED]"
@@ -95,6 +99,11 @@ _VALUE_SECRET_RE = re.compile(
     "|".join(f"(?:{pattern})" for _rule_id, pattern in _VALUE_SECRET_PATTERNS)
 )
 
+#: Ruleset v4 — the password of a URL's userinfo. Greedy up to the authority's
+#: *last* ``@``, so a password with an unescaped ``@`` is covered in full; the
+#: scheme, user and host stay, so the value remains diagnosable.
+_URL_USERINFO_RE = re.compile(r"(://[^/\s:@]*:)[^\s/?#]+@")
+
 
 def redact_value(value: Any) -> Any:
     """Recursively redact *value* per ruleset v1.
@@ -103,7 +112,9 @@ def redact_value(value: Any) -> Any:
       (including nested structures) replaced by :data:`REDACTED`; other
       values are recursed into.
     - list/tuple: each element is recursed into.
-    - scalars: returned unchanged.
+    - str: the line rules of :func:`redact_line` (ruleset v4) — a credential
+      under a key that names no secret is still a credential.
+    - other scalars: returned unchanged.
     """
     if isinstance(value, dict):
         redacted: dict[Any, Any] = {}
@@ -115,6 +126,8 @@ def redact_value(value: Any) -> Any:
         return redacted
     if isinstance(value, (list, tuple)):
         return [redact_value(item) for item in value]
+    if isinstance(value, str):
+        return redact_line(value)
     return value
 
 
@@ -131,6 +144,9 @@ def redact_line(line: str) -> str:
     bare token in prose is caught even when nothing names it as a secret.
     Applied second, because the key-driven pass leaves ``[REDACTED]`` behind
     and there is then nothing left for the value pass to match.
+
+    Ruleset v4: a URL's userinfo password (``scheme://user:password@host``).
     """
     line = _LINE_SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", line)
+    line = _URL_USERINFO_RE.sub(lambda m: f"{m.group(1)}{REDACTED}@", line)
     return _VALUE_SECRET_RE.sub(REDACTED, line)
