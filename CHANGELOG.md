@@ -13,6 +13,22 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **`nova server` rate limiting can no longer be bypassed with a fresh invalid token per request.** The bucket key
+  was the digest of whatever bearer token was sent, before authentication, so every garbage token got a full bucket and
+  10,000 of them evicted every real principal's bucket. A token now has its own bucket only after a request carrying
+  it has authenticated; until then it draws from the client-IP bucket.
+- **A JWT with a random `kid` no longer costs a blocking IdP round-trip per request.** The JWKS is re-fetched at most
+  once every 30 s (failed fetches included), off the event loop.
+- **Capsule upload checks the manifest it stores.** The run_id, parent and duplicate checks read the first archive
+  member whose name ended in `capsule.yaml`, so a decoy (`pkg/notes/capsule.yaml`) carried a capsule with a missing
+  parent past the check and stored a directory whose manifest named another run.
+- **Rotating an already-rotated API key is refused.** A second rotate reopened the predecessor's overlap window, so a
+  key reported revoked verified again for 24 h.
+- **Webhook targets are checked for SSRF before every delivery**, not only at registration, so a name that later
+  resolves to an internal address (DNS rebinding) receives nothing.
+- The SAML ACS keeps an assertion ID until the assertion's `NotOnOrAfter` plus skew (it kept it 600 s, so a
+  longer-lived IdP-initiated assertion could be replayed), and the pending-request set filled by the unauthenticated
+  `GET /v0/auth/saml/login` is bounded and expires.
 - **`GET /api/storage/validate` no longer sends the server's S3 credentials to a caller-chosen host.** It took an
   `endpoint_url` from the query and called `list_buckets` there with the server's AWS credentials. It now
   validates only the configured `NOVA_S3_ENDPOINT_URL` (any other endpoint returns `ok: false`,
@@ -220,6 +236,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   `nova promote keygen --identity NAME`.
 - `nova validate --fail-on-schema-violation` / `--write` without `--schemas` exit `2` (they were ignored);
   `server issue-token` / `api-key create --expires-in` accept only a positive number of days (exit `2`).
+- With `saml.experimental_acs_enabled`, a verified SAML assertion is answered `501 saml_session_unavailable`
+  (`details.assertion_verified: true`); it returned `200` with an HS256 token that no auth path accepts.
+- `NOVAFABRIC_SERVER_*` overrides are held to the bounds of the matching `server.yaml` keys: an out-of-range value
+  (`…_PORT=99999`, `…_INGEST_MAX_CONCURRENT_UNPACK=0`) makes `nova server start` exit `2`.
+- `PUT /v0/assets/{id}/promote` records `server:<subject>` as `promoted_by`; the request-body `actor` is ignored.
+- OIDC reads the key-set location from the issuer's discovery document (`jwks_uri`), falling back to
+  `/.well-known/jwks.json`, and accepts the issuer exactly as configured as well as without a trailing slash: Keycloak
+  and Okta tokens were all "Unknown key ID" and Auth0 tokens all "issuer mismatch".
 - `POST /api/seal/sigstore/sign` signs the capsule's own manifest (`manifest.json`, `capsule.json` or
   `capsule.yaml`) and refuses a caller-supplied `manifest_json`; `nova verify --backend sigstore` checks the same
   file. Bundles made by the route before this release cannot verify (they signed `{"capsule_id": ...}`).
@@ -453,6 +477,11 @@ longer forwards the submitting shell's environment (ADR-0270).
   reads verified.
 - `GET /api/runs/stream` (SSE) accepts tokens issued by `nova server issue-token`, as every other route does; it
   accepted only the startup token.
+- Offline and service-account tokens authenticate when OIDC is enabled; `POST /v0/service-accounts` answered `201`
+  with a token that was always `401`.
+- A capsule uploaded again after a delete is metered again; it was stored off the books.
+- A SCIM Group `PATCH`, `PUT` or `DELETE` that would revoke the last admin is refused with `409` before the group
+  changes (it changed the group, then answered `409`), and a `PATCH` applies all its operations or none.
 - The `examples/capsules/minimal-run` example passes `nova validate` in a fresh checkout. Its empty `inputs/`
   directory was not in git, so validation failed with `missing directory: inputs`.
 
