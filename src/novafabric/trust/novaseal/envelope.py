@@ -443,8 +443,8 @@ def _verify_signature_entry(sig_entry: dict[str, Any], pae: bytes) -> None:
             "Envelope has no 'cert' or 'pubkey' field; cannot verify signature"
         )
 
-    cert_der = _b64_decode(cert_b64)
     try:
+        cert_der = _b64_decode(cert_b64)
         cert = load_pem_x509_certificate(
             _der_to_pem_cert(cert_der)
         )
@@ -570,9 +570,21 @@ def _verify_envelope(
     except json.JSONDecodeError as exc:
         raise EnvelopeError(f"Envelope is not valid JSON: {exc}") from exc
 
-    payload = _b64_decode(env.get("payload", ""))
+    # A malformed envelope is a failed verification, never a crash of every
+    # verifier (review trust-evidence-03).
+    if not isinstance(env, dict):
+        raise EnvelopeError(f"Envelope is not a JSON object (got {type(env).__name__})")
+    raw_payload = env.get("payload", "")
     payload_type = env.get("payloadType", "")
     sigs = env.get("signatures", [])
+    if not isinstance(raw_payload, str) or not isinstance(payload_type, str):
+        raise EnvelopeError("Envelope 'payload' and 'payloadType' must be strings")
+    if not isinstance(sigs, list) or not all(isinstance(sig, dict) for sig in sigs):
+        raise EnvelopeError("Envelope 'signatures' must be a list of objects")
+    try:
+        payload = _b64_decode(raw_payload)
+    except ValueError as exc:  # binascii.Error, or non-ASCII text
+        raise EnvelopeError(f"Envelope payload is not valid base64: {exc}") from exc
 
     if not sigs:
         raise EnvelopeError("Envelope has no signatures")

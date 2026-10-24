@@ -137,12 +137,51 @@ def _forge_log_entry_id(a: Path, b: Path) -> Path:
     return a
 
 
-TAMPERS: dict[str, Callable[[Path, Path], Path]] = {
+def _rewrite_envelope(edit: Callable[[object], object]) -> Callable[[Path, Path], Path]:
+    """review trust-evidence-03: a malformed ``manifest.dsse`` crashed every
+    verifier (``AttributeError`` / ``binascii.Error``); ``nova verify`` printed a
+    traceback and the radar, swallowing it, called the tampered capsule *unsealed*."""
+
+    def _tamper(a: Path, b: Path) -> Path:
+        path = a / ".seal" / "manifest.dsse"
+        path.write_text(json.dumps(edit(json.loads(path.read_text()))))
+        return a
+
+    return _tamper
+
+
+def _field(key: str, value: object) -> Callable[[object], object]:
+    def _edit(env: object) -> object:
+        assert isinstance(env, dict)
+        return {**env, key: value}
+
+    return _edit
+
+
+def _cert(value: object) -> Callable[[object], object]:
+    def _edit(env: object) -> object:
+        assert isinstance(env, dict)
+        return {**env, "signatures": [{**env["signatures"][0], "cert": value}]}
+
+    return _edit
+
+
+BINDING_TAMPERS: dict[str, Callable[[Path, Path], Path]] = {
     "evidence-edited": _edit_evidence,
     "manifest-edited": _edit_manifest,
     "evidence-deleted": _delete_evidence,
     "seal-transplanted": _transplant_seal,
     "log-entry-id-forged": _forge_log_entry_id,
+}
+
+TAMPERS: dict[str, Callable[[Path, Path], Path]] = {
+    **BINDING_TAMPERS,
+    "envelope-a-list": _rewrite_envelope(lambda env: [env]),
+    "envelope-payload-not-a-string": _rewrite_envelope(_field("payload", 123)),
+    "envelope-payload-not-base64": _rewrite_envelope(_field("payload", "a")),
+    "envelope-signatures-not-a-list": _rewrite_envelope(_field("signatures", {"sig": "x"})),
+    "envelope-cert-not-base64": _rewrite_envelope(_cert("a")),
+    "envelope-cert-not-a-string": _rewrite_envelope(_cert(7)),
 }
 
 
@@ -178,12 +217,12 @@ def test_a_capsule_nova_verify_rejects_is_never_attested(
     assert signature.state is AxisState.fail
 
 
-@pytest.mark.parametrize("tamper", sorted(TAMPERS))
+@pytest.mark.parametrize("tamper", sorted(BINDING_TAMPERS))
 def test_flags_report_the_binding_verdict(
     capsules: tuple[Path, Path, Path], tamper: str
 ) -> None:
     a, b, _ = capsules
-    target = TAMPERS[tamper](a, b)
+    target = BINDING_TAMPERS[tamper](a, b)
     flags = flags_from_capsule(target)
     assert flags["valid"] is False
     assert flags["capsule_binding_ok"] is False
