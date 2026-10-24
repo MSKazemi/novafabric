@@ -96,9 +96,33 @@ longer forwards the submitting shell's environment (ADR-0270).
   directory or missing path exits 2.
 - **`nova ledger verify` without `--pubkey` no longer prints `✓ ledger OK`.** That check is structural only, and a
   stream edited and re-anchored with any key passes it. It now prints `signature NOT VERIFIED` (exit 0 kept).
+- **A maker-checker approval binds the capsule's content.** `nova seal propose`, `nova seal bypass` and
+  `POST /api/seal/{id}/bypass` signed `sha256(capsule_id)` — a hash of the id string — as the capsule digest, and
+  nothing compared it, so `nova seal verify` passed for a capsule that did not exist and an approval survived any
+  change to the capsule. They now sign the SHA-256 of `capsule.yaml` (an unknown capsule is refused, nothing is
+  signed), and `nova seal verify` / `POST /api/seal/{id}/verify` recompute it: an absent or changed capsule exits
+  `10` (new), and a bypass signed for other content is ignored. **Proposals and bypasses signed before this change
+  fail with exit 10 — re-propose them** (ADR-0059 Amendment 1).
+- **Seal evidence in audits and safety cases is a seal that verifies.** The audit engine, the evidence binding and
+  the safety-case compiler counted a file named `seal-bundle.json` (nothing writes one) as a verified seal and never
+  read the real `.seal/`; they now verify it. `nova audit verify` says the report is unsigned and that its score and
+  seal flag are claims, instead of printing `Seals: verified` from the file's own field.
+- **The safety-case compiler decides from content.** An eval whose confidence interval lay wholly below the pass
+  threshold (or with a failing consensus verdict), a completeness assertion reporting dropped events, and an
+  unsigned hand-written replay attestation were all SUPPORTED. They are now UNSUPPORTED, CONTESTED and UNKNOWN; a
+  replay attestation counts only when signed by a key passed with the new `nova safety-case build
+  --replay-pubkey` and issued for this capsule. `nova safety-case verify` now checks that the case's subject is
+  the capsule it is given (exit `6`, new), that every reference resolves, and refuses artifact paths outside the
+  capsule (it read `/etc/hostname` when a case named it) (ADR-0095 Amendment 1).
+- **Compliance evidence is no longer inferred from unrelated files.** The GDPR audit profile scored Art.17 erasure
+  "covered" from every capture's secret-scan proof (`redaction-proof.json`); only the `--pii-subject` redaction
+  manifest counts now. The HIPAA Safe Harbor proof reported every identifier without redaction evidence as
+  `not_present` — also for a capsule whose prompts held a name, an SSN and an email; it now says `not_assessable`,
+  since it reads redaction evidence, never the content.
 
 ### Changed
 
+- `nova audit map` exits `1` when a required control has no evidence, as its help always said (it exited `0`).
 - `nova seal sign --backend local` (the default backend) exits `2` and says nothing was signed. It printed a hint
   and exited `0`, so `nova seal sign m.json && publish` published an unsigned manifest. Seal with `nova capture`
   or `nova seal propose`, or use `--backend sigstore`.
