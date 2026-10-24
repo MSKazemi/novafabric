@@ -7934,7 +7934,9 @@ workspace, expiry) and print it **once**. Both the predecessor and successor
 stay valid for a bounded, configurable **overlap window**; after it elapses the
 predecessor is auto-revoked at verify time (checked on the next request — there
 is no background job). A zero-downtime credential swap for deployed agents.
-Both transitions are appended to the hash-chained audit log.
+Both transitions are appended to the hash-chained audit log. A key rotates
+once: rotating it again (a retry, inside or after the window) is refused, so
+the predecessor's window is never extended; rotate the successor instead.
 
 ```bash
 nova server api-key rotate a1b2c3d4
@@ -7952,7 +7954,7 @@ Options:
 
 Exit codes:
 - `0` — success (successor printed once)
-- `1` — key_id not found, key already revoked, or other failure
+- `1` — key_id not found, key already revoked or rotated, or other failure
 
 > The successor key is shown once and cannot be recovered — store it
 > immediately. `last_used_at` (coarse, at most one write per

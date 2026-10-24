@@ -363,6 +363,49 @@ class TestRotate:
         rows = {r["key_id"]: r for r in list_keys(db_path=db)}
         assert key_status(rows[record["key_id"]]) == "revoked"
 
+    def test_a_second_rotate_never_revives_the_auto_revoked_predecessor(self, db: Path) -> None:
+        # review server-06: a retried rotate reset rotate_expires_at, so the old
+        # (possibly leaked) secret verified again and its status read "active".
+        old, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        rotate_key(record["key_id"], actor="test", db_path=db, overlap_seconds=0)
+        with pytest.raises(RevokedKeyError, match="already rotated"):
+            rotate_key(record["key_id"], actor="test", db_path=db)
+        assert verify_key(old, db_path=db) is None
+        rows = {r["key_id"]: r for r in list_keys(db_path=db)}
+        assert key_status(rows[record["key_id"]]) == "revoked"
+        assert len(rows) == 2  # no second successor was minted
+
+    def test_a_predecessor_in_its_overlap_window_cannot_be_rotated_again(self, db: Path) -> None:
+        _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        successor, _ = rotate_key(record["key_id"], actor="test", db_path=db)
+        with pytest.raises(RevokedKeyError, match="already rotated"):
+            rotate_key(record["key_id"], actor="test", db_path=db)
+        assert verify_key(successor, db_path=db) is not None
+        assert len(list_keys(db_path=db)) == 2
+
+    def test_a_rotate_that_loses_a_race_discards_its_successor(
+        self, db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from novafabric.server import api_keys as mod
+
+        _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        real_insert = mod._insert_key
+
+        def _insert_then_lose(conn: sqlite3.Connection, **kw: object) -> str:
+            new_id = real_insert(conn, **kw)  # type: ignore[arg-type]
+            # A concurrent rotate claims the predecessor first.
+            conn.execute(
+                "UPDATE api_keys SET rotated_to = 'winner' WHERE key_id = ?",
+                (record["key_id"],),
+            )
+            conn.commit()
+            return new_id
+
+        monkeypatch.setattr(mod, "_insert_key", _insert_then_lose)
+        with pytest.raises(RevokedKeyError, match="already rotated"):
+            rotate_key(record["key_id"], actor="test", db_path=db)
+        assert [r["key_id"] for r in list_keys(db_path=db)] == [record["key_id"]]
+
 
 # ---------------------------------------------------------------------------
 # Coarse last_used_at tracking (ADR-0193 D4, slice 2)

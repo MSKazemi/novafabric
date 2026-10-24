@@ -542,6 +542,14 @@ def revoke_key(
     logger.info("Revoked API key %s", key_id)
 
 
+def _already_rotated(key_id: str, successor_id: str | None) -> str:
+    target = f" to '{successor_id}'" if successor_id else ""
+    return (
+        f"API key '{key_id}' was already rotated{target}; rotate the successor "
+        "instead (review server-06)"
+    )
+
+
 def rotate_key(
     key_id: str,
     *,
@@ -557,7 +565,9 @@ def rotate_key(
     ``overlap_seconds`` window (default: ``NOVA_API_KEY_ROTATE_OVERLAP_S`` →
     24h); after it elapses the predecessor is auto-revoked at verify time (no
     background job). Raises :class:`UnknownKeyError` if the predecessor is
-    absent and :class:`RevokedKeyError` if it is already revoked.
+    absent and :class:`RevokedKeyError` if it is already revoked or already
+    rotated: a key rotates once, so a retried rotation can neither extend the
+    predecessor's window nor orphan a still-valid successor.
     """
     overlap = _rotate_overlap_seconds(overlap_seconds)
     now = datetime.now(timezone.utc)
@@ -567,7 +577,7 @@ def rotate_key(
     conn = _get_conn(db_path)
     try:
         pred = conn.execute(
-            "SELECT owner, roles, workspace, expires_at, revoked_at "
+            "SELECT owner, roles, workspace, expires_at, revoked_at, rotated_to "
             "FROM api_keys WHERE key_id = ?",
             (key_id,),
         ).fetchone()
@@ -575,6 +585,8 @@ def rotate_key(
             raise UnknownKeyError(f"API key '{key_id}' not found")
         if pred["revoked_at"] is not None:
             raise RevokedKeyError(f"API key '{key_id}' is revoked; cannot rotate")
+        if pred["rotated_to"] is not None:
+            raise RevokedKeyError(_already_rotated(key_id, pred["rotated_to"]))
 
         successor_id = _insert_key(
             conn,
@@ -585,11 +597,17 @@ def rotate_key(
             expires_at=pred["expires_at"],
             created_at=now.isoformat(),
         )
-        conn.execute(
+        claimed = conn.execute(
             "UPDATE api_keys SET rotated_to = ?, rotate_expires_at = ? "
-            "WHERE key_id = ?",
+            "WHERE key_id = ? AND rotated_to IS NULL AND revoked_at IS NULL",
             (successor_id, rotate_expires_at, key_id),
         )
+        if claimed.rowcount != 1:
+            # A concurrent rotate or revoke won. _insert_key committed the
+            # successor, whose secret no caller holds: delete it.
+            conn.execute("DELETE FROM api_keys WHERE key_id = ?", (successor_id,))
+            conn.commit()
+            raise RevokedKeyError(_already_rotated(key_id, None))
         conn.commit()
         role_list = list(json.loads(pred["roles"]))
         record: dict[str, Any] = {
