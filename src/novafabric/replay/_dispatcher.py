@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric.capture import _tool_codec
+from novafabric.capture.hooks._mcp import MCP_TOOL_ERROR
 from novafabric.capture.hooks._sdk_streams import (
     RESPONSE_STATUS_EXT,
     STREAM_ERROR_EVENT_EXT,
@@ -1262,15 +1263,22 @@ def _mcp_result_from_record(record: dict[str, Any]) -> Any:
     raw_mcp = record.get("mcp")
     mcp: dict[str, Any] = raw_mcp if isinstance(raw_mcp, dict) else {}
     envelope = mcp.get("response_envelope")
-    if record.get("status") not in (None, "success") or (
-        isinstance(envelope, dict) and "error" in envelope
-    ):
-        _raise_recorded_tool_error(record, envelope)
     payload: Any = None
     if isinstance(envelope, dict) and isinstance(envelope.get("result"), dict):
         payload = envelope["result"]
     elif isinstance(record.get("result"), dict):
         payload = record["result"]
+    # A tool the server reported failing (``isError: true``) is recorded as an error,
+    # but the original call *returned* that result: serve it, do not raise.
+    raw_error = record.get("error")
+    tool_reported = (
+        isinstance(raw_error, dict) and raw_error.get("type") == MCP_TOOL_ERROR
+        and isinstance(payload, dict) and payload.get("isError") is True
+    )
+    if (record.get("status") not in (None, "success") and not tool_reported) or (
+        isinstance(envelope, dict) and "error" in envelope
+    ):
+        _raise_recorded_tool_error(record, envelope)
     payload = payload or {"content": []}
     try:
         from mcp.types import CallToolResult

@@ -43,6 +43,7 @@ from typing import IO, TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.hooks._fail_open import note_capture_failure
+from novafabric.capture.hooks._mcp import mcp_tool_error
 from novafabric.mcp.exchanges import ExchangeTracker
 
 
@@ -358,7 +359,16 @@ class MCPProxy:
             result = response_envelope.get("result")
             if isinstance(result, dict):
                 record["result"] = result
+                _mark_tool_error(record, result)
         return record
+
+
+def _mark_tool_error(record: dict[str, Any], result: dict[str, Any]) -> None:
+    """A result the server marked ``isError`` is a failed call (review capture-runners-22)."""
+    tool_error = mcp_tool_error(result)
+    if tool_error is not None:
+        record["status"] = "error"
+        record["error"] = tool_error
 
 
 def _safe_parse(raw: bytes) -> Any:
@@ -457,6 +467,7 @@ def _record_from_http_call(
         result = response_envelope.get("result")
         if isinstance(result, dict):
             record["result"] = result
+            _mark_tool_error(record, result)
     return record
 
 

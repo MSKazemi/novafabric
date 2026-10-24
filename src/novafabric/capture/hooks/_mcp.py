@@ -63,6 +63,27 @@ def _serialize_response(response: Any) -> dict[str, Any]:
     return out
 
 
+
+#: ``error.type`` of a tool call the MCP server answered with ``isError: true``.
+MCP_TOOL_ERROR = "McpToolError"
+
+
+def mcp_tool_error(result: Any) -> dict[str, Any] | None:
+    """The ``error`` block for a ``CallToolResult`` the server marked ``isError``.
+
+    MCP reports a failing tool in the result, not as a JSON-RPC error, so a call
+    with ``isError: true`` is a failed call (review capture-runners-22). The
+    message is the result's text content; the result itself is kept as recorded.
+    """
+    if not isinstance(result, dict) or result.get("isError") is not True:
+        return None
+    texts = [
+        item["text"] for item in result.get("content") or []
+        if isinstance(item, dict) and isinstance(item.get("text"), str)
+    ]
+    return {"type": MCP_TOOL_ERROR, "message": " ".join(texts)[:2000], "traceback_ref": None}
+
+
 class MCPHook:
     def __init__(self, writer: "CapsuleWriter", parent_span_id: str) -> None:
         self._writer = writer
@@ -299,6 +320,10 @@ class MCPHook:
         )
         result_obj = _serialize_response(response)
         record["result"] = result_obj if result_obj else None
+        tool_error = mcp_tool_error(result_obj)
+        if tool_error is not None:
+            record["status"] = "error"
+            record["error"] = tool_error
         record["mcp"] = {
             "server_name": self._server_attr(inner_self, "server_name", "unknown"),
             "server_version": self._server_attr(
