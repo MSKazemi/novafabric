@@ -42,6 +42,14 @@ class NullReader:
         return {}
 
 
+def _zone_name(zone: Path) -> str:
+    """A powercap zone's ``name`` (``package-0``, ``dram``, ``psys`` ...), or "" if unreadable."""
+    try:
+        return (zone / "name").read_text().strip().lower()
+    except OSError:
+        return ""
+
+
 class RaplSysfsReader:
     """Reads Intel RAPL energy counters from ``/sys/class/powercap``.
 
@@ -55,13 +63,26 @@ class RaplSysfsReader:
         self.base = Path(base)
 
     def _domains(self) -> list[Path]:
+        """The zones whose counters are summed, so that each joule is counted once.
+
+        ``/sys/class/powercap`` lists zones flat: ``intel-rapl:N`` is a package (or
+        ``psys``, the whole SoC) and ``intel-rapl:N:M`` its subzones. ``core`` and
+        ``uncore`` are already inside their package's counter, so summing them
+        double-counts (review misc-3-01); ``dram`` is a separate rail and is added.
+        ``psys`` covers packages and DRAM together, so it is used only when the
+        platform exposes no package zone. A top-level zone without a readable
+        ``name`` is treated as a package.
+        """
         if not self.base.is_dir():
             return []
-        return sorted(
-            d
-            for d in self.base.glob("intel-rapl:*")
-            if (d / "energy_uj").exists()
+        zones = sorted(
+            d for d in self.base.glob("intel-rapl:*") if (d / "energy_uj").exists()
         )
+        packages = [d for d in zones if d.name.count(":") == 1 and _zone_name(d) != "psys"]
+        dram = [d for d in zones if d.name.count(":") == 2 and _zone_name(d) == "dram"]
+        if packages or dram:
+            return packages + dram
+        return [d for d in zones if d.name.count(":") == 1]
 
     def available(self) -> bool:
         for dom in self._domains():

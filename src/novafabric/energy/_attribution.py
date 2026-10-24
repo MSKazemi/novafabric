@@ -25,7 +25,7 @@ from novafabric._capsule_fs import (
 )
 from novafabric.capsule.ulid_util import new_ulid
 from novafabric.capture.record_roles import logical_model_calls
-from novafabric.energy._readers import _RAPL_BASE, probe_counters, rapl_delta_joules
+from novafabric.energy._readers import _RAPL_BASE, probe_counters
 from novafabric.energy._receipt import (
     ActionKind,
     ActionRef,
@@ -137,31 +137,49 @@ def _action_wall_clock_s(record: dict[str, object]) -> float | None:
 def _integrate_node_joules(capsule_dir: Path) -> tuple[float, CounterName] | None:
     """Integrate node joules from ``energy-samples.jsonl`` (wraparound-safe).
 
-    Sums per-domain deltas between the first and last non-gap samples. Returns
-    ``(joules, counter)`` or ``None`` when no usable (non-gap) reading pair
-    exists — the honest "no node total" signal that triggers the unavailable
-    fallback.
+    Sums each domain's delta over every *consecutive* pair of non-gap samples, so
+    each counter wrap between two samples is added back once with that domain's
+    real ``max_range_uj`` (recorded in the samples), however many wraps a long run
+    has. A wrap with no recorded range (samples from before the range was
+    recorded) cannot be integrated honestly: the result is ``None``, the
+    "no node total" signal that triggers the unavailable fallback — never a guess
+    (an earlier version added 2**63 µJ, ~9.2 TJ, per wrap; review misc-3-01).
+    Returns ``(joules, counter)`` or ``None`` when no usable pair exists.
     """
-    readings: list[dict[str, int]] = []
+    readings: list[tuple[dict[str, int], dict[str, int]]] = []
     for record in _iter_jsonl(capsule_dir / SAMPLES_FILE):
         if record.get("gap") is True:
             continue
         domains = record.get("domains_uj")
         if isinstance(domains, dict) and domains:
-            readings.append({str(k): int(v) for k, v in domains.items()})
+            raw_ranges = record.get("max_range_uj")
+            ranges = (
+                {str(k): int(v) for k, v in raw_ranges.items()}
+                if isinstance(raw_ranges, dict)
+                else {}
+            )
+            readings.append(({str(k): int(v) for k, v in domains.items()}, ranges))
     if len(readings) < 2:
         return None
-    start_uj, end_uj = readings[0], readings[-1]
-    # max range unknown from samples alone; pass a large default so a single
-    # wrap is absorbed (RAPL pkg counters are ~262 GJ-range, far above a run).
-    max_range = dict.fromkeys(start_uj, 2 ** 63)
-    joules = rapl_delta_joules(start_uj, end_uj, max_range)
+    total_uj = 0
+    for (prev, _), (cur, ranges) in zip(readings, readings[1:]):
+        for domain, start in prev.items():
+            if domain not in cur:
+                continue
+            delta = cur[domain] - start
+            if delta < 0:
+                wrap = ranges.get(domain)
+                if not wrap or wrap <= 0:
+                    return None
+                delta += wrap
+            total_uj += delta
+    start_domains = readings[0][0]
     counter = (
         CounterName.RAPL_DRAM
-        if all("dram" in d.lower() for d in start_uj)
+        if all("dram" in d.lower() for d in start_domains)
         else CounterName.RAPL_PKG
     )
-    return joules, counter
+    return total_uj / 1_000_000, counter
 
 
 def _apportioned_receipt(

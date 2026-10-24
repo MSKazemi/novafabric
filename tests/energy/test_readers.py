@@ -104,3 +104,32 @@ def test_rapl_reader_skips_unreadable_domain(tmp_path):
     r = RaplSysfsReader(base=base)
     assert r.available() is False
     assert r.read_domains_uj() == {}
+
+
+# --- review misc-3-01: count each joule once ---------------------------------
+
+
+def _zone(base: Path, key: str, name: str, energy_uj: int, max_range_uj: int = 65_532_610_987) -> None:
+    dom = base / key
+    dom.mkdir(parents=True)
+    (dom / "name").write_text(f"{name}\n")
+    (dom / "energy_uj").write_text(f"{energy_uj}\n")
+    (dom / "max_energy_range_uj").write_text(f"{max_range_uj}\n")
+
+
+def test_rapl_reader_counts_packages_and_dram_never_core_uncore_or_psys(tmp_path):
+    base = tmp_path / "powercap"
+    _zone(base, "intel-rapl:0", "package-0", 100)
+    _zone(base, "intel-rapl:0:0", "core", 60)  # inside package-0 already
+    _zone(base, "intel-rapl:0:1", "uncore", 10)  # inside package-0 already
+    _zone(base, "intel-rapl:0:2", "dram", 20)  # separate rail: counted
+    _zone(base, "intel-rapl:1", "psys", 500)  # whole SoC: would double-count
+    r = RaplSysfsReader(base=base)
+    assert r.read_domains_uj() == {"intel-rapl:0": 100, "intel-rapl:0:2": 20}
+    assert set(r.max_range_uj()) == {"intel-rapl:0", "intel-rapl:0:2"}
+
+
+def test_rapl_reader_uses_psys_alone_when_there_is_no_package_zone(tmp_path):
+    base = tmp_path / "powercap"
+    _zone(base, "intel-rapl:1", "psys", 500)
+    assert RaplSysfsReader(base=base).read_domains_uj() == {"intel-rapl:1": 500}

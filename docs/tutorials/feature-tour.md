@@ -1271,7 +1271,12 @@ total: 3 receipt(s)
 ```
 
 On a laptop without readable RAPL/NVML counters the receipts are **honestly
-`unavailable`** — never fabricated (the degrade-safe default). On a Slurm cluster,
+`unavailable`** — never fabricated (the degrade-safe default). With RAPL, each package
+and the DRAM rail are counted once (`core`/`uncore` subzones are inside the package
+figure; `psys` is used only when there is no package zone), and a counter wrap between
+two samples is added back with the zone's own `max_energy_range_uj`, recorded in
+`energy-samples.jsonl`. A capsule sampled before that range was recorded, whose
+counter wrapped, gets `unavailable` receipts rather than a guess. On a Slurm cluster,
 `sacct ConsumedEnergyRaw` yields the measured per-job class. The forgery guard makes
 the honesty tamper-evident — edit a receipt to *claim* a measurement the host cannot
 back:

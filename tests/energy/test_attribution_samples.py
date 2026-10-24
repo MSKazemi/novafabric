@@ -259,3 +259,53 @@ def test_attest_capsule_dispatches_to_samples_when_present(tmp_path):
     assert all(r.confidence is Confidence.APPORTIONED for r in receipts)
     total = sum(r.measured_joules for r in receipts if r.measured_joules is not None)
     assert math.isclose(total, node_joules, rel_tol=1e-9)
+
+
+# --- review misc-3-01: wraps are integrated with the real range, pairwise -------
+
+_RANGE = 65_532_610_987  # a real laptop's max_energy_range_uj (~65.5 kJ)
+
+
+def _node_joules(tmp: Path, samples: list[dict[str, object]]) -> object:
+    from novafabric.energy._attribution import _integrate_node_joules
+
+    _write_jsonl(tmp / "energy-samples.jsonl", samples)
+    return _integrate_node_joules(tmp)
+
+
+def _s(ts: float, uj: int, *, with_range: bool = True) -> dict[str, object]:
+    record: dict[str, object] = {"ts": ts, "domains_uj": {"intel-rapl:0": uj}, "gap": False}
+    if with_range:
+        record["max_range_uj"] = {"intel-rapl:0": _RANGE}
+    return record
+
+
+def test_one_wrap_adds_the_domain_range_not_2_pow_63(tmp_path):
+    # 65 W for ~2 s across a wrap: the counter goes RANGE-50 J -> 80 J.
+    got = _node_joules(tmp_path, [_s(1, _RANGE - 50_000_000), _s(2, 80_000_000)])
+    assert got is not None
+    joules, _counter = got  # type: ignore[misc]
+    assert joules == 130.0
+
+
+def test_two_wraps_over_a_long_run_are_both_counted(tmp_path):
+    third = _RANGE // 3
+    samples = [_s(t, (t * third) % _RANGE) for t in range(0, 7)]  # 6 thirds = 2 full ranges
+    got = _node_joules(tmp_path, samples)
+    assert got is not None
+    joules, _counter = got  # type: ignore[misc]
+    assert joules == 6 * third / 1_000_000
+
+
+def test_a_wrap_without_a_recorded_range_gives_no_node_total(tmp_path):
+    # Samples written before the range was recorded: a wrap cannot be integrated
+    # honestly, so attribution falls back to "unavailable" instead of 9.2 TJ.
+    got = _node_joules(
+        tmp_path, [_s(1, _RANGE - 50, with_range=False), _s(2, 80, with_range=False)]
+    )
+    assert got is None
+
+
+def test_samples_without_a_range_still_integrate_when_nothing_wrapped(tmp_path):
+    got = _node_joules(tmp_path, [_s(1, 1_000_000, with_range=False), _s(2, 3_000_000, with_range=False)])
+    assert got is not None and got[0] == 2.0  # type: ignore[index]

@@ -161,3 +161,25 @@ def test_buffer_flushes_on_threshold(tmp_path):
     sampler.flush()
     samples = _read_samples(tmp_path)
     assert len(samples) == 3
+
+
+class _RangedReader(_ScriptedReader):
+    def max_range_uj(self) -> dict[str, int]:
+        return {"intel-rapl:0": 65_532_610_987}
+
+
+def test_sample_records_the_domain_wrap_range_when_the_reader_has_one(tmp_path):
+    """Review misc-3-01: the integrator needs each domain's real max_energy_range_uj."""
+    sampler = EnergySampler(tmp_path, _RangedReader([{"intel-rapl:0": 5}]), interval_ms=10)
+    sampler.sample_once()
+    sampler.flush()
+    (rec,) = _read_samples(tmp_path)
+    assert rec["max_range_uj"] == {"intel-rapl:0": 65_532_610_987}
+
+
+def test_sample_without_a_range_reader_omits_the_field(tmp_path):
+    sampler = EnergySampler(tmp_path, _ScriptedReader([{"intel-rapl:0": 5}]), interval_ms=10)
+    sampler.sample_once()
+    sampler.flush()
+    (rec,) = _read_samples(tmp_path)
+    assert "max_range_uj" not in rec

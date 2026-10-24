@@ -81,9 +81,15 @@ class EnergySampler:
         """
         gap = False
         domains: dict[str, int] = {}
+        ranges: dict[str, int] = {}
         try:
             if self.reader.available():
                 domains = dict(self.reader.read_domains_uj())
+                # Each domain's wrap point (RAPL: max_energy_range_uj, ~65-262 kJ):
+                # the integrator needs it to add a wrap back exactly (misc-3-01).
+                max_range = getattr(self.reader, "max_range_uj", None)
+                if callable(max_range):
+                    ranges = {k: v for k, v in dict(max_range()).items() if k in domains}
             else:
                 gap = True
         except Exception:  # noqa: BLE001 — fail-open: a reader must never block
@@ -94,12 +100,15 @@ class EnergySampler:
             )
             gap = True
             domains = {}
+            ranges = {}
 
         record: dict[str, object] = {
             "ts": time.time(),
             "domains_uj": domains,
             "gap": gap,
         }
+        if ranges:
+            record["max_range_uj"] = ranges
         with self._lock:
             self._buffer.append(record)
             if len(self._buffer) >= self.buffer_max:
