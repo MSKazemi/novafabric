@@ -2157,9 +2157,13 @@ Failure semantics (the contract your masker lives under):
   before the workload starts — expected masking is never silently skipped.
 - **Every mask is evidence.** Each applied mask emits a `masker_findings[]` entry in
   `redaction-proof.json` (`masker_id`, `pattern_id`, `target_ref`, `match_hash` of the
-  pre-mask bytes, `chain_position`); the proof stays hash-chained. An auditor can verify
-  a candidate value with `hash(candidate) == match_hash` without the capsule ever
-  holding the bytes.
+  pre-mask bytes, `chain_position`); the proof stays hash-chained. `match_hash` is an
+  HMAC-SHA256 under a key generated for each capture and never stored: findings that
+  masked the same value within one capsule share it, but it cannot be matched against a
+  candidate afterwards or linked to another capsule. A masked value is often the PII
+  itself (`user.email`), and a plain SHA-256 of it, sealed into a WORM capsule, could be
+  reversed by dictionary and would outlive `nova pii erase`. Releases up to v0.107.0
+  stored that plain digest.
 
 Reference implementation: `novafabric.masking.examples.EmailMasker` (registered as
 `novafabric-email`). See [ADR-0135](decisions.md) for the masking-pipeline decision; schemas:

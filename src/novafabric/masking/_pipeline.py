@@ -20,6 +20,7 @@ a raw value, and never crashes or blocks the captured workload.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -95,6 +96,9 @@ class MaskingPipeline:
     def __init__(self, maskers: list[LoadedMasker], tenant: str = "local") -> None:
         self._maskers = list(maskers)
         self._tenant = tenant
+        # Keys match_hash; never written anywhere, so a finding cannot be
+        # dictionary-reversed or linked to another capture (compliance-privacy-19).
+        self._match_key = os.urandom(32)
         self._worker: _DaemonWorker | None = None
         #: Maskers that overran their budget once: skipped (fail-closed) from then on.
         self._timed_out: set[str] = set()
@@ -380,7 +384,7 @@ class MaskingPipeline:
                 "target_ref": field.target_ref,
                 "byte_offset": field.byte_offset,
                 "byte_length": len(current.encode("utf-8")),
-                "match_hash": _sha256(current.encode("utf-8")),
+                "match_hash": self._match_hash(current),
                 "redaction_strategy": "mask",
                 "replacement": result,
                 "chain_position": applied,
@@ -388,6 +392,17 @@ class MaskingPipeline:
             applied += 1
             current = result
         return current
+
+    def _match_hash(self, value: str) -> str:
+        """``sha256:``-prefixed HMAC-SHA256 of *value* under this pipeline's key.
+
+        A finding's value is often the PII itself (``user.email``); a plain
+        SHA-256 of it, sealed into a WORM capsule, is dictionary-reversible and
+        survives ``nova pii erase``. Within one capture equal values still share
+        a hash, which is all attribution needs.
+        """
+        digest = hmac.new(self._match_key, value.encode("utf-8"), hashlib.sha256)
+        return "sha256:" + digest.hexdigest()
 
     def _fail_closed(
         self,

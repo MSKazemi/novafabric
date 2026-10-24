@@ -70,7 +70,8 @@ def _capsule_text(capsule_dir: Path) -> str:
 
 
 def test_masked_value_never_appears_in_capsule(capsule_dir: Path) -> None:
-    findings, errors = _pipeline(CaseIdMasker()).run(capsule_dir, run_id="r1")
+    pipeline = _pipeline(CaseIdMasker())
+    findings, errors = pipeline.run(capsule_dir, run_id="r1")
     text = _capsule_text(capsule_dir)
     assert "ACME-CASE-12345" not in text
     assert "ACME-CASE-99" not in text
@@ -80,13 +81,16 @@ def test_masked_value_never_appears_in_capsule(capsule_dir: Path) -> None:
     for f in findings:
         jsonschema.validate(f, _FINDING_SCHEMA, format_checker=jsonschema.FormatChecker())
         assert "ACME-CASE" not in f["replacement"]
-    # match_hash attributes the pre-mask value without storing it.
+    # match_hash attributes the pre-mask value without storing it — keyed with a
+    # per-capture secret that is never written, so it is not a dictionary-reversible
+    # digest of the PII sealed into the capsule (review compliance-privacy-19).
     by_ref = {f["target_ref"]: f for f in findings}
     tool_finding = by_ref["tool-calls.jsonl#L1 arguments.case"]
     candidate = "ACME-CASE-99"
-    assert tool_finding["match_hash"] == (
+    assert tool_finding["match_hash"] != (
         "sha256:" + hashlib.sha256(candidate.encode()).hexdigest()
     )
+    assert tool_finding["match_hash"] == pipeline._match_hash(candidate)
     assert tool_finding["byte_length"] == len(candidate.encode())
     assert tool_finding["redaction_strategy"] == "mask"
     assert tool_finding["chain_position"] == 0
@@ -194,9 +198,8 @@ def test_maskers_compose_in_declared_order(capsule_dir: Path) -> None:
                 return value.replace("[MASKED:acme-case-id]", "[MASKED:second]")
             return UNCHANGED
 
-    findings, errors = _pipeline(CaseIdMasker(), SecondMasker()).run(
-        capsule_dir, run_id="r1"
-    )
+    pipeline = _pipeline(CaseIdMasker(), SecondMasker())
+    findings, errors = pipeline.run(capsule_dir, run_id="r1")
     assert errors == []
     per_field: dict[str, list[dict[str, object]]] = {}
     for f in findings:
@@ -205,9 +208,7 @@ def test_maskers_compose_in_declared_order(capsule_dir: Path) -> None:
     assert [f["masker_id"] for f in chained] == ["acme-case-id", "second-masker"]
     assert [f["chain_position"] for f in chained] == [0, 1]
     # Each later masker observed the prior stage's output.
-    assert chained[1]["match_hash"] == (
-        "sha256:" + hashlib.sha256(str(chained[0]["replacement"]).encode()).hexdigest()
-    )
+    assert chained[1]["match_hash"] == pipeline._match_hash(str(chained[0]["replacement"]))
     assert "[MASKED:second]" in _capsule_text(capsule_dir)
 
 
@@ -396,3 +397,11 @@ def test_the_process_exits_after_a_masker_hung(tmp_path: Path) -> None:
     proc = subprocess.run([sys.executable, "-c", script], capture_output=True, timeout=60)
     assert proc.returncode == 0, proc.stderr.decode()[-500:]
     assert b"done" in proc.stdout
+
+
+def test_match_hashes_are_not_linkable_across_pipelines() -> None:
+    """Each capture's key is fresh and never stored: the same value hashes
+    differently in two captures, and neither equals its plain SHA-256."""
+    a, b = _pipeline(CaseIdMasker()), _pipeline(CaseIdMasker())
+    assert a._match_hash("alice@example.com") == a._match_hash("alice@example.com")
+    assert a._match_hash("alice@example.com") != b._match_hash("alice@example.com")
