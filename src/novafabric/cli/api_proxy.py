@@ -32,7 +32,6 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from novafabric.capture._ulid import new_ulid
 from novafabric.capture.capsule import CapsuleWriter
 from novafabric.proxy.api_proxy import ApiProxy
 
@@ -131,17 +130,13 @@ def api_proxy_cmd(
             param_hint="'--upstream-url'",
         )
 
-    # Capsule resolution (v0.6.5 ergonomic improvement):
-    #   1. --capsule-dir given → use it, auto-create if missing
-    #   2. NOVAFABRIC_CAPSULE_DIR set → use it
-    #   3. Neither → auto-allocate a fresh ULID dir under
-    #      $PWD/.novafabric/runs/ and announce the path
-    cap_dir = capsule_dir or _env_path("NOVAFABRIC_CAPSULE_DIR")
-    auto_allocated = False
-    if cap_dir is None:
-        run_id = new_ulid()
-        cap_dir = Path.cwd() / ".novafabric" / "runs" / run_id
-        auto_allocated = True
+    # Capsule resolution (cli/_proxy_capsule.py): --capsule-dir, else the active
+    # capsule of an enclosing capture, else a fresh capsule under the store root
+    # NOVAFABRIC_CAPSULE_DIR names, else under $PWD/.novafabric/runs/ — a fresh
+    # one is announced.
+    from novafabric.cli._proxy_capsule import resolve_proxy_capsule
+
+    cap_dir, auto_allocated = resolve_proxy_capsule(capsule_dir)
 
     host, port = _parse_listen(listen)
     resolved_span = span_id or os.environ.get("NOVAFABRIC_SPAN_ID") or ("0" * 16)
@@ -169,8 +164,3 @@ def api_proxy_cmd(
         upstream_timeout_s=upstream_timeout,
     )
     raise typer.Exit(code=proxy.run())
-
-
-def _env_path(name: str) -> Path | None:
-    value = os.environ.get(name)
-    return Path(value) if value else None

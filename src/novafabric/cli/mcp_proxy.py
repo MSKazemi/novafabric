@@ -136,16 +136,12 @@ def mcp_proxy_cmd(
       # Record into a specific capsule directory
       nova mcp-proxy --capsule-dir .novafabric/runs/01HX... -- python my_mcp_server.py
     """
-    # Capsule resolution (v0.6.5 ergonomic improvement, parallel to
-    # nova api-proxy): given dir is auto-created if missing; absent
-    # both flag and env var means a fresh ULID dir under
-    # $PWD/.novafabric/runs/.
-    from novafabric.capture._ulid import new_ulid as _new_ulid
+    # Capsule resolution (cli/_proxy_capsule.py): --capsule-dir, else the active
+    # capsule of an enclosing capture, else a fresh capsule under the store root
+    # NOVAFABRIC_CAPSULE_DIR names, else under $PWD/.novafabric/runs/.
+    from novafabric.cli._proxy_capsule import resolve_proxy_capsule
 
-    cap_dir = capsule_dir or _env_path("NOVAFABRIC_CAPSULE_DIR")
-    if cap_dir is None:
-        run_id = _new_ulid()
-        cap_dir = Path.cwd() / ".novafabric" / "runs" / run_id
+    cap_dir, _ = resolve_proxy_capsule(capsule_dir)
 
     resolved_span = span_id or os.environ.get("NOVAFABRIC_SPAN_ID") or ("0" * 16)
 
@@ -192,8 +188,3 @@ def mcp_proxy_cmd(
         client_out=sys.stdout.buffer,
     )
     raise typer.Exit(code=proxy.run())
-
-
-def _env_path(name: str) -> Path | None:
-    value = os.environ.get(name)
-    return Path(value) if value else None

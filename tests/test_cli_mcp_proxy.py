@@ -89,8 +89,11 @@ def test_cli_records_tool_call_with_explicit_capsule_dir(tmp_path: Path) -> None
 
 
 def test_cli_falls_back_to_env_capsule_dir(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Inside a capture child (the runner sets NOVAFABRIC_SPAN_ID too) the variable
+    names the active capsule."""
     cap_dir = _capsule_dir(tmp_path)
     monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", str(cap_dir))
+    monkeypatch.setenv("NOVAFABRIC_SPAN_ID", "a" * 16)
     result = runner.invoke(
         app,
         ["mcp-proxy", "--", sys.executable, "-c", _FAKE_SERVER_SCRIPT],
@@ -151,3 +154,28 @@ def test_cli_nonexistent_capsule_dir_auto_creates(tmp_path: Path) -> None:
     assert target.exists() and target.is_dir(), (
         f"--capsule-dir {target} was not auto-created\n{result.output}"
     )
+
+
+def test_cli_treats_the_store_root_as_a_store(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Review cli-b-15: NOVAFABRIC_CAPSULE_DIR exported as the capsule store root (as
+    nova capture/query document) made the proxy write a capsule named after the
+    store directly into it. Without NOVAFABRIC_SPAN_ID it is a store: a fresh capsule
+    is created under it."""
+    store = tmp_path / "capsules"
+    store.mkdir()
+    (store / "01EXISTINGCAPSULE").mkdir()
+    monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", str(store))
+    monkeypatch.delenv("NOVAFABRIC_SPAN_ID", raising=False)
+    result = runner.invoke(
+        app,
+        ["mcp-proxy", "--", sys.executable, "-c", _FAKE_SERVER_SCRIPT],
+        input=_client_input(
+            {"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": "2", "method": "tools/call",
+             "params": {"name": "ping", "arguments": {}}},
+        ),
+    )
+    assert result.exit_code == 0, result.output
+    assert not (store / "tool-calls.jsonl").exists()  # nothing written into the root
+    new = [d for d in store.iterdir() if d.is_dir() and d.name != "01EXISTINGCAPSULE"]
+    assert len(new) == 1 and (new[0] / "tool-calls.jsonl").is_file()

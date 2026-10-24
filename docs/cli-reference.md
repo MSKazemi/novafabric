@@ -756,7 +756,7 @@ claude ...   # or cursor, or any LLM client that respects BASE_URL
 Options:
 - `--upstream-url URL` (required) — upstream LLM API base URL (e.g. `https://api.openai.com`)
 - `--listen host:port` — listener address (default: `127.0.0.1:8765`)
-- `--capsule-dir PATH` — active capsule directory; falls back to `$NOVAFABRIC_CAPSULE_DIR`, then `$NOVAFABRIC_HOME/capsules/`; auto-allocates a fresh ULID sub-dir
+- `--capsule-dir PATH` — active capsule directory. Without it: inside a `nova capture` child (where the runner sets `NOVAFABRIC_SPAN_ID`) the capture's capsule `$NOVAFABRIC_CAPSULE_DIR`; otherwise `$NOVAFABRIC_CAPSULE_DIR` is the capsule store root and a fresh ULID capsule is created under it; with neither, under `$PWD/.novafabric/runs/`. Same rule as `nova mcp-proxy`
 - `--span-id HEX` — parent OTel span id (16 hex chars); falls back to `$NOVAFABRIC_SPAN_ID`
 - `--upstream-timeout FLOAT` — per-request timeout in seconds (default: `60.0`)
 
@@ -772,11 +772,16 @@ server, recording every `tools/call` request/response pair into the active
 capsule. Implements ADR-0015 §Secondary.
 
 ```bash
-NOVAFABRIC_CAPSULE_DIR=/path/to/.novafabric/runs/01HX...
 nova mcp-proxy -- npx -y @modelcontextprotocol/server-filesystem /tmp
 ```
 
-Or with an explicit flag:
+Which capsule it records into: `--capsule-dir` if given; inside a `nova capture` child (the runner
+sets `NOVAFABRIC_CAPSULE_DIR` **and** `NOVAFABRIC_SPAN_ID`) the capture's own capsule; otherwise
+`NOVAFABRIC_CAPSULE_DIR` is the capsule store root, as for `nova capture`/`query`, and a fresh ULID
+capsule is created under it (it was once used as the capsule itself, writing streams into the store
+root); with neither, a fresh capsule under `$PWD/.novafabric/runs/`.
+
+With an explicit capsule:
 
 ```bash
 nova mcp-proxy --capsule-dir .novafabric/runs/01HX.../ -- /usr/local/bin/my-mcp-server --flag
