@@ -162,6 +162,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   dead-lettered as well as pending uploads; the CLI never passed the WAL, so the refusal could not fire.
 - **Capsule migration refuses a schema other than 0.1.0**; a 0.1.3 capsule was "migrated" with nothing bumped and a
   false 0.1.0 → 1.0.0 lineage edge.
+- **`nova pii status` no longer confirms an erasure it cannot prove.** With a wrong `NOVA_PII_PEPPER` (rotated, mistyped,
+  another deployment's) every subject read `erased` although its DEK was live; a capsule whose subjects match no live
+  DEK while the store holds some is now `unknown`.
+- **Masker findings no longer seal a dictionary-reversible hash of the masked PII.** `match_hash` is an HMAC under a
+  per-capture key that is never stored (ADR-0135 amendment 1); it still links findings of the same value within one
+  capsule, but a candidate value can no longer be checked against it afterwards.
+- **The `--pii-subject` stage covers CJK-adjacent matches and non-UTF-8 text**; both were left in plaintext with no
+  record.
+- **Compliance exports state only what was recorded.** NIS2 phase-1 fields nobody supplied are empty and `missing`
+  (they were "medium severity, no cross-border impact", `complete`); an unverified pre-ADR-0312 registry row no
+  longer evidences model-validation independence; the Art. 73 clock keeps the 2- and 10-day deadlines for "critical
+  infrastructure outage", "fatality" or "patient died".
 - **Maker-checker records bind the capsule everywhere they are verified.** `POST /v0/seal/{capsule_id}/verify`
   (`nova server`) and `nova export-model-independence --capsule-id` called the SoD verifier without the capsule, so
   an approval of content changed since — or of a capsule that no longer exists — passed, and the export listed it
@@ -267,6 +279,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   - a configured seal that failed under `nova capture` left no trace; the capsule now records
     `metadata.finalization_error` and the CLI prints `✗ Capsule not sealed`;
   - `DualObjectStore` wrote the PII payload file while cap-003 was off;
+  - the GCS WORM adapter sends a CRC32C checksum, reads back the object's retention, and deletes an object it could
+    not lock, so a retry cannot commit it unlocked; S3 `object_exists` raises an auth or network error instead of
+    reading it as "absent" (wrong credentials looked like the wrong bucket on restore);
+  - the pg backup takes its row counts in the dump's own exported snapshot (`pg_dump --snapshot`), so a correct dump
+    of a busy server verifies on restore; `PostgresBackend.info()` no longer blanks every count after one failed
+    query; the ratchet directory is created 0700 before its first key is restored;
+  - `nova import` with a manifest whose DSSE payload or signature is not base64 is `INVALID` (it crashed before the
+    receipt); `nova run validate-distributed` reports a RUNNING parent with exit 3, not FAILED;
+  - SIEM follow mode no longer reports two false chain breaks on every clean log rotation and names each line's own
+    number; a non-object line in the audit log is a reported chain error, not a crash of `nova audit verify`;
   - `nova validate --schemas --write` deleted every tool-call line it could not parse and rewrote sealed capsules;
     it now keeps those lines byte-for-byte and refuses a sealed capsule (exit 1);
   - `POST /v0/replays` claimed the oldest queued replay rather than its own, so one orphaned job made every later
