@@ -603,3 +603,35 @@ def test_a_symlinked_receipt_is_unresolvable(backup_set: Path, tmp_path: Path) -
 
     assert _replay_step(result).ok is False  # type: ignore[attr-defined]
     assert "subj-1" in _subjects(target)
+
+
+# --- review storage-backup-16: secret bytes are never written into a readable file ----
+
+
+@pytest.mark.parametrize("preexisting", [False, True], ids=["new", "truncated-0644"])
+def test_a_sensitive_member_is_private_before_its_bytes_land(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preexisting: bool
+) -> None:
+    """Key material was created 0644 (or truncated in place, keeping 0644) and filled
+    before the follow-up chmod, so a local user could open it in that window."""
+    import io
+    import os
+    import stat
+
+    from novafabric.backup import restore
+
+    dst = tmp_path / "key.pem"
+    if preexisting:
+        dst.write_bytes(b"old")
+        dst.chmod(0o644)
+    modes: list[int] = []
+    real_copy = restore.shutil.copyfileobj
+
+    def spy(src: object, out: object, *a: object, **k: object) -> None:
+        modes.append(stat.S_IMODE(os.fstat(out.fileno()).st_mode))  # type: ignore[attr-defined]
+        real_copy(src, out, *a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(restore.shutil, "copyfileobj", spy)
+    restore._write_member_bytes(io.BytesIO(b"-----BEGIN PRIVATE KEY-----"), dst, mode=0o600)
+    assert modes == [0o600]
+    assert stat.S_IMODE(dst.stat().st_mode) == 0o600

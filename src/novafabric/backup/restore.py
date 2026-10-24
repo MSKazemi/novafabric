@@ -526,6 +526,12 @@ def _extract_members(
                 raise RestoreError(f"Member {member.path!r} escapes the target home")
             if member.origin == CAPSULE_DIR_ORIGIN:
                 _check_capsule_dir_member(member, dst, home, roots)
+            ratchet_dir = home / "seal" / "ratchet"
+            if dst.parent == ratchet_dir and not ratchet_dir.exists():
+                # The ratchet's chain keys: private before the first one lands
+                # (review storage-backup-16).
+                ratchet_dir.parent.mkdir(parents=True, exist_ok=True)
+                ratchet_dir.mkdir(mode=0o700)
             dst.parent.mkdir(parents=True, exist_ok=True)
             with fh:
                 _write_member_bytes(fh, dst, mode=0o600 if member.sensitive else 0o644)
