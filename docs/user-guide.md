@@ -492,7 +492,11 @@ namespace defaults.
 options: `image`, `namespace`. Optional: `service_account`, `node_selector`,
 `resources`. Capsule artifacts are pulled back via `kubectl cp` after completion.
 The job manifest enforces `privileged: false`, `hostNetwork: false`,
-`backoffLimit: 0` — no root, no host namespace, no silent retries.
+`backoffLimit: 0` — no root, no host namespace, no silent retries. A failed status
+poll (an API-server blip, a throttled `kubectl`, an expired token) is retried until the
+timeout; the count and last error are recorded as `runner_metadata.poll_errors` and
+`last_poll_error`. Releases up to v0.107.0 treated one failed poll as the end: they
+deleted the still-running Job and reported a timeout.
 
 **`slurm`.** Runs the workload as a SLURM batch job via `sbatch`. Required option:
 `partition`. Optional: `account`, `qos`, `time`, `nodes`, `gres`, `mem`,

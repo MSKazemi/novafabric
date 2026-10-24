@@ -184,6 +184,26 @@ class KubernetesRunner:
             return False, "kubectl found but cluster not reachable (check kubeconfig)"
         return True, ""
 
+    def _poll_job(self, job_name: str, namespace: str) -> dict[str, Any] | str:
+        """The Job object from ``kubectl get job -o json``, or why that poll failed."""
+        try:
+            status = subprocess.run(
+                [self._kubectl, "get", "job", job_name, "-n", namespace, "-o", "json"],
+                capture_output=True, timeout=10,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return f"{type(exc).__name__}: {exc}"[:300]
+        if status.returncode != 0:
+            tail = (status.stderr or b"").decode(errors="replace").strip()[-300:]
+            return tail or f"kubectl get job exited {status.returncode}"
+        try:
+            doc = json.loads(status.stdout.decode(errors="replace"))
+        except json.JSONDecodeError:
+            return "kubectl get job returned non-JSON output"
+        if not isinstance(doc, dict):
+            return "kubectl get job returned JSON that is not an object"
+        return doc
+
     def _delete_job(self, job_name: str, namespace: str) -> dict[str, Any]:
         """``kubectl delete job`` (background propagation removes its pod); the outcome."""
         try:
@@ -299,23 +319,22 @@ class KubernetesRunner:
         pod_name: str | None = None
         succeeded = False
         failed = False
+        # Review capture-runners-15: a failed poll (an API-server blip, a throttled
+        # kubectl, an expired token) is "status unknown", not the end of the Job —
+        # leaving the loop deleted a running Job and reported a timeout.
+        poll_errors = 0
+        last_poll_error = ""
         try:
             while time.monotonic() < deadline:
-                try:
-                    status = subprocess.run(
-                        [self._kubectl, "get", "job", job_name,
-                         "-n", namespace, "-o", "json"],
-                        capture_output=True, timeout=10,
-                    )
-                except (subprocess.TimeoutExpired, OSError):
-                    break
-                if status.returncode != 0:
-                    break
-                try:
-                    doc = json.loads(status.stdout.decode())
-                except json.JSONDecodeError:
-                    break
-                jstatus = doc.get("status", {})
+                doc = self._poll_job(job_name, namespace)
+                if isinstance(doc, str):
+                    poll_errors += 1
+                    last_poll_error = doc
+                    jittered_sleep(poll_interval)
+                    continue
+                jstatus = doc.get("status")
+                if not isinstance(jstatus, dict):
+                    jstatus = {}
                 if jstatus.get("succeeded", 0) >= 1:
                     succeeded = True
                     break
@@ -391,6 +410,9 @@ class KubernetesRunner:
             "image": image, "namespace": namespace, "job_name": job_name,
             IMAGE_PROVENANCE_KEY: image_block(image, image_resolution),
         }
+        if poll_errors:
+            runner_metadata["poll_errors"] = poll_errors
+            runner_metadata["last_poll_error"] = last_poll_error
         if pod_name:
             runner_metadata["pod_name"] = pod_name
 
@@ -418,7 +440,10 @@ class KubernetesRunner:
             return RunnerJobResult(
                 exit_code=124, runner_status="timeout",
                 stdout=stdout_bytes, stderr=stderr_bytes,
-                runner_error=f"workload did not complete within {timeout}s",
+                runner_error=f"workload did not complete within {timeout}s" + (
+                    f" ({poll_errors} status poll(s) failed; last: {last_poll_error})"
+                    if poll_errors else ""
+                ),
                 runner_metadata=runner_metadata,
             )
 

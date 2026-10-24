@@ -156,6 +156,74 @@ class TestKubernetesRunnerSuccessPath:
         assert result.exit_code == 1
 
 
+class TestKubernetesRunnerTransientPollFailure:
+    """Review capture-runners-15: one failed ``kubectl get job`` (an API-server blip, a
+    throttled kubectl, an expired token) left the poll loop, deleted the still-running
+    Job and reported a timeout after seconds."""
+
+    def _fake(self, polls: list[object]) -> tuple[list[list[str]], object]:
+        calls: list[list[str]] = []
+        replies = iter(polls)
+
+        def run(argv: list[str], *_a: object, **_k: object) -> subprocess.CompletedProcess[bytes]:
+            argv = [str(a) for a in argv]
+            calls.append(argv)
+            if argv[1:3] == ["get", "job"]:
+                reply = next(replies)
+                if isinstance(reply, BaseException):
+                    raise reply
+                assert isinstance(reply, subprocess.CompletedProcess)
+                return reply
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        return calls, run
+
+    @staticmethod
+    def _job(status: dict[str, int], rc: int = 0) -> subprocess.CompletedProcess[bytes]:
+        body = json.dumps({"status": status}).encode() if rc == 0 else b""
+        return subprocess.CompletedProcess([], rc, body, b"Unable to connect" if rc else b"")
+
+    @pytest.mark.parametrize("blip", [
+        "rc1", "timeout", "not-json", "not-an-object",
+    ])
+    def test_a_failed_poll_is_retried_not_treated_as_a_timeout(
+        self, tmp_path: Path, blip: str
+    ) -> None:
+        failure: object = {
+            "rc1": self._job({}, rc=1),
+            "timeout": subprocess.TimeoutExpired(cmd="kubectl", timeout=10),
+            "not-json": subprocess.CompletedProcess([], 0, b"<html>", b""),
+            "not-an-object": subprocess.CompletedProcess([], 0, b"[1]", b""),
+        }[blip]
+        calls, fake = self._fake([self._job({"active": 1}), failure, self._job({"succeeded": 1})])
+        with patch("subprocess.run", side_effect=fake), patch("time.sleep"):
+            result = KubernetesRunner().run(_spec(
+                tmp_path, ["python", "agent.py"], timeout_s=600.0,
+                runner_options={"image": "agent:1", "namespace": "ci", "poll_interval_s": 0.01},
+            ))
+        assert result.runner_status == "completed", result.runner_error
+        assert result.runner_metadata["poll_errors"] == 1
+        deletes = [i for i, c in enumerate(calls) if c[1:3] == ["delete", "job"]]
+        polls = [i for i, c in enumerate(calls) if c[1:3] == ["get", "job"]]
+        assert len(polls) == 3 and all(d > polls[-1] for d in deletes)
+
+
+    def test_a_timeout_after_failed_polls_says_so(self, tmp_path: Path) -> None:
+        clock = iter([0.0, 1.0, 2.0] + [999.0] * 100)
+        calls, fake = self._fake([self._job({}, rc=1)] * 3)
+        with (
+            patch("subprocess.run", side_effect=fake), patch("time.sleep"),
+            patch("time.monotonic", side_effect=lambda: next(clock)),
+        ):
+            result = KubernetesRunner().run(_spec(
+                tmp_path, ["python", "agent.py"], timeout_s=600.0,
+                runner_options={"image": "agent:1", "namespace": "ci", "poll_interval_s": 0.01},
+            ))
+        assert result.runner_status == "timeout"
+        assert result.runner_error and "status poll(s) failed" in result.runner_error
+        assert "Unable to connect" in result.runner_metadata["last_poll_error"]
+
+
 class TestJobManifest:
     """Direct tests of the manifest builder so anti-pattern enforcement
     is verified at the JSON level without round-tripping through kubectl."""
