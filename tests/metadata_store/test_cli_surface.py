@@ -38,12 +38,14 @@ runner = CliRunner()
 @pytest.mark.parametrize(
     ("dsn", "expected"),
     [
-        ("postgresql://user:hunter2@host:5432/db", "postgresql://user:***@host:5432/db"),
-        # No password to redact.
-        ("postgresql://user@host/db", "postgresql://user@host/db"),
-        # Not a URL at all — a libpq keyword string passes through untouched.
-        ("host=localhost dbname=nova", "host=localhost dbname=nova"),
-        ("", ""),
+        # Display is host/dbname only (review storage-backup-10: the old
+        # user:***@ form leaked a keyword DSN's password and a URL password's
+        # tail after an unescaped "@").
+        ("postgresql://user:hunter2@host:5432/db", "host/db"),
+        ("postgresql://user@host/db", "host/db"),
+        ("host=localhost dbname=nova", "localhost/nova"),
+        ("host=localhost user=nova password=hunter2 dbname=nova", "localhost/nova"),
+        ("", "unknown/unknown"),
     ],
 )
 def test_redact_dsn(dsn: str, expected: str) -> None:

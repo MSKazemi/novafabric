@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric import _paths as _nf_paths
+from novafabric._dsn import redact_dsn
 from novafabric.storage._migration import MigrationSummary, run_migration
 
 console = Console()
@@ -122,20 +123,8 @@ def migrate_to_postgres_cmd(
 
 
 def _redact_dsn(dsn: str) -> str:
-    """Replace the password in a DSN with ``***`` for display."""
-    # Simple regex-free redaction: postgresql://user:pass@host/db
-    if "://" in dsn and "@" in dsn:
-        scheme_rest = dsn.split("://", 1)
-        if len(scheme_rest) == 2:
-            user_pass, rest = (
-                scheme_rest[1].split("@", 1)
-                if "@" in scheme_rest[1]
-                else (scheme_rest[1], "")
-            )
-            if ":" in user_pass:
-                user, _ = user_pass.split(":", 1)
-                return f"{scheme_rest[0]}://{user}:***@{rest}"
-    return dsn
+    """``host/dbname`` for display — never a user or password (review storage-backup-10)."""
+    return redact_dsn(dsn)
 
 
 def _print_summary(summary: MigrationSummary) -> None:

@@ -177,13 +177,11 @@ def test_redact_dsn_with_password() -> None:
 
     result = _redact_dsn("postgresql://user:secret@host:5432/db")
     assert "secret" not in result
-    assert "***" in result
-    assert "user" in result
+    assert result == "host/db"  # host/dbname only (review storage-backup-10)
 
 
 def test_redact_dsn_fallback_no_url() -> None:
-    """_redact_dsn returns the original string when it is not a URL."""
+    """_redact_dsn never echoes an unparseable string — it may hold a password."""
     from novafabric.metadata_store.cli import _redact_dsn
 
-    raw = "not-a-real-dsn"
-    assert _redact_dsn(raw) == raw
+    assert _redact_dsn("not-a-real-dsn") == "unknown/unknown"

@@ -41,10 +41,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Callable, Optional
-from urllib.parse import urlsplit
 
 from novafabric import __version__ as _nova_version
 from novafabric._capsule_fs import CapsuleLinkError
+from novafabric._dsn import libpq_args, redact_dsn
 from novafabric._paths import capsule_dir_for_home
 from novafabric.backup.coverage import (
     CAPSULE_DIR_ARC,
@@ -488,32 +488,8 @@ def _dsn_from_env() -> Optional[str]:
     return None
 
 
-def _redact_dsn(dsn: str) -> str:
-    """Reduce a DSN to ``host/dbname`` — never credentials, never the raw string.
-
-    Handles URL DSNs (``postgresql://user:pass@host:5432/db``) and keyword DSNs
-    (``host=… dbname=…``). Anything unparseable degrades to ``"unknown"`` parts
-    rather than ever echoing the input.
-    """
-    host = "unknown"
-    dbname = "unknown"
-    if "://" in dsn:
-        try:
-            parts = urlsplit(dsn)
-            host = parts.hostname or "unknown"
-            dbname = parts.path.lstrip("/") or "unknown"
-        except ValueError:
-            pass
-    else:
-        for token in dsn.split():
-            key, sep, value = token.partition("=")
-            if not sep:
-                continue
-            if key == "host":
-                host = value or host
-            elif key == "dbname":
-                dbname = value or dbname
-    return f"{host}/{dbname}"
+#: Kept under its old name for the restore module.
+_redact_dsn = redact_dsn
 
 
 def _run_pg_dump(dsn: str, dump_path: Path) -> None:
@@ -530,10 +506,17 @@ def _run_pg_dump(dsn: str, dump_path: Path) -> None:
             "client tools (Debian/Ubuntu: `apt install postgresql-client`; "
             "macOS: `brew install libpq`)"
         )
+    # The password goes in the child's environment, never its argv, which any
+    # local user can read for the whole dump (review storage-backup-09).
+    try:
+        dbname, pg_env = libpq_args(dsn)
+    except ValueError as exc:
+        raise BackupCreateError(f"the database DSN cannot be parsed: {exc}") from None
     proc = subprocess.run(  # noqa: S603 — fixed binary, no shell
-        [pg_dump, "--format=custom", "--file", str(dump_path), "--dbname", dsn],
+        [pg_dump, "--format=custom", "--file", str(dump_path), "--dbname", dbname],
         capture_output=True,
         text=True,
+        env={**os.environ, **pg_env},
     )
     if proc.returncode != 0:
         # Scrub the DSN from anything we surface: it may carry credentials.

@@ -50,6 +50,7 @@ from typing import IO, TYPE_CHECKING, Optional
 if TYPE_CHECKING:  # pragma: no cover
     from novafabric.object_capsule_store.worm.base import WormAdapter
 
+from novafabric._dsn import libpq_args
 from novafabric._safe_path import fsync_dir
 from novafabric.backup.coverage import (
     CAPSULE_DIR_ARC,
@@ -869,6 +870,10 @@ def _run_pg_restore(
                 )
             with fh, open(dump_path, "wb") as out:
                 shutil.copyfileobj(fh, out)
+        try:
+            dbname, pg_env = libpq_args(dsn)  # the password never reaches argv
+        except ValueError as exc:
+            return RestoreStepResult(name=name, ok=False, detail=f"unparseable DSN: {exc}")
         proc = subprocess.run(  # noqa: S603 — fixed binary, no shell
             [
                 pg_restore,
@@ -878,11 +883,12 @@ def _run_pg_restore(
                 "--no-owner",
                 "--no-privileges",
                 "--dbname",
-                dsn,
+                dbname,
                 str(dump_path),
             ],
             capture_output=True,
             text=True,
+            env={**os.environ, **pg_env},
         )
     if proc.returncode != 0:
         detail = (proc.stderr or "no stderr").replace(dsn, "<dsn redacted>").strip()

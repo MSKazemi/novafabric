@@ -25,6 +25,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric import _paths as _nf_paths
+from novafabric._dsn import redact_dsn
 from novafabric.cli._extras import rich_install_command
 
 console = Console()
@@ -703,12 +704,5 @@ def _print_summary_table(summary: dict[str, dict[str, int]]) -> None:
 
 
 def _redact_dsn(dsn: str) -> str:
-    """Replace password in DSN with *** for display."""
-    if "://" in dsn and "@" in dsn:
-        scheme, rest = dsn.split("://", 1)
-        if "@" in rest:
-            user_pass, host_part = rest.split("@", 1)
-            if ":" in user_pass:
-                user, _ = user_pass.split(":", 1)
-                return f"{scheme}://{user}:***@{host_part}"
-    return dsn
+    """``host/dbname`` for display — never a user or password (review storage-backup-10)."""
+    return redact_dsn(dsn)
