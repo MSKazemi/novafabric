@@ -213,6 +213,17 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 - `nova annotate confirm` refuses (exit 1) a checker identity with no keyring key; create it once with
   `nova promote keygen --identity NAME`.
+- `nova mcp scan` / `risk-report` exit `2` for a document with no `tools` list (and read a saved `tools/list`
+  response's `result.tools`); they reported `LOW, 0 findings` and exited `0` for a manifest they did not scan.
+- `nova pii erase` names in `capsule_ids_affected` only the capsules whose redaction manifest carries the subject's
+  HMAC (none without `NOVA_PII_PEPPER`), and prints status lines to stderr so stdout is the receipt.
+- `nova subject-proof --key` exits `1` and writes nothing when the key cannot sign.
+- `nova migrate-to-postgres` reads the registry at `NOVAFABRIC_DB_PATH` by default.
+- `nova suggest-register --auto` exits `1` when a registration failed.
+- `nova mcp-proxy` / `nova api-proxy` treat `NOVAFABRIC_CAPSULE_DIR` as the capsule store root (a fresh capsule
+  is created under it) unless `NOVAFABRIC_SPAN_ID` is also set, as inside a `nova capture` child.
+- The SLSA-for-ML `eval-verdict` byproduct is the digest of the asset's recorded eval results, and absent when it has
+  none.
 - `LLMJudge` has no default endpoint: pass `api_base=` or set `NOVA_JUDGE_ENDPOINT` (it defaulted to
   `https://api.openai.com/v1`). A one-item `AggregatedJudgment` carries `inter_judge_agreement: null` and the new
   `raw_agreement`; the agreement gate uses it when there is no kappa.
@@ -334,6 +345,8 @@ longer forwards the submitting shell's environment (ADR-0270).
     a query error (exit 2). The query cache no longer evicts every other capsule directory's rows on each query;
   - the KG CRDT write-ahead log was confirmed before the store write and a refused delta was dropped; it is now
     confirmed after the write and a refused delta is re-queued (at-least-once);
+  - `nova prompt get` / `diff` / `history` rendered prompt text as Rich markup: `[tool_a]` vanished, a diff of
+    two versions differing in brackets showed identical lines, and `[/end]` raised a traceback;
   - the CrewAI, AutoGen and DSPy wrappers changed the framework's call signature (`crew.kickoff({...})`,
     `initiate_chat(r, True)` raised `TypeError`), `wrap_crew` failed on every real (pydantic) crew, and
     `kickoff_async`, `a_initiate_chat` and `aforward` were not captured; the three now run on the shared adapter core;
