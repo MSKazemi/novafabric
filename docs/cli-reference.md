@@ -10675,6 +10675,11 @@ truncation even after a host compromise. Exit codes (ADR-0094): `0` ok, `3` tamp
 (with `--observed-epoch`), `8` Merkle inclusion failure, `9` external-anchor mismatch,
 `10` no checkpoint.
 
+**Without `--pubkey` the signature is not checked.** The chains, epoch and anchor are checked
+against the checkpoint, but a ledger edited and then re-anchored with any key passes that, so
+exit `0` prints `✓ ledger structure consistent — signature NOT VERIFIED`; only a verify with
+`--pubkey` prints `✓ ledger OK`. Releases up to v0.107.0 printed `✓ ledger OK` either way.
+
 Exit `8` applies to a checkpoint that carries a `merkle` block (one appended to a NovaSeal
 Merkle log through the Python API, `sign_checkpoint(..., merkle_log=...)`): its `leaf_hash`
 must be the hash of this checkpoint's signed body, its root is verified only together with
@@ -10695,7 +10700,7 @@ the log. Either failure exits `8`; a `--merkle-db` that does not exist exits `2`
 inclusion in the log you supplied, not that others see the same log (witnessing, ADR-0097).
 
 ```bash
-nova ledger verify ./my-capsule
+nova ledger verify ./my-capsule --pubkey k.pub
 nova ledger verify ./my-capsule --pubkey k.pub --merkle-db ~/.novafabric/novaseal-merkle.db
 ```
 

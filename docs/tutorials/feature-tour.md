@@ -1302,6 +1302,7 @@ key `nova init` generated:
 
 ```bash
 KEY=${NOVAFABRIC_HOME:-$HOME/.novafabric}/keys/signing_key.pem
+PUB=${KEY%.pem}.pub.pem   # the public half, written beside the key
 
 nova ledger anchor $BASE --key $KEY
 # ✓ Anchored 7 stream(s); checkpoint 01KXK4G3… → /tmp/nova-tour/01KXK4AB…/.ledger/checkpoint.json
@@ -1325,15 +1326,15 @@ detects content edits, reordering, and truncation with a named exit-code taxonom
 try two tampers and watch each get the right verdict:
 
 ```bash
-nova ledger verify $BASE                            # ✓ ledger OK              (exit 0)
+nova ledger verify $BASE --pubkey $PUB             # ✓ ledger OK              (exit 0)
 
 sed -i 's/Paris/London/' $BASE/tool-calls.jsonl     # content edit
-nova ledger verify $BASE
+nova ledger verify $BASE --pubkey $PUB
 # ✗ TAMPER (exit 3)
 #   - stream tool-calls: record-digest multiset diverges from sealed chain (content edit)
 
 # …restore, then drop the last record instead (truncation)
-nova ledger verify $BASE
+nova ledger verify $BASE --pubkey $PUB
 # ✗ TRUNCATION (exit 5)
 #   - stream tool-calls: record count 2 != sealed 3
 ```
@@ -1341,6 +1342,8 @@ nova ledger verify $BASE
 Full taxonomy: `3` tamper, `4` reorder, `5` truncation, `6` bad signature, `7` epoch
 rollback, `8` Merkle inclusion failure (only for a checkpoint appended to a NovaSeal log,
 which `nova ledger anchor` does not do), `9` anchor mismatch, `10` no checkpoint. Restore the original stream and verification returns to `✓ ledger OK`.
+Without `--pubkey` the check is structural only and prints `signature NOT VERIFIED`: a stream
+edited and then re-anchored with *any* key passes it, so always verify with the signer's key.
 
 ### Evidence-grounded safety case (`nova safety-case`, ADR-0095)
 

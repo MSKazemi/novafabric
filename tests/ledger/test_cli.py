@@ -168,3 +168,38 @@ def test_help_smoke(verb: str) -> None:
     res = runner.invoke(ledger_app, [verb, "--help"])
     assert res.exit_code == 0
     assert verb in res.output
+
+
+def test_verify_without_pubkey_never_reports_an_unqualified_ok(tmp_path: Path) -> None:
+    """Review trust-evidence-10: an edited record, re-anchored with ANY key, passed a
+    no-``--pubkey`` verify as "✓ ledger OK" — the signature was never checked."""
+    capsule = _capsule(tmp_path)
+    priv, pub = generate_keypair(tmp_path / "owner")
+    anchor = ["anchor", str(capsule), "--node-id", "n1", "--epoch", "0"]
+    assert runner.invoke(ledger_app, [*anchor, "--key", str(priv)]).exit_code == 0
+    lines = (capsule / "model-calls.jsonl").read_text().splitlines()
+    lines[0] = json.dumps({"model": "m", "n": 999})
+    (capsule / "model-calls.jsonl").write_text("\n".join(lines) + "\n")
+    forger, _ = generate_keypair(tmp_path / "forger")
+    assert runner.invoke(ledger_app, [*anchor, "--key", str(forger)]).exit_code == 0
+
+    res = runner.invoke(ledger_app, ["verify", str(capsule)])
+    assert res.exit_code == 0, res.output  # structural check passes, as documented
+    assert "ledger OK" not in res.output
+    assert "signature NOT VERIFIED" in res.output
+    # With the owner's key the forgery is caught.
+    res = runner.invoke(ledger_app, ["verify", str(capsule), "--pubkey", str(pub)])
+    assert res.exit_code == 6, res.output
+
+
+def test_verify_with_pubkey_says_the_signature_was_checked(tmp_path: Path) -> None:
+    capsule = _capsule(tmp_path)
+    priv, pub = generate_keypair(tmp_path / "keys")
+    runner.invoke(
+        ledger_app,
+        ["anchor", str(capsule), "--key", str(priv), "--node-id", "n1", "--epoch", "0"],
+    )
+    res = runner.invoke(ledger_app, ["verify", str(capsule), "--pubkey", str(pub)])
+    assert res.exit_code == 0, res.output
+    assert "ledger OK" in res.output
+    assert "signature verified" in res.output

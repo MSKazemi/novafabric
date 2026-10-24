@@ -201,8 +201,19 @@ def ledger_verify_cmd(
         if merkle_log is not None:
             merkle_log.close()
     code = exit_code_for(verdict)
-    if verdict.ok:
+    if verdict.ok and verify_fn is not None:
         console.print("[green]✓ ledger OK[/green]")
+        console.print("  checkpoint signature verified (--pubkey)")
+        console.print(f"  {_MERKLE_INCLUSION_LINES[verdict.merkle_inclusion]}")
+    elif verdict.ok:
+        # Review trust-evidence-10: without the key the check is structural, and a
+        # ledger edited then re-anchored with ANY key passes it. Never print an
+        # unqualified OK for that; exit 0 stays (the documented structural meaning).
+        console.print("[yellow]✓ ledger structure consistent — signature NOT VERIFIED[/yellow]")
+        console.print(
+            "  no --pubkey: chains, epoch and anchor are self-consistent, but an edited "
+            "ledger re-anchored with any key also passes; verify with the signer's key"
+        )
         console.print(f"  {_MERKLE_INCLUSION_LINES[verdict.merkle_inclusion]}")
     else:
         console.print(f"[red]✗ {verdict.exit.name}[/red] (exit {code})")
