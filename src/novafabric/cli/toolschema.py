@@ -15,6 +15,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 app = typer.Typer(
     name="toolschema",
@@ -85,7 +86,13 @@ def impact(
         f"of {report.checked} checked (evidence, not a gate)"
     )
     for b in report.broken_run_ids:
-        console.print(f"  {b.run_id}: {', '.join(b.failing_paths)}")
+        console.print(f"  {escape(b.run_id)}: {escape(', '.join(b.failing_paths))}")
+    if report.unresolved_run_ids:
+        console.print(
+            f"[yellow]{len(report.unresolved_run_ids)} run(s) could not be checked[/yellow] "
+            "(the new schema has a $ref they reach that does not resolve): "
+            + ", ".join(escape(r) for r in report.unresolved_run_ids)
+        )
 
     raise typer.Exit(0)
 

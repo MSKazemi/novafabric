@@ -99,3 +99,26 @@ def test_malformed_calls_exits_two(tmp_path):
         app, ["toolschema", "impact", str(calls), "--new-schema", str(schema)]
     )
     assert result.exit_code == 2
+
+
+def test_impact_names_the_runs_it_could_not_check(tmp_path: Path) -> None:
+    schema = tmp_path / "s.json"
+    schema.write_text(json.dumps({"type": "object", "properties": {"opt": {"$ref": "#/$defs/x"}}}))
+    doc = tmp_path / "calls.json"
+    doc.write_text(json.dumps({"tool_id": "t", "tool_calls": [
+        {"run_id": "r-ok", "arguments": {}},
+        {"run_id": "r-ref", "arguments": {"opt": 1}},
+    ]}))
+    result = runner.invoke(app, ["toolschema", "impact", str(doc), "--new-schema", str(schema)])
+    assert result.exit_code == 0, result.output
+    assert "1 run(s) could not be checked" in result.output
+    assert "r-ref" in result.output and "of 1 checked" in result.output
+
+
+def test_impact_with_an_unparseable_schema_exits_2(tmp_path: Path) -> None:
+    schema = tmp_path / "s.json"
+    schema.write_text("{ not json")
+    doc = tmp_path / "calls.json"
+    doc.write_text('{"tool_calls": [{"run_id": "r", "arguments": {}}]}')
+    result = runner.invoke(app, ["toolschema", "impact", str(doc), "--new-schema", str(schema)])
+    assert result.exit_code == 2, result.output

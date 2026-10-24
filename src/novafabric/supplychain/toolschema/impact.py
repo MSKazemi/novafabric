@@ -18,10 +18,10 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Reuse the ADR-0128 validator core — never reimplement it (ADR-0148 §D2, tested by import).
-from novafabric.capture.schema_validation import _check_target
+from novafabric.capture.schema_validation import _check_target, _load_schema
 
 
 class BrokenRun(BaseModel):
@@ -33,7 +33,10 @@ class SchemaImpactReport(BaseModel):
     tool_id: str
     new_schema_digest: str  # sha256 of the new schema file
     broken_run_ids: list[BrokenRun]
-    checked: int  # how many historical records were re-validated
+    checked: int  # how many historical records got a verdict under the new schema
+    # Records the new schema could not check (an unresolved $ref the payload
+    # reaches): neither broken nor conforming, and never counted in `checked`.
+    unresolved_run_ids: list[str] = Field(default_factory=list)
     # Intentionally NO verdict/passed/gate/promote field — it reports impact, it does not gate.
 
 
@@ -51,25 +54,35 @@ def compute_schema_impact(
     """Re-validate each historical tool-call's ``target`` payload against the new schema.
 
     Only records that carry the ``target`` key (``arguments`` by default) are checked. A record
-    whose payload violates the new schema is listed in ``broken_run_ids`` with its failing paths.
-    Raises ``ValueError`` if the new schema file is missing/unreadable.
+    whose payload violates the new schema is listed in ``broken_run_ids`` with its failing paths;
+    one the schema could not check is listed in ``unresolved_run_ids`` and not counted as checked.
+    Raises ``ValueError`` if the new schema file is missing, unreadable or not a JSON Schema.
     """
     if not new_schema_path.is_file():
         raise ValueError(f"new schema file not found: {new_schema_path}")
     digest = _schema_digest(new_schema_path)
     ref = str(new_schema_path.resolve())
     base_dir = new_schema_path.resolve().parent
+    # A schema that does not load checks nothing; "0 broken" would be a false
+    # all-clear (review trust-evidence-11).
+    schema, problem = _load_schema(ref, base_dir)
+    if schema is None:
+        raise ValueError(f"new schema could not be loaded: {problem}")
 
     broken: list[BrokenRun] = []
+    unresolved: list[str] = []
     checked = 0
     for record in tool_calls:
         if target not in record:
             continue
-        checked += 1
         errors: list[dict[str, object]] = []
         result = _check_target(record.get(target), ref, target, base_dir, errors)
-        if result is False:  # violations recorded (None = schema unresolved, True = conforms)
-            run_id = str(record.get("run_id", ""))
+        run_id = str(record.get("run_id", ""))
+        if result is None:  # schema unresolved for this payload: no verdict
+            unresolved.append(run_id)
+            continue
+        checked += 1
+        if result is False:  # violations recorded
             failing = sorted({str(e.get("path", "$")) for e in errors})
             broken.append(BrokenRun(run_id=run_id, failing_paths=failing))
 
@@ -78,4 +91,5 @@ def compute_schema_impact(
         new_schema_digest=digest,
         broken_run_ids=broken,
         checked=checked,
+        unresolved_run_ids=unresolved,
     )

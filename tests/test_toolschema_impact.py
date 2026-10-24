@@ -100,3 +100,31 @@ def test_missing_schema_file_raises(tmp_path):
 def test_report_has_no_verdict_or_gate_field():
     for forbidden in ("verdict", "passed", "gate", "promote", "approved"):
         assert forbidden not in SchemaImpactReport.model_fields
+
+
+# review trust-evidence-11: an unresolved check counted as `checked` and was never
+# reported, so an unparseable schema gave "checked: 2, broken: []" — nothing
+# breaks, under a schema nobody validated against.
+
+
+def test_an_unparseable_new_schema_is_refused(tmp_path: Path) -> None:
+    bad = tmp_path / "new_schema.json"
+    bad.write_text("{ not json")
+    with pytest.raises(ValueError, match="could not be loaded"):
+        compute_schema_impact(tool_id="t", new_schema_path=bad, tool_calls=_TOOL_CALLS)
+
+
+def test_a_run_the_schema_could_not_check_is_reported_not_counted(tmp_path: Path) -> None:
+    schema = tmp_path / "new_schema.json"
+    schema.write_text(json.dumps({
+        "type": "object",
+        "properties": {"opt": {"$ref": "#/$defs/missing"}},
+    }))
+    calls = [
+        {"run_id": "plain", "arguments": {}},
+        {"run_id": "reaches-the-ref", "arguments": {"opt": 1}},
+    ]
+    report = compute_schema_impact(tool_id="t", new_schema_path=schema, tool_calls=calls)
+    assert report.checked == 1
+    assert report.unresolved_run_ids == ["reaches-the-ref"]
+    assert report.broken_run_ids == []

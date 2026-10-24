@@ -2681,7 +2681,12 @@ Options:
 - `--new-schema PATH` (required) — the new JSON Schema to test past runs against
 - `--json` — emit the `schema_impact` report as JSON
 
-Exit codes: `0` (report rendered), `2` (missing or malformed input).
+A run whose arguments reach a `$ref` the new schema cannot resolve has no verdict: it is
+listed as could-not-be-checked (`unresolved_run_ids` in `--json`) and not counted in
+`checked`.
+
+Exit codes: `0` (report rendered), `2` (missing or malformed input, or a new schema that
+does not load as JSON Schema).
 
 ---
 
