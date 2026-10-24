@@ -40,38 +40,81 @@ function suggestPairs(runs: RunSummary[]): Array<[RunSummary, RunSummary]> {
   return pairs;
 }
 
-function adaptDiffReport(raw: unknown): DiffReport {
-  const wrapper = (raw as { report?: Record<string, unknown> }) ?? {};
-  const r = (wrapper.report ?? raw) as Record<string, unknown>;
+type RawModelPair = {
+  changed?: boolean; added?: boolean; removed?: boolean;
+  request_changed?: boolean; response_changed?: boolean; provider_changed?: boolean;
+  params_changed?: boolean; changed_params?: string[];
+  model_call_id_a?: string; model_call_id_b?: string;
+};
+type ModelChange = { field: string; before: string; after: string; severity: string };
+
+/** What changed in one aligned model-call pair, from the server's booleans (no content). */
+function modelPairChanges(p: RawModelPair): ModelChange[] {
+  const mark = (field: string, severity = 'major'): ModelChange =>
+    ({ field, before: 'run A', after: 'run B', severity });
+  if (p.added) return [{ field: 'call added', before: '—', after: 'present in run B', severity: 'major' }];
+  if (p.removed) return [{ field: 'call removed', before: 'present in run A', after: '—', severity: 'major' }];
+  const out: ModelChange[] = [];
+  if (p.provider_changed) out.push(mark('provider'));
+  if (p.request_changed && !p.provider_changed && !p.params_changed) out.push(mark('request'));
+  for (const name of p.changed_params ?? []) out.push(mark(`param ${name}`, 'minor'));
+  if (p.response_changed) out.push(mark('response'));
+  if (out.length === 0 && p.changed) out.push(mark('call'));
+  return out;
+}
+
+/**
+ * Shape the `/api/diff` response for the diff view.
+ *
+ * Counts come from the server's canonical `summary` / `sections` — the same verdict
+ * `nova diff --assert-no-regressions` uses — when present. Model-call pairs carry
+ * booleans (`changed`, `added`, `removed`, `request_changed`, `response_changed`,
+ * …), never a `changes` array: reading one reported every model-call change, and
+ * every added or removed call, as nothing (review frontend-dashboard-02).
+ */
+export function adaptDiffReport(raw: unknown): DiffReport {
+  const wrapper = (raw as Record<string, unknown>) ?? {};
+  const r = ((wrapper.report as Record<string, unknown> | undefined) ?? wrapper) as Record<string, unknown>;
   const envChanges = (r.env_changes as Array<{ field: string; before: unknown; after: unknown; severity?: string }>) ?? [];
-  const modelPairs = (r.model_call_pairs as Array<{ index?: number; a_call_id?: string; b_call_id?: string; changes?: Array<{ field: string; before: string; after: string; severity?: string }> }>) ?? [];
+  const modelPairs = (r.model_call_pairs as RawModelPair[]) ?? [];
   type RawToolPair = { changed?: boolean; added?: boolean; removed?: boolean; result_changed?: boolean; tool_name?: string; tool_call_id_a?: string; tool_call_id_b?: string };
   const toolPairs = (r.tool_call_pairs as RawToolPair[]) ?? [];
   const outChanges = (r.output_changes as Array<{ path: string; before_hash: string | null; after_hash: string | null; severity?: string }>) ?? [];
-  const modelChanged = modelPairs.filter(p => (p.changes?.length ?? 0) > 0).length;
-  const toolChanged = toolPairs.filter(p => p.changed || p.added || p.removed).length;
+
+  const modelChanged = modelPairs.filter(p => p.changed).length;
+  const modelAdded = modelPairs.filter(p => p.added).length;
+  const modelRemoved = modelPairs.filter(p => p.removed).length;
+  const toolChanged = toolPairs.filter(p => p.changed).length;
   const toolAdded = toolPairs.filter(p => p.added).length;
   const toolRemoved = toolPairs.filter(p => p.removed).length;
-  const summaryChanged = envChanges.length + modelChanged + toolChanged + outChanges.length;
-  const summaryAdded = toolAdded;
-  const summaryRemoved = toolRemoved;
+  const derived = {
+    changed: envChanges.length + modelChanged + toolChanged + outChanges.length,
+    added: modelAdded + toolAdded,
+    removed: modelRemoved + toolRemoved,
+  };
+  const canonical = wrapper.summary as { changed?: number; added?: number; removed?: number } | undefined;
+  const summary = canonical && typeof canonical.changed === 'number'
+    ? { changed: canonical.changed, added: canonical.added ?? 0, removed: canonical.removed ?? 0 }
+    : derived;
+  const sectionCounts = ((wrapper.sections as Record<string, Record<string, number>> | undefined) ?? {}).model_calls;
+
   return {
     schema_version: '0.1.0',
-    run_a_id: String(r.run_a_id ?? ''),
-    run_b_id: String(r.run_b_id ?? ''),
-    summary: { changed: summaryChanged, added: summaryAdded, removed: summaryRemoved },
+    run_a_id: String(r.run_a_id ?? wrapper.run_a_id ?? ''),
+    run_b_id: String(r.run_b_id ?? wrapper.run_b_id ?? ''),
+    summary,
     sections: {
       environment: { changes: envChanges.map(c => ({ field: c.field, before: c.before, after: c.after, severity: c.severity ?? 'minor' })) },
       model_calls: {
-        aligned: modelPairs.length,
-        changed: modelChanged,
-        added: 0,
-        removed: 0,
+        aligned: sectionCounts?.aligned ?? modelPairs.filter(p => !p.added && !p.removed).length,
+        changed: sectionCounts?.changed ?? modelChanged,
+        added: sectionCounts?.added ?? modelAdded,
+        removed: sectionCounts?.removed ?? modelRemoved,
         pairs: modelPairs.map((p, i) => ({
-          index: p.index ?? i,
-          a_call_id: p.a_call_id ?? '',
-          b_call_id: p.b_call_id ?? '',
-          changes: (p.changes ?? []).map(c => ({ ...c, severity: c.severity ?? 'minor' })),
+          index: i,
+          a_call_id: p.model_call_id_a ?? '',
+          b_call_id: p.model_call_id_b ?? '',
+          changes: modelPairChanges(p),
         })),
       },
       tool_calls: {
