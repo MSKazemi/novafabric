@@ -340,9 +340,10 @@ very large dumps (`--jobs` parallel restore is incompatible with
 --profile manifest --backend s3` records, per (tenant, run), the chain head
 version + head-commit hash (hash linkage pins the whole chain — the
 countermeasure for chain logs not being WORM-locked), the newest checkpoint,
-and a secret-free backend fingerprint. Create **refuses while the local WAL
-has pending un-chained uploads** (`--allow-pending-wal` overrides and records
-the gap). Restore verifies every pinned head as an *ancestor* of the live
+and a secret-free backend fingerprint. Given the client's WAL (`--wal-db PATH`),
+create **refuses while it has pending or dead-lettered un-chained uploads**
+(`--allow-pending-wal` overrides and records the gap); without `--wal-db` the WAL
+is not checked and the command prints so. Restore verifies every pinned head as an *ancestor* of the live
 chain, rebuilds the metadata DB from the chain (ADR-0175 path), and exits
 **2** when the bucket is unreachable. Note there is no global point-in-time
 cut across runs — each chain is individually consistent (append-only makes

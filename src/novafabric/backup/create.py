@@ -579,17 +579,29 @@ def _collect_object_store(
         backend_tag = "local"
 
     wal_state = WalState()
-    if wal_db_path is not None and Path(wal_db_path).exists():
+    if wal_db_path is not None:
+        if not Path(wal_db_path).is_file():
+            # A named WAL that is not there is a typo, not "no pending uploads".
+            raise BackupCreateError(f"there is no local WAL at {wal_db_path} (--wal-db)")
         from novafabric.object_capsule_store.local_wal import LocalWal
 
-        pending = LocalWal(wal_db_path).pending_count()
-        wal_state = WalState(present=True, pending=pending)
+        wal = LocalWal(wal_db_path)
+        pending, poisoned = wal.pending_count(), wal.poisoned_count()
+        wal_state = WalState(present=True, pending=pending, poisoned=poisoned)
         if pending and not allow_pending_wal:
             raise BackupCreateError(
                 f"Local WAL at {wal_db_path} has {pending} pending un-chained "
                 "upload(s) — a manifest-only set taken now would silently omit "
                 "them. Drain the WAL first, or pass --allow-pending-wal to "
                 "record the gap as evidence and proceed."
+            )
+        if poisoned and not allow_pending_wal:
+            # Review storage-backup-07: dead-lettered rows will never be chained,
+            # so their capsules are in no manifest-only set at all.
+            raise BackupCreateError(
+                f"Local WAL at {wal_db_path} has {poisoned} dead-lettered upload(s) "
+                "that will never be chained — a manifest-only set cannot cover them. "
+                "Resolve them, or pass --allow-pending-wal to record the gap and proceed."
             )
 
     fingerprint = BackendFingerprint(
@@ -621,6 +633,8 @@ def _collect_object_store(
     )
     if wal_state.pending:
         detail += f"; WARNING: {wal_state.pending} WAL upload(s) not yet chained"
+    if wal_state.poisoned:
+        detail += f"; WARNING: {wal_state.poisoned} dead-lettered WAL upload(s) never chained"
     coverage_row = CoverageEntry(component="object-store", status="included", detail=detail)
     return member, coverage_row, (
         OBJECT_STORE_MANIFEST_NAME,

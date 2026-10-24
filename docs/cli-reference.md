@@ -8066,7 +8066,8 @@ Options:
 - `--include-keys` — ALSO pack the signing keyring and `novaseal.yaml` + its key/cert PEMs (ADR-0216 D4). Default off; a set created with this flag requires key-custody care
 - `--backend TEXT` — object-store backend for `--profile manifest`: `local | s3 | minio | ceph_rgw | azure_blob | gcs` (env: `NOVA_OCS_BACKEND`)
 - `--tenant TEXT` — scope the manifest listing to these tenant(s) (repeatable)
-- `--allow-pending-wal` — proceed with `--profile manifest` even when the local WAL has pending un-chained uploads (the gap is recorded in the listing); default: refuse
+- `--wal-db PATH` — `--profile manifest`: the object-store client's local WAL database to check. Pending **and dead-lettered** uploads in it are in no chain, so the set refuses them; a path that does not exist is refused. Without it the WAL is **not** checked and the command says so (releases up to v0.107.0 never checked it from the CLI at all: the refusal could not fire)
+- `--allow-pending-wal` — proceed with `--profile manifest` even when the local WAL has pending or dead-lettered un-chained uploads (the gap is recorded in the listing); default: refuse
 - `--deep` — `--profile manifest`: fully verify every chain at create time, not just pin the heads
 
 Exit codes: `0` (set created), `1` (backup error).

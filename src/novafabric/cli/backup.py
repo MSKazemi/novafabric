@@ -88,9 +88,21 @@ def create(
         typer.Option(
             "--allow-pending-wal",
             help="Proceed with --profile manifest even when the local WAL has "
-            "pending un-chained uploads (the gap is recorded in the listing).",
+            "pending or dead-lettered un-chained uploads (the gap is recorded in "
+            "the listing).",
         ),
     ] = False,
+    wal_db: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--wal-db",
+            help="--profile manifest: the object-store client's local WAL database. "
+            "Uploads still in it (pending or dead-lettered) are in no chain yet, so "
+            "the set refuses them unless --allow-pending-wal. Without it the WAL "
+            "is not checked, and the command says so.",
+            show_default=False,
+        ),
+    ] = None,
     deep: Annotated[
         bool,
         typer.Option(
@@ -165,6 +177,7 @@ def create(
             tenants=tenant,
             allow_pending_wal=allow_pending_wal,
             deep=deep,
+            wal_db_path=wal_db,
         )
     except BackupCreateError as exc:
         err_console.print(f"[red]✗[/red] {exc}")
@@ -188,6 +201,11 @@ def create(
     console.print(f"  profile: {manifest.profile}")
     console.print(f"  members: {len(manifest.members)}")
     console.print(f"  signing: {sig_line}")
+    if profile == "manifest" and wal_db is None:
+        console.print(
+            "  [yellow]![/yellow] the local WAL was not checked — uploads not yet "
+            "chained would be missing from this set; pass --wal-db to check it"
+        )
     if manifest.coverage:
         console.print("  coverage:")
         for entry in manifest.coverage:

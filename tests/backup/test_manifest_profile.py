@@ -239,6 +239,68 @@ def test_wal_guard_refuses_pending_uploads(
 
 
 @pytest.mark.usefixtures("_no_signing")
+def test_dead_lettered_uploads_refuse_the_set_and_are_recorded(
+    home: Path, seeded_adapter: InMemoryWormAdapter, tmp_path: Path
+) -> None:
+    """Review storage-backup-07: poisoned (dead-lettered) WAL rows were never read, so
+    uploads that will never be chained dropped out of the backup without a trace."""
+    from novafabric.object_capsule_store.local_wal import LocalWal
+
+    wal_db = tmp_path / "wal.db"
+    wal = LocalWal(wal_db)
+    wal.enqueue(
+        capsule_uri=f"capsules/tenant-a/{FAKE_SHA[:4]}/{FAKE_SHA}/data.zst",
+        capsule_sha256=FAKE_SHA, tenant="tenant-a", run_id="run-9",
+    )
+    ((row_id, _entry),) = wal.pending_entries()
+    wal.mark_poisoned(row_id)
+    with pytest.raises(BackupCreateError, match="dead-lettered"):
+        create_backup(
+            tmp_path / "m.tar.gz", home=home, profile="manifest",
+            adapter=seeded_adapter, wal_db_path=wal_db,
+        )
+    result = create_backup(
+        tmp_path / "m2.tar.gz", home=home, profile="manifest",
+        adapter=seeded_adapter, wal_db_path=wal_db, allow_pending_wal=True,
+    )
+    row = next(c for c in result.manifest.coverage if c.component == "object-store")
+    assert "1 dead-lettered WAL upload(s)" in (row.detail or "")
+
+
+@pytest.mark.usefixtures("_no_signing")
+def test_a_wal_path_that_does_not_exist_is_refused(
+    home: Path, seeded_adapter: InMemoryWormAdapter, tmp_path: Path
+) -> None:
+    with pytest.raises(BackupCreateError, match="no local WAL"):
+        create_backup(
+            tmp_path / "m.tar.gz", home=home, profile="manifest",
+            adapter=seeded_adapter, wal_db_path=tmp_path / "typo.db",
+        )
+
+
+def test_the_cli_passes_the_wal_path_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI never passed wal_db_path, so the refusal above could never fire."""
+    from typer.testing import CliRunner
+
+    from novafabric.backup import create as create_mod
+    from novafabric.cli.main import app
+
+    seen: dict[str, object] = {}
+
+    def fake(output: Path, **kwargs: object) -> object:
+        seen.update(kwargs)
+        raise BackupCreateError("stop here")
+
+    monkeypatch.setattr(create_mod, "create_backup", fake)
+    monkeypatch.setattr("novafabric.events.sources.emit_backup_failed_alert", lambda *a, **k: None)
+    CliRunner().invoke(app, [
+        "backup", "create", "--profile", "manifest", "--wal-db", str(tmp_path / "wal.db"),
+        "-o", str(tmp_path / "m.tar.gz"),
+    ])
+    assert seen.get("wal_db_path") == tmp_path / "wal.db"
+
+
+@pytest.mark.usefixtures("_no_signing")
 def test_manifest_profile_requires_backend_or_adapter(
     home: Path, tmp_path: Path
 ) -> None:
