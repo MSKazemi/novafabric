@@ -36,6 +36,32 @@ _BUNDLE_DIR_NAME = "sigstore"
 # Verification result
 # ---------------------------------------------------------------------------
 
+#: What a capsule's Sigstore signature covers, in order of preference: a NovaSeal
+#: manifest when the capsule carries one, else the capsule manifest itself.
+SIGSTORE_PAYLOAD_FILES = ("manifest.json", "capsule.json", "capsule.yaml")
+
+
+def sigstore_signing_payload(capsule_dir: Path) -> tuple[str, bytes] | None:
+    """``(file name, bytes)`` a capsule's Sigstore signature covers, or ``None``.
+
+    The single definition shared by ``POST /api/seal/sigstore/sign``, its verify
+    route and ``nova verify --backend sigstore`` (review serve-12: the sign route
+    signed caller-supplied JSON, the verify route checked a re-derived
+    ``{"capsule_id": ...}``, so a real signature never verified). Read without
+    following a link.
+    """
+    from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file  # noqa: PLC0415
+
+    for name in SIGSTORE_PAYLOAD_FILES:
+        if not (capsule_dir / name).exists() and not (capsule_dir / name).is_symlink():
+            continue
+        try:
+            return name, read_capsule_file(capsule_dir, name, operation="Sigstore signing")
+        except CapsuleEntryError:
+            continue  # a link or a special file is never signed
+    return None
+
+
 @dataclass
 class SigstoreVerificationResult:
     """Result of a Sigstore bundle verification.

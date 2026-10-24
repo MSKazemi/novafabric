@@ -11,7 +11,6 @@ import typer
 from rich.console import Console
 
 from novafabric import _paths as _nf_paths
-from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
 
 console = Console()
 err_console = Console(stderr=True)
@@ -915,19 +914,18 @@ def _verify_sigstore(
     manifest_bytes: bytes | None = None
 
     if capsule_dir.exists():
-        # Try to read manifest from capsule dir
-        for candidate in ("manifest.json", "capsule.json"):
-            manifest_file = capsule_dir / candidate
-            if manifest_file.exists():
-                try:
-                    manifest_bytes = read_capsule_file(
-                        capsule_dir, candidate, operation="nova verify"
-                    )
-                except CapsuleEntryError:
-                    continue  # a link or special file is never followed
-                if not effective_capsule_id:
-                    effective_capsule_id = hashlib.sha256(manifest_bytes).hexdigest()
-                break
+        # The one definition of what a capsule's Sigstore signature covers, shared
+        # with the serve sign/verify routes (review serve-12). It now includes
+        # capsule.yaml, which a current capture carries instead of manifest.json.
+        from novafabric.trust.novaseal.sigstore_signer import (  # noqa: PLC0415
+            sigstore_signing_payload,
+        )
+
+        payload = sigstore_signing_payload(capsule_dir)
+        if payload is not None:
+            manifest_bytes = payload[1]
+            if not effective_capsule_id:
+                effective_capsule_id = hashlib.sha256(manifest_bytes).hexdigest()
 
     if not effective_capsule_id:
         err_console.print(

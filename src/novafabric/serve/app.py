@@ -5322,10 +5322,23 @@ def create_app(
                 ),
             )
 
-        manifest_json = body.get("manifest_json") or f'{{"capsule_id": "{capsule_id}"}}'
-        artifact_bytes = (
-            manifest_json.encode("utf-8") if isinstance(manifest_json, str) else manifest_json
+        # The capsule's own manifest, never caller-supplied bytes: what is signed
+        # must be bound to the capsule, and verify must read the same thing
+        # (review serve-12).
+        if body.get("manifest_json") is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="manifest_json is not accepted: the route signs the capsule's own "
+                "manifest (manifest.json, capsule.json or capsule.yaml)",
+            )
+        from novafabric.trust.novaseal.sigstore_signer import (  # noqa: PLC0415
+            sigstore_signing_payload,
         )
+
+        payload = sigstore_signing_payload(_resolve_capsule(capsule_id, capsule_dir))
+        if payload is None:
+            raise HTTPException(status_code=422, detail="the capsule has no manifest to sign")
+        signed_file, artifact_bytes = payload
 
         home = _nf_paths.nova_home()
         signer = SigstoreSigner()
@@ -5372,6 +5385,7 @@ def create_app(
             "bundle_path": str(bundle_path),
             "log_index": log_index,
             "identity": identity,
+            "signed_file": signed_file,
             "note": (
                 "Sigstore Bundle v0.3 stored; "
                 "verify with nova verify --backend sigstore"
@@ -5417,9 +5431,18 @@ def create_app(
                 "error": f"No Sigstore bundle found for capsule_id={capsule_id!r}",
             }
 
-        # Re-derive the artifact bytes from the capsule_id (same as sign path)
-        manifest_json = f'{{"capsule_id": "{capsule_id}"}}'
-        artifact_bytes = manifest_json.encode("utf-8")
+        # The same bytes the sign route signed: the capsule's own manifest.
+        from novafabric.trust.novaseal.sigstore_signer import (  # noqa: PLC0415
+            sigstore_signing_payload,
+        )
+
+        payload = sigstore_signing_payload(_resolve_capsule(capsule_id, capsule_dir))
+        if payload is None:
+            return {
+                "ok": False, "capsule_id": capsule_id, "valid": False, "identity": None,
+                "rekor_log_index": None, "error": "the capsule has no manifest to verify",
+            }
+        _, artifact_bytes = payload
 
         signer = SigstoreSigner()
         result = signer.verify_bundle(bundle, artifact_bytes)
