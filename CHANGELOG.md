@@ -146,6 +146,22 @@ longer forwards the submitting shell's environment (ADR-0270).
   environments as equal; it now hashes the whole file (unchanged for a UTF-8 lock under 64 KiB). Every installed
   package is recorded, sorted (it was an arbitrary 200). **A `poetry.lock`, `pdm.lock` or `requirements.txt` lock is
   now `best-effort`, as ADR-0007 specifies, so `nova replay --mode exact` refuses those capsules.**
+- **A database password never reaches argv or the console.** `nova backup create --profile pg` and `nova restore`
+  passed the full DSN to `pg_dump`/`pg_restore` as `--dbname`, readable by every local user in `ps`; the password now
+  goes through `PGPASSWORD`. `nova db migrate-to-postgres` printed a keyword DSN's `password=` and the tail of a URL
+  password containing `@`; every DSN shown is now `host/dbname`.
+- **Support bundles redact credentials by value (ruleset v4).** A `database_url` or OTLP endpoint with a password, or
+  a bare token under a neutral key, shipped verbatim in `config.redacted.yaml`.
+- **`nova export-blob` refuses a capsule with no usable redaction proof** — absent, torn or not an object — as
+  `nova export-evidence` does (`--allow-unsafe-skips` overrides); it read as "0 unsafe skips".
+- **`nova import` bounds untrusted archives** (10 000 entries, 2 GiB uncompressed, 100:1 ratio — the server ingest
+  defaults) and streams them; a small compression bomb filled the disk or killed the CLI.
+- **`nova migrate-to-postgres` names the tables it does not migrate and exits 1.** Label protections, maker-checker
+  approvals, label history and comments were dropped while the run reported "verified".
+- **`nova backup create --profile manifest --wal-db PATH`** checks the object-store client's WAL and refuses
+  dead-lettered as well as pending uploads; the CLI never passed the WAL, so the refusal could not fire.
+- **Capsule migration refuses a schema other than 0.1.0**; a 0.1.3 capsule was "migrated" with nothing bumped and a
+  false 0.1.0 → 1.0.0 lineage edge.
 - **Maker-checker records bind the capsule everywhere they are verified.** `POST /v0/seal/{capsule_id}/verify`
   (`nova server`) and `nova export-model-independence --capsule-id` called the SoD verifier without the capsule, so
   an approval of content changed since — or of a capsule that no longer exists — passed, and the export listed it
@@ -241,6 +257,16 @@ longer forwards the submitting shell's environment (ADR-0270).
     nothing;
   - the capture loader shadowed the user's own `sitecustomize`, so the workload under capture was not the program
     the user ran; it now runs the one it shadows;
+  - the local runner's `--timeout` waited for the workload's pipes, not its exit: a detached child holding stdout
+    turned a success into `exit_code: 124` and could block for that child's whole life; output is now capped at
+    64 MiB per stream;
+  - an MCP tool result with `isError: true` was recorded as a successful call (hook and proxy); mocked replay still
+    returns that result;
+  - LSF/PBS job scripts interpolated the capsule path unquoted, so a path with a space produced an empty capture;
+    exports are quoted and a directive value with whitespace or a line break is refused;
+  - a configured seal that failed under `nova capture` left no trace; the capsule now records
+    `metadata.finalization_error` and the CLI prints `✗ Capsule not sealed`;
+  - `DualObjectStore` wrote the PII payload file while cap-003 was off;
   - `nova validate --schemas --write` deleted every tool-call line it could not parse and rewrote sealed capsules;
     it now keeps those lines byte-for-byte and refuses a sealed capsule (exit 1);
   - `POST /v0/replays` claimed the oldest queued replay rather than its own, so one orphaned job made every later
