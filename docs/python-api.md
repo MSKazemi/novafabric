@@ -1012,8 +1012,9 @@ another capsule, a proof that does not recompute its root) is `failed`.
 `seal.verify()` passes the sealer's own log, and `verify_seal_dir(..., merkle_log=log)`
 any log you open. The log is checked at the index `log-entry.json` records, so a manifest
 sealed twice (the same leaf twice in the log) verifies at each index. When the supplied log
-holds other seals by the same signer (the entry's `keyid` or the signing certificate's
-SHA-256 fingerprint) under the record's root version, it is that sealer's log: an entry
+holds other seals by the same signer (the entry's `keyid`, or the SHA-256 fingerprint of the
+certificate of **any** signature that verifies) under the record's root version, it is that
+sealer's log: an entry
 missing from it is `failed`, even if the carried proof verifies. A log with no seals by that
 signer, a fresh log, or a log of the other root version (after starting a new v2 log,
 ADR-0313) is not the sealer's, and absence there keeps `carried-proof`, with a note in

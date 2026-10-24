@@ -139,6 +139,49 @@ def signer_certificate_info(dsse_bytes: bytes) -> Optional[SignerCertificateInfo
     )
 
 
+def verifying_signer_fingerprints(dsse_bytes: bytes) -> tuple[str, ...]:
+    """SHA-256 fingerprints of the certificates of **every** signature entry that verifies.
+
+    In envelope order, without repeats; ``()`` when none verifies or the envelope
+    does not parse. Never raises. The sealer-log check must ask about each of them:
+    asking only about the first let a key holder put a throw-away co-signature
+    first, so the check asked about a key no log had seen and a forged capsule
+    passed (review trust-evidence-01). An entry that verifies without a parseable
+    certificate contributes nothing — a log is keyed by certificate fingerprint.
+    """
+    if not dsse_bytes:
+        return ()
+    from novafabric.trust.novaseal.envelope import (  # noqa: PLC0415
+        EnvelopeError,
+        _b64_decode,
+        _verify_signature_entry_any_pae,
+        pae_candidates,
+    )
+
+    try:
+        envelope = json.loads(dsse_bytes)
+        candidates = pae_candidates(
+            envelope.get("payloadType", ""), _b64_decode(envelope.get("payload", ""))
+        )
+        entries = list(envelope["signatures"])
+    except (ValueError, KeyError, TypeError, AttributeError, EnvelopeError, binascii.Error):
+        return ()
+    found: dict[str, None] = {}
+    for entry in entries:
+        try:
+            _verify_signature_entry_any_pae(entry, candidates)
+            cert_b64 = entry.get("cert")
+            if not isinstance(cert_b64, str) or not cert_b64:
+                continue
+            normalised = cert_b64.replace("-", "+").replace("_", "/")
+            der = base64.b64decode(normalised + "=" * (-len(normalised) % 4))
+            x509.load_der_x509_certificate(der)
+        except (EnvelopeError, ValueError, KeyError, TypeError, AttributeError, binascii.Error):
+            continue
+        found[hashlib.sha256(der).hexdigest()] = None
+    return tuple(found)
+
+
 def unanchored_identity_trust(signature_ok: bool) -> str:
     """Level before any CA bundle is consulted: ``self-asserted`` or ``none``."""
     return IDENTITY_SELF_ASSERTED if signature_ok else IDENTITY_NONE

@@ -615,6 +615,7 @@ def verify_seal_dir(
     from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
         signer_certificate_info,
         unanchored_identity_trust,
+        verifying_signer_fingerprints,
     )
 
     signer = signer_certificate_info(dsse_bytes) if signature_ok else None
@@ -625,7 +626,7 @@ def verify_seal_dir(
         _read_seal_member(seal_path, "log-entry.json", max_bytes=_SEAL_LOG_ENTRY_MAX_BYTES),
         payload_capsule_id,
         merkle_log,
-        signer_keyid=signer.fingerprint_sha256 if signer else None,
+        signer_keyids=verifying_signer_fingerprints(dsse_bytes) if signature_ok else (),
         previous_logs=previous_logs,
     )
     log_notes = list(inclusion.notes)
@@ -900,16 +901,17 @@ def _check_log_inclusion(
     payload_capsule_id: str | None,
     merkle_log: "MerkleLog | PostgresMerkleLog | None",
     *,
-    signer_keyid: str | None = None,
+    signer_keyids: tuple[str, ...] = (),
     previous_logs: "Sequence[MerkleLog | PostgresMerkleLog]" = (),
 ) -> _Inclusion:
     """Check ``log-entry.json`` and, when given, the supplied logs — see :func:`verify_seal_dir`.
 
-    *signer_keyid* is the SHA-256 fingerprint of the certificate whose signature
-    verified; with the entry's own ``keyid`` it decides which supplied logs are
-    this signer's (:func:`_sealer_log_keyid`).
+    *signer_keyids* are the SHA-256 fingerprints of the certificates of **every**
+    signature that verified; with the entry's own ``keyid`` they decide which
+    supplied logs are this signer's (:func:`_sealer_log_keyid`). A log holding
+    seals by any of them is the sealer's (review trust-evidence-01).
     """
-    parsed = _parse_log_record(log_file, payload_capsule_id, signer_keyid)
+    parsed = _parse_log_record(log_file, payload_capsule_id, signer_keyids)
     if isinstance(parsed, _Inclusion):
         return parsed
     record, proof = parsed
@@ -957,7 +959,7 @@ def _check_log_inclusion(
 
 
 def _parse_log_record(
-    log_file: _SealMember, payload_capsule_id: str | None, signer_keyid: str | None
+    log_file: _SealMember, payload_capsule_id: str | None, signer_keyids: tuple[str, ...]
 ) -> "tuple[_LogRecord, object] | _Inclusion":
     """Validate ``log-entry.json``; return the record and its raw proof, or a failure."""
     if log_file.refused is not None:
@@ -1009,7 +1011,7 @@ def _parse_log_record(
         root_hash=root_hash if isinstance(root_hash, str) else None,
         tree_size=tree_size if _is_int(tree_size) else None,
         root_version=root_version,
-        keyids=(entry.get("keyid"), signer_keyid),
+        keyids=(entry.get("keyid"), *signer_keyids),
     )
     if root_hash is not None and parsed.root_hash is None:
         return _failed("log-entry.json has a malformed root_hash")
