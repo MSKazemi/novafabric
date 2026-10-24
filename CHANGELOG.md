@@ -80,6 +80,9 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- The promote keyring directory (`~/.config/novafabric/keyring`) is resolved when it is used, not at import, and
+  `NOVAFABRIC_KEYRING_DIR` relocates it. A tool or test that changed `HOME` after import still read and wrote the
+  original keyring; the hermetic test environment now isolates it.
 - A PII erasure through the dashboard (`POST /api/compliance/pii/erase`) appends the same hash-only
   `erasure.request` audit entry as `nova pii erase`; it recorded nothing. The response reports `audit_recorded`.
 - Cost-attribution facets: `verify_conservation` rejected too little — agents attributed more than the run
