@@ -213,3 +213,49 @@ def test_keyring_from_home_without_a_store_reports_erased(tmp_path: Path, store_
     assert render_value(out["v"], keyring=kr, run_id=RUN, field_path="capsule.yaml v") == ERASED
     assert not (empty_home / "dek.db").exists()
     kr.close()
+
+
+# --- review compliance-privacy-17: two common cases left the PII in plaintext ---------
+
+
+def _bare_capsule(tmp_path: Path) -> Path:
+    cap = tmp_path / "cap"
+    (cap / "outputs").mkdir(parents=True)
+    return cap
+
+
+def test_an_email_glued_to_cjk_text_is_encrypted(tmp_path: Path, store_path: Path) -> None:
+    """CJK has no spaces; the "glued to a larger token" rule used str.isalnum(), which
+    is true for CJK letters, so the address next to them stayed plaintext."""
+    cap = _bare_capsule(tmp_path)
+    (cap / "outputs" / "stdout.txt").write_text("連絡先alice@example.com です\n", encoding="utf-8")
+    _stage(store_path).run(cap, RUN)
+    text = (cap / "outputs" / "stdout.txt").read_text(encoding="utf-8")
+    assert "alice@example.com" not in text
+    assert TOKEN_RE.search(text)
+    assert text.startswith("連絡先")
+
+
+def test_an_ascii_glued_match_is_still_left_alone(tmp_path: Path, store_path: Path) -> None:
+    """The rule's purpose: a match inside an ASCII token (an id, a digest) is not PII."""
+    cap = _bare_capsule(tmp_path)
+    line = f"ref=x{S}y\n"
+    (cap / "outputs" / "stdout.txt").write_text(line)
+    _stage(store_path).run(cap, RUN)
+    assert (cap / "outputs" / "stdout.txt").read_text() == line
+
+
+def test_a_latin1_text_file_is_protected_not_skipped_as_binary(
+    tmp_path: Path, store_path: Path
+) -> None:
+    """Not valid UTF-8 read as binary and was skipped, with the subject in plaintext."""
+    cap = _bare_capsule(tmp_path)
+    raw = f"Müller {S} écrit\n".encode("latin-1")
+    (cap / "outputs" / "notes.txt").write_bytes(raw)
+    _stage(store_path).run(cap, RUN)
+    after = (cap / "outputs" / "notes.txt").read_bytes()
+    assert S.encode() not in after
+    assert after.startswith("Müller ".encode("latin-1"))  # other bytes kept as they were
+    assert after.endswith(" écrit\n".encode("latin-1"))
+    kr = _keyring(store_path)
+    assert read_capsule_file(cap, "outputs/notes.txt", keyring=kr, run_id=RUN) == raw.decode("latin-1")

@@ -341,6 +341,22 @@ def _render_obj(obj: Any, path: str, ref: str, keyring: EnvelopeKeyring | None,
     return obj
 
 
+def decode_text(data: bytes) -> tuple[str, str] | None:
+    """``(text, encoding)`` for a text artifact, or ``None`` for a binary one.
+
+    UTF-8 first; a file with no NUL byte that is not valid UTF-8 is read as
+    Latin-1, which maps every byte to one character and back, so rewriting it
+    keeps every byte outside a protected span. Such files were read as binary and
+    skipped, leaving the subject in plaintext (review compliance-privacy-17).
+    """
+    if b"\x00" in data:
+        return None
+    try:
+        return data.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        return data.decode("latin-1"), "latin-1"
+
+
 def read_capsule_file(
     capsule_dir: Path, rel: str, *, keyring: EnvelopeKeyring | None, run_id: str
 ) -> Any:
@@ -374,10 +390,10 @@ def read_capsule_file(
         return _render_obj(
             yaml.safe_load(path.read_text(encoding="utf-8")), "", rel, keyring, run_id
         )
+    decoded = decode_text(path.read_bytes())
+    text = decoded[0] if decoded is not None else path.read_text(encoding="utf-8")
     out: list[str] = []
-    for lineno, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(keepends=True), start=1
-    ):
+    for lineno, line in enumerate(text.splitlines(keepends=True), start=1):
         body = line.rstrip("\r\n")
         out.append(
             render_value(body, keyring=keyring, run_id=run_id, field_path=f"{rel}#L{lineno}")

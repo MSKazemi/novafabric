@@ -70,6 +70,7 @@ from novafabric.masking._pipeline import _walk, _walk_mode, default_targets
 from novafabric.pii.dek.store import DataSubjectDEK, DEKStore, open_dek_store
 from novafabric.pii.envelope import (
     TOKEN_RE,
+    decode_text,
     seal_value,
     subject_hash_prefix,
     subject_ref,
@@ -194,11 +195,13 @@ class SubjectEnvelopeStage:
                 return False
             if any(s.start < b_end and b_start < s.end for b_start, b_end in blocked):
                 return False
-            # A match glued to letters/digits is part of a larger token (a digest, an
-            # id, a ciphertext group) -- not a PII value.
-            if s.start > 0 and value[s.start - 1].isalnum():
+            # A match glued to ASCII letters/digits is part of a larger token (a
+            # digest, an id, a ciphertext group) -- not a PII value. ASCII only:
+            # str.isalnum() is true for CJK and accented letters, so an address
+            # written straight after them stayed plaintext (compliance-privacy-17).
+            if s.start > 0 and _token_char(value[s.start - 1]):
                 return False
-            return not (s.end < len(value) and value[s.end].isalnum())
+            return not (s.end < len(value) and _token_char(value[s.end]))
 
         kept = sorted((s for s in found if _keep(s)), key=lambda s: (s.start, -s.end))
         merged: list[_Span] = []
@@ -416,18 +419,20 @@ class SubjectEnvelopeStage:
         if read is None:
             return  # over the artifact bound: the built-in scanner records it
         data, file_mode = read
-        if _secrets._is_binary(data):
-            return
+        decoded = decode_text(data)
+        if decoded is None:
+            return  # binary: documented as not covered
+        text, encoding = decoded
         out: list[str] = []
         changed = False
-        for lineno, line in enumerate(data.decode("utf-8").splitlines(keepends=True), start=1):
+        for lineno, line in enumerate(text.splitlines(keepends=True), start=1):
             body = line.rstrip("\r\n")
             new = self._protect(body, f"{filename}#L{lineno}", run_id, errors,
                                 mask_only=mask_only)
             changed = changed or new != body
             out.append(new + line[len(body):])
         if changed:
-            _rewrite(root, filename, "".join(out), file_mode)
+            _rewrite(root, filename, "".join(out), file_mode, encoding=encoding)
 
     def _write_manifest(self, capsule_dir: Path, run_id: str) -> None:
         if not self._entries:
@@ -457,11 +462,18 @@ def _read(root: Path, rel: str, *, max_bytes: int | None = None) -> tuple[bytes,
         return handle.read(), st.st_mode & 0o7777
 
 
-def _rewrite(root: Path, rel: str, text: str, file_mode: int) -> None:
+def _rewrite(
+    root: Path, rel: str, text: str, file_mode: int, *, encoding: str = "utf-8"
+) -> None:
     """Replace capsule file *rel* by a rename (never written through), keeping its mode."""
     replace_capsule_file(
-        root, rel, text.encode("utf-8"), operation=_FILE_OPERATION, file_mode=file_mode
+        root, rel, text.encode(encoding), operation=_FILE_OPERATION, file_mode=file_mode
     )
+
+
+def _token_char(ch: str) -> bool:
+    """An ASCII letter or digit: what glues a match into a larger token."""
+    return ch.isascii() and ch.isalnum()
 
 
 class ChainedCaptureStages:
