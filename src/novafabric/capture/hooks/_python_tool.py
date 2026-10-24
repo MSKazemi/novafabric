@@ -27,7 +27,11 @@ from novafabric.capture import _tool_codec as codec
 from novafabric.capture import _tool_scope
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import get_current_writer
-from novafabric.capture.hooks._fail_open import TOOL_CALLS_STREAM, fail_open
+from novafabric.capture.hooks._fail_open import (
+    TOOL_CALLS_STREAM,
+    fail_open,
+    note_capture_failure,
+)
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
@@ -142,7 +146,8 @@ class PythonToolHook:
             call = codec.CanonicalCall(arguments=None, not_canonical="arguments could not be bound")
         try:
             return _Pending(spec, call)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 -- counted, never raised into the workload
+            note_capture_failure("record.tool", TOOL_CALLS_STREAM, exc)
             return None
 
     def _finish(

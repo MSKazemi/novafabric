@@ -518,3 +518,54 @@ def test_invalid_fixture_records_are_never_served() -> None:
         assert not is_servable_tool_record(rec)
     assert tool_surface(unmarked) is None
     assert codec.decode_result(foreign_codec) == (False, None)
+
+
+# --- review capture-runners-07: a canonicalisation failure is recorded, not dropped ---
+
+
+@dataclasses.dataclass
+class _HoldsALock:
+    lock: Any
+
+
+def test_an_argument_that_cannot_be_canonicalised_is_recorded_not_servable(
+    sink: _ListWriter,
+) -> None:
+    """``dataclasses.asdict`` deep-copies fields; a lock raises ``TypeError`` from
+    inside canonicalisation, which ``_start`` took for "the call does not bind" and
+    recorded nothing — the tool body still ran."""
+    import threading
+
+    @record.tool
+    def lookup(holder: _HoldsALock, q: str) -> dict[str, str]:
+        return {"answer": q.upper()}
+
+    assert lookup(_HoldsALock(threading.Lock()), "hi") == {"answer": "HI"}
+    (rec,) = sink.records
+    assert rec["arguments"] is None or rec["arguments"] == {}
+    reason = not_servable_reason(rec)
+    assert reason and "holder" in reason
+
+
+def test_a_call_that_does_not_bind_still_raises_and_records_nothing(sink: _ListWriter) -> None:
+    @record.tool
+    def two(a: int, b: int) -> int:
+        return a + b
+
+    with pytest.raises(TypeError):
+        two(1)  # type: ignore[call-arg]
+    assert sink.records == []
+
+
+def test_canonical_call_raises_only_for_binding() -> None:
+    import inspect
+    import threading
+
+    def f(holder: _HoldsALock) -> None: ...
+
+    sig = inspect.signature(f)
+    with pytest.raises(TypeError):
+        codec.canonical_call(sig, frozenset(), (), {})
+    call = codec.canonical_call(sig, frozenset(), (_HoldsALock(threading.Lock()),), {})
+    assert call.arguments is None
+    assert call.not_canonical and "holder" in call.not_canonical

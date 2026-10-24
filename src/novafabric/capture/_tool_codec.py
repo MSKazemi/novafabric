@@ -277,6 +277,17 @@ def canonical_call(
                     f"with ignore=({name!r},)"
                 ),
             )
+        except Exception as exc:  # noqa: BLE001 -- the call bound; this is canonicalisation
+            # Review capture-runners-07: e.g. ``dataclasses.asdict`` deep-copying a
+            # field that holds a lock or a client raises TypeError. Only binding may
+            # raise from here; anything later makes the record not servable.
+            return CanonicalCall(
+                arguments=None,
+                not_canonical=(
+                    f"argument `{name}` could not be canonicalised ({type(exc).__name__}) "
+                    f"-- exclude it with ignore=({name!r},)"
+                ),
+            )
     return CanonicalCall(arguments=out)
 
 
