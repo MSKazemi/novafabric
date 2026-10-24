@@ -29,15 +29,17 @@ class TestJudgeFramework:
         assert result.inter_judge_agreement is None
         assert result.consensus_verdict == "pass"
 
-    def test_two_judges_compute_kappa(self) -> None:
-        """Two judges → kappa is computed."""
+    def test_two_judges_on_one_item_report_raw_agreement_not_kappa(self) -> None:
+        """One item gives no chance-corrected kappa (review eval-adapters-query-20): the
+        single-item 'kappa' was 1.0 when judges agreed and <= 0 otherwise. Raw pairwise
+        agreement is reported instead."""
         j1 = NumericalJudge("exact match ok", exact_match="hello")
         j2 = NumericalJudge("length 5+", length_range=(5, 100))
         framework = JudgeFramework([j1, j2])
         result = framework.evaluate("hello")
 
-        assert result.inter_judge_agreement is not None
-        assert isinstance(result.inter_judge_agreement, float)
+        assert result.inter_judge_agreement is None
+        assert result.raw_agreement == 1.0
 
     def test_consensus_all_pass(self) -> None:
         """All judges pass → consensus pass."""
@@ -163,9 +165,10 @@ class TestAggregateJudgments:
         r1 = _make_result("pass", 1.0)
         r2 = _make_result("fail", 0.0)
         judgment = aggregate_judgments([r1, r2])
-        # tie → uncertain, kappa computed
+        # tie → uncertain; one item: no kappa, the two judges disagree
         assert judgment.consensus_verdict == "uncertain"
-        assert judgment.inter_judge_agreement is not None
+        assert judgment.inter_judge_agreement is None
+        assert judgment.raw_agreement == 0.0
 
     def test_aggregate_majority_pass(self) -> None:
         results = [
@@ -175,3 +178,45 @@ class TestAggregateJudgments:
         ]
         judgment = aggregate_judgments(results)
         assert judgment.consensus_verdict == "pass"
+
+
+class TestAgreementOnOneItem:
+    """Review eval-adapters-query-20: kappa needs several items; one item is not enough."""
+
+    @pytest.mark.parametrize(
+        ("verdicts", "raw"),
+        [
+            (["pass", "pass"], 1.0),
+            (["pass", "fail"], 0.0),
+            (["pass", "pass", "fail"], 1 / 3),
+            (["pass", "pass", "pass", "pass", "fail"], 0.6),
+        ],
+    )
+    def test_raw_agreement_is_the_share_of_agreeing_judge_pairs(
+        self, verdicts: list[str], raw: float
+    ) -> None:
+        judgment = aggregate_judgments([_make_result(v, 0.5) for v in verdicts])
+        assert judgment.inter_judge_agreement is None
+        assert judgment.raw_agreement == pytest.approx(raw)
+
+    def test_one_judge_has_no_agreement_at_all(self) -> None:
+        judgment = aggregate_judgments([_make_result("pass", 1.0)])
+        assert judgment.raw_agreement is None
+
+    def test_the_gate_uses_raw_agreement_when_there_is_no_kappa(self) -> None:
+        framework = JudgeFramework([], kappa_threshold=0.6)
+        split = aggregate_judgments([_make_result(v, 0.5) for v in ("pass", "pass", "fail")])
+        assert framework.check_kappa_gate(split) is False
+        agree = aggregate_judgments([_make_result("pass", 1.0), _make_result("pass", 1.0)])
+        assert framework.check_kappa_gate(agree) is True
+
+    def test_evaluate_and_aggregate_judgments_agree(self) -> None:
+        j1 = NumericalJudge("exact", exact_match="hello")
+        j2 = NumericalJudge("len", length_range=(50, 100))
+        framework = JudgeFramework([j1, j2])
+        evaluated = framework.evaluate("hello", run_id="r")
+        aggregated = aggregate_judgments(evaluated.results, run_id="r",
+                                         judges=evaluated.judges)
+        assert evaluated.model_dump(exclude={"timestamp_utc"}) == aggregated.model_dump(
+            exclude={"timestamp_utc"}
+        )

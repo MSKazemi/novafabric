@@ -25,7 +25,9 @@ def judgment_to_rego_input(judgment: AggregatedJudgment) -> dict[str, Any]:
             "consensus_score": judgment.consensus_score,
             "inter_judge_agreement": judgment.inter_judge_agreement,
             "judge_count": len(judgment.judges),
-            "all_pass": all(r.verdict == "pass" for r in judgment.results),
+            # all([]) is True: a judgment with no results is not "all pass".
+            "all_pass": bool(judgment.results)
+            and all(r.verdict == "pass" for r in judgment.results),
             "any_fail": any(r.verdict == "fail" for r in judgment.results),
         }
     }

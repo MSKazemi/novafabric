@@ -26,5 +26,9 @@ class AggregatedJudgment(BaseModel):
     results: list[JudgeResult]
     consensus_verdict: Literal["pass", "fail", "uncertain"]
     consensus_score: float
-    inter_judge_agreement: float | None = None  # Cohen's kappa, None if < 2 judges
+    #: Chance-corrected kappa across items. None for a single item, whatever the
+    #: number of judges: one item's verdicts cannot separate agreement from chance.
+    inter_judge_agreement: float | None = None
+    #: Share of judge pairs that gave the same verdict on this item; None with < 2 judges.
+    raw_agreement: float | None = None
     timestamp_utc: str

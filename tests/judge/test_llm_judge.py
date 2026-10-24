@@ -26,6 +26,38 @@ def _mock_response(verdict: str, rationale: str = "test rationale") -> MagicMock
     return mock_resp
 
 
+@pytest.fixture(autouse=True)
+def _judge_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A local OpenAI-compatible endpoint; nothing here reaches a network."""
+    monkeypatch.setenv("NOVA_JUDGE_ENDPOINT", "http://127.0.0.1:11434/v1")
+
+
+class TestLLMJudgeEndpoint:
+    """Review eval-adapters-query-20: the default was https://api.openai.com/v1 — a
+    hardcoded external, paid service."""
+
+    def test_no_endpoint_configured_is_refused_before_any_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOVA_JUDGE_ENDPOINT")
+        monkeypatch.setenv("OPENAI_API_KEY", "k")
+        with patch("httpx.post") as post, pytest.raises(LLMJudgeAPIError, match="NOVA_JUDGE_ENDPOINT"):
+            LLMJudge("criteria").judge("output")
+        post.assert_not_called()
+
+    def test_the_endpoint_comes_from_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "k")
+        with patch("httpx.post", return_value=_mock_response("pass")) as post:
+            LLMJudge("criteria", k_samples=1).judge("output")
+        assert post.call_args.args[0].startswith("http://127.0.0.1:11434/v1/")
+
+    def test_an_explicit_api_base_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "k")
+        with patch("httpx.post", return_value=_mock_response("pass")) as post:
+            LLMJudge("criteria", k_samples=1, api_base="http://judge.internal/v1/").judge("o")
+        assert post.call_args.args[0].startswith("http://judge.internal/v1/")
+
+
 class TestLLMJudgeAPIKeyCheck:
     def test_api_key_not_set_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Missing API key env var raises LLMJudgeAPIError before any HTTP call."""

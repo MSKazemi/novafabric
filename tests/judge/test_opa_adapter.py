@@ -126,3 +126,15 @@ class TestJudgmentToRegoInput:
         rego = judgment_to_rego_input(judgment)["judgment"]
         assert rego["all_pass"] is False
         assert rego["any_fail"] is True
+
+
+def test_zero_results_are_not_all_pass() -> None:
+    """Review eval-adapters-query-20: all([]) made an empty judgment all_pass: True."""
+    from novafabric.judge.models import AggregatedJudgment
+    from novafabric.judge.opa_adapter import judgment_to_rego_input
+
+    empty = AggregatedJudgment(
+        run_id="r", judges=[], results=[], consensus_verdict="uncertain",
+        consensus_score=0.5, timestamp_utc="2026-01-01T00:00:00+00:00",
+    )
+    assert judgment_to_rego_input(empty)["judgment"]["all_pass"] is False

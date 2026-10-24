@@ -35,11 +35,19 @@ class LLMJudgeAPIError(RuntimeError):
     """Raised when the LLM API call cannot be completed."""
 
 
+#: Where the judge endpoint comes from when ``api_base`` is not passed — the
+#: same variable eval cards reference as ``endpoint_ref: env:NOVA_JUDGE_ENDPOINT``.
+JUDGE_ENDPOINT_ENV = "NOVA_JUDGE_ENDPOINT"
+
+
 class LLMJudge:
     """Judges outputs using an LLM with self-consistency (K samples).
 
-    Uses httpx to call any OpenAI-compatible API (including local Ollama).
-    Supports OpenAI-compatible APIs (including local Ollama).
+    Uses httpx to call any OpenAI-compatible chat-completions API, e.g. a local
+    Ollama at ``http://127.0.0.1:11434/v1``. There is no default endpoint: pass
+    ``api_base`` or set ``NOVA_JUDGE_ENDPOINT``, so no judge call goes to an
+    external (or paid) service unless it was configured to (review
+    eval-adapters-query-20).
     """
 
     def __init__(
@@ -47,7 +55,7 @@ class LLMJudge:
         criteria: str,
         *,
         model: str = "gpt-4o-mini",
-        api_base: str = "https://api.openai.com/v1",
+        api_base: str | None = None,
         api_key_env: str = "OPENAI_API_KEY",
         k_samples: int = 3,
         pass_threshold: float = 0.6,
@@ -55,12 +63,24 @@ class LLMJudge:
     ) -> None:
         self.criteria = criteria
         self.model = model
-        self.api_base = api_base.rstrip("/")
+        self._api_base = api_base
         self.api_key_env = api_key_env
         self.k_samples = k_samples
         self.pass_threshold = pass_threshold
         self.timeout = timeout
         self._judge_id = f"llm-{uuid.uuid4().hex[:8]}"
+
+    @property
+    def api_base(self) -> str:
+        """The configured endpoint; raises :class:`LLMJudgeAPIError` when there is none."""
+        base = self._api_base or os.environ.get(JUDGE_ENDPOINT_ENV, "")
+        if not base:
+            raise LLMJudgeAPIError(
+                "no judge endpoint configured: pass api_base= or set "
+                f"{JUDGE_ENDPOINT_ENV} to an OpenAI-compatible base URL "
+                "(e.g. http://127.0.0.1:11434/v1 for a local Ollama)"
+            )
+        return base.rstrip("/")
 
     def judge(self, actual: str, expected: str | None = None) -> JudgeResult:
         """Evaluate using LLM with self-consistency.
@@ -69,6 +89,7 @@ class LLMJudge:
         Verdict is majority vote of K samples.
         Score = fraction of K samples voting "pass".
         """
+        api_base = self.api_base
         api_key = os.environ.get(self.api_key_env, "")
         if not api_key:
             raise LLMJudgeAPIError(
@@ -82,7 +103,7 @@ class LLMJudge:
 
         for _ in range(self.k_samples):
             try:
-                verdict, rationale = self._call_once(actual, expected, api_key)
+                verdict, rationale = self._call_once(actual, expected, api_key, api_base)
             except Exception as exc:
                 # Single sample failure: record uncertain and continue
                 sample_verdicts.append("uncertain")
@@ -141,7 +162,7 @@ class LLMJudge:
         )
 
     def _call_once(
-        self, actual: str, expected: str | None, api_key: str
+        self, actual: str, expected: str | None, api_key: str, api_base: str
     ) -> tuple[str, str]:
         """Single LLM evaluation call. Returns (verdict, rationale)."""
         prompt = self._build_prompt(actual, expected)
@@ -158,7 +179,7 @@ class LLMJudge:
             "Content-Type": "application/json",
         }
         response = httpx.post(
-            f"{self.api_base}/chat/completions",
+            f"{api_base}/chat/completions",
             json=payload,
             headers=headers,
             timeout=self.timeout,
