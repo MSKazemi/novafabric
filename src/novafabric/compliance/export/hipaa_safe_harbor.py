@@ -155,7 +155,8 @@ STANDARD_LIMITATIONS: list[str] = [
     "NovaSeal cryptographic signing of this artifact is a planned future extension.",
 ]
 
-#: Status vocabulary.
+#: Status vocabulary. ``not_present`` and ``present_unredacted`` need a scan of the
+#: captured content and are never emitted by :class:`HIPAASafeHarborExporter`.
 STATUS_NOT_PRESENT = "not_present"
 STATUS_REDACTED = "redacted"
 STATUS_PRESENT_UNREDACTED = "present_unredacted"
@@ -264,9 +265,11 @@ class HIPAASafeHarborExporter:
 
     The exporter reads available redaction evidence files from the capsule
     directory and maps PII entity types to Safe Harbor identifier categories.
-    Categories for which no evidence exists are marked ``not_present``.
-    Categories that cannot be assessed from structured evidence (e.g. images)
-    are marked ``not_assessable``.
+    Categories with redaction evidence are ``redacted``. Every other category is
+    ``not_assessable``: the exporter reads redaction-evidence files, never the
+    captured content, so it cannot say an identifier is absent. ``not_present``
+    and ``present_unredacted`` are reserved for a scan of the content (planned);
+    this exporter emits neither (review compliance-privacy-03).
 
     No ML dependencies.  No cloud API calls.  Read-only access to capsule files.
 
@@ -342,10 +345,14 @@ class HIPAASafeHarborExporter:
                     evidence_refs=refs,
                 )
             else:
+                # Review compliance-privacy-03: no redaction evidence says nothing
+                # about the content — this exporter reads evidence files, never the
+                # captured streams. ``not_present`` is a factual negative only a scan
+                # of the content could support, so it is never inferred here.
                 assessment = HIPAASafeHarborIdentifierAssessment(
                     identifier=ident_id,
                     label=label,
-                    status=STATUS_NOT_PRESENT,
+                    status=STATUS_NOT_ASSESSABLE,
                     evidence_count=0,
                     redaction_method=None,
                     evidence_refs=[],

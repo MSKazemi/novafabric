@@ -5150,7 +5150,12 @@ Options:
 
 **works today** — Export a HIPAA Safe Harbor (§164.514(b)) de-identification
 proof artifact for a capsule, documenting which of the 18 identifier categories
-were absent, redacted, or not assessable from available capsule evidence files.
+were **redacted** (a redaction manifest records it) and which are **not assessable**.
+The exporter reads the capsule's redaction-evidence files, never its captured content, so
+it never states that an identifier is absent: `not_present` (and `present_unredacted`) are
+reserved for a scan of the content (**planned**). Releases up to v0.107.0 reported every
+category without redaction evidence as `not_present` — including for a capsule whose
+prompts held a name, an SSN and an email.
 
 **DISCLAIMER:** This is a technical evidence artifact only. It is NOT legal
 advice, NOT a compliance certification, and does NOT guarantee Safe Harbor

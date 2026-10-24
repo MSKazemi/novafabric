@@ -14,7 +14,6 @@ import yaml
 from novafabric.compliance.export.hipaa_safe_harbor import (
     SAFE_HARBOR_IDENTIFIERS,
     STATUS_NOT_ASSESSABLE,
-    STATUS_NOT_PRESENT,
     STATUS_REDACTED,
     HIPAASafeHarborExporter,
 )
@@ -172,7 +171,8 @@ class TestIdentifierStatusMapping:
         assert email_assessment.evidence_count == 1
         assert email_assessment.redaction_method == "redaction_manifest"
 
-    def test_unrelated_categories_not_present(self, capsule_with_email_redaction: Path) -> None:
+    def test_unrelated_categories_not_assessable(self, capsule_with_email_redaction: Path) -> None:
+        """compliance-privacy-03: no redaction evidence is never "not present"."""
         proof = HIPAASafeHarborExporter(assessment_datetime=_FIXED_DT).build_proof(
             capsule_with_email_redaction
         )
@@ -181,8 +181,8 @@ class TestIdentifierStatusMapping:
             if a.identifier not in ("email_addresses", "full_face_photos", "biometric_identifiers")
         ]
         for a in unrelated:
-            assert a.status == STATUS_NOT_PRESENT, (
-                f"Expected not_present for {a.identifier}, got {a.status}"
+            assert a.status == STATUS_NOT_ASSESSABLE, (
+                f"Expected not_assessable for {a.identifier}, got {a.status}"
             )
 
     def test_multi_pii_types_map_correctly(self, capsule_with_multi_redaction: Path) -> None:
@@ -341,8 +341,8 @@ class TestCustomisation:
         proof = exporter.build_proof(minimal_capsule)
         by_id = {a.identifier: a for a in proof.identifiers}
         assert by_id["full_face_photos"].status == STATUS_NOT_ASSESSABLE
-        # biometric_identifiers should be not_present (not not_assessable) since not in custom set
-        assert by_id["biometric_identifiers"].status == STATUS_NOT_PRESENT
+        # Outside the set it is still not_assessable: there is no evidence either way.
+        assert by_id["biometric_identifiers"].status == STATUS_NOT_ASSESSABLE
 
     def test_empty_not_assessable_set(self, minimal_capsule: Path) -> None:
         exporter = HIPAASafeHarborExporter(
@@ -351,6 +351,21 @@ class TestCustomisation:
         )
         proof = exporter.build_proof(minimal_capsule)
         by_id = {a.identifier: a for a in proof.identifiers}
-        # With no not_assessable override, everything defaults to not_present (no evidence)
-        assert by_id["biometric_identifiers"].status == STATUS_NOT_PRESENT
-        assert by_id["full_face_photos"].status == STATUS_NOT_PRESENT
+        # No evidence is never "not present" (compliance-privacy-03).
+        assert by_id["biometric_identifiers"].status == STATUS_NOT_ASSESSABLE
+        assert by_id["full_face_photos"].status == STATUS_NOT_ASSESSABLE
+
+
+def test_a_capsule_full_of_phi_with_no_redaction_evidence_claims_nothing_absent(
+    tmp_path: Path,
+) -> None:
+    """compliance-privacy-03: the exporter never reads the content, so it must never
+    state that an identifier is absent from it."""
+    cap = tmp_path / "phi"
+    cap.mkdir()
+    (cap / "capsule.yaml").write_text("run_id: phi\n")
+    (cap / "model-calls.jsonl").write_text(
+        '{"prompt": "John Smith, SSN 123-45-6789, DOB 1970-03-14, john@example.com"}\n'
+    )
+    proof = HIPAASafeHarborExporter(assessment_datetime=_FIXED_DT).build_proof(cap)
+    assert {a.status for a in proof.identifiers} == {STATUS_NOT_ASSESSABLE}
