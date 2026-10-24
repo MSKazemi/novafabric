@@ -177,6 +177,10 @@ def _token_db_path(key_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+#: The ``iss`` of every offline token; how ``verify_token`` routes one in OIDC mode.
+OFFLINE_TOKEN_ISSUER = "nova-offline"
+
+
 def issue_token(
     subject: str,
     roles: list[str],
@@ -213,7 +217,7 @@ def issue_token(
         "nova_roles": roles,
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
-        "iss": "nova-offline",
+        "iss": OFFLINE_TOKEN_ISSUER,
     }
     token = jwt.encode(payload, priv_key, algorithm=_ALGORITHM)
 

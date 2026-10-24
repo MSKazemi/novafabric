@@ -347,6 +347,16 @@ def _try_offline_token(request: Request, config: ServerConfig) -> AuthContext | 
     return ctx
 
 
+def _unverified_issuer(raw_token: str) -> str | None:
+    """The token's ``iss`` claim, read without verification (routing only)."""
+    try:
+        claims = jwt.decode(raw_token, options={"verify_signature": False})
+    except jwt.exceptions.PyJWTError:
+        return None
+    issuer = claims.get("iss")
+    return issuer if isinstance(issuer, str) else None
+
+
 def _accepted_issuers(configured: str) -> list[str]:
     """The ``iss`` values a token may carry: the issuer exactly as configured.
 
@@ -366,7 +376,7 @@ async def verify_token(request: Request) -> AuthContext:
     OIDC disabled → requires the local bearer token (ADR-0184), unless the
     explicit ``insecure_no_auth`` opt-out restores anonymous LOCAL_AUTH.
     When ``offline_key_path`` is configured, offline ed25519 JWTs (service
-    accounts, ADR-0178) are also accepted in local mode.
+    accounts, ADR-0178) are also accepted, in local and in OIDC mode.
     """
     config: ServerConfig = request.app.state.config
 
@@ -403,6 +413,16 @@ async def verify_token(request: Request) -> AuthContext:
         raise _unauthenticated("Missing or malformed Authorization header")
 
     raw_token = auth_header.removeprefix("Bearer ").strip()
+
+    # Service-account tokens are minted whenever the offline key is configured,
+    # OIDC or not, and carry a fixed issuer no IdP uses: verify them against the
+    # offline key, never the IdP's key set (review server-15).
+    from novafabric.server.offline_tokens import OFFLINE_TOKEN_ISSUER
+
+    if config.offline_key_path and _unverified_issuer(raw_token) == OFFLINE_TOKEN_ISSUER:
+        offline_ctx = _try_offline_token(request, config)
+        if offline_ctx is not None:
+            return offline_ctx
 
     # Peek at header to extract kid without full verification
     try:

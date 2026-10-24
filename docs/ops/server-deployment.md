@@ -231,7 +231,10 @@ nova server flush-jwks-cache --server http://nova.example.com:7433
 
 **Status: experimental.** Offline tokens require no OIDC provider. Use this
 mode for SLURM batch jobs, air-gapped clusters, or any environment where
-reaching an external identity provider is not possible.
+reaching an external identity provider is not possible. They also work beside
+OIDC: with both configured, a token whose `iss` is `nova-offline` (every offline
+and service-account token) is verified against the offline key, and every other
+token against the IdP.
 
 ### How it works
 
