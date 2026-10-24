@@ -152,3 +152,14 @@ def test_query_rebuild_index_flag_accepted(
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["rows"] == [{"count()": 1}]
+
+
+def test_a_since_out_of_range_exits_2_without_a_traceback(capsule_dir: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["query", "--select", "count()", "--since", "999999999999d",
+         "--capsule-dir", str(capsule_dir)],
+    )
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert "out of range" in result.output

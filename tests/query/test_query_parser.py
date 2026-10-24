@@ -182,6 +182,30 @@ def test_invalid_since_rejected(since: str) -> None:
         build_plan(select="count()", since=since)
 
 
+@pytest.mark.parametrize(
+    "since",
+    [
+        "999999999999d",  # past timedelta's range: OverflowError from timedelta()
+        "99999999d",  # fits a timedelta, but now - it is before year 1
+        "P999999999999D",
+        "P999999W",
+    ],
+)
+def test_a_since_out_of_range_is_a_parse_error(since: str) -> None:
+    """Review eval-adapters-query-17: these crashed with a raw OverflowError traceback."""
+    with pytest.raises(QueryParseError, match="out of range"):
+        build_plan(select="count()", since=since)
+
+
+def test_the_executor_window_reports_out_of_range_as_a_parse_error() -> None:
+    from datetime import datetime, timezone
+
+    from novafabric.query.executor import resolve_time_window
+
+    with pytest.raises(QueryParseError, match="out of range"):
+        resolve_time_window("3650d", None, datetime(2, 1, 1, tzinfo=timezone.utc))
+
+
 def test_invalid_until_rejected() -> None:
     with pytest.raises(QueryParseError, match="until"):
         build_plan(select="count()", until="7d")

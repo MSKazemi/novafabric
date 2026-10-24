@@ -40,7 +40,7 @@ from novafabric.query.model import (
     QueryPlan,
     Scope,
 )
-from novafabric.query.parser import parse_duration, parse_timestamp
+from novafabric.query.parser import parse_duration, parse_timestamp, since_from
 
 _EPOCH_ISO = "1970-01-01T00:00:00Z"
 
@@ -62,7 +62,7 @@ def resolve_time_window(
     since_iso = _EPOCH_ISO
     if since is not None:
         duration = parse_duration(since)
-        since_dt = now - duration if duration is not None else parse_timestamp(
+        since_dt = since_from(now, duration, since) if duration is not None else parse_timestamp(
             since, clause="since"
         )
         since_epoch = since_dt.timestamp()

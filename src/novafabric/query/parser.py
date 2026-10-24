@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -298,18 +298,32 @@ def parse_group_by(value: str | list[str] | None) -> tuple[str, ...]:
 
 def parse_duration(value: str) -> timedelta | None:
     """Parse ``7d`` / ``24h`` / ``P30D``-style durations; None if not a duration."""
+    parts: dict[str, int]
     short = _DURATION_RE.match(value)
     if short is not None:
-        n = int(short.group("n"))
-        unit = short.group("unit")
-        return timedelta(**{{"d": "days", "h": "hours", "m": "minutes", "s": "seconds"}[unit]: n})
-    if value.startswith("P"):
+        unit = {"d": "days", "h": "hours", "m": "minutes", "s": "seconds"}[short.group("unit")]
+        parts = {unit: int(short.group("n"))}
+    elif value.startswith("P"):
         iso = _ISO_DURATION_RE.match(value)
         if iso is None or not any(iso.groupdict().values()):
             raise QueryParseError(f"invalid ISO-8601 duration: {value!r}")
         parts = {k: int(v) for k, v in iso.groupdict().items() if v is not None}
+    else:
+        return None
+    try:
         return timedelta(**parts)
-    return None
+    except OverflowError:  # the digits are unbounded; timedelta is not
+        raise QueryParseError(f"duration out of range: {value!r}") from None
+
+
+def since_from(now: datetime, duration: timedelta, value: str) -> datetime:
+    """``now - duration``; a window reaching before year 1 is a parse error."""
+    try:
+        return now - duration
+    except OverflowError:
+        raise QueryParseError(
+            f"since {value!r} is out of range (it reaches before year 1)"
+        ) from None
 
 
 def parse_timestamp(value: str, *, clause: str) -> datetime:
@@ -319,8 +333,6 @@ def parse_timestamp(value: str, *, clause: str) -> datetime:
     except ValueError as exc:
         raise QueryParseError(f"invalid {clause} timestamp: {value!r}") from exc
     if parsed.tzinfo is None:
-        from datetime import timezone
-
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
 
@@ -330,7 +342,9 @@ def validate_since(value: str | None) -> str | None:
     if value is None:
         return None
     value = value.strip()
-    if parse_duration(value) is not None:
+    duration = parse_duration(value)
+    if duration is not None:
+        since_from(datetime.now(timezone.utc), duration, value)
         return value
     parse_timestamp(value, clause="since")
     return value
