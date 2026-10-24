@@ -1298,6 +1298,7 @@ def create_app(
         from novafabric.serve.new_run_tracker import NewRunTracker  # noqa: PLC0415
 
         _tracker = NewRunTracker()
+        _failures = _RefreshFailureLog("stats refresh")
         while not stop.is_set():
             try:
                 data = _compute_stats()
@@ -1314,8 +1315,11 @@ def create_app(
                         _run_bus.publish(r)
                 finally:
                     _conn.close()
-            except Exception:  # noqa: BLE001
-                pass
+                _failures.succeeded()
+            except Exception as exc:  # noqa: BLE001 — the loop must keep running
+                # A silent `pass` left the SSE stream and runs index stale with no
+                # trace (review serve-11).
+                _failures.failed(exc)
             if stop.wait(2.0):  # poll every 2 s for SSE freshness; wake early on stop
                 break
 
@@ -10346,6 +10350,25 @@ def _resolve_capsule(run_id: str, capsule_dir: Path) -> Path:
 
 
 _ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+
+
+class _RefreshFailureLog:
+    """Log a background loop's failures without flooding: on start, on change, on recovery."""
+
+    def __init__(self, what: str) -> None:
+        self._what = what
+        self._last: str | None = None
+
+    def failed(self, exc: BaseException) -> None:
+        key = f"{type(exc).__name__}: {exc}"
+        if key != self._last:
+            logger.warning("%s failed (data may be stale): %s", self._what, key)
+            self._last = key
+
+    def succeeded(self) -> None:
+        if self._last is not None:
+            logger.info("%s recovered after: %s", self._what, self._last)
+            self._last = None
 
 
 class _ManifestRunIdIndex:
