@@ -6274,10 +6274,25 @@ def create_app(
                 status_code=501,
                 detail=f"S3 abstraction not available: {exc}",
             ) from exc
-        endpoint_url = endpoint or os.environ.get("NOVA_S3_ENDPOINT_URL")
+        configured = os.environ.get("NOVA_S3_ENDPOINT_URL")
+        if endpoint is not None and endpoint != configured:
+            # The client is built with the server's S3 credentials: a caller-chosen
+            # host would receive their SigV4 Authorization header (review serve-13).
+            return {
+                "ok": False,
+                "endpoint": endpoint,
+                "bucket": bucket,
+                "error": "only the configured S3 endpoint (NOVA_S3_ENDPOINT_URL) can be "
+                "validated; the server's credentials are never sent to another host",
+                "error_class": "EndpointNotAllowed",
+            }
+        endpoint_url = configured
+
+        def _validate() -> dict[str, Any]:
+            return NovaObjectStore(endpoint_url=endpoint_url, bucket=bucket).validate()
+
         try:
-            store = NovaObjectStore(endpoint_url=endpoint_url, bucket=bucket)
-            info = store.validate()
+            info = await asyncio.to_thread(_validate)  # boto3 is blocking IO
             return {"ok": True, "endpoint": endpoint_url, "bucket": bucket, "result": info}
         except ObjectLockNotSupportedError as exc:
             return {
