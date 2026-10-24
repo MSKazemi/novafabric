@@ -195,8 +195,24 @@ longer forwards the submitting shell's environment (ADR-0270).
   manifest counts now. The HIPAA Safe Harbor proof reported every identifier without redaction evidence as
   `not_present` — also for a capsule whose prompts held a name, an SSN and an email; it now says `not_assessable`,
   since it reads redaction evidence, never the content.
+- **`nova annotate confirm` no longer lets a maker confirm their own work under a second name.** It minted a
+  keyring key for any new `--as` name, so the fingerprint differed from the maker's by construction. The checker's
+  key must now already exist, and with a signer trust list (the ADR-0312 file `nova promote` reads) it must be bound
+  to the `--as` identity as an `approver`, and to someone other than the person the maker's key is bound to.
+- **The audit log is created owner-only (0600).** It was created 0666 minus the umask, which is world-readable
+  under the usual 022.
+- **Compliance exports claim a NovaSeal seal only when the seal verifies.** The EU AI Act Art. 12 log, the GDPR
+  RoPA security measures and the examiner PCCP risk controls asserted signing for every capsule; unverified controls
+  are now left for the operator to confirm. The Art. 12 log records which redaction artifacts each run has instead
+  of declaring every run `art12_compliant` with its PII redacted, and lists a run whose manifest cannot be read.
+- **A GPAI Art. 53 revision digest covers the whole revision and the model name** (`digest_scheme: v2`), so a
+  silent edit to retention, timestamps or numbering fails verification. Revisions written before v2 (no
+  `digest_scheme`) still verify, but only their `fields` are covered; an unknown scheme fails verification.
 
 ### Changed
+
+- `nova annotate confirm` refuses (exit 1) a checker identity with no keyring key; create it once with
+  `nova promote keygen --identity NAME`.
 
 - `nova audit map` exits `1` when a required control has no evidence, as its help always said (it exited `0`).
 - `nova seal sign --backend local` (the default backend) exits `2` and says nothing was signed. It printed a hint
@@ -287,6 +303,10 @@ longer forwards the submitting shell's environment (ADR-0270).
     query; the ratchet directory is created 0700 before its first key is restored;
   - `nova import` with a manifest whose DSSE payload or signature is not base64 is `INVALID` (it crashed before the
     receipt); `nova run validate-distributed` reports a RUNNING parent with exit 3, not FAILED;
+  - the NIST GenAI profile evidences an area only from a metric read from a recorded artifact, and MG-2.2 counts
+    redaction records instead of claiming a 100% redaction rate; the BagIt evidence packet carries every regular
+    capsule file, streamed and checksummed, not only the manifest and top-level archives; the ISO 42001 export no
+    longer aborts on a naive `created_at`;
   - SIEM follow mode no longer reports two false chain breaks on every clean log rotation and names each line's own
     number; a non-object line in the audit log is a reported chain error, not a crash of `nova audit verify`;
   - `nova validate --schemas --write` deleted every tool-call line it could not parse and rewrote sealed capsules;
