@@ -167,3 +167,19 @@ def test_report_json_output(cli_env: Path, fixtures_dir: Path) -> None:
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert isinstance(data, list)
+
+
+@pytest.mark.parametrize("fmt", ["markdown", "json", "html"])
+def test_report_stdout_is_the_file_it_would_write(
+    cli_env: Path, fixtures_dir: Path, tmp_path: Path, fmt: str
+) -> None:
+    """Review cli-b-17: stdout went through the Rich console, hard-wrapped at the
+    terminal width and parsed as markup, so `nova report --format html > a.html`
+    differed from `-o a.html` (CSS split mid-declaration)."""
+    runner.invoke(app, ["register", str(fixtures_dir / "valid_model.yaml")])
+    out = tmp_path / f"report.{fmt}"
+    to_file = runner.invoke(app, ["report", "--format", fmt, "-o", str(out)])
+    assert to_file.exit_code == 0, to_file.output
+    to_stdout = runner.invoke(app, ["report", "--format", fmt])
+    assert to_stdout.exit_code == 0, to_stdout.output
+    assert to_stdout.stdout == out.read_text() + "\n"

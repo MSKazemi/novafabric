@@ -63,4 +63,6 @@ def report_cmd(
             f.write(content)
         console.print(f"[green]Report written to {output}[/green]")
     else:
-        console.print(content)
+        # Plain stdout, never the Rich console: it wraps at the terminal width and
+        # reads `[...]` as markup, so piped HTML/JSON would differ from -o (cli-b-17).
+        typer.echo(content)
