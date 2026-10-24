@@ -34,7 +34,9 @@ from typing import Annotated, Any
 import typer
 import yaml
 from rich.console import Console
+from rich.markup import escape
 
+from novafabric.capsule._manifest_write import FORCE_UNSEAL_FLAG, FORCE_UNSEAL_HELP
 from novafabric.trust.provenance._honesty import HONESTY_LINE
 
 app = typer.Typer(
@@ -76,9 +78,30 @@ def _read_manifest(capsule_dir: Path) -> dict[str, Any]:
     return data
 
 
-def _write_manifest(capsule_dir: Path, manifest: dict[str, Any]) -> None:
-    path = capsule_dir / _MANIFEST_NAME
-    path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+def _write_manifest(
+    capsule_dir: Path, manifest: dict[str, Any], *, force_unseal: bool = False
+) -> None:
+    """Atomically replace ``capsule.yaml`` through the shared safe writer (review cli-b-03).
+
+    A raw ``write_text`` followed a symlinked ``capsule.yaml`` — an imported or
+    untrusted capsule could make ``--write`` overwrite any file the user can write —
+    and silently broke a NovaSeal seal. Now a link is refused, a sealed capsule is
+    refused unless ``--force-unseal``, and the replace is atomic.
+    """
+    from novafabric.capsule._manifest_write import (
+        UNSEAL_WARNING,
+        ManifestWriteError,
+        write_capsule_manifest,
+    )
+
+    text = yaml.safe_dump(manifest, sort_keys=False)
+    try:
+        result = write_capsule_manifest(capsule_dir, text, force_unseal=force_unseal)
+    except ManifestWriteError as exc:
+        err_console.print(f"[red]Error:[/red] {escape(str(exc))}")
+        raise typer.Exit(1) from exc
+    if result.was_sealed:
+        err_console.print(f"[bold red]{escape(UNSEAL_WARNING)}[/bold red]", highlight=False)
 
 
 def _load_manifest_documents(paths: list[Path] | None) -> dict[str, Any] | None:
@@ -171,6 +194,9 @@ def bind(
         bool,
         typer.Option("--write", help=f"Persist the facet into {_MANIFEST_NAME}."),
     ] = False,
+    force_unseal: Annotated[
+        bool, typer.Option(FORCE_UNSEAL_FLAG, help=FORCE_UNSEAL_HELP)
+    ] = False,
     json_out: Annotated[
         bool, typer.Option("--json", help="Emit the facet as JSON.")
     ] = False,
@@ -217,7 +243,7 @@ def bind(
     if write:
         capsule_manifest = _read_manifest(capsule_dir)
         attach_facet(capsule_manifest, facet)
-        _write_manifest(capsule_dir, capsule_manifest)
+        _write_manifest(capsule_dir, capsule_manifest, force_unseal=force_unseal)
 
     body = facet.model_dump(mode="json", exclude_none=True)
     if json_out:
@@ -394,6 +420,9 @@ def watermark_show(
         bool,
         typer.Option("--write", help=f"With --bind, persist into {_MANIFEST_NAME}."),
     ] = False,
+    force_unseal: Annotated[
+        bool, typer.Option(FORCE_UNSEAL_FLAG, help=FORCE_UNSEAL_HELP)
+    ] = False,
     json_out: Annotated[
         bool, typer.Option("--json", help="Emit the facet as JSON.")
     ] = False,
@@ -420,7 +449,7 @@ def watermark_show(
         if facet is not None and write:
             capsule_manifest = _read_manifest(capsule_dir)
             attach_facet(capsule_manifest, facet)
-            _write_manifest(capsule_dir, capsule_manifest)
+            _write_manifest(capsule_dir, capsule_manifest, force_unseal=force_unseal)
     else:
         facet = facet_from_capsule(_read_manifest(capsule_dir))
 

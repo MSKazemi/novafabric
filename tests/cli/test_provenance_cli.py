@@ -480,3 +480,39 @@ def test_an_unparseable_capsule_manifest_is_a_usage_error(tmp_path: Path) -> Non
     result = run("show", "--capsule", str(capsule))
     assert result.exit_code == 2
     assert "Could not read capsule.yaml" in result.output
+
+
+# --- review cli-b-03: --write goes through the safe manifest writer -----------------
+
+
+def _link_manifest(capsule: Path, tmp_path: Path) -> Path:
+    """Replace capsule.yaml by a link to a file outside the capsule; return the victim."""
+    victim = tmp_path / "victim.yaml"
+    victim.write_text((capsule / "capsule.yaml").read_text())
+    (capsule / "capsule.yaml").unlink()
+    (capsule / "capsule.yaml").symlink_to(victim)
+    return victim
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("bind",), ("watermark", "show", "--bind")],
+    ids=["bind", "watermark-show"],
+)
+def test_write_refuses_a_symlinked_manifest(tmp_path: Path, args: tuple[str, ...]) -> None:
+    capsule = a_capsule(tmp_path, blob=IMAGE_BYTES, sidecar=with_soft_binding(True))
+    victim = _link_manifest(capsule, tmp_path)
+    before = victim.read_text()
+    result = run(*args, "--capsule", str(capsule), "--write")
+    assert result.exit_code != 0, result.output
+    assert victim.read_text() == before  # nothing was written through the link
+
+
+def test_write_refuses_a_sealed_capsule_unless_forced(bound_capsule: Path) -> None:
+    (bound_capsule / ".seal").mkdir()
+    refused = run("bind", "--capsule", str(bound_capsule), "--write")
+    assert refused.exit_code != 0, refused.output
+    assert "media_provenance" not in (bound_capsule / "capsule.yaml").read_text()
+    forced = run("bind", "--capsule", str(bound_capsule), "--write", "--force-unseal")
+    assert forced.exit_code == 0, forced.output
+    assert "media_provenance" in (bound_capsule / "capsule.yaml").read_text()

@@ -2490,7 +2490,8 @@ Key options:
 - `--producing-model` / `--producing-run-id` / `--art50-marking-claimed` /
   `--nf094-receipt-digest` — the NF-163 fields carried on output entries only
 - `--capture-manifests` — record that manifest bytes were retained (ADR-0125 opt-in)
-- `--write` — persist the facet into `capsule.yaml`
+- `--write` — persist the facet into `capsule.yaml`, atomically. A symlinked `capsule.yaml` is refused (exit 1), and so is a sealed capsule unless `--force-unseal` is also given (the seal then no longer matches, and a warning says so). `nova provenance watermark show --bind --write` behaves the same. Releases up to v0.107.0 wrote through a link and broke a seal silently.
+- `--force-unseal` — with `--write`, write into a sealed capsule anyway
 - `--strict` (`verify` only) — exit `1` when any binding is not established
 - `--json` — emit as JSON, including on the empty path
 
