@@ -16,6 +16,8 @@ from novafabric.safetycase.compiler import (
 from novafabric.safetycase.models import BackingState, EvidenceKind
 from novafabric.safetycase.templates import ClaimSpec
 
+from ._replay import write_replay
+
 
 def _write(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,7 +67,8 @@ class TestSign:
 
 
 class TestSealResolver:
-    def test_seal_bundle_supported(self, tmp_path: Path) -> None:
+    def test_a_seal_bundle_file_is_no_seal_evidence(self, tmp_path: Path) -> None:
+        """misc-1-02: only a .seal/ that verifies is seal evidence."""
         cap = _capsule(tmp_path)
         _write(cap / "seal-bundle.json", {"sig": "x"})
         # use a template whose leaf accepts seal
@@ -78,9 +81,8 @@ class TestSealResolver:
             }
         )
         resolved = SafetyCaseCompiler()._resolve_leaf(spec, cap)
-        assert resolved.evidence is not None
-        assert resolved.evidence.evidence_kind is EvidenceKind.SEAL
-        assert resolved.state is BackingState.SUPPORTED
+        assert resolved.evidence is None
+        assert resolved.state is BackingState.UNSUPPORTED
 
     def test_seal_absent_is_unsupported(self, tmp_path: Path) -> None:
         cap = _capsule(tmp_path)
@@ -179,11 +181,8 @@ class TestEdges:
 
     def test_unknown_replay_match_contests(self, tmp_path: Path) -> None:
         cap = _capsule(tmp_path)
-        _write(
-            cap / "attestations" / "reperformance.json",
-            {"run_id": cap.name, "match": "weird-value"},
-        )
-        case = SafetyCaseCompiler().build(cap, "clymer-generic-v0")
+        pub = write_replay(cap, tmp_path / "keys", match="weird-value")
+        case = SafetyCaseCompiler(replay_public_keys=[pub]).build(cap, "clymer-generic-v0")
         rec = case.get_claim("C-record-integrity")
         assert rec is not None
         assert rec.backing_state is BackingState.CONTESTED
@@ -210,9 +209,16 @@ class TestEdges:
         case = SafetyCaseCompiler().build(cap, "clymer-generic-v0")
         rec = case.get_claim("C-record-integrity")
         assert rec is not None
+        # misc-1-02: an envelope whose signature nobody checked is not evidence.
+        assert rec.backing_state is BackingState.UNKNOWN
+        # Signed by a trusted key over this capsule, the predicate is read.
+        pub = write_replay(cap, tmp_path / "keys")
+        case = SafetyCaseCompiler(replay_public_keys=[pub]).build(cap, "clymer-generic-v0")
+        rec = case.get_claim("C-record-integrity")
+        assert rec is not None
         assert rec.backing_state is BackingState.SUPPORTED
 
-    def test_dsse_with_garbage_payload_contests(self, tmp_path: Path) -> None:
+    def test_dsse_with_garbage_payload_is_unknown(self, tmp_path: Path) -> None:
         cap = _capsule(tmp_path)
         envelope = {
             "payloadType": "application/vnd.in-toto+json",
@@ -223,7 +229,7 @@ class TestEdges:
         case = SafetyCaseCompiler().build(cap, "clymer-generic-v0")
         rec = case.get_claim("C-record-integrity")
         assert rec is not None
-        assert rec.backing_state is BackingState.CONTESTED
+        assert rec.backing_state is BackingState.UNKNOWN  # unverifiable, not evidence
 
     def test_eval_stored_ci_without_counts_used(self, tmp_path: Path) -> None:
         # no successes/sample_size -> the stored confidence_interval is used directly

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -78,6 +78,26 @@ def _sha256_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+#: consensus verdicts that say the eval failed (first word, case-insensitive)
+_FAILING_VERDICTS = frozenset({"fail", "failed", "failing", "reject", "rejected", "unsafe"})
+
+
+def _is_failing_verdict(verdict: object) -> bool:
+    words = str(verdict or "").strip().lower().replace(":", " ").split()
+    return bool(words) and words[0] in _FAILING_VERDICTS
+
+
+def _subject_digests(statement: dict[str, Any]) -> set[str]:
+    subjects = statement.get("subject")
+    if not isinstance(subjects, list):
+        return set()
+    return {
+        str(s["digest"]["sha256"]).removeprefix("sha256:")
+        for s in subjects
+        if isinstance(s, dict) and isinstance(s.get("digest"), dict) and "sha256" in s["digest"]
+    }
+
+
 def _load_json(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text())
@@ -108,12 +128,20 @@ class _Resolved:
 class SafetyCaseCompiler:
     """Assemble a safety case from a capsule directory and a template."""
 
-    def __init__(self, producer_version: str | None = None) -> None:
+    def __init__(
+        self,
+        producer_version: str | None = None,
+        *,
+        replay_public_keys: Sequence[bytes] = (),
+    ) -> None:
+        """*replay_public_keys* are the PEM ed25519 keys a re-performance attestation
+        must be signed by to count (review misc-1-02); none = no replay is verified."""
         if producer_version is None:
             from novafabric import __version__  # noqa: PLC0415
 
             producer_version = __version__
         self._producer_version = producer_version
+        self._replay_public_keys = tuple(replay_public_keys)
         self._evidence_counter = 0
 
     # -- public API ----------------------------------------------------------
@@ -332,23 +360,19 @@ class SafetyCaseCompiler:
     # each resolver returns a _Resolved or None (artifact absent)
 
     def _resolve_replay(self, capsule_dir: Path) -> _Resolved | None:
+        """A re-performance attestation, counted only when signed by a trusted key.
+
+        Review misc-1-02: the DSSE envelope was decoded and never verified, so a
+        hand-written ``{"match": "exact"}`` made the record-integrity claim
+        SUPPORTED and deductive. Now the signature must verify under one of the
+        compiler's ``replay_public_keys`` (UNKNOWN otherwise — unsigned or
+        unverifiable is not evidence either way), and the statement's subject must
+        be this capsule's current ``capsule.yaml`` (CONTESTED otherwise).
+        """
         path = capsule_dir / "attestations" / "reperformance.json"
         data = _load_json(path)
         if data is None:
             return None
-        if "payload" in data and "payloadType" in data:
-            # `nova evidence attest-replay` emits a DSSE envelope wrapping an
-            # in-toto Statement whose predicate is the attestation. Unwrap it
-            # instead of misreading the envelope as a raw attestation (which
-            # produced a misleading CONTESTED "match == ''" verdict).
-            import base64
-
-            try:
-                statement = json.loads(base64.b64decode(data["payload"]))
-                data = statement.get("predicate") or {}
-            except (ValueError, TypeError):
-                data = {}
-        match = str(data.get("match", ""))
         ev = Evidence(
             id=self._next_evidence_id("replay"),
             evidence_kind=EvidenceKind.REPLAY_ATTESTATION,
@@ -359,6 +383,21 @@ class SafetyCaseCompiler:
             ),
             attestation_ref=str(path.relative_to(capsule_dir)),
         )
+        statement = self._verified_statement(data)
+        if statement is None:
+            return _Resolved(ev, BackingState.UNKNOWN)
+        current = self._capsule_hash(capsule_dir).removeprefix("sha256:")
+        if current not in _subject_digests(statement):
+            return _Resolved(
+                ev,
+                BackingState.CONTESTED,
+                contest_reason=(
+                    "The replay attestation is for another capsule state: its subject "
+                    "digest is not this capsule's capsule.yaml."
+                ),
+            )
+        predicate = statement.get("predicate")
+        match = str(predicate.get("match", "")) if isinstance(predicate, dict) else ""
         if match == "exact":
             return _Resolved(ev, BackingState.SUPPORTED, inference_override=InferenceType.DEDUCTIVE)
         if match == "semantic-match":
@@ -369,6 +408,24 @@ class SafetyCaseCompiler:
             BackingState.CONTESTED,
             contest_reason=f"Replay match == {match!r}; re-performance diverged.",
         )
+
+    def _verified_statement(self, envelope: dict[str, Any]) -> dict[str, Any] | None:
+        """The in-toto statement of *envelope* if a trusted key signed it, else None."""
+        if not ("payload" in envelope and "payloadType" in envelope):
+            return None  # not a signed envelope at all
+        from novafabric.evidence.intoto import dsse_verify  # noqa: PLC0415
+        from novafabric.evidence.signing import verify_with_pem  # noqa: PLC0415
+
+        for key in self._replay_public_keys:
+            try:
+                statement = dsse_verify(
+                    envelope, lambda pae, sig, key=key: verify_with_pem(key, pae, sig)
+                )
+            except (ValueError, TypeError, KeyError, IndexError):
+                continue
+            if isinstance(statement, dict):
+                return statement
+        return None
 
     def _resolve_eval(self, capsule_dir: Path) -> _Resolved | None:
         eval_dir = capsule_dir / "eval-results"
@@ -434,19 +491,30 @@ class SafetyCaseCompiler:
                 ),
                 confidence=confidence,
             )
-        # Rule 2: Wilson CI straddling the pass threshold forces CONTESTED.
-        if interval is not None and interval[0] < DEFAULT_PASS_THRESHOLD < interval[1]:
-            return _Resolved(
-                ev,
-                BackingState.CONTESTED,
-                contest_reason=(
-                    f"Wilson CI [{interval[0]:.2f}, {interval[1]:.2f}] straddles the "
-                    f"pass threshold {DEFAULT_PASS_THRESHOLD}; statistically "
-                    "indistinguishable from failing."
-                ),
-                confidence=confidence,
-            )
-        return _Resolved(ev, BackingState.SUPPORTED, confidence=confidence)
+        # Review misc-1-01: the verdict and the whole interval decide, not only a
+        # straddle — a CI wholly below the threshold (10/100) was SUPPORTED.
+        # Rule 2: a failing consensus verdict is evidence against the claim.
+        if _is_failing_verdict(data.get("consensus_verdict")):
+            return _Resolved(ev, BackingState.UNSUPPORTED, confidence=confidence)
+        # Rule 3: no interval, no statistical basis either way.
+        if interval is None:
+            return _Resolved(ev, BackingState.UNKNOWN, confidence=confidence)
+        # Rule 4: SUPPORTED only when the whole interval clears the threshold.
+        if interval[0] >= DEFAULT_PASS_THRESHOLD:
+            return _Resolved(ev, BackingState.SUPPORTED, confidence=confidence)
+        if interval[1] < DEFAULT_PASS_THRESHOLD:
+            return _Resolved(ev, BackingState.UNSUPPORTED, confidence=confidence)
+        # Rule 5: a Wilson CI straddling (or touching) the threshold forces CONTESTED.
+        return _Resolved(
+            ev,
+            BackingState.CONTESTED,
+            contest_reason=(
+                f"Wilson CI [{interval[0]:.2f}, {interval[1]:.2f}] straddles the "
+                f"pass threshold {DEFAULT_PASS_THRESHOLD}; statistically "
+                "indistinguishable from failing."
+            ),
+            confidence=confidence,
+        )
 
     @staticmethod
     def _wilson(
@@ -479,6 +547,23 @@ class SafetyCaseCompiler:
             ),
             attestation_ref=None,
         )
+        # Review misc-1-02: read the assertion, not just its existence.
+        from novafabric.evidence.completeness import CompletenessAssertion  # noqa: PLC0415
+
+        try:
+            assertion = CompletenessAssertion.model_validate(data)
+        except ValueError:
+            return _Resolved(ev, BackingState.UNKNOWN)
+        dropped = {k: v for k, v in assertion.dropped_counts.items() if v > 0}
+        if dropped:
+            detail = ", ".join(f"{k}: {v}" for k, v in sorted(dropped.items()))
+            return _Resolved(
+                ev,
+                BackingState.CONTESTED,
+                contest_reason=(
+                    f"The capture plane dropped events ({detail}); the log is incomplete."
+                ),
+            )
         return _Resolved(ev, BackingState.SUPPORTED)
 
     def _resolve_criterion_binding(self, capsule_dir: Path) -> _Resolved | None:
@@ -509,23 +594,35 @@ class SafetyCaseCompiler:
         return _Resolved(ev, BackingState.UNSUPPORTED)
 
     def _resolve_seal(self, capsule_dir: Path) -> _Resolved | None:
-        for name in ("seal-bundle.json", "seal.json"):
-            path = capsule_dir / name
-            data = _load_json(path)
-            if data is None:
-                continue
-            ev = Evidence(
-                id=self._next_evidence_id("seal"),
-                evidence_kind=EvidenceKind.SEAL,
-                artifact_ref=ArtifactRef(
-                    kind="seal",
-                    path_in_bundle=str(path.relative_to(capsule_dir)),
-                    sha256=_sha256_file(path),
-                ),
-                attestation_ref=None,
-            )
+        """The capsule's NovaSeal seal, verified (review misc-1-02).
+
+        Any ``seal-bundle.json``/``seal.json`` that parsed used to be a SUPPORTED seal,
+        while the real seal — ``.seal/``, which nothing here looked at — never was.
+        """
+        from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415
+            capsule_seal_verifies,
+        )
+
+        path = capsule_dir / ".seal" / "manifest.dsse"
+        if not path.is_file():
+            return None
+        ev = Evidence(
+            id=self._next_evidence_id("seal"),
+            evidence_kind=EvidenceKind.SEAL,
+            artifact_ref=ArtifactRef(
+                kind="seal",
+                path_in_bundle=".seal/manifest.dsse",
+                sha256=_sha256_file(path),
+            ),
+            attestation_ref=None,
+        )
+        if capsule_seal_verifies(capsule_dir):
             return _Resolved(ev, BackingState.SUPPORTED)
-        return None
+        return _Resolved(
+            ev,
+            BackingState.CONTESTED,
+            contest_reason="The capsule's seal does not verify: it was altered after sealing.",
+        )
 
     #: evidence_kind -> resolver (unbound; called as resolver(self, capsule_dir))
     _RESOLVERS: dict[str, Callable[["SafetyCaseCompiler", Path], "_Resolved | None"]] = {

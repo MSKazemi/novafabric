@@ -22,6 +22,8 @@ from novafabric.safetycase.models import (
     InferenceType,
 )
 
+from ._replay import write_replay
+
 _SCHEMA_PATH = (
     Path(__file__).resolve().parents[2] / "schemas" / "safety-case.schema.json"
 )
@@ -86,10 +88,10 @@ class TestSupportedAndContested:
         self, tmp_path: Path, schema_validator
     ) -> None:
         cap = _capsule(tmp_path)
-        _exact_replay(cap)
+        pub = write_replay(cap, tmp_path / "keys")
         _contested_judge_eval(cap)
         _completeness(cap)
-        case = SafetyCaseCompiler().build(cap, "clymer-generic-v0")
+        case = SafetyCaseCompiler(replay_public_keys=[pub]).build(cap, "clymer-generic-v0")
         schema_validator.validate(case.to_record())
 
         record_claim = case.get_claim("C-record-integrity")
@@ -187,24 +189,18 @@ class TestDanglingArtifact:
 class TestMismatchReplay:
     def test_replay_mismatch_contests(self, tmp_path: Path) -> None:
         cap = _capsule(tmp_path)
-        _write(
-            cap / "attestations" / "reperformance.json",
-            {"run_id": cap.name, "match": "mismatch", "replay_mode": "exact"},
-        )
+        pub = write_replay(cap, tmp_path / "keys", match="mismatch")
         _contested_judge_eval(cap, kappa=0.9)
         _completeness(cap)
-        case = SafetyCaseCompiler().build(cap, "clymer-generic-v0")
+        case = SafetyCaseCompiler(replay_public_keys=[pub]).build(cap, "clymer-generic-v0")
         rec = case.get_claim("C-record-integrity")
         assert rec is not None
         assert rec.backing_state is BackingState.CONTESTED
 
     def test_semantic_match_is_inductive(self, tmp_path: Path) -> None:
         cap = _capsule(tmp_path)
-        _write(
-            cap / "attestations" / "reperformance.json",
-            {"run_id": cap.name, "match": "semantic-match", "replay_mode": "semantic"},
-        )
-        case = SafetyCaseCompiler().build(cap, "clymer-generic-v0")
+        pub = write_replay(cap, tmp_path / "keys", match="semantic-match", mode="semantic")
+        case = SafetyCaseCompiler(replay_public_keys=[pub]).build(cap, "clymer-generic-v0")
         arg = next(n for n in case.nodes if getattr(n, "id", None) == "A-replay")
         assert arg.inference_type is InferenceType.INDUCTIVE
         rec = case.get_claim("C-record-integrity")

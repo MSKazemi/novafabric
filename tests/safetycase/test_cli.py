@@ -186,3 +186,24 @@ class TestExport:
         assert result.exit_code == 0, result.output
         assert md.exists()
         assert "# Safety Case" in md.read_text()
+
+
+def test_build_counts_a_replay_only_with_its_signing_key(tmp_path: Path) -> None:
+    """misc-1-02: ``--replay-pubkey`` is how the CLI trusts a re-performance attestation."""
+    from ._replay import write_replay
+
+    cap = tmp_path / "01HXAY7M5JZ8R7K4P9DPBYK2WX"
+    cap.mkdir()
+    (cap / "capsule.yaml").write_text(f"run_id: {cap.name}\n")
+    pub = write_replay(cap, tmp_path / "keys")
+    key = tmp_path / "replay.pub.pem"
+    key.write_bytes(pub)
+
+    def record_state(*extra: str) -> str:
+        res = runner.invoke(safety_case_app, ["build", str(cap), *extra])
+        assert res.exit_code == 0, res.output
+        nodes = json.loads(res.output)["nodes"]
+        return next(n["backing_state"] for n in nodes if n.get("id") == "C-record-integrity")
+
+    assert record_state() == "UNKNOWN"
+    assert record_state("--replay-pubkey", str(key)) == "SUPPORTED"

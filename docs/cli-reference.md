@@ -10728,13 +10728,27 @@ nova ledger status ./my-capsule
 ### nova safety-case build
 
 Compile a Claims-Arguments-Evidence safety case from a capsule's real artifacts (evals,
-seals, criterion bindings, replay attestations) against a template. Backing states are
-driven by inter-judge κ and Wilson confidence intervals; naked (unsupported) claims are a
-schema error.
+seals, criterion bindings, replay attestations) against a template. Naked (unsupported)
+claims are a schema error. Each backing state is decided from the artifact's **content**:
+
+| Evidence | SUPPORTED when | otherwise |
+|---|---|---|
+| Eval (`eval-results/*.json`) | the whole Wilson interval is at or above the pass threshold (0.7) and κ, when reported, is ≥ 0.6 | κ < 0.6 or an interval straddling the threshold → CONTESTED; an interval wholly below it, or a failing consensus verdict (`fail`, `rejected`, `unsafe`, …) → UNSUPPORTED; no interval → UNKNOWN |
+| Completeness (`completeness.json`) | it parses and reports no dropped events | dropped events → CONTESTED (the counts are in the reason); not a completeness assertion → UNKNOWN |
+| Seal | the capsule's `.seal/` verifies (signature, content binding, capsule id) | a `.seal/` that does not verify → CONTESTED; a file named `seal-bundle.json` or `seal.json` is not a seal |
+| Replay (`attestations/reperformance.json`) | the DSSE signature verifies under a `--replay-pubkey` key, the subject is this capsule's current `capsule.yaml`, and `match` is `exact` (deductive) or `semantic-match` (inductive) | unsigned or no trusted key → UNKNOWN; another capsule state, or `mismatch` → CONTESTED |
+
+Releases up to v0.107.0 decided these from the files' existence: an eval whose interval lay
+wholly below the threshold, a completeness assertion reporting dropped events, any parseable
+`seal.json`, and an unsigned hand-written replay file were all SUPPORTED.
 
 ```bash
 nova safety-case build ./my-capsule --template clymer-generic-v0 --output case.json
+nova safety-case build ./my-capsule --replay-pubkey ed25519.pub.pem --output case.json
 ```
+
+- `--replay-pubkey PATH` — PEM ed25519 public key a re-performance attestation must be signed
+  by to count (repeatable; the key `nova evidence attest-replay --key` signed with).
 
 ### nova safety-case verify
 

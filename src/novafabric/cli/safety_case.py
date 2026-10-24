@@ -83,11 +83,27 @@ def build_cmd(
         ),
     ] = "clymer-generic-v0",
     output: _OutOpt = None,
+    replay_pubkey: Annotated[
+        Optional[list[Path]],
+        typer.Option(
+            "--replay-pubkey",
+            help=(
+                "PEM ed25519 public key a re-performance attestation must be signed by "
+                "to count (repeatable). Without one, a replay attestation is UNKNOWN."
+            ),
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
 ) -> None:
     """Compile a safety case from a capsule against a CAE template.
 
-    Backing states are assigned mechanically from evidence statistics; an
-    unresolved template leaf becomes an honest UNSUPPORTED claim.
+    Backing states are assigned mechanically from the evidence's content; an
+    unresolved template leaf becomes an honest UNSUPPORTED claim. An eval is
+    SUPPORTED only when its whole confidence interval clears the pass threshold;
+    a completeness assertion with dropped events is CONTESTED; a seal counts only
+    when ``.seal/`` verifies; a replay attestation counts only when signed by a
+    ``--replay-pubkey`` key over this capsule.
 
     Scope: single capsule.
 
@@ -95,10 +111,12 @@ def build_cmd(
     Examples:
       nova safety-case build path/to/capsule --template clymer-generic-v0
       nova safety-case build 01HX... --template eu-ai-act-annex-iv-v0 -o safety-case.json
+      nova safety-case build 01HX... --replay-pubkey ed25519.pub.pem
     """
     capsule_dir = _resolve_capsule(capsule)
+    keys = [path.read_bytes() for path in replay_pubkey or []]
     try:
-        case = SafetyCaseCompiler().build(capsule_dir, template)
+        case = SafetyCaseCompiler(replay_public_keys=keys).build(capsule_dir, template)
     except TemplateError as exc:
         console.print(f"[red]Template error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
