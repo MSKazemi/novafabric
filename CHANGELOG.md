@@ -83,9 +83,29 @@ longer forwards the submitting shell's environment (ADR-0270).
   pipeline could not walk was skipped, and a file whose masking failed was still counted as redacted in
   `redaction-proof.json`. Such a line is now masked as text, and a file that still fails is redacted or dropped
   according to the masker's policy and recorded as failed.
+- **A throw-away co-signature can no longer hide a forged seal from the sealer's log.** The sealer-log check
+  (ADR-0297) asked only about the first signature that verified, and the `keyid` the seal's own writer put in
+  `log-entry.json`. A holder of the sealing key put a fresh self-signed key first in the envelope, and a capsule
+  forged outside the sealing path verified, chain-anchored as the real signer. Every signer whose signature
+  verifies now counts.
+- **`nova verify --check-redaction` checks what the seal covers.** It checked only that the envelope verified
+  under the key it carried (any self-made key passes), and ignored the positional: a tampered capsule, or a path
+  that did not exist, exited 0 with "Redaction proof seal is VALID". The positional is now the report JSON the
+  seal must cover (`nova verify --check-redaction proof.seal.json proof.json`): the signed payload must be exactly
+  that report, the signer is reported as `SELF-ASSERTED` unless `--ca-bundle` validates its chain, and a
+  directory or missing path exits 2.
+- **`nova ledger verify` without `--pubkey` no longer prints `✓ ledger OK`.** That check is structural only, and a
+  stream edited and re-anchored with any key passes it. It now prints `signature NOT VERIFIED` (exit 0 kept).
 
 ### Changed
 
+- `nova seal sign --backend local` (the default backend) exits `2` and says nothing was signed. It printed a hint
+  and exited `0`, so `nova seal sign m.json && publish` published an unsigned manifest. Seal with `nova capture`
+  or `nova seal propose`, or use `--backend sigstore`.
+- `nova seal log verify` opens the log read-only and exits `3` when no log exists; it created an empty log at a
+  mistyped `--db` and printed `Consistency: OK`. `--consistency N` now reports `Consistency proof … internal
+  consistency only` unless the new `--old-root HEX` supplies the root at `N` from outside the log; only then is it
+  reported as an append-only proof.
 - Dependencies: setup-uv v10.3.2, sbom-action v0.24.3, hypothesis 6.170.8, pyarrow 26.0.0, astro 7.4.2 and
   lucide-react 1.61.0. The dashboard now needs Node 22.23.4 or newer.
 
@@ -114,6 +134,13 @@ longer forwards the submitting shell's environment (ADR-0270).
     checkout without package metadata) replaced the call's own return value or exception. Each step is now
     fail-open: the capsule is still scanned and written, is not sealed, and `metadata.finalization_error` reads
     `capture incomplete: <step>: <error type>`. An unwritable `@agent` capsule store runs the function uncaptured.
+  - an interrupted `nova capture` (Ctrl-C, SIGTERM) left the capsule without `capsule.yaml` and the streams the
+    workload had written unscanned. Once the workload has stopped, the capsule is finalised as usual (secret scan,
+    proof, seal if configured) with `status: aborted` and `error.type: WorkloadInterrupted`, and `nova capture`
+    still exits 130 / 128+signal;
+  - a cancelled daemon run (`novacap` interrupted or disconnected) killed its worker after 5 s, before the local
+    runner's 10 s SIGKILL of the workload, so a workload that ignored SIGTERM ran on unsupervised; the worker now
+    waits 15 s.
 - Dashboard: the Diff tab reported two runs as identical when their model calls changed, were added or were removed;
   it now shows the server's own counts and what changed in each pair. The run inspector showed a made-up
   `redaction-proof.json` (zero findings, fixed chain hash) and `env.lock` for every real run; it now shows the
