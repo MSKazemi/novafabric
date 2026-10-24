@@ -18,6 +18,8 @@ from typing import Any
 import duckdb
 import pyarrow as pa
 
+from novafabric.evidence_fabric._event_fields import event_model, event_tokens_in_out
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -180,8 +182,10 @@ class DuckDBAccumulator:
         """Bulk-ingest capsule events (tool calls, model calls).
 
         Each dict must contain ``run_id``, ``event_type``, ``tenant``.
-        Optional: ``model`` (str), ``tool_name`` (str), ``ts`` (datetime),
-        ``tokens_in`` (int), ``tokens_out`` (int).
+        Optional: ``model`` or ``model_id`` (str), ``tool_name`` (str), ``ts`` (datetime),
+        ``tokens_in`` (int), ``tokens_out`` (int) — read like the ClickHouse accumulator
+        reads them (:mod:`novafabric.evidence_fabric._event_fields`). A bare
+        ``tokens_total`` is not split into input and output: this table has no total column.
 
         Returns:
             Number of rows written.
@@ -203,13 +207,14 @@ class DuckDBAccumulator:
         for ev in events:
             rows["run_id"].append(ev["run_id"])
             rows["event_type"].append(ev["event_type"])
-            rows["model"].append(ev.get("model") or "")
+            rows["model"].append(event_model(ev) or "")
             rows["tool_name"].append(ev.get("tool_name") or "")
             rows["tenant"].append(ev.get("tenant", "default"))
             ts = ev.get("ts", now)
             rows["ts"].append(ts if isinstance(ts, datetime) else now)
-            rows["tokens_in"].append(int(ev.get("tokens_in", 0)))
-            rows["tokens_out"].append(int(ev.get("tokens_out", 0)))
+            tokens_in, tokens_out = event_tokens_in_out(ev)
+            rows["tokens_in"].append(tokens_in)
+            rows["tokens_out"].append(tokens_out)
 
         arrow_table = pa.table(rows, schema=_ARROW_SCHEMA_CAPSULE)
         with self._lock:

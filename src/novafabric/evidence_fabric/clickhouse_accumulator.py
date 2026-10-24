@@ -26,6 +26,8 @@ import os
 from typing import Any
 from urllib.parse import urlparse
 
+from novafabric.evidence_fabric._event_fields import event_model, event_tokens_total
+
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------
@@ -176,7 +178,9 @@ class ClickHouseAccumulator:
         """Bulk-insert capsule events into ClickHouse.
 
         Each dict must contain ``run_id``, ``event_type``, ``tenant``.
-        Optional: ``model_id`` (str), ``tool_name`` (str), ``tokens_total`` (int).
+        Optional: ``model_id`` or ``model`` (str), ``tool_name`` (str), and
+        ``tokens_total`` or ``tokens_in``/``tokens_out`` (int) — read like the DuckDB
+        accumulator reads them (:mod:`novafabric.evidence_fabric._event_fields`).
 
         Returns:
             Number of rows inserted.
@@ -193,10 +197,10 @@ class ClickHouseAccumulator:
                 [
                     ev["run_id"],
                     ev["event_type"],
-                    ev.get("model_id") or ev.get("model"),
+                    event_model(ev),
                     ev.get("tool_name"),
                     ev.get("tenant", "default"),
-                    ev.get("tokens_total"),
+                    event_tokens_total(ev),
                 ]
             )
 

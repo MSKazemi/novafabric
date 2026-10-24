@@ -100,8 +100,9 @@ class CapsuleEvent(BaseModel):
     malformed one is refused with ``422`` here instead of raising inside the
     accumulator (a ``500``). Any other key is kept and passed through unchanged.
     ``model``/``tokens_in``/``tokens_out`` are the DuckDB columns, ``model_id``/
-    ``tokens_total`` the ClickHouse ones. ``tenant`` is checked against the
-    principal by the route, not here.
+    ``tokens_total`` the ClickHouse ones; both accumulators read either spelling
+    (:mod:`novafabric.evidence_fabric._event_fields`). ``tenant`` is checked against
+    the principal by the route, not here.
     """
 
     model_config = ConfigDict(extra="allow")

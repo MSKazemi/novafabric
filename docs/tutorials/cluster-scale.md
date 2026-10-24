@@ -115,6 +115,11 @@ uvicorn --factory novafabric.collector_app:create_collector_app --host 0.0.0.0 -
   in 0–2⁶³−1. One event that breaks this refuses the whole batch; nothing in it is
   ingested, and the response's `detail` names the event index and the field. Other
   keys pass through unchanged. (Before, such an event crashed the request with `500`.)
+- **Either spelling of the model and token fields is counted by either backend.** The
+  model is `model_id`, else `model`. ClickHouse stores `tokens_total` when given, else
+  `tokens_in + tokens_out`, and `NULL` when the event reports no count (not reported is
+  not zero). DuckDB stores `tokens_in` and `tokens_out`; it does not split a bare
+  `tokens_total`, so send `tokens_in`/`tokens_out` when DuckDB backs the collector.
 
 ---
 
