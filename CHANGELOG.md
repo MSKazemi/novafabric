@@ -31,6 +31,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 - Dependencies: setup-uv v10.3.2, sbom-action v0.24.3, hypothesis 6.170.8, pyarrow 26.0.0, astro 7.4.2 and
   lucide-react 1.61.0. The dashboard now needs Node 22.23.4 or newer.
 
+### Fixed
+
+- `nova export-retention --registry` reads the registry's `retention-policy.yaml` and `worm.db` from
+  `$NOVAFABRIC_HOME/registries/<registry>/`, where `nova retention` and `nova capsule delete` read them, and still
+  reads a legacy `./.novafabric/registries/<registry>/` copy, with a warning. Run from any other directory, it
+  reported no retention policy and no WORM lock although deletion enforced both. With several policy copies,
+  `deletion_mode` is `prohibited` if any copy says so; with several `worm.db` files the latest lock per run wins. A
+  `worm.db` that is found but cannot be read exits `2`. `--worm-db` still reads exactly one database.
+- `nova serve`'s ClickHouse cost auto-ingest scans the server's capsule store (`--capsule-dir` /
+  `$NOVAFABRIC_CAPSULE_DIR`) instead of `$NOVAFABRIC_HOME/capsules`; with the capsules anywhere else, the cost tab
+  never showed a run.
+- The `examples/capsules/minimal-run` example passes `nova validate` in a fresh checkout. Its empty `inputs/`
+  directory was not in git, so validation failed with `missing directory: inputs`.
+
 ## [0.107.0] - 2026-10-23
 
 **Capture that a workload cannot turn against its host, one verifier behind every trust surface,
