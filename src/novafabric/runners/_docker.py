@@ -119,6 +119,11 @@ def docker_env_args(
     return flags, client_env
 
 
+#: Where :meth:`DockerRunner.run_eval_container` mounts the capsule (read-only)
+#: inside an eval container — the path a suite passes to its container binary.
+EVAL_CAPSULE_MOUNTPOINT = "/novafabric/eval-capsule"
+
+
 class DockerRunner:
     """Run the captured workload inside a Docker container.
 
@@ -404,7 +409,7 @@ class DockerRunner:
 
     # ── Eval container helper (ADR-0033 E-4) ──────────────────────────────────
 
-    _EVAL_CAPSULE_MOUNTPOINT = "/novafabric/eval-capsule"
+    _EVAL_CAPSULE_MOUNTPOINT = EVAL_CAPSULE_MOUNTPOINT
 
     def run_eval_container(
         self,

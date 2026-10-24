@@ -11,6 +11,7 @@ from novafabric.evals.adapter import EvalSuiteAdapter
 from novafabric.evals.exceptions import EvalSuiteError
 from novafabric.evals.result import EvalResult
 from novafabric.evals.suites.gaia import GaiaAdapter
+from novafabric.runners._docker import EVAL_CAPSULE_MOUNTPOINT
 
 _VALID_EVAL_RESULT_JSON = json.dumps(
     {
@@ -120,7 +121,7 @@ def test_gaia_run_delegates_to_docker_runner(tmp_path: Path, adapter: GaiaAdapte
     assert call_kwargs.kwargs["image_ref"] == "registry.example.com/gaia-eval:test"
     assert call_kwargs.kwargs["digest"] == adapter.oci_digest()
     assert call_kwargs.kwargs["capsule_path"] == tmp_path
-    assert call_kwargs.kwargs["command"] == adapter.container_argv(str(tmp_path))
+    assert call_kwargs.kwargs["command"] == adapter.container_argv(EVAL_CAPSULE_MOUNTPOINT)
     assert isinstance(result, EvalResult)
     assert result.suite_id == "gaia-v1"
     assert result.passed is True

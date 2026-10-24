@@ -6212,6 +6212,21 @@ Built-in suites:
 | `swe-bench-verified-v1` | 0.1.0 | SWE-bench Verified coding benchmark (OCI-pinned) |
 | `agentbench-v1` | 0.1.0 | AgentBench multi-task agent benchmark (OCI-pinned) |
 
+**Container suite contract.** NovaFabric publishes no eval image (ADR-0308); an image you
+build for an OCI-pinned suite is run as `docker run --rm -v <capsule>:/novafabric/eval-capsule:ro
+<image>@<digest> <argv>`, where the capsule is the read-only mount and `<argv>` is fixed per suite:
+
+| Suite | Argv inside the container |
+|---|---|
+| `gaia-v1` | `gaia-run --capsule /novafabric/eval-capsule --output stdout` |
+| `mmlu-v1` | `mmlu-run --capsule /novafabric/eval-capsule --output stdout` |
+| `truthful-qa-v1` | `truthful-qa-run --capsule /novafabric/eval-capsule --output stdout` |
+| `swe-bench-verified-v1` | `swe-bench-run --capsule /novafabric/eval-capsule` |
+| `agentbench-v1` | `agentbench-run --capsule /novafabric/eval-capsule` |
+
+The binary writes one EvalResult JSON document to stdout and exits `0`; a non-zero exit or
+unparseable stdout fails the run.
+
 Third-party suites register via `[project.entry-points."novafabric.eval_suites"]` in their `pyproject.toml`. Any load errors for registered adapters are shown inline without crashing the command.
 
 ### nova eval card / nova eval score (experimental)

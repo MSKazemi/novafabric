@@ -14,7 +14,7 @@ from pathlib import Path
 from novafabric.evals.exceptions import EvalSuiteError
 from novafabric.evals.result import EvalResult
 from novafabric.evals.suites._container import require_pinned_image
-from novafabric.runners._docker import DockerRunner
+from novafabric.runners._docker import EVAL_CAPSULE_MOUNTPOINT, DockerRunner
 
 _SUITE_ID = "swe-bench-verified-v1"
 _SUITE_VERSION = "0.1.0"
@@ -99,7 +99,7 @@ class SweBenchAdapter:
             image_ref=self.oci_image(),
             digest=self.oci_digest(),
             capsule_path=capsule_path,
-            command=self.container_argv(str(capsule_path)),
+            command=self.container_argv(EVAL_CAPSULE_MOUNTPOINT),
             env=config,
         )
         if returncode != 0:
