@@ -49,3 +49,51 @@ def test_sp1_attack_path_latency_budget() -> None:
     assert result["n_nodes"] > 0
     # Generous bound: proves the query path is fast; the real gate is the 1M host run.
     assert result["p99_ms"] < 500.0, result
+
+
+# ── review eval-adapters-query-20 ────────────────────────────────────────────
+
+
+def _edges() -> list[dict[str, object]]:
+    return [
+        {"source": {"kind": "run", "ref": r}, "target": {"kind": "run", "ref": s},
+         "edge_type": "produces", "capsule_run_id": "cap-1", "created_at": "t"}
+        for r, s in [("A", "B"), ("B", "C")]
+    ]
+
+
+def test_ingesting_the_same_capsule_twice_does_not_duplicate_edges() -> None:
+    """CREATE made a second build_spkg on one capsule double every LPG edge,
+    contradicting "rebuild-from-capsule"."""
+    store = SpkgGraphStore()
+    store.ingest_edges(_edges())
+    store.ingest_edges(_edges())
+    assert store.edge_count() == 2
+    store.close()
+
+
+def test_the_same_pair_from_two_capsules_or_types_stays_two_edges() -> None:
+    store = SpkgGraphStore()
+    other_capsule = [dict(e, capsule_run_id="cap-2") for e in _edges()]
+    other_type = [dict(e, edge_type="reads") for e in _edges()]
+    store.ingest_edges([*_edges(), *other_capsule, *other_type])
+    assert store.edge_count() == 6
+    store.close()
+
+
+def test_close_removes_the_temporary_database() -> None:
+    from pathlib import Path
+
+    store = SpkgGraphStore()
+    tmp = Path(store._tmp_dir or "")
+    assert tmp.is_dir()
+    store.close()
+    assert not tmp.exists()
+
+
+def test_close_leaves_a_caller_supplied_database_alone(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    db = tmp_path / "spkg.kuzu"
+    store = SpkgGraphStore(db)
+    store.ingest_edges(_edges())
+    store.close()
+    assert db.exists()

@@ -10,6 +10,8 @@ Requires the optional ``spkg`` extra (installs ``kuzu``); imported lazily.
 """
 from __future__ import annotations
 
+import gc
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Iterable
@@ -54,7 +56,10 @@ class SpkgGraphStore:
         self._conn.execute(_DDL_REL)
 
     def ingest_edges(self, edges: Iterable[dict[str, Any]]) -> int:
-        """Ingest lineage-shaped edge dicts. Returns the number of edges written.
+        """Ingest lineage-shaped edge dicts. Returns the number of edges ingested.
+
+        An edge is identified by (source, target, ``edge_type``,
+        ``capsule_run_id``): ingesting the same capsule again adds nothing.
 
         Runs as a single explicit transaction with node MERGEs deduplicated up
         front: KùzuDB auto-commits (and checkpoints) every statement outside a
@@ -78,9 +83,12 @@ class SpkgGraphStore:
             for node_id, (kind, ref) in seen_nodes.items():
                 self._merge_node(node_id, kind, ref)
             for s_id, t_id, edge in rows:
+                # MERGE on (source, target, type, capsule): rebuilding from the
+                # same capsule is idempotent, as "rebuild-from-capsule" promises.
                 self._conn.execute(
                     "MATCH (a:Entity {node_id: $s}), (b:Entity {node_id: $t}) "
-                    "CREATE (a)-[:EDGE {edge_type: $et, capsule_run_id: $c, created_at: $ca}]->(b)",
+                    "MERGE (a)-[e:EDGE {edge_type: $et, capsule_run_id: $c}]->(b) "
+                    "ON CREATE SET e.created_at = $ca",
                     {
                         "s": s_id,
                         "t": t_id,
@@ -161,6 +169,11 @@ class SpkgGraphStore:
         return int(res.get_next()[0]) if res.has_next() else 0
 
     def close(self) -> None:
-        # KùzuDB closes on GC; drop references so a temp dir can be cleaned.
+        """Release the database; remove it when this store created it in a temp dir."""
+        # KùzuDB closes on GC: drop the references first, then the directory.
         self._conn = None  # type: ignore[assignment]
         self._db = None  # type: ignore[assignment]
+        if self._tmp_dir is not None:
+            gc.collect()
+            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+            self._tmp_dir = None
