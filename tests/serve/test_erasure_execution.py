@@ -449,12 +449,19 @@ def test_both_audit_surfaces_receive_hash_only_events(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setenv("NOVA_AI_ACT_RETENTION_MONTHS", "0")
+    monkeypatch.setenv("NOVA_PII_PEPPER", "pepper-for-test")
     _seed_dek(nova_home)
     with caplog.at_level(logging.DEBUG):
         res = _post(client, {"subject_id": SUBJECT, "confirmed": True})
     assert res.status_code == 200
     request = res.json()["request"]
-    subject_hash = eq.subject_sha256(SUBJECT)
+    # compliance-privacy-15: the logs carry the pepper-keyed reference, never a bare
+    # (dictionary-reversible) SHA-256 of the subject.
+    from novafabric.pii.erasure_audit import subject_audit_ref
+
+    subject_ref = subject_audit_ref(SUBJECT)
+    assert subject_ref is not None
+    bare_hash = eq.subject_sha256(SUBJECT)
 
     # 1) Layer B dashboard audit (serve/audit.py JSONL under NOVAFABRIC_HOME).
     dashboard_audit = nova_home / "dashboard-audit.jsonl"
@@ -463,12 +470,13 @@ def test_both_audit_surfaces_receive_hash_only_events(
     entries = [e for e in lines if e["action"] == "erasure_request"]
     assert len(entries) == 1
     entry = entries[0]
-    assert entry["args"]["subject_sha256"] == subject_hash
+    assert entry["args"]["subject_ref"] == subject_ref
     assert entry["args"]["request_id"] == request["request_id"]
     assert entry["args"]["state"] == "COMPLETED"
     assert entry["result"] == "ok"
-    assert entry["cli_equivalent"] == f"nova pii erase sha256:{subject_hash[:12]}"
+    assert entry["cli_equivalent"] == "nova pii erase <subject>"
     assert SUBJECT not in json.dumps(entry)  # hash-only args, normative
+    assert bare_hash[:12] not in json.dumps(entry)
 
     # 2) Hash-chained AuditLog (ADR-0191 SIEM path).
     from novafabric.audit import AuditLog
@@ -479,7 +487,8 @@ def test_both_audit_surfaces_receive_hash_only_events(
     erasure_events = [e for e in chained if e["event_type"] == "erasure.request"]
     assert len(erasure_events) == 1
     event = erasure_events[0]
-    assert event["details"]["subject_sha256"] == subject_hash
+    assert event["details"]["subject_ref"] == subject_ref
+    assert bare_hash[:12] not in json.dumps(event)
     assert event["details"]["state"] == "COMPLETED"
     assert event["details"]["receipt_sha256"] == request["receipt_sha256"]
     assert SUBJECT not in json.dumps(event)

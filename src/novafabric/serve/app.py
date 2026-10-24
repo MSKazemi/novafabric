@@ -6066,15 +6066,18 @@ def create_app(
         finally:
             queue.close()
 
-        subject_hash = record.subject_sha256
+        # Keyed reference, never a bare hash of the subject (compliance-privacy-15).
+        from novafabric.pii.erasure_audit import subject_audit_ref  # noqa: PLC0415
+
+        subject_ref = subject_audit_ref(body.subject_id)
         audit.append(
             action="erasure_request",
             args={
-                "subject_sha256": subject_hash,
+                "subject_ref": subject_ref,
                 "request_id": record.request_id,
                 "state": record.state,
             },
-            cli_equivalent=f"nova pii erase sha256:{subject_hash[:12]}",
+            cli_equivalent="nova pii erase <subject>",
             actor_token_fp=actor_fp,
             result="ok" if record.state != eq.STATE_FAILED else "error",
             error=record.error_class,
@@ -6086,7 +6089,7 @@ def create_app(
                 resource_id=record.request_id,
                 details={
                     "request_id": record.request_id,
-                    "subject_sha256": subject_hash,
+                    "subject_ref": subject_ref,
                     "state": record.state,
                     "receipt_sha256": record.receipt_sha256,
                     "error_class": record.error_class,

@@ -221,6 +221,35 @@ class TestPiiEraseIsAudited:
         assert entry["details"]["via"] == "POST /api/compliance/pii/erase"
         assert "alice@example.com" not in (tmp_path / "audit.jsonl").read_text()
 
+    def test_erasure_entry_never_carries_a_bare_sha256_of_the_subject(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review compliance-privacy-15: sha256(email) is dictionary-reversible, and the log is permanent."""
+        import hashlib
+        import hmac
+
+        monkeypatch.setenv("NOVA_PII_PEPPER", "pepper-for-test")
+        _body, entries = self._erase(client, tmp_path, monkeypatch, months=0)
+        log = (tmp_path / "audit.jsonl").read_text()
+        bare = hashlib.sha256(b"alice@example.com").hexdigest()
+        assert bare not in log and bare[:12] not in log
+        keyed = hmac.new(b"pepper-for-test", b"alice@example.com", hashlib.sha256).hexdigest()
+        (entry,) = entries
+        assert entry["details"]["subject_ref"] == f"sha256:{keyed}"
+
+    def test_without_a_pepper_the_entry_has_no_subject_reference(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import hashlib
+
+        monkeypatch.delenv("NOVA_PII_PEPPER", raising=False)
+        _body, entries = self._erase(client, tmp_path, monkeypatch, months=0)
+        (entry,) = entries
+        assert entry["details"]["subject_ref"] is None
+        assert hashlib.sha256(b"alice@example.com").hexdigest()[:12] not in (
+            tmp_path / "audit.jsonl"
+        ).read_text()
+
     def test_deferred_erasure_is_audited_too(
         self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
