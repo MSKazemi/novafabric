@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import datetime as _dt
 import importlib.metadata as importlib_metadata
 import importlib.util
 import json
@@ -5096,10 +5097,9 @@ def create_app(
                 }
 
             else:  # iso42001
-                from datetime import datetime, timezone
-
-                period_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-                period_end = datetime.now(timezone.utc)
+                # The audit period asked for (CLI form YYYY-MM-DD/YYYY-MM-DD),
+                # else the trailing year — never a fixed start date (serve-16).
+                period_start, period_end = _iso_period(body.get("period"))
                 with tempfile.TemporaryDirectory() as tmp:
                     iso_exp = ISO42001Exporter(
                         data_dir=capsule_path.parent,
@@ -5112,6 +5112,7 @@ def create_app(
                     "ok": True,
                     "format": "iso42001",
                     "run_id": run_id,
+                    "period": f"{period_start.date()}/{period_end.date()}",
                     "output_path": "iso42001.zip",
                     "size_bytes": size,
                     "note": "ISO 42001 evidence package generated. "
@@ -10393,6 +10394,29 @@ def _resolve_capsule(run_id: str, capsule_dir: Path) -> Path:
 
 
 _ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+
+
+def _iso_period(value: object) -> tuple[_dt.datetime, _dt.datetime]:
+    """``(start, end)`` of an ISO 42001 audit period; 422 on a malformed one.
+
+    *value* is ``YYYY-MM-DD/YYYY-MM-DD`` (as ``nova export-examiner iso42001
+    --period`` takes it) or absent, which means the trailing 365 days.
+    """
+    datetime, timedelta, timezone = _dt.datetime, _dt.timedelta, _dt.timezone
+    if value is None:
+        end = datetime.now(timezone.utc)
+        return end - timedelta(days=365), end
+    try:
+        first, second = str(value).split("/")
+        start = datetime.fromisoformat(first).replace(tzinfo=timezone.utc)
+        end = datetime.fromisoformat(second).replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(
+            status_code=422, detail="period must be YYYY-MM-DD/YYYY-MM-DD"
+        ) from None
+    if end < start:
+        raise HTTPException(status_code=422, detail="period ends before it starts")
+    return start, end
 
 
 class _RefreshFailureLog:
