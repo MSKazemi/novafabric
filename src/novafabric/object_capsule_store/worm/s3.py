@@ -162,8 +162,26 @@ class S3WormAdapter(WormAdapter):
         self._client.delete_object(Bucket=self._bucket, Key=key)
 
     def object_exists(self, key: str) -> bool:
+        """True if *key* exists; False only when S3 says it does not.
+
+        Any other failure (AccessDenied, throttling, a timeout) is raised: it
+        used to read as "absent", so wrong credentials looked like the wrong
+        bucket on restore and a transient HEAD error re-PUT the object (review
+        storage-backup-17).
+        """
         try:
             self._client.head_object(Bucket=self._bucket, Key=key)
             return True
-        except Exception:
-            return False
+        except Exception as exc:
+            if _is_not_found(exc):
+                return False
+            raise
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """True for boto3 ``ClientError`` shapes that mean "object does not exist"."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    code = str(response.get("Error", {}).get("Code", ""))
+    return code in ("404", "NoSuchKey", "NotFound")
