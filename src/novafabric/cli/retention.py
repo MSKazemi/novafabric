@@ -577,7 +577,7 @@ def apply_cmd(
             hold_roots=(capsule_base_holds_root(resolved_dir),),
             pepper=_pii_pepper(),
         )
-        records = executor.execute(plan, dry_run=dry_run, limit=limit)
+        records = executor.execute(plan, dry_run=dry_run, limit=limit, inventory=sweep.items)
     finally:
         if dek_store is not None:
             dek_store.close()

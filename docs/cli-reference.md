@@ -8643,9 +8643,14 @@ DEK in `$NOVAFABRIC_HOME/dek.db` with `NOVA_PII_PEPPER`. So for capsules capture
 `ErasureReceipt` is written to `$NOVAFABRIC_HOME/evidence/erasure/<run>.receipt.json`, and
 readers show `[erased]`. Know before you enable it:
 
-- The DEK is **per subject, not per capsule**: when one capsule is due, the subject's PII
-  becomes unreadable in *every* capsule captured with that `--pii-subject`, including newer
-  ones.
+- The DEK is **per subject, not per capsule**: destroying it makes the subject's PII
+  unreadable in *every* capsule captured with that `--pii-subject`. So `apply` destroys it
+  only when **every** capsule carrying the subject is itself due for crypto-shred in the same
+  sweep. If any sibling is WORM-locked, legal-held, not yet due, or under no crypto-shred
+  binding, the due capsule is `skipped` with reason `subject_in_retained_capsule: <ids>` and
+  the key is kept. When all are due, the first records `applied` and the rest
+  `already_shredded` with its receipt. Releases up to v0.107.0 shredded anyway, erasing a
+  WORM-held capsule's PII the same plan reported as held.
 - `apply` needs `NOVA_PII_PEPPER` in its environment (for example in the cron job). Without
   it the item is recorded `skipped` (`pii_pepper_unavailable`) and no key is touched. If no
   live DEK matches — a different pepper or `dek.db`, or a subject already erased with

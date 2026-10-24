@@ -46,6 +46,7 @@ from novafabric.retention.models import (
     PlannedDecision,
     RetentionAction,
     RetentionActionRecord,
+    SweepItem,
     SweepOutcome,
 )
 from novafabric.retention.sweep import EXPIRED_MARKER
@@ -97,6 +98,9 @@ class SweepExecutor:
         self._hold_roots = tuple(hold_roots)
         self._hold_check: HoldCheck = hold_check or self._registry_hold_check
         self._pepper = pepper
+        self._shred_siblings: list[SweepItem] = []
+        self._shred_due: set[str] = set()
+        self._shredded_this_pass: dict[str, str] = {}
 
     def _registry_hold_check(self, decision: PlannedDecision) -> str | None:
         """Default re-check: active holds on this registry, read fresh."""
@@ -115,12 +119,27 @@ class SweepExecutor:
         *,
         dry_run: bool,
         limit: int | None = None,
+        inventory: Iterable[SweepItem] | None = None,
     ) -> list[RetentionActionRecord]:
         """Execute (or preview) *plan*; return one record per decision.
 
         ``limit`` bounds the number of *applied* actions in one pass; held and
         errored decisions are always recorded (never silently dropped).
+
+        *inventory* is every item the plan was built from (review
+        compliance-privacy-08). A crypto-shred destroys a per-**subject** key, so
+        it is applied only when every inventory item carrying that subject is
+        itself due for crypto-shred in *plan*; a held, not-yet-due or unbound
+        sibling keeps the key. Without it, only the plan's own items are known.
         """
+        self._shred_siblings = list(inventory) if inventory is not None else [
+            d.item for d in plan
+        ]
+        self._shred_due = {
+            d.item.item_id
+            for d in plan
+            if d.decision is Decision.DUE and d.action is RetentionAction.CRYPTO_SHRED
+        }
         records: list[RetentionActionRecord] = []
         applied_count = 0
         for decision in plan:
@@ -282,6 +301,20 @@ class SweepExecutor:
             if not subject_ids:
                 # The store cannot tell "erased" from "wrong pepper / other dek.db":
                 # only this sweep's own receipt proves the shred already happened.
+                # A sibling capsule's shred earlier in this pass destroyed the
+                # same subject's key: that receipt is the proof.
+                earlier = next(
+                    (self._shredded_this_pass[r] for r in item.pii_subject_refs
+                     if r in self._shredded_this_pass),
+                    None,
+                )
+                if earlier is not None:
+                    return self._record(
+                        decision,
+                        SweepOutcome.APPLIED,
+                        reason="already_shredded",
+                        erasure_receipt_ref=earlier,
+                    )
                 receipt = self._receipt_path(item.item_id)
                 if receipt.is_file():
                     # Carry the receipt so a restore can still re-shred this subject.
@@ -294,6 +327,16 @@ class SweepExecutor:
                 return self._record(
                     decision, SweepOutcome.SKIPPED, reason="pii_subject_unresolved"
                 )
+        retained = self._retained_siblings(item, subject_ids)
+        if retained:
+            # The key is per subject: destroying it would erase this subject's PII
+            # in capsules that must keep it (WORM-locked, held, not yet due, or
+            # under no crypto-shred binding at all).
+            return self._record(
+                decision,
+                SweepOutcome.SKIPPED,
+                reason="subject_in_retained_capsule: " + ", ".join(sorted(retained)),
+            )
         records = [self._shred_one(decision, store, subject_id) for subject_id in subject_ids]
         # The least final outcome speaks for the item: held > error > deferred > applied.
         for outcome in (SweepOutcome.SKIPPED, SweepOutcome.ERROR, SweepOutcome.DEFERRED):
@@ -301,6 +344,24 @@ class SweepExecutor:
                 if record.outcome is outcome:
                     return record
         return records[0]
+
+    def _retained_siblings(self, item: SweepItem, subject_ids: list[str]) -> set[str]:
+        """Other inventory items carrying one of *subject_ids* that are not due to shred."""
+        from novafabric.pii.envelope import subject_ref  # noqa: PLC0415
+
+        ids = set(subject_ids)
+        refs = (
+            {subject_ref(self._pepper, s) for s in subject_ids}
+            if self._pepper is not None
+            else set()
+        )
+        return {
+            other.item_id
+            for other in self._shred_siblings
+            if other.item_id != item.item_id
+            and other.item_id not in self._shred_due
+            and (other.pii_subject_id in ids or refs.intersection(other.pii_subject_refs))
+        }
 
     @staticmethod
     def _resolve_subject_refs(store: DEKStore, refs: list[str], pepper: bytes) -> list[str]:
@@ -343,6 +404,10 @@ class SweepExecutor:
                 reason="art17_retention_window",
                 erasure_receipt_ref=receipt_ref,
             )
+        if self._pepper is not None and receipt_ref is not None:
+            from novafabric.pii.envelope import subject_ref  # noqa: PLC0415
+
+            self._shredded_this_pass[subject_ref(self._pepper, subject_id)] = receipt_ref
         return self._record(
             decision, SweepOutcome.APPLIED, erasure_receipt_ref=receipt_ref
         )
