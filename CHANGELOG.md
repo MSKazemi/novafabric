@@ -124,6 +124,12 @@ longer forwards the submitting shell's environment (ADR-0270).
   capsule. LLM02 now reads the proof's `findings_count.total` (and fails on `unsafe_skips`), LLM04 sums
   `gen_ai.usage.input_tokens`, and LLM07 fails when a response reproduces a recorded system prompt (SKIP when none
   is recorded).
+- **The collector's batch signer signs, or refuses to start.** `novaseal_batch_signer` built no signer from its
+  config in any build, so every batch was forwarded unsigned — also with `fail_open: false`. `local_wal: true` now
+  builds the signer; with no signer and `fail_open: false` the collector refuses to start; a set
+  `keystore_endpoint` (the KMS keystore needs mTLS client-certificate config that does not exist yet) is refused
+  instead of ignored. `novafabric-verifier` panicked on every signed batch and could never print `OK`; it now
+  verifies them and accepts a standard SPKI public-key PEM.
 - **Compliance evidence is no longer inferred from unrelated files.** The GDPR audit profile scored Art.17 erasure
   "covered" from every capture's secret-scan proof (`redaction-proof.json`); only the `--pii-subject` redaction
   manifest counts now. The HIPAA Safe Harbor proof reported every identifier without redaction evidence as
@@ -172,6 +178,10 @@ longer forwards the submitting shell's environment (ADR-0270).
     workload had written unscanned. Once the workload has stopped, the capsule is finalised as usual (secret scan,
     proof, seal if configured) with `status: aborted` and `error.type: WorkloadInterrupted`, and `nova capture`
     still exits 130 / 128+signal;
+  - `libnovaspool.so` started its segment numbering at 0 in every capture process, so a second run replaced the
+    first run's undrained segment and later events were skipped as already acknowledged; segments now number above
+    every committed segment and the forwarder's checkpoint and commit with `link(2)`. The resident spool forwarder
+    never saw segments written after it started, and each restart deleted a live writer's temp file;
   - a cancelled daemon run (`novacap` interrupted or disconnected) killed its worker after 5 s, before the local
     runner's 10 s SIGKILL of the workload, so a workload that ignored SIGTERM ran on unsupervised; the worker now
     waits 15 s.
