@@ -213,6 +213,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 - `nova annotate confirm` refuses (exit 1) a checker identity with no keyring key; create it once with
   `nova promote keygen --identity NAME`.
+- `nova experiment compare` (and `nova experiment run --baseline`) exits `2` when no item carries the metric on both
+  sides, e.g. a mistyped `--metric`. Two empty sequences left the SPRT at `continue` and exited `0`, so the gate passed
+  a candidate that failed every item.
+- `nova kg ingest`, `nova serve`'s `POST /api/kg/ingest` and its auto-ingest loop count only events that added an
+  edge as ingested; malformed, non-object and unmappable events are `skipped`. Re-ingesting a capsule no longer
+  changes any edge count (see Fixed). A KG built before this release has no per-capsule contribution records, so
+  rebuild it for exact counts.
 
 - `nova audit map` exits `1` when a required control has no evidence, as its help always said (it exited `0`).
 - `nova seal sign --backend local` (the default backend) exits `2` and says nothing was signed. It printed a hint
@@ -303,6 +310,16 @@ longer forwards the submitting shell's environment (ADR-0270).
     query; the ratchet directory is created 0700 before its first key is restored;
   - `nova import` with a manifest whose DSSE payload or signature is not base64 is `INVALID` (it crashed before the
     receipt); `nova run validate-distributed` reports a RUNNING parent with exit 3, not FAILED;
+  - KG ingest of a local capsule never produced a `USES_TOOL` edge (capture tool-call records were dropped while
+    counted as ingested), `/api/kg/ingest` read only `model-calls.jsonl`, and every re-ingest added a capsule's counts
+    again; one shared `kg.capsule_ingest` path now reads both event files without following links and replaces a
+    capsule's earlier contribution (ADR-0067 amendment 1);
+  - a score correction (`supersedes`, ADR-0119) was averaged together with the score it corrects in `nova query`,
+    `nova experiment compare`, `nova diff --significance` and the registry significance gate; the correction now
+    replaces it (the query cache is rebuilt once);
+  - the `novafabric-smoke-v1` suite failed every real capsule (it looked for `replay-policy.yaml`; captures write
+    `replay.yaml`), and the five container suites told their binary the host capsule path instead of the
+    `/novafabric/eval-capsule` mount point; the CLI reference now states the container image contract;
   - the NIST GenAI profile evidences an area only from a metric read from a recorded artifact, and MG-2.2 counts
     redaction records instead of claiming a 100% redaction rate; the BagIt evidence packet carries every regular
     capsule file, streamed and checksummed, not only the manifest and top-level archives; the ISO 42001 export no
