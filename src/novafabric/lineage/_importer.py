@@ -11,9 +11,8 @@ from novafabric.lineage._store import LineageStore
 from novafabric.lineage._types import (
     LineageEdge,
     LineageNode,
+    node_from_edge_dict,
     node_id_for,
-    node_ref_for_artifact,
-    node_ref_for_asset,
     node_ref_for_run,
 )
 
@@ -52,32 +51,29 @@ def _edge_from_dict(record: dict[str, Any]) -> LineageEdge:
     )
 
 
-def _node_from_node_dict(
-    node_dict: dict[str, Any], capsule_run_id: str
-) -> LineageNode:
-    kind = node_dict.get("kind", "")
-    if kind == "run":
-        ref = node_ref_for_run(node_dict.get("run_id", ""))
-    elif kind == "asset":
-        ref = node_ref_for_asset(
-            node_dict.get("registry", "local"),
-            node_dict.get("asset_ref", ""),
-        )
-    elif kind == "artifact":
-        artifact_ref = node_dict.get("artifact_ref", {})
-        ref = node_ref_for_artifact(
-            artifact_ref.get("capsule_run_id", capsule_run_id),
-            artifact_ref.get("path", ""),
-        )
-    else:
-        ref = str(node_dict)
-    return LineageNode(
-        node_id=node_id_for(kind, ref),
-        kind=kind,
-        ref=ref,
-        first_seen_capsule_run_id=capsule_run_id,
-        payload=node_dict,
-    )
+def _with_artifact_run(node_dict: dict[str, Any], capsule_run_id: str) -> dict[str, Any]:
+    """*node_dict*, an artifact endpoint stamped with the capsule it belongs to.
+
+    An artifact ref without its own ``capsule_run_id`` belongs to the capsule being
+    imported. It is written into the endpoint itself, so the node row and the
+    edge's endpoint ids — both derived by :func:`node_from_edge_dict`, the one
+    definition of node identity — agree. (The importer used to fall back to the
+    capsule run while the store fell back to ``""``: the edge referenced a node
+    that did not exist and failed the foreign key.)
+    """
+    if node_dict.get("kind") != "artifact":
+        return node_dict
+    artifact_ref = dict(node_dict.get("artifact_ref") or {})
+    if artifact_ref.get("capsule_run_id"):
+        return node_dict
+    artifact_ref["capsule_run_id"] = capsule_run_id
+    return {**node_dict, "artifact_ref": artifact_ref}
+
+
+def _node_from_node_dict(node_dict: dict[str, Any], capsule_run_id: str) -> LineageNode:
+    node = node_from_edge_dict(node_dict)
+    node.first_seen_capsule_run_id = capsule_run_id
+    return node
 
 
 @dataclass
@@ -126,8 +122,13 @@ def index_capsule_lineage(
                 continue
             record: dict[str, Any] = json.loads(line)
             _validate_edge_record(record)
-            edge = _edge_from_dict(record)
             run_id_for_node = record.get("capsule_run_id", capsule_run_id)
+            record = {
+                **record,
+                "source": _with_artifact_run(record["source"], run_id_for_node),
+                "target": _with_artifact_run(record["target"], run_id_for_node),
+            }
+            edge = _edge_from_dict(record)
             edges.append(edge)
             for node_dict in (record["source"], record["target"]):
                 node = _node_from_node_dict(node_dict, run_id_for_node)
