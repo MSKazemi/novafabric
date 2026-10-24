@@ -15,6 +15,7 @@ from typing import Annotated, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 
 from novafabric._paths import default_capsule_dir
@@ -39,6 +40,11 @@ every dashboard view surfaces the equivalent `nova` command.
 #: Hosts ``nova serve`` binds without ``--insecure``. Anything else exposes the
 #: shared admin-scope token beyond this machine (ADR-0230), so it is refused.
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _url_host(host: str) -> str:
+    """*host* as it goes in a URL: an IPv6 literal is bracketed (``[::1]``)."""
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
 
 
 def non_loopback_bind_refused(host: str, *, insecure: bool) -> bool:
@@ -259,6 +265,21 @@ def serve_cmd(
         ))
         raise typer.Exit(code=2) from exc
 
+    # ADR-0241 slice 1: first-party TLS, fail-closed on unusable material —
+    # checked before a token is minted or a URL printed (review cli-b-19).
+    from novafabric.server.config import TlsConfig, TlsConfigError, check_tls_config
+
+    cert = str(tls_cert) if tls_cert else os.environ.get("NOVA_TLS_CERT_PATH")
+    key = str(tls_key) if tls_key else os.environ.get("NOVA_TLS_KEY_PATH")
+    tls = TlsConfig(enabled=bool(cert or key), cert_path=cert, key_path=key)
+    try:
+        check_tls_config(tls)
+    except TlsConfigError as exc:
+        console.print(f"[bold red]TLS configuration error:[/bold red] {exc}")
+        raise typer.Exit(code=2) from None
+    # The scheme the listener speaks, and an IPv6 literal in brackets.
+    base_url = f"{'https' if tls.enabled else 'http'}://{_url_host(host)}:{port}"
+
     # Token + auth
     from novafabric.registry.store import get_db_path as _registry_db_path
     from novafabric.serve.app import create_app
@@ -321,16 +342,16 @@ def serve_cmd(
     # and `/api/tv5/live` are DATA endpoints (Arrow stream / JSON) — printing
     # them as "Topology" made a working feature look broken, because following
     # the link renders binary. Point at the pages; keep the data URLs out.
-    url = f"http://{host}:{port}/dashboard?token={token}"
-    api_docs = f"http://{host}:{port}/api/docs?token={token}"
-    topo_url = f"http://{host}:{port}/topology/?token={token}"
+    url = f"{base_url}/dashboard?token={token}"
+    api_docs = f"{base_url}/api/docs?token={token}"
+    topo_url = f"{base_url}/topology/?token={token}"
 
     topo_line = f"[bold]Topology:[/bold]  {topo_url}\n" if topology else ""
-    tv5_url = f"http://{host}:{port}/topology/?token={token}#tv5"
+    tv5_url = f"{base_url}/topology/?token={token}#tv5"
     tv5_line = f"[bold]TV-5 3D:[/bold]   {tv5_url}\n" if tv5 else ""
     console.print(Panel(
         _EXPERIMENTAL_BANNER + "\n"
-        f"[bold]Listening:[/bold] http://{host}:{port}\n"
+        f"[bold]Listening:[/bold] {escape(base_url)}\n"
         f"[bold]Capsules:[/bold]  {resolved_capsule_dir}\n"
         f"[bold]Registry:[/bold]  {db_path or _registry_db_path()}\n\n"
         + f"[bold]Dashboard:[/bold] {url}\n"
@@ -354,18 +375,6 @@ def serve_cmd(
         threading.Thread(target=_open, daemon=True).start()
 
     import uvicorn
-
-    # ADR-0241 slice 1: first-party TLS, fail-closed on unusable material.
-    from novafabric.server.config import TlsConfig, TlsConfigError, check_tls_config
-
-    cert = str(tls_cert) if tls_cert else os.environ.get("NOVA_TLS_CERT_PATH")
-    key = str(tls_key) if tls_key else os.environ.get("NOVA_TLS_KEY_PATH")
-    tls = TlsConfig(enabled=bool(cert or key), cert_path=cert, key_path=key)
-    try:
-        check_tls_config(tls)
-    except TlsConfigError as exc:
-        console.print(f"[bold red]TLS configuration error:[/bold red] {exc}")
-        raise typer.Exit(code=2) from None
 
     try:
         uvicorn.run(
