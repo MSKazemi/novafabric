@@ -87,6 +87,16 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- Capture no longer breaks or outlives the workload:
+  - under capture, a urllib3 retry or redirect raised `TypeError` inside the workload (urllib3 calls itself back with
+    positional arguments the hook did not accept); they now pass through unchanged;
+  - Ctrl-C, or SIGTERM/SIGHUP to `nova capture` (a scheduler, `kill`, a closing terminal), reached only `nova capture`
+    and left the `local` workload running unsupervised; it is now forwarded to the workload's process group, which
+    gets 10 s before SIGKILL (`nova capture` exits 130 / 128+signal; the capsule stays unfinalised);
+  - when `--timeout` passes, SLURM/LSF/PBS jobs are cancelled (`scancel`/`bkill`/`qdel`) and the Docker container is
+    removed, instead of running on and writing into the sealed capsule; `runner_metadata.cancelled` records it;
+  - the PII email patterns (cap-001 detector, masking example) are linear-time: a long `@`-less line (a hex dump,
+    a minified blob) cost minutes per 64 KiB in the `--pii-subject` stage.
 - Dashboard: the Diff tab reported two runs as identical when their model calls changed, were added or were removed;
   it now shows the server's own counts and what changed in each pair. The run inspector showed a made-up
   `redaction-proof.json` (zero findings, fixed chain hash) and `env.lock` for every real run; it now shows the
