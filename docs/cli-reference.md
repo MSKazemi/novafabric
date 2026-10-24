@@ -10421,7 +10421,12 @@ result = await Runner.run(agent, "hello")
 
 The adapter registers a `NovaCapsuleTracingProcessor` via `add_trace_processor()`.
 Each trace produces one capsule in the adapter default directory (`$NOVAFABRIC_HOME/runs/`, or `./.novafabric/runs/` when `NOVAFABRIC_HOME` is unset). `capture_mode` is
-`sdk-decorator` and `command` is a `@openai-agents:<workflow>` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
+`sdk-decorator` and `command` is a `@openai-agents:<workflow>` label (the trace's `RunConfig.workflow_name`), so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
+The capsule's `status` follows the SDK's own span errors. An error on an **agent** span — where the SDK records
+`Max turns exceeded`, `Guardrail tripwire triggered` and an exception escaping the agent — makes it `failure` with
+`exit_code: 1` and `error: {type: AgentRunError, message}` (the SDK's span message, never its `data`). An error on any
+other span, such as a tool error fed back to the model, leaves the run `success` and is counted in
+`metadata.span_errors` by span type.
 
 Top-level alias: `from novafabric.adapters import register_openai_agents`
 

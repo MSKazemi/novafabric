@@ -33,6 +33,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+#: The SDK records a run-ending failure — max turns, a tripped guardrail, an
+#: exception escaping the agent — on the agent span. An error on any other span
+#: (a tool, a model response) is fed back or retried and the run can go on.
+_RUN_ENDING_SPAN_TYPE = "agent"
+_ERROR_MESSAGE_MAX = 500
+
+
 def _count_jsonl(path: Path) -> int:
     if not path.exists():
         return 0
@@ -46,6 +53,9 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
         self._data_dir = data_dir
         # trace_id -> (writer, run_id, span_id, created_at, t0)
         self._active: dict[str, tuple[Any, str, str, str, float, str]] = {}
+        # trace_id -> span type -> errored spans; trace_id -> first run-ending error
+        self._span_errors: dict[str, dict[str, int]] = {}
+        self._run_error: dict[str, str] = {}
 
     def on_trace_start(self, trace: Any) -> None:
         from novafabric.capture._ulid import new_span_id, new_ulid
@@ -68,9 +78,12 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
         from novafabric.capture.replay import minimal_replay_policy
 
         entry = self._active.pop(trace.trace_id, None)
+        span_errors = self._span_errors.pop(trace.trace_id, {})
+        run_error = self._run_error.pop(trace.trace_id, None)
         if entry is None:
             return
         writer, run_id, span_id, created_at, t0, hook_token = entry
+        failed = run_error is not None
         # eval-adapters-query-04: teardown never replaces the call's outcome.
         steps = TeardownSteps("adapter-openai_agents")
         _wire_state = steps.run(
@@ -81,7 +94,10 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
         finished_at = _now()
         duration_ms = int((time.monotonic() - t0) * 1000)
         cap_dir = writer.capsule_dir
-        workflow_name = getattr(trace, "workflow_name", "run")
+        # The SDK's Trace carries RunConfig.workflow_name as ``name``.
+        workflow_name = (
+            getattr(trace, "workflow_name", None) or getattr(trace, "name", None) or "run"
+        )
 
         steps.do("trace", lambda: writer.append_trace_span({
             "span_id": span_id,
@@ -90,7 +106,7 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
             "started_at": created_at,
             "finished_at": finished_at,
             "duration_ms": duration_ms,
-            "status": "ok",
+            "status": "error" if failed else "ok",
             "attributes": {"framework": "openai-agents", "trace_id": trace.trace_id},
         }))
 
@@ -116,7 +132,7 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
             "created_at": created_at,
             "finished_at": finished_at,
             "duration_ms": duration_ms,
-            "status": "success",
+            "status": "failure" if failed else "success",
             "command": [f"@openai-agents:{workflow_name}"],
             "capture_mode": "sdk-decorator",
             "novafabric_version": novafabric_version(),
@@ -135,9 +151,17 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
             "model_call_count": model_call_count,
             "tool_call_count": tool_call_count,
             "mutating_tool_count": 0,
-            "exit_code": 0,
+            "exit_code": 1 if failed else 0,
             "metadata": {"framework": "openai-agents", "wire_capture": _wire_state},
         }
+        if span_errors:
+            manifest["metadata"]["span_errors"] = span_errors
+        if run_error is not None:
+            manifest["error"] = {
+                "type": "AgentRunError",
+                "message": run_error,
+                "traceback_ref": None,
+            }
         # Main scan (after replay.yaml), manifest redaction, lineage, residual
         # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
         # uses. Never raises; a failure — or a failed step above — leaves the capsule
@@ -151,6 +175,7 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
         pass  # wire hooks capture HTTP bytes; spans provide supplementary metadata
 
     def on_span_end(self, span: Any) -> None:
+        self._note_span_error(span)
         # ADR-0209 D2.1 (experimental): the SDK emits typed guardrail span
         # data natively — map it onto the capsule's guardrail_events.jsonl
         # stream via the record façade. Duck-typed and fail-open: any
@@ -168,6 +193,28 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
                 guardrail_name=name if isinstance(name, str) and name else "guardrail",
                 outcome="blocked" if triggered else "passed",
             )
+        except Exception:
+            pass  # fail-open (ADR-0021: never block the workload)
+
+    def _note_span_error(self, span: Any) -> None:
+        """Count an errored span against its trace; remember a run-ending one.
+
+        Duck-typed and fail-open like the guardrail mapping: a span that does
+        not look like an SDK span records nothing.
+        """
+        try:
+            trace_id = getattr(span, "trace_id", None)
+            error = getattr(span, "error", None)
+            if not isinstance(trace_id, str) or trace_id not in self._active or not error:
+                return
+            span_type = getattr(getattr(span, "span_data", None), "type", None)
+            span_type = span_type if isinstance(span_type, str) and span_type else "unknown"
+            counts = self._span_errors.setdefault(trace_id, {})
+            counts[span_type] = counts.get(span_type, 0) + 1
+            if span_type == _RUN_ENDING_SPAN_TYPE and trace_id not in self._run_error:
+                message = error.get("message") if isinstance(error, Mapping) else None
+                text = message if isinstance(message, str) and message else "agent run error"
+                self._run_error[trace_id] = text[:_ERROR_MESSAGE_MAX]
         except Exception:
             pass  # fail-open (ADR-0021: never block the workload)
 
