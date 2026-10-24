@@ -5809,9 +5809,14 @@ def create_app(
         capsule replaces its contribution (:mod:`novafabric.kg.capsule_ingest`).
         """
         from novafabric.kg.capsule_ingest import ingest_capsule_dir
+        from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
 
         del store  # the pipeline writes to it
-        result = ingest_capsule_dir(pipeline, target, operation="nova serve")
+        result = ingest_capsule_dir(
+            pipeline, target,
+            novaseal_valid=capsule_seal_verifies(target),  # the seal, not a flag
+            operation="nova serve",
+        )
         return {
             "ingested": result.ingested,
             "skipped": result.skipped + len(result.unreadable),
@@ -6641,11 +6646,22 @@ def create_app(
     async def kg_ingest_endpoint(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         """Ingest a capsule directory into the KG — mirrors `nova kg ingest`."""
         capsule_path_str: str = body.get("capsule_path", "")
-        novaseal_verified: bool = bool(body.get("verified", False))
         if not capsule_path_str:
             raise HTTPException(status_code=422, detail="capsule_path is required")
         # A bare run id resolves in the capsule dir; a path is confined (serve.paths).
         target = _capsule_target(str(capsule_path_str))
+        # NovaSeal verification comes from the capsule's own seal, never from the
+        # caller: `verified: true` let any token holder mark an unsealed capsule's
+        # edges verified (review serve-09).
+        from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
+
+        novaseal_verified = capsule_seal_verifies(target)
+        flag_note = (
+            "the request's verified flag was ignored: verification is read from the "
+            "capsule's NovaSeal seal, which does not verify"
+            if bool(body.get("verified", False)) and not novaseal_verified
+            else ""
+        )
         kg_path = str(_kg_db_path())
         try:
             from novafabric.kg.pipeline import KGIngestionPipeline
@@ -6683,14 +6699,16 @@ def create_app(
                     "or directory); nothing was ingested",
                     "note": "",
                 }
+            notes = [flag_note] if flag_note else []
+            if result.unreadable:
+                notes.append(f"not read: {', '.join(result.unreadable)}")
             return {
                 "ok": True, "ingested": result.ingested,
                 "skipped": result.skipped + len(result.unreadable),
                 "written": result.written,
+                "novaseal_verified": novaseal_verified,
                 "capsule_path": capsule_path_str, "kg_path": kg_path,
-                "note": (
-                    f"not read: {', '.join(result.unreadable)}" if result.unreadable else ""
-                ),
+                "note": "; ".join(notes),
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "ingested": 0, "written": 0, "error": str(exc), "note": ""}
@@ -6863,25 +6881,28 @@ def create_app(
                 "failed": 0,
             }
 
-        newly_ingested = 0
-        skipped = 0
-        failed = 0
+        def _ingest_dirs() -> tuple[int, int, int]:
+            newly, skip, fail = 0, 0, 0
+            for cdir in dirs:
+                key = str(cdir.resolve())
+                if tracker.contains(key):
+                    skip += 1
+                    continue
+                try:
+                    result = _ingest_one_capsule_dir(cdir, store=store, pipeline=pipeline)
+                    tracker.mark(key)
+                    if result["ingested"] > 0 or result["written"] > 0:
+                        newly += 1
+                    else:
+                        skip += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("kg ingest-all: failed %s — %s", cdir.name, exc)
+                    fail += 1
+            return newly, skip, fail
 
-        for cdir in dirs:
-            key = str(cdir.resolve())
-            if tracker.contains(key):
-                skipped += 1
-                continue
-            try:
-                result = _ingest_one_capsule_dir(cdir, store=store, pipeline=pipeline)
-                tracker.mark(key)
-                if result["ingested"] > 0 or result["written"] > 0:
-                    newly_ingested += 1
-                else:
-                    skipped += 1
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("kg ingest-all: failed %s — %s", cdir.name, exc)
-                failed += 1
+        # Off the event loop: reading and writing every capsule blocked every other
+        # request for the whole run (review serve-09).
+        newly_ingested, skipped, failed = await asyncio.to_thread(_ingest_dirs)
 
         return {
             "ok": True,
