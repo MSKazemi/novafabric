@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from novafabric.events.hygiene import redact_url, scrub_url
 from novafabric.events.signing import SIGNATURE_HEADER
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,9 @@ class WebhookSink:
         backoff_s: float = DEFAULT_BACKOFF_S,
     ) -> None:
         self._url = url
+        #: What logs, results and the audit trail may show: never the path/query,
+        #: which for a Slack/Discord/Teams webhook is the secret (misc-2-04).
+        self._shown_url = redact_url(url)
         self._timeout = timeout_s
         self._max_retries = max(0, max_retries)
         self._backoff = max(0.0, backoff_s)
@@ -141,16 +145,17 @@ class WebhookSink:
                 last_error = exc
                 if attempt < self._max_retries and self._backoff > 0:
                     time.sleep(self._backoff * (2**attempt))
+        error = scrub_url(str(last_error), self._url)
         logger.warning(
-            "lifecycle webhook delivery failed url=%r after %d attempt(s): %s",
-            self._url,
+            "lifecycle webhook delivery failed url=%s after %d attempt(s): %s",
+            self._shown_url,
             self._max_retries + 1,
-            last_error,
+            error,
         )
         return DeliveryResult(
             ok=False,
             attempts=self._max_retries + 1,
-            error=str(last_error),
+            error=error,
             status_code=last_status,
         )
 

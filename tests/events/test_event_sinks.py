@@ -7,6 +7,8 @@ import socket
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from novafabric.events.signing import SIGNATURE_HEADER, sign_record
 from novafabric.events.sinks import FileSink, MultiSink, NullSink, WebhookSink
 
@@ -81,3 +83,43 @@ class TestMultiSink:
         multi = MultiSink([BoomSink(), FileSink(log)])
         multi.send(RECORD)  # must not raise; file sink still delivered
         assert len(log.read_text().splitlines()) == 1
+
+
+# --- review misc-2-04: a webhook URL is a credential --------------------------
+
+_SECRET = "XXXXSECRETTOKENXXXX"
+_SLACK = f"https://hooks.slack.com/services/T000/B000/{_SECRET}"
+
+
+def test_failed_delivery_never_logs_or_returns_the_webhook_url(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    import httpx
+
+    from novafabric.events.sinks import WebhookSink
+
+    def fail(url: str, **_kw: object) -> httpx.Response:
+        request = httpx.Request("POST", url)
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError(
+            f"Client error '404 Not Found' for url '{url}'", request=request, response=response
+        )
+
+    monkeypatch.setattr(httpx, "post", fail)
+    with caplog.at_level(logging.WARNING, logger="novafabric.events.sinks"):
+        result = WebhookSink(_SLACK, max_retries=0, backoff_s=0).deliver({"k": "v"})
+    assert result.ok is False
+    assert result.error is not None and _SECRET not in result.error
+    assert "hooks.slack.com" in result.error  # still says where it failed
+    assert _SECRET not in caplog.text and "hooks.slack.com" in caplog.text
+
+
+def test_redact_url_keeps_scheme_and_host_only() -> None:
+    from novafabric.events.hygiene import redact_url
+
+    assert redact_url(_SLACK) == "https://hooks.slack.com/…"
+    assert redact_url("https://user:pw@example.com:8443/") == "https://example.com:8443"
+    assert redact_url("https://example.com/hook?token=abc") == "https://example.com/…"
+    assert redact_url("not a url") == "<webhook url>"
