@@ -104,19 +104,49 @@ class MaskingPipeline:
                         self._mask_text(capsule_dir, filename, kind, run_id, findings, errors)
                 except Exception:  # noqa: BLE001 — must not crash capture
                     logger.exception(
-                        "novafabric.masking: pipeline failed on %s; continuing", filename
+                        "novafabric.masking: pipeline failed on %s; masking it as text", filename
+                    )
+                    # Fail closed (compliance-privacy-05): the error used to say
+                    # "redact" while the file was left as it was. Mask it as plain
+                    # text; when even that cannot run, withhold its content.
+                    action = self._fail_closed_file(
+                        capsule_dir, filename, kind, run_id, findings, errors
                     )
                     errors.append({
                         "masker_id": _PIPELINE_ID,
                         "masker_version": _PIPELINE_VERSION,
                         "target_ref": filename,
                         "reason": "raised",
-                        "action_taken": "redact",
+                        "action_taken": action,
                         "detail_hash": None,
                     })
         finally:
             self._close()
         return findings, errors
+
+    def _fail_closed_file(
+        self,
+        root: Path,
+        filename: str,
+        kind: str,
+        run_id: str,
+        findings: list[dict[str, Any]],
+        errors: list[dict[str, Any]],
+    ) -> str:
+        """After a file's structured masking raised: mask it as text, else withhold it.
+
+        Returns the ``action_taken`` to record — ``redact`` when the text pass ran,
+        ``drop`` when the file's content was replaced by a placeholder (binary,
+        oversize, or the text pass failed too). The schema allows only these two: a
+        masking error never leaves the value in place.
+        """
+        try:
+            if self._mask_text(root, filename, kind, run_id, findings, errors):
+                return "redact"
+        except Exception:  # noqa: BLE001 — fall through to withholding the file
+            logger.exception("novafabric.masking: text fallback failed on %s", filename)
+        _rewrite(root, filename, f"[novafabric: {filename} withheld — masking failed]\n")
+        return "drop"
 
     # -- per-file walkers ---------------------------------------------------
 
@@ -140,18 +170,25 @@ class MaskingPipeline:
             if not stripped:
                 out_lines.append(line)
                 continue
-            try:
-                obj = json.loads(stripped)
-            except json.JSONDecodeError:
-                out_lines.append(line)  # unparseable: leave the scanner's output as-is
-                continue
 
             def apply(json_path: str, value: str, _n: int = lineno, _o: int = line_start) -> str:
                 ref = f"{filename}#L{_n}" + (f" {json_path}" if json_path else "")
                 field = MaskField(target_kind=kind, target_ref=ref, byte_offset=_o)
                 return self._apply_chain(field, value, run_id, findings, errors)
 
-            new_obj, changed = _walk(obj, "", apply)
+            try:
+                obj = json.loads(stripped)
+                new_obj, changed = _walk(obj, "", apply)
+            except (ValueError, RecursionError):
+                # Not JSON that can be walked — malformed, or nested past the
+                # recursion limit (tool arguments are arbitrary JSON). Mask the line
+                # as text: passing it through left its values unmasked, and a
+                # RecursionError used to abort the whole file (compliance-privacy-05).
+                body = line.rstrip("\r\n")
+                masked = apply("", body)
+                out_lines.append(masked + line[len(body):])
+                changed_any = changed_any or masked != body
+                continue
             if changed:
                 newline = "\n" if line.endswith("\n") else ""
                 out_lines.append(json.dumps(new_obj) + newline)
@@ -191,19 +228,20 @@ class MaskingPipeline:
         run_id: str,
         findings: list[dict[str, Any]],
         errors: list[dict[str, Any]],
-    ) -> None:
+    ) -> bool:
         """Mask a free-text artifact (``inputs/**``, ``outputs/**``) one line at a time.
 
         Each line, without its terminator, is one value (ref ``<file>#L<n>``). A
         binary or oversize artifact is skipped: maskers take strings, never raw
         blobs (ADR-0135 D1), and the built-in scanner already covers both.
+        Returns whether the file was scanned (False for a skipped one).
         """
         with open_capsule_file(root, filename, operation=_FILE_OPERATION) as fh:
             if os.fstat(fh.fileno()).st_size > _secrets.MAX_ARTIFACT_SCAN_BYTES:
-                return
+                return False
             data = fh.read()
         if _secrets._is_binary(data):
-            return
+            return False
         out: list[str] = []
         changed = False
         byte_pos = 0
@@ -222,6 +260,7 @@ class MaskingPipeline:
             out.append(new + line[len(body):])
         if changed:
             _rewrite(root, filename, "".join(out))
+        return True
 
     def mask_mapping(
         self, obj: dict[str, Any], ref: str, kind: str, run_id: str

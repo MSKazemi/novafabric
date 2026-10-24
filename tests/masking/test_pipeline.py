@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 from novafabric.capture.secrets import SecretScannerV0, recompute_chain_hash
 from novafabric.masking import MaskerSpec, MaskingPipeline
@@ -284,3 +285,55 @@ def test_masker_config_reaches_the_masker(capsule_dir: Path) -> None:
     findings, _ = MaskingPipeline(loaded).run(capsule_dir, run_id="r1")
     assert findings == []  # configured prefix does not match → masker declines
     assert "ACME-CASE-12345" in _capsule_text(capsule_dir)
+
+
+# --- review compliance-privacy-05: a JSONL line that cannot be walked is masked as text ---
+
+_EMAIL = "carol@example.com"
+
+
+def _email_pipeline() -> "MaskingPipeline":
+    from novafabric.masking import MaskerSpec, MaskingPipeline
+    from novafabric.masking._registry import LoadedMasker
+    from novafabric.masking.examples import EmailMasker
+
+    return MaskingPipeline([LoadedMasker(masker=EmailMasker(), spec=MaskerSpec(id="email"))])
+
+
+def test_a_deeply_nested_line_does_not_leave_the_file_unmasked(tmp_path: Path) -> None:
+    import json
+
+    capsule = tmp_path / "cap"
+    capsule.mkdir()
+    deep = "[" * 5000 + json.dumps(_EMAIL) + "]" * 5000  # json.loads -> RecursionError
+    plain = json.dumps({"tool": "send", "to": _EMAIL})
+    (capsule / "tool-calls.jsonl").write_text(plain + "\n" + deep + "\n")
+
+    _findings, errors = _email_pipeline().run(
+        capsule, run_id="r1", targets=[("tool-calls.jsonl", "tool_call")]
+    )
+
+    text = (capsule / "tool-calls.jsonl").read_text()
+    assert _EMAIL not in text  # neither the ordinary line nor the deep one keeps it
+    assert errors == []  # nothing failed: the deep line was masked as text
+
+
+def test_a_file_whose_structured_masking_fails_is_masked_as_text(
+    tmp_path: Path, monkeypatch: "pytest.MonkeyPatch"
+) -> None:
+    from novafabric.masking import _pipeline
+
+    capsule = tmp_path / "cap"
+    capsule.mkdir()
+    (capsule / "model-calls.jsonl").write_text('{"prompt": "mail %s"}\n' % _EMAIL)
+
+    def broken(*_a: object, **_k: object) -> None:
+        raise RuntimeError("walker bug")
+
+    monkeypatch.setattr(_pipeline.MaskingPipeline, "_mask_jsonl", broken)
+    _findings, errors = _email_pipeline().run(
+        capsule, run_id="r1", targets=[("model-calls.jsonl", "model_call")]
+    )
+    assert _EMAIL not in (capsule / "model-calls.jsonl").read_text()
+    (err,) = errors
+    assert err["reason"] == "raised" and err["action_taken"] == "redact"
