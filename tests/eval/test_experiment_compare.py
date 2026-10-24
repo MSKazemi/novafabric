@@ -28,6 +28,7 @@ from novafabric.eval.experiment import (
 from novafabric.eval.experiment_compare import (
     DatasetMismatchError,
     MetricTypeMismatchError,
+    NoPairedObservationsError,
     compare_experiments,
 )
 from novafabric.eval.scores import (
@@ -194,6 +195,33 @@ def test_numeric_metric_uses_drift_block(tmp_path: Path) -> None:
     assert drift["detected"] is True  # drift != regression: reported separately
     assert comparison.significance["numeric"]["candidate_mean"] > 5.0
     assert all(item.changed for item in comparison.per_item)
+
+
+# ── review eval-adapters-query-05: no evidence is not "no regression" ─────────
+
+
+def test_a_metric_no_item_carries_is_an_error_not_a_pass(tmp_path: Path) -> None:
+    """A typo'd --metric gave an empty SPRT, verdict CONTINUE, exit 0 — while the
+    candidate failed every item."""
+    items = {f"i{k}": True for k in range(5)}
+    baseline = _make_experiment(tmp_path, "base", items)
+    candidate = _make_experiment(tmp_path, "cand", dict.fromkeys(items, False))
+    with pytest.raises(NoPairedObservationsError, match="exact_mtach"):
+        compare_experiments(baseline, candidate, metric="exact_mtach")
+
+
+def test_a_metric_only_one_side_recorded_is_an_error(tmp_path: Path) -> None:
+    baseline = _make_experiment(tmp_path, "base", {"a": True, "b": True})
+    candidate = _make_experiment(tmp_path, "cand", {"a": None, "b": None})
+    with pytest.raises(NoPairedObservationsError, match="no item"):
+        compare_experiments(baseline, candidate, metric="exact_match")
+
+
+def test_a_numeric_metric_with_no_pairs_is_an_error(tmp_path: Path) -> None:
+    baseline = _make_experiment(tmp_path, "base", {"a": 1.0}, metric="latency")
+    candidate = _make_experiment(tmp_path, "cand", {"b": 2.0}, metric="latency")
+    with pytest.raises(NoPairedObservationsError):
+        compare_experiments(baseline, candidate, metric="latency")
 
 
 def test_comparison_matches_graduated_schema(tmp_path: Path) -> None:

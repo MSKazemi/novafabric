@@ -154,6 +154,22 @@ def test_compare_dataset_mismatch_exits_2(tmp_path: Path) -> None:
     assert "same pinned dataset" in gated.output
 
 
+def test_compare_with_a_metric_no_item_carries_exits_2(tmp_path: Path) -> None:
+    """Review eval-adapters-query-05: a typo'd --metric passed the CI gate (exit 0)."""
+    dataset = _dataset(tmp_path, 1)
+    assert _run(tmp_path, dataset, _ECHO_CODE).exit_code == 0
+    assert _run(tmp_path, dataset, _ECHO_CODE).exit_code == 0
+    id_a, id_b = _stored_ids(tmp_path)
+    args = ["--metric", "exact_mtach", "--experiments-dir", str(tmp_path / "exps")]
+    result = runner.invoke(app, ["experiment", "compare", id_a, id_b, *args])
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert "exact_mtach" in result.output and "no item" in result.output
+
+    gated = _run(tmp_path, dataset, _ECHO_CODE, "--baseline", id_a, "--metric", "exact_mtach")
+    assert gated.exit_code == 2, gated.output
+
+
 def test_run_writes_out_file_and_show_renders_items(tmp_path: Path) -> None:
     dataset = _dataset(tmp_path, 1)
     out = tmp_path / "artifacts" / "experiment.json"

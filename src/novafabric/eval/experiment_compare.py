@@ -83,6 +83,15 @@ class MetricTypeMismatchError(ExperimentError):
     """The metric is boolean on one side and numeric on the other (hard error)."""
 
 
+class NoPairedObservationsError(ExperimentError):
+    """No item carries the metric on both sides, so there is nothing to compare.
+
+    An empty sequence leaves the SPRT at ``CONTINUE`` (exit 0), which a CI gate
+    reads as "no regression" — for a typo'd metric name as much as for a
+    candidate that failed every item.
+    """
+
+
 class ComparisonOf(BaseModel):
     """The experiment pair a comparison is over."""
 
@@ -221,8 +230,9 @@ def compare_experiments(
     """Diff two experiments per item and in aggregate (ADR-0120 D3).
 
     Raises :class:`DatasetMismatchError` when the pinned ``dataset_ref`` differs
-    on any field, and :class:`MetricTypeMismatchError` on a boolean/numeric
-    disagreement. The verdict is produced verbatim by ADR-0080's
+    on any field, :class:`MetricTypeMismatchError` on a boolean/numeric
+    disagreement, and :class:`NoPairedObservationsError` when no item carries the
+    metric on both sides. The verdict is produced verbatim by ADR-0080's
     ``significance_diff``; ``exit_code`` follows its contract.
     """
     if baseline.dataset_ref != candidate.dataset_ref:
@@ -263,6 +273,13 @@ def compare_experiments(
             )
         else:
             per_item.append(ComparisonItem(item_id=item_id, baseline=b, candidate=c))
+
+    if not paired_base:
+        raise NoPairedObservationsError(
+            f"metric {metric!r}: no item has a value for it in both experiments "
+            f"(baseline: {len(base_values)} item(s), candidate: {len(cand_values)}) — "
+            "check the metric name; with nothing paired there is no evidence either way"
+        )
 
     if value_type is ScoreValueType.NUMERIC:
         diff = significance_diff(

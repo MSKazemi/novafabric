@@ -6551,8 +6551,12 @@ A finalized experiment is **never mutated** — a re-run mints a new `experiment
 refuses overwrites. Comparing experiments over **different** pinned datasets (any of
 name/version/`dataset_hash`/`split_hash`) is a hard error, never a silent skew; items present on one
 side only, errored items, and items without the metric are reported unmatched and excluded from the
-SPRT sequences. Exit codes: `0` = no significant regression, **`3` = significant regression**
-(`accept_h1`), `2` = usage error. The comparison record
+SPRT sequences. When **no** item carries the metric on both sides (a mistyped `--metric`, a metric
+only one experiment recorded) the comparison exits `2`: there is no evidence either way, and it is
+not reported as "no regression". The SPRT runs on **boolean** metrics only; a numeric metric reports
+mean and drift in the `numeric`/`drift` blocks and never exits `3`. Exit codes: `0` = no significant
+regression, **`3` = significant regression** (`accept_h1`, boolean metrics), `2` = usage error or
+nothing to compare. The comparison record
 (`schemas/experiment-comparison.schema.json`) also renders a `regression_report`-shaped gate input
 for the existing Rego regression gate (ADR-0003/0019) — no new gate engine.
 

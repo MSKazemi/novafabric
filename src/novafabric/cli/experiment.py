@@ -356,10 +356,14 @@ def experiment_compare_cmd(
 
     Per-item alignment by ``item_id``; the verdict is produced verbatim by the
     existing ADR-0080 significance gate. Comparing experiments over different
-    pinned datasets is a hard error. The result's ``score_config`` block reports
-    whether both aggregates were computed under the same pinned score-config
-    digest (true), different digests (false — not directly comparable), or an
-    unpinned side (null — unknown, never assumed).
+    pinned datasets is a hard error, and so is a metric no item carries on both
+    sides (exit 2 — no evidence is not "no regression"). Only a boolean metric
+    can exit 3; a numeric one reports mean and drift.
+
+    The result's ``score_config`` block reports whether both aggregates were
+    computed under the same pinned score-config digest (true), different
+    digests (false — not directly comparable), or an unpinned side (null —
+    unknown, never assumed).
 
     \b
     Examples:
