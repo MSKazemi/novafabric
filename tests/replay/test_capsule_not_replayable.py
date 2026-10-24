@@ -142,7 +142,8 @@ def _manifest_capture_modes() -> dict[str, str]:
 def test_every_adapter_and_sdk_writer_is_covered_by_the_helper() -> None:
     """A new in-process writer with a new capture_mode must be classified here."""
     modes = _manifest_capture_modes()
-    assert len(modes) >= 10, modes  # 9 adapters + the shared core + the SDK
+    # the four own-body adapters + the shared core (which seven adapters use) + the SDK
+    assert len(modes) >= 6, modes
     unknown = {where: m for where, m in modes.items() if m not in NON_REEXECUTABLE_CAPTURE_MODES}
     assert not unknown, unknown
 

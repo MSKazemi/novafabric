@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Deque
 
+from novafabric._safe_path import fsync_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -232,6 +234,7 @@ class CRDTAccumulator:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, self._wal_path)
+        fsync_dir(self._wal_path.parent)  # the rename itself survives a crash
 
     # ------------------------------------------------------------------
     # Public interface
