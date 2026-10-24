@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from novafabric.trust.capsule_flags import flags_from_capsule
 from novafabric.trust.radar import build_trust_radar
 
@@ -125,3 +127,38 @@ def test_sealed_capsule_without_seal_config_stays_na(tmp_path: Path) -> None:
         assert isinstance(flags["signature_ok"], bool)
     else:
         assert _axis(cap, "signature").state.value == "na"
+
+
+def test_a_seal_whose_verification_errors_fails_the_signature_axis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # review trust-evidence-03: the radar swallowed a verifier exception into
+    # {} and rendered a tampered sealed capsule as "unsealed".
+    import novafabric.trust.novaseal.capsule_verify as capsule_verify
+    import novafabric.trust.novaseal.config as seal_config
+
+    cap = _capsule(tmp_path, sealed=True)
+    monkeypatch.setattr(seal_config, "load_signing_profile", lambda: object())
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise AttributeError("'list' object has no attribute 'get'")
+
+    monkeypatch.setattr(capsule_verify, "verify_capsule", _boom)
+    flags = flags_from_capsule(cap)
+    assert flags["signature_ok"] is False and flags["valid"] is False
+    assert build_trust_radar(flags).verdict.value == "critical"
+
+
+def test_an_unchecked_log_entry_warns_instead_of_failing() -> None:
+    # review trust-evidence-14: `not-checked` (no log or proof could check the
+    # entry; `nova verify` accepts it) rendered critical, like a forged entry.
+    from novafabric.trust.capsule_flags import _log_axis
+
+    assert _log_axis("local-log") is True
+    assert _log_axis("carried-proof") is True
+    assert _log_axis("not-checked") == 0.5
+    assert _log_axis("failed") is False
+    radar = build_trust_radar(
+        {"signature_ok": True, "timestamp_ok": True, "log_integrity_ok": _log_axis("not-checked")}
+    )
+    assert radar.verdict.value == "partial"

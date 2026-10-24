@@ -66,10 +66,17 @@ def _seal_flags(capsule_dir: Path) -> dict[str, Any]:
             load_signing_profile,
         )
 
-        report = verify_capsule(capsule_dir, load_signing_profile())
+        profile = load_signing_profile()
     except Exception:  # noqa: BLE001 — a verification fault must not crash the view
         log.warning("seal verification unavailable for %s", capsule_dir, exc_info=True)
         return {}
+    try:
+        report = verify_capsule(capsule_dir, profile)
+    except Exception:  # noqa: BLE001 — a verification fault must not crash the view
+        # A seal is present and its verification broke: that is not "unsealed",
+        # which is what an empty result renders as (review trust-evidence-03).
+        log.warning("seal verification failed with an error for %s", capsule_dir, exc_info=True)
+        return {"signature_ok": False, "valid": False}
 
     result = report.result
     flags: dict[str, Any] = {
@@ -77,7 +84,7 @@ def _seal_flags(capsule_dir: Path) -> dict[str, Any]:
         # ADR-0301: no token is "n/a" (None), not a passed timestamp axis. An
         # intact token whose TSA no anchor vouches for is not trusted time: warn.
         "timestamp_ok": _timestamp_axis(result.timestamp_trust),
-        "log_integrity_ok": bool(result.log_integrity_ok),
+        "log_integrity_ok": _log_axis(result.log_inclusion),
         # Additive, not radar axes: what `nova verify --json` reports.
         "capsule_binding_ok": report.binding.ok and report.capsule_id_ok,
         "valid": report.valid,
@@ -92,6 +99,24 @@ def _seal_flags(capsule_dir: Path) -> dict[str, Any]:
 
 def _no_axis_fails(flags: dict[str, Any]) -> bool:
     return all(flags[k] is not False for k in ("signature_ok", "timestamp_ok", "log_integrity_ok"))
+
+
+def _log_axis(log_inclusion: str) -> bool | float:
+    """Radar value of the log-integrity axis for a ``log_inclusion`` value.
+
+    An entry no available log or carried proof could check (``not-checked``)
+    does not invalidate the seal and ``nova verify`` accepts it, so it warns; it
+    read ``critical``, the verdict of a forged entry (review trust-evidence-14).
+    """
+    from novafabric.trust.novaseal import (  # noqa: PLC0415
+        LOG_INCLUSION_LOCAL,
+        LOG_INCLUSION_NOT_CHECKED,
+        LOG_INCLUSION_PROOF,
+    )
+
+    if log_inclusion in (LOG_INCLUSION_LOCAL, LOG_INCLUSION_PROOF):
+        return True
+    return 0.5 if log_inclusion == LOG_INCLUSION_NOT_CHECKED else False
 
 
 def _timestamp_axis(timestamp_trust: str) -> bool | float | None:
