@@ -3074,15 +3074,17 @@ Performs 10 deterministic checks against capsule artifacts:
 | Check | OWASP Category | What is verified |
 |---|---|---|
 | LLM01 | Prompt Injection | `redaction-proof.json` captured |
-| LLM02 | Sensitive Info Disclosure | `secrets_found == 0` in redaction proof |
+| LLM02 | Sensitive Info Disclosure | the redaction proof's `findings_count.total` is 0 and it records no `unsafe_skips` (a secret kept unredacted); SKIP without a count |
 | LLM03 | Supply Chain | `env.lock` + `novafabric_version` recorded |
-| LLM04 | Data/Model Poisoning | total input tokens < 100,000 |
+| LLM04 | Data/Model Poisoning | the sum of `gen_ai.usage.input_tokens` over the model calls < 100,000 |
 | LLM05 | Improper Output Handling | `tool-calls.jsonl` present when `tool_call_count > 0` |
 | LLM06 | Excessive Agency | tool/model call ratio < 10 (warn) / < 50 (fail) |
-| LLM07 | System Prompt Leakage | no `system_prompt` in DEBUG model-call records |
+| LLM07 | System Prompt Leakage | no response reproduces a recorded system (or developer) message of 40+ characters, whitespace-normalised; SKIP when no system message is recorded |
 | LLM08 | Vector/Embedding Weakness | `replay.yaml` policy captured |
 | LLM09 | Misinformation | `trace.jsonl` has ≥1 span |
 | LLM10 | Unbounded Consumption | `duration_ms` < 1,800,000 (warn) / < 3,600,000 (fail) |
+
+Releases up to v0.107.0 read LLM02, LLM04 and LLM07 from fields no capsule carries (`secrets_found`, `tokens.input`, a `level: DEBUG` record with a `system_prompt` key), so the three passed for every capsule.
 
 Options:
 - `--format {rich,json}` — Output format: `rich` (default, colored table) or `json`. Tab-completion available via `nova --install-completion`.

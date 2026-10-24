@@ -57,7 +57,11 @@ def _make_capsule_dir(tmp_path: Path, *, manifest: dict | None = None) -> Path:
     (cap / "redaction-proof.json").write_text(
         json.dumps(
             {
-                "secrets_found": 0,
+                # The real proof shape (schema-required): misc-3-02.
+                "findings_count": {
+                    "total": 0,
+                    "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
+                },
                 "redacted": [],
                 "scan_timestamp": "2026-01-01T00:00:00Z",
             }
@@ -149,7 +153,7 @@ class TestOWASPChecks:
     def test_llm02_fail_when_secrets_found(self, tmp_path: Path) -> None:
         cap = _make_capsule_dir(tmp_path)
         (cap / "redaction-proof.json").write_text(
-            json.dumps({"secrets_found": 3, "redacted": ["token1", "token2", "token3"]})
+            json.dumps({"findings_count": {"total": 3, "by_severity": {"critical": 3}}})
         )
         result = LLM02Check().run(cap)
         assert result.status.value == "FAIL"
@@ -197,10 +201,11 @@ class TestOWASPChecks:
         result = LLM06Check().run(cap)
         assert result.status.value in ("WARN", "FAIL")
 
-    def test_llm07_pass_no_system_prompt_leaked(self, tmp_path: Path) -> None:
+    def test_llm07_skips_when_no_system_prompt_is_recorded(self, tmp_path: Path) -> None:
         cap = _make_capsule_dir(tmp_path)
         result = LLM07Check().run(cap)
-        assert result.status.value == "PASS"
+        # Nothing to compare is not a pass (misc-3-02); see test_checks_read_real_record_shapes.
+        assert result.status.value == "SKIP"
 
     def test_llm08_pass_when_replay_policy_exists(self, tmp_path: Path) -> None:
         cap = _make_capsule_dir(tmp_path)
