@@ -4454,10 +4454,11 @@ NOVA_PII_PEPPER="<secret>" nova subject-proof "user@example.com" \
 Options:
 - `<subject-id>` (positional, required) — data-subject identifier (email, phone, GDPR subject ID, etc.)
 - `--db PATH` — path to `redaction_subject_idx.db` (default: `$NOVAFABRIC_HOME/compliance/redaction_subject_idx.db`)
-- `--key PATH` — ed25519 private key for signing the proof report
+- `--key PATH` — ed25519 private key for signing the proof report; if it cannot sign (another key type, a corrupt
+  file) the command exits `1` and writes nothing — it never falls back to an unsigned proof
 - `--output, -o PATH` — path to write `redaction_proof_report.json` (default: stdout)
 
-Exit codes: `0` (subject found), `1` (env var missing, compliance extra missing, or DB error).
+Exit codes: `0` (subject found), `1` (env var missing, compliance extra missing, DB error, or `--key` failed to sign).
 
 ---
 

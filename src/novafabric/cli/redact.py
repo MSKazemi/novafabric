@@ -12,6 +12,7 @@ from typing import Any
 import typer
 import yaml
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import read_required_capsule_member
@@ -140,7 +141,13 @@ def subject_proof_cmd(
                 "sig": base64.b64encode(sig).decode("ascii"),
             }
         except Exception as exc:
-            err_console.print(f"[yellow]⚠[/yellow] signing failed: {exc}")
+            # --key asked for a signed proof: an unsigned one is not what was asked
+            # for, so nothing is written (review cli-b-10).
+            err_console.print(
+                f"[red]✗[/red] signing failed: {escape(str(exc))} — no proof written",
+                soft_wrap=True,
+            )
+            raise typer.Exit(code=1) from None
 
     report_json = json.dumps(report, indent=2)
 

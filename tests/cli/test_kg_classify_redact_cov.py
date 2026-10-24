@@ -904,10 +904,11 @@ def test_subject_proof_db_default_from_env(
     assert report["records"] == []
 
 
-def test_subject_proof_signing_failure_warns(
+def test_subject_proof_signing_failure_is_an_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A non-ed25519 key triggers the signing-failed warning (138-139) but exits 0."""
+    """Review cli-b-10: --key asks for a signed GDPR proof; a key that cannot sign
+    printed a warning, wrote an UNSIGNED proof and exited 0."""
     monkeypatch.setenv("NOVA_PII_PEPPER", "unit-test-pepper")
     bad_key = tmp_path / "bad.pem"
     bad_key.write_text("-----BEGIN PRIVATE KEY-----\nnonsense\n-----END PRIVATE KEY-----\n")
@@ -916,9 +917,26 @@ def test_subject_proof_signing_failure_warns(
         _redact_app(),
         ["subject-proof", "dave@example.com", "--db", str(db), "--key", str(bad_key)],
     )
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit)
     assert "signing failed" in result.stderr.lower()
-    assert "signature" not in json.loads(result.stdout)  # stdout still parses
+    assert result.stdout.strip() == ""  # no unsigned report
+
+
+def test_subject_proof_signing_failure_writes_no_output_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NOVA_PII_PEPPER", "unit-test-pepper")
+    bad_key = tmp_path / "bad.pem"
+    bad_key.write_text("not a key")
+    out = tmp_path / "proof.json"
+    result = runner.invoke(
+        _redact_app(),
+        ["subject-proof", "dave@example.com", "--db", str(tmp_path / "m.db"),
+         "--key", str(bad_key), "-o", str(out)],
+    )
+    assert result.exit_code == 1, result.output
+    assert not out.exists()
 
 
 def test_subject_proof_compliance_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
