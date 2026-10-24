@@ -136,6 +136,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   steps promoted content nobody reviewed. The signatures now cover the asset's spec digest (signing scheme
   `nova-promote-signoff/v2`); a changed asset fails approval with exit 3, and `unregister` supersedes the open
   proposal. **Open proposals signed before this change must be re-proposed.**
+- **A protected-label move applies the content that was reviewed.** `nova label propose-move`/`approve-move` signed
+  the version string only, so content swapped under the proposed version before approval moved the label to content
+  nobody reviewed. Both sign-offs now cover the target's spec digest (`label-move/v2`); a changed target fails
+  approval with exit 3, while `--reject` still retires the move. **Pending moves proposed before this change must
+  be rejected and proposed again.**
+- **Maker-checker records bind the capsule everywhere they are verified.** `POST /v0/seal/{capsule_id}/verify`
+  (`nova server`) and `nova export-model-independence --capsule-id` called the SoD verifier without the capsule, so
+  an approval of content changed since — or of a capsule that no longer exists — passed, and the export listed it
+  as complete independence. Both now recompute the signed capsule digest (exit 10 / `missing`); the `/v0` response
+  carries `content_checked`.
 - **A signed rejection is no longer an approval.** The SoD verifier never read the approver's signed `decision`, so
   `rejected` passed; it now exits 8.
 - **`nova provenance bind --write`** (and `watermark show --bind --write`) wrote through a symlinked `capsule.yaml`
@@ -202,6 +212,12 @@ longer forwards the submitting shell's environment (ADR-0270).
   - `nova replay --mode intervention` with `replace_model_response` re-ran the workload with the recorded answer
     (the value went to a field replay never serves) while the result said the substitution was delivered; it now
     replaces the served `gen_ai.response.choices`, and check `field` paths can index lists;
+  - Ctrl-C or a forwarded SIGTERM during a `slurm`, `lsf`, `pbs`, `docker` or `kubernetes` capture abandoned the job,
+    which ran on with no capsule finalised; it is now cancelled (`scancel`/`bkill`/`qdel`, `docker rm -f`,
+    `kubectl delete job`) and, once the job is confirmed stopped, the capsule is finalised as `aborted`;
+  - a framework adapter whose capsule store could not be opened (an unwritable `data_dir`) raised NovaFabric's
+    `OSError` from the user's own `kickoff()`/`forward()`/`run()`, so the call never ran; it now runs uncaptured,
+    as `@agent` already did;
   - `POST /v0/replays` claimed the oldest queued replay rather than its own, so one orphaned job made every later
     replay stay pending forever;
   - `nova diff --assert-no-regressions` passed a tool call that went from success to failure, or whose argument or
