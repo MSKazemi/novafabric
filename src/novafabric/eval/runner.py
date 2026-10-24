@@ -53,18 +53,19 @@ def run_evals(
             try:
                 fn = available[suite_name].load()
                 raw = fn(spec_data)
-                passed = (
-                    bool(raw.get("passed", False))
-                    if isinstance(raw, dict)
-                    else bool(raw)
-                )
-                suite_results.append(
-                    {
-                        "suite_name": suite_name,
-                        "passed": passed,
-                        "score": raw.get("score") if isinstance(raw, dict) else None,
-                    }
-                )
+                verdict = raw.get("passed") if isinstance(raw, dict) else raw
+                result: dict[str, Any] = {
+                    "suite_name": suite_name,
+                    # Only a real True passes: bool("false") is True, and the
+                    # promote gate trusts the stored flag.
+                    "passed": verdict is True,
+                    "score": raw.get("score") if isinstance(raw, dict) else None,
+                }
+                if not isinstance(verdict, bool):
+                    result["reason"] = (
+                        f"suite returned passed={verdict!r}, not a boolean — counted as a failure"
+                    )
+                suite_results.append(result)
             except Exception as exc:
                 suite_results.append(
                     {
@@ -74,7 +75,9 @@ def run_evals(
                     }
                 )
 
-    overall_passed = all(s["passed"] for s in suite_results)
+    # No suite is no evidence: all([]) would report a pass for an asset that
+    # declares nothing to evaluate.
+    overall_passed = bool(suite_results) and all(s["passed"] for s in suite_results)
 
     # Version pinning (ADR-0085): attach the resolved asset version to every
     # result, and the dataset version when one was supplied. Omitted cleanly

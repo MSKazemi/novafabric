@@ -77,6 +77,8 @@ def eval_agent_cmd(
     for suite in result.get("suites", []):
         icon = "✓" if suite["passed"] else "✗"
         console.print(f"  {icon} {suite['suite_name']}: {suite.get('reason', '')}")
+    if not result.get("suites"):
+        console.print("  The asset declares no eval suites (spec.evals): nothing was evaluated.")
 
     # M9: the exit code carries the verdict, as `nova eval run` does — 0 on PASS,
     # 1 on FAIL — so the command can gate a CI step.

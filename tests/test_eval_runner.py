@@ -87,3 +87,48 @@ def test_promotion_allowed_after_passing_eval(
         "kube-rca-agent", "v1.0.0", AssetStatus.staging, "tester", db_path=tmp_db
     )
     assert result["status"] == "staging"
+
+
+# ── review eval-adapters-query-20: only a real True passes ────────────────────
+
+
+@pytest.mark.parametrize(
+    "raw", [{"passed": "false"}, {"passed": "true"}, {"passed": 1}, {"passed": None}, "yes", 1]
+)
+def test_a_non_boolean_passed_is_a_failure(
+    tmp_db: Path, registered_agent: dict, raw: object  # type: ignore[type-arg]
+) -> None:
+    """bool({"passed": "false"}["passed"]) is True: a suite reporting the string "false"
+    was stored passed=1, which the promote gate's _has_passing_eval accepts."""
+    mock_ep = MagicMock()
+    mock_ep.name = "basic_rca_suite"
+    mock_ep.load.return_value = MagicMock(return_value=raw)
+    with patch("novafabric.eval.runner.entry_points", return_value=[mock_ep]):
+        result = run_evals("kube-rca-agent", "v1.0.0", db_path=tmp_db)
+    assert result["passed"] is False
+    assert result["suites"][0]["passed"] is False
+    assert "boolean" in result["suites"][0]["reason"]
+    with pytest.raises(PromotionBlockedError):
+        promote_asset("kube-rca-agent", "v1.0.0", AssetStatus.staging, "t", db_path=tmp_db)
+
+
+def test_a_bare_true_still_passes(
+    tmp_db: Path, registered_agent: dict  # type: ignore[type-arg]
+) -> None:
+    mock_ep = MagicMock()
+    mock_ep.name = "basic_rca_suite"
+    mock_ep.load.return_value = MagicMock(return_value=True)
+    with patch("novafabric.eval.runner.entry_points", return_value=[mock_ep]):
+        assert run_evals("kube-rca-agent", "v1.0.0", db_path=tmp_db)["passed"] is True
+
+
+def test_an_asset_with_no_eval_suites_does_not_pass(tmp_db: Path, fixtures_dir: Path) -> None:
+    """all([]) is True: an asset declaring no suites (a model spec has no ``evals``)
+    reported passed: True — and `nova eval agent` exited 0."""
+    spec_path = fixtures_dir / "valid_model.yaml"
+    spec = validate_spec(spec_path)
+    register_asset(spec, spec_path, db_path=tmp_db)
+    with patch("novafabric.eval.runner.entry_points", return_value=[]):
+        result = run_evals(spec.name, spec.version, db_path=tmp_db)
+    assert result["passed"] is False
+    assert result["suites"] == []
