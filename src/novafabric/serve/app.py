@@ -6047,14 +6047,15 @@ def create_app(
             if record is None:
                 capsule_ids = body.capsule_ids
                 if capsule_ids is None:
-                    # Coarse manifest scan — CLI parity; clients SHOULD pass
-                    # explicit capsule_ids (see spec rest-erasure-v0).
+                    # Manifest scan by subject HMAC — CLI parity; none without
+                    # NOVA_PII_PEPPER. Clients SHOULD pass explicit capsule_ids
+                    # (see spec rest-erasure-v0).
                     from novafabric.cli.pii_erase import (
                         _find_capsule_ids_for_subject,
                     )
 
-                    capsule_ids = _find_capsule_ids_for_subject(
-                        body.subject_id, capsule_dir
+                    capsule_ids = (
+                        _find_capsule_ids_for_subject(body.subject_id, capsule_dir) or []
                     )
                 record = queue.create_request(
                     subject_id=body.subject_id,

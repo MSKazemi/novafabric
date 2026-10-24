@@ -145,3 +145,73 @@ def test_erase_help_contains_scope_and_examples() -> None:
     help_text = result.stdout
     assert "Scope:" in help_text, f"'Scope:' not found in help: {help_text!r}"
     assert "Examples:" in help_text, f"'Examples:' not found in help: {help_text!r}"
+
+
+# ---------------------------------------------------------------------------
+# Review cli-b-09: the receipt names only the subject's capsules; stdout is JSON
+# ---------------------------------------------------------------------------
+
+_PEPPER = "test-pepper"
+
+
+def _capsule_with_subject(capsules: Path, capsule_id: str, subject_id: str) -> None:
+    from novafabric.pii.envelope import subject_ref
+
+    cdir = capsules / capsule_id
+    cdir.mkdir(parents=True)
+    (cdir / "redaction_manifest.json").write_text(json.dumps({
+        "capsule_id": capsule_id,
+        "entries": [{
+            "field_path": "model_calls[0].messages[0].content",
+            "detection_rule_id": "EMAIL",
+            "legal_basis": "GDPR Art.17",
+            "subject_id_hmac": subject_ref(_PEPPER.encode(), subject_id),
+            "redacted_at_utc": "2026-10-24T00:00:00Z",
+            "protection": "envelope",
+        }],
+    }))
+
+
+def _two_subjects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path))
+    capsules = tmp_path / "store"
+    monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", str(capsules))
+    _capsule_with_subject(capsules, "capsule-of-alice", "alice@example.com")
+    _capsule_with_subject(capsules, "capsule-of-bob", "bob@example.com")
+    _setup_store_with_subject(tmp_path, "alice@example.com")
+    return capsules
+
+
+def test_the_receipt_names_only_the_subjects_capsules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every capsule with a redaction manifest was listed as "affected" — bob's too."""
+    _two_subjects(tmp_path, monkeypatch)
+    monkeypatch.setenv("NOVA_PII_PEPPER", _PEPPER)
+    result = runner.invoke(app, ["pii", "erase", "alice@example.com", "--retention-months", "0"])
+    assert result.exit_code == 0, result.output
+    receipt = json.loads(result.stdout)  # stdout is the receipt, nothing else
+    assert receipt["capsule_ids_affected"] == ["capsule-of-alice"]
+
+
+def test_without_the_pepper_no_capsule_is_claimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_subjects(tmp_path, monkeypatch)
+    monkeypatch.delenv("NOVA_PII_PEPPER", raising=False)
+    result = runner.invoke(app, ["pii", "erase", "alice@example.com", "--retention-months", "0"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["capsule_ids_affected"] == []
+    assert "NOVA_PII_PEPPER" in result.stderr
+
+
+def test_stdout_redirected_to_a_file_is_a_valid_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`nova pii erase X > receipt.json` began with "✓ DEK destroyed…"."""
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path))
+    _setup_store_with_subject(tmp_path, "carol@example.com")
+    result = runner.invoke(app, ["pii", "erase", "carol@example.com", "--retention-months", "0"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["subject_id"] == "carol@example.com"
+    assert "DEK destroyed" in result.stderr

@@ -39,8 +39,22 @@ H = {"host": "127.0.0.1:4321", "authorization": f"Bearer {TOKEN}"}
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     h = tmp_path / "home"
     (h / "capsules" / RUN).mkdir(parents=True)
+    # A real manifest names its subject only by HMAC; the pepper lets erase find it.
+    from novafabric.pii.envelope import subject_ref
+
+    monkeypatch.setenv("NOVA_PII_PEPPER", "hold-test-pepper")
     (h / "capsules" / RUN / "redaction_manifest.json").write_text(
-        json.dumps({"capsule_id": RUN})
+        json.dumps({
+            "capsule_id": RUN,
+            "entries": [{
+                "field_path": "model_calls[0].messages[0].content",
+                "detection_rule_id": "EMAIL",
+                "legal_basis": "GDPR Art.17",
+                "subject_id_hmac": subject_ref(b"hold-test-pepper", SUBJECT),
+                "redacted_at_utc": "2026-10-22T00:00:00Z",
+                "protection": "envelope",
+            }],
+        })
     )
     cwd = tmp_path / "cwd"
     cwd.mkdir()

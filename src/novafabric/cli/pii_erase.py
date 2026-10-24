@@ -42,6 +42,8 @@ from novafabric.pii.erasure_audit import audit_erasure
 from novafabric.pii.status import PIIStatusError, build_pii_status
 
 console = Console()
+#: Human-readable lines go to stderr: stdout is the receipt JSON when no --output.
+err_console = Console(stderr=True)
 
 #: ``nova pii erase`` exit code when a legal hold kept the DEK (GDPR Art.17(3)(e)):
 #: the request was valid but nothing was erased. Distinct from 1 (failure) and from
@@ -57,36 +59,36 @@ app = typer.Typer(
 )
 
 
-def _find_capsule_ids_for_subject(
-    subject_id: str,
-    capsule_dir: Path,
-) -> list[str]:
-    """Scan *capsule_dir* for redaction_manifest.json files that mention *subject_id*.
+def _find_capsule_ids_for_subject(subject_id: str, capsule_dir: Path) -> list[str] | None:
+    """Capsule ids whose redaction manifest references *subject_id*; None without a pepper.
 
-    Returns a list of capsule IDs (directory names) whose manifests reference
-    the given subject.  The subject_id match is done by scanning for the raw
-    string in the manifest JSON (the actual stored value is an HMAC, so we look
-    for the directory name as capsule_id which is always stored).
-
-    In practice, because subject_ids are never stored in plaintext (only their
-    HMAC appears in redaction manifests), we scan by capsule directory name and
-    return all capsule IDs found under the directory.  Operators should supply the
-    complete list via ``--capsule-ids`` when available.
+    A manifest stores only the subject's HMAC keyed by ``NOVA_PII_PEPPER``, so the
+    match needs the pepper. Without it the subject's capsules cannot be identified
+    and none is claimed (review cli-b-09: every capsule with a manifest was listed as
+    "affected", other subjects' included). Manifests are read without following a
+    link.
     """
+    from novafabric._capsule_fs import read_capsule_member_or_none
+    from novafabric.pii.erasure_audit import subject_audit_ref
+
+    ref = subject_audit_ref(subject_id)
+    if ref is None:
+        return None
     capsule_ids: list[str] = []
     if not capsule_dir.is_dir():
         return capsule_ids
-
-    for manifest_path in capsule_dir.rglob("redaction_manifest.json"):
+    for manifest_path in sorted(capsule_dir.rglob("redaction_manifest.json")):
         try:
-            content = manifest_path.read_text(encoding="utf-8")
-            data = json.loads(content)
-            capsule_id = data.get("capsule_id", "")
-            if capsule_id:
-                capsule_ids.append(capsule_id)
-        except (OSError, json.JSONDecodeError):
+            text = read_capsule_member_or_none(manifest_path, operation="nova pii erase")
+            data = json.loads(text) if text else None
+        except (OSError, ValueError):
             continue
-
+        if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+            continue
+        if any(
+            isinstance(e, dict) and e.get("subject_id_hmac") == ref for e in data["entries"]
+        ):
+            capsule_ids.append(str(data.get("capsule_id") or manifest_path.parent.name))
     return capsule_ids
 
 
@@ -164,14 +166,23 @@ def erase_cmd(
     if capsule_dir is None:
         capsule_dir = _nf_paths.capsule_dir_for_home(nova_home)
 
-    # Find capsule IDs associated with this subject.
-    capsule_ids = _find_capsule_ids_for_subject(subject_id, capsule_dir)
+    # Find capsule IDs associated with this subject (needs the HMAC pepper).
+    found = _find_capsule_ids_for_subject(subject_id, capsule_dir)
+    if found is None:
+        err_console.print(
+            "[yellow]⚠[/yellow] NOVA_PII_PEPPER is not set: the capsules holding this "
+            "subject's data cannot be identified, so the receipt lists none. Erasure "
+            "still makes the PII captured with --pii-subject under this subject's DEK "
+            "unreadable in every capsule.",
+            soft_wrap=True,
+        )
+    capsule_ids = found or []
 
     # Open DEK store and perform erasure.
     try:
         dek_store = open_dek_store(nova_home)
     except Exception as exc:
-        console.print(f"[red]✗[/red] Failed to open DEK store: {exc}")
+        err_console.print(f"[red]✗[/red] Failed to open DEK store: {exc}")
         raise typer.Exit(code=1) from exc
 
     from novafabric.retention.holds import capsule_base_holds_root
@@ -184,10 +195,10 @@ def erase_cmd(
             hold_roots=(capsule_base_holds_root(capsule_dir),),
         )
     except KeyError as exc:
-        console.print(f"[red]✗[/red] {exc}")
+        err_console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc
     except Exception as exc:
-        console.print(f"[red]✗[/red] Erasure failed: {exc}")
+        err_console.print(f"[red]✗[/red] Erasure failed: {exc}")
         raise typer.Exit(code=1) from exc
     finally:
         dek_store.close()
@@ -200,20 +211,20 @@ def erase_cmd(
     audit_erasure(subject_id, result, actor="cli-user", via="nova pii erase")
 
     if isinstance(result, ErasureReceipt):
-        console.print(
+        err_console.print(
             f"[green]✓[/green] DEK destroyed for subject_id={subject_id!r} "
             f"({len(result.capsule_ids_affected)} capsule(s) affected). "
             f"method={result.method}"
         )
     elif isinstance(result, ErasureDeferredReceipt):
-        console.print(
+        err_console.print(
             f"[yellow]⚠[/yellow] Erasure deferred for subject_id={subject_id!r}. "
             f"Earliest erasure: {result.earliest_erasure_at.isoformat()} "
             f"(retention_months={retention_months})"
         )
     elif isinstance(result, ErasureHeldReceipt):
         hold_ids = ", ".join(h.hold_id for h in result.holds)
-        console.print(
+        err_console.print(
             f"[yellow]⚠[/yellow] Erasure held for subject_id={subject_id!r}: active legal "
             f"hold(s) {hold_ids}. The DEK was NOT destroyed; "
             f"{len(result.held_capsules)} capsule(s) held (GDPR Art.17(3)(e)). "

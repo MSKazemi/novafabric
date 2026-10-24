@@ -5015,12 +5015,19 @@ nova pii erase "user@example.com" --retention-months 6
 ```
 
 Options:
-- `--output, -o PATH` — path to write the `ErasureReceipt` JSON (default: stdout)
+- `--output, -o PATH` — path to write the `ErasureReceipt` JSON (default: stdout; status lines go to stderr, so
+  `nova pii erase X > receipt.json` is a valid receipt)
 - `--capsule-dir PATH` — search for redaction manifests here (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules/`; before 2026-10-23 the env var was ignored, so an erasure in the Docker layout scanned an empty directory)
 - `--retention-months INT` — Art.17(3)(b) retention floor in months (default: `6`; provider mode: `120`)
 
 Exit codes: `0` (erased or deferred; receipt written), `1` (subject not found or error),
 `3` (held by a legal hold — nothing erased; `ErasureHeldReceipt` written).
+
+`capsule_ids_affected` (and a held receipt's `held_capsules`) lists the capsules whose redaction
+manifest references the subject, matched by the subject's HMAC under `NOVA_PII_PEPPER`. Without the
+pepper the subject's capsules cannot be identified and the list is empty (a warning says so); the
+erasure itself is unaffected. Before this release every capsule with a redaction manifest was listed,
+other subjects' included.
 
 Scope: single data subject. Requires DEK store at `$NOVAFABRIC_HOME/dek.db`.
 
