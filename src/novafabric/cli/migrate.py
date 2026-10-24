@@ -27,16 +27,16 @@ console = Console()
 
 def migrate_to_postgres_cmd(
     source: Annotated[
-        Path,
+        Optional[Path],
         typer.Option(
             "--source",
             help=(
-                "Path to the source SQLite database "
-                "(default: ~/.novafabric/registry.db)."
+                "Path to the source SQLite database (default: the registry every "
+                "command uses — $NOVAFABRIC_DB_PATH, else $NOVAFABRIC_HOME/registry.db)."
             ),
             show_default=False,
         ),
-    ] = _nf_paths.nova_home() / "registry.db",
+    ] = None,
     target: Annotated[
         Optional[str],
         typer.Option(
@@ -82,6 +82,9 @@ def migrate_to_postgres_cmd(
         )
         raise typer.Exit(code=2)
 
+    # Resolved per run, never at import: the env of the importing process is not
+    # the env of the command (review cli-b-11).
+    source = source if source is not None else _nf_paths.registry_db_path()
     if not source.exists():
         console.print(f"[red]Error:[/red] Source database not found: {source}")
         raise typer.Exit(code=2)

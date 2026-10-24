@@ -957,3 +957,38 @@ def test_the_cli_names_the_tables_left_behind(tmp_path: Path) -> None:
     assert result.exit_code == 1, result.output
     assert isinstance(result.exception, SystemExit)
     assert "asset_label_protection" in result.output and "not migrated" in result.output
+
+
+# ── review cli-b-11: the default source is the registry every reader uses ─────
+
+
+def test_the_default_source_honours_novafabric_db_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default was nova_home()/registry.db, computed once at import: with the
+    registry at $NOVAFABRIC_DB_PATH (where `nova list` reads it) the migration read
+    a missing — or a stale — home database."""
+    db = tmp_path / "elsewhere" / "registry.db"
+    db.parent.mkdir()
+    _make_sqlite_db(db)
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / "empty-home"))
+    monkeypatch.setenv("NOVAFABRIC_DB_PATH", str(db))
+    monkeypatch.setitem(sys.modules, "psycopg", None)  # type: ignore[misc]
+    monkeypatch.delenv("NOVAFABRIC_POSTGRES_DSN", raising=False)
+    result = CliRunner().invoke(app, ["migrate-to-postgres", "--dry-run"])
+    assert "not found" not in result.output, result.output
+    assert "assets" in result.output
+
+
+def test_the_default_source_follows_novafabric_home_set_after_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "late-home"
+    home.mkdir()
+    _make_sqlite_db(home / "registry.db")
+    monkeypatch.delenv("NOVAFABRIC_DB_PATH", raising=False)
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(home))
+    monkeypatch.setitem(sys.modules, "psycopg", None)  # type: ignore[misc]
+    monkeypatch.delenv("NOVAFABRIC_POSTGRES_DSN", raising=False)
+    result = CliRunner().invoke(app, ["migrate-to-postgres", "--dry-run"])
+    assert "not found" not in result.output, result.output

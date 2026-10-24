@@ -7295,7 +7295,7 @@ nova migrate-to-postgres --target "$NOVA_DSN" --log migration.jsonl
 ```
 
 Options:
-- `--source PATH` — source SQLite database (default: `~/.novafabric/registry.db`)
+- `--source PATH` — source SQLite database (default: the registry every other command uses — `$NOVAFABRIC_DB_PATH`, else `$NOVAFABRIC_HOME/registry.db`, resolved when the command runs)
 - `--target TEXT` — Postgres DSN; can also be set via `NOVAFABRIC_POSTGRES_DSN`
 - `--dry-run` — list capsules that would be migrated without writing
 - `--log PATH` — optional JSONL log file (one record per table)
