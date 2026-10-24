@@ -589,10 +589,12 @@ def _write_config(paths: LocalIdentityPaths, *, merkle_db: Optional[str] = None)
         f"#   nova verify --ca-bundle {paths.ca_cert} <capsule>\n"
         "# No tsa_url: sealing makes no network call (ADR-0292).\n"
         "profile: local\n"
-        f"key_path: {paths.signing_key}\n"
-        f"cert_path: {paths.signing_cert}\n"
-        # json.dumps: a YAML double-quoted scalar, safe for any path or DSN.
-        f"merkle_db: {json.dumps(merkle_db) if merkle_db else paths.merkle_db}\n"
+        # json.dumps: a YAML double-quoted scalar, safe for any path or DSN. A
+        # bare path containing " #" or ": " does not load (review
+        # trust-evidence-12).
+        f"key_path: {json.dumps(str(paths.signing_key))}\n"
+        f"cert_path: {json.dumps(str(paths.signing_cert))}\n"
+        f"merkle_db: {json.dumps(merkle_db or str(paths.merkle_db))}\n"
     )
     _atomic_write(paths.config, text.encode("utf-8"), _PUBLIC_MODE)
 

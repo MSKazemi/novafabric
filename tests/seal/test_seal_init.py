@@ -177,6 +177,25 @@ class TestInitialization:
             assert f.is_file(), f
         assert "self-asserted" in result.output
 
+    @pytest.mark.parametrize("odd", ["my #home", "a: b"])
+    def test_the_config_loads_under_a_home_path_yaml_would_misread(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, odd: str
+    ) -> None:
+        # review trust-evidence-12: key_path/cert_path were written unquoted, so
+        # " #" began a comment and ": " a mapping; the config did not load and
+        # capture sealed nothing.
+        home = tmp_path / odd / "nova-home"
+        monkeypatch.setenv("NOVAFABRIC_HOME", str(home))
+        monkeypatch.delenv("NOVAFABRIC_SEAL_CONFIG", raising=False)
+        monkeypatch.delenv("NOVAFABRIC_SEAL_DB_PATH", raising=False)
+        assert _seal_init(home).exit_code == 0
+        from novafabric.trust.novaseal.config import _parse_profile
+
+        p = _paths(home)
+        profile = _parse_profile(p.config)
+        assert Path(profile.key_path) == p.signing_key
+        assert Path(profile.cert_path) == p.signing_cert
+
     def test_private_keys_are_0600_and_directory_0700(self, home: Path) -> None:
         _seal_init(home)
         p = _paths(home)
