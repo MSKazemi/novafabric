@@ -26,7 +26,7 @@ def _make_capsule(tmp_path: Path, *, with_capsule_yaml: bool = True,
         (capsule_dir / "capsule.yaml").write_text(yaml.dump(data))
 
     if with_replay_policy:
-        (capsule_dir / "replay-policy.yaml").write_text("allow_readonly: true\n")
+        (capsule_dir / "replay.yaml").write_text("allow_readonly: true\n")
 
     return capsule_dir
 
@@ -98,3 +98,57 @@ def test_run_capsule_id_from_run_id_field(tmp_path: Path, smoke: SmokeAdapter) -
     (capsule_dir / "replay-policy.yaml").write_text("allow_readonly: true\n")
     result = smoke.run(capsule_dir, {})
     assert result.capsule_id == "MY_CUSTOM_RUN_ID"
+
+
+# ── review eval-adapters-query-07: the policy file every capture writes ───────
+
+
+def test_a_capsule_from_a_real_capture_passes(tmp_path: Path, smoke: SmokeAdapter) -> None:
+    """The suite looked for replay-policy.yaml; every capture writes replay.yaml."""
+    import sys
+
+    from novafabric.capture.orchestrator import CaptureOrchestrator
+
+    capsule_dir = CaptureOrchestrator(base_dir=tmp_path / "runs").run(
+        command=[sys.executable, "-c", "pass"]
+    ).capsule_dir
+    result = smoke.run(capsule_dir, {})
+    assert {m.name: m.passed for m in result.metrics} == {
+        "capsule_schema": True,
+        "replay_policy_present": True,
+    }
+    assert result.passed is True
+
+
+def test_the_manifest_names_the_policy_file(tmp_path: Path, smoke: SmokeAdapter) -> None:
+    capsule_dir = _make_capsule(tmp_path, with_replay_policy=False)
+    manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+    manifest["replay_policy_ref"] = "policy-v2.yaml"
+    (capsule_dir / "capsule.yaml").write_text(yaml.dump(manifest))
+    (capsule_dir / "replay.yaml").write_text("allow_readonly: true\n")  # not the named one
+    assert smoke.run(capsule_dir, {}).passed is False
+    (capsule_dir / "policy-v2.yaml").write_text("allow_readonly: true\n")
+    assert smoke.run(capsule_dir, {}).passed is True
+
+
+@pytest.mark.parametrize("ref", ["../outside.yaml", "/etc/hostname", "sub/replay.yaml", ""])
+def test_a_policy_ref_outside_the_capsule_root_fails(
+    tmp_path: Path, smoke: SmokeAdapter, ref: str
+) -> None:
+    capsule_dir = _make_capsule(tmp_path)
+    (tmp_path / "outside.yaml").write_text("x: 1\n")
+    (capsule_dir / "sub").mkdir()
+    (capsule_dir / "sub" / "replay.yaml").write_text("x: 1\n")
+    manifest = yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+    manifest["replay_policy_ref"] = ref
+    (capsule_dir / "capsule.yaml").write_text(yaml.dump(manifest))
+    metrics = {m.name: m.passed for m in smoke.run(capsule_dir, {}).metrics}
+    assert metrics["replay_policy_present"] is False
+
+
+def test_a_symlinked_policy_file_does_not_count(tmp_path: Path, smoke: SmokeAdapter) -> None:
+    capsule_dir = _make_capsule(tmp_path, with_replay_policy=False)
+    (tmp_path / "elsewhere.yaml").write_text("x: 1\n")
+    (capsule_dir / "replay.yaml").symlink_to(tmp_path / "elsewhere.yaml")
+    metrics = {m.name: m.passed for m in smoke.run(capsule_dir, {}).metrics}
+    assert metrics["replay_policy_present"] is False

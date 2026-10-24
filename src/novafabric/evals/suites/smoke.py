@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,6 +12,8 @@ from novafabric.evals.result import EvalResult, Metric
 
 _SUITE_ID = "novafabric-smoke-v1"
 _SUITE_VERSION = "0.1.0"
+#: What every capture path writes, and records as ``replay_policy_ref``.
+_DEFAULT_REPLAY_POLICY = "replay.yaml"
 
 
 class SmokeAdapter:
@@ -18,7 +22,9 @@ class SmokeAdapter:
     Checks two invariants on the capsule directory:
 
     1. ``capsule.yaml`` exists and is valid YAML containing a ``run_id`` field.
-    2. ``replay-policy.yaml`` exists.
+    2. The replay policy the manifest names in ``replay_policy_ref`` (default
+       ``replay.yaml``) is a regular file directly in the capsule root — not a
+       symlink, not a path outside the root.
 
     The OCI digest is the empty string because no container is required.
     """
@@ -39,6 +45,7 @@ class SmokeAdapter:
         # ── Metric 1: capsule.yaml exists and has run_id ──────────────────────
         capsule_yaml_path = capsule_path / "capsule.yaml"
         capsule_schema_passed = False
+        data: object = None
         if capsule_yaml_path.exists():
             try:
                 capsule_text = (
@@ -61,9 +68,13 @@ class SmokeAdapter:
             )
         )
 
-        # ── Metric 2: replay-policy.yaml exists ───────────────────────────────
-        replay_policy_path = capsule_path / "replay-policy.yaml"
-        replay_policy_passed = replay_policy_path.exists()
+        # ── Metric 2: the manifest's replay policy file exists ────────────────
+        ref = (
+            data.get("replay_policy_ref", _DEFAULT_REPLAY_POLICY)
+            if isinstance(data, dict)
+            else _DEFAULT_REPLAY_POLICY
+        )
+        replay_policy_passed = _is_root_regular_file(capsule_path, ref)
         metrics.append(
             Metric(
                 name="replay_policy_present",
@@ -88,3 +99,17 @@ class SmokeAdapter:
             statistical_context=None,
             notes=None,
         )
+
+
+def _is_root_regular_file(capsule_path: Path, name: object) -> bool:
+    """True when *name* is a plain file name of a regular file in the capsule root.
+
+    A separator would reach a subdirectory or, absolute, replace the root; ``""``,
+    ``.`` and ``..`` name directories, which ``S_ISREG`` already rejects.
+    """
+    if not isinstance(name, str) or "/" in name or "\\" in name:
+        return False
+    try:
+        return stat.S_ISREG(os.lstat(capsule_path / name).st_mode)
+    except OSError:
+        return False

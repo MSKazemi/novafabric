@@ -6205,7 +6205,7 @@ Built-in suites:
 
 | Suite ID | Version | Notes |
 |---|---|---|
-| `novafabric-smoke-v1` | 0.1.0 | Fast structural check; no OCI container |
+| `novafabric-smoke-v1` | 0.1.0 | Fast structural check, no OCI container: `capsule.yaml` parses and has a `run_id`, and the replay policy it names (`replay_policy_ref`, default `replay.yaml`) is a regular file in the capsule root |
 | `gaia-v1` | 0.1.0 | GAIA Lvl-1/2/3 benchmark (OCI-pinned) |
 | `mmlu-v1` | 0.1.0 | MMLU 57-subject knowledge benchmark (OCI-pinned) |
 | `truthful-qa-v1` | 0.1.0 | TruthfulQA adversarial honesty benchmark (OCI-pinned) |

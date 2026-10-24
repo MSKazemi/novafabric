@@ -78,7 +78,7 @@ def capsule_dir(tmp_path: Path) -> Path:
         "mutating_tool_count": 0,
     }
     (cdir / "capsule.yaml").write_text(yaml.safe_dump(manifest))
-    (cdir / "replay-policy.yaml").write_text("mode: forensic\n")
+    (cdir / "replay.yaml").write_text("mode: forensic\n")
     (cdir / "trace.jsonl").write_text(
         json.dumps({"span_id": "root", "name": "test", "kind": "internal"}) + "\n"
     )

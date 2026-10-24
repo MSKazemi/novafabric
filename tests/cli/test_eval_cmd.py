@@ -21,7 +21,7 @@ def valid_capsule(tmp_path: Path) -> Path:
     (capsule_dir / "capsule.yaml").write_text(
         yaml.dump({"run_id": "01TESTCAPSULE000000000001", "schema_version": "0.1.0"})
     )
-    (capsule_dir / "replay-policy.yaml").write_text("allow_readonly: true\n")
+    (capsule_dir / "replay.yaml").write_text("allow_readonly: true\n")
     return capsule_dir
 
 
