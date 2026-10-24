@@ -252,6 +252,11 @@ def _prepare_versions(conn: sqlite3.Connection, *, write: bool) -> bool:
     return True
 
 
+def _parent(capsule_key: str) -> str:
+    """The resolved capsule directory a key was discovered under."""
+    return capsule_key.rpartition("/")[0]
+
+
 def _load_cached(conn: sqlite3.Connection) -> dict[str, tuple[str, str]]:
     """Read the whole cache as ``{capsule_key: (signature, payload)}``."""
     return {
@@ -341,9 +346,14 @@ def scan_capsule_dir_cached(
         score_rows.extend(capsule_scores)
         refreshed[key] = (signature, capsule_calls, capsule_scores)
 
-    stale = set(cached) - set(live_keys)
+    # One cache file serves every capsule directory: only this directory's own
+    # children can be stale here — never a sibling's or a nested directory's.
+    live = set(live_keys)
+    stale = {key for key in cached if _parent(key) == resolved_base and key not in live}
     if refreshed or stale or rebuild:
-        _write_back(path, refreshed, stale, rebuild=rebuild, live_keys=live_keys)
+        _write_back(
+            path, refreshed, stale, rebuild=rebuild, live_keys=live_keys, base=resolved_base
+        )
 
     return IndexRows(calls=calls, scores=score_rows, capsule_count=capsule_count)
 
@@ -355,8 +365,11 @@ def _write_back(
     *,
     rebuild: bool,
     live_keys: list[str],
+    base: str,
 ) -> None:
     """Persist refreshed rows and drop rows whose capsule is gone.
+
+    Only keys directly under *base* (the directory just scanned) are pruned.
 
     Pruning is not housekeeping: ADR-0225 D3 forbids serving a row whose source
     capsule no longer exists, so removal happens in the same transaction as the
@@ -373,7 +386,9 @@ def _write_back(
                 stored = [
                     row[0] for row in conn.execute("SELECT capsule_key FROM capsules")
                 ]
-                stale.update(key for key in stored if key not in keep)
+                stale.update(
+                    key for key in stored if _parent(key) == base and key not in keep
+                )
             conn.executemany(
                 "DELETE FROM capsules WHERE capsule_key = ?", [(key,) for key in stale]
             )

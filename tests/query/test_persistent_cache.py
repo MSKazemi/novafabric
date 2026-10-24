@@ -340,3 +340,50 @@ class TestQueryIntegration:
         for result in (cold, warm):
             assert result["rows"] == uncached["rows"]
             assert result["row_count"] == uncached["row_count"]
+
+
+class TestSeveralCapsuleDirectories:
+    """Review eval-adapters-query-16: one cache file serves every capsule directory, and
+    querying directory B pruned all of A's rows as "stale", so alternating directories
+    (or the CLI and the dashboard on different ones) re-parsed everything each time."""
+
+    @staticmethod
+    def _keys(cache: Path) -> set[str]:
+        with sqlite3.connect(cache) as conn:
+            return {row[0] for row in conn.execute("SELECT capsule_key FROM capsules")}
+
+    def test_querying_another_directory_keeps_this_ones_rows(
+        self, tmp_path: Path, capsules: Path, cache: Path
+    ) -> None:
+        other = tmp_path / "other"
+        _write_capsule(other, "run-z", calls=[{"gen_ai.response.model": "m", "duration_ms": 1}])
+        scan_capsule_dir_cached(capsules)
+        scan_capsule_dir_cached(other)
+        keys = self._keys(cache)
+        assert {k.rsplit("/", 1)[1] for k in keys} == {"run-a", "run-b", "run-z"}
+
+    def test_a_nested_directory_is_not_pruned_by_its_parent(
+        self, capsules: Path, cache: Path
+    ) -> None:
+        nested = capsules / "run-a" / "inner"
+        _write_capsule(nested, "run-n")
+        scan_capsule_dir_cached(nested)
+        scan_capsule_dir_cached(capsules)
+        assert any(k.endswith("/inner/run-n") for k in self._keys(cache))
+
+    def test_rebuild_prunes_only_its_own_directory(
+        self, tmp_path: Path, capsules: Path, cache: Path
+    ) -> None:
+        other = tmp_path / "other"
+        _write_capsule(other, "run-z")
+        scan_capsule_dir_cached(other)
+        scan_capsule_dir_cached(capsules, rebuild=True)
+        assert any(k.endswith("/other/run-z") for k in self._keys(cache))
+
+    def test_a_removed_capsule_is_still_pruned(self, capsules: Path, cache: Path) -> None:
+        scan_capsule_dir_cached(capsules)
+        for path in sorted((capsules / "run-b").iterdir()):
+            path.unlink()
+        (capsules / "run-b").rmdir()
+        scan_capsule_dir_cached(capsules)
+        assert not any(k.endswith("/run-b") for k in self._keys(cache))
