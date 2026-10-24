@@ -291,6 +291,20 @@ class TestServerPromote:
         assert r.status_code == 200, r.text
         assert reg.status("2.0.0") == "staging"
 
+    def test_promoted_by_names_the_authenticated_principal(
+        self, reg: Reg, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # review server-18: the caller's free-text `actor` became the
+        # provenance record, so any writer could promote "as" someone else.
+        _noop(monkeypatch)
+        c = _server_client(reg)
+        r = c.put(
+            f"/v0/assets/{self._id(reg, '2.0.0')}/promote",
+            json={"to_status": "staging", "actor": "cfo@corp"},
+        )
+        assert r.status_code == 200, r.text
+        assert get_asset(NAME, "2.0.0", db_path=reg.db)["promoted_by"] == "server:local"
+
     def test_an_explicit_allow_permits_production(
         self, reg: Reg, monkeypatch: pytest.MonkeyPatch
     ) -> None:

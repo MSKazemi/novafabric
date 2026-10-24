@@ -248,7 +248,10 @@ async def promote_asset(
     to_status_raw = body.get("to_status")
     if not to_status_raw:
         raise BadRequestError("to_status is required")
-    actor = str(body.get("actor", "api"))
+    # Provenance names the authenticated principal, as registration does; a
+    # body `actor` is ignored, so no writer can promote "as" someone else
+    # (review server-18).
+    actor = f"server:{_auth.subject}"
     force = bool(body.get("force", False))
 
     from novafabric.registry.service import (
@@ -283,7 +286,7 @@ async def promote_asset(
     # ADR-0312 D1: a single-actor promotion, gated exactly like
     # `nova promote direct`. `production` needs an explicit `promote_direct`
     # policy allow (403 otherwise); `force` does not bypass it. The policy sees
-    # the authenticated principal, never the caller-chosen `actor` label.
+    # the authenticated principal.
     try:
         result = promote_asset_direct(
             name=name,
@@ -292,7 +295,7 @@ async def promote_asset(
             actor=actor,
             force=force,
             db_path=db_path,
-            policy_subject=f"server:{_auth.subject}",
+            policy_subject=actor,
         )
     except AssetNotFoundError as exc:
         raise NotFoundError(str(exc))

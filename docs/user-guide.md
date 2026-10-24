@@ -1659,7 +1659,8 @@ What is enforced today:
 `nova prompt promote`, the dashboard and `nova serve` promote endpoints, the `nova server`
 route `PUT /v0/assets/{id}/promote` (403 `promote_direct_denied`), and a `nova rollback` to a
 version that was never in production all need an explicit `promote_direct` policy allow;
-`--force` does not bypass it.
+`--force` does not bypass it. `PUT /v0/assets/{id}/promote` records the authenticated principal
+(`server:<subject>`) as `promoted_by`, as registration does; a request-body `actor` is ignored.
 
 **Limit.** The trust list is the trust anchor. Anyone who can edit it — or who can set
 `NOVAFABRIC_PROMOTE_SIGNERS` / `NOVAFABRIC_HOME` for the process doing the approving — can bind
