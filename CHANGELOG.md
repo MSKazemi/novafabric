@@ -213,6 +213,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 - `nova annotate confirm` refuses (exit 1) a checker identity with no keyring key; create it once with
   `nova promote keygen --identity NAME`.
+- Capsules from the `a2a`, `google_adk` and `openai_agents` adapters say `schema_version: 0.1.0`, like every other
+  writer; they said `1.0.0` without having been migrated, and `nova migrate` refused them. Only `nova migrate` writes
+  `1.0.0` (ADR-0034).
+- An OpenAI Agents run that ends in `MaxTurnsExceeded`, a tripped guardrail or an exception escaping the agent is
+  captured as `status: failure`, `exit_code: 1`; tool errors the run survives are counted in `metadata.span_errors`.
+- The Bedrock AgentCore capsule no longer copies `inputText` into `capsule.yaml`, and at the default capture level
+  `bedrock-traces.jsonl` keeps a digest of each trace part, not its body (which holds the prompt).
 - `nova experiment compare` (and `nova experiment run --baseline`) exits `2` when no item carries the metric on both
   sides, e.g. a mistyped `--metric`. Two empty sequences left the SPRT at `continue` and exited `0`, so the gate passed
   a candidate that failed every item.
@@ -310,6 +317,16 @@ longer forwards the submitting shell's environment (ADR-0270).
     query; the ratchet directory is created 0700 before its first key is restored;
   - `nova import` with a manifest whose DSSE payload or signature is not base64 is `INVALID` (it crashed before the
     receipt); `nova run validate-distributed` reports a RUNNING parent with exit 3, not FAILED;
+  - the Bedrock AgentCore adapter never wrote `bedrock-traces.jsonl` (it read the trace kinds one level above where
+    botocore puts them) while the manifest pointed at it, and a caller that stopped reading the completion stream,
+    or a stream that raised, left no capsule and the wire hooks installed; it now runs on the shared adapter core and
+    closes as `success`, `failure` or `partial`;
+  - the OpenAI Agents capsule's command was always `@openai-agents:run` (the SDK trace carries the workflow as
+    `name`);
+  - `nova query --since 999999999999d` (or any window before year 1) crashed with an `OverflowError` traceback; it is
+    a query error (exit 2). The query cache no longer evicts every other capsule directory's rows on each query;
+  - the KG CRDT write-ahead log was confirmed before the store write and a refused delta was dropped; it is now
+    confirmed after the write and a refused delta is re-queued (at-least-once);
   - KG ingest of a local capsule never produced a `USES_TOOL` edge (capture tool-call records were dropped while
     counted as ingested), `/api/kg/ingest` read only `model-calls.jsonl`, and every re-ingest added a capsule's counts
     again; one shared `kg.capsule_ingest` path now reads both event files without following links and replaces a
