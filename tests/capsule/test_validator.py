@@ -235,3 +235,18 @@ def test_validate_distributed_three_exit_codes(tmp_path: Path) -> None:
         assert result.exit_code == expected_exit, (
             f"Status {status}: expected exit {expected_exit}, got {result.exit_code}"
         )
+
+
+def test_validate_distributed_running_is_not_failed(tmp_path: Path) -> None:
+    """Review storage-backup-21: a RUNNING parent was reported "FAILED" with exit 1,
+    so a gate script could not tell "still running" from "failed"."""
+    spool = tmp_path / "spool"
+    rid = new_ulid()
+    manifest = make_parent_manifest(
+        rid, new_ulid(), children_expected=4, children_arrived=1, status="RUNNING"
+    )
+    write_capsule(spool, rid, manifest)
+    result = DistributedCapsuleValidator(spool / rid).validate_distributed(rid)
+    assert result.exit_code == 3
+    assert result.message.startswith("RUNNING: 1/4")
+    assert "FAILED" not in result.message

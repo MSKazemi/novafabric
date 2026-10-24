@@ -80,7 +80,7 @@ def validate_distributed_cmd(
     Checks that all expected worker capsules were created and that none
     are in an orphaned or failed state.
 
-    Exit codes: 0=COMPLETE, 1=FAILED, 2=PARTIALLY_COMPLETE.
+    Exit codes: 0=COMPLETE, 1=FAILED, 2=PARTIALLY_COMPLETE, 3=RUNNING (not finished).
 
     Scope: single parent run (validates all child capsules).
 

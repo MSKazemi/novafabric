@@ -137,6 +137,8 @@ class DistributedCapsuleValidator:
           0 → COMPLETE
           1 → FAILED
           2 → PARTIALLY_COMPLETE
+          3 → RUNNING (not finished; was reported as FAILED, review
+              storage-backup-21)
         """
         manifest = self._read_manifest()
         status = manifest.get("status", "RUNNING")
@@ -150,6 +152,12 @@ class DistributedCapsuleValidator:
         elif status == ParentStatus.PARTIALLY_COMPLETE.value:
             exit_code = 2
             message = f"PARTIALLY_COMPLETE: {children_arrived}/{children_expected} children arrived"
+        elif status == ParentStatus.RUNNING.value:
+            exit_code = 3
+            message = (
+                f"RUNNING: {children_arrived}/{children_expected} children arrived so far "
+                "(not finished)"
+            )
         else:
             exit_code = 1
             message = f"FAILED: {children_arrived}/{children_expected} children arrived"

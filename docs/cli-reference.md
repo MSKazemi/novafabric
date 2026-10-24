@@ -1067,7 +1067,7 @@ nova run validate-distributed .novafabric/runs/01HXPARENT/ --parent-run-id 01HXP
 Options:
 - `--parent-run-id TEXT` — override parent run_id (default: read from `capsule.json`)
 
-Exit codes: `0` = COMPLETE, `1` = FAILED, `2` = PARTIALLY_COMPLETE.
+Exit codes: `0` = COMPLETE, `1` = FAILED, `2` = PARTIALLY_COMPLETE, `3` = RUNNING (children still arriving; releases up to v0.107.0 reported it as `FAILED` with exit `1`).
 
 ### nova run show \<capsule-dir\>
 
