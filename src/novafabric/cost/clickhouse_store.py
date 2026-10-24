@@ -256,13 +256,14 @@ def ingest_capsule(run_id: str, capsule_dir: Path, tenant_id: str = "default") -
 
 
 def ingest_all_capsules(
-    novafabric_home: Path, tenant_id: str = "default"
+    capsules_root: Path, tenant_id: str = "default"
 ) -> dict[str, int]:
-    """Scan all capsule directories and ingest any not yet in ClickHouse.
+    """Scan every capsule directory under *capsules_root* and ingest any not yet in ClickHouse.
 
-    Returns a mapping of run_id → rows_inserted (0 = already up to date).
+    *capsules_root* is the capsule store itself (``nova serve --capsule-dir``), not
+    ``$NOVAFABRIC_HOME``. Returns a mapping of run_id → rows_inserted (0 = already up to
+    date, -1 = failed).
     """
-    capsules_root = novafabric_home / "capsules"
     if not capsules_root.is_dir():
         return {}
 

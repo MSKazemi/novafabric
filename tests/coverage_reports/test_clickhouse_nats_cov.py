@@ -185,7 +185,7 @@ class TestCostStoreIngestCapsule:
 
 class TestCostStoreIngestAll:
     def test_returns_empty_when_no_capsules_dir(self, tmp_path: Any) -> None:
-        assert clickhouse_store.ingest_all_capsules(tmp_path) == {}
+        assert clickhouse_store.ingest_all_capsules(tmp_path / "capsules") == {}
 
     def test_scans_and_maps_results(self, tmp_path: Any) -> None:
         capsules = tmp_path / "capsules"
@@ -200,7 +200,7 @@ class TestCostStoreIngestAll:
             return 3
 
         with patch.object(clickhouse_store, "ingest_capsule", side_effect=fake_ingest):
-            results = clickhouse_store.ingest_all_capsules(tmp_path)
+            results = clickhouse_store.ingest_all_capsules(capsules)
 
         assert results["runA"] == 3
         assert results["runB"] == -1  # error sentinel

@@ -599,6 +599,35 @@ def _list_evidence_bundles(
 
 
 
+async def _cost_auto_ingest_loop(capsule_dir: Path, interval_seconds: float = 120.0) -> None:
+    """Background asyncio task: push new capsule cost events to ClickHouse.
+
+    Scans *capsule_dir*, the store this server reads (``--capsule-dir`` /
+    ``NOVAFABRIC_CAPSULE_DIR``), not ``$NOVAFABRIC_HOME/capsules``. No-op when
+    NOVA_CLICKHOUSE_URL is not set. Runs every 2 minutes so the CostTab reflects
+    recent runs without a manual trigger.
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        if not os.environ.get("NOVA_CLICKHOUSE_URL"):
+            continue
+        try:
+            from novafabric.cost import clickhouse_store  # noqa: PLC0415
+
+            results = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: clickhouse_store.ingest_all_capsules(capsule_dir)
+            )
+            total = sum(n for n in results.values() if n > 0)
+            if total > 0:
+                logger.info(
+                    "cost auto-ingest: %d new cost row(s) across %d run(s)",
+                    total,
+                    sum(1 for n in results.values() if n > 0),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cost auto-ingest tick error: %s", exc)
+
+
 def _cost_report_from_capsules(
     capsule_dir: "Path", days: int, run_id: "str | None" = None
 ) -> "dict[str, Any]":
@@ -789,7 +818,7 @@ def create_app(
         # Start ClickHouse cost auto-ingest background task.  No-op when
         # NOVA_CLICKHOUSE_URL is not set.
         _cost_task = asyncio.create_task(
-            _cost_auto_ingest_loop(), name="nova-serve-cost-auto-ingest"
+            _cost_auto_ingest_loop(capsule_dir), name="nova-serve-cost-auto-ingest"
         )
         # Start topology periodic re-seed loop (no-op when topology is disabled).
         _topo_task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -5807,33 +5836,6 @@ def create_app(
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("KG auto-ingest tick error: %s", exc)
-
-    async def _cost_auto_ingest_loop(interval_seconds: float = 120.0) -> None:
-        """Background asyncio task: push new capsule cost events to ClickHouse.
-
-        No-op when NOVA_CLICKHOUSE_URL is not set.  Runs every 2 minutes so
-        the CostTab reflects recent runs without a manual trigger.
-        """
-        while True:
-            await asyncio.sleep(interval_seconds)
-            if not os.environ.get("NOVA_CLICKHOUSE_URL"):
-                continue
-            try:
-                from novafabric.cost.clickhouse_store import ingest_all_capsules  # noqa: PLC0415
-
-                home = _nf_paths.nova_home()
-                results = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: ingest_all_capsules(home)
-                )
-                total = sum(n for n in results.values() if n > 0)
-                if total > 0:
-                    logger.info(
-                        "cost auto-ingest: %d new cost row(s) across %d run(s)",
-                        total,
-                        sum(1 for n in results.values() if n > 0),
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("cost auto-ingest tick error: %s", exc)
 
     @app.get("/api/kg/status", dependencies=[Depends(verify_token)])
     async def kg_status_endpoint() -> dict[str, Any]:
