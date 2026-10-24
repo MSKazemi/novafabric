@@ -2,7 +2,7 @@
  * Pins useMutation's state machine before PanelScaffold builds on it.
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { ToastProvider } from '@/lib/ToastContext';
 import { useMutation } from '@/lib/useMutation';
@@ -98,5 +98,47 @@ describe('useMutation', () => {
     act(() => result.current.reset());
     expect(result.current.result).toBeNull();
     expect(result.current.error).toBeNull();
+  });
+
+  // Review frontend-dashboard-04: many routes answer HTTP 200 with `ok: false`.
+  it('an ok:false body is an error, not a success, and keeps the result', async () => {
+    const onSuccess = vi.fn();
+    const onError = vi.fn();
+    const body = { ok: false, error: 'ratchet state missing' };
+    const { result } = renderHook(
+      () => useMutation(async () => body, { onSuccess, onError, silentError: true }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(result.current.error).toBe('ratchet state missing');
+    expect(result.current.result).toEqual(body);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it('an ok:false body without a message still says the server refused', async () => {
+    const { result } = renderHook(
+      () => useMutation(async () => ({ ok: false }), { silentError: true }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(result.current.error).toMatch(/server reported a failure/);
+  });
+
+  it('a body without ok, or ok:true, is still a success', async () => {
+    const onSuccess = vi.fn();
+    const { result } = renderHook(
+      () => useMutation(async () => ({ ok: true, n: 1 }), { onSuccess, silentSuccess: true }),
+      { wrapper },
+    );
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(result.current.error).toBeNull();
+    expect(onSuccess).toHaveBeenCalledOnce();
   });
 });

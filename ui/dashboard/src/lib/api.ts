@@ -1802,6 +1802,9 @@ export const api = {
       ok: boolean;
       suite_id?: string;
       regression_detected?: boolean;
+      /** False: different suites, or a baseline metric missing from the candidate. */
+      comparable?: boolean;
+      missing_metrics?: string[];
       summary?: string;
       metrics?: Array<{ name: string; baseline_value: number; candidate_value: number; delta: number; relative_delta: number; p_value: number | null; significant: boolean }>;
     }>('/api/eval/compare', { baseline_json, candidate_json, alpha, min_samples }),

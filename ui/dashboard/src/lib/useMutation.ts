@@ -31,13 +31,33 @@ export interface UseMutationOptions<TResult> {
 }
 
 export interface MutationState<TArgs extends unknown[], TResult> {
-  /** Invoke the mutation. Resolves to the result, or null if it threw. */
+  /**
+   * Invoke the mutation. Resolves to the result, or null if it threw. A result whose
+   * body is `{ ok: false, … }` is returned too, but reported as an error (error state,
+   * error toast, onError) — never as a success.
+   */
   run: (...args: TArgs) => Promise<TResult | null>;
   pending: boolean;
   error: string | null;
   result: TResult | null;
   /** Clear error/result back to the initial state. */
   reset: () => void;
+}
+
+/**
+ * The failure message of a body that reports failure in-band (`{ ok: false, … }`), or null.
+ *
+ * Many routes answer HTTP 200 and signal failure in the body. Treating any resolved
+ * value as success toasted "Done" / "No regression" for refusals (review
+ * frontend-dashboard-04).
+ */
+function inBandFailure(r: unknown): string | null {
+  if (r === null || typeof r !== 'object' || (r as { ok?: unknown }).ok !== false) return null;
+  const body = r as { error?: unknown; detail?: unknown; summary?: unknown; message?: unknown };
+  for (const v of [body.error, body.detail, body.message, body.summary]) {
+    if (typeof v === 'string' && v.trim()) return v;
+  }
+  return 'the server reported a failure (ok: false)';
 }
 
 function resolveMessage<T>(
@@ -69,6 +89,17 @@ export function useMutation<TArgs extends unknown[], TResult>(
         const r = await fn(...args);
         if (ticket !== inflight.current) return r; // superseded — drop state update
         setResult(r);
+        const failure = inBandFailure(r);
+        if (failure !== null) {
+          // Kept as the result (the body often explains the refusal), reported as an error.
+          const err = new Error(failure);
+          setError(failure);
+          if (!opts.silentError) {
+            toast('error', resolveMessage(opts.errorMessage, err, failure));
+          }
+          opts.onError?.(err);
+          return r;
+        }
         if (!opts.silentSuccess) {
           toast('success', resolveMessage(opts.successMessage, r, 'Done'));
         }

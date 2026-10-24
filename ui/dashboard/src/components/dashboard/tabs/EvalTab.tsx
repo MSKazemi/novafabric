@@ -47,7 +47,10 @@ export default function EvalTab() {
   );
   const compare = useMutation(
     (b: string, c: string, a: number) => api.evalCompare(b, c, a),
-    { successMessage: (r) => (r.regression_detected ? 'Regression detected' : 'No regression') },
+    {
+      successMessage: (r) =>
+        r.comparable === false ? 'Cannot compare' : r.regression_detected ? 'Regression detected' : 'No regression',
+    },
   );
 
   const suiteColumns = useMemo<Column<Suite>[]>(() => [
@@ -181,8 +184,8 @@ export default function EvalTab() {
         </div>
         {compare.result?.metrics && (
           <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] p-3 text-[10px] font-mono space-y-1">
-            <div className={compare.result.regression_detected ? 'text-[var(--color-status-failure)]' : 'text-[var(--color-status-success)]'}>
-              {compare.result.summary ?? (compare.result.regression_detected ? 'Regression detected' : 'No regression')}
+            <div className={compare.result.regression_detected || compare.result.comparable === false ? 'text-[var(--color-status-failure)]' : 'text-[var(--color-status-success)]'}>
+              {compare.result.summary ?? (compare.result.comparable === false ? 'Cannot compare' : compare.result.regression_detected ? 'Regression detected' : 'No regression')}
             </div>
             {compare.result.metrics.map((m) => (
               <div key={m.name} className="flex items-center gap-2">
