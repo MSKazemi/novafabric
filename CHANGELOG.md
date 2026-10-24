@@ -13,6 +13,25 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **Secrets on disk are owner-only from their first byte and are never written through a planted link.** `dek.db`
+  (the raw per-subject PII keys) and the erasure queue were created at the umask mode (commonly `0644`), and SQLite
+  gives their `-wal`/`-shm` files the same mode; both are now created, or narrowed on open, at `0600`. The
+  `nova serve` and `nova server` token files and the offline-token signing key followed a symbolic link planted at
+  their name; `nova login` credentials, the promote keyring key, the NovaSeal ratchet state, a restored sensitive
+  backup member and the dashboard audit log were written at the umask mode and narrowed afterwards. Each now gets its
+  mode before any byte is written. Two first callers of the keyring no longer overwrite each other's key. A guard test
+  fails on any new write-then-`chmod 0600`.
+- **NovaSeal ratchet rotation survives a crash.** It deleted the old state before writing the new one, so a crash in
+  between left the node unable to sign. The new state is now written first; the previous chain key is then
+  overwritten in the replaced file.
+- **State, evidence and secret files survive a crash mid-write.** 27 places that publish a file by renaming it now
+  flush the file before and the directory after (on XFS or Lustre a crash could otherwise leave an empty or missing
+  file). The most serious was releasing a legal hold: an empty `holds.jsonl` reads as "no holds", so deletion would
+  fail open. Also: the token store rewrote through a fixed `tokens.tmp` name that a planted link redirected; the local
+  NovaSeal key was never flushed; `nova migrate-schema` rewrote `manifest.json` in place; the local export
+  destination removed its manifest before renaming the new one in; media blobs followed a linked `outputs/`; and
+  uploaded or imported capsules were published before their files were flushed. A guard test fails on any new rename
+  that skips the directory flush.
 - **Deletion now fails closed on unreadable WORM state (PR #158, ADR-0318).** A configured `worm.db` that cannot be
   read (corrupt, truncated, missing table, directory, dangling link, permission denied, locked) refuses
   `nova capsule delete`, `DELETE /v0/capsules`, bulk delete, the dashboard delete, metadata-index delete and
@@ -33,6 +52,11 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- The cluster collector's two backends count an event's model and tokens the same way. `POST /capsule` accepts
+  `model`/`tokens_in`/`tokens_out` and `model_id`/`tokens_total`, but DuckDB read only the first spelling and
+  ClickHouse only the second, so an event lost its model or its token count depending on the backend. ClickHouse now
+  stores `tokens_in + tokens_out` when no `tokens_total` is given (and `NULL` when the event reports no count); DuckDB
+  takes `model_id` when `model` is absent. DuckDB does not split a bare `tokens_total`.
 - `nova export-retention --registry` reads the registry's `retention-policy.yaml` and `worm.db` from
   `$NOVAFABRIC_HOME/registries/<registry>/`, where `nova retention` and `nova capsule delete` read them, and still
   reads a legacy `./.novafabric/registries/<registry>/` copy, with a warning. Run from any other directory, it
