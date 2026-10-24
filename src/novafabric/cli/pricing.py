@@ -48,13 +48,13 @@ def _fail(message: str, *, code: int = 1) -> NoReturn:
     raise SystemExit(code)
 
 
-def _parse_at(value: str | None) -> date | None:
+def _parse_at(value: str | None, *, flag: str = "--at") -> date | None:
     if value is None:
         return None
     try:
         return date.fromisoformat(value)
     except ValueError:
-        _fail(f"--at must be a YYYY-MM-DD date, got {value!r}")
+        _fail(f"{flag} must be a YYYY-MM-DD date, got {value!r}")
 
 
 def _merged(explicit: Path | None) -> MergedCatalog:
@@ -266,7 +266,7 @@ def pricing_add_cmd(
         )
     ):
         _fail("provide at least one price (--input/--output/--cached/...)")
-    effective = _parse_at(effective_from)
+    effective = _parse_at(effective_from, flag="--effective-from")
     try:
         entry = PricingEntry(
             model_id=model_id,

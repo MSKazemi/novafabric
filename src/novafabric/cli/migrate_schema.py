@@ -67,7 +67,9 @@ class _MigrationReport:
 
     @property
     def migrated_count(self) -> int:
-        return sum(1 for r in self.results if r.action != "skip")
+        # A failed capsule is not migrated (review cli-b-21: one failure read
+        # "Migrated: 1 … Failed: 1").
+        return sum(1 for r in self.results if r.action != "skip" and not r.failed)
 
     @property
     def skipped_count(self) -> int:

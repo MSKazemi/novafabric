@@ -447,3 +447,12 @@ class TestCostEstimate:
         assert "skipped" in _all_output(result)
         payload = json.loads(result.stdout)  # warning went to stderr, JSON to stdout
         assert payload["calls"] == 3
+
+
+def test_a_bad_effective_from_names_that_flag(_isolated_layers: Path) -> None:
+    """Review cli-b-21: the error said "--at must be a YYYY-MM-DD date"."""
+    result = runner.invoke(pricing_app, ["add", "m", "--input", "1.0", "--effective-from", "July"])
+    assert result.exit_code != 0
+    out = _all_output(result)
+    assert "--effective-from must be a YYYY-MM-DD date" in out
+    assert "--at" not in out

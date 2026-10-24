@@ -125,7 +125,9 @@ def build_cmd(
         output.write_text(payload + "\n")
         console.print(
             f"[green]✓[/green] Safety case ({case.template_id}) → {output} "
-            f"[top claim: {_state_of(case, case.top_claim_id)}]"
+            # Escaped: Rich reads `[top claim: …]` as a tag and drops it.
+            f"\\[top claim: {_state_of(case, case.top_claim_id)}]",
+            soft_wrap=True,
         )
     else:
         typer.echo(payload)

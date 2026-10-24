@@ -382,6 +382,13 @@ def validate_cmd(
         except CapsuleRefError:
             pass  # not a run id either — report it as a spec path below
 
+    # A gate flag that cannot act must not pass silently: a CI step written as
+    # `nova validate CAP --fail-on-schema-violation` never gated (review cli-b-21).
+    if not schemas and (fail_on_schema_violation or write):
+        flag = "--fail-on-schema-violation" if fail_on_schema_violation else "--write"
+        console.print(f"[red]✗[/red] {flag} applies only with --schemas")
+        raise typer.Exit(code=2)
+
     if _is_replay_dir(spec_file):
         _validate_replay(spec_file)
         return

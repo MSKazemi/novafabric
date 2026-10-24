@@ -300,3 +300,16 @@ def test_help_examples_parse_and_run(tmp_path: Path, monkeypatch) -> None:
         assert isinstance(result.exception, SystemExit) or result.exception is None, args
         assert result.exit_code == 0, f"example `nova migrate-schema {args}`: {result.output}"
         assert "capsules" in result.output
+
+
+# ── review cli-b-21: a failed capsule is not counted as migrated ──────────────
+
+
+def test_a_failed_capsule_is_not_counted_as_migrated(tmp_path: Path) -> None:
+    from novafabric.cli.main import app
+
+    (tmp_path / "broken").mkdir()
+    (tmp_path / "broken" / "manifest.json").write_text("{not json")
+    result = runner.invoke(app, ["migrate-schema", "--capsule-dir", str(tmp_path)])
+    assert result.exit_code == 1, result.output
+    assert "Migrated: 0" in result.output and "Failed: 1" in result.output

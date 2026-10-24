@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from novafabric.capture._ulid import new_ulid
@@ -144,3 +145,13 @@ def test_validate_schemas_on_non_capsule_target_errors(tmp_path: Path) -> None:
     result = runner.invoke(app, ["validate", "--schemas", str(spec)])
     assert result.exit_code == 2
     assert "requires a capsule directory" in result.output
+
+
+@pytest.mark.parametrize("flag", ["--fail-on-schema-violation", "--write"])
+def test_a_schema_flag_without_schemas_is_refused(tmp_path: Path, flag: str) -> None:
+    """Review cli-b-21: without --schemas these were silently ignored, so a CI gate
+    written as `nova validate CAP --fail-on-schema-violation` never gated."""
+    capsule_dir = _make_capsule(tmp_path, [_tool_call()])
+    result = runner.invoke(app, ["validate", flag, str(capsule_dir)])
+    assert result.exit_code == 2, result.output
+    assert "--schemas" in result.output

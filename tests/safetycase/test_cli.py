@@ -207,3 +207,14 @@ def test_build_counts_a_replay_only_with_its_signing_key(tmp_path: Path) -> None
 
     assert record_state() == "UNKNOWN"
     assert record_state("--replay-pubkey", str(key)) == "SUPPORTED"
+
+
+def test_build_success_line_shows_the_top_claim_state(tmp_path: Path) -> None:
+    """Review cli-b-21: `[top claim: SUPPORTED]` was read as a Rich tag and vanished."""
+    cap = _capsule(tmp_path)
+    out = tmp_path / "case.json"
+    result = runner.invoke(
+        safety_case_app, ["build", str(cap), "--template", "clymer-generic-v0", "-o", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "[top claim:" in result.output
