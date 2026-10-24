@@ -13,6 +13,16 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **A workspace membership no longer grants server-wide privilege (`nova server`, ADR-0178, experimental).** Once
+  the workspace/org model was in use, every membership a principal held counted on every route: a workspace-only
+  `admin` could mint a server-wide admin API key, create organisations and assign himself global admin, and a
+  reader API key owned by an admin inherited the owner's roles. A membership now applies in full only on its own
+  workspace's routes (`/v0/workspaces/{ws_id}/…`) and grants at most `writer` elsewhere; an API key, or an offline
+  token issued with `--roles`, gets exactly its own roles. Role-less service-account tokens still take their roles
+  from bindings.
+- **SCIM no longer grants roles to an inactive user.** A user provisioned with `active: false` into a mapped group,
+  or deactivated and later re-added by an IdP group sync, received the group's role (including `admin`). Inactive
+  users now get none; reactivation restores the roles of their groups.
 - **Secrets on disk are owner-only from their first byte and are never written through a planted link.** `dek.db`
   (the raw per-subject PII keys) and the erasure queue were created at the umask mode (commonly `0644`), and SQLite
   gives their `-wal`/`-shm` files the same mode; both are now created, or narrowed on open, at `0600`. The
@@ -52,6 +62,10 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- `server.db_path` (`NOVAFABRIC_SERVER_DB_PATH`) applies to every registry table. Orgs, workspaces, role
+  assignments, service accounts and SCIM used `$NOVAFABRIC_HOME/registry.db` regardless, so with `db_path` set an
+  API key was created in one database and refused (401) from the other, and the multi-org shared-store start-up
+  guard counted the wrong database and never fired.
 - The cluster collector's two backends count an event's model and tokens the same way. `POST /capsule` accepts
   `model`/`tokens_in`/`tokens_out` and `model_id`/`tokens_total`, but DuckDB read only the first spelling and
   ClickHouse only the second, so an event lost its model or its token count depending on the backend. ClickHouse now
