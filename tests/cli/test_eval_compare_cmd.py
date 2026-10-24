@@ -158,7 +158,8 @@ def test_eval_compare_invalid_candidate_json_exits_1(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
-def test_eval_compare_no_common_metrics_exits_0(tmp_path: Path) -> None:
+def test_eval_compare_no_common_metrics_cannot_compare_exits_2(tmp_path: Path) -> None:
+    """Review cli-a-02: a candidate that lost the baseline's metric is not a pass."""
     baseline_file = _write_result(
         tmp_path / "baseline.json",
         [{"name": "accuracy", "value": 0.90}],
@@ -171,5 +172,25 @@ def test_eval_compare_no_common_metrics_exits_0(tmp_path: Path) -> None:
         app,
         ["eval", "compare", str(baseline_file), str(candidate_file)],
     )
-    assert result.exit_code == 0
-    assert "No metrics in common" in result.output
+    assert result.exit_code == 2, result.output
+    out = " ".join(result.output.split())
+    assert "CANNOT COMPARE" in out and "accuracy" in out
+
+
+def test_eval_compare_improvement_exits_0(tmp_path: Path) -> None:
+    """Review cli-a-02: accuracy 0.80 -> 0.95 was reported as a regression (two-sided test)."""
+    baseline_file = _write_result(tmp_path / "b.json", [{"name": "accuracy", "value": 0.80}])
+    candidate_file = _write_result(tmp_path / "c.json", [{"name": "accuracy", "value": 0.95}])
+    result = runner.invoke(app, ["eval", "compare", str(baseline_file), str(candidate_file)])
+    assert result.exit_code == 0, result.output
+    assert "NO REGRESSION" in result.output
+
+
+def test_eval_compare_suite_mismatch_exits_2(tmp_path: Path) -> None:
+    baseline_file = _write_result(tmp_path / "b.json", [{"name": "accuracy", "value": 0.90}])
+    candidate_file = _write_result(tmp_path / "c.json", [{"name": "accuracy", "value": 0.90}])
+    data = candidate_file.read_text().replace("test-suite-v1", "other-suite")
+    candidate_file.write_text(data)
+    result = runner.invoke(app, ["eval", "compare", str(baseline_file), str(candidate_file)])
+    assert result.exit_code == 2, result.output
+    assert "other-suite" in result.output

@@ -38,8 +38,11 @@ def eval_compare_cmd(
 ) -> None:
     """Compare two EvalResult JSON files and report regressions.
 
-    Exits 1 if a regression is detected (any score decreased). Exits 0
-    if results are identical or improved.
+    A regression is a significant decrease of a metric (metrics are
+    higher-is-better: the schema's ``threshold`` is a minimum). Exits 1 if a
+    regression is detected, 0 if every metric held or improved, and 2 if the
+    files cannot be compared: different suites, or a baseline metric missing
+    from the candidate.
 
     Scope: two eval result files.
 
@@ -48,7 +51,7 @@ def eval_compare_cmd(
       # Compare baseline to current
       nova eval compare baseline.json current.json
 
-      # Use in CI (exits 1 on regression)
+      # Use in CI (exits 1 on regression, 2 when the runs cannot be compared)
       nova eval compare baseline.json current.json && echo "No regression"
     """
     for label, path in (("baseline", baseline_path), ("candidate", candidate_path)):
@@ -76,14 +79,17 @@ def eval_compare_cmd(
     header.add_column("Field")
     header.add_column("Value")
     header.add_row("suite_id", report.suite_id)
+    if report.candidate_suite_id != report.suite_id:
+        header.add_row("candidate suite_id", report.candidate_suite_id)
     header.add_row("baseline_run_at", report.baseline_run_at.isoformat())
     header.add_row("candidate_run_at", report.candidate_run_at.isoformat())
     header.add_row("alpha", str(alpha))
-    status_label = (
-        "[red]✗ REGRESSION DETECTED[/red]"
-        if report.regression_detected
-        else "[green]✓ NO REGRESSION[/green]"
-    )
+    if not report.comparable:
+        status_label = "[yellow]? CANNOT COMPARE[/yellow]"
+    elif report.regression_detected:
+        status_label = "[red]✗ REGRESSION DETECTED[/red]"
+    else:
+        status_label = "[green]✓ NO REGRESSION[/green]"
     header.add_row("result", status_label)
     console.print(header)
 
@@ -96,13 +102,18 @@ def eval_compare_cmd(
         metrics_table.add_column("Delta", justify="right")
         metrics_table.add_column("Rel Δ%", justify="right")
         metrics_table.add_column("p-value", justify="right")
-        metrics_table.add_column("Significant")
+        metrics_table.add_column("Change")
 
         for mc in report.metrics:
             delta_str = f"{mc.delta:+.4f}"
             rel_str = f"{mc.relative_delta * 100:+.2f}%"
             p_str = f"{mc.p_value:.4f}" if mc.p_value is not None else "n/a"
-            sig_label = "[red]YES[/red]" if mc.significant else "no"
+            if mc.significant:
+                sig_label = "[red]regression[/red]"
+            elif mc.improved:
+                sig_label = "[green]improved[/green]"
+            else:
+                sig_label = "no significant change"
             metrics_table.add_row(
                 mc.name,
                 f"{mc.baseline_value:.4f}",
@@ -117,7 +128,15 @@ def eval_compare_cmd(
     else:
         console.print("[yellow]No metrics in common between baseline and candidate.[/yellow]")
 
+    if report.missing_metrics:
+        console.print(
+            "[yellow]Baseline metrics missing from the candidate: "
+            f"{', '.join(report.missing_metrics)}[/yellow]"
+        )
+
     console.print(f"\n{report.summary}")
 
+    if not report.comparable:
+        sys.exit(2)
     if report.regression_detected:
         sys.exit(1)

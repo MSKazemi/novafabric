@@ -198,9 +198,12 @@ def test_compare_metric_name_mismatch_skips_unmatched() -> None:
     candidate = _make_result(metrics=[_make_metric("f1_score", 0.88)])
     detector = RegressionDetector()
     report = detector.compare(baseline=baseline, candidate=candidate)
-    # No metrics in common → report has 0 compared metrics, no regression
+    # No metrics in common → nothing compared, and the baseline's metric is missing:
+    # the result cannot be called a pass (review cli-a-02).
     assert len(report.metrics) == 0
     assert report.regression_detected is False
+    assert report.missing_metrics == ["accuracy"]
+    assert report.comparable is False
 
 
 # ── z-test p_value is < alpha for clearly significant delta ───────────────────
@@ -241,3 +244,57 @@ def test_ztest_zero_se_returns_not_significant() -> None:
     mc = report.metrics[0]
     assert mc.p_value is not None
     assert mc.significant is False
+
+
+# ── review cli-a-02: one-sided — only a decrease is a regression ──────────────
+
+def test_improvement_beyond_alpha_is_not_a_regression() -> None:
+    baseline = _make_result(metrics=[_make_metric("accuracy", 0.80)])
+    candidate = _make_result(metrics=[_make_metric("accuracy", 0.95)])
+    report = RegressionDetector(alpha=0.05).compare(baseline=baseline, candidate=candidate)
+    assert report.regression_detected is False
+    assert report.comparable is True
+    (mc,) = report.metrics
+    assert mc.significant is False and mc.improved is True
+
+
+def test_ztest_significant_improvement_is_not_a_regression() -> None:
+    ctx_b = StatisticalContext(sample_size=50, confidence_interval=[0.49, 0.51])
+    ctx_c = StatisticalContext(sample_size=50, confidence_interval=[0.89, 0.91])
+    baseline = _make_result(metrics=[_make_metric("accuracy", 0.50)], statistical_context=ctx_b)
+    candidate = _make_result(metrics=[_make_metric("accuracy", 0.90)], statistical_context=ctx_c)
+    report = RegressionDetector(alpha=0.05, min_samples=5).compare(
+        baseline=baseline, candidate=candidate
+    )
+    assert report.regression_detected is False
+    (mc,) = report.metrics
+    assert mc.improved is True
+    assert mc.p_value is not None and mc.p_value > 0.5  # one-sided p for a decrease
+
+
+def test_ztest_one_sided_p_value_for_a_decrease_is_half_the_two_sided() -> None:
+    ctx_b = StatisticalContext(sample_size=50, confidence_interval=[0.80, 0.90])
+    ctx_c = StatisticalContext(sample_size=50, confidence_interval=[0.75, 0.85])
+    baseline = _make_result(metrics=[_make_metric("accuracy", 0.85)], statistical_context=ctx_b)
+    candidate = _make_result(metrics=[_make_metric("accuracy", 0.80)], statistical_context=ctx_c)
+    (mc,) = RegressionDetector(alpha=0.05, min_samples=5).compare(
+        baseline=baseline, candidate=candidate
+    ).metrics
+    se = math.sqrt(2 * ((0.05 / 1.96 * math.sqrt(50)) ** 2 / 50))
+    z = (0.80 - 0.85) / se
+    assert mc.p_value == pytest.approx(0.5 * math.erfc(-z / math.sqrt(2)))
+
+
+def test_suite_mismatch_is_not_comparable() -> None:
+    baseline = _make_result(suite_id="a")
+    candidate = _make_result(suite_id="b")
+    report = RegressionDetector().compare(baseline=baseline, candidate=candidate)
+    assert report.comparable is False
+    assert report.candidate_suite_id == "b"
+
+
+def test_metric_added_by_the_candidate_is_ignored() -> None:
+    baseline = _make_result(metrics=[_make_metric("accuracy", 0.90)])
+    candidate = _make_result(metrics=[_make_metric("accuracy", 0.90), _make_metric("f1", 0.7)])
+    report = RegressionDetector().compare(baseline=baseline, candidate=candidate)
+    assert report.comparable is True and report.missing_metrics == []

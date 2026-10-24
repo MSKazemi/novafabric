@@ -3381,6 +3381,9 @@ def create_app(
                 "ok": True,
                 "suite_id": report.suite_id,
                 "regression_detected": report.regression_detected,
+                "comparable": report.comparable,
+                "missing_metrics": report.missing_metrics,
+                "candidate_suite_id": report.candidate_suite_id,
                 "summary": report.summary,
                 "metrics": [m.model_dump() for m in report.metrics],
             }

@@ -12,7 +12,10 @@ interface MetricRow {
   delta: number;
   relative_delta: number;
   p_value: number | null;
+  /** A significant decrease (metrics are higher-is-better). */
   significant: boolean;
+  /** A significant increase. */
+  improved?: boolean;
 }
 
 export default function EvalComparePanel() {
@@ -26,6 +29,9 @@ export default function EvalComparePanel() {
     ok: boolean;
     suite_id?: string;
     regression_detected?: boolean;
+    /** False: different suites, or a baseline metric missing from the candidate. */
+    comparable?: boolean;
+    missing_metrics?: string[];
     summary?: string;
     metrics?: MetricRow[];
   } | null>(null);
@@ -148,13 +154,19 @@ export default function EvalComparePanel() {
           {/* Regression banner */}
           <div className={clsx(
             'text-xs font-mono font-bold px-3 py-2 rounded border',
-            result.regression_detected
+            result.regression_detected || result.comparable === false
               ? 'text-[var(--color-status-failure)] border-[color-mix(in_oklab,var(--color-status-failure)_35%,transparent)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)]'
               : result.ok
                 ? 'text-[var(--color-status-success)] border-[color-mix(in_oklab,var(--color-status-success)_35%,transparent)] bg-[color-mix(in_oklab,var(--color-status-success)_8%,transparent)]'
                 : 'text-[var(--color-status-pending)] border-[color-mix(in_oklab,var(--color-status-pending)_35%,transparent)] bg-[color-mix(in_oklab,var(--color-status-pending)_8%,transparent)]',
           )}>
-            {result.regression_detected ? 'Regression detected' : result.ok ? 'No regression' : 'Comparison error'}
+            {result.comparable === false
+              ? 'Cannot compare'
+              : result.regression_detected
+                ? 'Regression detected'
+                : result.ok
+                  ? 'No regression'
+                  : 'Comparison error'}
             {result.suite_id ? ` — suite: ${result.suite_id}` : ''}
           </div>
 
@@ -168,7 +180,7 @@ export default function EvalComparePanel() {
               <table className="w-full text-[10px] font-mono border-collapse">
                 <thead>
                   <tr className="border-b border-[var(--color-border)]">
-                    {['Metric', 'Baseline', 'Candidate', 'Delta', 'Rel%', 'Significant'].map((h) => (
+                    {['Metric', 'Baseline', 'Candidate', 'Delta', 'Rel%', 'Change'].map((h) => (
                       <th key={h} className="text-left px-2 py-1 text-[var(--color-text-faint)] uppercase tracking-wider font-normal">
                         {h}
                       </th>
@@ -195,8 +207,10 @@ export default function EvalComparePanel() {
                       </td>
                       <td className="px-2 py-1.5">
                         {m.significant
-                          ? <span className="text-[var(--color-status-failure)] font-bold">yes</span>
-                          : <span className="text-[var(--color-text-faint)]">no</span>
+                          ? <span className="text-[var(--color-status-failure)] font-bold">regression</span>
+                          : m.improved
+                            ? <span className="text-[var(--color-status-success)]">improved</span>
+                            : <span className="text-[var(--color-text-faint)]">no</span>
                         }
                       </td>
                     </tr>

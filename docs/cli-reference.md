@@ -6101,8 +6101,17 @@ Options:
 - `--alpha FLOAT` — significance level / relative-delta threshold (default: `0.05`)
 - `--min-samples N` — minimum `sample_size` that enables the z-test (default: `5`)
 
-Exits `1` when a regression is detected and `0` when results are identical or improved,
-so `nova eval compare baseline.json candidate.json && echo "No regression"` works as a CI gate.
+A **regression** is a significant *decrease* of a metric: eval metrics are higher-is-better
+(the schema's `threshold` is the minimum acceptable value). With both files carrying a
+`statistical_context` of at least `--min-samples` samples and a confidence interval, a
+one-sided z-test decides; otherwise a relative decrease above `--alpha` is a regression.
+An improvement is never one.
+
+Exit codes: `0` every baseline metric held or improved; `1` a regression; `2` the files
+cannot be compared — different `suite_id`s, or a baseline metric is missing from the
+candidate (a suite that crashed before writing it, or a renamed metric). So
+`nova eval compare baseline.json candidate.json && echo "No regression"` works as a CI
+gate: a run that lost its metric fails it. A metric only the candidate has is ignored.
 
 ### nova eval list
 
