@@ -49,6 +49,17 @@ def test_render_command_substitutes_placeholders() -> None:
     assert render_command(["agent.py", "{expected}"], bare) == ["agent.py", ""]
 
 
+def test_placeholder_text_inside_an_input_is_not_substituted() -> None:
+    """Review eval-adapters-query-20: chained str.replace substituted the reference
+    answer into an input that contains the text "{expected}" — leaking the label to
+    the system under test."""
+    item = DatasetItem(item_id="i-3", input="say {expected} or {item_id}", expected="SECRET")
+    (arg,) = render_command(["{input}"], item)
+    assert arg == "say {expected} or {item_id}"
+    assert "SECRET" not in arg
+    assert render_command(["{item_id}:{expected}"], item) == ["i-3:SECRET"]
+
+
 def test_run_experiment_produces_capsule_scores_and_bound_record(tmp_path: Path) -> None:
     ds = load_dataset(
         _dataset(

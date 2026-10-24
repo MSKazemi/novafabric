@@ -35,6 +35,7 @@ failure (spec §Edge cases).
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Sequence
 
@@ -78,15 +79,22 @@ EXACT_MATCH_CARD = EvalCard(
 )
 
 
+_PLACEHOLDER_RE = re.compile(r"\{(input|item_id|expected)\}")
+
+
 def render_command(command: Sequence[str], item: DatasetItem) -> list[str]:
-    """Substitute ``{input}``/``{item_id}``/``{expected}`` placeholders per item."""
-    rendered: list[str] = []
-    for arg in command:
-        arg = arg.replace("{input}", item.input_text())
-        arg = arg.replace("{item_id}", item.item_id)
-        arg = arg.replace("{expected}", item.expected or "")
-        rendered.append(arg)
-    return rendered
+    """Substitute ``{input}``/``{item_id}``/``{expected}`` placeholders per item.
+
+    One pass per argument: substituted text is never scanned again, so an input
+    that contains the text ``{expected}`` cannot pull the reference answer into
+    the command.
+    """
+    values = {
+        "input": item.input_text(),
+        "item_id": item.item_id,
+        "expected": item.expected or "",
+    }
+    return [_PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], arg) for arg in command]
 
 
 def _capsule_stdout(capsule_dir: Path) -> str:
