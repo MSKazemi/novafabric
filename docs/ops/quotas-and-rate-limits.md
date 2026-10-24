@@ -44,10 +44,18 @@ The bucket key is resolved per request in strict fallback order — first
 available wins:
 
 1. **principal** — the SHA-256 digest of the presented bearer token (the raw
-   token is never used as a key value);
+   token is never used as a key value), once a request carrying that token has
+   authenticated;
 2. **tenant** — a resolved tenant id (the slot exists for the ADR-0178
    workspace model; no server surface populates it before routing today);
-3. **client IP** — unauthenticated surfaces.
+3. **client IP** — unauthenticated surfaces, and every request whose bearer
+   token has not yet authenticated.
+
+A token's first request therefore draws from its client's IP bucket; once it
+authenticates, the token has its own bucket. A client that sends a different
+invalid token on every request is limited by its IP and creates no buckets.
+With `insecure_no_auth` no token names a principal, so all requests are keyed
+by client IP.
 
 Classes never share buckets, so an ingest storm cannot starve reads for the
 same client.

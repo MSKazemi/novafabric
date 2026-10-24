@@ -6,7 +6,10 @@ First slice of the contract in ``the private design/spec/rate-limiting-quotas-v0
   in-process map (LRU eviction) — deliberately not distributed, because the
   supported topology is single-writer (ADR-0179);
 - keyed per the spec's strict fallback order: authenticated **principal**
-  (bearer-token id) → **tenant** → **client IP**;
+  (bearer-token id) → **tenant** → **client IP**. A bearer token is a principal
+  only once a request carrying it has authenticated; until then it draws from
+  the client-IP bucket, so a fresh garbage token per request buys no fresh
+  budget and creates no bucket (review server-09);
 - three limit classes — ``ingest`` (write verbs + OTLP ingest paths),
   ``read`` (GET/HEAD), ``admin`` (``/v0/admin`` + ``/v0/roles``) — each with
   its own configurable ``rate``/``burst``;
@@ -123,13 +126,30 @@ def resolve_key_parts(
     return KEY_CLIENT_IP, client_ip or "unknown"
 
 
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
 def _resolve_key(request: Request) -> tuple[str, str]:
     """Resolve the bucket key from a live request (see :func:`resolve_key_parts`)."""
     return resolve_key_parts(
         request.headers.get("Authorization"),
         getattr(request.state, "tenant_id", None),
-        request.client.host if request.client else None,
+        _client_ip(request),
     )
+
+
+def _authenticated(request: Request) -> bool:
+    """Whether the route authenticated a real principal for this request.
+
+    ``verify_token`` sets ``request.state.auth`` only on success. The anonymous
+    ``LOCAL_AUTH`` of ``insecure_no_auth`` names no principal: there, every
+    bearer is the same identity, so none earns a bucket of its own.
+    """
+    from novafabric.server.auth import LOCAL_AUTH  # noqa: PLC0415
+
+    auth = getattr(request.state, "auth", None)
+    return auth is not None and auth is not LOCAL_AUTH
 
 
 def key_hash(key_value: str) -> str:
@@ -189,10 +209,28 @@ class TokenBucketLimiter:
         self._audit_hook = audit_hook or emit_sustained_limiting_audit
         self._max_buckets = max_buckets
         self._buckets: OrderedDict[tuple[str, str, str], _Entry] = OrderedDict()
+        # Principal digests seen to authenticate; LRU-bounded like the buckets.
+        self._verified: OrderedDict[str, None] = OrderedDict()
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
         return len(self._buckets)
+
+    def is_verified(self, principal: str) -> bool:
+        """Whether a request with this principal digest has authenticated."""
+        with self._lock:
+            if principal not in self._verified:
+                return False
+            self._verified.move_to_end(principal)
+            return True
+
+    def mark_verified(self, principal: str) -> None:
+        """Record that a request with this principal digest authenticated."""
+        with self._lock:
+            self._verified[principal] = None
+            self._verified.move_to_end(principal)
+            if len(self._verified) > self._max_buckets:
+                self._verified.popitem(last=False)
 
     def _class_budget(self, limit_class: str) -> tuple[float, int]:
         cls = getattr(self._config, limit_class)
@@ -359,7 +397,13 @@ def install_rate_limiting(app: FastAPI, config: ServerConfig) -> None:
             return await call_next(request)
 
         key_type, key_value = _resolve_key(request)
-        decision = limiter.check(key_type, key_value, limit_class)
+        unverified = key_type == KEY_PRINCIPAL and not limiter.is_verified(key_value)
+        if unverified:
+            # The bearer is unauthenticated until a request carrying it has
+            # authenticated: charge the client, not the token (review server-09).
+            decision = limiter.check(KEY_CLIENT_IP, _client_ip(request), limit_class)
+        else:
+            decision = limiter.check(key_type, key_value, limit_class)
 
         if not decision.allowed:
             from novafabric.server.errors import error_response  # noqa: PLC0415
@@ -378,5 +422,7 @@ def install_rate_limiting(app: FastAPI, config: ServerConfig) -> None:
             return response
 
         response = await call_next(request)
+        if unverified and _authenticated(request):
+            limiter.mark_verified(key_value)
         _apply_headers(response, decision)
         return response

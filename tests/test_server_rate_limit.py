@@ -153,18 +153,32 @@ class TestLimitContract:
 # --------------------------------------------------------------------------- #
 
 
+def _authed_config(db_path: Path, rate_limits: RateLimitsConfig) -> ServerConfig:
+    """A server that authenticates (local token + API keys in *db_path*)."""
+    return ServerConfig(
+        db_path=str(db_path), local_token="rl-local-token", rate_limits=rate_limits
+    )
+
+
+def _api_key(db_path: Path, owner: str) -> dict[str, str]:
+    from novafabric.server.api_keys import create_key
+
+    key, _ = create_key(owner, ["reader"], actor="test", db_path=db_path)
+    return {"Authorization": f"Bearer {key}"}
+
+
 class TestKeying:
     def test_two_principals_do_not_share_a_bucket(self, db_path: Path) -> None:
         rl = RateLimitsConfig(enabled=True, read=_tiny(burst=2))
-        client = _client(_config(db_path, rl))
-        alice = {"Authorization": "Bearer token-alice"}
-        bob = {"Authorization": "Bearer token-bob"}
+        client = _client(_authed_config(db_path, rl))
+        alice = _api_key(db_path, "alice@x")
+        bob = _api_key(db_path, "bob@x")
 
         # Alice exhausts her bucket …
-        for _ in range(2):
-            assert client.get("/v0/assets", headers=alice).status_code == 200
-        assert client.get("/v0/assets", headers=alice).status_code == 429
+        codes = [client.get("/v0/assets", headers=alice).status_code for _ in range(4)]
+        assert codes[0] == 200 and codes[-1] == 429, codes
         # … Bob is unaffected.
+        assert client.get("/v0/assets", headers=bob).status_code == 200
         assert client.get("/v0/assets", headers=bob).status_code == 200
 
     def test_same_principal_shares_a_bucket(self, db_path: Path) -> None:
@@ -190,6 +204,55 @@ class TestKeying:
         assert not limiter.check("principal", "k", CLASS_READ).allowed
         # Same key, other class: fresh bucket.
         assert limiter.check("principal", "k", CLASS_INGEST).allowed
+
+
+class TestUnverifiedBearers:
+    """review server-09: the principal key was the digest of whatever bearer the
+    client sent, before auth ran, so a fresh garbage token per request got a
+    fresh bucket — an unauthenticated flood was never limited, and 10 000
+    distinct tokens evicted every real principal's bucket from the LRU map.
+    """
+
+    def test_rotating_bogus_bearers_are_limited_by_client_ip(self, db_path: Path) -> None:
+        rl = RateLimitsConfig(enabled=True, read=_tiny(burst=2))
+        app = create_app(_authed_config(db_path, rl))
+        client = TestClient(app, raise_server_exceptions=False)
+        codes = [
+            client.get("/v0/assets", headers={"Authorization": f"Bearer bogus-{i}"}).status_code
+            for i in range(50)
+        ]
+        assert codes[:2] == [401, 401]
+        assert set(codes[2:]) == {429}
+        # No bucket per bogus token: the map cannot be flooded.
+        assert len(app.state.rate_limiter) == 1
+
+    def test_a_real_principal_keeps_its_own_bucket_during_a_flood(
+        self, db_path: Path
+    ) -> None:
+        rl = RateLimitsConfig(enabled=True, read=_tiny(burst=3))
+        client = _client(_authed_config(db_path, rl))
+        alice = _api_key(db_path, "alice@x")
+        assert client.get("/v0/assets", headers=alice).status_code == 200  # now verified
+        for i in range(20):
+            client.get("/v0/assets", headers={"Authorization": f"Bearer bogus-{i}"})
+        assert client.get("/v0/assets", headers=alice).status_code == 200
+
+    def test_without_authentication_a_token_names_no_principal(self, db_path: Path) -> None:
+        # insecure_no_auth: every bearer is the same anonymous admin.
+        rl = RateLimitsConfig(enabled=True, read=_tiny(burst=2))
+        client = _client(_config(db_path, rl))
+        codes = [
+            client.get("/v0/assets", headers={"Authorization": f"Bearer t-{i}"}).status_code
+            for i in range(4)
+        ]
+        assert codes == [200, 200, 429, 429]
+
+    def test_the_verified_set_is_bounded(self) -> None:
+        limiter = TokenBucketLimiter(RateLimitsConfig(enabled=True), max_buckets=10)
+        for i in range(100):
+            limiter.mark_verified(f"p-{i}")
+        assert limiter.is_verified("p-99")
+        assert not limiter.is_verified("p-0")
 
 
 # --------------------------------------------------------------------------- #
