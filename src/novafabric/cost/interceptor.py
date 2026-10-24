@@ -12,6 +12,9 @@ from novafabric.schemas.event_schema import CostFacet
 
 log = logging.getLogger(__name__)
 
+#: The only currency the ``*_usd`` cost figures are computed in (no FX conversion).
+USD = "USD"
+
 
 class CostInterceptor:
     """Wraps OpenAI and Anthropic clients to extract CostFacet from usage.
@@ -62,6 +65,9 @@ class CostInterceptor:
     ) -> float:
         """Return estimated cost in USD.  Returns 0.0 for unknown models.
 
+        Also 0.0 (and :meth:`is_priced` ``False``) for a model whose catalog price
+        is in another currency: NovaFabric converts no currency.
+
         Consults the local model-pricing catalog (ADR-0133) merged over
         ``PRICE_TABLE``: a user/project/explicit catalog entry overrides the
         built-in price; with no catalog files on disk the merged catalog is
@@ -77,6 +83,13 @@ class CostInterceptor:
             catalog = pricing_catalog.load_merged_catalog()
             resolved = pricing_catalog.resolve_entry(catalog, model)
             if resolved is not None:
+                if resolved.entry.currency != USD:
+                    # The figure is labelled USD everywhere downstream
+                    # (cost_usd_estimated, ClickHouse cost_usd). With no rate
+                    # with provenance there is no USD figure: unpriced, never the
+                    # foreign amount relabelled (review misc-2-02). Not the
+                    # built-in USD price either: the operator overrode it.
+                    return 0.0
                 return pricing_catalog.price_usage(
                     resolved.entry,
                     {
@@ -122,8 +135,10 @@ class CostInterceptor:
             )
 
             catalog = pricing_catalog.load_merged_catalog()
-            if pricing_catalog.resolve_entry(catalog, model) is not None:
-                return True
+            resolved = pricing_catalog.resolve_entry(catalog, model)
+            if resolved is not None:
+                # Only a USD price yields the USD figure _estimate_cost reports.
+                return resolved.entry.currency == USD
         except Exception as exc:  # noqa: BLE001 — mirror _estimate_cost's tolerance
             log.debug("pricing catalog unavailable while checking coverage: %s", exc)
         return model in cls.PRICE_TABLE

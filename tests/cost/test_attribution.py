@@ -262,6 +262,71 @@ def test_forged_ok_flag_does_not_survive_re_derivation() -> None:
     assert verify_conservation(facet) is False
 
 
+# ── review misc-2-01: forged facets the verifier must catch ────────────────
+
+
+def _forged(**updates: Any) -> CostAttributionFacet:
+    facet = build_facet(_FOUR_AGENT_TOTAL, _FOUR_AGENTS)
+    assert facet is not None and verify_conservation(facet) is True
+    data = facet.model_dump()
+    for path, value in updates.items():
+        node: Any = data
+        *parents, leaf = path.split(".")
+        for part in parents:
+            node = node[int(part)] if part.isdigit() else node[part]
+        node[int(leaf) if leaf.isdigit() else leaf] = value
+    return CostAttributionFacet.model_validate(data)
+
+
+def _cost_check_index(facet: CostAttributionFacet) -> int:
+    return next(i for i, c in enumerate(facet.conservation) if c.dimension == "cost")
+
+
+def test_over_attribution_hidden_by_a_negative_unattributed_does_not_verify() -> None:
+    facet = build_facet(_FOUR_AGENT_TOTAL, _FOUR_AGENTS)
+    assert facet is not None
+    i = _cost_check_index(facet)
+    total = facet.conservation[i].total
+    forged = _forged(
+        **{
+            "by_agent.0.cost.amount_minor": facet.by_agent[0].cost.amount_minor + total,  # type: ignore[union-attr]
+            f"conservation.{i}.attributed": facet.conservation[i].attributed + total,
+            f"conservation.{i}.unattributed": facet.conservation[i].unattributed - total,
+        }
+    )
+    assert verify_conservation(forged) is False
+
+
+def test_check_total_that_is_not_the_run_total_does_not_verify() -> None:
+    facet = build_facet(_FOUR_AGENT_TOTAL, _FOUR_AGENTS)
+    assert facet is not None
+    i = _cost_check_index(facet)
+    extra = 1_000_000
+    forged = _forged(
+        **{
+            "by_agent.0.cost.amount_minor": facet.by_agent[0].cost.amount_minor + extra,  # type: ignore[union-attr]
+            f"conservation.{i}.total": facet.conservation[i].total + extra,
+            f"conservation.{i}.attributed": facet.conservation[i].attributed + extra,
+        }
+    )
+    assert verify_conservation(forged) is False  # run_total.cost was never changed
+
+
+def test_agent_cost_in_another_currency_does_not_verify() -> None:
+    facet = build_facet(_FOUR_AGENT_TOTAL, _FOUR_AGENTS)
+    assert facet is not None
+    other = "JPY" if facet.run_total.cost.currency != "JPY" else "EUR"  # type: ignore[union-attr]
+    assert verify_conservation(_forged(**{"by_agent.0.cost.currency": other})) is False
+
+
+def test_dropping_a_dimensions_check_does_not_verify() -> None:
+    facet = build_facet(_FOUR_AGENT_TOTAL, _FOUR_AGENTS)
+    assert facet is not None and len(facet.conservation) >= 2
+    data = facet.model_dump()
+    data["conservation"] = data["conservation"][1:]
+    assert verify_conservation(CostAttributionFacet.model_validate(data)) is False
+
+
 # ── Apportionment: no unit lost, none invented ────────────────────────────
 
 

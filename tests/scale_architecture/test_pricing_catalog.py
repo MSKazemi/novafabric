@@ -631,6 +631,32 @@ class TestInterceptorIntegration:
         )
         assert facet.cost_usd_estimated == pytest.approx(0.25)
 
+    def test_non_usd_catalog_price_is_never_reported_as_usd(self, tmp_path: Path) -> None:
+        """Review misc-2-02: a JPY 150/1k price became cost_usd 150.0 (i.e. $150).
+
+        There is no conversion rate with provenance, so the USD figure is
+        "unpriced" (0.0 with priced=False), exactly like an unknown model —
+        never the yen amount relabelled as dollars.
+        """
+        _write_project_catalog(
+            tmp_path, _catalog([_entry("jp-model", 150.0, 150.0, currency="JPY")])
+        )
+        assert CostInterceptor._estimate_cost("jp-model", 1000, 1000) == 0.0
+        assert CostInterceptor.is_priced("jp-model") is False
+        facet = CostInterceptor.extract_from_openai_response(
+            {"usage": {"prompt_tokens": 1000, "completion_tokens": 1000}}, "jp-model"
+        )
+        assert facet.cost_usd_estimated == 0.0
+
+    def test_non_usd_override_does_not_fall_back_to_the_builtin_usd_price(
+        self, tmp_path: Path
+    ) -> None:
+        # The operator priced gpt-4o in EUR on purpose; the built-in USD price is
+        # not what they asked for, and silently using it would be a wrong figure.
+        _write_project_catalog(tmp_path, _catalog([_entry("gpt-4o", 1.0, 1.0, currency="EUR")]))
+        assert CostInterceptor._estimate_cost("gpt-4o", 1000, 1000) == 0.0
+        assert CostInterceptor.is_priced("gpt-4o") is False
+
     def test_catalog_cached_price_is_added_when_defined(self, tmp_path: Path) -> None:
         _write_project_catalog(
             tmp_path,

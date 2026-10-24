@@ -9531,6 +9531,14 @@ no remote registry, no price fetch — NovaFabric never ships live vendor
 prices as truth; the built-in table is a convenience default you can
 override.
 
+An entry may carry any ISO-4217 `currency` (default `USD`); NovaFabric converts no
+currency. The figures recorded during capture and summed by the cluster cost
+store are USD (`cost_usd_estimated`, `cost_usd`), so a model priced in another
+currency is recorded there as **unpriced** (`priced: false`), never its foreign
+amount relabelled as dollars; a non-USD entry also replaces, not falls back to,
+a built-in USD price for that model. `nova cost estimate` reports the entry's own
+currency.
+
 ```bash
 # Show the whole merged catalog and where each entry came from
 nova pricing list

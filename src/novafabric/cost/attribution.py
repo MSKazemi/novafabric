@@ -466,12 +466,24 @@ def attach_facet(
 
 
 def verify_conservation(facet: CostAttributionFacet) -> bool:
-    """Re-derive every conservation claim from ``by_agent``.
+    """Re-derive every conservation claim from ``run_total`` and ``by_agent``.
 
     The reading half of the invariant: :func:`build_facet` cannot be trusted
     to have run over a facet parsed from someone else's capsule. Returns
-    ``False`` for a facet whose recorded sums no longer match its agents, or
-    that carries ``ok: false``.
+    ``True`` only when, for **every** dimension the run total declares, there is
+    exactly one check, and that check
+
+    * carries ``ok: true``;
+    * has ``total`` equal to the run total for that dimension;
+    * has ``attributed`` equal to the sum re-derived from ``by_agent``;
+    * has ``unattributed == total - attributed`` and ``unattributed >= 0``
+      (agents never hold more than the run spent);
+
+    and every agent's cost is in the run total's currency. A check for a
+    dimension the run total does not declare fails too (there is no whole to
+    conserve against). Review misc-2-01: the verifier used to accept agents 150
+    against a run of 100 with ``unattributed: -50``, a check whose ``total`` was
+    not the run total, and an agent in another currency.
 
     A facet with no conservation block returns ``False``. An unchecked split
     is not "trivially conserving" — it is exactly the facet a verifier exists
@@ -480,8 +492,26 @@ def verify_conservation(facet: CostAttributionFacet) -> bool:
     """
     if not facet.conservation:
         return False
+    run_total = facet.run_total
+    expected: dict[str, int] = {}
+    if run_total.cost is not None:
+        expected["cost"] = run_total.cost.amount_minor
+        if any(
+            agent.cost is not None and agent.cost.currency != run_total.cost.currency
+            for agent in facet.by_agent
+        ):
+            return False
+    for dimension, _unit in _COUNT_DIMENSIONS:
+        value = _int_field(run_total, dimension)
+        if value is not None:
+            expected[dimension] = value
+    dimensions = [check.dimension for check in facet.conservation]
+    if sorted(dimensions) != sorted(expected) or len(set(dimensions)) != len(dimensions):
+        return False
     for check in facet.conservation:
-        if not check.ok or check.total != check.attributed + check.unattributed:
+        if not check.ok or check.total != expected[check.dimension]:
+            return False
+        if check.unattributed < 0 or check.total != check.attributed + check.unattributed:
             return False
         if check.dimension == "cost":
             attributed = sum(
