@@ -20,13 +20,39 @@ file/dir entries, but the importer MUST NOT trust the packer: every member name
 is sanitized (no absolute paths, no ``..`` components, no drive/UNC prefixes)
 and only regular files and directories are extracted — links, devices, and
 FIFOs are rejected outright.
+
+Expansion is bounded too (review storage-backup-15): the entry count, the total
+uncompressed size and the compression ratio are capped with the server ingest
+defaults (``server.config.IngestConfig``), checked from each member's header
+*before* its bytes are written, and members are streamed to disk, never read
+whole into memory.
 """
 
 from __future__ import annotations
 
 import io
+import shutil
 import tarfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import IO
+
+#: Ratios are not judged below this many uncompressed bytes (small archives of
+#: tiny, compressible files legitimately exceed any ratio). As server ingest.
+_RATIO_FLOOR_BYTES = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class ExtractLimits:
+    """Caps on what an untrusted archive may expand to; 0 disables one."""
+
+    max_entries: int = 10_000
+    max_uncompressed_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB
+    max_ratio: float = 100.0
+
+
+#: The server ingest defaults (``IngestConfig.zip_max_*``).
+DEFAULT_LIMITS = ExtractLimits()
 
 
 class UnpackError(Exception):
@@ -50,20 +76,53 @@ def _validate_member_name(name: str) -> PurePosixPath:
     return pure
 
 
-def safe_extract_tar(data: bytes, target: Path) -> int:
-    """Extract tar *data* into *target* with a sanitizing walk; return file count.
+def safe_extract_tar(
+    source: bytes | Path, target: Path, *, limits: ExtractLimits = DEFAULT_LIMITS
+) -> int:
+    """Extract a tar archive into *target* with a sanitizing walk; return file count.
 
-    Only regular files and directories are written. Any unsafe or unsupported
-    member refuses the **whole** archive (an archive that needs one unsafe
-    member dropped is not an archive to trust), and *target* is left as-is —
-    the caller stages into a scratch directory and discards it on error.
+    *source* is the archive's bytes, or a path to it (then it is streamed, never
+    read whole). Only regular files and directories are written. Any unsafe or
+    unsupported member, or one that would exceed *limits*, refuses the **whole**
+    archive (an archive that needs one unsafe member dropped is not an archive to
+    trust), and *target* is left as-is — the caller stages into a scratch
+    directory and discards it on error.
     """
     target.mkdir(parents=True, exist_ok=True)
     resolved_target = target.resolve()
+    if isinstance(source, Path):
+        compressed = source.stat().st_size
+        with open(source, "rb") as fh:
+            return _extract(fh, compressed, resolved_target, limits)
+    return _extract(io.BytesIO(source), len(source), resolved_target, limits)
+
+
+def _check_budget(entries: int, total: int, compressed: int, limits: ExtractLimits) -> None:
+    if limits.max_entries and entries > limits.max_entries:
+        raise UnpackError(f"archive has more than {limits.max_entries} entries; refused")
+    if limits.max_uncompressed_bytes and total > limits.max_uncompressed_bytes:
+        raise UnpackError(
+            f"archive expands past {limits.max_uncompressed_bytes} uncompressed bytes; refused"
+        )
+    if limits.max_ratio and total > _RATIO_FLOOR_BYTES and total > limits.max_ratio * max(
+        compressed, 1
+    ):
+        raise UnpackError(
+            f"archive compression ratio exceeds {limits.max_ratio:g}:1 "
+            "(a compression bomb?); refused"
+        )
+
+
+def _extract(fh: IO[bytes], compressed: int, resolved_target: Path, limits: ExtractLimits) -> int:
     extracted = 0
+    entries = 0
+    total = 0
     try:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
+        with tarfile.open(fileobj=fh, mode="r|*") as tf:
             for member in tf:
+                entries += 1
+                total += max(member.size, 0) if member.isreg() else 0
+                _check_budget(entries, total, compressed, limits)
                 rel = _validate_member_name(member.name)
                 dest = resolved_target.joinpath(*rel.parts)
                 # Belt-and-braces: the sanitized path must stay inside target.
@@ -82,7 +141,8 @@ def safe_extract_tar(data: bytes, target: Path) -> int:
                     if fileobj is None:  # pragma: no cover — isreg implies a body
                         raise UnpackError(f"unreadable member: {member.name!r}")
                     dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(fileobj.read())
+                    with open(dest, "wb") as out:
+                        shutil.copyfileobj(fileobj, out, length=1024 * 1024)
                     extracted += 1
                 else:
                     raise UnpackError(

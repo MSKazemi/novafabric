@@ -5435,7 +5435,11 @@ into the local capsule store — the verified inverse of the export
 ([ADR-0207](./decisions.md), spec
 batch-import-v0). `<source>` is either a
 directory containing `export-manifest.json` + `objects/`, or a single
-`.tar`/`.tar.gz` archive of that layout (the air-gap courier format).
+`.tar`/`.tar.gz` archive of that layout (the air-gap courier format). An archive is
+streamed, never read whole into memory, and bounded with the server-ingest defaults: at
+most 10 000 entries, 2 GiB uncompressed, and a 100:1 compression ratio (past 1 MiB) — a
+larger one fails to extract (`INVALID`) before its bytes are written. Releases up to
+v0.107.0 had no bounds, so a small compression bomb filled the disk or killed the CLI.
 
 **Verification-first, fail-closed:** before any byte enters the store the
 manifest must verify (`VALID` — DSSE signature via the supplied public key,

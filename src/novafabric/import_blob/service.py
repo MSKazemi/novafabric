@@ -322,7 +322,7 @@ def _resolve_source(
     tmp = tempfile.TemporaryDirectory(prefix="nova-import-")
     target = Path(tmp.name) / "source"
     try:
-        safe_extract_tar(source.read_bytes(), target)
+        safe_extract_tar(source, target)  # streamed and bounded (storage-backup-15)
     except (UnpackError, OSError) as exc:
         return None, f"archive source failed to extract: {exc}", tmp
     # The exporter writes the manifest at the layout root; a courier archive
