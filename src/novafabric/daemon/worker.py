@@ -19,8 +19,14 @@ from typing import Any
 from novafabric._paths import default_capsule_dir
 from novafabric.capture.orchestrator import CaptureOrchestrator
 from novafabric.daemon.protocol import read_frame, recv_fds, write_frame
+from novafabric.runners._local import INTERRUPT_GRACE_S
 
-_GRACE_KILL_S = 5.0
+#: How long a cancelled worker gets before its whole group is SIGKILLed. The
+#: SIGTERM reaches the orchestrator, whose local runner forwards it to the
+#: workload's own session and SIGKILLs that after ``INTERRUPT_GRACE_S``; this must
+#: be longer, or a workload that ignores SIGTERM outlives the worker that was
+#: supervising it (review capture-runners-03).
+_GRACE_KILL_S = INTERRUPT_GRACE_S + 5.0
 
 
 def _apply_env(env: dict[str, str]) -> None:
@@ -31,7 +37,7 @@ def _apply_env(env: dict[str, str]) -> None:
 def _start_cancel_watcher(conn: socket.socket, done: threading.Event) -> threading.Thread:
     """Watch the control socket. On an inbound ``{op:"signal"}`` frame or a
     client disconnect (EOF) — and only while the run is still active — terminate
-    this worker's process group (SIGTERM, then SIGKILL after a grace period).
+    this worker's process group (SIGTERM, then SIGKILL after :data:`_GRACE_KILL_S`).
     Never fires once ``done`` is set, so a cleanly finished run is untouched."""
 
     def _watch() -> None:

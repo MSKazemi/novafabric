@@ -77,3 +77,13 @@ def test_cancel_watcher_signals_group_on_client_disconnect(monkeypatch):
     _join_finished(t)
     assert int(signal.SIGTERM) in killed
     b.close()
+
+
+def test_the_worker_outlives_the_runners_own_escalation():
+    """Review capture-runners-03: on cancel the watcher SIGTERMs the worker's group;
+    the local runner forwards it to the workload's own session and SIGKILLs that
+    after ``INTERRUPT_GRACE_S``. The watcher's SIGKILL of the worker must come
+    later, or a workload that ignores SIGTERM outlives a dead worker, orphaned."""
+    from novafabric.runners._local import INTERRUPT_GRACE_S
+
+    assert worker_mod._GRACE_KILL_S > INTERRUPT_GRACE_S + 1.0

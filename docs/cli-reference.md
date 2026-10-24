@@ -874,7 +874,11 @@ novacap python agent.py
 If no daemon is reachable, or the daemon refuses the run (`busy`, `bad-op`,
 `uid-denied`), `novacap` falls back to `nova capture --no-daemon` with a
 one-line stderr warning — it never blocks your workload. A daemon lost *after*
-accepting a run exits 1 without re-running the workload. For fleet use,
+accepting a run exits 1 without re-running the workload. Ctrl-C, or `novacap`
+itself being killed or disconnected, cancels the run: the daemon worker passes
+the signal to the workload, which gets 10 s to exit before SIGKILL, and the
+worker itself is killed only after 15 s, so it is always there to stop the
+workload. For fleet use,
 invoke `novacap` as the per-run entry (e.g. the Slurm `srun` wrapper) — that is
 where the cold-start saving is realized.
 
