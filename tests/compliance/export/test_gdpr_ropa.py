@@ -72,11 +72,12 @@ class TestGDPRRoPAExporter:
         assert entry.completeness == "complete"
         assert entry.missing_fields == []
 
-    def test_security_measures_always_includes_dsse(self, capsule_dir: Path) -> None:
+    def test_an_unsealed_capsule_claims_no_signing(self, capsule_dir: Path) -> None:
+        """Review compliance-privacy-12: DSSE signing was listed for every capsule."""
         from novafabric.compliance.export.gdpr_ropa import GDPRRoPAExporter
 
         entry = GDPRRoPAExporter().build_ropa_entry(capsule_dir)
-        assert "dsse_envelope_signing" in entry.security_measures
+        assert "dsse_envelope_signing" not in entry.security_measures
 
     def test_evidence_bundle_adds_integrity_measure(self, capsule_dir: Path) -> None:
         from novafabric.compliance.export.gdpr_ropa import GDPRRoPAExporter

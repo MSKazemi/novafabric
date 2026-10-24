@@ -41,6 +41,7 @@ from novafabric._capsule_fs import (
     refuse_capsule_links,
 )
 from novafabric._hashutil import sha256_file_hex, sha256_hex
+from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
 
 _OPERATION = "an examiner BagIt export"
 
@@ -274,6 +275,13 @@ class PCCPExporter:
         self.proposed_capsule_id = proposed_capsule_id
         self.data_dir = data_dir
 
+    def _verified_risk_controls(self) -> list[str]:
+        """Controls the two capsules themselves show: NovaSeal signing when both seals verify."""
+        dirs = [self.data_dir / self.baseline_capsule_id, self.data_dir / self.proposed_capsule_id]
+        if all(capsule_seal_verifies(d) for d in dirs):
+            return ["NovaSeal signing"]
+        return []
+
     def export(self, output_path: Path) -> Path:
         """Export the PCCP document as JSON.
 
@@ -302,8 +310,11 @@ class PCCPExporter:
             "section_3_impact_assessment": {
                 "safety_impact": "See attached diff report",
                 "benefit_risk_analysis": self._extract_benefit_risk(),
-                "risk_controls": [
-                    "NovaSeal signing",
+                # Review compliance-privacy-12: controls this export can check are
+                # listed only when they hold; the rest are for the operator to
+                # confirm, never asserted as in place.
+                "risk_controls": self._verified_risk_controls(),
+                "risk_controls_to_confirm": [
                     "Rego policy gates",
                     "Maker-checker approval",
                 ],
@@ -453,9 +464,10 @@ _ISO42001_CONTROLS: dict[str, dict[str, str]] = {
     "10.2": {
         "title": "Nonconformity and corrective action",
         "narrative": (
-            "Tool-permission denied events are captured in capsules and surfaced "
-            "in NIS2 incident reports (cap-005). Corrective actions are logged "
-            "against the incident identifier."
+            "Tool-permission denied events, when a capsule carries them (this "
+            "version does not capture them; see 8.1), are surfaced in NIS2 incident "
+            "reports (cap-005). Corrective actions are logged against the incident "
+            "identifier."
         ),
     },
 }

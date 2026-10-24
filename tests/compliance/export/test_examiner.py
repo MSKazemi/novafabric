@@ -304,7 +304,9 @@ class TestPCCPExporter:
         s3 = data["section_3_impact_assessment"]
         assert "risk_controls" in s3
         assert isinstance(s3["risk_controls"], list)
-        assert len(s3["risk_controls"]) >= 1
+        # Unsealed fixtures: nothing verified is asserted; the rest awaits the operator.
+        assert s3["risk_controls"] == []
+        assert s3["risk_controls_to_confirm"]
 
     def test_context_field_present(
         self, tmp_path: Path, capsule_dir: Path, proposed_capsule_dir: Path

@@ -36,6 +36,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from novafabric._capsule_fs import read_required_capsule_member
+from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
 
 from .models import (
     COMPLETENESS_COMPLETE,
@@ -194,20 +195,20 @@ def build_art12_report(
         ref=capsule_ref,
     ))
 
-    # Tamper-evidence — a NovaSeal envelope / signature.
-    has_seal = _has_stream("seal-envelope.json", "novaseal-envelope.json") or bool(
-        manifest.get("seal_ref")
-    )
-    if has_seal and capsule_ref is not None:
+    # Tamper-evidence — a NovaSeal seal that verifies (review compliance-privacy-12):
+    # this read file names NovaFabric never writes, so a hand-made file counted and
+    # a genuine `.seal/` read as unsealed.
+    if capsule_seal_verifies(capsule_dir) and capsule_ref is not None:
         entries.append(_entry(
             "tamper_evidence",
-            "capsule is sealed (NovaSeal envelope present); logs are tamper-evident",
+            "the capsule's NovaSeal seal verifies against its files; a change to a sealed "
+            "log is detectable (the signer is not anchored to a trust list by this check)",
             complete=True, source=EvidenceSource.capsule_verified, ref=capsule_ref,
         ))
     else:
         entries.append(_entry(
             "tamper_evidence",
-            "no seal envelope found; log tamper-evidence could not be verified",
+            "no NovaSeal seal that verifies; log tamper-evidence is not established",
             complete=False, source=EvidenceSource.unverifiable,
         ))
 

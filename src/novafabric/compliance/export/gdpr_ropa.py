@@ -31,6 +31,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
+from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
 
 # ---------------------------------------------------------------------------
 # Models
@@ -121,12 +122,14 @@ class GDPRRoPAExporter:
         # Derive personal data categories from redaction manifest if present.
         pdc = self._derive_personal_data_categories(capsule_dir)
 
-        # Security measures: always include NovaSeal envelope signing.
-        security: list[str] = ["dsse_envelope_signing"]
+        # Security measures: only what this capsule shows (review
+        # compliance-privacy-12). Signing was listed "always", and a "seal.json"
+        # nothing writes stood for an RFC 3161 timestamp.
+        security: list[str] = []
+        if capsule_seal_verifies(capsule_dir):
+            security.append("dsse_envelope_signing")
         if (capsule_dir / "evidence_bundle.json").exists():
             security.append("evidence_bundle_integrity")
-        if (capsule_dir / "seal.json").exists():
-            security.append("rfc3161_timestamp")
 
         # Identify missing fields.
         missing: list[str] = []
