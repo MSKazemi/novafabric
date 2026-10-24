@@ -9441,7 +9441,7 @@ runner = LSFRunner(RunnerSpec(image=None, command=["python", "agent.py"]))
 result = runner.run(capsule_dir=Path(".novafabric/runs/01HXAY7M"))
 ```
 
-The runner submits via `bsub`, polls via `bjobs`, and cancels via `bkill`. Only the job's own `stdout.<jobid>.log` / `stderr.<jobid>.log` is read; a missing one is empty (releases up to v0.107.0 fell back to another job's log in a shared `output_dir`). The job script is piped to `bsub` on stdin; it is never written to disk or put on a command line, because it carries the `extra_env` values.
+The runner submits via `bsub`, polls via `bjobs`, and cancels via `bkill`. The job script shell-quotes every exported value (the capsule path, `PYTHONPATH`, `extra_env`); `#BSUB` directive values cannot be quoted, so a `job_name`, `queue`, `walltime` or `output_dir` (which defaults to the capsule directory) containing whitespace or a line break is refused with `failed_setup` before anything is submitted, and `resource_requirement` is wrapped in double quotes. The PBS runner applies the same rules to its `#PBS` lines. Releases up to v0.107.0 interpolated these unquoted, so a capsule path with a space silently produced an empty capture. Only the job's own `stdout.<jobid>.log` / `stderr.<jobid>.log` is read; a missing one is empty (releases up to v0.107.0 fell back to another job's log in a shared `output_dir`). The job script is piped to `bsub` on stdin; it is never written to disk or put on a command line, because it carries the `extra_env` values.
 
 ---
 

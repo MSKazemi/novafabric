@@ -141,3 +141,31 @@ def coerce_str_dict(value: Any, *, name: str = "runner option") -> dict[str, str
     if not isinstance(value, dict):
         return {}
     return {str(k): str(v) for k, v in value.items()}
+
+
+def directive_value(name: str, value: str, *, allow_spaces: bool = False) -> str:
+    """*value* as it may appear on a ``#BSUB`` / ``#PBS`` directive line.
+
+    Directive lines are parsed by the scheduler, not by the shell, so they cannot
+    be shell-quoted (review capture-runners-23): a line break would start another
+    directive, and whitespace ends the value. Both are refused with a
+    :class:`ValueError` naming the option. With *allow_spaces* (LSF ``-R``, whose
+    resource strings contain spaces) the value is wrapped in double quotes, which
+    then must not occur in it.
+    """
+    if any(c in value for c in "\r\n\0"):
+        raise ValueError(
+            f"runner option {name!r} contains a line break, which would add a scheduler "
+            "directive; refused"
+        )
+    if allow_spaces:
+        if '"' in value:
+            raise ValueError(f"runner option {name!r} contains a double quote; refused")
+        return f'"{value}"' if any(c.isspace() for c in value) else value
+    if any(c.isspace() for c in value):
+        raise ValueError(
+            f"runner option {name!r} ({value!r}) contains whitespace, which a scheduler "
+            "directive line cannot carry; use a value without it (for output_dir, which "
+            "defaults to the capsule directory, a path without spaces)"
+        )
+    return value

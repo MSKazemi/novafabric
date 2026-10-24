@@ -40,6 +40,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from novafabric.runners._options import directive_value
 from novafabric.runners._poll import (
     cancel_after_deadline,
     cancel_on_interrupt,
@@ -76,7 +77,7 @@ _PBS_SCRIPT_TEMPLATE = """\
 cd "$PBS_O_WORKDIR"
 
 # NovaFabric sitecustomize injection — enables wire-level capture on compute node
-export PYTHONPATH={sitecustomize_dir}:$PYTHONPATH
+export PYTHONPATH={sitecustomize_dir}:"$PYTHONPATH"
 export NOVAFABRIC_CAPSULE_DIR={capsule_dir}
 export NOVAFABRIC_SPAN_ID={span_id}
 
@@ -177,6 +178,18 @@ class PBSRunner:
             if isinstance(output_dir_opt, str) and output_dir_opt
             else spec.capsule_dir
         )
+        # Directive values cannot be shell-quoted; refuse one that the directive
+        # line would cut or extend, before anything is created or submitted.
+        try:
+            for option, value in (
+                ("job_name", job_name), ("queue", queue), ("walltime", walltime),
+                ("output_dir", str(output_dir)),
+            ):
+                directive_value(option, value)
+        except ValueError as exc:
+            return RunnerJobResult(
+                exit_code=127, runner_status="failed_setup", runner_error=str(exc)
+            )
         output_dir.mkdir(parents=True, exist_ok=True)
 
         poll_interval = opts.get("poll_interval_s", 30.0)
@@ -207,9 +220,10 @@ class PBSRunner:
             queue=queue,
             log_dir=str(output_dir),
             run_id=spec.run_id,
-            sitecustomize_dir=str(spec.capsule_dir),
-            capsule_dir=str(spec.capsule_dir),
-            span_id=span_id,
+            # Body lines are shell: quote every value, as SlurmRunner does.
+            sitecustomize_dir=_shell_quote(str(spec.capsule_dir)),
+            capsule_dir=_shell_quote(str(spec.capsule_dir)),
+            span_id=_shell_quote(span_id),
             command=command_str,
         )
 
