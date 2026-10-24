@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import enum
 import math
+import re
 from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel
@@ -63,9 +64,18 @@ _OBLIGATION_BASIS: dict[Obligation, str] = {
     ),
 }
 
-#: classification keywords that select additional, stricter obligations
-_DEATH_KEYWORDS = ("death",)
-_WIDESPREAD_KEYWORDS = ("widespread", "critical_infrastructure")
+#: Classification words that select the stricter obligations, matched as whole
+#: words of the lower-cased classification. Natural spellings — "Critical
+#: infrastructure outage", "critical-infrastructure", "fatality", "patient died" —
+#: used to miss substring keywords, dropping the 2- and 10-day deadlines (review
+#: compliance-privacy-18).
+_DEATH_WORDS = frozenset({
+    "death", "deaths", "dead", "died", "dies", "fatal", "fatality", "fatalities",
+    "deceased", "killed", "lethal",
+})
+_WIDESPREAD_WORDS = frozenset({"widespread"})
+#: Adjacent word pairs, after splitting on spaces, hyphens and underscores.
+_WIDESPREAD_PHRASES = frozenset({("critical", "infrastructure"), ("critical", "infra")})
 
 
 class ObligationDeadline(BaseModel):
@@ -82,18 +92,21 @@ class ObligationDeadline(BaseModel):
 def applicable_obligations(classification: str) -> list[Obligation]:
     """Map a declared classification to candidate Art. 73 obligations.
 
-    Keyword-based, deterministic, fail-informative: the 15-day standard
-    obligation always applies; ``death`` adds the 10-day path; ``widespread``
-    / ``critical_infrastructure`` adds the 2-day path; an empty/blank
-    classification is ambiguous and yields all three.
+    Word-based, deterministic, fail-informative: the 15-day standard obligation
+    always applies; a death word (``death``, ``died``, ``fatality``,
+    ``deceased``…) adds the 10-day path; ``widespread`` or "critical
+    infrastructure" (any of space, hyphen, underscore between) adds the 2-day
+    path; an empty/blank classification is ambiguous and yields all three.
     """
     text = classification.strip().lower()
     if not text:
         return list(Obligation)
+    words = re.findall(r"[a-z0-9]+", text)
+    pairs = set(zip(words, words[1:]))
     result = [Obligation.ART_73_2_STANDARD]
-    if any(k in text for k in _WIDESPREAD_KEYWORDS):
+    if _WIDESPREAD_WORDS.intersection(words) or _WIDESPREAD_PHRASES & pairs:
         result.append(Obligation.ART_73_3_WIDESPREAD_OR_CRITICAL_INFRA)
-    if any(k in text for k in _DEATH_KEYWORDS):
+    if _DEATH_WORDS.intersection(words):
         result.append(Obligation.ART_73_4_DEATH)
     return result
 

@@ -109,3 +109,26 @@ class TestDeadlineClock:
             DeadlineClock.compute(
                 _incident("unauthorized_tool_use"), now=datetime(2026, 6, 4)
             )
+
+
+# --- review compliance-privacy-18: natural spellings keep the stricter deadlines -------
+
+
+@pytest.mark.parametrize(("classification", "stricter"), [
+    ("Critical infrastructure outage", Obligation.ART_73_3_WIDESPREAD_OR_CRITICAL_INFRA),
+    ("critical-infrastructure", Obligation.ART_73_3_WIDESPREAD_OR_CRITICAL_INFRA),
+    ("fatality", Obligation.ART_73_4_DEATH),
+    ("patient died after a wrong triage", Obligation.ART_73_4_DEATH),
+    ("Deceased patient", Obligation.ART_73_4_DEATH),
+])
+def test_natural_spellings_keep_the_stricter_obligation(
+    classification: str, stricter: Obligation
+) -> None:
+    obligations = applicable_obligations(classification)
+    assert Obligation.ART_73_2_STANDARD in obligations
+    assert stricter in obligations
+
+
+@pytest.mark.parametrize("classification", ["diet advice error", "case studies mislabeled"])
+def test_a_word_that_merely_contains_a_keyword_adds_nothing(classification: str) -> None:
+    assert applicable_obligations(classification) == [Obligation.ART_73_2_STANDARD]
