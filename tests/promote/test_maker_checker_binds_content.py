@@ -180,3 +180,30 @@ def test_a_bypass_signed_for_other_content_does_not_skip_sod(tmp_path: Path) -> 
     bypass(capsule_content_digest(capsule))
     bound = verify_sod(CAPSULE, policy, bundles, capsule_dir=capsule, require_bypass_audit=False)
     assert (bound.passed, bound.bypass_used, bound.content_checked) == (True, True, True)
+
+
+def test_a_signed_rejection_is_not_an_approval(tmp_path: Path) -> None:
+    """Review replay-lineage-registry-07: the verifier never read the approval's signed
+    ``decision``, so an approver's signed "rejected" passed SoD."""
+    capsule = make_capsule(CAPSULE, tmp_path / "caps")
+    policy_store = PolicyStore(tmp_path / "merkle.db")
+    bundle_store = PromoteBundleStore(tmp_path)
+    version = str(policy_store.put(json.dumps(build_policy_predicate(["proposer"], ["approver"]))))
+    proposal = sign_promote_envelope(
+        json.dumps(build_proposal_predicate(
+            capsule_id=CAPSULE, capsule_digest_hex=capsule_content_digest(capsule),
+            target_env="staging", justification="Ready for production after review.",
+            proposer_subject="proposer", policy_version=version,
+        )).encode(),
+        PROPOSAL_PAYLOAD_TYPE, FIXTURE_KEYS / "proposer.pem", FIXTURE_KEYS / "proposer_cert.pem",
+    )
+    proposal_uuid = bundle_store.put_proposal(CAPSULE, proposal)
+    time.sleep(0.05)
+    rejection = sign_promote_envelope(
+        json.dumps(build_approval_predicate(proposal, "rejected", "approver")).encode(),
+        APPROVAL_PAYLOAD_TYPE, FIXTURE_KEYS / "approver.pem", FIXTURE_KEYS / "approver_cert.pem",
+    )
+    bundle_store.put_approval(CAPSULE, rejection, proposal_uuid)
+    result = verify_sod(CAPSULE, policy_store, bundle_store, capsule_dir=capsule)
+    assert (result.passed, result.exit_code) == (False, 8)
+    assert "rejected" in result.message

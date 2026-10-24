@@ -71,7 +71,7 @@ def verify_sod(
       4. approver_subject != proposer_subject (no self-approval)                → exit 6
       5. approval.timestamp > proposal.timestamp                                → exit 7
 
-    Missing approval → exit 8
+    Missing approval, or a signed decision other than ``approved`` → exit 8
     Missing proposal → exit 9
 
     A bypass skips the checks only under the conditions of :func:`_active_bypass`.
@@ -199,6 +199,13 @@ def verify_sod(
         return VerifyResult(passed=False, exit_code=4, message=msg)
 
     approval_predicate = json.loads(approval_payload)
+    # Review replay-lineage-registry-07: the approver signs a decision; a signed
+    # "rejected" is the checker saying no, not an approval of any kind.
+    decision = approval_predicate.get("decision") if isinstance(approval_predicate, dict) else None
+    if decision != "approved":
+        msg = f"the approver did not approve: the signed decision is {decision!r}"
+        log.warning(msg)
+        return VerifyResult(passed=False, exit_code=8, message=msg)
 
     approver_key_ids: list[str] = policy.get("approver_key_ids", [])
     if approver_subject not in approver_key_ids:

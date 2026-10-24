@@ -535,7 +535,7 @@ def seal_verify_cmd(
       5  — proposal_digest mismatch
       6  — self-approval prohibited
       7  — timestamp ordering violation
-      8  — missing approval bundle
+      8  — missing approval bundle, or the approver signed decision=rejected
       9  — missing proposal bundle
       10 — the capsule does not exist, or is not the one that was proposed
            (its capsule.yaml changed since, or the proposal signed a hash of the id)

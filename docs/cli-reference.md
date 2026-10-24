@@ -5933,7 +5933,7 @@ Additional exit codes:
 - `3` — also: no trust root configured, a signer that does not chain to it, or a signed
   policy whose signature does not verify
 - `2` — the `--ca-bundle` file cannot be read
-- `8` — Approval bundle not found for capsule
+- `8` — no approval: the Approval bundle is missing, or the approver signed `decision: rejected` (releases up to v0.107.0 ignored the signed decision, so a rejection passed)
 - `9` — Proposal bundle not found for capsule
 - `10` — the capsule does not exist, or is not the one that was proposed: the proposal's (or a
   bypass's) signed `capsule_digest` is not the SHA-256 of its `capsule.yaml` now — the capsule
