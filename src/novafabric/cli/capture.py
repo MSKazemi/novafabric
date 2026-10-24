@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric._capsule_fs import CapsuleRootChangedError, replace_capsule_file
 from novafabric._paths import default_capsule_dir
@@ -559,6 +560,13 @@ def capture_cmd(
         f"{status_icon} Capsule written: {result.capsule_dir}  "
         f"(run_id={result.run_id})"
     )
+    if result.unsealed_reason:
+        # Review capture-runners-21: a configured seal that failed is not a ✓ alone.
+        console.print(
+            f"[red]✗[/red] Capsule not sealed: {escape(result.unsealed_reason)} "
+            "(recorded as metadata.finalization_error)",
+            soft_wrap=True,
+        )
 
     # NF-032/033: opt-in OTel GenAI span emission alongside the capsule.
     if emit_otel_genai:

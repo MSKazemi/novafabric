@@ -36,6 +36,7 @@ from novafabric.capture.finalize import (
     evidence_digests,
     extend_masker_results,
     finalize_capsule,
+    record_unsealed,
     seal_capsule,
     write_redacted_manifest,
 )
@@ -139,6 +140,11 @@ class CaptureResult:
     exit_code: int
     runner_status: str | None = None
     runner_error: str | None = None
+    #: Whether the capsule was sealed; ``None`` when finalization never ran.
+    sealed: bool | None = None
+    #: Why a capsule that could have been sealed was not (the manifest gate, a
+    #: failed seal). ``None`` when it was sealed or sealing is not configured.
+    unsealed_reason: str | None = None
 
 
 class AssetStatusCheckError(Exception):
@@ -780,12 +786,22 @@ class CaptureOrchestrator:
         # Lineage (ADR-0251 §6), late scans, ADR-0009 residual pass, the proof,
         # ADR-0251 evidence_digests, the fail-closed manifest gate and the opt-in
         # NovaSeal — one path shared with adapter and @agent capsules.
-        manifest = finalize_capsule(
+        finalized = finalize_capsule(
             capsule_dir, manifest, run_id=run_id, writer=writer, scanner=scanner,
             proof=proof, masking_pipeline=self._masking_pipeline,
             before_residual=_write_capture_health,
             digests=_evidence_digests, seal=_seal_capsule,
-        ).manifest
+        )
+        manifest = finalized.manifest
+        if finalized.unsealed_reason is not None:
+            # Review capture-runners-21: the capsule says why it is not sealed, as
+            # adapter and @agent capsules do (metadata.finalization_error).
+            try:
+                manifest = record_unsealed(
+                    capsule_dir, manifest, writer, finalized.unsealed_reason
+                )
+            except Exception:  # noqa: BLE001 — the disk itself may be the failure
+                logger.exception("could not record why capsule %s is unsealed", run_id)
         _health_drops = _health_seen[0] if _health_seen else {}
 
         # Hot-path optimization (v0.6.8): same is_configured() short-
@@ -866,6 +882,8 @@ class CaptureOrchestrator:
             exit_code=exit_code,
             runner_status=runner_result.runner_status,
             runner_error=runner_result.runner_error,
+            sealed=finalized.sealed,
+            unsealed_reason=finalized.unsealed_reason,
         )
 
 

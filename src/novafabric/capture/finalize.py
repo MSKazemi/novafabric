@@ -409,6 +409,11 @@ def _record_unsealed(
     return redacted
 
 
+#: Public name for the orchestrator (``nova capture``), which records the reason
+#: the same way.
+record_unsealed = _record_unsealed
+
+
 def finalize_in_process_capsule(
     capsule_dir: Path,
     manifest: dict[str, Any],
