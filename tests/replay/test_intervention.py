@@ -30,7 +30,7 @@ GOLDEN_VALID_SPEC = {
             "name": "response-replaced",
             "stream": "model-calls",
             "event_index": 1,
-            "field": "response.content",
+            "field": "gen_ai.response.choices.0.message.content",
             "contains": "DENY",
             "fatal": False,
         }
@@ -45,11 +45,21 @@ GOLDEN_INVALID_SPEC = {
 }
 
 
+def _choices(text: str) -> list[dict[str, object]]:
+    return [{"index": 0, "message": {"role": "assistant", "content": text},
+             "finish_reason": "stop"}]
+
+
+def _content(record: dict[str, object]) -> object:
+    return record["gen_ai.response.choices"][0]["message"]["content"]  # type: ignore[index]
+
+
 def _model_calls() -> list[dict[str, object]]:
     return [
-        {"span_id": "s0", "model": "m", "response": {"content": "step zero"}},
-        {"span_id": "s1", "model": "m", "response": {"content": "APPROVE"}},
-        {"span_id": "s2", "model": "m", "response": {"content": "final"}},
+        # The real record shape: replay serves gen_ai.response.choices (rlr-05).
+        {"span_id": "s0", "model": "m", "gen_ai.response.choices": _choices("step zero")},
+        {"span_id": "s1", "model": "m", "gen_ai.response.choices": _choices("APPROVE")},
+        {"span_id": "s2", "model": "m", "gen_ai.response.choices": _choices("final")},
     ]
 
 
@@ -119,10 +129,10 @@ class TestApply:
         original = _model_calls()
         mutated, tools, idx = apply_intervention(spec, original, _tool_calls())
         assert idx == 1
-        assert mutated[1]["response"] == {"content": "DENY the request"}
+        assert _content(mutated[1]) == "DENY the request"
         assert mutated[1]["intervened"] is True
         # source untouched (read-only invariant)
-        assert original[1]["response"] == {"content": "APPROVE"}
+        assert _content(original[1]) == "APPROVE"
 
     def test_span_id_selector(self) -> None:
         spec = InterventionSpec.model_validate(
@@ -176,7 +186,7 @@ class TestChecks:
                     {
                         "name": "expects-approve",
                         "event_index": 1,
-                        "field": "response.content",
+                        "field": "gen_ai.response.choices.0.message.content",
                         "equals": "APPROVE",
                     }
                 ],
@@ -246,7 +256,7 @@ class TestEngine:
                 {
                     "name": "must-still-approve",
                     "event_index": 1,
-                    "field": "response.content",
+                    "field": "gen_ai.response.choices.0.message.content",
                     "equals": "APPROVE",
                     "fatal": True,
                 }
@@ -263,7 +273,7 @@ class TestEngine:
             json.loads(line)
             for line in (capsule / "model-calls.jsonl").read_text().splitlines()
         ]
-        assert records[1]["response"] == {"content": "APPROVE"}
+        assert _content(records[1]) == "APPROVE"
         assert "intervened" not in records[1]
 
 

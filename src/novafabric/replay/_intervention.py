@@ -191,7 +191,7 @@ def apply_intervention(
     idx = _find_target_index(spec, events)
     record = events[idx]
     if spec.replace_model_response is not None:
-        record["response"] = spec.replace_model_response
+        record["gen_ai.response.choices"] = _served_choices(spec.replace_model_response)
     elif spec.replace_tool_result is not None:
         record["result"] = spec.replace_tool_result
     else:
@@ -201,12 +201,67 @@ def apply_intervention(
     return model_calls, tool_calls, idx
 
 
+def _served_choices(value: Any) -> list[dict[str, Any]]:
+    """``replace_model_response`` as the ``gen_ai.response.choices`` replay serves.
+
+    Review replay-lineage-registry-05: the value used to be written to a
+    ``response`` field that the mocked-replay dispatcher never reads — it serves
+    ``gen_ai.response.choices`` for every provider — so the re-run got the
+    recorded answer while the result said the substitution was delivered.
+    Accepted: a string (the assistant's text), a message mapping with
+    ``content`` (and optionally ``role``, ``tool_calls``, ``finish_reason``), or
+    a list of choices. Anything else cannot be served and is refused.
+    """
+    if isinstance(value, str):
+        value = {"content": value}
+    if isinstance(value, dict) and ("content" in value or "tool_calls" in value):
+        message: dict[str, Any] = {"role": value.get("role", "assistant"),
+                                   "content": value.get("content")}
+        if "tool_calls" in value:
+            message["tool_calls"] = copy.deepcopy(value["tool_calls"])
+        finish = value.get("finish_reason", "tool_calls" if "tool_calls" in value else "stop")
+        return [{"index": 0, "message": message, "finish_reason": finish}]
+    if (
+        isinstance(value, list)
+        and value
+        and all(isinstance(c, dict) and isinstance(c.get("message"), dict) for c in value)
+    ):
+        return [
+            {"index": c.get("index", i), "finish_reason": c.get("finish_reason", "stop"),
+             **copy.deepcopy(c)}
+            for i, c in enumerate(value)
+        ]
+    raise InterventionSpecError(
+        "replace_model_response must be the response text, a message with 'content' "
+        "(or 'tool_calls'), or a list of choices with a 'message' each — replay cannot "
+        f"serve {type(value).__name__} {value!r}"
+    )
+
+
 def _resolve_field(record: dict[str, Any], dotted: str) -> Any:
+    """Follow a dotted path; a numeric part indexes a list, so a check can reach
+    ``gen_ai.response.choices.0.message.content``. Record keys themselves may contain
+    dots (``gen_ai.response.choices``): the longest matching key is taken first."""
+    parts = dotted.split(".")
     current: Any = record
-    for part in dotted.split("."):
-        if not isinstance(current, dict) or part not in current:
+    i = 0
+    while i < len(parts):
+        if isinstance(current, list):
+            if not parts[i].isdigit() or int(parts[i]) >= len(current):
+                return None
+            current = current[int(parts[i])]
+            i += 1
+            continue
+        if not isinstance(current, dict):
             return None
-        current = current[part]
+        for j in range(len(parts), i, -1):
+            key = ".".join(parts[i:j])
+            if key in current:
+                current = current[key]
+                i = j
+                break
+        else:
+            return None
     return current
 
 
