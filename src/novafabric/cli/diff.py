@@ -18,7 +18,12 @@ from novafabric.eval.regression_diff import (
     DEFAULT_P1,
     significance_diff,
 )
-from novafabric.eval.scores import SCORES_FILENAME, ScoreValueType, read_scores
+from novafabric.eval.scores import (
+    SCORES_FILENAME,
+    ScoreValueType,
+    effective_scores,
+    read_scores,
+)
 from novafabric.registry.service import AssetNotFoundError, get_asset
 
 
@@ -332,7 +337,7 @@ def _read_outcomes(path: Path, metric: str) -> list[int]:
         all_scores = read_scores(_resolve_scores(path), capsule_member=path.is_dir())
     except ValueError as exc:  # unreadable (a link, FIFO) or invalid score log
         raise typer.BadParameter(str(exc)) from exc
-    scores = [s for s in all_scores if s.name == metric]
+    scores = [s for s in effective_scores(all_scores) if s.name == metric]
     if not scores:
         raise typer.BadParameter(f"no scores named {metric!r} in {path}")
     outcomes: list[int] = []

@@ -209,15 +209,30 @@ def iter_scores(path: str | Path) -> Iterator[Score]:
                 raise ValueError(f"{p}:{line_no}: invalid Score record: {exc}") from exc
 
 
+def effective_scores(scores: Iterable[Score]) -> list[Score]:
+    """*scores* without every record a correction supersedes, in the given order.
+
+    A correction (ADR-0119) is a new record whose ``supersedes`` names the
+    ``score_id`` it replaces; the original stays in the append-only log for
+    audit, but every aggregate, comparison and gate reads only the effective
+    record. In a chain A <- B <- C only C remains. Callers wanting the full
+    history read :func:`read_scores` directly.
+    """
+    records = list(scores)
+    superseded = {s.supersedes for s in records if s.supersedes is not None}
+    return [s for s in records if s.score_id not in superseded]
+
+
 def boolean_metric_outcomes(scores: Iterable[Score], metric: str) -> list[int]:
     """0/1 pass/fail outcomes for a boolean ``metric``, in the given order.
 
     A bridge for the ADR-0080 significance gate (NF-007): turns evidence-grade
     ``scores.jsonl`` records into the Bernoulli sequence the SPRT consumes. Scores whose
     ``name`` differs from *metric* are skipped; a matching non-boolean score is an error.
+    A superseded record is replaced by its correction (:func:`effective_scores`).
     """
     outcomes: list[int] = []
-    for score in scores:
+    for score in effective_scores(scores):
         if score.name != metric:
             continue
         if score.value_type is not ScoreValueType.BOOLEAN:

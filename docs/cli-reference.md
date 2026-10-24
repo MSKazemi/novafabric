@@ -3322,7 +3322,11 @@ Validation is **fail-closed** — on any rejection nothing is written:
   capsule (its stable root digest, current Merkle root, manifest digest, or any
   digest recorded in the capsule's top-level evidence files).
 - **Append-only**: a correction is a *new* record whose `--supersedes` names an
-  existing `score_id`; prior lines are never edited or removed.
+  existing `score_id`; prior lines are never edited or removed. Every reader that
+  aggregates or gates (`nova query`, `nova experiment compare`, `nova diff
+  --significance`, the registry significance gate) uses the correction in place of the
+  record it supersedes, so in a chain A ← B ← C only C counts; the original stays in
+  `scores.jsonl` for audit.
 - **Idempotent**: re-running with the same client-minted `--score-id` and body is a
   no-op that echoes the stored record; the same `--score-id` with a different body
   is refused (idempotency-key collision).

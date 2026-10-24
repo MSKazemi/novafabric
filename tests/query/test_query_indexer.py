@@ -241,3 +241,24 @@ def test_find_capsule_returns_none_for_an_unknown_run(
 def test_find_capsule_fails_closed_on_a_missing_directory(tmp_path: Path) -> None:
     with pytest.raises(QueryIndexError, match="capsule directory not found"):
         find_capsule(tmp_path / "nope", "run-x")
+
+
+def test_a_score_correction_replaces_the_original(
+    make_capsule: CapsuleFactory, capsule_dir: Path, score: RecordFactory
+) -> None:
+    """Review eval-adapters-query-09: original + correction were both indexed."""
+    original = score("faithfulness", 0.1) | {"score_id": "01HZZZZZZZZZZZZZZZZZZZZZZA"}
+    correction = score("faithfulness", 0.9) | {
+        "score_id": "01HZZZZZZZZZZZZZZZZZZZZZZB",
+        "supersedes": "01HZZZZZZZZZZZZZZZZZZZZZZA",
+    }
+    make_capsule("run-corr", scores=[original, correction])
+    rows = scan_capsule_dir(capsule_dir)
+    assert [(r.name, r.value) for r in rows.scores] == [("faithfulness", 0.9)]
+
+
+def test_the_indexer_schema_version_was_bumped_for_corrections() -> None:
+    """Warm caches built before corrections applied must be discarded."""
+    from novafabric.query.cache import INDEXER_SCHEMA_VERSION
+
+    assert INDEXER_SCHEMA_VERSION >= 4

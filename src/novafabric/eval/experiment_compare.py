@@ -70,7 +70,13 @@ from novafabric.eval.score_config_pin import (
     ScoreConfigComparability,
     score_config_comparability,
 )
-from novafabric.eval.scores import SCORES_FILENAME, ScoreValueType, read_scores
+from novafabric.eval.scores import (
+    SCORES_FILENAME,
+    Score,
+    ScoreValueType,
+    effective_scores,
+    read_scores,
+)
 
 EXPERIMENT_COMPARISON_SCHEMA_VERSION: Literal["0.1.0"] = "0.1.0"
 
@@ -196,13 +202,31 @@ def _item_values(
     return values, value_type
 
 
+def _with_corrections(score_ids: set[str], scores: list[Score]) -> set[str]:
+    """*score_ids* plus every later correction of one of them, transitively.
+
+    The run recorded the ids it produced; a reviewer's correction, appended
+    afterwards, supersedes one of them and must take its place.
+    """
+    wanted = set(score_ids)
+    grew = True
+    while grew:
+        grew = False
+        for score in scores:
+            if score.supersedes in wanted and score.score_id not in wanted:
+                wanted.add(score.score_id)
+                grew = True
+    return wanted
+
+
 def _run_value(run: ItemRun, metric: str) -> tuple[float | None, ScoreValueType | None]:
     if run.status is not ItemRunStatus.OK or not run.score_ids:
         return None, None
     scores_path = Path(run.capsule_ref) / SCORES_FILENAME
-    wanted = set(run.score_ids)
     # A capsule's own score log: never through a link, never a FIFO.
-    for score in read_scores(scores_path, capsule_member=True):
+    scores = read_scores(scores_path, capsule_member=True)
+    wanted = _with_corrections(set(run.score_ids), scores)
+    for score in effective_scores(scores):
         if score.score_id not in wanted or score.name != metric:
             continue
         if score.value_type is ScoreValueType.BOOLEAN:

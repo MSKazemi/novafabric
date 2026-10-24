@@ -46,7 +46,12 @@ from novafabric._capsule_manifest import (
     read_capsule_manifest,
 )
 from novafabric.capture.record_roles import logical_model_calls
-from novafabric.eval.scores import SCORES_FILENAME, ScoreValueType, read_scores
+from novafabric.eval.scores import (
+    SCORES_FILENAME,
+    ScoreValueType,
+    effective_scores,
+    read_scores,
+)
 from novafabric.query.errors import QueryIndexError
 from novafabric.query.model import LOG_LEVEL_ALIASES, LOG_LEVEL_RANKS
 
@@ -288,7 +293,7 @@ def _score_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[ScoreRow]:
     except ValueError as exc:
         raise QueryIndexError(f"{path}: invalid scores.jsonl: {exc}") from exc
     rows: list[ScoreRow] = []
-    for score in scores:
+    for score in effective_scores(scores):  # a correction replaces what it supersedes
         if score.value_type is ScoreValueType.NUMERIC and isinstance(score.value, (int, float)):
             value = float(score.value)
         elif score.value_type is ScoreValueType.BOOLEAN:

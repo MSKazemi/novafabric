@@ -254,3 +254,32 @@ def test_gate_input_shape_feeds_policy_resource(tmp_path: Path) -> None:
 
     improved = compare_experiments(baseline, baseline, metric="exact_match")
     assert improved.to_policy_regression_report()["regression_detected"] is False
+
+
+def test_a_corrected_score_is_compared_by_its_correction(tmp_path: Path) -> None:
+    """Review eval-adapters-query-09: a correction appended after the run (it is not in
+    the run's score_ids) must still replace the original it supersedes."""
+    items = {f"i{k}": True for k in range(5)}
+    baseline = _make_experiment(tmp_path, "base", items)
+    candidate = _make_experiment(tmp_path, "cand", dict.fromkeys(items, False))
+    assert compare_experiments(baseline, candidate, metric="exact_match").exit_code == 3
+    for run in candidate.runs:  # a reviewer corrects every candidate verdict to pass
+        capsule = Path(run.capsule_ref)
+        (original,) = run.score_ids
+        append_score(
+            capsule / SCORES_FILENAME,
+            Score(
+                subject=_DIGEST,
+                subject_kind="capsule",
+                name="exact_match",
+                value=True,
+                value_type=ScoreValueType.BOOLEAN,
+                source=ScoreSource.HUMAN,
+                evaluator_id="reviewer",
+                eval_card_digest=_DIGEST,
+                supersedes=original,
+            ),
+        )
+    comparison = compare_experiments(baseline, candidate, metric="exact_match")
+    assert comparison.exit_code == 0
+    assert all(item.candidate == 1.0 for item in comparison.per_item)
