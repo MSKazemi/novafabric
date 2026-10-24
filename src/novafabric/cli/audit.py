@@ -215,10 +215,12 @@ def audit_map(
                 indent=2, by_alias=True, exclude_none=True
             )
         )
-        return
-
-    _print_report_summary(report)
-    _print_coverage_table(report)
+    else:
+        _print_report_summary(report)
+        _print_coverage_table(report)
+    # Review cli-a-03: the help has always promised this exit; nothing raised it.
+    if any(c.status == "missing" for c in report.coverages):
+        raise typer.Exit(code=1)
 
 
 @app.command("report")
@@ -297,9 +299,12 @@ def audit_verify(
         typer.Argument(help="Path to an audit report JSON-LD file"),
     ],
 ) -> None:
-    """Verify the integrity of a signed audit report.
+    """Check that an audit report is well-formed, and say what that does not prove.
 
-    Checks that the report is structurally valid JSON-LD and parses cleanly.
+    The report is **not signed**, so this is a schema check: it parses and has
+    the report's shape. Its score, coverage and seal flag are what the report
+    claims, not something this command re-derived — run ``nova audit map``
+    against the capsules to recompute them (review cli-a-03).
 
     Scope: single audit report file.
 
@@ -318,7 +323,10 @@ def audit_verify(
         console.print(f"[red]x[/red] Failed to parse audit report: {exc}")
         raise typer.Exit(code=1) from exc
 
-    console.print(f"[green]ok[/green] Report {report.report_id} is valid.")
+    console.print(
+        f"[green]ok[/green] Report {report.report_id} is well-formed "
+        "(schema check only — the report is not signed)."
+    )
     console.print(
         f"  Profile  : {report.profile_name}  ({report.framework})"
     )
@@ -327,10 +335,11 @@ def audit_verify(
         f"  Score    : {report.overall_score * 100:.1f}%  "
         f"({report.covered_controls}/{report.total_controls} controls covered)"
     )
-    if report.evidence_seal_verified:
-        console.print("  Seals    : [green]verified[/green]")
-    else:
-        console.print("  Seals    : [dim]not present[/dim]")
+    seal_claim = "a verified seal" if report.evidence_seal_verified else "no verified seal"
+    console.print(
+        f"  Seals    : {seal_claim} — claimed by the report, not re-checked here; "
+        "nova audit map recomputes it"
+    )
 
 
 @app.command("bundle")

@@ -25,12 +25,13 @@ from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
 BINDING_PREDICATE_TYPE = "https://novafabric.io/criterion-binding/v0"
 
 #: evidence_type → capsule-relative file evidencing it (mirrors the audit
-#: engine's checkers; a binding is only emitted when the file exists)
+#: engine's checkers; a binding is only emitted when the file exists — and, for
+#: ``seal_signature``, only when the seal verifies)
 _EVIDENCE_FILES: dict[str, str] = {
     "model_calls": "model-calls.jsonl",
     "tool_permissions": "tool-permission-events.jsonl",
     "policy_events": "tool-permission-events.jsonl",
-    "seal_signature": "seal-bundle.json",
+    "seal_signature": ".seal/manifest.dsse",
     "lineage": "lineage.jsonl",
     "pii_scan": "redaction-proof.json",
 }
@@ -53,6 +54,12 @@ class CriterionBinding(BaseModel):
     criterion_id: str
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     binding_status: Literal["satisfied", "partial", "unsatisfied"]
+
+
+def _seal_verifies(capsule_dir: Path) -> bool:
+    from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies  # noqa: PLC0415
+
+    return capsule_seal_verifies(capsule_dir)
 
 
 def _ref_for(capsule_dir: Path, rel_path: str) -> EvidenceRef | None:
@@ -85,6 +92,8 @@ def build_bindings(
             if rel is None:
                 continue
             wanted += 1
+            if req.evidence_type == "seal_signature" and not _seal_verifies(capsule_dir):
+                continue  # a seal is evidence only when it verifies (review cli-a-03)
             ref = _ref_for(capsule_dir, rel)
             if ref is not None:
                 refs.append(ref)

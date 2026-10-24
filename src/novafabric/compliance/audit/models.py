@@ -122,7 +122,11 @@ class AuditReport(BaseModel):
     )
     evidence_seal_verified: bool = Field(
         default=False,
-        description="True if at least one capsule has a verified seal bundle",
+        description=(
+            "True if at least one capsule's NovaSeal seal verified when the report was "
+            "generated (signature + content binding; signer self-asserted). A claim of "
+            "the report: the report itself is not signed."
+        ),
     )
     bundle_path: str | None = Field(
         default=None,

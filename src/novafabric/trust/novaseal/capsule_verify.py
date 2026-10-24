@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -58,6 +59,8 @@ __all__ = [
 ]
 
 _OPERATION = "nova verify"
+
+logger = logging.getLogger(__name__)
 # Bounds for the small structured files read whole (R6: no unbounded read of a
 # capsule file). Evidence files are hashed in chunks, never read whole.
 _MAX_ENVELOPE_BYTES = 16 * 1024 * 1024
@@ -808,3 +811,23 @@ def verify_capsule(
         capture_tampered=signed_capture_tampered(dsse_bytes),
         special_entries=capsule_special_entries(capsule_dir),
     )
+
+
+def capsule_seal_verifies(capsule_dir: Path) -> bool:
+    """True when *capsule_dir* carries a NovaSeal seal that verifies. Never raises.
+
+    The one test every "is this capsule sealed?" evidence check uses: the
+    ``.seal/`` signature verifies, the signed manifest binds the files on disk
+    (``evidence_digests``) and the capsule id matches — :func:`verify_capsule`
+    from the capsule alone, so the signer is self-asserted, never anchored.
+    The audit engine, the evidence binding and the safety-case compiler used to
+    accept a file named ``seal-bundle.json`` (which nothing writes) instead, so a
+    hand-made file counted and a genuine seal did not (review cli-a-03).
+    """
+    try:
+        if not (capsule_dir / ".seal").is_dir():
+            return False
+        return verify_capsule(capsule_dir).valid
+    except Exception:  # noqa: BLE001 — evidence is absent, never a crash
+        logger.debug("seal verification failed for %s", capsule_dir, exc_info=True)
+        return False

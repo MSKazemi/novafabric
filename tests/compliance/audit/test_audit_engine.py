@@ -231,13 +231,14 @@ def test_partial_coverage_status(tmp_path: Path) -> None:
     assert op_ctrl.status == "partial"
 
 
-def test_seal_verified_flag_when_seal_present(tmp_path: Path) -> None:
-    """evidence_seal_verified is True when any capsule has seal-bundle.json."""
+def test_seal_bundle_file_is_not_a_verified_seal(tmp_path: Path) -> None:
+    """A file named seal-bundle.json proves nothing (cli-a-03); only a NovaSeal seal
+    that verifies sets the flag — see test_audit_seal_evidence_is_verified.py."""
     data_dir = make_full_capsule(tmp_path)
     profile = load_profile("nist-ai-rmf")
     engine = AuditEngine(data_dir=data_dir, profile=profile)
     report = engine.scan()
-    assert report.evidence_seal_verified is True
+    assert report.evidence_seal_verified is False
 
 
 def test_seal_verified_flag_when_no_seal(tmp_path: Path) -> None:
@@ -295,8 +296,10 @@ def test_audit_map_json_output(tmp_path: Path) -> None:
             "--json",
         ],
     )
-    assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
+    # Exit 1 when a required control has no evidence, as the help says (cli-a-03).
+    missing = any(c["status"] == "missing" for c in payload["coverages"])
+    assert result.exit_code == (1 if missing else 0), result.output
     assert "@type" in payload
     assert payload["@type"] == "AuditReport"
     assert "overall_score" in payload
@@ -314,7 +317,9 @@ def test_audit_map_text_output(tmp_path: Path) -> None:
             "--profile", "gdpr",
         ],
     )
-    assert result.exit_code == 0, result.output
+    report = AuditEngine(data_dir=data_dir, profile=load_profile("gdpr")).scan()
+    expected = 1 if any(c.status == "missing" for c in report.coverages) else 0
+    assert result.exit_code == expected, result.output
     assert "Audit Report" in result.output
 
 
@@ -370,7 +375,8 @@ def test_audit_verify_valid_report(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["audit", "verify", str(report_file)])
     assert result.exit_code == 0, result.output
-    assert "valid" in result.output.lower()
+    assert "well-formed" in result.output.lower()
+    assert "not signed" in result.output.lower()
 
 
 def test_audit_verify_invalid_file(tmp_path: Path) -> None:

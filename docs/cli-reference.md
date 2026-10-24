@@ -4878,7 +4878,7 @@ scheduled for v0.26.x), or **future** (ADR accepted, implementation not yet sche
 | `nova subject-proof <subject_id>` | GDPR Art.17 HMAC subject lookup | v0.15.0 |
 | `nova audit coverage` | Multi-profile control coverage scoring | v0.16.0 |
 | `nova audit bundle` | ZIP export of full audit report | v0.16.0 |
-| `nova audit verify` | AuditReport schema validation | v0.16.0 |
+| `nova audit verify` | AuditReport schema check (the report is unsigned) | v0.16.0 |
 | `nova classify run` | EU AI Act / NIST RMF / OMB M-24-10 risk tier | v0.16.0 |
 | `nova verify <capsule>` | DSSE + RFC 3161 TSR + Merkle log verification | v0.10.0+ |
 | `nova export-ropa <capsule_id>` | GDPR Art.30 Records of Processing Activities (cap-007) | v0.25.1 |
@@ -9202,7 +9202,11 @@ with one line naming the file and the field — before the L25 fix it raised a b
 ### nova audit map
 
 Map capsule evidence to a profile's regulatory controls and report coverage gaps. Exits 1
-if any required control has no evidence.
+if any required control has no evidence (with or without `--json`; releases up to v0.107.0
+always exited 0). The `seal_signature` evidence type, and the summary's `Seals: verified`, mean
+a capsule's NovaSeal seal **verifies** — signature, content binding and capsule id, the signer
+self-asserted; a file merely named `seal-bundle.json` no longer counts, and a genuine `.seal/`
+now does.
 
 **Not captured by this version.** The `tool_permissions` and `policy_events` evidence types
 read `tool-permission-events.jsonl`, which no NovaFabric producer writes today. When no scanned
@@ -9235,8 +9239,11 @@ nova audit report --format text
 
 ### nova audit verify
 
-Verify the integrity of an audit report: checks that it is structurally valid JSON-LD
-and parses cleanly.
+Check that an audit report is well-formed JSON-LD with the report's schema. **The report is not
+signed**, so this proves nothing about its contents: the score, the coverage and the seal flag are
+what the report claims, and the output says so (`Seals: … claimed by the report, not re-checked
+here`). To recompute them, run `nova audit map` against the capsules. Releases up to v0.107.0
+printed `Report … is valid` and `Seals: verified` from the file's own field.
 
 ```bash
 nova audit report --profile nist-ai-rmf --output report.json

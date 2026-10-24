@@ -84,7 +84,10 @@ def _check_policy_events(capsule_dir: Path) -> bool:
 
 
 def _check_seal_signature(capsule_dir: Path) -> bool:
-    return (capsule_dir / "seal-bundle.json").exists()
+    """A NovaSeal seal that verifies — never the existence of a file (review cli-a-03)."""
+    from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies  # noqa: PLC0415
+
+    return capsule_seal_verifies(capsule_dir)
 
 
 def _check_lineage(capsule_dir: Path) -> bool:
