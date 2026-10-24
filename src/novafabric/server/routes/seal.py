@@ -16,6 +16,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from novafabric._safe_path import PathEscapeError, UnsafePathSegmentError, safe_child
 from novafabric.promote.bundle_store import PromoteBundleStore
 from novafabric.promote.exceptions import BundleNotFoundError, PolicyNotFoundError
 from novafabric.promote.policy_store import PolicyStore
@@ -27,7 +28,8 @@ from novafabric.promote.predicates import (
 )
 from novafabric.promote.verifier import verify_sod
 from novafabric.server.auth import AuthContext
-from novafabric.server.errors import NotFoundError
+from novafabric.server.deps import get_capsule_dir
+from novafabric.server.errors import BadRequestError, NotFoundError
 from novafabric.server.rbac import Role, require_role
 
 router = APIRouter(prefix="/seal", tags=["seal"])
@@ -61,6 +63,9 @@ class VerifyResponse(BaseModel):
     exit_code: int
     message: str
     check_results: list[dict[str, Any]]
+    # Review cli-b-01: the proposal's signed capsule digest was recomputed from the
+    # server's copy of the capsule (exit 10 when it changed or is absent).
+    content_checked: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +225,18 @@ _EXIT_CODE_TO_CHECK: dict[int, int] = {3: 0, 4: 1, 5: 2, 6: 3, 7: 4}
 async def verify_seal_chain(
     capsule_id: str,
     _auth: Annotated[AuthContext, Depends(require_role(Role.reader))] = None,  # type: ignore[assignment]
+    capsule_dir: Annotated[Path, Depends(get_capsule_dir)] = None,  # type: ignore[assignment]
 ) -> VerifyResponse:
-    """Run the five-check SoD verifier for a capsule's promote bundles."""
+    """Run the five-check SoD verifier for a capsule's promote bundles.
+
+    The proposal's signed capsule digest is recomputed from the server's capsule
+    (review cli-b-01): content changed since the proposal, or a capsule the server
+    does not hold, fails with ``exit_code`` 10.
+    """
+    try:
+        capsule_path = safe_child(capsule_dir, capsule_id, field="capsule_id")
+    except (UnsafePathSegmentError, PathEscapeError) as exc:
+        raise BadRequestError(str(exc)) from exc
     data_dir = _data_dir()
     db_path = _merkle_db_path()
 
@@ -229,7 +244,7 @@ async def verify_seal_chain(
     policy_store = PolicyStore(db_path)
 
     try:
-        result = verify_sod(capsule_id, policy_store, bundle_store)
+        result = verify_sod(capsule_id, policy_store, bundle_store, capsule_dir=capsule_path)
     finally:
         policy_store.close()
 
@@ -266,4 +281,5 @@ async def verify_seal_chain(
         exit_code=result.exit_code,
         message=result.message,
         check_results=check_results,
+        content_checked=result.content_checked,
     )

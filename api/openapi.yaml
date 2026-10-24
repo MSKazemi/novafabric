@@ -708,6 +708,10 @@ components:
             type: object
           title: Check Results
           type: array
+        content_checked:
+          default: false
+          title: Content Checked
+          type: boolean
         exit_code:
           title: Exit Code
           type: integer
@@ -2658,7 +2662,14 @@ paths:
       - seal
   /v0/seal/{capsule_id}/verify:
     post:
-      description: Run the five-check SoD verifier for a capsule's promote bundles.
+      description: 'Run the five-check SoD verifier for a capsule''s promote bundles.
+
+
+        The proposal''s signed capsule digest is recomputed from the server''s capsule
+
+        (review cli-b-01): content changed since the proposal, or a capsule the server
+
+        does not hold, fails with ``exit_code`` 10.'
       operationId: verify_seal_chain_v0_seal__capsule_id__verify_post
       parameters:
       - in: path

@@ -275,6 +275,7 @@ def _seal(
     approver: str | None = "approver",
     policy: bool = True,
     approvers: tuple[str, ...] = ("approver", "proposer"),
+    digest: str = "a" * 64,
 ) -> tuple[Path, Path]:
     policy_db = tmp_path / "merkle.db"
     version = "1"
@@ -286,7 +287,7 @@ def _seal(
     proposal = _sign(
         build_proposal_predicate(
             CAPSULE,
-            "a" * 64,
+            digest,
             "staging",
             "A justification long enough for the schema.",
             "proposer",
@@ -463,3 +464,53 @@ def test_seal_collector_corrupt_policy_db_raises(tmp_path: Path) -> None:
     policy_db.write_bytes(b"not sqlite" * 200)
     with pytest.raises(collect.MakerCheckerSourceError):
         collect.collect_seal_record(CAPSULE, data_dir=data_dir, policy_db=policy_db)
+
+
+# ---------------------------------------------------------------------------
+# The seal record binds the capsule's content (follow-up to review cli-b-01)
+# ---------------------------------------------------------------------------
+# verify_sod recomputes the capsule digest only when it is given the capsule. The
+# collector never passed it, so a proposal signed for other content — or for a
+# capsule that no longer exists — was exported as "verified" independence evidence.
+
+
+def _capsule(tmp_path: Path) -> Path:
+    capsule = tmp_path / "capsules" / CAPSULE
+    capsule.mkdir(parents=True)
+    (capsule / "capsule.yaml").write_text(f"run_id: {CAPSULE}\nstatus: success\n")
+    return capsule
+
+
+def test_seal_record_of_the_approved_capsule_is_verified(tmp_path: Path) -> None:
+    from novafabric.promote.capsule_digest import capsule_content_digest
+
+    capsule = _capsule(tmp_path)
+    data_dir, policy_db = _seal(tmp_path, digest=capsule_content_digest(capsule))
+    rec = collect.collect_seal_record(
+        CAPSULE, data_dir=data_dir, policy_db=policy_db, capsule_dir=capsule
+    )
+    assert rec is not None and rec.state == "verified"
+    assert classify_record(rec).status == "complete"
+
+
+def test_seal_record_of_a_capsule_changed_since_approval_is_missing(tmp_path: Path) -> None:
+    from novafabric.promote.capsule_digest import capsule_content_digest
+
+    capsule = _capsule(tmp_path)
+    data_dir, policy_db = _seal(tmp_path, digest=capsule_content_digest(capsule))
+    (capsule / "capsule.yaml").write_text(f"run_id: {CAPSULE}\nstatus: failure\n")
+    rec = collect.collect_seal_record(
+        CAPSULE, data_dir=data_dir, policy_db=policy_db, capsule_dir=capsule
+    )
+    assert rec is not None and rec.state == "unverified"
+    assert rec.verification_failure and "changed since" in rec.verification_failure
+    assert classify_record(rec).status == "missing"
+
+
+def test_seal_record_of_a_capsule_that_does_not_exist_is_missing(tmp_path: Path) -> None:
+    data_dir, policy_db = _seal(tmp_path)
+    rec = collect.collect_seal_record(
+        CAPSULE, data_dir=data_dir, policy_db=policy_db, capsule_dir=tmp_path / "gone" / CAPSULE
+    )
+    assert rec is not None and rec.state == "unverified"
+    assert classify_record(rec).status == "missing"

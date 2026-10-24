@@ -4488,8 +4488,11 @@ validator (checker) identity differs from the developer (maker) identity.
 **It asserts only that independence was recorded — never that validation was
 sufficient, and never a rating.** A single-identity approval is `missing` with
 reason `single-identity approval`; an open proposal, a bypass, or a record that
-failed SoD verification is `missing` with its reason. The single-sign-off
-`nova approve` table is not read (it records no developer identity).
+failed SoD verification is `missing` with its reason. A `--capsule-id` record is
+verified against that capsule's content (`capsule.yaml`, resolved like `nova seal verify`):
+an approval of content changed since, or of a capsule that does not exist here, failed SoD
+and is `missing` — releases up to v0.107.0 exported it as complete independence. The
+single-sign-off `nova approve` table is not read (it records no developer identity).
 
 ```bash
 nova export-model-independence --model credit-scorer@2.1
@@ -5949,9 +5952,13 @@ Additional exit codes:
   the message says to re-propose). A bypass signed for other content is ignored.
 - `1` — other error (missing policy, malformed envelope)
 
-`POST /api/seal/{capsule_id}/verify` (`nova serve`) runs the same check against the served
-capsule and returns `content_checked: true`. A caller of the library `verify_sod()` without a
-`capsule_dir` gets `content_checked: false`: nothing bound the approval to the content.
+`POST /api/seal/{capsule_id}/verify` (`nova serve`) and `POST /v0/seal/{capsule_id}/verify`
+(`nova server`) run the same check against the capsule the server holds and return
+`content_checked: true` on a pass; a capsule id that is not one safe path segment is `400` on
+`/v0`. Before this fix the `/v0` route never passed the capsule, so it answered `passed: true`
+for content changed since approval and for a capsule the server does not hold. A caller of the
+library `verify_sod()` without a `capsule_dir` gets `content_checked: false`: nothing bound the
+approval to the content.
 
 Options:
 

@@ -194,9 +194,14 @@ def _envelope_subject(envelope: bytes, payload_type: str) -> tuple[str | None, s
 
 
 def collect_seal_record(
-    capsule_id: str, *, data_dir: Path, policy_db: Path
+    capsule_id: str, *, data_dir: Path, policy_db: Path, capsule_dir: Path | None = None
 ) -> MakerCheckerRecord | None:
     """Read the DSSE maker-checker bundle for ``capsule_id`` and its ``verify_sod`` outcome.
+
+    With *capsule_dir* the proposal's signed capsule digest is recomputed from that
+    capsule (review cli-b-01): an approval of content that has since changed, or of a
+    capsule that no longer exists, is ``unverified``. Without it nothing binds the
+    approval to the content — the CLI always passes it.
 
     Returns ``None`` when no proposal is stored for the capsule (no record). The policy database
     is read through a ``mode=ro`` snapshot (never ``PolicyStore``, whose constructor creates the
@@ -217,7 +222,10 @@ def collect_seal_record(
     if not proposals and not has_bypass:
         return None
     policy_store = _ReadOnlyPolicySnapshot(policy_db)
-    result = verify_sod(capsule_id, cast("PolicyStore", policy_store), bundle_store, offline=True)
+    result = verify_sod(
+        capsule_id, cast("PolicyStore", policy_store), bundle_store, offline=True,
+        capsule_dir=capsule_dir,
+    )
     if result.exit_code == _SOD_NO_PROPOSAL:
         return None
 

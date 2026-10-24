@@ -35,9 +35,11 @@ CAPSULE = "cap-content-001"
 runner = CliRunner()
 
 
-def _approved(tmp_path: Path, digest: str) -> tuple[PolicyStore, PromoteBundleStore]:
-    policy_store = PolicyStore(tmp_path / "merkle.db")
-    bundle_store = PromoteBundleStore(tmp_path)
+def _approved(
+    tmp_path: Path, digest: str, *, policy_db: Path | None = None, data_dir: Path | None = None
+) -> tuple[PolicyStore, PromoteBundleStore]:
+    policy_store = PolicyStore(policy_db or tmp_path / "merkle.db")
+    bundle_store = PromoteBundleStore(data_dir or tmp_path)
     version = str(policy_store.put(json.dumps(build_policy_predicate(["proposer"], ["approver"]))))
     proposal = sign_promote_envelope(
         json.dumps(build_proposal_predicate(
@@ -207,3 +209,50 @@ def test_a_signed_rejection_is_not_an_approval(tmp_path: Path) -> None:
     result = verify_sod(CAPSULE, policy_store, bundle_store, capsule_dir=capsule)
     assert (result.passed, result.exit_code) == (False, 8)
     assert "rejected" in result.message
+
+
+# --- server mode: POST /v0/seal/{capsule_id}/verify -----------------------------------
+# The route called verify_sod without the capsule, so it answered passed: true for an
+# approval of since-changed content, or of a capsule the server does not hold.
+
+
+def _server_verify(tmp_path: Path, capsule_id: str = CAPSULE) -> dict[str, object]:
+    import pytest
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from novafabric.server.app import create_app
+    from novafabric.server.config import ServerConfig
+
+    app_ = create_app(ServerConfig(db_path=str(tmp_path / "server.db"), insecure_no_auth=True))
+    response = TestClient(app_, raise_server_exceptions=False).post(f"/v0/seal/{capsule_id}/verify")
+    assert response.status_code == 200, response.text
+    body: dict[str, object] = response.json()
+    return body
+
+
+def _approved_at_server_paths(tmp_path: Path, digest: str) -> None:
+    from novafabric._paths import nova_home
+    from novafabric.trust.novaseal.config import resolve_merkle_db_path
+
+    policy, _ = _approved(
+        tmp_path, digest, policy_db=resolve_merkle_db_path(), data_dir=nova_home()
+    )
+    policy.close()
+
+
+def test_server_verify_binds_the_capsule_content(tmp_path: Path) -> None:
+    capsule = make_capsule(CAPSULE)  # the server's capsule store
+    _approved_at_server_paths(tmp_path, capsule_content_digest(capsule))
+    body = _server_verify(tmp_path)
+    assert (body["passed"], body["content_checked"]) == (True, True), body
+    (capsule / "capsule.yaml").write_text(f"run_id: {CAPSULE}\nstatus: failure\n")
+    body = _server_verify(tmp_path)
+    assert (body["passed"], body["exit_code"]) == (False, 10), body
+
+
+def test_server_verify_of_a_capsule_it_does_not_hold_fails(tmp_path: Path) -> None:
+    _approved_at_server_paths(tmp_path, "a" * 64)
+    body = _server_verify(tmp_path)
+    assert (body["passed"], body["exit_code"]) == (False, 10), body

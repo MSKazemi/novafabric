@@ -109,7 +109,8 @@ def export_model_independence_cmd(
         for capsule_id in capsule_ids or []:
             assert resolved_policy_db is not None  # resolved above whenever capsule_ids
             rec = collect_seal_record(
-                capsule_id, data_dir=data_dir, policy_db=resolved_policy_db
+                capsule_id, data_dir=data_dir, policy_db=resolved_policy_db,
+                capsule_dir=_capsule_dir_or_absent(capsule_id),
             )
             if rec is not None:
                 records.append(rec)
@@ -145,3 +146,18 @@ def export_model_independence_cmd(
         )
     console.print(f"[dim]{escape(mif.banner)}[/dim]")
     raise typer.Exit(0)
+
+
+def _capsule_dir_or_absent(capsule_id: str) -> Path:
+    """The capsule *capsule_id* names, or a path that does not exist.
+
+    ``verify_sod`` recomputes the proposal's signed capsule digest from it (review
+    cli-b-01), so an approval of since-changed or missing content reads as unverified.
+    """
+    from novafabric import _paths
+    from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
+
+    try:
+        return resolve_capsule_ref(capsule_id)
+    except CapsuleRefError:
+        return _paths.default_capsule_dir() / capsule_id

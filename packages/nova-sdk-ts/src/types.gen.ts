@@ -880,6 +880,10 @@ export interface paths {
         /**
          * Verify Seal Chain
          * @description Run the five-check SoD verifier for a capsule's promote bundles.
+         *
+         *     The proposal's signed capsule digest is recomputed from the server's capsule
+         *     (review cli-b-01): content changed since the proposal, or a capsule the server
+         *     does not hold, fails with ``exit_code`` 10.
          */
         post: operations["verify_seal_chain_v0_seal__capsule_id__verify_post"];
         delete?: never;
@@ -1614,6 +1618,11 @@ export interface components {
             check_results: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Content Checked
+             * @default false
+             */
+            content_checked: boolean;
             /** Exit Code */
             exit_code: number;
             /** Message */
