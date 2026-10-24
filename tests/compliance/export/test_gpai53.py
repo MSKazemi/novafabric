@@ -110,3 +110,50 @@ class TestDiff:
 def test_build_requires_fields() -> None:
     with pytest.raises(ValueError, match="fields"):
         build_gpai53_form("gpai-x", initial_fields={}, created_at=_T0)
+
+
+# --- review compliance-privacy-22: every sealed field is bound, not only `fields` -----
+
+
+@pytest.mark.parametrize(("attr", "value"), [
+    ("retention_until", "2027-01-01T00:00:00Z"),  # ten years quietly shortened to one
+    ("created_at", "2020-01-01T00:00:00Z"),
+    ("revision", 7),
+])
+def test_a_silent_edit_of_any_sealed_attribute_is_rejected(attr: str, value: object) -> None:
+    from datetime import datetime, timezone
+
+    form = build_gpai53_form(
+        "gpai-x", initial_fields={"training_data": "summary"},
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    assert verify_history(form)
+    tampered = form.model_copy(deep=True)
+    setattr(tampered.revisions[0], attr, value)
+    assert not verify_history(tampered)
+
+
+def test_a_revision_moved_to_another_model_is_rejected() -> None:
+    from datetime import datetime, timezone
+
+    form = build_gpai53_form(
+        "gpai-x", initial_fields={"training_data": "summary"},
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    assert not verify_history(form.model_copy(update={"model_name": "gpai-y"}))
+
+
+def test_a_revision_sealed_before_v2_still_verifies_its_fields() -> None:
+    """Exported forms predate the full digest; they verify the way they were sealed."""
+    from novafabric.compliance.export.gpai53 import Gpai53Form, Gpai53Revision, _canonical_digest
+
+    fields = {"training_data": "summary"}
+    legacy = Gpai53Revision(
+        revision=1, fields=fields, created_at="2026-01-01T00:00:00Z",
+        retention_until="2036-01-01T00:00:00Z", content_digest=_canonical_digest(fields),
+    )
+    form = Gpai53Form(model_name="gpai-x", revisions=[legacy])
+    assert verify_history(form)
+    edited = form.model_copy(deep=True)
+    edited.revisions[0].fields["training_data"] = "changed"
+    assert not verify_history(edited)

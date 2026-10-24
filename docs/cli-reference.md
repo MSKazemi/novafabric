@@ -5316,7 +5316,7 @@ Subcommands and key options:
 - `iso42001 --catalog c.json` — `--evidence a,b`, `--capsule-id ID` (supplies the
   re-performable reference evidenced controls require; without it, evidenced controls
   honestly degrade to `not_evidenced`), `--out`.
-- `gpai53 --model NAME --fields f.json` — `--out`. `fields.json` is a `{field: value}` object.
+- `gpai53 --model NAME --fields f.json` — `--out`. `fields.json` is a `{field: value}` object. Each revision's `content_digest` (`digest_scheme: v2`) covers the whole revision — fields, `created_at`, `retention_until`, revision number, predecessor link — and the model name, so a silent edit to any of them fails verification. Revisions sealed before `v2` (no `digest_scheme`) covered `fields` only, and still verify only those.
 - `pmm --system NAME --findings f.json --occurred-at ISO` — `--period-start`, `--period-end`,
   `--out`. A serious finding (severity `critical`/`high`) must carry an
   `incident_classification`, or the command fails closed.

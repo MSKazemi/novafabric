@@ -69,6 +69,10 @@ class Gpai53Revision(BaseModel):
     retention_until: str
     content_digest: str
     prev_digest: str | None = None
+    #: ``"v2"``: ``content_digest`` covers the whole revision (minus itself) and the
+    #: model name. Absent on revisions sealed before review compliance-privacy-22,
+    #: whose digest covers ``fields`` only.
+    digest_scheme: str | None = None
 
 
 class Gpai53Form(BaseModel):
@@ -78,9 +82,25 @@ class Gpai53Form(BaseModel):
     revisions: list[Gpai53Revision] = Field(default_factory=list)
 
 
+_DIGEST_SCHEME = "v2"
+
+
 def _canonical_digest(fields: Mapping[str, str]) -> str:
-    """Deterministic ``sha256:`` digest of a revision's fields (sorted, compact JSON)."""
+    """Legacy digest: ``sha256:`` of a revision's fields only (sorted, compact JSON)."""
     payload = json.dumps(dict(fields), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return sha256_prefixed(payload)
+
+
+def _revision_digest(model_name: str, rev: Gpai53Revision) -> str:
+    """``sha256:`` of the whole revision minus ``content_digest``, bound to the model.
+
+    The legacy digest covered ``fields`` only, so shortening the ten-year
+    ``retention_until`` (or moving ``created_at``, renumbering, or reusing a
+    revision for another model) still verified (review compliance-privacy-22).
+    """
+    body = rev.model_dump(mode="json", exclude={"content_digest"})
+    body["model_name"] = model_name
+    payload = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return sha256_prefixed(payload)
 
 
@@ -104,19 +124,23 @@ def _iso(when: datetime) -> str:
 
 def _seal_revision(
     *,
+    model_name: str,
     revision: int,
     fields: Mapping[str, str],
     created_at: datetime,
     prev_digest: str | None,
 ) -> Gpai53Revision:
-    return Gpai53Revision(
+    rev = Gpai53Revision(
         revision=revision,
         fields=dict(fields),
         created_at=_iso(created_at),
         retention_until=_retention_until(created_at),
-        content_digest=_canonical_digest(fields),
+        content_digest="",
         prev_digest=prev_digest,
+        digest_scheme=_DIGEST_SCHEME,
     )
+    rev.content_digest = _revision_digest(model_name, rev)
+    return rev
 
 
 def build_gpai53_form(
@@ -133,7 +157,8 @@ def build_gpai53_form(
     if not initial_fields:
         raise ValueError("initial_fields must not be empty for an Art. 53 form")
     revision = _seal_revision(
-        revision=1, fields=initial_fields, created_at=created_at, prev_digest=None
+        model_name=model_name, revision=1, fields=initial_fields, created_at=created_at,
+        prev_digest=None,
     )
     return Gpai53Form(model_name=model_name, revisions=[revision])
 
@@ -149,6 +174,7 @@ def append_revision(
         raise ValueError("a revision must not have empty fields")
     latest = form.revisions[-1]
     revision = _seal_revision(
+        model_name=form.model_name,
         revision=latest.revision + 1,
         fields=fields,
         created_at=created_at,
@@ -164,10 +190,19 @@ def verify_history(form: Gpai53Form) -> bool:
     ``content_digest`` **and** every revision after the first carries its predecessor's
     digest in ``prev_digest``. A silent edit to a sealed revision, or a broken link,
     returns ``False``.
+
+    A ``v2`` revision binds every attribute and the model name. A revision sealed
+    before ``v2`` (no ``digest_scheme``) can only be checked for its ``fields``.
     """
     prev: str | None = None
     for rev in form.revisions:
-        if _canonical_digest(rev.fields) != rev.content_digest:
+        if rev.digest_scheme == _DIGEST_SCHEME:
+            expected = _revision_digest(form.model_name, rev)
+        elif rev.digest_scheme is None:
+            expected = _canonical_digest(rev.fields)
+        else:
+            return False  # a scheme this version does not know is not verified
+        if expected != rev.content_digest:
             return False
         if rev.prev_digest != prev:
             return False
