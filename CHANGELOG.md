@@ -79,6 +79,10 @@ longer forwards the submitting shell's environment (ADR-0270).
   directory that cannot be searched, or a `registries/` directory that cannot be listed, now counts as an active hold.
   Before, every delete crashed with a `PermissionError` on Python 3.12, and on Python 3.14 the hold was silently
   ignored and the delete went ahead.
+- **A masker failure can no longer leave a file unmasked but reported as masked.** A JSONL line the masking
+  pipeline could not walk was skipped, and a file whose masking failed was still counted as redacted in
+  `redaction-proof.json`. Such a line is now masked as text, and a file that still fails is redacted or dropped
+  according to the masker's policy and recorded as failed.
 
 ### Changed
 
@@ -97,6 +101,19 @@ longer forwards the submitting shell's environment (ADR-0270).
     removed, instead of running on and writing into the sealed capsule; `runner_metadata.cancelled` records it;
   - the PII email patterns (cap-001 detector, masking example) are linear-time: a long `@`-less line (a hex dump,
     a minified blob) cost minutes per 64 KiB in the `--pii-subject` stage.
+  - a masker that hung (a stuck network call, a pathological regex) held `nova capture` open forever; it now runs on
+    a daemon thread, is abandoned at its timeout, and is skipped for the rest of the run;
+  - the MCP stdio proxy stopped forwarding when recording one message failed (ENOSPC, a refused write): every later
+    response was dropped and the client hung on its next `tools/call`; recording failures now cost only that record;
+  - the A2A interceptor raised `TypeError` on a protobuf message and broke `send_message`; it records the message's
+    JSON form, and its hooks never raise into the call (strict mode's `ConcurrentCaptureRefused` still does);
+  - `@agent` recorded `sys.exit(3)` and Ctrl-C as `status: success, exit_code: 0`; they now record their own exit
+    code (130 for Ctrl-C) and are re-raised. An `async def` agent was finalised before it ran (`success, 0 model
+    calls`); the decorated function now stays a coroutine function and is captured while it runs;
+  - in `@agent` and every framework adapter, a capture failure in teardown (ENOSPC writing `env.lock`, a source
+    checkout without package metadata) replaced the call's own return value or exception. Each step is now
+    fail-open: the capsule is still scanned and written, is not sealed, and `metadata.finalization_error` reads
+    `capture incomplete: <step>: <error type>`. An unwritable `@agent` capsule store runs the function uncaptured.
 - Dashboard: the Diff tab reported two runs as identical when their model calls changed, were added or were removed;
   it now shows the server's own counts and what changed in each pair. The run inspector showed a made-up
   `redaction-proof.json` (zero findings, fixed chain hash) and `env.lock` for every real run; it now shows the
