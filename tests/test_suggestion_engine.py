@@ -890,3 +890,48 @@ def test_suggest_register_interactive_edit(tmp_path: Path):
     assert result.exit_code == 0
     assert out_dir.exists()
     assert any(f.suffix == ".yaml" for f in out_dir.iterdir())
+
+
+# ── review cli-b-14: --auto reports failures and exits 1 ─────────────────────
+
+
+def _auto_model_run(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    import os
+
+    runs_dir = tmp_path / "runs"
+    d = runs_dir / "01AUTOFAIL"
+    d.mkdir(parents=True)
+    rec = {"gen_ai.system": "openai", "gen_ai.request.model": "gpt-4o-2024-08-06",
+           "gen_ai.response.model": "gpt-4o-2024-08-06"}
+    (d / "model-calls.jsonl").write_text(json.dumps(rec))
+    (d / "tool-calls.jsonl").write_text("")
+    (d / "capsule.yaml").write_text(yaml.dump(
+        {"run_id": "01AUTOFAIL", "schema_version": "0.1.0", "command": [], "exit_code": 0,
+         "status": "success"}
+    ))
+    return runs_dir, {**os.environ, "NOVAFABRIC_DB_PATH": str(tmp_path / "reg.db")}
+
+
+def test_auto_counts_a_failed_registration_as_failed_and_exits_1(tmp_path: Path) -> None:
+    """Every draft failed (validation or DB error) and it still printed
+    "Done. N registered", exit 0 in CI."""
+    from unittest.mock import patch
+
+    runs_dir, env = _auto_model_run(tmp_path)
+    with patch("novafabric.registry.service.register_asset", side_effect=RuntimeError("db locked")):
+        result = cli_runner.invoke(app, [
+            "suggest-register", "--runs-dir", str(runs_dir), "--auto", "--min-confidence", "0.9",
+            "--output-dir", str(tmp_path / "drafts"),
+        ], env=env)
+    assert result.exit_code == 1, result.output
+    assert "0 registered" in result.output and "1 failed" in result.output
+
+
+def test_auto_success_reports_what_it_registered(tmp_path: Path) -> None:
+    runs_dir, env = _auto_model_run(tmp_path)
+    result = cli_runner.invoke(app, [
+        "suggest-register", "--runs-dir", str(runs_dir), "--auto", "--min-confidence", "0.9",
+        "--output-dir", str(tmp_path / "drafts"),
+    ], env=env)
+    assert result.exit_code == 0, result.output
+    assert "1 registered" in result.output and "0 failed" in result.output

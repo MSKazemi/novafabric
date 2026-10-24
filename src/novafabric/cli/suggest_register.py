@@ -11,15 +11,20 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections import Counter
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from novafabric._paths import default_capsule_dir
 from novafabric.registry.suggestion_engine import RegistrationSuggestion, SuggestionEngine
+
+#: What registering one draft did.
+Outcome = Literal["registered", "duplicate", "failed"]
 
 console = Console()
 
@@ -127,14 +132,19 @@ def suggest_register_cmd(
                 f"[yellow]No suggestions with confidence ≥ {min_confidence:.1f}.[/yellow]"
             )
             return
-        for s in eligible:
-            _register_suggestion(s, output_dir, db_path)
+        auto_outcomes: Counter[Outcome] = Counter(
+            _register_suggestion(s, output_dir, db_path) for s in eligible
+        )
+        _print_outcomes(auto_outcomes)
+        # A CI step must not pass when a registration failed (review cli-b-14).
+        if auto_outcomes["failed"]:
+            raise typer.Exit(1)
         return
 
     # Interactive mode
     draft_dir = output_dir or Path(".novafabric/drafts")
     draft_dir.mkdir(parents=True, exist_ok=True)
-    registered = 0
+    outcomes: Counter[Outcome] = Counter()
     skipped = 0
     for i, s in enumerate(suggestions, 1):
         header = (
@@ -150,20 +160,29 @@ def suggest_register_cmd(
             default="n",
         ).strip().lower()
         if choice == "y":
-            _register_suggestion(s, draft_dir, db_path)
-            registered += 1
+            outcomes[_register_suggestion(s, draft_dir, db_path)] += 1
         elif choice in ("e", "edit"):
             draft_path = _write_single_draft(s, draft_dir)
             console.print(f"  Draft written to: {draft_path}")
             _open_editor(draft_path)
             if typer.confirm("  Register from edited spec?", default=True):
-                _register_from_file(draft_path, db_path)
-                registered += 1
+                outcomes[_register_from_file(draft_path, db_path)] += 1
         else:
             skipped += 1
             console.print("  → Skipped")
 
-    console.print(f"\nDone. {registered} registered, {skipped} skipped.")
+    _print_outcomes(outcomes, skipped=skipped)
+
+
+def _print_outcomes(outcomes: Counter[Outcome], *, skipped: int | None = None) -> None:
+    parts = [
+        f"{outcomes['registered']} registered",
+        f"{outcomes['duplicate']} already registered",
+        f"{outcomes['failed']} failed",
+    ]
+    if skipped is not None:
+        parts.append(f"{skipped} skipped")
+    console.print(f"\nDone. {', '.join(parts)}.")
 
 
 def _print_summary_table(suggestions: list[RegistrationSuggestion]) -> None:
@@ -205,26 +224,31 @@ def _write_single_draft(s: RegistrationSuggestion, output_dir: Path) -> Path:
 
 def _register_suggestion(
     s: RegistrationSuggestion, draft_dir: Path | None, db_path: Path | None
-) -> None:
+) -> Outcome:
     draft_dir = draft_dir or Path(".novafabric/drafts")
     draft_path = _write_single_draft(s, draft_dir)
-    _register_from_file(draft_path, db_path)
+    return _register_from_file(draft_path, db_path)
 
 
-def _register_from_file(spec_path: Path, db_path: Path | None) -> None:
+def _register_from_file(spec_path: Path, db_path: Path | None) -> Outcome:
+    """Register one draft; return what happened, never raise."""
     from novafabric.registry.service import DuplicateAssetError, register_asset
     from novafabric.spec.validator import SpecValidationError, validate_spec
 
     try:
         spec = validate_spec(spec_path)
         register_asset(spec, spec_path=spec_path, db_path=db_path)
-        console.print(f"  [green]✓[/green] Registered {spec.name}@{spec.version}")
     except SpecValidationError as exc:
-        console.print(f"  [red]Validation error:[/red] {exc}")
+        console.print(f"  [red]Validation error:[/red] {escape(str(exc))}")
+        return "failed"
     except DuplicateAssetError:
         console.print("  [yellow]Already registered[/yellow] (skipped)")
+        return "duplicate"
     except Exception as exc:
-        console.print(f"  [red]Error:[/red] {exc}")
+        console.print(f"  [red]Error:[/red] {escape(str(exc))}")
+        return "failed"
+    console.print(f"  [green]✓[/green] Registered {spec.name}@{spec.version}")
+    return "registered"
 
 
 def _open_editor(path: Path) -> None:

@@ -5583,7 +5583,7 @@ capture first, then let NovaFabric propose what to register from observed eviden
 
 - **Interactive** (default) — prompts per suggestion: `y` register, `n` skip, `e` open editor, `s` skip.
 - `--draft-only` — write draft YAML files to `--output-dir` without registering.
-- `--auto` — register all suggestions above `--min-confidence` (default 0.8) without prompting.
+- `--auto` — register all suggestions above `--min-confidence` (default 0.8) without prompting. Prints `N registered, D already registered, F failed` and exits `1` when any registration failed (a draft that does not validate, a registry error), so it can gate a CI step.
 
 **Options:**
 
