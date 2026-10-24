@@ -29,7 +29,13 @@ from novafabric.eval.inspect_interop import (
     export_inspect_log,
     import_inspect_log,
 )
-from novafabric.eval.scores import SCORES_FILENAME, ScoreSource, ScoreValueType, write_scores
+from novafabric.eval.scores import (
+    SCORES_FILENAME,
+    ScoreSource,
+    ScoreValueType,
+    read_scores,
+    write_scores,
+)
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 VALID_LOG = FIXTURES / "inspect_log_valid.json"
@@ -104,10 +110,13 @@ def test_import_unmapped_fields_enumerated_not_dropped() -> None:
     # eval-header fields without a native target are preserved
     assert "eval.revision" in result.unmapped
     assert "eval.packages" in result.unmapped
-    # scorer answer/explanation extras are preserved
-    assert result.unmapped["samples[0].scores.model_graded_qa"]["answer"] == "Paris"
-    # sample metadata has no Score target
-    assert result.unmapped["samples[0].metadata"] == {"category": "geography"}
+    # review eval-adapters-query-20: a scorer's answer/explanation (model output and
+    # judge text) and sample metadata are content — enumerated by name, never copied
+    assert "samples[0].scores.model_graded_qa.answer" in result.omitted
+    assert "samples[0].metadata" in result.omitted
+    assert "samples[0].scores.model_graded_qa" not in result.unmapped
+    assert "samples[0].metadata" not in result.unmapped
+    assert "Paris" not in result.model_dump_json()
 
 
 def test_import_content_fields_omitted_by_name() -> None:
@@ -328,3 +337,23 @@ def test_roundtrip_preserves_header_and_scorer_results(tmp_path: Path) -> None:
             assert out_value == (float(orig_value) if isinstance(orig_value, int) else orig_value)
     # the exported dict is JSON-serializable end to end
     json.dumps(log)
+
+
+def test_export_reads_a_correction_in_place_of_the_score_it_supersedes(tmp_path: Path) -> None:
+    """The -09 residual: the export aggregated a corrected score together with its
+    correction (count doubled, mean averaged over both)."""
+    cap = _imported_capsule(tmp_path)
+    scores = read_scores(cap / SCORES_FILENAME)
+    graded = [s for s in scores if s.name == "model_graded_qa"]
+    original = graded[0]
+    correction = original.model_copy(
+        update={"score_id": "01HZZZZZZZZZZZZZZZZZZZZZZC", "value": 0.0, "supersedes": original.score_id}
+    )
+    write_scores(cap / SCORES_FILENAME, [*scores, correction])
+    log = export_inspect_log(cap)
+    (entry,) = [r for r in log["results"]["scores"] if r["name"] == "model_graded_qa"]
+    effective = [correction, *graded[1:]]
+    assert entry["metrics"]["count"]["value"] == len(graded)
+    assert entry["metrics"]["mean"]["value"] == pytest.approx(
+        sum(float(s.value) for s in effective) / len(effective)
+    )

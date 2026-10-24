@@ -29,8 +29,9 @@ Honesty invariants (ADR-0021 §4, spec R2–R4):
   :data:`INSPECT_MAPPING_VERSION`.
 - **Nothing dropped silently.** Inspect fields with no ``Score`` target are
   preserved in the result's ``unmapped`` block (``org.inspect.*`` namespace on
-  disk). Content-bearing fields (prompts, model output, message transcripts)
-  are **enumerated by name** in ``omitted`` but deliberately not copied —
+  disk). Content-bearing fields (prompts, model output, message transcripts,
+  sample ``metadata``, and a score's ``answer`` / ``explanation`` / ``metadata`` /
+  ``history``) are **enumerated by name** in ``omitted`` but deliberately not copied —
   full-content span import is the planned capsule-level bridge, and NovaFabric
   never captures prompt/response bytes by default.
 - **Foreign provenance is explicit.** Imported scores carry
@@ -58,6 +59,7 @@ from novafabric.eval.scores import (
     Score,
     ScoreSource,
     ScoreValueType,
+    effective_scores,
     read_scores,
 )
 
@@ -77,7 +79,14 @@ IMPORT_RECORD_PATH = Path("extensions") / INSPECT_EXTENSION_NS / "import.json"
 #: (ADR-0021 §4; the span-level bridge is the planned home for content import).
 _CONTENT_FIELDS = (
     "input", "choices", "target", "messages", "output", "events", "store", "attachments",
+    # Dataset-supplied per-sample data: as content-bearing as the input it describes.
+    "metadata",
 )
+
+#: Score-record fields that carry content: the scorer's view of the model output
+#: (``answer``), a judge's text (``explanation``), and free-form ``metadata`` /
+#: ``history``. Enumerated by name in ``omitted``, never copied.
+_SCORE_CONTENT_FIELDS = ("answer", "explanation", "metadata", "history")
 
 #: Sample fields the score mapping consumes directly.
 _MAPPED_SAMPLE_FIELDS = ("id", "epoch", "scores")
@@ -245,10 +254,13 @@ def import_inspect_log(path: str | Path) -> InspectImportResult:
                             eval_card_digest=_scorer_card_digest(scorer),
                         )
                     )
+                for k, v in record.items():
+                    if k in _SCORE_CONTENT_FIELDS and v is not None:
+                        omitted.append(f"{loc}.{k}")
                 extras = {
                     k: v
                     for k, v in record.items()
-                    if k != "value" and v is not None
+                    if k != "value" and k not in _SCORE_CONTENT_FIELDS and v is not None
                 }
                 if extras:
                     unmapped[loc] = extras
@@ -324,7 +336,8 @@ def export_inspect_log(capsule: str | Path) -> dict[str, Any]:
     capsule_dir = Path(capsule)
     if not capsule_dir.is_dir():
         raise FileNotFoundError(f"not a capsule directory: {capsule_dir}")
-    scores = read_scores(capsule_dir / SCORES_FILENAME, capsule_member=True)
+    # A correction replaces the score it supersedes (ADR-0119), here as in nova query.
+    scores = effective_scores(read_scores(capsule_dir / SCORES_FILENAME, capsule_member=True))
 
     record = _read_import_record(capsule_dir)
     prov = record.get("provenance", {}) if isinstance(record.get("provenance"), dict) else {}

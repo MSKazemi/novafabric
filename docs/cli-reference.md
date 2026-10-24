@@ -6382,11 +6382,13 @@ content-addressed `eval_card_digest` derived from the foreign scorer identity + 
 *not* a signed NovaFabric eval card). The mapping is versioned and only pinned Inspect log versions are
 accepted; an unsupported `version` errors naming it. **Nothing is dropped silently:** Inspect fields with
 no `Score` target are preserved in `extensions/org.inspect/import.json` (`unmapped`), and content-bearing
-fields (prompts, outputs, transcripts) are enumerated by name in `omitted` but never copied (ADR-0021 §4).
+fields (prompts, outputs, transcripts, sample `metadata`, and a scorer's `answer` / `explanation` /
+`metadata` / `history`) are enumerated by name in `omitted` but never copied (ADR-0021 §4).
 The log's dataset name is also recorded as an NF-028 `dataset_provenance` facet (status `unknown` — Inspect
 logs carry no content hashes).
 
-**Export** produces an Inspect-shaped JSON log from the capsule's `scores.jsonl`: one sample per span
+**Export** produces an Inspect-shaped JSON log from the capsule's `scores.jsonl`, reading a correction in
+place of the score it supersedes (ADR-0119): one sample per span
 subject, per-scorer aggregates under `results.scores` (booleans → `accuracy`, numerics → `mean`), and
 NovaFabric identities carried in score `metadata` under `dev.novafabric.*` keys. A capsule imported from
 Inspect restores the preserved task/model/run-id header; a capsule without scores exports a valid empty
