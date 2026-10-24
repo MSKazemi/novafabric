@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactElement } from 'react';
 import ChartCard from '../ui/ChartCard';
 import { formatSI } from '../../lib/chartFormat';
 
@@ -70,7 +70,11 @@ export default function ReportChart({
     const yOf = (v: number) => MT + plotH * (1 - (v - lo) / span);
     const color = (ki: number) => spec.colors[ki % spec.colors.length] ?? '#3987e5';
 
-    const marks: string[] = [];
+    // React elements, never a string of markup: labels come from capsules (a
+    // recorded command[0], say) and colours from the server catalog, so string-built
+    // SVG injected with dangerouslySetInnerHTML was a stored XSS (review
+    // frontend-dashboard-01). React escapes text and attribute values.
+    const marks: ReactElement[] = [];
     if (spec.kind === 'bar' || spec.kind === 'stacked-bar') {
       const barW = Math.max(2, slot * 0.6);
       order.forEach((ri, i) => {
@@ -81,7 +85,16 @@ export default function ReportChart({
           const h = Math.abs(yOf(0) - yOf(v));
           const yTop = spec.kind === 'stacked-bar' ? yBase - h : Math.min(yOf(v), yOf(0));
           marks.push(
-            `<rect x="${(xOf(i) - barW / 2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(h, 1).toFixed(1)}" fill="${color(ki)}"><title>${labels[ri]} · ${k}: ${v}</title></rect>`,
+            <rect
+              key={`bar-${ri}-${ki}`}
+              x={(xOf(i) - barW / 2).toFixed(1)}
+              y={yTop.toFixed(1)}
+              width={barW.toFixed(1)}
+              height={Math.max(h, 1).toFixed(1)}
+              fill={color(ki)}
+            >
+              <title>{`${labels[ri]} · ${k}: ${v}`}</title>
+            </rect>,
           );
           if (spec.kind === 'stacked-bar') yBase = yTop;
         });
@@ -94,7 +107,15 @@ export default function ReportChart({
           .map(p => `${xOf(p.i).toFixed(1)},${yOf(p.v).toFixed(1)}`);
         if (pts.length > 1) {
           marks.push(
-            `<polyline points="${pts.join(' ')}" fill="none" stroke="${color(ki)}" stroke-width="2"><title>${k}</title></polyline>`,
+            <polyline
+              key={`line-${ki}`}
+              points={pts.join(' ')}
+              fill="none"
+              stroke={color(ki)}
+              strokeWidth={2}
+            >
+              <title>{k}</title>
+            </polyline>,
           );
         }
       });
@@ -102,21 +123,43 @@ export default function ReportChart({
 
     // Sparse x labels: first, middle, last.
     const labelIdx = n <= 3 ? order.map((_, i) => i) : [0, Math.floor(n / 2), n - 1];
-    const xLabels = labelIdx
-      .map(
-        i =>
-          `<text x="${xOf(i).toFixed(1)}" y="${HEIGHT - 8}" text-anchor="middle" font-size="9" fill="currentColor" opacity="0.6">${labels[order[i]].slice(0, 16)}</text>`,
-      )
-      .join('');
-    const yTicks = [lo, (lo + hi) / 2, hi]
-      .map(
-        v =>
-          `<text x="${ML - 6}" y="${(yOf(v) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="currentColor" opacity="0.6">${formatSI(Math.round(v * 100) / 100)}</text>` +
-          `<line x1="${ML}" x2="${W - MR}" y1="${yOf(v).toFixed(1)}" y2="${yOf(v).toFixed(1)}" stroke="currentColor" opacity="0.12"/>`,
-      )
-      .join('');
+    const xLabels = labelIdx.map(i => (
+      <text
+        key={`x-${i}`}
+        x={xOf(i).toFixed(1)}
+        y={HEIGHT - 8}
+        textAnchor="middle"
+        fontSize={9}
+        fill="currentColor"
+        opacity={0.6}
+      >
+        {labels[order[i]].slice(0, 16)}
+      </text>
+    ));
+    const yTicks = [lo, (lo + hi) / 2, hi].map((v, ti) => (
+      <g key={`y-${ti}`}>
+        <text
+          x={ML - 6}
+          y={(yOf(v) + 3).toFixed(1)}
+          textAnchor="end"
+          fontSize={9}
+          fill="currentColor"
+          opacity={0.6}
+        >
+          {formatSI(Math.round(v * 100) / 100)}
+        </text>
+        <line
+          x1={ML}
+          x2={W - MR}
+          y1={yOf(v).toFixed(1)}
+          y2={yOf(v).toFixed(1)}
+          stroke="currentColor"
+          opacity={0.12}
+        />
+      </g>
+    ));
 
-    return { svg: yTicks + xLabels + marks.join('') };
+    return { elements: [...yTicks, ...xLabels, ...marks] };
   }, [spec, rows, filters]);
 
   if (!chart) return null;
@@ -147,9 +190,9 @@ export default function ReportChart({
           className="w-full text-[var(--color-text)]"
           role="img"
           aria-label={spec.title}
-          // eslint-disable-next-line react/no-danger
-          dangerouslySetInnerHTML={{ __html: chart.svg }}
-        />
+        >
+          {chart.elements}
+        </svg>
       </ChartCard>
     </div>
   );
