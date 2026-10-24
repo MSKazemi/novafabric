@@ -49,7 +49,7 @@ except ImportError:  # pragma: no cover - PyYAML is a runtime dependency
     yaml = None  # type: ignore[assignment]
 
 #: Recorded in ``promotion_proposals.signoff_scheme`` for rows written under ADR-0312.
-SIGNOFF_SCHEME = "nova-promote-signoff/v1"
+SIGNOFF_SCHEME = "nova-promote-signoff/v2"
 
 Role = Literal["proposer", "approver"]
 Party = Literal["proposer", "approver"]
@@ -107,21 +107,37 @@ def _canonical(doc: dict[str, str]) -> bytes:
     )
 
 
-def proposal_payload(*, proposal_id: str, name: str, version: str, to_status: str) -> bytes:
-    """Bytes the maker signs: scheme, step, proposal id, asset ref and target stage."""
+def proposal_payload(
+    *, proposal_id: str, name: str, version: str, to_status: str, spec_sha256: str
+) -> bytes:
+    """Bytes the maker signs: scheme, step, proposal id, asset ref, its content and stage.
+
+    Review replay-lineage-registry-04: v1 signed ``name@version`` only, so unregistering
+    and re-registering different content under the same version between propose and
+    approve promoted content nobody reviewed. *spec_sha256* (``spec_digest`` of the
+    asset's ``spec_json``) binds the signature to the reviewed content; the scheme is
+    v2 so a v1 signature can never verify.
+    """
     return _canonical(
         {
             "scheme": SIGNOFF_SCHEME,
             "step": "propose",
             "proposal_id": proposal_id,
             "asset": f"{name}@{version}",
+            "spec_sha256": spec_sha256,
             "to_status": to_status,
         }
     )
 
 
 def approval_payload(
-    *, proposal_id: str, name: str, version: str, to_status: str, proposer_sig: str
+    *,
+    proposal_id: str,
+    name: str,
+    version: str,
+    to_status: str,
+    proposer_sig: str,
+    spec_sha256: str,
 ) -> bytes:
     """Bytes the checker signs: the proposal fields plus a hash of the maker's signature.
 
@@ -134,6 +150,7 @@ def approval_payload(
             "step": "approve",
             "proposal_id": proposal_id,
             "asset": f"{name}@{version}",
+            "spec_sha256": spec_sha256,
             "to_status": to_status,
             "proposer_sig_sha256": hashlib.sha256(proposer_sig.encode("utf-8")).hexdigest(),
         }

@@ -206,7 +206,11 @@ def test_a_approval_signature_is_bound_to_the_proposal(env: Env) -> None:
     """A valid approval signature over a *different* proposal does not transfer."""
     import uuid
 
-    from novafabric.registry.service import approve_promotion, get_open_proposal
+    from novafabric.registry.service import (
+        approve_promotion,
+        asset_spec_sha256,
+        get_open_proposal,
+    )
     from novafabric.registry.signers import InvalidSignatureError, approval_payload
 
     assert _propose("alice").exit_code == 0
@@ -216,6 +220,7 @@ def test_a_approval_signature_is_bound_to_the_proposal(env: Env) -> None:
     other = approval_payload(
         proposal_id=str(uuid.uuid4()), name=NAME, version=VERSION,
         to_status=open_["to_status"], proposer_sig=open_["proposer_sig"],
+        spec_sha256=asset_spec_sha256(NAME, VERSION, db_path=env.db),
     )
     with pytest.raises(InvalidSignatureError):
         approve_promotion(

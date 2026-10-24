@@ -5713,7 +5713,8 @@ signers:
 #### nova promote propose \<name@version\> --to \<status\> --identity NAME
 
 Open a maker-checker proposal (maker step). Signs a canonical payload with the keyring key
-for `--identity`: proposal id, asset ref, target stage, and a domain-separation tag. Before
+for `--identity`: proposal id, asset ref, the SHA-256 of the asset's registered spec
+(`spec_sha256`), target stage, and a domain-separation tag (`nova-promote-signoff/v2`). Before
 the proposal is stored, the signature is verified with the public key the trust list
 binds to that identity, and the identity must hold the `proposer` role.
 
@@ -5723,6 +5724,10 @@ binds to that identity, and the identity must hold the `proposer` role.
   to another identity, the role is missing, or the signature does not verify.
 - An open proposal stored before ADR-0312 (unverified) is marked `superseded` by the new
   proposal instead of blocking the asset.
+- The signature covers the asset's **content**, not only `name@version`: releases up to
+  v0.107.0 signed the reference alone, so `unregister` + `register` of different content
+  under the same version between propose and approve promoted content nobody reviewed.
+  `unregister` now also supersedes the asset's open proposal.
 
 #### nova promote approve \<name@version\> --identity NAME
 
@@ -5730,8 +5735,10 @@ Approve the open proposal for `name@version` (checker step). The approver signs 
 bound to that exact proposal: its id, target stage and a hash of the maker's signature.
 Before anything changes:
 
-- The stored **maker** signature is re-verified against the trust list. An edited
-  proposal, or a maker since removed from the list, is refused with exit `3`. A proposal
+- The stored **maker** signature is re-verified against the trust list **over the asset's
+  current content**. An edited proposal, a maker since removed from the list, or an asset
+  whose spec changed since it was proposed is refused with exit `3` — as is a proposal signed
+  with the v1 scheme (before content binding): re-propose it. A proposal
   stored before ADR-0312 reads as `unverified` and is refused with exit `3`; open a new
   one with `propose`.
 - The **checker** signature must verify with the key bound to `--identity`, and that

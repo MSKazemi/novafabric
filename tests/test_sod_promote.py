@@ -16,6 +16,7 @@ from novafabric.registry.service import (
     SelfApprovalError,
     SoDViolationError,
     approve_promotion,
+    asset_spec_sha256,
     get_open_proposal,
     new_proposal_id,
     promote_asset,
@@ -88,7 +89,10 @@ def _propose(
     key, fp = ensure_keypair(who)
     pid = new_proposal_id()
     sig = sign_payload(
-        key, proposal_payload(proposal_id=pid, name=NAME, version=VERSION, to_status=to.value)
+        key, proposal_payload(
+            proposal_id=pid, name=NAME, version=VERSION, to_status=to.value,
+            spec_sha256=asset_spec_sha256(NAME, VERSION, db_path=tmp_db),  # rlr-04
+        )
     )
     return propose_promotion(
         NAME, VERSION, to, who, fp, sig, db_path=tmp_db, proposal_id=pid, trust_list=trust
@@ -104,6 +108,7 @@ def _approve(tmp_db: Path, trust: SignerTrustList, who: str = "bob") -> dict[str
         approval_payload(
             proposal_id=open_["proposal_id"], name=NAME, version=VERSION,
             to_status=open_["to_status"], proposer_sig=open_["proposer_sig"],
+            spec_sha256=asset_spec_sha256(NAME, VERSION, db_path=tmp_db),
         ),
     )
     return approve_promotion(
@@ -314,3 +319,39 @@ def test_audit_entries_written(
     assert AuditEventType.PROMOTE_APPROVE in event_types
     approve = next(e for e in lines if e["event_type"] == AuditEventType.PROMOTE_APPROVE)
     assert approve["actor"] == "bob"
+
+
+# --- review replay-lineage-registry-04: the sign-off binds the reviewed content -------
+
+
+def test_content_changed_after_the_proposal_cannot_be_approved(
+    tmp_path: Path, trust: SignerTrustList
+) -> None:
+    """The maker signed the asset's spec digest; swapped content fails re-verification."""
+    from novafabric.registry.signers import SignerVerificationError
+
+    tmp_db = tmp_path / "test.db"
+    _register_model(tmp_db)
+    _promote_to_validated(tmp_db)
+    _propose(tmp_db, trust)
+    conn = get_connection(tmp_db)
+    conn.execute(
+        "UPDATE assets SET spec_json = ? WHERE name = ? AND version = ?",
+        ('{"description": "SWAPPED content nobody reviewed"}', NAME, VERSION),
+    )
+    conn.commit()
+    conn.close()
+    with pytest.raises(SignerVerificationError, match="content changed"):
+        _approve(tmp_db, trust)
+
+
+def test_unregistering_supersedes_the_open_proposal(tmp_path: Path, trust: SignerTrustList) -> None:
+    from novafabric.registry.service import unregister_asset
+
+    tmp_db = tmp_path / "test.db"
+    _register_model(tmp_db)
+    _promote_to_validated(tmp_db)
+    _propose(tmp_db, trust)
+    unregister_asset(NAME, VERSION, actor="mallory", db_path=tmp_db)
+    _register_model(tmp_db)  # different content may now be registered under this version
+    assert get_open_proposal(NAME, VERSION, db_path=tmp_db) is None

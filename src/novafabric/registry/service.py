@@ -20,6 +20,7 @@ from novafabric.policy import (
 from novafabric.registry.signers import (
     SIGNOFF_SCHEME,
     SignerTrustList,
+    SignerVerificationError,
     TrustedSigner,
     UnverifiedProposalError,
     approval_payload,
@@ -1405,6 +1406,13 @@ def unregister_asset(
                 (name, version),
             )
             conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+            # rlr-04: an open proposal reviewed the content just removed; it must not
+            # carry over to whatever is registered under this version next.
+            conn.execute(
+                "UPDATE promotion_proposals SET state = 'superseded' "
+                "WHERE asset_name = ? AND asset_version = ? AND state = 'open'",
+                (name, version),
+            )
             conn.commit()
         except Exception:
             conn.rollback()
@@ -1637,6 +1645,22 @@ def get_open_proposal(
     return result
 
 
+def asset_spec_sha256(name: str, version: str, db_path: Path | None = None) -> str:
+    """``spec_digest`` of the registered asset's ``spec_json`` — what a maker-checker
+    proposal and approval sign (review replay-lineage-registry-04)."""
+    conn = get_connection(db_path)
+    init_schema(conn)
+    try:
+        row = conn.execute(
+            "SELECT spec_json FROM assets WHERE name = ? AND version = ?", (name, version)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise AssetNotFoundError(f"Asset '{name}@{version}' not found.")
+    return spec_digest(row["spec_json"])
+
+
 def propose_promotion(
     name: str,
     version: str,
@@ -1691,7 +1715,7 @@ def propose_promotion(
             role="proposer",
             payload=proposal_payload(
                 proposal_id=proposal_id, name=name, version=version,
-                to_status=to_status.value,
+                to_status=to_status.value, spec_sha256=spec_digest(row["spec_json"]),
             ),
             signature=proposer_sig,
             party="proposer",
@@ -1818,23 +1842,40 @@ def approve_promotion(
                 party="proposer",
             )
 
-        maker = trust.verify(
-            claimed_identity=str(proposal["proposer"]),
-            key_fp=str(proposal["proposer_key_fp"]),
-            role="proposer",
-            payload=proposal_payload(
-                proposal_id=proposal_id, name=name, version=version, to_status=to_status
-            ),
-            signature=str(proposal["proposer_sig"]),
-            party="proposer",
-        )
+        asset_row = conn.execute(
+            "SELECT spec_json FROM assets WHERE name = ? AND version = ?", (name, version)
+        ).fetchone()
+        if not asset_row:
+            raise AssetNotFoundError(f"Asset '{name}@{version}' not found.")
+        # Review replay-lineage-registry-04: the maker signed the content's digest, so
+        # re-verifying over the *current* content refuses a swap made since.
+        current_sha256 = spec_digest(asset_row["spec_json"])
+        try:
+            maker = trust.verify(
+                claimed_identity=str(proposal["proposer"]),
+                key_fp=str(proposal["proposer_key_fp"]),
+                role="proposer",
+                payload=proposal_payload(
+                    proposal_id=proposal_id, name=name, version=version,
+                    to_status=to_status, spec_sha256=current_sha256,
+                ),
+                signature=str(proposal["proposer_sig"]),
+                party="proposer",
+            )
+        except SignerVerificationError as exc:
+            raise SignerVerificationError(
+                f"{exc} — the proposal does not cover '{name}@{version}' as it is now: its "
+                "content changed since it was proposed, or the proposal was signed before "
+                "content binding (scheme v1). Re-propose to review the current content.",
+                party="proposer",
+            ) from exc
         checker = trust.verify(
             claimed_identity=approver,
             key_fp=approver_key_fp,
             role="approver",
             payload=approval_payload(
                 proposal_id=proposal_id, name=name, version=version, to_status=to_status,
-                proposer_sig=str(proposal["proposer_sig"]),
+                proposer_sig=str(proposal["proposer_sig"]), spec_sha256=current_sha256,
             ),
             signature=approver_sig,
             party="approver",

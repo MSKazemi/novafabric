@@ -17,6 +17,7 @@ from novafabric.registry.service import (
     SelfApprovalError,
     SoDViolationError,
     approve_promotion,
+    asset_spec_sha256,
     get_open_proposal,
     new_proposal_id,
     promote_asset_direct,
@@ -306,8 +307,14 @@ def promote_propose_cmd(
 
     private_key, key_fp = _load_signing_key(identity)
     proposal_id = new_proposal_id()
+    try:
+        spec_sha256 = asset_spec_sha256(name, version)
+    except AssetNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise typer.Exit(code=1) from None
     payload = proposal_payload(
-        proposal_id=proposal_id, name=name, version=version, to_status=to.value
+        proposal_id=proposal_id, name=name, version=version, to_status=to.value,
+        spec_sha256=spec_sha256,
     )
     sig = sign_payload(private_key, payload)
 
@@ -369,12 +376,19 @@ def promote_approve_cmd(
     if proposal is None:
         console.print(f"[red]No open promotion proposal found for '{name}@{version}'.[/red]")
         raise typer.Exit(code=1)
+    try:
+        # The checker signs the content as it is now (rlr-04).
+        spec_sha256 = asset_spec_sha256(name, version)
+    except AssetNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise typer.Exit(code=1) from None
     payload = approval_payload(
         proposal_id=str(proposal["proposal_id"]),
         name=name,
         version=version,
         to_status=str(proposal["to_status"]),
         proposer_sig=str(proposal["proposer_sig"]),
+        spec_sha256=spec_sha256,
     )
     sig = sign_payload(private_key, payload)
 
