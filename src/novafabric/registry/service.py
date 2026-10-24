@@ -976,8 +976,16 @@ def approve_asset(
     approver: str,
     note: str = "",
     db_path: Path | None = None,
+    *,
+    authenticated_as: str | None = None,
 ) -> dict[str, Any]:
     """Record an approval sign-off for an asset pending approval.
+
+    *approver* is stored in the approvals table as given. When the caller is an
+    authenticated surface whose *approver* is only a caller-chosen label (``nova
+    serve``: a shared token), pass *authenticated_as* (``serve:<token fp>``): the
+    hash-chained APPROVE entry is then attributed to it and records *approver* as
+    ``approver_label`` — a claim, not an identity (review serve-07).
 
     Returns a dict with keys: asset_name, asset_version, approver,
     approved_at, approval_id.
@@ -1015,11 +1023,14 @@ def approve_asset(
         conn.close()
 
     # Audit write follows the committed DB record; an IO failure here leaves the DB authoritative.
+    details: dict[str, Any] = {"approval_id": approval_id, "note": note}
+    if authenticated_as is not None:
+        details["approver_label"] = approver
     AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.APPROVE,
-        actor=approver,
+        actor=authenticated_as or approver,
         resource_id=f"{name}@{version}",
-        details={"approval_id": approval_id, "note": note},
+        details=details,
     )
 
     return {

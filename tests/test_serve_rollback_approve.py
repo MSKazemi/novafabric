@@ -290,3 +290,40 @@ def test_approve_success_and_list(client: TestClient, env: dict[str, Path]) -> N
     assert ap["actor"] == "alice"
     assert ap["note"] == "LGTM"
     assert "approved_at" in ap
+
+
+def test_hash_chained_approve_entry_names_the_credential_not_the_body_actor(
+    client: TestClient, env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review serve-07: any token holder could record "bob approved" in the evidence log.
+
+    The body's ``actor`` stays the display label (the approvals list), but the
+    hash-chained APPROVE entry is attributed to the authenticated credential and
+    records the label only as a claim.
+    """
+    import json
+
+    from novafabric.registry.store import get_connection, init_schema
+    from novafabric.spec.models import AssetStatus
+
+    chain = env["tmp"] / "chain.jsonl"
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(chain))
+    asset_id = _register_asset(client, "approve-actor-model", "1.0.0")
+    conn = get_connection(env["db"])
+    init_schema(conn)
+    conn.execute(
+        "UPDATE assets SET status = ? WHERE id = ?", (AssetStatus.pending_approval.value, asset_id)
+    )
+    conn.commit()
+    conn.close()
+
+    res = client.post(
+        f"/api/assets/{asset_id}/approve?token={VALID_TOKEN}",
+        headers=HEADERS,
+        json={"role": "security", "actor": "bob", "confirmed": True},
+    )
+    assert res.status_code == 200, res.text
+    entries = [json.loads(line) for line in chain.read_text().splitlines() if line.strip()]
+    (approve,) = [e for e in entries if e["event_type"] == "approve"]
+    assert approve["actor"].startswith("serve:") and approve["actor"] != "bob"
+    assert approve["details"]["approver_label"] == "bob"

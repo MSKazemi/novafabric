@@ -3746,6 +3746,9 @@ def create_app(
                 approver=body.actor,
                 note=body.note,
                 db_path=db_path,
+                # body.actor is a label anyone with the token can choose; the
+                # evidence entry names the credential (review serve-07).
+                authenticated_as=f"serve:{actor_fp}",
             )
         except AssetNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
