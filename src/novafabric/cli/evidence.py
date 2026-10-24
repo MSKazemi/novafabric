@@ -17,15 +17,14 @@ if TYPE_CHECKING:
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric._paths import default_capsule_dir, default_replays_dir
 from novafabric.audit import resolve_audit_log_path
 from novafabric.evidence.admissibility import (
-    ChainOfCustody,
     Custodian,
-    SelfAuthentication,
     admissibility_block,
-    compute_admissibility_status,
+    reverify_admissibility,
 )
 from novafabric.evidence.binding import attest_bindings, build_bindings
 from novafabric.evidence.completeness import (
@@ -464,6 +463,24 @@ def evidence_check_admissibility_cmd(
         Path,
         typer.Argument(help="Admissibility/custody JSON (from bind-custody)"),
     ],
+    capsule: Annotated[
+        Optional[str],
+        typer.Option(
+            "--capsule",
+            help="Run ID or capsule directory the block describes (recomputes its hash "
+            "and looks its custody events up in the audit log)",
+        ),
+    ] = None,
+    pubkey: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--pubkey",
+            help="PEM ed25519 public key you trust to have signed the block (the key "
+            "the block itself names is never trusted)",
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
     timestamp_ok: Annotated[
         bool,
         typer.Option(
@@ -475,29 +492,44 @@ def evidence_check_admissibility_cmd(
         ),
     ] = False,
 ) -> None:
-    """Re-run the five-point FRE-902(14) gate on a custody block (ADR-0095).
+    """Re-witness the five-point FRE-902(14) gate for a custody block (ADR-0095).
 
-    Recomputes the status honestly from the block's own custody + self-authentication
-    evidence (it does not trust the stored ``admissibility_status``). Exits non-zero
+    Nothing is read from the block's own verdicts (review cli-a-01): the signature
+    is re-verified under ``--pubkey``, the capsule's Merkle root is recomputed from
+    ``--capsule``, and the custody events must be exactly those the local
+    hash-chained audit log holds for that run. A point the checker was not given
+    the material for fails, so a block alone is never self-authenticating. Exits 3
     unless the result is ``self-authenticating``.
 
     Scope: one custody block.
 
     \b
     Examples:
-      nova evidence check-admissibility custody.json --timestamp-ok
+      nova evidence check-admissibility custody.json --capsule 01HX... \\
+          --pubkey signer.pub.pem --timestamp-ok
     """
     try:
         data = json.loads(block_file.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         console.print(f"[red]Cannot read custody block:[/red] {exc}")
         raise typer.Exit(code=1) from exc
+    if not isinstance(data, dict):
+        console.print("[red]Cannot read custody block:[/red] not a JSON object")
+        raise typer.Exit(code=1)
 
-    coc_raw = data.get("chain_of_custody")
-    sa_raw = data.get("self_authentication")
-    coc = ChainOfCustody.model_validate(coc_raw) if coc_raw else None
-    sa = SelfAuthentication.model_validate(sa_raw) if sa_raw else None
-    status = compute_admissibility_status(coc, sa, timestamp_ok=timestamp_ok)
-    console.print(f"admissibility_status: [bold]{status}[/bold]")
-    if status != "self-authenticating":
+    capsule_dir = _resolve_capsule(capsule) if capsule is not None else None
+    result = reverify_admissibility(
+        data,
+        capsule_dir=capsule_dir,
+        trusted_public_pem=pubkey.read_bytes() if pubkey is not None else None,
+        audit_log_path=resolve_audit_log_path(),
+        timestamp_ok=timestamp_ok,
+    )
+    for point, ok in result.points.items():
+        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+        console.print(f"  {mark} {point}")
+    for reason in result.reasons:
+        console.print(f"    - {escape(reason)}")
+    console.print(f"admissibility_status: [bold]{result.status}[/bold]")
+    if result.status != "self-authenticating":
         raise typer.Exit(code=3)

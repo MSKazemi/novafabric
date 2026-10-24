@@ -338,6 +338,41 @@
             },
             "signature_verifies": {
               "type": "boolean"
+            },
+            "signature": {
+              "description": "Additive (review cli-a-01): the signature itself, so a checker can re-verify it under a key it trusts instead of reading signature_verifies. Signed message: the UTF-8 bytes of chain_of_custody.acquisition.hash_at_acquisition.",
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "alg",
+                "public_key_pem",
+                "signature_b64",
+                "signed"
+              ],
+              "properties": {
+                "alg": {
+                  "type": "string",
+                  "enum": [
+                    "ed25519"
+                  ]
+                },
+                "public_key_pem": {
+                  "type": "string",
+                  "description": "The signer's public key as the block states it \u2014 self-asserted; a checker verifies under its own trusted key."
+                },
+                "signature_b64": {
+                  "type": "string"
+                },
+                "signed": {
+                  "type": "string",
+                  "enum": [
+                    "hash_at_acquisition"
+                  ]
+                }
+              }
             }
           }
         },

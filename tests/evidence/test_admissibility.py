@@ -202,13 +202,19 @@ def test_cli_bind_custody_and_check_admissibility(tmp_path, monkeypatch):
     block = json.loads(out.read_text())
     assert block["admissibility_status"] == "self-authenticating"
 
-    # check-admissibility re-derives the gate; self-authenticating → exit 0
-    ok = runner.invoke(evidence_app, ["check-admissibility", str(out), "--timestamp-ok"])
-    assert ok.exit_code == 0
+    # check-admissibility re-witnesses every point from the capsule, the trusted key
+    # and the audit log (cli-a-01); self-authenticating → exit 0
+    pub = tmp_path / "key" / "ed25519.pub.pem"
+    witnessed = ["check-admissibility", str(out), "--capsule", str(cap), "--pubkey", str(pub)]
+    ok = runner.invoke(evidence_app, [*witnessed, "--timestamp-ok"])
+    assert ok.exit_code == 0, ok.output
 
     # without the timestamp evidence, the gate drops to requires-foundation → non-zero
-    no_ts = runner.invoke(evidence_app, ["check-admissibility", str(out)])
+    no_ts = runner.invoke(evidence_app, witnessed)
     assert no_ts.exit_code == 3
+    # the block alone proves nothing: no capsule, no trusted key
+    alone = runner.invoke(evidence_app, ["check-admissibility", str(out), "--timestamp-ok"])
+    assert alone.exit_code == 3
 
 
 def test_cli_bind_custody_unwitnessed_is_requires_foundation(tmp_path, monkeypatch):
@@ -236,3 +242,85 @@ def test_cli_bind_custody_unwitnessed_is_requires_foundation(tmp_path, monkeypat
 
 def test_status_incomplete_when_block_missing():
     assert compute_admissibility_status(None, None, timestamp_ok=True) == "incomplete"
+
+
+# --- review cli-a-01: the checker re-witnesses, it never reads the block's verdicts ---------
+
+
+def _bound(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    import json
+
+    from typer.testing import CliRunner
+
+    from novafabric.cli.evidence import evidence_app
+
+    cap = tmp_path / _RUN_ID
+    cap.mkdir()
+    _capsule(cap)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(_audit_log(tmp_path)))
+    priv, pub = generate_keypair(tmp_path / "key")
+    out = tmp_path / "custody.json"
+    res = CliRunner().invoke(evidence_app, [
+        "bind-custody", str(cap), "--custodian", "alice@corp", "--provenance", "oidc",
+        "--key", str(priv), "-o", str(out),
+    ])
+    assert res.exit_code == 0, res.output
+    return cap, pub, out, json.loads(out.read_text())
+
+
+def _check(block_path, cap, pub):  # type: ignore[no-untyped-def]
+    from typer.testing import CliRunner
+
+    from novafabric.cli.evidence import evidence_app
+
+    return CliRunner().invoke(evidence_app, [
+        "check-admissibility", str(block_path), "--capsule", str(cap),
+        "--pubkey", str(pub), "--timestamp-ok",
+    ])
+
+
+def test_a_hand_written_all_true_block_is_not_self_authenticating(tmp_path, monkeypatch):
+    import json
+
+    cap, pub, out, block = _bound(tmp_path, monkeypatch)
+    block["self_authentication"]["certification"]["signature"] = None
+    block["self_authentication"]["certification"]["signature_verifies"] = True
+    block["self_authentication"]["hash_verified_against_acquisition"] = True
+    block["chain_of_custody"]["integrity_continuous"] = True
+    out.write_text(json.dumps(block))
+    assert _check(out, cap, pub).exit_code == 3
+
+
+def test_a_capsule_changed_after_binding_fails_the_hash_point(tmp_path, monkeypatch):
+    cap, pub, out, _ = _bound(tmp_path, monkeypatch)
+    (cap / "model-calls.jsonl").write_text('{"model_call_id":"y","model":"edited"}\n')
+    res = _check(out, cap, pub)
+    assert res.exit_code == 3
+    assert "Merkle root" in res.output
+
+
+def test_a_block_signed_by_another_key_fails(tmp_path, monkeypatch):
+    cap, _, out, _ = _bound(tmp_path, monkeypatch)
+    _, other = generate_keypair(tmp_path / "other")
+    assert _check(out, cap, other).exit_code == 3
+
+
+def test_edited_custody_events_fail_the_custody_point(tmp_path, monkeypatch):
+    import json
+
+    cap, pub, out, block = _bound(tmp_path, monkeypatch)
+    block["chain_of_custody"]["custody_events"] = block["chain_of_custody"]["custody_events"][:1]
+    out.write_text(json.dumps(block))
+    assert _check(out, cap, pub).exit_code == 3
+
+
+def test_a_witnessed_custodian_without_a_signer_is_recorded_as_declared(tmp_path, monkeypatch):
+    """I3: --provenance oidc with nothing vouching for it is the operator's word."""
+    cap = tmp_path / _RUN_ID
+    cap.mkdir()
+    _capsule(cap)
+    block = admissibility_block(
+        cap, audit_log_path=_audit_log(tmp_path), run_id=_RUN_ID,
+        custodian=Custodian(identity="alice@corp", provenance="oidc"),
+    )
+    assert block["chain_of_custody"]["custodian"]["provenance"] == "operator_declared"

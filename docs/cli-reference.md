@@ -10811,7 +10811,10 @@ nova safety-case export case.json --format nist-rmf --output nist-rmf.md
 Build the FRE-902(14) court-admissibility block (chain-of-custody + self-authentication) for a
 capsule, from the hash-chained audit log + capsule Merkle root. Invariant I3: unwitnessed fields
 are `null` + `operator_declared`, never fabricated. With `--key`, the capsule hash is signed and
-verified.
+the signature itself is carried in the block (`self_authentication.certification.signature`) so a
+checker can re-verify it. Without `--key`, a `--provenance oidc` or `novaseal-identity` custodian
+has nothing vouching for it and is recorded as `operator_declared` (releases up to v0.107.0 took it
+on the operator's word).
 
 ```bash
 nova evidence bind-custody 01HX... --custodian alice@corp --provenance oidc --key ed25519.pem -o custody.json
@@ -10819,11 +10822,23 @@ nova evidence bind-custody 01HX... --custodian alice@corp --provenance oidc --ke
 
 ### nova evidence check-admissibility
 
-Re-run the five-point FRE-902(14) gate on a custody block and exit non-zero (3) unless the result
-is `self-authenticating`. The checker supplies independent timestamp evidence via `--timestamp-ok`.
+Re-witness the five-point FRE-902(14) gate for a custody block and exit `3` unless the result is
+`self-authenticating`. Nothing is read from the block's own verdicts:
+
+| Point | Witnessed by |
+|---|---|
+| custodian | named, not `operator_declared`, and vouched for by the trusted key below |
+| signature | the carried signature verifies under `--pubkey` (the key the block names is never trusted) |
+| hash | `--capsule`'s Merkle root equals `hash_at_acquisition` |
+| timestamp | the checker's own `--timestamp-ok` (verify the RFC 3161 token with `nova verify --tsa-ca-bundle`) |
+| custody | the local hash-chained audit log holds exactly the block's custody events for that run, and its chain verifies |
+
+A point the checker was not given the material for fails, so a block alone is never
+self-authenticating; each failing point is printed with its reason. Releases up to v0.107.0 re-ran
+the gate over the block's own booleans, so a hand-written JSON with them set to `true` passed.
 
 ```bash
-nova evidence check-admissibility custody.json --timestamp-ok
+nova evidence check-admissibility custody.json --capsule 01HX... --pubkey signer.pub.pem --timestamp-ok
 ```
 
 **Reference:** `src/novafabric/safetycase/`, `design/adr/0095-evidence-grounded-safety-case-and-admissible-evidence.md` (private).
