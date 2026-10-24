@@ -25,7 +25,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +35,7 @@ from novafabric.capture.finalize import finalize_in_process_capsule
 
 # Module-level so tests can patch via ``novafabric.adapters._capsule.<name>``.
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
+from novafabric.capture.teardown import TeardownSteps, novafabric_version
 
 
 def _now() -> str:
@@ -106,14 +106,21 @@ class AdapterCapture:
             self.partial_reason = reason
 
     def finish(self) -> None:
-        """Release the hooks and write the capsule. Safe to call in ``finally``."""
+        """Release the hooks and write the capsule. Never raises (eval-adapters-query-04).
+
+        Safe to call in ``finally``: a failed teardown step is logged, counted and
+        recorded in the capsule (left unsealed) — it never replaces the
+        framework call's own result or exception.
+        """
         from novafabric.capture.hooks import uninstall_all, wire_capture_state
 
-        wire_state = wire_capture_state(self.hook_token)
-        uninstall_all(self.hook_token)
-        self._write(wire_state)
+        steps = TeardownSteps(f"adapter-{self.framework}")
+        # The wire state is read *before* the hooks are released (ADR-0224).
+        wire_state = steps.run("wire-state", lambda: wire_capture_state(self.hook_token), "unknown")
+        steps.do("hooks", lambda: uninstall_all(self.hook_token))
+        self._write(wire_state, steps)
 
-    def _write(self, wire_state: str) -> None:
+    def _write(self, wire_state: str, steps: TeardownSteps) -> None:
         from novafabric.capture.replay import minimal_replay_policy
 
         finished_at = _now()
@@ -128,7 +135,7 @@ class AdapterCapture:
         if status == "partial" and self.partial_reason is not None:
             tags["partial_reason"] = self.partial_reason
 
-        self.writer.append_trace_span({
+        steps.do("trace", lambda: self.writer.append_trace_span({
             "span_id": self.root_span_id,
             "parent_span_id": None,
             "name": f"novafabric.adapter.{self.framework}.{self.run_name}",
@@ -137,14 +144,23 @@ class AdapterCapture:
             "duration_ms": duration_ms,
             "status": "ok" if self.exit_code == 0 else "error",
             "attributes": {"run_name": self.run_name, **tags},
-        })
-
-        env_lock = capture_environment(created_at=self.created_at, run_id=self.run_id)
-        self.writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
-
-        self.writer.write_text(
+        }))
+        steps.do("env.lock", lambda: self.writer.write_text("env.lock", yaml.dump(
+            capture_environment(created_at=self.created_at, run_id=self.run_id),
+            allow_unicode=True,
+        )))
+        steps.do("replay.yaml", lambda: self.writer.write_text(
             "replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True)
+        ))
+        model_call_count = steps.run(
+            "model-calls",
+            lambda: count_logical_model_calls_in_file(self.cap_dir / "model-calls.jsonl"),
+            0,
         )
+        tool_call_count = steps.run(
+            "tool-calls", lambda: _count_lines(self.cap_dir / "tool-calls.jsonl"), 0
+        )
+        host: dict[str, Any] = steps.run("host", host_info, {})
 
         manifest: dict[str, Any] = {
             "schema_version": "0.1.0",
@@ -155,9 +171,9 @@ class AdapterCapture:
             "status": status,
             "command": [f"@{self.framework}:{self.run_name}"],
             "capture_mode": "sdk-decorator",
-            "novafabric_version": _pkg_version("novafabric"),
+            "novafabric_version": novafabric_version(),
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-            "host": host_info(),
+            "host": host,
             "environment_ref": "env.lock",
             "replay_policy_ref": "replay.yaml",
             "redaction_proof_ref": "redaction-proof.json",
@@ -168,10 +184,8 @@ class AdapterCapture:
             "assets_ref": "assets.jsonl",
             "inputs": [],
             "outputs": [],
-            "model_call_count": count_logical_model_calls_in_file(
-                self.cap_dir / "model-calls.jsonl"
-            ),
-            "tool_call_count": _count_lines(self.cap_dir / "tool-calls.jsonl"),
+            "model_call_count": model_call_count,
+            "tool_call_count": tool_call_count,
             "mutating_tool_count": 0,
             "exit_code": self.exit_code,
             "metadata": tags,
@@ -181,9 +195,11 @@ class AdapterCapture:
 
         # Main scan (after replay.yaml), manifest redaction, lineage, residual pass,
         # evidence_digests, gate and opt-in seal: the path `nova capture` uses.
-        # Never raises; a failure leaves the capsule unsealed and says why.
+        # Never raises; a failure — or a failed step above — leaves the capsule
+        # unsealed and says why in metadata.finalization_error.
         finalize_in_process_capsule(
-            self.cap_dir, manifest, run_id=self.run_id, writer=self.writer
+            self.cap_dir, manifest, run_id=self.run_id, writer=self.writer,
+            incomplete_reason=steps.incomplete_reason,
         )
 
 

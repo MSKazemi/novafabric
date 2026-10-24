@@ -377,6 +377,13 @@ Python process:
   partial `.seal/` is removed), the reason is written to
   `metadata.finalization_error` (redacted), and a warning is logged; the call's
   own result or exception is unchanged.
+- The steps *before* finalization are fail-open too (`capture/teardown.py`). If writing the root span, `env.lock` or `replay.yaml`, counting
+  the streams, or reading host or package metadata fails, that step is logged and
+  counted as a capture failure, the capsule is still finalized (so the secret scan
+  always runs), and it is **not sealed**:
+  `metadata.finalization_error` reads `capture incomplete: <step>: <error type>`,
+  e.g. `capture incomplete: env.lock: OSError`. Releases up to v0.107.0 let the exception
+  escape the wrapped call's `finally:`, replacing its result or exception.
 
 OTLP-ingested capsules (`capture_mode: otel-import`, `metadata.capture_level:
 ingested-otlp`, written by `otel/genai_ingest.py` for `POST /api/otlp/v1/traces`)

@@ -18,7 +18,6 @@ import contextvars
 import json
 import time
 from datetime import datetime, timezone
-from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +26,7 @@ import yaml
 from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
+from novafabric.capture.teardown import TeardownSteps, novafabric_version
 
 _CAPTURE_METHODS = frozenset({"send_message", "send_message_streaming"})
 
@@ -199,20 +199,27 @@ class NovaA2AInterceptor:
         from novafabric.capture.hooks import uninstall_all, wire_capture_state
         from novafabric.capture.replay import minimal_replay_policy
         # Read before teardown: uninstall_all forgets the contention record.
-        _wire_state = wire_capture_state(hook_token)
-        uninstall_all(hook_token)
+        # eval-adapters-query-04: teardown never replaces the call's outcome.
+        steps = TeardownSteps("adapter-a2a")
+        _wire_state = steps.run(
+            "wire-state", lambda: wire_capture_state(hook_token), "unknown"
+        )
+        steps.do("hooks", lambda: uninstall_all(hook_token))
 
         # Write A2A task output
-        task_log = writer.capsule_dir / "a2a-tasks.jsonl"
-        with task_log.open("a") as f:
-            f.write(json.dumps({"direction": "response", "method": args.method,
-                                 "agent": agent_name, "result": _jsonable(args.result)}) + "\n")
+        def _append_task_response() -> None:
+            task_log = writer.capsule_dir / "a2a-tasks.jsonl"
+            with task_log.open("a") as f:
+                f.write(json.dumps({"direction": "response", "method": args.method,
+                                     "agent": agent_name, "result": _jsonable(args.result)}) + "\n")
+
+        steps.do("a2a-tasks", _append_task_response)
 
         finished_at = _now()
         duration_ms = int((time.monotonic() - t0) * 1000)
         cap_dir = writer.capsule_dir
 
-        writer.append_trace_span({
+        steps.do("trace", lambda: writer.append_trace_span({
             "span_id": span_id,
             "parent_span_id": None,
             "name": f"novafabric.adapter.a2a.{agent_name}",
@@ -221,11 +228,23 @@ class NovaA2AInterceptor:
             "duration_ms": duration_ms,
             "status": "ok",
             "attributes": {"framework": "a2a", "agent": agent_name, "method": args.method},
-        })
+        }))
 
-        env_lock = capture_environment(created_at=created_at, run_id=run_id)
-        writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
-        writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
+        steps.do("env.lock", lambda: writer.write_text("env.lock", yaml.dump(
+            capture_environment(created_at=created_at, run_id=run_id), allow_unicode=True
+        )))
+        steps.do("replay.yaml", lambda: writer.write_text(
+            "replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True)
+        ))
+        model_call_count = steps.run(
+            "model-calls",
+            lambda: count_logical_model_calls_in_file(cap_dir / "model-calls.jsonl"),
+            0,
+        )
+        tool_call_count = steps.run(
+            "tool-calls", lambda: _count_jsonl(cap_dir / "tool-calls.jsonl"), 0
+        )
+        host: dict[str, Any] = steps.run("host", host_info, {})
 
         manifest: dict[str, Any] = {
             "schema_version": "1.0.0",
@@ -236,9 +255,9 @@ class NovaA2AInterceptor:
             "status": "success",
             "command": [f"@a2a:{agent_name}"],
             "capture_mode": "sdk-decorator",
-            "novafabric_version": _pkg_version("novafabric"),
+            "novafabric_version": novafabric_version(),
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-            "host": host_info(),
+            "host": host,
             "environment_ref": "env.lock",
             "replay_policy_ref": "replay.yaml",
             "redaction_proof_ref": "redaction-proof.json",
@@ -255,8 +274,8 @@ class NovaA2AInterceptor:
             "extensions": {"io.a2aproject": {"tasks_ref": "a2a-tasks.jsonl"}},
             "inputs": [],
             "outputs": [],
-            "model_call_count": count_logical_model_calls_in_file(cap_dir / "model-calls.jsonl"),
-            "tool_call_count": _count_jsonl(cap_dir / "tool-calls.jsonl"),
+            "model_call_count": model_call_count,
+            "tool_call_count": tool_call_count,
             "mutating_tool_count": 0,
             "exit_code": 0,
             "metadata": {
@@ -270,8 +289,12 @@ class NovaA2AInterceptor:
         }
         # Main scan (after replay.yaml), manifest redaction, lineage, residual
         # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
-        # uses. Never raises; a failure leaves the capsule unsealed and says why.
-        finalize_in_process_capsule(cap_dir, manifest, run_id=run_id, writer=writer)
+        # uses. Never raises; a failure — or a failed step above — leaves the capsule
+        # unsealed and says why in metadata.finalization_error.
+        finalize_in_process_capsule(
+            cap_dir, manifest, run_id=run_id, writer=writer,
+            incomplete_reason=steps.incomplete_reason,
+        )
 
 
 def make_interceptor(data_dir: Path | None = None) -> NovaA2AInterceptor:

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -160,8 +159,7 @@ def test_a_missing_package_version_never_breaks_the_call(
     def missing(_: str) -> str:
         raise PackageNotFoundError("novafabric")
 
-    # ``novafabric.sdk.agent`` the attribute is the re-exported decorator, not the module.
-    monkeypatch.setattr(sys.modules["novafabric.sdk.agent"], "_pkg_version", missing)
+    monkeypatch.setattr("novafabric.capture.teardown._pkg_version", missing)
 
     @agent(name="ok", version="1.0", capsule_dir=tmp_path / "caps")
     def ok() -> int:

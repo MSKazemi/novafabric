@@ -271,6 +271,8 @@ and `evidence_digests`, and it is sealed when a signing profile exists
 (`nova seal init`), so `nova verify` checks it like any other capsule. Sealing
 stays opt-in. If finalization fails, your function's return value or exception is
 unchanged: the capsule is left unsealed and `metadata.finalization_error` says why.
+The same holds when an earlier capture step fails (for example, a full disk while
+writing `env.lock`): the reason reads `capture incomplete: env.lock: OSError`.
 
 **Optional record-only tags (experimental, v0.59).** The decorator also accepts
 `deployment_environment=` (ADR-0126), `variant=` (ADR-0116, A/B attribution),

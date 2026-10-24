@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +22,7 @@ from novafabric.capture.finalize import finalize_in_process_capsule
 
 # Module-level imports so tests can patch via ``novafabric.adapters.dspy.<name>``.
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
+from novafabric.capture.teardown import TeardownSteps, novafabric_version
 
 
 def _now() -> str:
@@ -42,14 +42,16 @@ def _write_capsule(
     root_span_id: str,
     run_id: str,
     cap_dir: Path,
+    steps: TeardownSteps,
 ) -> None:
+    """Write the capsule. Never raises: a failed step is recorded, not propagated."""
     from novafabric.capture.replay import minimal_replay_policy
 
     finished_at = _now()
     duration_ms = int((time.monotonic() - t0) * 1000)
     status = "success" if exit_code == 0 else "failure"
 
-    writer.append_trace_span({
+    steps.do("trace", lambda: writer.append_trace_span({
         "span_id": root_span_id,
         "parent_span_id": None,
         "name": f"novafabric.adapter.dspy.{run_name}",
@@ -58,21 +60,24 @@ def _write_capsule(
         "duration_ms": duration_ms,
         "status": "ok" if exit_code == 0 else "error",
         "attributes": {"run_name": run_name, **tags},
-    })
-
-    env_lock = capture_environment(created_at=created_at, run_id=run_id)
-    writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
-
-    writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
-
-    model_call_count = count_logical_model_calls_in_file(
-        cap_dir / "model-calls.jsonl"
+    }))
+    steps.do("env.lock", lambda: writer.write_text("env.lock", yaml.dump(
+        capture_environment(created_at=created_at, run_id=run_id), allow_unicode=True
+    )))
+    steps.do("replay.yaml", lambda: writer.write_text(
+        "replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True)
+    ))
+    model_call_count = steps.run(
+        "model-calls",
+        lambda: count_logical_model_calls_in_file(cap_dir / "model-calls.jsonl"),
+        0,
     )
-    tool_call_count = sum(
+    tool_call_count = steps.run("tool-calls", lambda: sum(
         1
         for line in (cap_dir / "tool-calls.jsonl").read_text().splitlines()
         if line.strip()
-    )
+    ), 0)
+    host: dict[str, Any] = steps.run("host", host_info, {})
 
     manifest: dict[str, Any] = {
         "schema_version": "0.1.0",
@@ -83,9 +88,9 @@ def _write_capsule(
         "status": status,
         "command": [f"@dspy:{run_name}"],
         "capture_mode": "sdk-decorator",
-        "novafabric_version": _pkg_version("novafabric"),
+        "novafabric_version": novafabric_version(),
         "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-        "host": host_info(),
+        "host": host,
         "environment_ref": "env.lock",
         "replay_policy_ref": "replay.yaml",
         "redaction_proof_ref": "redaction-proof.json",
@@ -107,8 +112,12 @@ def _write_capsule(
 
     # Main scan (after replay.yaml), manifest redaction, lineage, residual
     # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
-    # uses. Never raises; a failure leaves the capsule unsealed and says why.
-    finalize_in_process_capsule(cap_dir, manifest, run_id=run_id, writer=writer)
+    # uses. Never raises; a failure — or a failed step above — leaves the capsule
+    # unsealed and says why in metadata.finalization_error.
+    finalize_in_process_capsule(
+        cap_dir, manifest, run_id=run_id, writer=writer,
+        incomplete_reason=steps.incomplete_reason,
+    )
 
 
 def wrap_program(
@@ -189,8 +198,12 @@ def wrap_program(
             error = {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
             raise
         finally:
-            _wire_state = wire_capture_state(_hook_token)
-            uninstall_all(_hook_token)
+            # eval-adapters-query-04: teardown never replaces the call's outcome.
+            steps = TeardownSteps("adapter-dspy")
+            _wire_state = steps.run(
+                "wire-state", lambda: wire_capture_state(_hook_token), "unknown"
+            )
+            steps.do("hooks", lambda: uninstall_all(_hook_token))
             _write_capsule(
                 run_name=resolved_name,
                 data_dir=resolved_data_dir,
@@ -203,6 +216,7 @@ def wrap_program(
                 root_span_id=root_span_id,
                 run_id=run_id,
                 cap_dir=cap_dir,
+                steps=steps,
             )
         return result
 

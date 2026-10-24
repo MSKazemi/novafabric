@@ -17,7 +17,6 @@ import threading
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +26,7 @@ from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
 from novafabric.capture.hooks import ConcurrentCaptureRefused
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
+from novafabric.capture.teardown import TeardownSteps, novafabric_version
 
 _log = logging.getLogger(__name__)
 
@@ -162,18 +162,18 @@ class NovaAdkPlugin:
 
         writer = run.writer
         # BEFORE teardown: uninstall_all forgets the contention record.
-        wire_state = wire_capture_state(run.hook_token)
-        try:
-            uninstall_all(run.hook_token)
-        except Exception:
-            _log.debug("google_adk: hook teardown failed", exc_info=True)
+        # eval-adapters-query-04: a failed step is recorded and the capsule still
+        # scanned, never abandoned unscanned with only a debug log line.
+        steps = TeardownSteps("adapter-google_adk")
+        wire_state = steps.run("wire-state", lambda: wire_capture_state(run.hook_token), "unknown")
+        steps.do("hooks", lambda: uninstall_all(run.hook_token))
 
         finished_at = _now()
         duration_ms = int((time.monotonic() - run.t0) * 1000)
         cap_dir = writer.capsule_dir
         failed = error is not None
 
-        writer.append_trace_span({
+        steps.do("trace", lambda: writer.append_trace_span({
             "span_id": run.span_id,
             "parent_span_id": None,
             "name": "novafabric.adapter.google_adk.run",
@@ -182,14 +182,24 @@ class NovaAdkPlugin:
             "duration_ms": duration_ms,
             "status": "error" if failed else "ok",
             "attributes": {"framework": "google-adk"},
-        })
+        }))
 
         run_id, created_at = run.run_id, run.created_at
-        env_lock = capture_environment(created_at=created_at, run_id=run_id)
-        writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
-        writer.write_text(
+        steps.do("env.lock", lambda: writer.write_text("env.lock", yaml.dump(
+            capture_environment(created_at=created_at, run_id=run_id), allow_unicode=True
+        )))
+        steps.do("replay.yaml", lambda: writer.write_text(
             "replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True)
+        ))
+        model_call_count = steps.run(
+            "model-calls",
+            lambda: count_logical_model_calls_in_file(cap_dir / "model-calls.jsonl"),
+            0,
         )
+        tool_call_count = steps.run(
+            "tool-calls", lambda: _count_jsonl(cap_dir / "tool-calls.jsonl"), 0
+        )
+        host: dict[str, Any] = steps.run("host", host_info, {})
 
         manifest: dict[str, Any] = {
             "schema_version": "1.0.0",
@@ -200,9 +210,9 @@ class NovaAdkPlugin:
             "status": "failure" if failed else "success",
             "command": ["@google-adk:run"],
             "capture_mode": "sdk-decorator",
-            "novafabric_version": _pkg_version("novafabric"),
+            "novafabric_version": novafabric_version(),
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-            "host": host_info(),
+            "host": host,
             "environment_ref": "env.lock",
             "replay_policy_ref": "replay.yaml",
             "redaction_proof_ref": "redaction-proof.json",
@@ -213,8 +223,8 @@ class NovaAdkPlugin:
             "assets_ref": "assets.jsonl",
             "inputs": [],
             "outputs": [],
-            "model_call_count": count_logical_model_calls_in_file(cap_dir / "model-calls.jsonl"),
-            "tool_call_count": _count_jsonl(cap_dir / "tool-calls.jsonl"),
+            "model_call_count": model_call_count,
+            "tool_call_count": tool_call_count,
             "mutating_tool_count": 0,
             "exit_code": 1 if failed else 0,
             "metadata": {
@@ -231,8 +241,12 @@ class NovaAdkPlugin:
             }
         # Main scan (after replay.yaml), manifest redaction, lineage, residual
         # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
-        # uses. Never raises; a failure leaves the capsule unsealed and says why.
-        finalize_in_process_capsule(cap_dir, manifest, run_id=run_id, writer=writer)
+        # uses. Never raises; a failure — or a failed step above — leaves the capsule
+        # unsealed and says why in metadata.finalization_error.
+        finalize_in_process_capsule(
+            cap_dir, manifest, run_id=run_id, writer=writer,
+            incomplete_reason=steps.incomplete_reason,
+        )
 
     async def on_event_callback(self, ctx: Any = None, event: Any = None, **kwargs: Any) -> None:
         pass  # wire hooks capture model/tool events via HTTP

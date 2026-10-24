@@ -9,8 +9,6 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -20,6 +18,7 @@ from opentelemetry import trace
 from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric.capture.hooks._fail_open import note_capture_failure
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
+from novafabric.capture.teardown import TeardownSteps, novafabric_version
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -149,13 +148,6 @@ def _outcome(exc: BaseException | None) -> tuple[int, dict[str, Any] | None]:
     return exit_code, {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
 
 
-def _novafabric_version() -> str:
-    try:
-        return _pkg_version("novafabric")
-    except PackageNotFoundError:  # a source checkout run without an install
-        return "unknown"
-
-
 @dataclass
 class _SdkCapture:
     """One ``@agent`` call's capsule: opened by :meth:`start`, closed by :meth:`finish`.
@@ -240,30 +232,21 @@ class _SdkCapture:
         exit_code, error = _outcome(exc)
         finished_at = _now()
         duration_ms = int((time.monotonic() - self.t0) * 1000)
-        failed: list[str] = []
-
-        def step(label: str, action: Callable[[], Any], default: Any = None) -> Any:
-            try:
-                return action()
-            except Exception as err:
-                note_capture_failure("sdk-agent", label, err)
-                failed.append(f"{label}: {type(err).__name__}")
-                return default
-
-        step("trace", lambda: self.writer.append_trace_span(
+        steps = TeardownSteps("sdk-agent")
+        steps.do("trace", lambda: self.writer.append_trace_span(
             self._root_span(finished_at, duration_ms, exit_code)
         ))
-        step("env.lock", self._write_env_lock)
-        step("replay.yaml", lambda: self.writer.write_text(
+        steps.do("env.lock", self._write_env_lock)
+        steps.do("replay.yaml", lambda: self.writer.write_text(
             "replay.yaml", yaml.dump(_minimal_replay_policy(), allow_unicode=True)
         ))
         cap_dir: Path = self.writer.capsule_dir
-        model_call_count = step(
-            "model-calls", lambda: count_logical_model_calls_in_file(
-                cap_dir / "model-calls.jsonl"
-            ), 0,
+        model_call_count = steps.run(
+            "model-calls",
+            lambda: count_logical_model_calls_in_file(cap_dir / "model-calls.jsonl"),
+            0,
         )
-        tool_call_count = step("tool-calls", lambda: _count_lines(cap_dir), 0)
+        tool_call_count = steps.run("tool-calls", lambda: _count_lines(cap_dir), 0)
 
         manifest: dict[str, Any] = {
             "schema_version": "0.1.0",
@@ -274,9 +257,9 @@ class _SdkCapture:
             "status": "success" if exit_code == 0 else "failure",
             "command": [f"@agent:{self.agent_name}@{self.agent_version}"],
             "capture_mode": "sdk-decorator",
-            "novafabric_version": _novafabric_version(),
+            "novafabric_version": novafabric_version(),
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-            "host": step("host", _host_info, {}),
+            "host": steps.run("host", _host_info, _NO_HOST),
             "environment_ref": "env.lock",
             "replay_policy_ref": "replay.yaml",
             "redaction_proof_ref": "redaction-proof.json",
@@ -302,9 +285,7 @@ class _SdkCapture:
         # reason in metadata.finalization_error, so its counts are not vouched for.
         finalize_in_process_capsule(
             cap_dir, manifest, run_id=self.run_id, writer=self.writer,
-            incomplete_reason=(
-                f"capture incomplete: {', '.join(failed)}" if failed else None
-            ),
+            incomplete_reason=steps.incomplete_reason,
         )
 
     def _root_span(self, finished_at: str, duration_ms: int, exit_code: int) -> dict[str, Any]:
@@ -357,6 +338,9 @@ def _minimal_replay_policy() -> dict[str, Any]:
     from novafabric.capture.replay import minimal_replay_policy
 
     return minimal_replay_policy()
+
+
+_NO_HOST: dict[str, Any] = {}
 
 
 def _host_info() -> dict[str, Any]:
