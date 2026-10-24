@@ -39,11 +39,17 @@ console = Console()
 
 def _load_public_key(key_path: Path) -> Ed25519PublicKey:
     """Load an Ed25519 public key from a PEM file (accepts a private-key PEM too)."""
-    data = key_path.read_bytes()
+    try:
+        data = key_path.read_bytes()
+    except OSError as exc:
+        raise typer.BadParameter(f"cannot read {key_path}: {exc.strerror}") from None
     try:
         loaded: object = serialization.load_pem_public_key(data)
     except ValueError:
-        priv = serialization.load_pem_private_key(data, password=None)
+        try:
+            priv = serialization.load_pem_private_key(data, password=None)
+        except (ValueError, TypeError):
+            raise typer.BadParameter(f"{key_path} is not a PEM key") from None
         loaded = priv.public_key()
     if not isinstance(loaded, Ed25519PublicKey):
         raise typer.BadParameter(f"{key_path} is not an Ed25519 key")
@@ -57,7 +63,12 @@ def verify_envelope_cmd(
     ],
 ) -> None:
     """Verify a DSSE envelope's Ed25519 signature (exit non-zero on failure)."""
-    env = json.loads(envelope.read_text(encoding="utf-8"))
+    try:
+        env = json.loads(envelope.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # missing, unreadable or not JSON
+        raise typer.BadParameter(
+            f"cannot read the envelope {envelope}: {exc}", param_hint="'ENVELOPE'"
+        ) from None
     public_key = _load_public_key(key)
 
     def _verify(pae: bytes, sig: bytes) -> bool:

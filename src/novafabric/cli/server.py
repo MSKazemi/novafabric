@@ -1216,8 +1216,17 @@ def _resolve_key_path(key_path: Optional[Path]) -> Path:  # noqa: UP007
 
 
 def _parse_days(value: str) -> int:
-    """Parse a duration string like '90d' or '30' into integer days."""
-    value = value.strip()
-    if value.endswith("d"):
-        return int(value[:-1])
-    return int(value)
+    """Parse a duration like ``90d`` or ``30`` into a positive number of days.
+
+    Anything else — ``2w``, ``12h``, ``0``, a negative count — is a usage error
+    (exit 2), not a ``ValueError`` traceback or a silently accepted zero
+    (review cli-b-16).
+    """
+    text = value.strip()
+    digits = text[:-1] if text.endswith("d") else text
+    if not digits.isdigit() or int(digits) <= 0:
+        raise typer.BadParameter(
+            f"{value!r} is not a positive number of days (e.g. 90d or 30)",
+            param_hint="'--expires-in'",
+        )
+    return int(digits)

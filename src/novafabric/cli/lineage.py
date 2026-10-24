@@ -520,6 +520,7 @@ def emit_openlineage_cmd(
     from novafabric.lineage._openlineage import build_events_from_capsule
 
     effective_facets = with_facets or otel_correlation
+    delivered = 0
     for capsule_dir in capsule_dirs:
         events = build_events_from_capsule(
             capsule_dir,
@@ -529,7 +530,17 @@ def emit_openlineage_cmd(
         if not events:
             console.print(f"[yellow]![/yellow] skipped {capsule_dir.name} (no capsule.yaml)")
             continue
-        emit_to(events, target)
+        try:
+            emit_to(events, target)
+        except (OSError, ValueError) as exc:  # URLError is an OSError
+            # Say what reached the target, not a traceback (review cli-b-16).
+            typer.echo(
+                f"✗ {capsule_dir.name}: delivery to {target} failed: {exc}. "
+                f"{delivered} capsule(s) delivered before it; later capsules not sent.",
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+        delivered += 1
         if target != "-":
             console.print(
                 f"[green]✓[/green] {capsule_dir.name} ({len(events)} events → {target})"

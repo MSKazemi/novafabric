@@ -99,6 +99,9 @@ def redaction_xray_cmd(
         except (json.JSONDecodeError, OSError, CapsuleRequiredFileError) as exc:
             err_console.print(f"[red]Could not read redaction proof:[/red] {exc}")
             raise typer.Exit(2) from exc
+        if not isinstance(doc, dict):
+            err_console.print("[red]The redaction proof is not a JSON object.[/red]")
+            raise typer.Exit(2)
         # Read the authoritative id from the proof BEFORE narrowing `doc` —
         # the directory name is only a fallback for a proof that omits it.
         capsule_id = capsule_id or str(doc.get("capsule_run_id") or capsule.name)

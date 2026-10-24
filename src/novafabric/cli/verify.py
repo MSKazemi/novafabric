@@ -996,6 +996,13 @@ def _verify_evidence_bundle(
 
     from novafabric.evidence.bundle_verify import BundleArchiveError, verify_bundle_archive
 
+    trusted_pems: list[bytes] = []
+    if public_key is not None:
+        try:
+            trusted_pems.append(public_key.read_bytes())
+        except OSError as exc:
+            console.print(f"[red]Error:[/red] cannot read --public-key: {exc}")
+            raise typer.Exit(code=1) from None
     try:
         zf = zipfile.ZipFile(bundle_path)
     except zipfile.BadZipFile as exc:
@@ -1008,7 +1015,7 @@ def _verify_evidence_bundle(
         try:
             outcome = verify_bundle_archive(
                 zf,
-                trusted_public_pems=[public_key.read_bytes()] if public_key is not None else (),
+                trusted_public_pems=trusted_pems,
             )
         except BundleArchiveError as exc:
             console.print(f"[red]Error:[/red] {bundle_path}: {exc}")

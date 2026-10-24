@@ -140,6 +140,17 @@ def migrate_capsule(
             failed=True,
         )
 
+    if not isinstance(manifest, dict):
+        # One bad capsule is one failed result, never an exception that aborts
+        # the batch (review cli-b-16).
+        return _CapsuleResult(
+            capsule_id=capsule_id,
+            old_version="—",
+            action="error",
+            result=f"manifest.json is a JSON {type(manifest).__name__}, not an object",
+            failed=True,
+        )
+
     schema_version: Optional[str] = manifest.get("schema_version")
 
     # ── Already at v1: skip ───────────────────────────────────────────────
