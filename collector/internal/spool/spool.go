@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -220,6 +221,13 @@ func (s *Spool) ReadBatch(maxEvents int) ([][]byte, error) {
 
 	var results [][]byte
 
+	// Review go-collector-ts-packages-04: the resident forwarder never writes;
+	// segments come from other processes, so look for new ones whenever the
+	// known list is exhausted (names sort by sequence, so this is one listing).
+	if s.readIdx >= len(s.readSegments) {
+		s.rescanLocked()
+	}
+
 	for len(results) < maxEvents && s.readIdx < len(s.readSegments) {
 		segPath := s.readSegments[s.readIdx]
 
@@ -254,6 +262,42 @@ func (s *Spool) ReadBatch(maxEvents int) ([][]byte, error) {
 	}
 
 	return results, nil
+}
+
+// rescanLocked appends committed segments that appeared since the list was
+// built — those with a sequence above every known segment and the checkpoint.
+// Caller holds s.mu. A listing error is logged; the next ReadBatch retries.
+func (s *Spool) rescanLocked() {
+	floor := uint64(0)
+	known := false
+	if n := len(s.readSegments); n > 0 {
+		floor, known = seqFromPath(s.readSegments[n-1]), true
+	}
+	if s.checkpoint.HasAcked() && (!known || s.checkpoint.LastAckSeq() > floor) {
+		floor, known = s.checkpoint.LastAckSeq(), true
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		slog.Warn("spool: rescan failed", "dir", s.dir, "error", err)
+		return
+	}
+	var fresh []string
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		seq := seqFromPath(name)
+		if known && seq <= floor {
+			continue
+		}
+		fresh = append(fresh, filepath.Join(s.dir, name))
+		if seq >= s.seqNum {
+			s.seqNum = seq + 1
+		}
+	}
+	sort.Strings(fresh)
+	s.readSegments = append(s.readSegments, fresh...)
 }
 
 // Commit marks the events returned by the last ReadBatch as acknowledged and

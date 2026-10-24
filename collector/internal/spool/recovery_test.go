@@ -30,6 +30,10 @@ func TestSpool_KillRecovery(t *testing.T) {
 	// Inject a crash artifact: a .jsonl.tmp file with an incomplete header.
 	crashedTmp := filepath.Join(dir, "99999999999999999999.jsonl.tmp")
 	require.NoError(t, os.WriteFile(crashedTmp, []byte("partial"), 0o600))
+	// A crashed writer's file is old; a fresh one may belong to a live writer
+	// (go-collector-ts-packages-04) and is kept.
+	old := time.Now().Add(-2 * tmpGrace)
+	require.NoError(t, os.Chtimes(crashedTmp, old, old))
 
 	// recoverSegments should discard the .tmp and return only .jsonl files.
 	segments, err := recoverSegments(dir)

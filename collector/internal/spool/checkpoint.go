@@ -8,7 +8,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
+
+// tmpGrace is how old a .jsonl.tmp must be before recovery treats it as a
+// crashed writer's and removes it; younger ones may belong to a live writer.
+const tmpGrace = 5 * time.Minute
 
 // checkpointFile is the name of the checkpoint JSON file within the spool dir.
 const checkpointFile = "checkpoint.json"
@@ -134,8 +139,15 @@ func recoverSegments(dir string) ([]string, error) {
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasSuffix(name, ".jsonl.tmp") {
-			// Incomplete segment from a crashed writer — discard it.
 			fullPath := filepath.Join(dir, name)
+			// Review go-collector-ts-packages-04: a writer in another process holds
+			// its temp file for milliseconds between write and rename; deleting it
+			// on every forwarder restart lost that event silently. Only a temp file
+			// older than tmpGrace is a crashed writer's.
+			if info, statErr := e.Info(); statErr == nil && time.Since(info.ModTime()) < tmpGrace {
+				continue
+			}
+			// Incomplete segment from a crashed writer — discard it.
 			slog.Warn("spool: discarding incomplete segment from crashed writer",
 				"path", fullPath)
 			if rmErr := os.Remove(fullPath); rmErr != nil {
