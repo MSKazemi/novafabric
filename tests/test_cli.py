@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -182,4 +183,6 @@ def test_report_stdout_is_the_file_it_would_write(
     assert to_file.exit_code == 0, to_file.output
     to_stdout = runner.invoke(app, ["report", "--format", fmt])
     assert to_stdout.exit_code == 0, to_stdout.output
-    assert to_stdout.stdout == out.read_text() + "\n"
+    # The two renders may straddle a second; only the generation time may differ.
+    stamp = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)?")
+    assert stamp.sub("<t>", to_stdout.stdout) == stamp.sub("<t>", out.read_text() + "\n")
