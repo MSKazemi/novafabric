@@ -124,6 +124,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   capsule. LLM02 now reads the proof's `findings_count.total` (and fails on `unsafe_skips`), LLM04 sums
   `gen_ai.usage.input_tokens`, and LLM07 fails when a response reproduces a recorded system prompt (SKIP when none
   is recorded).
+- **A secret in a capsule file over 64 MiB is redacted.** Such files were skipped by the secret scanner and sealed
+  unscanned, so an API key printed anywhere in a long agent's stdout stayed in the clear. They are now scanned in
+  overlapping windows and redacted in place exactly as a small file is; a large binary carrying a secret is dropped.
+- **Crypto-shred no longer erases PII a capsule must keep.** The key is per data subject, so shredding because one
+  capsule was due erased the subject's PII in a sibling the same plan reported as WORM-held. `apply` now keeps the
+  key while any capsule carrying the subject is held, not yet due or unbound (`skipped`,
+  `subject_in_retained_capsule`).
+- **A signed rejection is no longer an approval.** The SoD verifier never read the approver's signed `decision`, so
+  `rejected` passed; it now exits 8.
+- **`nova provenance bind --write`** (and `watermark show --bind --write`) wrote through a symlinked `capsule.yaml`
+  and silently broke a seal; they now use the safe manifest writer (a link is refused, a sealed capsule needs
+  `--force-unseal`).
 - **The collector's batch signer signs, or refuses to start.** `novaseal_batch_signer` built no signer from its
   config in any build, so every batch was forwarded unsigned — also with `fail_open: false`. `local_wal: true` now
   builds the signer; with no signer and `fail_open: false` the collector refuses to start; a set
@@ -182,6 +194,12 @@ longer forwards the submitting shell's environment (ADR-0270).
     first run's undrained segment and later events were skipped as already acknowledged; segments now number above
     every committed segment and the forwarder's checkpoint and commit with `link(2)`. The resident spool forwarder
     never saw segments written after it started, and each restart deleted a live writer's temp file;
+  - `POST /v0/replays` claimed the oldest queued replay rather than its own, so one orphaned job made every later
+    replay stay pending forever;
+  - `nova diff --assert-no-regressions` passed a tool call that went from success to failure, or whose argument or
+    result digest changed (the only content at the default capture level);
+  - a compressed capsule stored while NovaSeal was down read back as the zstd frame: the WAL dropped the compression
+    dictionary and stats the drained chain commit needs;
   - a cancelled daemon run (`novacap` interrupted or disconnected) killed its worker after 5 s, before the local
     runner's 10 s SIGKILL of the workload, so a workload that ignored SIGTERM ran on unsupervised; the worker now
     waits 15 s.
