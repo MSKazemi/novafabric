@@ -757,6 +757,32 @@ class TestReplays:
         get_body = get_resp.json()
         assert get_body["replay_id"] == replay_id
 
+    def test_an_orphaned_queued_replay_never_wedges_later_ones(
+        self, client: TestClient, capsule_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """misc-3-03 / server-07: the route claimed the *oldest* queued replay and ran
+        it only if it was its own, so one orphan made every later POST a no-op."""
+        from novafabric.server.routes import replays
+
+        started: list[str] = []
+        monkeypatch.setattr(
+            replays, "_run_replay_job", lambda replay_id, *_a: started.append(replay_id)
+        )
+        orphan = replays._jobs().enqueue(replays._KIND, {"run_id": "gone"}, max_attempts=1)
+        run_id = "01REPLAY0000000000000000009"
+        _write_capsule(capsule_dir, run_id)
+        resp = client.post("/v0/replays", json={"run_id": run_id, "mode": "forensic"})
+        assert resp.status_code == 202
+        replay_id = resp.json()["replay_id"]
+        for _ in range(100):  # the job runs on a thread
+            if started:
+                break
+            import time
+
+            time.sleep(0.01)
+        assert started == [replay_id]
+        assert replays._jobs().get(orphan.job_id).state.value == "queued"
+
     def test_get_not_found(self, client: TestClient) -> None:
         resp = client.get("/v0/replays/no-such-replay-id")
         assert resp.status_code == 404

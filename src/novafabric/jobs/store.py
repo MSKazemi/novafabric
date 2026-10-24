@@ -152,6 +152,26 @@ class JobStore:
             ).fetchone()
         return _row_to_job(row) if row else None
 
+    def claim_job(
+        self, job_id: str, worker_id: str, *, lease_seconds: float = 30.0
+    ) -> Job | None:
+        """Atomically claim *job_id* if it is still queued; None otherwise.
+
+        For a caller that enqueued a job and runs it itself (review misc-3-03):
+        :meth:`claim` takes the *oldest* queued job, so one job left queued by a
+        crashed request was claimed — and dropped — by every later request,
+        whose own job then stayed queued forever.
+        """
+        now = _now_iso()
+        with closing(self._connect()) as conn, conn:
+            row = conn.execute(
+                "UPDATE jobs SET state='running', worker_id=?, attempt=attempt+1,"
+                " lease_expires_at=?, started_at=COALESCE(started_at, ?), updated_at=?"
+                " WHERE job_id=? AND state='queued' RETURNING *",
+                (worker_id, time.time() + lease_seconds, now, now, job_id),
+            ).fetchone()
+        return _row_to_job(row) if row else None
+
     def heartbeat(self, job_id: str, worker_id: str, *, lease_seconds: float = 30.0) -> bool:
         """Extend the lease; returns False if the worker no longer holds the job."""
         with closing(self._connect()) as conn, conn:

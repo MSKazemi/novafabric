@@ -118,8 +118,9 @@ async def schedule_replay(
     # Claim immediately and execute in a background thread: the request-scoped
     # runner keeps the pre-ADR execution model while the state is durable.
     worker_id = f"replays-{uuid.uuid4().hex[:8]}"
-    claimed = store.claim(worker_id, kinds=(_KIND,), lease_seconds=3600.0)
-    if claimed is not None and claimed.job_id == replay_id:
+    # misc-3-03: claim this request's own job, never "the oldest queued replay".
+    claimed = store.claim_job(replay_id, worker_id, lease_seconds=3600.0)
+    if claimed is not None:
         threading.Thread(
             target=_run_replay_job,
             args=(replay_id, worker_id, capsule_path, mode),

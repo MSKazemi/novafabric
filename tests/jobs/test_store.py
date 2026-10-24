@@ -137,3 +137,22 @@ def test_list_jobs_filters(store: JobStore) -> None:
     assert len(store.list_jobs(tenant_id="t1")) == 2
     assert len(store.list_jobs(kind="b")) == 1
     assert len(store.list_jobs(state=JobState.QUEUED)) == 3
+
+
+# --- review misc-3-03 / server-07: claim a specific job ---------------------------
+
+
+def test_claim_job_claims_exactly_the_named_job(store: JobStore) -> None:
+    orphan = store.enqueue("replay")  # left queued by a crashed request
+    mine = store.enqueue("replay")
+    claimed = store.claim_job(mine.job_id, "w1", lease_seconds=60)
+    assert claimed is not None and claimed.job_id == mine.job_id
+    assert claimed.state is JobState.RUNNING
+    assert store.get(orphan.job_id).state is JobState.QUEUED  # untouched
+
+
+def test_claim_job_refuses_a_job_that_is_not_queued(store: JobStore) -> None:
+    job = store.enqueue("replay")
+    assert store.claim_job(job.job_id, "w1") is not None
+    assert store.claim_job(job.job_id, "w2") is None  # already running
+    assert store.claim_job("no-such-job", "w1") is None
