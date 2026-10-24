@@ -423,12 +423,14 @@ class TestLSFLogReading:
         assert stdout == b"hello from LSF\n"
         assert stderr == b""
 
-    def test_falls_back_to_glob_when_no_direct_match(self, tmp_path: Path) -> None:
+    def test_never_reads_another_jobs_log(self, tmp_path: Path) -> None:
+        """Review capture-runners-18: a glob fallback filed another job's output into
+        this run's capsule; only the exact ``%J`` file is read."""
         capsule_dir = tmp_path / "capsule"
         capsule_dir.mkdir()
-        (capsule_dir / "stdout.99.log").write_bytes(b"fallback content\n")
+        (capsule_dir / "stdout.99.log").write_bytes(b"another job's output\n")
         stdout, _ = LSFRunner()._read_log_files(capsule_dir, "does-not-exist")
-        assert stdout == b"fallback content\n"
+        assert stdout == b""
 
     def test_returns_empty_when_no_logs(self, tmp_path: Path) -> None:
         capsule_dir = tmp_path / "capsule"

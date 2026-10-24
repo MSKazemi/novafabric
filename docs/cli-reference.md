@@ -9424,7 +9424,7 @@ runner = PBSRunner(RunnerSpec(image=None, command=["python", "agent.py"]))
 result = runner.run(capsule_dir=Path(".novafabric/runs/01HXAY7M"))
 ```
 
-The runner submits via `qsub`, polls via `qstat`, and cancels via `qdel` on timeout or signal. Job script is injected at `PBS_JOBSCRIPT`.
+The runner submits via `qsub`, polls via `qstat`, and cancels via `qdel` on timeout or signal. Job script is injected at `PBS_JOBSCRIPT`. A job that `qstat -f` no longer lists is looked up with `qstat -x -f` (OpenPBS shows finished jobs only there; Torque's XML form is read too), and OpenPBS's `Exit_status` is read as the exit code. Logs are written to `stdout.<run_id>.log` / `stderr.<run_id>.log` in `output_dir`, so captures sharing an `output_dir` never read each other's output. Releases up to v0.107.0 polled a finished OpenPBS job until the timeout and used one `stdout.log` for every job.
 
 ### LSFRunner (Python API)
 
@@ -9437,7 +9437,7 @@ runner = LSFRunner(RunnerSpec(image=None, command=["python", "agent.py"]))
 result = runner.run(capsule_dir=Path(".novafabric/runs/01HXAY7M"))
 ```
 
-The runner submits via `bsub`, polls via `bjobs`, and cancels via `bkill`. The job script is piped to `bsub` on stdin; it is never written to disk or put on a command line, because it carries the `extra_env` values.
+The runner submits via `bsub`, polls via `bjobs`, and cancels via `bkill`. Only the job's own `stdout.<jobid>.log` / `stderr.<jobid>.log` is read; a missing one is empty (releases up to v0.107.0 fell back to another job's log in a shared `output_dir`). The job script is piped to `bsub` on stdin; it is never written to disk or put on a command line, because it carries the `extra_env` values.
 
 ---
 

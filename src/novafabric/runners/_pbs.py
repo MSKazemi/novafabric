@@ -57,8 +57,10 @@ _PBS_SUCCESS_STATES = {"C", "F"}   # Both map to success in PBS semantics.
 _QSUB_JOBID_RE = re.compile(r"(\d+(?:\.\S+)?)")
 
 # qstat -f field: "    job_state = R"
-_QSTAT_STATE_RE = re.compile(r"job_state\s*=\s*(\S+)")
-_QSTAT_EXIT_RE = re.compile(r"exit_status\s*=\s*(\S+)")
+# ``-f`` text (``job_state = R``) or Torque's ``-x`` XML (``<job_state>C</job_state>``).
+# OpenPBS prints ``Exit_status`` and Torque ``exit_status``: match either case.
+_QSTAT_STATE_RE = re.compile(r"job_state(?:\s*=\s*|>)([^\s<]+)")
+_QSTAT_EXIT_RE = re.compile(r"exit_status(?:\s*=\s*|>)([^\s<]+)", re.IGNORECASE)
 
 #: PBS job script template.  All placeholders filled by PBSRunner._build_script().
 _PBS_SCRIPT_TEMPLATE = """\
@@ -67,8 +69,8 @@ _PBS_SCRIPT_TEMPLATE = """\
 #PBS -l nodes={nodes}:ppn={ppn}
 #PBS -l walltime={walltime}
 #PBS -q {queue}
-#PBS -o {log_dir}/stdout.log
-#PBS -e {log_dir}/stderr.log
+#PBS -o {log_dir}/stdout.{run_id}.log
+#PBS -e {log_dir}/stderr.{run_id}.log
 #PBS -v PYTHONPATH,NOVA_CAPSULE_DIR,NOVA_RUN_ID
 
 cd "$PBS_O_WORKDIR"
@@ -204,6 +206,7 @@ class PBSRunner:
             walltime=walltime,
             queue=queue,
             log_dir=str(output_dir),
+            run_id=spec.run_id,
             sitecustomize_dir=str(spec.capsule_dir),
             capsule_dir=str(spec.capsule_dir),
             span_id=span_id,
@@ -285,7 +288,7 @@ class PBSRunner:
                 poll_interval=poll_interval,
                 runner_metadata={"job_id": job_id, "queue": queue, "final_state": last_state},
                 read_output=lambda: read_log_pair(
-                    output_dir / "stdout.log", output_dir / "stderr.log"
+                    *_log_paths(output_dir, spec.run_id)
                 ),
             )
             raise
@@ -302,10 +305,9 @@ class PBSRunner:
             )
 
         # 5. Read stdout/stderr from the log files PBS wrote.
-        stdout_path = output_dir / "stdout.log"
-        stderr_path = output_dir / "stderr.log"
-        stdout_bytes = stdout_path.read_bytes() if stdout_path.exists() else b""
-        stderr_bytes = stderr_path.read_bytes() if stderr_path.exists() else b""
+        # Named for this run (review capture-runners-18): a shared output_dir once
+        # held one stdout.log every job wrote, so a run sealed another run's output.
+        stdout_bytes, stderr_bytes = read_log_pair(*_log_paths(output_dir, spec.run_id))
 
         runner_metadata: dict[str, Any] = {
             "job_id": job_id,
@@ -382,21 +384,22 @@ class PBSRunner:
         Returns ``(state, exit_status_str)`` where ``state`` is one of
         the single-char PBS job state codes (R, Q, C, E, H, S, F, W) or
         ``None`` if qstat failed / did not recognise the job.
+
+        OpenPBS shows a *finished* job only with ``qstat -x`` — ``-f`` errors
+        "Job has finished, use -x or -H" — so a failed ``-f`` is retried as
+        ``-x -f`` (review capture-runners-19). On Torque ``-x`` means XML, which
+        the parser reads too.
         """
-        try:
-            proc = subprocess.run(
-                [self._qstat, "-f", job_id],
-                capture_output=True,
-                timeout=10,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            return None, ""
-
-        if proc.returncode != 0:
-            return None, ""
-
-        output = proc.stdout.decode(errors="replace")
-        return self._parse_status(output)
+        for argv in ([self._qstat, "-f", job_id], [self._qstat, "-x", "-f", job_id]):
+            try:
+                proc = subprocess.run(argv, capture_output=True, timeout=10)
+            except (subprocess.TimeoutExpired, OSError):
+                return None, ""
+            if proc.returncode == 0:
+                state, exit_status = self._parse_status(proc.stdout.decode(errors="replace"))
+                if state is not None:
+                    return state, exit_status
+        return None, ""
 
     def _parse_status(self, qstat_output: str) -> tuple[str | None, str]:
         """Parse ``qstat -f`` output and return ``(state, exit_status)``."""
@@ -417,6 +420,11 @@ class PBSRunner:
 # ------------------------------------------------------------------
 # Module-level helpers
 # ------------------------------------------------------------------
+
+
+def _log_paths(output_dir: Path, run_id: str) -> tuple[Path, Path]:
+    """This run's stdout and stderr log files (the ``#PBS -o`` / ``-e`` targets)."""
+    return output_dir / f"stdout.{run_id}.log", output_dir / f"stderr.{run_id}.log"
 
 def _shell_quote(arg: str) -> str:
     """POSIX-shell quoting (``shlex.quote``, as SlurmRunner and LSFRunner).

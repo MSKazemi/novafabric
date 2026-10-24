@@ -51,6 +51,7 @@ from novafabric.runners._poll import (
     cancel_after_deadline,
     cancel_on_interrupt,
     jittered_sleep,
+    read_log_pair,
 )
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
@@ -423,34 +424,15 @@ class LSFRunner:
     def _read_log_files(
         self, output_dir: Path, job_id: str
     ) -> tuple[bytes, bytes]:
-        """Read LSF stdout/stderr log files for the given job ID.
+        """Read this job's ``stdout.<jobid>.log`` / ``stderr.<jobid>.log`` (``%J``).
 
-        LSF names the files using ``%J`` substitution; the actual filenames
-        are ``stdout.<jobid>.log`` and ``stderr.<jobid>.log``.  We search
-        for matching files with a glob in case the naming convention varies.
+        Only the exact files: a missing one reads as empty. A fallback to "any
+        ``stdout.*.log``" once filed another job's output — from a shared
+        ``output_dir`` — into this run's capsule (review capture-runners-18).
         """
-        stdout_bytes = b""
-        stderr_bytes = b""
-
-        # Direct hit: {output_dir}/stdout.<job_id>.log
-        stdout_direct = output_dir / f"stdout.{job_id}.log"
-        if stdout_direct.exists():
-            stdout_bytes = stdout_direct.read_bytes()
-        else:
-            # Fallback: any file matching stdout.*.log in the output dir
-            candidates = sorted(output_dir.glob("stdout.*.log"))
-            if candidates:
-                stdout_bytes = candidates[-1].read_bytes()
-
-        stderr_direct = output_dir / f"stderr.{job_id}.log"
-        if stderr_direct.exists():
-            stderr_bytes = stderr_direct.read_bytes()
-        else:
-            candidates = sorted(output_dir.glob("stderr.*.log"))
-            if candidates:
-                stderr_bytes = candidates[-1].read_bytes()
-
-        return stdout_bytes, stderr_bytes
+        return read_log_pair(
+            output_dir / f"stdout.{job_id}.log", output_dir / f"stderr.{job_id}.log"
+        )
 
 
 # ------------------------------------------------------------------
