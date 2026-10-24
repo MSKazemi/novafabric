@@ -139,11 +139,28 @@ def test_provenance_verifiable_via_verify_envelope_cli(
     assert "verified" in result.output
 
 
-def test_slsa_ml_profile_emits_promote_ml_and_eval_verdict(
-    promote_env: Path, fixtures_dir: Path
-) -> None:
-    _register_model(fixtures_dir)
-    out = promote_env / "ml.slsa.json"
+def _record_eval(passed: bool, score: float) -> None:
+    """One eval_results row for the model, as `nova eval agent` would store it."""
+    import uuid
+
+    from novafabric.registry.service import get_asset
+    from novafabric.registry.store import get_connection, init_schema
+
+    asset = get_asset("fraud-model", "1.0.0")
+    conn = get_connection()
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO eval_results (id, asset_id, suite_name, passed, score_json, run_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), asset["id"], "accuracy", int(passed),
+         json.dumps({"score": score}), "2026-10-24T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _ml_provenance(promote_env: Path, name: str) -> dict:  # type: ignore[type-arg]
+    out = promote_env / f"{name}.slsa.json"
     result = runner.invoke(
         app,
         [
@@ -155,8 +172,32 @@ def test_slsa_ml_profile_emits_promote_ml_and_eval_verdict(
     assert result.exit_code == 0, result.output
     assert "SLSA-for-ML SLSA provenance written" in result.output
     statement = json.loads(base64.b64decode(json.loads(out.read_text())["payload"]))
-    bd = statement["predicate"]["buildDefinition"]
-    assert bd["buildType"] == "https://novafabric.dev/promote-ml/v1"
-    byproducts = {b["name"]: b for b in statement["predicate"]["runDetails"]["byproducts"]}
-    assert "eval-verdict" in byproducts
-    assert len(byproducts["eval-verdict"]["digest"]["sha256"]) == 64
+    assert statement["predicate"]["buildDefinition"]["buildType"] == (
+        "https://novafabric.dev/promote-ml/v1"
+    )
+    return {b["name"]: b for b in statement["predicate"]["runDetails"]["byproducts"]}
+
+
+def test_slsa_ml_profile_digests_the_recorded_eval_verdict(
+    promote_env: Path, fixtures_dir: Path
+) -> None:
+    """Review cli-b-13: the digest hashed the CLI's own constants (asset, decision,
+    gate), so any two promotions of one asset carried the same "verdict"."""
+    from novafabric.registry.service import eval_verdict_sha256, get_asset
+
+    _register_model(fixtures_dir)
+    _record_eval(passed=True, score=0.91)
+    digest = _ml_provenance(promote_env, "a")["eval-verdict"]["digest"]["sha256"]
+    asset_id = get_asset("fraud-model", "1.0.0")["id"]
+    assert digest == eval_verdict_sha256(asset_id)  # the recorded rows, not CLI constants
+    _record_eval(passed=False, score=0.40)
+    assert eval_verdict_sha256(asset_id) not in (None, digest)
+
+
+def test_slsa_ml_profile_without_an_eval_verdict_claims_none(
+    promote_env: Path, fixtures_dir: Path
+) -> None:
+    _register_model(fixtures_dir)
+    byproducts = _ml_provenance(promote_env, "none")
+    assert "eval-verdict" not in byproducts
+

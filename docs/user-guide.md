@@ -1594,7 +1594,7 @@ nova promote direct support-triage-agent@v1.0.0 --to staging --force
 DSSE-signed `slsa.dev/provenance/v1` attestation for the promotion, and
 `--slsa-ml-profile` to emit the **SLSA-for-ML** profile instead — its `buildDefinition`
 captures dataset versions/hashes and seeds, and its byproducts bind the promoted model to
-the exact gating eval verdict (NF-057). Both verify with `nova verify-envelope` or stock
+the digest of its recorded eval results (omitted when none is recorded) (NF-057). Both verify with `nova verify-envelope` or stock
 `cosign`:
 
 ```bash

@@ -5683,8 +5683,11 @@ behavior and output are unchanged.
 **`--slsa-ml-profile`** (NF-057, experimental, [ADR-0105](./decisions.md)) — with
 `--slsa-provenance`, emit the **SLSA-for-ML profile** instead of the generic one: the build type becomes
 `https://novafabric.dev/promote-ml/v1`, a `gate-rule` byproduct records the gating rule, and an `eval-verdict`
-byproduct carries the sha256 digest of the gating eval verdict — binding the promoted model to the exact eval
-result that justified it. Use for model assets. Still a valid `slsa.dev/provenance/v1` Statement, DSSE-signed
+byproduct carries the sha256 of the asset's recorded eval results (canonical JSON of its `eval_results` rows:
+id, suite, pass flag, score, run time — the evidence the promote gate reads), binding the promoted model to the
+eval that justified it. A promotion with no recorded eval (e.g. `--force`) gets no `eval-verdict` byproduct and a
+warning; releases up to v0.107.0 digested the command's own constants instead, so every promotion of an asset
+carried the same "verdict". Use for model assets. Still a valid `slsa.dev/provenance/v1` Statement, DSSE-signed
 and `nova verify-envelope`-verifiable.
 
 ```bash

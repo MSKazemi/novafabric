@@ -111,7 +111,7 @@ def ml_promotion_provenance(
     *,
     asset_ref: str,
     asset_sha256: str,
-    eval_verdict_sha256: str,
+    eval_verdict_sha256: str | None,
     eval_container: str | None = None,
     seeds: Sequence[int] | None = None,
     datasets: Sequence[dict[str, str]] | None = None,
@@ -123,9 +123,10 @@ def ml_promotion_provenance(
     """Build the SLSA-for-ML profile provenance for a model promotion (NF-057).
 
     Same shape as :func:`promotion_provenance` but with the ``promote-ml/v1`` build type,
-    a ``gate-rule`` byproduct, and a mandatory ``eval-verdict`` digest byproduct capturing
-    the gating eval verdict — so a consumer can bind the promoted model to the exact eval
-    result that justified it.
+    a ``gate-rule`` byproduct, and an ``eval-verdict`` digest byproduct capturing the
+    gating eval verdict — so a consumer can bind the promoted model to the exact eval
+    result that justified it. ``None`` (a promotion with no recorded eval) omits the
+    byproduct: the provenance never claims a verdict it does not have.
     """
     return promotion_provenance(
         asset_ref=asset_ref,

@@ -107,14 +107,21 @@ def _emit_slsa_provenance(
     asset_sha256 = hashlib.sha256(spec_json.encode("utf-8")).hexdigest()
     gate = "significance-gate/v1" if gated else None
     if ml_profile:
-        # SLSA-for-ML (NF-057): bind the promoted model to the digest of the gating
-        # eval verdict (content-addressed over the recorded decision context).
-        verdict_ctx = json.dumps(
-            {"asset": f"{name}@{version}", "asset_sha256": asset_sha256,
-             "decision": "promoted", "gate": gate},
-            sort_keys=True,
+        # SLSA-for-ML (NF-057): bind the promoted model to the digest of the asset's
+        # recorded eval results — the evidence the gate read, not values this command
+        # chose (review cli-b-13). No recorded eval → no eval-verdict byproduct.
+        from novafabric.registry.service import (  # noqa: PLC0415
+            eval_verdict_sha256 as _verdict_digest,
         )
-        eval_verdict_sha256 = hashlib.sha256(verdict_ctx.encode("utf-8")).hexdigest()
+
+        eval_verdict_sha256 = _verdict_digest(str(result.get("id", "")))
+        if eval_verdict_sha256 is None:
+            console.print(
+                "[yellow]⚠[/yellow] no eval result is recorded for "
+                f"{name}@{version}: the SLSA-for-ML provenance carries no eval-verdict "
+                "byproduct.",
+                soft_wrap=True,
+            )
         statement = ml_promotion_provenance(
             asset_ref=f"{name}@{version}",
             asset_sha256=asset_sha256,
@@ -180,8 +187,9 @@ def promote_direct_cmd(
         "--slsa-ml-profile",
         help=(
             "With --slsa-provenance, emit the SLSA-for-ML profile (NF-057, ADR-0105): "
-            "buildType promote-ml/v1 plus an eval-verdict digest byproduct binding the "
-            "promoted model to the gating eval verdict. Use for model assets."
+            "buildType promote-ml/v1 plus an eval-verdict byproduct: the sha256 of the "
+            "asset's recorded eval results (omitted when none is recorded). Use for "
+            "model assets."
         ),
     ),
     slsa_out: Optional[Path] = typer.Option(

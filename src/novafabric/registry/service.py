@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import uuid
@@ -520,6 +521,37 @@ def get_asset(
         return _row_to_dict(row)
     finally:
         conn.close()
+
+
+def eval_verdict_sha256(asset_id: str, db_path: Path | None = None) -> str | None:
+    """Hex sha256 of the asset's recorded eval results — the evidence the promote gate reads.
+
+    Canonical JSON over every ``eval_results`` row of *asset_id* (id, suite, pass flag,
+    score, run time), oldest first. ``None`` when the asset has no recorded eval: there
+    is no verdict to bind, and none is invented (review cli-b-13).
+    """
+    conn = get_connection(db_path)
+    try:
+        init_schema(conn)
+        rows = conn.execute(
+            "SELECT id, suite_name, passed, score_json, run_at FROM eval_results "
+            "WHERE asset_id = ? ORDER BY run_at, id",
+            (asset_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return None
+    canonical = json.dumps(
+        [
+            {"id": r[0], "suite_name": r[1], "passed": bool(r[2]),
+             "score_json": r[3], "run_at": r[4]}
+            for r in rows
+        ],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _has_passing_eval(conn: sqlite3.Connection, asset_id: str) -> bool:
