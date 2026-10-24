@@ -163,6 +163,12 @@ oidc:
   audience: "nova-server"
 ```
 
+- `issuer_url` is the IdP's issuer, written as it appears in the tokens' `iss`
+  claim (Auth0's ends in `/`); a configured trailing slash also matches an `iss`
+  without one. The server reads the key-set location (`jwks_uri`) from
+  `<issuer_url>/.well-known/openid-configuration`, which Keycloak, Okta and
+  Auth0 all publish, and falls back to `<issuer_url>/.well-known/jwks.json`
+  when there is no discovery document.
 - Roles are read from the `nova_roles` claim (falling back to `roles`); the claim
   name is not configurable.
 - The JWKS is cached for 3600 s; the interval is not configurable. A token whose

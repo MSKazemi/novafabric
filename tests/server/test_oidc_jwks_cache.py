@@ -105,3 +105,123 @@ def test_the_fetch_never_runs_on_the_event_loop(
     )
     assert resp.status_code == 401
     assert on_loop == [False]
+
+
+# ── review server-11: the documented IdPs ────────────────────────────────────
+
+
+class _FakeResponse:
+    def __init__(self, body: dict[str, Any] | None, status: int = 200) -> None:
+        self._body, self.status_code = body, status
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self) -> dict[str, Any]:
+        assert self._body is not None
+        return self._body
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, routes: dict[str, Any]) -> list[str]:
+    import novafabric.server.auth as auth_mod
+
+    seen: list[str] = []
+
+    def _get(url: str, timeout: float) -> _FakeResponse:
+        seen.append(url)
+        body = routes.get(url)
+        return _FakeResponse(body, 200 if body is not None else 404)
+
+    monkeypatch.setattr(auth_mod.httpx, "get", _get)
+    return seen
+
+
+def test_the_jwks_location_comes_from_the_discovery_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Keycloak publishes /protocol/openid-connect/certs, not /.well-known/jwks.json.
+    issuer = "https://kc.example.com/realms/nova"
+    certs = f"{issuer}/protocol/openid-connect/certs"
+    seen = _serve(monkeypatch, {
+        f"{issuer}/.well-known/openid-configuration": {"issuer": issuer, "jwks_uri": certs},
+        certs: {"keys": [KEY]},
+    })
+    assert JwksCache(issuer).get_key("known") == KEY
+    assert seen == [f"{issuer}/.well-known/openid-configuration", certs]
+
+
+def test_without_a_discovery_document_the_conventional_path_is_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issuer = "https://idp.example.com"
+    _serve(monkeypatch, {f"{issuer}/.well-known/jwks.json": {"keys": [KEY]}})
+    assert JwksCache(issuer).get_key("known") == KEY
+
+
+def _oidc_token_client(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, *, configured: str, iss: str
+) -> Any:
+    import json
+
+    jwt = pytest.importorskip("jwt")
+    from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
+    from fastapi.testclient import TestClient
+    from jwt.algorithms import RSAAlgorithm
+
+    import novafabric.server.auth as auth_mod
+    from novafabric.server.app import create_app
+    from novafabric.server.config import OidcConfig, ServerConfig
+
+    priv = generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(priv.public_key())) | {"kid": "k1", "alg": "RS256"}
+    base = configured.rstrip("/")
+    _serve(monkeypatch, {
+        f"{base}/.well-known/openid-configuration": {"jwks_uri": f"{base}/keys"},
+        f"{base}/keys": {"keys": [jwk]},
+    })
+    monkeypatch.setattr(auth_mod, "_jwks_cache", None)
+    cfg = ServerConfig(
+        db_path=str(tmp_path / "t.db"),
+        oidc=OidcConfig(issuer_url=configured, audience="nova"),
+    )
+    now = int(time.time())
+    token = jwt.encode(
+        {"sub": "u", "aud": "nova", "iss": iss, "iat": now, "exp": now + 600,
+         "nova_roles": ["reader"]},
+        priv, algorithm="RS256", headers={"kid": "k1"},
+    )
+    client = TestClient(create_app(cfg), raise_server_exceptions=False)
+    return client.get("/v0/assets", headers={"Authorization": f"Bearer {token}"})
+
+
+def test_an_issuer_with_a_trailing_slash_is_accepted(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Auth0's iss is "https://<tenant>.auth0.com/"; stripping the configured
+    # slash made every token an "issuer mismatch".
+    resp = _oidc_token_client(
+        tmp_path, monkeypatch,
+        configured="https://tenant.auth0.com/", iss="https://tenant.auth0.com/",
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_a_configured_trailing_slash_still_accepts_an_issuer_without_one(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resp = _oidc_token_client(
+        tmp_path, monkeypatch,
+        configured="https://kc.example.com/realms/nova/", iss="https://kc.example.com/realms/nova",
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_a_different_issuer_is_still_refused(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resp = _oidc_token_client(
+        tmp_path, monkeypatch,
+        configured="https://tenant.auth0.com/", iss="https://evil.example.com/",
+    )
+    assert resp.status_code == 401

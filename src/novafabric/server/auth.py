@@ -110,20 +110,43 @@ class JwksCache:
         self._keys: dict[str, Any] = {}  # kid → JWK dict
         self._fetched_at: float = float("-inf")  # never fetched → always stale
         self._attempted_at: float = float("-inf")
+        self._jwks_uri: str | None = None  # from discovery, once found
         self._lock = threading.Lock()
 
-    @property
-    def _jwks_uri(self) -> str:
+    def _discover_jwks_uri(self) -> str:
+        """The issuer's ``jwks_uri``, read from its OpenID discovery document.
+
+        The JWKS location is the IdP's to publish, not a fixed path: Keycloak
+        serves ``/protocol/openid-connect/certs`` and Okta ``/v1/keys``, neither
+        of which answers ``/.well-known/jwks.json`` (review server-11). Without
+        a usable discovery document, that conventional path is the fallback.
+        The discovered location is kept; a failed discovery is retried with
+        the next fetch.
+        """
+        if self._jwks_uri is not None:
+            return self._jwks_uri
+        discovery = f"{self._issuer_url}/.well-known/openid-configuration"
+        try:
+            resp = httpx.get(discovery, timeout=10)
+            resp.raise_for_status()
+            uri = resp.json().get("jwks_uri")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("OIDC discovery failed for %s: %s", discovery, exc)
+            uri = None
+        if isinstance(uri, str) and uri:
+            self._jwks_uri = uri
+            return uri
         return f"{self._issuer_url}/.well-known/jwks.json"
 
     def _fetch(self) -> None:
         """Fetch JWKS from the issuer and populate the in-memory key map."""
+        jwks_uri = self._discover_jwks_uri()
         try:
-            resp = httpx.get(self._jwks_uri, timeout=10)
+            resp = httpx.get(jwks_uri, timeout=10)
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("JWKS fetch failed for %s: %s", self._jwks_uri, exc)
+            logger.warning("JWKS fetch failed for %s: %s", jwks_uri, exc)
             return
         keys: dict[str, Any] = {}
         for jwk in data.get("keys", []):
@@ -324,6 +347,18 @@ def _try_offline_token(request: Request, config: ServerConfig) -> AuthContext | 
     return ctx
 
 
+def _accepted_issuers(configured: str) -> list[str]:
+    """The ``iss`` values a token may carry: the issuer exactly as configured.
+
+    Matching only the slash-stripped form refused every token from an IdP
+    whose ``iss`` ends in ``/`` (Auth0, review server-11); the stripped form is
+    still accepted so a configured trailing slash keeps matching an ``iss``
+    without one.
+    """
+    stripped = configured.rstrip("/")
+    return [configured] if configured == stripped else [configured, stripped]
+
+
 async def verify_token(request: Request) -> AuthContext:
     """FastAPI dependency that validates the Bearer JWT and returns AuthContext.
 
@@ -404,7 +439,7 @@ async def verify_token(request: Request) -> AuthContext:
             key=public_key,
             algorithms=[alg],
             audience=config.oidc.audience,
-            issuer=config.oidc.issuer_url.rstrip("/"),
+            issuer=_accepted_issuers(config.oidc.issuer_url),
             options={"require": ["exp", "iss", "aud"]},
         )
     except jwt.ExpiredSignatureError:
