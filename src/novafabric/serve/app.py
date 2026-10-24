@@ -3310,24 +3310,40 @@ def create_app(
         from novafabric.registry.service import DuplicateAssetError, register_asset
         from novafabric.spec.validator import SpecValidationError, validate_spec
 
+        # Every outcome is in the dashboard audit, as for POST /api/assets — a
+        # registration from the suggest-register panel left none (review serve-08).
+        def _audited(result: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+            audit.append(
+                action="register_asset",
+                args=args,
+                cli_equivalent=f"nova register <{args.get('name', 'spec')}.yaml>",
+                actor_token_fp=actor_fp,
+                result="ok" if result["ok"] else "error",
+                error=None if result["ok"] else str(result.get("error")),
+                extra={"route": "register-from-yaml"},
+            )
+            return result
+
+        args: dict[str, Any] = {"spec_yaml_len": len(spec_yaml)}
         try:
             with _tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
                 f.write(spec_yaml)
                 tmp = Path(f.name)
             try:
                 spec = validate_spec(tmp)
+                args = {"name": spec.name, "version": spec.version}
                 register_asset(
                     spec, spec_path=tmp, db_path=db_path, actor=f"serve:{actor_fp}"
                 )
-                return {"ok": True, "name": spec.name}
+                return _audited({"ok": True, "name": spec.name}, args)
             finally:
                 tmp.unlink(missing_ok=True)
         except SpecValidationError as exc:
-            return {"ok": False, "error": str(exc)}
+            return _audited({"ok": False, "error": str(exc)}, args)
         except DuplicateAssetError:
-            return {"ok": False, "error": "already registered"}
+            return _audited({"ok": False, "error": "already registered"}, args)
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            return _audited({"ok": False, "error": str(exc)}, args)
 
     @app.post("/api/assets/{asset_id}/eval")
     async def eval_asset_by_id_endpoint(
