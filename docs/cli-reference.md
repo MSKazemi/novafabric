@@ -4518,9 +4518,13 @@ nova export-retention --bundle a.zip --bundle b.zip --regime mifid --json
 
 - `--bundle` — Evidence Bundle ZIP (repeatable, required)
 - `--regime` — `17a-4` (default; `17 CFR 240.17a-4 (2022 amendment)`) or `mifid` — a version-pinned tag, not a determination
-- `--registry` — read `.novafabric/registries/<name>/{retention-policy.yaml,worm.db}` and the
-  registry's legal holds from the shared hold store (every hold location; see `nova hold create`)
-- `--worm-db`, `--worm-receipts`, `--audit-log` — override the WORM DB, supply cloud WORM receipts, override the audit log
+- `--registry` — read the registry's `retention-policy.yaml`, `worm.db` and legal holds from the
+  locations `nova retention` and `nova hold` use: `$NOVAFABRIC_HOME/registries/<name>/`, then the
+  legacy `./.novafabric/registries/<name>/` under the working directory (read, with a warning). With
+  several policy copies the window is the first copy's and `deletion_mode` is `prohibited` if any
+  copy says so (deletion refuses then too); with several `worm.db` files the latest lock per run wins
+- `--worm-db` — read only this WORM DB instead of every `worm.db` of `--registry`
+- `--worm-receipts`, `--audit-log` — supply cloud WORM receipts, override the audit log
 
 Exit codes: `0` (rendered, including `missing` rows), `2` (unreadable/corrupt bundle, policy, hold ledger, WORM DB or receipts).
 

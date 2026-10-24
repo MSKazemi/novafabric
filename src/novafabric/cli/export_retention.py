@@ -26,7 +26,6 @@ console = Console()
 err_console = Console(stderr=True)
 
 _MARK = {"complete": "[green]✓[/green]", "partial": "[yellow]◐[/yellow]", "missing": "[red]✗[/red]"}
-_REGISTRIES = Path(".novafabric") / "registries"
 
 
 class RegimeOption(str, Enum):
@@ -51,14 +50,19 @@ def export_retention_cmd(
         typer.Option(
             "--registry",
             help=(
-                "Registry whose retention-policy.yaml and worm.db are read, and whose "
-                "legal holds are read from the shared hold store (nova hold / API)."
+                "Registry whose retention-policy.yaml, worm.db and legal holds are read, "
+                "from $NOVAFABRIC_HOME/registries/<registry>/ and the legacy "
+                "./.novafabric/registries/<registry>/ (the locations nova retention and "
+                "nova hold use)."
             ),
         ),
     ] = None,
     worm_db: Annotated[
         Path | None,
-        typer.Option("--worm-db", help="Local WORM adapter DB (default: the registry's worm.db)."),
+        typer.Option(
+            "--worm-db",
+            help="Read only this local WORM adapter DB (default: every worm.db of --registry).",
+        ),
     ] = None,
     worm_receipts: Annotated[
         Path | None,
@@ -97,19 +101,21 @@ def export_retention_cmd(
     from novafabric.compliance.export.finance.retention_collect import (
         CorruptEvidenceError,
         collect_bundle_facts,
-        read_policy,
         read_registry_holds,
+        read_registry_policy,
+        registry_worm_dbs,
     )
 
-    registry_dir = _REGISTRIES / registry if registry is not None else None
-    if worm_db is None and registry_dir is not None:
-        worm_db = registry_dir / "worm.db"
     try:
-        policy = read_policy(registry_dir) if registry_dir is not None else None
+        policy = read_registry_policy(registry) if registry is not None else None
         holds = read_registry_holds(registry) if registry is not None else None
+        discovered = (
+            registry_worm_dbs(registry) if registry is not None and worm_db is None else []
+        )
         facts = collect_bundle_facts(
             bundles,
             worm_db=worm_db,
+            worm_dbs=discovered,
             worm_receipts=worm_receipts,
             audit_log=audit_log or resolve_audit_log_path(),
         )

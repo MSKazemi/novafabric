@@ -4,12 +4,14 @@ Each function reads one shipped source and returns the typed facts
 :func:`~.retention.build_retention_attestation` renders — nothing is inferred or defaulted into
 existence:
 
-* ``.novafabric/registries/<registry>/retention-policy.yaml`` via the ADR-0031
-  :class:`~novafabric.storage._retention.RetentionPolicy` model;
+* the registry's ``retention-policy.yaml`` via the ADR-0031
+  :class:`~novafabric.storage._retention.RetentionPolicy` model, from every location
+  ``nova retention`` reads (``$NOVAFABRIC_HOME/registries/<registry>/`` first, then the
+  legacy ``./.novafabric/registries/<registry>/``);
 * the legal-hold ledgers of the one hold store (:mod:`novafabric.retention.holds` —
   ``$NOVAFABRIC_HOME/registries/<registry>/holds.jsonl``, written by ``nova hold`` and
   ``POST /api/holds``, plus the pre-unification locations);
-* the local ADR-0031 WORM adapter database (``worm.db``) written by
+* the local ADR-0031 WORM adapter databases (``worm.db``, in the same locations) written by
   :class:`~novafabric.storage._local_worm.LocalWormAdapter`, queried through a ``mode=ro``
   connection (never the adapter, whose constructor runs DDL) and only when it already exists;
 * operator-supplied cloud WORM receipts (the :class:`~novafabric.storage.worm.WormReceipt` an
@@ -54,11 +56,15 @@ def read_policy(registry_dir: Path) -> PolicyFacts | None:
     Raises:
         CorruptEvidenceError: the file exists but is not a valid ADR-0031 policy.
     """
-    from novafabric.storage._retention import RetentionPolicy
-
     path = registry_dir / "retention-policy.yaml"
     if not path.exists():
         return None
+    return _policy_facts(path)
+
+
+def _policy_facts(path: Path) -> PolicyFacts:
+    from novafabric.storage._retention import RetentionPolicy
+
     try:
         policy = RetentionPolicy.from_yaml(path)
     except (OSError, ValueError, ValidationError) as exc:
@@ -72,6 +78,74 @@ def read_policy(registry_dir: Path) -> PolicyFacts | None:
         jurisdiction=policy.jurisdiction,
         legal_hold_ids=list(policy.legal_hold_ids),
     )
+
+
+def read_registry_policy(
+    registry: str, *, extra_roots: Iterable[Path] = ()
+) -> PolicyFacts | None:
+    """The retention policy of *registry*, read from every copy ``nova retention`` reads.
+
+    Copies are found like holds (:func:`novafabric.retention.holds.registry_file_entries`):
+    ``$NOVAFABRIC_HOME/registries/<registry>/`` first, then the legacy
+    ``./.novafabric/registries/<registry>/`` (read, with a warning). The window and
+    jurisdiction are the first copy's (the one ``nova retention`` takes bindings from);
+    ``deletion_mode`` is ``prohibited`` when any copy says so, because deletion refuses
+    then too; ``legal_hold_ids`` is the union; ``ref`` names every copy. ``None`` when
+    the registry has no policy anywhere.
+
+    Raises:
+        CorruptEvidenceError: a copy is unreadable or invalid, a registry location
+            cannot be examined, or *registry* is not a valid registry name.
+    """
+    from novafabric.retention.holds import (
+        RETENTION_POLICY_FILENAME,
+        HoldStoreError,
+        canonical_registry_file,
+        registry_file_entries,
+        warn_legacy_registry_file,
+    )
+
+    try:
+        paths = registry_file_entries(
+            registry, RETENTION_POLICY_FILENAME, extra_roots=extra_roots
+        )
+        canonical = canonical_registry_file(registry, RETENTION_POLICY_FILENAME)
+    except HoldStoreError as exc:
+        raise CorruptEvidenceError(str(exc)) from exc
+    copies: list[PolicyFacts] = []
+    for path in paths:
+        if path != canonical:
+            warn_legacy_registry_file(path, canonical, used=True)
+        copies.append(_policy_facts(path))
+    if not copies:
+        return None
+    first = copies[0]
+    modes = {c.deletion_mode for c in copies}
+    return first.model_copy(
+        update={
+            "ref": "; ".join(c.ref for c in copies),
+            "deletion_mode": "prohibited" if "prohibited" in modes else first.deletion_mode,
+            "legal_hold_ids": list(
+                dict.fromkeys(h for c in copies for h in c.legal_hold_ids)
+            ),
+        }
+    )
+
+
+def registry_worm_dbs(registry: str, *, extra_roots: Iterable[Path] = ()) -> list[Path]:
+    """Every ``worm.db`` entry of *registry*, in the locations deletion reads them.
+
+    Raises:
+        CorruptEvidenceError: a registry location cannot be examined, or *registry*
+            is not a valid registry name.
+    """
+    from novafabric.retention.holds import HoldStoreError
+    from novafabric.retention.worm_state import WormStateUnavailableError, worm_db_paths
+
+    try:
+        return worm_db_paths(registry, extra_roots=extra_roots)
+    except (HoldStoreError, WormStateUnavailableError) as exc:
+        raise CorruptEvidenceError(str(exc)) from exc
 
 
 def _hold_facts(ref: str, present: bool, records: Iterable[Any]) -> HoldFacts:
@@ -134,14 +208,22 @@ def read_registry_holds(
     return _hold_facts("; ".join(sources), True, records)
 
 
-def read_local_worm(worm_db: Path, run_ids: Iterable[str]) -> dict[str, WormFacts]:
+def read_local_worm(
+    worm_db: Path, run_ids: Iterable[str], *, required: bool = False
+) -> dict[str, WormFacts]:
     """Read local-adapter WORM locks for ``run_ids``; empty when ``worm_db`` does not exist.
 
     Same facts as ``LocalWormAdapter.list`` + ``verify_integrity`` (``sha256(data)`` against the
     stored digest), but over a ``mode=ro`` connection so the export never writes the store.
+    *required* — the entry was found on disk (a discovered ``worm.db``), so one that is not a
+    readable file (a dangling link, a directory) is corrupt evidence, not "no lock".
     """
     if not worm_db.exists():
+        if required:
+            raise CorruptEvidenceError(f"unreadable WORM database {worm_db}: not a file")
         return {}
+    if required and not worm_db.is_file():
+        raise CorruptEvidenceError(f"unreadable WORM database {worm_db}: not a file")
     facts: dict[str, WormFacts] = {}
     try:
         conn = sqlite3.connect(worm_db.resolve().as_uri() + "?mode=ro", uri=True)
@@ -304,20 +386,29 @@ class AuditIndex:
 def collect_bundle_facts(
     bundles: Iterable[Path],
     *,
-    worm_db: Path | None,
+    worm_db: Path | None = None,
+    worm_dbs: Iterable[Path] = (),
     worm_receipts: Path | None,
     audit_log: Path,
 ) -> list[BundleFacts]:
     """Read every bundle and join its WORM lock and audit trail by ``run_id``.
 
-    A supplied cloud receipt wins over a local-adapter entry for the same run (the receipt is the
-    stronger evidence); both are read-only.
+    *worm_db* is one operator-named database (absent = no lock); *worm_dbs* are discovered
+    ``worm.db`` entries (:func:`registry_worm_dbs`), each of which must be readable. Across
+    local databases the latest ``locked_until`` wins per run. A supplied cloud receipt wins over
+    a local-adapter entry for the same run (the receipt is the stronger evidence); all are
+    read-only.
     """
     read = [(p, *read_bundle(p)) for p in bundles]
     run_ids = [run_id for _, _, run_id, _ in read]
     worm: dict[str, WormFacts] = {}
-    if worm_db is not None:
-        worm.update(read_local_worm(worm_db, run_ids))
+    local = [(worm_db, False)] if worm_db is not None else []
+    local += [(path, True) for path in dict.fromkeys(worm_dbs)]
+    for path, required in local:
+        for run_id, fact in read_local_worm(path, run_ids, required=required).items():
+            current = worm.get(run_id)
+            if current is None or fact.locked_until > current.locked_until:
+                worm[run_id] = fact
     if worm_receipts is not None:
         worm.update(read_worm_receipts(worm_receipts))
     index = AuditIndex(audit_log) if audit_log.exists() else None

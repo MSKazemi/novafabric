@@ -1488,7 +1488,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "force",
         "label": "--force",
         "type": "toggle",
-        "hint": "Skip the retention-window check only. Legal holds, WORM locks, NovaSeal seals and deletion_mode=prohibited still refuse.",
+        "hint": "Skip the retention-window check only. Legal holds, WORM locks, NovaSeal seals, deletion_mode=prohibited and unreadable WORM or policy files still refuse.",
         "flag": "--force"
       },
       {
@@ -6268,14 +6268,14 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "registry",
         "label": "--registry",
         "type": "text",
-        "hint": "Registry whose retention-policy.yaml and worm.db are read, and whose legal holds are read from the shared hold store (nova hold / API).",
+        "hint": "Registry whose retention-policy.yaml, worm.db and legal holds are read, from $NOVAFABRIC_HOME/registries/<registry>/ and the legacy ./.novafabric/registries/<registry>/ (the locations nova retention and nova hold use).",
         "flag": "--registry"
       },
       {
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB (default: the registry's worm.db).",
+        "hint": "Read only this local WORM adapter DB (default: every worm.db of --registry).",
         "flag": "--worm-db"
       },
       {
@@ -11487,7 +11487,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds. A worm.db that exists but cannot be read (or a --worm-db that does not exist) refuses the whole command with worm_state_unavailable; no worm.db anywhere means no local WORM is configured.",
         "flag": "--worm-db"
       },
       {
@@ -11578,7 +11578,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds. A worm.db that exists but cannot be read (or a --worm-db that does not exist) refuses the whole command with worm_state_unavailable; no worm.db anywhere means no local WORM is configured.",
         "flag": "--worm-db"
       },
       {
@@ -11617,7 +11617,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds. A worm.db that exists but cannot be read (or a --worm-db that does not exist) refuses the whole command with worm_state_unavailable; no worm.db anywhere means no local WORM is configured.",
         "flag": "--worm-db"
       },
       {
@@ -11663,7 +11663,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "worm-db",
         "label": "--worm-db",
         "type": "text",
-        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds.",
+        "hint": "Local WORM adapter DB consulted for locked_until. Default: every worm.db found for the registry — $NOVAFABRIC_HOME/registries/<registry>/worm.db, the legacy ./.novafabric/registries/<registry>/worm.db (read with a warning) and the swept capsule base's ../registries/<registry>/worm.db; a lock in any of them holds. A worm.db that exists but cannot be read (or a --worm-db that does not exist) refuses the whole command with worm_state_unavailable; no worm.db anywhere means no local WORM is configured.",
         "flag": "--worm-db"
       },
       {
