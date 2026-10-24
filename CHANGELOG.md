@@ -13,6 +13,11 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **Erasure audit entries no longer carry a reversible hash of the data subject.** `nova pii erase` and both
+  dashboard erasure routes wrote `sha256(subject_id)` into the hash-chained audit log, the dashboard audit log and
+  every SIEM copy; for an email address that digest is reversed by a dictionary in seconds, in a log that cannot be
+  edited after the erasure it records. The entries now carry `subject_ref`, the `NOVA_PII_PEPPER`-keyed HMAC the
+  redaction manifest already uses, or `null` without a pepper. The erasure status API is unchanged.
 - **A failed webhook delivery no longer writes the webhook URL to logs or the audit trail.** A Slack, Discord or
   Teams webhook URL is the credential itself; every failed delivery logged it in full and stored the HTTP client's
   error text — which embeds the URL — in the append-only hash-chained audit log (lifecycle webhooks, alert routing,
