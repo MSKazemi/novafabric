@@ -112,6 +112,21 @@ _RUN_AGGREGATE_REPORTS: frozenset[str] = frozenset(
 _BUNDLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 
 
+#: Browser security headers on every ``nova serve`` response (review frontend-dashboard-01,
+#: defence in depth). No plugins, no ``<base>`` hijack, no framing (click-jacking), no
+#: MIME sniffing, and no Referer: the dashboard token can travel in ``?token=``, so a
+#: Referer would hand it to any site the dashboard links to. ``script-src`` is not
+#: restricted yet — the built dashboard carries an inline hydration script.
+SECURITY_HEADERS: dict[str, str] = {
+    "Content-Security-Policy": (
+        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
+
+
 def _effective_scope_label(record: dict[str, Any]) -> str:
     """The scope an issued-token record is enforced with, as a display label."""
     held = record_scope(record)
@@ -940,6 +955,15 @@ def create_app(
                 content={"error": "host_not_localhost", "host": request.headers.get("host")},
             )
         return await call_next(request)
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+        # Registered after the host guard, so it wraps that guard's 403s too; a
+        # route that sets one of these headers itself keeps its own value.
+        response = await call_next(request)
+        for name, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        return response
 
     # ---------- auth dependency ----------
 
