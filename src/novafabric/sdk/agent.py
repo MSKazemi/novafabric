@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import contextlib
 import functools
+import inspect
 import logging
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any, TypeVar
@@ -14,6 +18,7 @@ import yaml
 from opentelemetry import trace
 
 from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric.capture.hooks._fail_open import note_capture_failure
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -59,145 +64,224 @@ def agent(
     arguments. Absent = a standalone run (today's behavior).
     """
     def decorator(fn: F) -> F:
+        store = None if capsule_dir is None else Path(capsule_dir)
+        tags = _Tags(deployment_environment, variant, session_id, session_sequence)
+
+        if inspect.iscoroutinefunction(fn):
+            # eval-adapters-query-03: an async agent must be awaited *inside* the
+            # capture; calling it returned an un-awaited coroutine, so the capsule
+            # was finalised (and the hooks removed) before any agent code ran.
+            @functools.wraps(fn)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                with _agent_span(name, version):
+                    capture = _SdkCapture.start(name, version, store, tags)
+                    if capture is None:
+                        return await fn(*args, **kwargs)
+                    try:
+                        result = await fn(*args, **kwargs)
+                    except BaseException as exc:
+                        capture.finish(exc)
+                        raise
+                    capture.finish(None)
+                    return result
+
+            return async_wrapper  # type: ignore[return-value]
+
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span(f"novafabric.agent.{name}") as span:
-                span.set_attribute("gen_ai.agent.id", str(uuid.uuid4()))
-                span.set_attribute("gen_ai.agent.name", name)
-                span.set_attribute("gen_ai.agent.version", version)
-
-                if capsule_dir is None:
+            with _agent_span(name, version):
+                capture = _SdkCapture.start(name, version, store, tags)
+                if capture is None:
                     return fn(*args, **kwargs)
-
-                return _run_with_capture(
-                    fn, args, kwargs, name, version, Path(capsule_dir),
-                    deployment_environment=deployment_environment,
-                    variant=variant,
-                    session_id=session_id,
-                    session_sequence=session_sequence,
-                )
+                try:
+                    result = fn(*args, **kwargs)
+                except BaseException as exc:
+                    capture.finish(exc)
+                    raise
+                capture.finish(None)
+                return result
 
         return wrapper  # type: ignore[return-value]
 
     return decorator
 
 
-def _run_with_capture(
-    fn: Callable[..., Any],
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    agent_name: str,
-    agent_version: str,
-    capsule_root: Path,
-    deployment_environment: str | None = None,
-    variant: Mapping[str, Any] | None = None,
-    session_id: str | None = None,
-    session_sequence: int | None = None,
-) -> Any:
-    from novafabric.capture._ulid import new_span_id, new_ulid
-    from novafabric.capture.capsule import CapsuleWriter
-    from novafabric.capture.deployment_env import resolve_deployment_environment
-    from novafabric.capture.env import capture_environment, host_info
-    from novafabric.capture.finalize import finalize_in_process_capsule
-    from novafabric.capture.hooks import install_all, uninstall_all
-    from novafabric.capture.replay import minimal_replay_policy
-    from novafabric.capture.variant import resolve_variant_attribution
+@contextlib.contextmanager
+def _agent_span(agent_name: str, agent_version: str) -> Iterator[None]:
+    tracer = trace.get_tracer(__name__)
+    with tracer.start_as_current_span(f"novafabric.agent.{agent_name}") as span:
+        span.set_attribute("gen_ai.agent.id", str(uuid.uuid4()))
+        span.set_attribute("gen_ai.agent.name", agent_name)
+        span.set_attribute("gen_ai.agent.version", agent_version)
+        yield
 
-    # ADR-0126: resolve pre-flight (env var beats the SDK argument); an invalid
-    # explicit sdk-arg raises here, before the workload runs.
-    deployment_env = resolve_deployment_environment(sdk_value=deployment_environment)
-    # ADR-0116: resolve pre-flight (NOVAFABRIC_VARIANT* env vars beat the SDK
-    # argument); an incomplete/invalid explicit block raises here, before the
-    # workload runs. Record-only — values are copied verbatim, never derived.
-    variant_attr = resolve_variant_attribution(sdk_values=variant)
-    # ADR-0122: resolve pre-flight (NOVAFABRIC_SESSION_* env vars beat the SDK
-    # arguments); an invalid explicit membership raises here, before the
-    # workload runs. Record-only back-reference; session.json is authoritative.
-    from novafabric.capture.session import resolve_session_membership
 
-    session_membership = resolve_session_membership(
-        sdk_session_id=session_id, sdk_sequence=session_sequence
-    )
+@dataclass(frozen=True)
+class _Tags:
+    """The optional record-only tagging arguments of :func:`agent`."""
 
-    run_id = new_ulid()
-    root_span_id = new_span_id()
-    created_at = _now()
-    t0 = time.monotonic()
+    deployment_environment: str | None
+    variant: Mapping[str, Any] | None
+    session_id: str | None
+    session_sequence: int | None
 
-    # M13: ``capsule_root`` is a capsule *store*, exactly like
-    # ``nova capture --output-dir``: every call gets its own fresh
-    # ``<capsule_root>/<run_id>/``. Writing into ``capsule_root`` itself made a
-    # second call overwrite capsule.yaml while the JSONL streams appended, so
-    # one capsule held several runs' spans under the last run's id.
-    writer = CapsuleWriter(run_id=run_id, base_dir=capsule_root)
-    writer.open()
-    cap_dir = writer.capsule_dir
-    logger.info(
-        "sdk_capsule_started",
-        extra={"run_id": run_id, "capsule_dir": str(cap_dir), "agent_name": agent_name},
-    )
 
-    _hook_token = install_all(writer=writer, parent_span_id=root_span_id)
-    exit_code = 0
-    error: dict[str, Any] | None = None
-    result: Any = None
-    try:
-        result = fn(*args, **kwargs)
-    except Exception as exc:
+def _outcome(exc: BaseException | None) -> tuple[int, dict[str, Any] | None]:
+    """``(exit_code, error)`` for how the wrapped call ended.
+
+    ``sys.exit(n)`` and Ctrl-C are outcomes too (eval-adapters-query-03): they
+    escaped ``except Exception`` and the capsule said ``success, exit_code 0``.
+    The codes follow what ``nova capture`` would record for the same process:
+    ``SystemExit`` carries its own code (``None``/``0`` = success, a non-int
+    message = 1) and an interrupt is 130 (128 + SIGINT).
+    """
+    if exc is None:
+        return 0, None
+    if isinstance(exc, SystemExit):
+        code = exc.code
+        if code is None or code == 0:
+            return 0, None
+        exit_code = int(code) if isinstance(code, int) else 1
+    elif isinstance(exc, KeyboardInterrupt):
+        exit_code = 130
+    else:
         exit_code = 1
-        error = {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
-        raise
-    finally:
-        uninstall_all(_hook_token)
+    return exit_code, {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
+
+
+def _novafabric_version() -> str:
+    try:
+        return _pkg_version("novafabric")
+    except PackageNotFoundError:  # a source checkout run without an install
+        return "unknown"
+
+
+@dataclass
+class _SdkCapture:
+    """One ``@agent`` call's capsule: opened by :meth:`start`, closed by :meth:`finish`.
+
+    Fail-open by construction (eval-adapters-query-04): capture I/O never
+    replaces the workload's own outcome. An unwritable store means the call runs
+    uncaptured; a teardown step that fails is logged, counted, and recorded in
+    the capsule, which is then left unsealed. Only an invalid *explicit* tagging
+    argument raises — before the workload runs, as documented — because that is
+    the caller's error, not capture's.
+    """
+
+    agent_name: str
+    agent_version: str
+    writer: Any
+    hook_token: str
+    run_id: str
+    root_span_id: str
+    created_at: str
+    t0: float
+    manifest_tags: dict[str, Any]
+
+    @classmethod
+    def start(
+        cls, agent_name: str, agent_version: str, store: Path | None, tags: _Tags
+    ) -> _SdkCapture | None:
+        if store is None:
+            return None
+        from novafabric.capture._ulid import new_span_id, new_ulid
+        from novafabric.capture.capsule import CapsuleWriter
+        from novafabric.capture.hooks import install_all
+
+        # Pre-flight: an invalid explicit argument raises here, before the
+        # workload runs; an invalid ambient env var warns and is ignored.
+        manifest_tags = _resolve_tags(tags)
+
+        run_id = new_ulid()
+        # M13: ``store`` is a capsule *store*, exactly like ``nova capture
+        # --output-dir``: every call gets its own fresh ``<store>/<run_id>/``.
+        # Writing into ``store`` itself made a second call overwrite capsule.yaml
+        # while the JSONL streams appended, so one capsule held several runs.
+        writer = CapsuleWriter(run_id=run_id, base_dir=store)
+        try:
+            writer.open()
+        except Exception as exc:  # an unwritable store must not block the call
+            note_capture_failure("sdk-agent", "capsule", exc)
+            logger.warning(
+                "sdk_capsule_not_started",
+                extra={"agent_name": agent_name, "error_type": type(exc).__name__},
+            )
+            return None
+        logger.info(
+            "sdk_capsule_started",
+            extra={
+                "run_id": run_id,
+                "capsule_dir": str(writer.capsule_dir),
+                "agent_name": agent_name,
+            },
+        )
+        root_span_id = new_span_id()
+        return cls(
+            agent_name=agent_name,
+            agent_version=agent_version,
+            writer=writer,
+            hook_token=install_all(writer=writer, parent_span_id=root_span_id),
+            run_id=run_id,
+            root_span_id=root_span_id,
+            created_at=_now(),
+            t0=time.monotonic(),
+            manifest_tags=manifest_tags,
+        )
+
+    def finish(self, exc: BaseException | None) -> None:
+        """Write the root span, env.lock, replay.yaml and the manifest. Never raises."""
+        from novafabric.capture.finalize import finalize_in_process_capsule
+        from novafabric.capture.hooks import uninstall_all
+
+        try:
+            uninstall_all(self.hook_token)
+        except Exception as err:
+            note_capture_failure("sdk-agent", "hooks", err)
+        exit_code, error = _outcome(exc)
         finished_at = _now()
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        status = "success" if exit_code == 0 else "failure"
+        duration_ms = int((time.monotonic() - self.t0) * 1000)
+        failed: list[str] = []
 
-        writer.append_trace_span({
-            "span_id": root_span_id,
-            "parent_span_id": None,
-            "name": f"novafabric.agent.{agent_name}",
-            "started_at": created_at,
-            "finished_at": finished_at,
-            "duration_ms": duration_ms,
-            "status": "ok" if exit_code == 0 else "error",
-            "attributes": {"agent_name": agent_name, "agent_version": agent_version},
-        })
+        def step(label: str, action: Callable[[], Any], default: Any = None) -> Any:
+            try:
+                return action()
+            except Exception as err:
+                note_capture_failure("sdk-agent", label, err)
+                failed.append(f"{label}: {type(err).__name__}")
+                return default
 
-        env_lock = capture_environment(created_at=created_at, run_id=run_id)
-        writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
-
-        writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
-
-        model_call_count = count_logical_model_calls_in_file(
-            cap_dir / "model-calls.jsonl"
+        step("trace", lambda: self.writer.append_trace_span(
+            self._root_span(finished_at, duration_ms, exit_code)
+        ))
+        step("env.lock", self._write_env_lock)
+        step("replay.yaml", lambda: self.writer.write_text(
+            "replay.yaml", yaml.dump(_minimal_replay_policy(), allow_unicode=True)
+        ))
+        cap_dir: Path = self.writer.capsule_dir
+        model_call_count = step(
+            "model-calls", lambda: count_logical_model_calls_in_file(
+                cap_dir / "model-calls.jsonl"
+            ), 0,
         )
-        tool_call_count = sum(
-            1
-            for line in (
-                read_capsule_member_or_none(cap_dir / "tool-calls.jsonl", operation="the SDK") or ""
-            ).splitlines()
-            if line.strip()
-        )
+        tool_call_count = step("tool-calls", lambda: _count_lines(cap_dir), 0)
 
         manifest: dict[str, Any] = {
             "schema_version": "0.1.0",
-            "run_id": run_id,
-            "created_at": created_at,
+            "run_id": self.run_id,
+            "created_at": self.created_at,
             "finished_at": finished_at,
             "duration_ms": duration_ms,
-            "status": status,
-            "command": [f"@agent:{agent_name}@{agent_version}"],
+            "status": "success" if exit_code == 0 else "failure",
+            "command": [f"@agent:{self.agent_name}@{self.agent_version}"],
             "capture_mode": "sdk-decorator",
-            "novafabric_version": _pkg_version("novafabric"),
+            "novafabric_version": _novafabric_version(),
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-            "host": host_info(),
+            "host": step("host", _host_info, {}),
             "environment_ref": "env.lock",
             "replay_policy_ref": "replay.yaml",
             "redaction_proof_ref": "redaction-proof.json",
             "trace_ref": "trace.jsonl",
-            "trace_root_span_id": root_span_id,
+            "trace_root_span_id": self.root_span_id,
             "model_calls_ref": "model-calls.jsonl",
             "tool_calls_ref": "tool-calls.jsonl",
             "assets_ref": "assets.jsonl",
@@ -207,26 +291,80 @@ def _run_with_capture(
             "tool_call_count": tool_call_count,
             "mutating_tool_count": 0,
             "exit_code": exit_code,
+            **self.manifest_tags,
         }
-        # ADR-0126: additive optional deployment-context tag (absent = unchanged manifest).
-        if deployment_env is not None:
-            manifest["deployment_environment"] = deployment_env.value
-            manifest["environment_source"] = deployment_env.source
-        # ADR-0116: additive optional variant-attribution block (absent = unchanged manifest).
-        if variant_attr is not None:
-            manifest["variant"] = variant_attr.to_manifest_block()
-        # ADR-0122: additive optional session back-reference (absent = unchanged manifest).
-        if session_membership is not None:
-            manifest["session_id"] = session_membership.session_id
-            if session_membership.sequence is not None:
-                manifest["sequence"] = session_membership.sequence
         if error:
             manifest["error"] = error
 
         # Main scan (after replay.yaml), manifest redaction, lineage, residual pass,
         # evidence_digests, gate and opt-in seal: the path `nova capture` uses.
-        # Never raises, so the wrapped call's result or exception is untouched; a
-        # failure leaves the capsule unsealed with metadata.finalization_error.
-        finalize_in_process_capsule(cap_dir, manifest, run_id=run_id, writer=writer)
+        # Never raises; a failed step above leaves the capsule unsealed with the
+        # reason in metadata.finalization_error, so its counts are not vouched for.
+        finalize_in_process_capsule(
+            cap_dir, manifest, run_id=self.run_id, writer=self.writer,
+            incomplete_reason=(
+                f"capture incomplete: {', '.join(failed)}" if failed else None
+            ),
+        )
 
-    return result
+    def _root_span(self, finished_at: str, duration_ms: int, exit_code: int) -> dict[str, Any]:
+        return {
+            "span_id": self.root_span_id,
+            "parent_span_id": None,
+            "name": f"novafabric.agent.{self.agent_name}",
+            "started_at": self.created_at,
+            "finished_at": finished_at,
+            "duration_ms": duration_ms,
+            "status": "ok" if exit_code == 0 else "error",
+            "attributes": {"agent_name": self.agent_name, "agent_version": self.agent_version},
+        }
+
+    def _write_env_lock(self) -> None:
+        from novafabric.capture import env
+
+        env_lock = env.capture_environment(created_at=self.created_at, run_id=self.run_id)
+        self.writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
+
+
+def _resolve_tags(tags: _Tags) -> dict[str, Any]:
+    """The additive optional manifest fields (absent = unchanged manifest)."""
+    from novafabric.capture.deployment_env import resolve_deployment_environment
+    from novafabric.capture.session import resolve_session_membership
+    from novafabric.capture.variant import resolve_variant_attribution
+
+    out: dict[str, Any] = {}
+    # ADR-0126: deployment-context tag; the env var beats the SDK argument.
+    deployment_env = resolve_deployment_environment(sdk_value=tags.deployment_environment)
+    if deployment_env is not None:
+        out["deployment_environment"] = deployment_env.value
+        out["environment_source"] = deployment_env.source
+    # ADR-0116: variant attribution, record-only — copied verbatim, never derived.
+    variant_attr = resolve_variant_attribution(sdk_values=tags.variant)
+    if variant_attr is not None:
+        out["variant"] = variant_attr.to_manifest_block()
+    # ADR-0122: session back-reference; session.json stays authoritative.
+    membership = resolve_session_membership(
+        sdk_session_id=tags.session_id, sdk_sequence=tags.session_sequence
+    )
+    if membership is not None:
+        out["session_id"] = membership.session_id
+        if membership.sequence is not None:
+            out["sequence"] = membership.sequence
+    return out
+
+
+def _minimal_replay_policy() -> dict[str, Any]:
+    from novafabric.capture.replay import minimal_replay_policy
+
+    return minimal_replay_policy()
+
+
+def _host_info() -> dict[str, Any]:
+    from novafabric.capture.env import host_info
+
+    return host_info()
+
+
+def _count_lines(cap_dir: Path) -> int:
+    text = read_capsule_member_or_none(cap_dir / "tool-calls.jsonl", operation="the SDK")
+    return sum(1 for line in (text or "").splitlines() if line.strip())

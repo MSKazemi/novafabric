@@ -113,7 +113,20 @@ wrote every call into `capsule_dir` itself, so a second call overwrote
 
 - Installs OpenAI + Anthropic hooks before calling the function.
 - Removes hooks after the function returns (including on exception).
-- On exception: writes a capsule with `status: failure` and re-raises.
+- On exception: writes a capsule with `status: failure` and re-raises. `sys.exit(n)`
+  records `exit_code: n` (`sys.exit()`/`sys.exit(0)` is a success, a message is
+  `1`) and Ctrl-C records `exit_code: 130`; both are re-raised untouched.
+- `async def` agents are supported: the decorated function stays a coroutine
+  function, and the capture stays open until the coroutine finishes, so model and
+  tool calls after an `await` are recorded. Releases up to v0.107.0 finalised the
+  capsule before an async agent ran and recorded `success, 0 model calls`.
+- **Fail-open:** capture never replaces your result or exception. If the capsule
+  store is unwritable, the call runs uncaptured (logged as
+  `sdk_capsule_not_started`). If a teardown step fails (for example, ENOSPC
+  writing `env.lock`), the capsule is still scanned and written but is **not
+  sealed**, and `metadata.finalization_error` names the failed step, e.g.
+  `capture incomplete: env.lock: OSError`. Invalid *explicit* tagging arguments
+  still raise before the function runs.
 - Thread-safe: each call writes to its own capsule directory.
 
 > The capsule this produces has the same shape as one produced by

@@ -415,6 +415,7 @@ def finalize_in_process_capsule(
     *,
     run_id: str,
     writer: Any,
+    incomplete_reason: str | None = None,
 ) -> FinalizeResult:
     """Finalize a capsule written inside the user's process. Never raises.
 
@@ -427,6 +428,11 @@ def finalize_in_process_capsule(
     in ``metadata.finalization_error`` and logged, and the caller's own result or
     exception is untouched. A gate refusal or a failed seal is recorded the same
     way; a capsule with no signing profile is simply unsealed (ADR-0301).
+
+    *incomplete_reason* is for a caller whose own capture step failed (an
+    ``env.lock`` that could not be written): every scan still runs, but the
+    capsule is never sealed — a signature over a capsule known to be incomplete
+    would vouch for it — and the reason is recorded the same way.
     """
     proof: dict[str, Any] | None = None
     try:
@@ -438,6 +444,7 @@ def finalize_in_process_capsule(
         result = finalize_capsule(
             capsule_dir, manifest, run_id=run_id, writer=writer, scanner=scanner,
             proof=proof,
+            seal=None if incomplete_reason is None else (lambda *_: incomplete_reason),
         )
     except Exception as exc:  # noqa: BLE001 — never fail the user's call
         reason = f"finalization failed: {type(exc).__name__}: {exc}"
