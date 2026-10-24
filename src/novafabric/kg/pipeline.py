@@ -49,7 +49,8 @@ class _ReviewQueueProtocol(Protocol):
     """Structural protocol for HumanReviewQueueWriter (avoids circular imports)."""
 
     def enqueue(self, item: ReviewItem) -> None: ...
-    def list_pending(self) -> list[ReviewItem]: ...
+    def has_pending(self, alias: str, entity_type: str) -> bool: ...
+    def count_pending(self) -> int: ...
 
 _HEURISTIC_CONFIDENCE_THRESHOLD = 0.7
 
@@ -193,6 +194,8 @@ class KGIngestionPipeline:
         self._alias_resolver: _AliasResolverProtocol | None = alias_resolver
         # Tier 3: optional HumanReviewQueueWriter
         self._review_queue: _ReviewQueueProtocol | None = review_queue
+        # (entity_type, alias) already pending review: queued once, not per event.
+        self._queued_for_review: set[tuple[str, str]] = set()
 
     # ------------------------------------------------------------------
     # Tier 2+3 resolution helper
@@ -247,29 +250,37 @@ class KGIngestionPipeline:
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("Auto-register alias error: %s", exc)
             else:
-                # Low confidence — enqueue for human review
-                try:
-                    from novafabric.kg.review_queue import ReviewItem
-
-                    self._review_queue.enqueue(
-                        ReviewItem(
-                            alias=name,
-                            entity_type=entity_type,
-                            context={"capsule_id": capsule_id},
-                            suggested_canonical=None,
-                            confidence=heuristic_confidence,
-                        )
-                    )
-                    # Update Prometheus queue depth gauge
-                    try:
-                        depth = len(self._review_queue.list_pending())
-                        _set_queue_depth(depth)
-                    except Exception:  # noqa: BLE001
-                        pass
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("ReviewQueue.enqueue error: %s", exc)
+                # Low confidence — enqueue for human review, once per alias: every
+                # event naming it used to add a row (fresh UUID) and rescan the queue.
+                self._enqueue_for_review(name, entity_type, capsule_id, heuristic_confidence)
 
         return name
+
+    def _enqueue_for_review(
+        self, name: str, entity_type: str, capsule_id: str, confidence: float
+    ) -> None:
+        """Queue *name* for review unless it is already pending (here or in the queue)."""
+        assert self._review_queue is not None
+        key = (entity_type, name)
+        if key in self._queued_for_review:
+            return
+        try:
+            if not self._review_queue.has_pending(name, entity_type):
+                from novafabric.kg.review_queue import ReviewItem
+
+                self._review_queue.enqueue(
+                    ReviewItem(
+                        alias=name,
+                        entity_type=entity_type,
+                        context={"capsule_id": capsule_id},
+                        suggested_canonical=None,
+                        confidence=confidence,
+                    )
+                )
+                _set_queue_depth(self._review_queue.count_pending())
+            self._queued_for_review.add(key)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ReviewQueue.enqueue error: %s", exc)
 
     # ------------------------------------------------------------------
     # Stage 1+2+3+4 — ingest one event

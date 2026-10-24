@@ -259,3 +259,66 @@ def test_persistence_across_instances(tmp_path: Path) -> None:
     assert len(items) == 1
     assert items[0].alias == "persist-model"
     q2.close()
+
+
+# ── review eval-adapters-query-20: one pending item per unresolved alias ─────
+
+
+class _Unresolved:
+    def resolve(self, name: str, entity_type: str) -> None:
+        return None
+
+    def register(self, entry: object) -> None:  # never reached at confidence 0.5
+        raise AssertionError("auto-registered")
+
+
+def _pipeline(queue: object) -> object:
+    from unittest.mock import MagicMock
+
+    from novafabric.kg.pipeline import KGIngestionPipeline
+
+    return KGIngestionPipeline(MagicMock(), alias_resolver=_Unresolved(), review_queue=queue)  # type: ignore[arg-type]
+
+
+def _event() -> dict[str, str]:
+    return {"event_type": "ModelCallCompleted", "agent_id": "agent-x",
+            "model_id": "mystery-model", "capsule_id": "cap-1"}
+
+
+def test_every_event_naming_one_unresolved_alias_queues_it_once(tmp_path: Path) -> None:
+    """A fresh UUID per event defeated INSERT OR IGNORE: one row per event, and a
+    list_pending() scan after each (unbounded growth, O(n²))."""
+    queue = _queue(tmp_path)
+    pipeline = _pipeline(queue)
+    for _ in range(50):
+        pipeline.ingest_event(_event())  # type: ignore[attr-defined]
+    assert sorted((i.alias, i.entity_type) for i in queue.list_pending()) == [
+        ("agent-x", "agent"),
+        ("mystery-model", "model"),
+    ]
+
+
+def test_a_second_ingest_run_does_not_queue_a_pending_alias_again(tmp_path: Path) -> None:
+    queue = _queue(tmp_path)
+    _pipeline(queue).ingest_event(_event())  # type: ignore[attr-defined]
+    _pipeline(queue).ingest_event(_event())  # type: ignore[attr-defined]
+    assert queue.count_pending() == 2
+
+
+def test_an_alias_rejected_earlier_is_queued_again(tmp_path: Path) -> None:
+    """Only a *pending* item suppresses a new one: a resolved alias that shows up
+    unresolved again needs a fresh review."""
+    queue = _queue(tmp_path)
+    _pipeline(queue).ingest_event(_event())  # type: ignore[attr-defined]
+    for item in queue.list_pending():
+        queue.reject(item.item_id, resolved_by="r")
+    _pipeline(queue).ingest_event(_event())  # type: ignore[attr-defined]
+    assert queue.count_pending() == 2
+
+
+def test_has_pending(tmp_path: Path) -> None:
+    queue = _queue(tmp_path)
+    queue.enqueue(_item("m"))
+    assert queue.has_pending("m", "model") is True
+    assert queue.has_pending("m", "tool") is False
+    assert queue.has_pending("other", "model") is False

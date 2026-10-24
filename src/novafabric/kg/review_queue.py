@@ -180,6 +180,17 @@ class HumanReviewQueueWriter:
             rows = conn.execute(sql, params).fetchall()
             return [self._row_to_item(r) for r in rows]
 
+    def has_pending(self, alias: str, entity_type: str) -> bool:
+        """True when *alias* (of *entity_type*) already waits for review."""
+        with self._lock:
+            conn = self._get_conn()
+            row = conn.execute(
+                "SELECT 1 FROM entity_review_queue "
+                "WHERE alias = ? AND entity_type = ? AND status = 'pending' LIMIT 1",
+                (alias, entity_type),
+            ).fetchone()
+            return row is not None
+
     def count_pending(self) -> int:
         """Return the total number of items with status='pending'."""
         with self._lock:
