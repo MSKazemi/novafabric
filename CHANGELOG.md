@@ -13,6 +13,11 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **`GET /api/storage/validate` no longer sends the server's S3 credentials to a caller-chosen host.** It took an
+  `endpoint_url` from the query and called `list_buckets` there with the server's AWS credentials. It now
+  validates only the configured `NOVA_S3_ENDPOINT_URL` (any other endpoint returns `ok: false`,
+  `error_class: EndpointNotAllowed`), and the S3 call no longer blocks the event loop.
+- The unauthenticated `/api/health` shows the registry path relative to the home directory (`~/...`), not absolute.
 - **Stored XSS in the dashboard's Reports chart closed.** Chart labels come from capsules (the recorded
   `command[0]`), and the chart string-built its SVG and injected it as HTML, so a capsule whose command was
   `<img src=x onerror=…>` ran script in the browser of whoever opened the Reports tab. Labels and colours are now
@@ -442,6 +447,12 @@ longer forwards the submitting shell's environment (ADR-0270).
 - `nova serve`'s ClickHouse cost auto-ingest scans the server's capsule store (`--capsule-dir` /
   `$NOVAFABRIC_CAPSULE_DIR`) instead of `$NOVAFABRIC_HOME/capsules`; with the capsules anywhere else, the cost tab
   never showed a run.
+- The ISO 42001 examiner export covers the requested `period` (`YYYY-MM-DD/YYYY-MM-DD`; the trailing 365 days by
+  default) and echoes it in the response; it started at a fixed 2026-01-01. A malformed or inverted period is `422`.
+- The reports evidence inventory's verified column runs the bundle verifier `nova verify` uses, so a valid bundle
+  reads verified.
+- `GET /api/runs/stream` (SSE) accepts tokens issued by `nova server issue-token`, as every other route does; it
+  accepted only the startup token.
 - The `examples/capsules/minimal-run` example passes `nova validate` in a fresh checkout. Its empty `inputs/`
   directory was not in git, so validation failed with `missing directory: inputs`.
 
