@@ -141,6 +141,11 @@ longer forwards the submitting shell's environment (ADR-0270).
   nobody reviewed. Both sign-offs now cover the target's spec digest (`label-move/v2`); a changed target fails
   approval with exit 3, while `--reject` still retires the move. **Pending moves proposed before this change must
   be rejected and proposed again.**
+- **`env.lock` describes the environment it claims.** The lock-file hash covered only the first 64 KiB, so two
+  different `uv.lock` files (this repo's is 1.3 MB) hashed the same and a replay attestation certified unequal
+  environments as equal; it now hashes the whole file (unchanged for a UTF-8 lock under 64 KiB). Every installed
+  package is recorded, sorted (it was an arbitrary 200). **A `poetry.lock`, `pdm.lock` or `requirements.txt` lock is
+  now `best-effort`, as ADR-0007 specifies, so `nova replay --mode exact` refuses those capsules.**
 - **Maker-checker records bind the capsule everywhere they are verified.** `POST /v0/seal/{capsule_id}/verify`
   (`nova server`) and `nova export-model-independence --capsule-id` called the SoD verifier without the capsule, so
   an approval of content changed since — or of a capsule that no longer exists — passed, and the export listed it
@@ -218,6 +223,26 @@ longer forwards the submitting shell's environment (ADR-0270).
   - a framework adapter whose capsule store could not be opened (an unwritable `data_dir`) raised NovaFabric's
     `OSError` from the user's own `kickoff()`/`forward()`/`run()`, so the call never ran; it now runs uncaptured,
     as `@agent` already did;
+  - a SIGTERM that reached `nova capture` just after the workload started killed `nova capture` outright and
+    orphaned the workload: the local runner now installs its signal forwarding before the spawn;
+  - one failed `kubectl get job` poll deleted a still-running Kubernetes Job and reported a timeout; failed polls
+    are now retried until the deadline (`runner_metadata.poll_errors`);
+  - LSF fell back to another job's log in a shared `output_dir` and every PBS job wrote one `stdout.log`, so a run
+    could seal another run's output; PBS logs are now `stdout.<run_id>.log` and LSF reads only its own `%J` file.
+    PBS never saw a finished OpenPBS job (`qstat -f` no longer lists it) and reported a timeout; it now falls back
+    to `qstat -x -f` and reads OpenPBS's `Exit_status`;
+  - the pure-Python event spool deleted unforwarded events at 100 segments and let two writers overwrite each
+    other's segments; it now evicts only acknowledged segments, refuses (and counts) when full, and commits with
+    `link(2)` above every committed segment and the forwarder's checkpoint;
+  - a wire call cancelled mid-flight (`CancelledError`) or interrupted by Ctrl-C was recorded as a successful model
+    call, and aiohttp/urllib3 recorded HTTP 200 for a request that never got a response;
+  - a `record.*` event its model rejected, and a `record.tool` argument that failed canonicalisation, were lost
+    with no drop count; `record.wrap_retriever` consumed a generator result before returning it, so the caller got
+    nothing;
+  - the capture loader shadowed the user's own `sitecustomize`, so the workload under capture was not the program
+    the user ran; it now runs the one it shadows;
+  - `nova validate --schemas --write` deleted every tool-call line it could not parse and rewrote sealed capsules;
+    it now keeps those lines byte-for-byte and refuses a sealed capsule (exit 1);
   - `POST /v0/replays` claimed the oldest queued replay rather than its own, so one orphaned job made every later
     replay stay pending forever;
   - `nova diff --assert-no-regressions` passed a tool call that went from success to failure, or whose argument or
