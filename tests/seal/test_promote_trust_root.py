@@ -151,10 +151,11 @@ def _bypass(
     capsule: str = CAPSULE,
     signed_hours: float = 2,
     stored_until: str | None = None,
+    digest: str = "ab" * 32,
 ) -> PromoteBundleStore:
     signed_until = (datetime.now(UTC) + timedelta(hours=signed_hours)).isoformat()
     predicate = build_bypass_predicate(
-        capsule, "ab" * 32, "production", REASON, "alice", signed_until, []
+        capsule, digest, "production", REASON, "alice", signed_until, []
     )
     store = PromoteBundleStore(pki.tmp / "bundles")
     store.put_bypass(CAPSULE, pki.sign(signer, predicate, BYPASS_PAYLOAD_TYPE),
@@ -223,9 +224,14 @@ def test_a_signed_policy_with_an_edited_payload_is_refused(pki: Pki) -> None:
 
 
 def _cli_bypass(pki: Pki) -> tuple[Path, Path]:
+    from _promote_capsule import make_capsule
+
+    from novafabric.promote.capsule_digest import capsule_content_digest
+
     alice = pki.identity("alice")
     _policy(pki, ["alice"])
-    _bypass(pki, alice)
+    # nova seal verify binds the bypass to the capsule's real digest (cli-b-01).
+    _bypass(pki, alice, digest=capsule_content_digest(make_capsule(CAPSULE)))
     return pki.tmp / "policy.db", pki.tmp / "bundles"
 
 

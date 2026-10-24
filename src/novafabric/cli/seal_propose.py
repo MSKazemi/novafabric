@@ -146,7 +146,6 @@ def seal_sign_cmd(
       nova seal sign path/to/manifest.json --backend sigstore \\
         --capsule-id abc123 --home ~/.novafabric
     """
-    import hashlib
     import json as _json
     from pathlib import Path as _Path
 
@@ -304,8 +303,8 @@ def seal_propose_cmd(
         err_console.print(f"[red]Error:[/red] Failed to read certificate: {exc}")
         raise typer.Exit(code=1)
 
-    # Compute capsule digest stand-in
-    capsule_digest_hex = hashlib.sha256(capsule_id.encode()).hexdigest()
+    # Review cli-b-01: sign the capsule's real content digest, never a hash of its id.
+    capsule_digest_hex = _capsule_digest_or_exit(capsule_id, "nothing was proposed")
 
     # Build predicate
     predicate = build_proposal_predicate(
@@ -475,6 +474,28 @@ def seal_approve_cmd(
     )
 
 
+def _capsule_dir_or_absent(capsule_id: str) -> Path:
+    """The capsule *capsule_id* names, or a path that does not exist (verify then fails)."""
+    from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
+
+    try:
+        return resolve_capsule_ref(capsule_id)
+    except CapsuleRefError:
+        return _nf_paths.default_capsule_dir() / capsule_id
+
+
+def _capsule_digest_or_exit(capsule_id: str, consequence: str) -> str:
+    """SHA-256 of the capsule's ``capsule.yaml``; exit 1 when there is no such capsule."""
+    from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
+    from novafabric.promote.capsule_digest import CapsuleDigestError, capsule_content_digest
+
+    try:
+        return capsule_content_digest(resolve_capsule_ref(capsule_id))
+    except (CapsuleRefError, CapsuleDigestError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc} — {consequence}.")
+        raise typer.Exit(code=1) from exc
+
+
 def _parse_duration_hours(duration: str) -> int:
     """Parse e.g. '24h' → 24, '7d' → 168. Raises ValueError on bad format."""
     m = re.fullmatch(r"(\d+)(h|d)", duration.strip().lower())
@@ -516,12 +537,17 @@ def seal_verify_cmd(
       7  — timestamp ordering violation
       8  — missing approval bundle
       9  — missing proposal bundle
+      10 — the capsule does not exist, or is not the one that was proposed
+           (its capsule.yaml changed since, or the proposal signed a hash of the id)
     """
     policy_store = PolicyStore(_policy_db(db_path))
     bundle_store = PromoteBundleStore(data_dir)
 
     trust = _promote_trust(ca_bundle, insecure_self_signed)
-    result = verify_sod(capsule_id, policy_store, bundle_store, offline=offline, trust=trust)
+    result = verify_sod(
+        capsule_id, policy_store, bundle_store, offline=offline, trust=trust,
+        capsule_dir=_capsule_dir_or_absent(capsule_id),
+    )
 
     if result.passed:
         console.print("[green]SoD verification passed[/green]")
@@ -614,7 +640,7 @@ def seal_bypass_cmd(
     valid_until = now + timedelta(hours=hours)
     valid_until_str = valid_until.isoformat()
 
-    capsule_digest_hex = hashlib.sha256(capsule_id.encode()).hexdigest()
+    capsule_digest_hex = _capsule_digest_or_exit(capsule_id, "no bypass was created")
 
     # The store's channels are what put_bypass delivers to: sign that configuration
     # (pending / not_configured), never a claimed "sent" (review r6).

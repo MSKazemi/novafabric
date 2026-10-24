@@ -39,6 +39,19 @@ def _admin_cert() -> Path:
     return FIXTURE_KEYS / "admin_cert.pem"
 
 
+@pytest.fixture(autouse=True)
+def _capsules() -> None:
+    """The capsules this module proposes for: propose/verify bind to the capsule's
+    capsule.yaml digest and refuse an id with no capsule (review cli-b-01)."""
+    from _promote_capsule import make_capsule
+
+    for capsule_id in (
+        "cap-approve-test", "cap-no-approval", "cap-no-policy", "cap-no-such-proposal",
+        "cap-self-approval", "cap-test-001", "cap-test-short",
+    ):
+        make_capsule(capsule_id)
+
+
 @pytest.fixture
 def setup_policy(tmp_path: Path) -> tuple[Path, Path, int]:
     """Create a policy signed by admin; return (db_path, data_dir, version)."""

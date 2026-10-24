@@ -57,6 +57,10 @@ def _gen_key_cert() -> tuple[str, str]:
 def client(tmp_path: Path) -> Iterator[TestClient]:
     capsule_dir = tmp_path / "runs"
     capsule_dir.mkdir()
+    from _promote_capsule import make_capsule
+
+    for run in ("run-001", "run-abc", "run-xyz"):  # a bypass signs the capsule digest (cli-b-01)
+        make_capsule(run, capsule_dir)
     app = create_app(
         capsule_dir=capsule_dir,
         token=VALID_TOKEN,

@@ -95,6 +95,9 @@ def _audit_entries(event_type: str) -> list[dict[str, object]]:
 
 
 def _cli_bypass(tmp_path: Path, capsule_id: str = "cap-h3") -> object:
+    from _promote_capsule import make_capsule
+
+    make_capsule(capsule_id)  # a bypass signs the capsule's digest (cli-b-01)
     key_path, cert_path, _, _ = _key_cert(tmp_path)
     return runner.invoke(
         app,
@@ -150,6 +153,9 @@ def test_serve_bypass_notifies(
     monkeypatch.setenv("NOVA_BYPASS_NOTIFY_FILE", str(sink))
     monkeypatch.setenv("NOVA_BYPASS_NOTIFY_WEBHOOK", webhook)
     _, _, key_pem, cert_pem = _key_cert(tmp_path)
+    from _promote_capsule import make_capsule
+
+    make_capsule("run-h3", tmp_path / "runs")
     token = "test-token-h3-bypass"
     api = create_app(
         capsule_dir=tmp_path / "runs", token=token, db_path=tmp_path / "r.db", static_dir=None

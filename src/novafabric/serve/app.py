@@ -5406,7 +5406,10 @@ def create_app(
         bundle_store = PromoteBundleStore(nova_data)
         policy_store = PolicyStore(_seal_db_path())
         try:
-            result = verify_sod(capsule_id, policy_store, bundle_store)
+            result = verify_sod(
+                capsule_id, policy_store, bundle_store,
+                capsule_dir=_seal_capsule_dir(capsule_id),
+            )
         finally:
             policy_store.close()
 
@@ -5441,7 +5444,18 @@ def create_app(
             "exit_code": result.exit_code,
             "message": result.message,
             "check_results": check_results,
+            # cli-b-01: whether the signed capsule digest was recomputed from the capsule.
+            "content_checked": result.content_checked,
         }
+
+    def _seal_capsule_dir(capsule_id: str) -> Path:
+        """The served capsule for *capsule_id*, or a path that does not exist (exit 10)."""
+        try:
+            return _resolve_capsule(capsule_id, capsule_dir)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            return capsule_dir / capsule_id
 
     @app.post("/api/seal/{capsule_id}/bypass")
     async def seal_bypass_endpoint(
@@ -5460,7 +5474,6 @@ def create_app(
         log, as the CLI's is in the chained log.
         """
         capsule_id = _require_path_segment(capsule_id, "capsule_id")
-        import hashlib
         from datetime import UTC, datetime, timedelta
 
         from cryptography.x509 import NameOID, load_pem_x509_certificate
@@ -5508,7 +5521,16 @@ def create_app(
         now = datetime.now(UTC)
         valid_until = now + timedelta(hours=duration_hours)
         valid_until_str = valid_until.isoformat()
-        capsule_digest_hex = hashlib.sha256(capsule_id.encode()).hexdigest()
+        # Review cli-b-01: the capsule's real content digest, never a hash of its id.
+        from novafabric.promote.capsule_digest import (  # noqa: PLC0415
+            CapsuleDigestError,
+            capsule_content_digest,
+        )
+
+        try:
+            capsule_digest_hex = capsule_content_digest(_resolve_capsule(capsule_id, capsule_dir))
+        except CapsuleDigestError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         # Sign the channels put_bypass will deliver to (pending / not_configured);
         # the delivery outcome is audited afterwards (review r6).

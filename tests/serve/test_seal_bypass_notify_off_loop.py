@@ -81,6 +81,9 @@ def test_slow_bypass_webhook_does_not_block_other_requests(
     monkeypatch.setattr(bundle_store_mod, "build_notifier_from_env", lambda: slow)
     caps = tmp_path / "runs"
     caps.mkdir()
+    from _promote_capsule import make_capsule
+
+    make_capsule("run-001", caps)  # a bypass signs the capsule's digest (cli-b-01)
     app = create_app(token=TOKEN, capsule_dir=caps, db_path=tmp_path / "r.db")
     key_pem, cert_pem = _key_cert()
 

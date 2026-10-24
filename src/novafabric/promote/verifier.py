@@ -8,11 +8,17 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import jcs  # type: ignore[import-untyped]
 
 from novafabric.promote.bundle_store import PromoteBundleStore
+from novafabric.promote.capsule_digest import (
+    CapsuleDigestError,
+    capsule_content_digest,
+    id_stand_in_digest,
+)
 from novafabric.promote.exceptions import BundleNotFoundError, PolicyNotFoundError
 from novafabric.promote.policy_store import PolicyStore
 from novafabric.promote.predicates import (
@@ -35,9 +41,15 @@ PROMOTE_BYPASS_AUDIT_OPTIONAL_ENV = "NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL"
 @dataclass
 class VerifyResult:
     passed: bool
-    exit_code: int  # 0=pass; 3-7 per check; 8=missing approval; 9=missing proposal
+    # 0=pass; 3-7 per check; 8=missing approval; 9=missing proposal;
+    # 10=the capsule is absent, or not the one that was proposed (cli-b-01)
+    exit_code: int
     message: str
     bypass_used: bool = field(default=False)
+    #: True when the signed capsule digest was recomputed from the capsule itself.
+    #: False means the caller passed no ``capsule_dir``: nothing bound the approval
+    #: to the capsule's content, and a caller must say so.
+    content_checked: bool = field(default=False)
 
 
 def verify_sod(
@@ -48,6 +60,7 @@ def verify_sod(
     *,
     trust: PromoteTrust | None = None,
     require_bypass_audit: bool | None = None,
+    capsule_dir: Path | None = None,
 ) -> VerifyResult:
     """Run the five-check SoD verification for a capsule's promote bundles.
 
@@ -65,6 +78,12 @@ def verify_sod(
     ``require_bypass_audit`` (default: on, unless
     ``NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1``) also requires its
     ``seal.bypass.create`` audit entry.
+
+    With *capsule_dir* (review cli-b-01) the proposal's — and any bypass's — signed
+    ``capsule_digest`` must equal the SHA-256 of that capsule's ``capsule.yaml``
+    now; an absent capsule, a changed one, or a digest of the id string (what
+    releases up to v0.107.0 signed) exits 10. Without it the result carries
+    ``content_checked=False``.
     """
     # ------------------------------------------------------------------
     # Trust root (ADR-0315): every envelope below is signed by a certificate the
@@ -81,13 +100,25 @@ def verify_sod(
     # ------------------------------------------------------------------
     # Bypass check — a valid, trusted, authorised, unexpired bypass skips SoD
     # ------------------------------------------------------------------
+    content_digest: str | None = None
+    if capsule_dir is not None:
+        try:
+            content_digest = capsule_content_digest(capsule_dir)
+        except CapsuleDigestError as exc:
+            return VerifyResult(passed=False, exit_code=10, message=str(exc))
+    checked = content_digest is not None
+
     if require_bypass_audit is None:
         require_bypass_audit = os.environ.get(PROMOTE_BYPASS_AUDIT_OPTIONAL_ENV) != "1"
     bypass_msg = _active_bypass(
-        capsule_id, policy_store, bundle_store, trust, require_audit=require_bypass_audit
+        capsule_id, policy_store, bundle_store, trust, require_audit=require_bypass_audit,
+        content_digest=content_digest,
     )
     if bypass_msg is not None:
-        return VerifyResult(passed=True, exit_code=0, message=bypass_msg, bypass_used=True)
+        return VerifyResult(
+            passed=True, exit_code=0, message=bypass_msg, bypass_used=True,
+            content_checked=checked,
+        )
 
     # ------------------------------------------------------------------
     # Load proposal
@@ -120,6 +151,11 @@ def verify_sod(
         return VerifyResult(passed=False, exit_code=3, message=msg)
 
     proposal_predicate = json.loads(proposal_payload)
+    if content_digest is not None:
+        problem = _digest_problem(proposal_predicate, capsule_id, content_digest)
+        if problem is not None:
+            log.warning("proposal for %s: %s", capsule_id, problem)
+            return VerifyResult(passed=False, exit_code=10, message=problem)
     policy_version_str = proposal_predicate.get("policy_version", "")
 
     try:
@@ -205,6 +241,7 @@ def verify_sod(
         passed=True,
         exit_code=0,
         message="SoD verification passed",
+        content_checked=checked,
     )
 
 
@@ -265,6 +302,23 @@ def _bypass_audit_problem(capsule_id: str, bypass_uuid: str, envelope: bytes) ->
     return None if created else "no matching seal.bypass.create audit entry"
 
 
+def _digest_problem(predicate: dict[str, Any], capsule_id: str, content_digest: str) -> str | None:
+    """Why *predicate*'s signed ``capsule_digest`` does not name this capsule, or None."""
+    signed = predicate.get("capsule_digest")
+    signed_hex = signed.get("sha256") if isinstance(signed, dict) else None
+    if signed_hex == content_digest:
+        return None
+    if signed_hex == id_stand_in_digest(capsule_id):
+        return (
+            "it signed a hash of the capsule id, not of the capsule (releases up to "
+            "v0.107.0): nothing binds it to this capsule's content — re-propose"
+        )
+    return (
+        "its signed capsule_digest is not this capsule's capsule.yaml: the capsule "
+        "changed since it was signed, or it was signed for another capsule"
+    )
+
+
 def _active_bypass(
     capsule_id: str,
     policy_store: PolicyStore,
@@ -272,8 +326,11 @@ def _active_bypass(
     trust: PromoteTrust,
     *,
     require_audit: bool = True,
+    content_digest: str | None = None,
 ) -> str | None:
     """Return a message for the first bypass that may skip SoD, else ``None``.
+
+    With *content_digest*, a bypass counts only if it signed that capsule digest.
 
     A bypass counts only when (ADR-0315): its signature verifies and its signer chains
     to the promote trust root; the signed predicate names this ``capsule_id``; it is
@@ -300,6 +357,11 @@ def _active_bypass(
         if not isinstance(predicate, dict) or predicate.get("capsule_id") != capsule_id:
             log.warning("bypass %s names a different capsule; ignored", bypass_uuid)
             continue
+        if content_digest is not None:
+            problem = _digest_problem(predicate, capsule_id, content_digest)
+            if problem is not None:
+                log.warning("bypass %s ignored: %s", bypass_uuid, problem)
+                continue
         signed_until = _parse_utc(predicate.get("valid_until"))
         if signed_until is None or stored_until is None or min(signed_until, stored_until) <= now:
             continue

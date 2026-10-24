@@ -37,6 +37,20 @@ def _self_signed_promote_fixtures(monkeypatch: pytest.MonkeyPatch) -> None:
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _capsules() -> None:
+    """Capsules for the ids this module proposes/bypasses/verifies: maker-checker
+    signs and recomputes the capsule's capsule.yaml digest (review cli-b-01).
+    ``cap-never-proposed`` exists too, so its verify fails on the missing proposal."""
+    from _promote_capsule import make_capsule
+
+    for capsule_id in (
+        "cap-approve-1", "cap-b", "cap-bypass-ok", "cap-bypass-rec", "cap-bypass-verify",
+        "cap-cov-001", "cap-never-proposed", "cap-sig-1", "cap-success-1", "cap-x",
+    ):
+        make_capsule(capsule_id)
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -580,7 +594,6 @@ class TestSealVerify:
 
     def test_verify_bypass_passes(self, tmp_path: Path) -> None:
         """A valid active bypass makes verify pass and report the bypass."""
-        import hashlib
         from datetime import UTC, datetime, timedelta
 
         from novafabric.promote.bundle_store import PromoteBundleStore
@@ -597,7 +610,10 @@ class TestSealVerify:
 
         capsule_id = "cap-bypass-verify"
         valid_until = (datetime.now(UTC) + timedelta(hours=12)).isoformat()
-        digest = hashlib.sha256(capsule_id.encode()).hexdigest()
+        from novafabric._paths import default_capsule_dir
+        from novafabric.promote.capsule_digest import capsule_content_digest
+
+        digest = capsule_content_digest(default_capsule_dir() / capsule_id)
         predicate = build_bypass_predicate(
             capsule_id=capsule_id,
             capsule_digest_hex=digest,

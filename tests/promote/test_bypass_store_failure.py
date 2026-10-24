@@ -123,10 +123,12 @@ def test_a_failed_staging_write_raises_the_named_error_and_audits_nothing(
 @pytest.fixture()
 def serve_client(tmp_path: Path) -> Iterator[tuple[object, str]]:
     pytest.importorskip("fastapi")
+    from _promote_capsule import make_capsule
     from fastapi.testclient import TestClient
 
     from novafabric.serve.app import create_app
 
+    make_capsule("run-r8", tmp_path / "runs")
     token = "test-token-r8-bypass-store"
     api = create_app(
         capsule_dir=tmp_path / "runs", token=token, db_path=tmp_path / "r.db", static_dir=None

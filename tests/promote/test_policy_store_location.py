@@ -65,6 +65,9 @@ def _sign(*extra: str) -> object:
 
 
 def _propose(*extra: str) -> object:
+    from _promote_capsule import make_capsule
+
+    make_capsule("cap-001")  # propose signs the capsule's digest (cli-b-01)
     return runner.invoke(
         app,
         [

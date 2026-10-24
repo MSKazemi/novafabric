@@ -5829,6 +5829,8 @@ time, so rotate before the leaf expires. No network access at any point.
 
 Create a promotion proposal (maker step). Builds a `promote/proposal/v1` DSSE predicate, validates it against the JSON Schema, signs with ECDSA P-256, and stores at `{data_dir}/promote/{capsule_id}/proposal/{uuid}.json`.
 
+The proposal's `capsule_digest` is the SHA-256 of the capsule's `capsule.yaml` — which binds every evidence file through `evidence_digests` — so the capsule must exist in the capsule store (resolved like every `<capsule-id>` argument); an unknown id exits `1` and nothing is proposed. `nova seal bypass` signs the same digest. Releases up to v0.107.0 signed a hash of the id string, so an approval bound nothing about the capsule's content.
+
 ```bash
 nova seal propose capsule-abc123 \
   --justification "All eval gates green; p99 latency < 200ms. Ready for staging." \
@@ -5931,7 +5933,15 @@ Additional exit codes:
 - `2` — the `--ca-bundle` file cannot be read
 - `8` — Approval bundle not found for capsule
 - `9` — Proposal bundle not found for capsule
+- `10` — the capsule does not exist, or is not the one that was proposed: the proposal's (or a
+  bypass's) signed `capsule_digest` is not the SHA-256 of its `capsule.yaml` now — the capsule
+  changed after approval, or the proposal predates content binding (it signed a hash of the id;
+  the message says to re-propose). A bypass signed for other content is ignored.
 - `1` — other error (missing policy, malformed envelope)
+
+`POST /api/seal/{capsule_id}/verify` (`nova serve`) runs the same check against the served
+capsule and returns `content_checked: true`. A caller of the library `verify_sod()` without a
+`capsule_dir` gets `content_checked: false`: nothing bound the approval to the content.
 
 Options:
 

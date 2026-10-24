@@ -103,6 +103,9 @@ def _signed_predicate(store: PromoteBundleStore, capsule_id: str) -> dict[str, o
 
 
 def _cli_bypass(tmp_path: Path, *extra: str, capsule_id: str = "cap-r6") -> object:
+    from _promote_capsule import make_capsule
+
+    make_capsule(capsule_id)  # a bypass signs the capsule's digest (cli-b-01)
     key_path, cert_path, _, _ = _key_cert(tmp_path)
     return runner.invoke(
         app,
@@ -222,10 +225,12 @@ def test_cli_bypass_create_entry_names_the_cli_actor_and_signer(
 @pytest.fixture()
 def serve_client(tmp_path: Path) -> Iterator[tuple[object, str]]:
     pytest.importorskip("fastapi")
+    from _promote_capsule import make_capsule
     from fastapi.testclient import TestClient
 
     from novafabric.serve.app import create_app
 
+    make_capsule("run-r6", tmp_path / "runs")
     token = "test-token-r6-bypass-audit"
     api = create_app(
         capsule_dir=tmp_path / "runs", token=token, db_path=tmp_path / "r.db", static_dir=None
