@@ -13,6 +13,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **Stored XSS in the dashboard's Reports chart closed.** Chart labels come from capsules (the recorded
+  `command[0]`), and the chart string-built its SVG and injected it as HTML, so a capsule whose command was
+  `<img src=x onerror=…>` ran script in the browser of whoever opened the Reports tab. Labels and colours are now
+  rendered as text and attribute values. `nova serve` also sends `Content-Security-Policy` (no plugins, `<base>`,
+  framing or foreign form targets), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: no-referrer` — the token may travel in `?token=`. ⚠ Takes effect in the shipped dashboard once
+  its bundle is rebuilt.
 - **Erasure audit entries no longer carry a reversible hash of the data subject.** `nova pii erase` and both
   dashboard erasure routes wrote `sha256(subject_id)` into the hash-chained audit log, the dashboard audit log and
   every SIEM copy; for an email address that digest is reversed by a dictionary in seconds, in a log that cannot be
@@ -80,6 +87,12 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- Dashboard: the Diff tab reported two runs as identical when their model calls changed, were added or were removed;
+  it now shows the server's own counts and what changed in each pair. The run inspector showed a made-up
+  `redaction-proof.json` (zero findings, fixed chain hash) and `env.lock` for every real run; it now shows the
+  capsule's real redaction proof or says it has none. An action the server refused with HTTP 200 and `ok: false`
+  (ratchet rotate, eval compare, DB upgrade, incident transitions, …) was toasted as a success; it is now shown as
+  an error with the server's message.
 - The promote keyring directory (`~/.config/novafabric/keyring`) is resolved when it is used, not at import, and
   `NOVAFABRIC_KEYRING_DIR` relocates it. A tool or test that changed `HOME` after import still read and wrote the
   original keyring; the hermetic test environment now isolates it.
