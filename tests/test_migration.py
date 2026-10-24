@@ -921,3 +921,39 @@ class TestStatusHistory:
 
         assert summary.sqlite_counts["asset_status_history"] == 3
         assert "asset_status_history" in {r.table for r in summary.table_results}
+
+
+# ---------------------------------------------------------------------------
+# Review storage-backup-11: tables the migration does not carry are named and fail
+# ---------------------------------------------------------------------------
+# Only five registry tables are copied. A source holding label protections or
+# maker-checker approvals lost them on Postgres while the run reported "verified".
+
+
+def _with_protected_label(path: Path) -> None:
+    _make_sqlite_db(path)
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE asset_label_protection (asset_name TEXT, label TEXT)")
+    conn.execute("INSERT INTO asset_label_protection VALUES ('triage', 'production')")
+    conn.execute("CREATE TABLE runs_cache (run_id TEXT)")  # derived: rebuilt, not migrated
+    conn.execute("INSERT INTO runs_cache VALUES ('r1')")
+    conn.execute("CREATE TABLE empty_extra (x TEXT)")  # no rows: nothing is lost
+    conn.commit()
+    conn.close()
+
+
+def test_a_table_left_behind_is_named_and_fails_the_dry_run(tmp_path: Path) -> None:
+    db = tmp_path / "registry.db"
+    _with_protected_label(db)
+    summary = run_migration(source=db, target_dsn="", dry_run=True)
+    assert summary.not_migrated == {"asset_label_protection": 1}
+    assert summary.exit_code() == 1
+
+
+def test_the_cli_names_the_tables_left_behind(tmp_path: Path) -> None:
+    db = tmp_path / "registry.db"
+    _with_protected_label(db)
+    result = CliRunner().invoke(app, ["migrate-to-postgres", "--source", str(db), "--dry-run"])
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert "asset_label_protection" in result.output and "not migrated" in result.output

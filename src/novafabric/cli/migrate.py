@@ -153,6 +153,15 @@ def _print_summary(summary: MigrationSummary) -> None:
 
     console.print(tbl)
 
+    if summary.not_migrated:
+        left = ", ".join(f"{t} ({n} rows)" for t, n in summary.not_migrated.items())
+        console.print(
+            f"\n[red]✗ Tables not migrated:[/red] {left}. They have no Postgres "
+            "counterpart in this migration, so their rows would be lost — "
+            "the migration is not complete (exit 1).",
+            soft_wrap=True,
+        )
+
     if summary.dry_run:
         console.print(
             "\n[yellow]Dry run complete.[/yellow] "

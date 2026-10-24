@@ -7254,7 +7254,15 @@ Options:
 - `--dry-run` — list capsules that would be migrated without writing
 - `--log PATH` — optional JSONL log file (one record per table)
 
-Exit codes: `0` = success (row counts verified), `1` = verification failure, `2` = connection error.
+It migrates five tables: `assets`, `eval_results`, `lineage_nodes`, `lineage_edges` and
+`asset_status_history`. Any other source table that holds rows — label protections,
+maker-checker approvals and proposals, label history, comments — has no Postgres
+counterpart here, so the run names it (`✗ Tables not migrated: …`) and exits `1`, in
+`--dry-run` too; only the derived `runs_cache` and schema bookkeeping are skipped by design.
+Releases up to v0.107.0 dropped those rows and reported success.
+
+Exit codes: `0` = success (row counts verified, nothing left behind), `1` = verification
+failure or a table left behind, `2` = connection error.
 
 The SQLite file is never modified or deleted. Upsert semantics prevent
 duplicates on re-run after a partial failure.

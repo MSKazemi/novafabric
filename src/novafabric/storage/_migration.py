@@ -110,6 +110,16 @@ _TABLE_ORDER = (
     "asset_status_history",
 )
 
+#: Source tables that are deliberately not migrated, and why. Every *other*
+#: table holding rows fails the migration (review storage-backup-11: label
+#: protections, maker-checker approvals and comments were silently left behind
+#: while the run reported "verified").
+_NOT_MIGRATED_BY_DESIGN: dict[str, str] = {
+    "runs_cache": "a derived index, rebuilt from the capsules",
+    "alembic_version": "schema bookkeeping of the source database",
+    "schema_version": "the source registry's own schema bookkeeping",
+}
+
 
 # ── Result types ─────────────────────────────────────────────────────────────
 
@@ -143,9 +153,17 @@ class MigrationSummary:
     # postgres_counts[table] = count confirmed in Postgres after write
     postgres_counts: dict[str, int] = field(default_factory=dict)
     verification_passed: bool | None = None  # None in dry-run mode
+    # not_migrated[table] = rows in a source table this migration does not carry
+    not_migrated: dict[str, int] = field(default_factory=dict)
 
     def exit_code(self) -> int:
-        """Return the appropriate process exit code."""
+        """Return the appropriate process exit code.
+
+        1 whenever source rows would be (or were) left behind — a dry run too,
+        since previewing that is what it is for — or the counts do not verify.
+        """
+        if self.not_migrated:
+            return 1
         if self.dry_run:
             return 0
         if self.verification_passed is False:
@@ -349,6 +367,8 @@ def _execute_migration(
 ) -> MigrationSummary:
     summary = MigrationSummary(dry_run=dry_run)
 
+    summary.not_migrated = _tables_left_behind(sqlite_conn)
+
     # Phase 1: read from SQLite
     table_data: dict[str, tuple[int, list[tuple[Any, ...]]]] = {}
     for table in _TABLE_ORDER:
@@ -410,10 +430,28 @@ def _execute_migration(
         summary.postgres_counts.get(t, 0) >= summary.sqlite_counts.get(t, 0)
         for t in _TABLE_ORDER
     )
-    summary.verification_passed = all_ok
+    summary.verification_passed = all_ok and not summary.not_migrated
 
     _write_log(summary, log_path)
     return summary
+
+
+def _tables_left_behind(conn: sqlite3.Connection) -> dict[str, int]:
+    """Source tables with rows that this migration does not carry, by row count."""
+    names = [
+        str(row[0]) for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    left: dict[str, int] = {}
+    for name in sorted(names):
+        if name in _TABLE_ORDER or name in _NOT_MIGRATED_BY_DESIGN:
+            continue
+        quoted = '"' + name.replace('"', '""') + '"'
+        (count,) = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()  # noqa: S608
+        if count:
+            left[name] = int(count)
+    return left
 
 
 def _write_log(summary: MigrationSummary, log_path: Path | None) -> None:
