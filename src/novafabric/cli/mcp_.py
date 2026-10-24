@@ -8,6 +8,7 @@ from typing import Annotated, Any, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 app = typer.Typer(name="mcp", help="Scan MCP servers for supply-chain risks.")
@@ -37,8 +38,9 @@ def scan_cmd(
     """Scan an MCP server manifest for OWASP LLM supply-chain risks.
 
     Checks for tool poisoning, server impersonation, and other supply-chain
-    attack vectors. Exits 0 if no findings at or above the threshold.
-    Exits 1 otherwise.
+    attack vectors. Reads a manifest's top-level `tools` or a tools/list
+    response's `result.tools`. Exits 0 if no findings at or above the threshold,
+    1 otherwise, and 2 when the document has no tools list to scan.
 
     Scope: single manifest file.
 
@@ -48,14 +50,17 @@ def scan_cmd(
       nova mcp scan path/to/mcp-manifest.yaml --threshold MEDIUM
     """
     from novafabric.mcp_scanner.models import RiskSeverity  # noqa: F401
-    from novafabric.mcp_scanner.scanner import RiskScanner
+    from novafabric.mcp_scanner.scanner import ManifestError, RiskScanner
 
     if not manifest.exists():
         err_console.print(f"[red]File not found:[/red] {manifest}")
         raise typer.Exit(2)
 
-    scanner = RiskScanner()
-    report = scanner.scan_file(manifest)
+    try:
+        report = RiskScanner().scan_file(manifest)
+    except ManifestError as exc:
+        err_console.print(f"[red]Not scanned:[/red] {escape(str(exc))}", soft_wrap=True)
+        raise typer.Exit(2) from None
 
     _severity_rank = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
     threshold_rank = _severity_rank.get(threshold.upper(), 3)
@@ -89,7 +94,8 @@ def scan_cmd(
             )
 
     console.print(table)
-    console.print(f"\nOverall risk level: [bold]{report.overall_risk_level}[/bold]")
+    console.print(f"\nTools scanned: {len(report.tools)}")
+    console.print(f"Overall risk level: [bold]{report.overall_risk_level}[/bold]")
     console.print(f"Total findings: {report.total_findings}")
 
     if fail:
@@ -116,14 +122,17 @@ def risk_report_cmd(
       nova mcp risk-report path/to/mcp-manifest.json
       nova mcp risk-report path/to/mcp-manifest.json --format json
     """
-    from novafabric.mcp_scanner.scanner import RiskScanner
+    from novafabric.mcp_scanner.scanner import ManifestError, RiskScanner
 
     if not manifest.exists():
         err_console.print(f"[red]File not found:[/red] {manifest}")
         raise typer.Exit(2)
 
-    scanner = RiskScanner()
-    report = scanner.scan_file(manifest)
+    try:
+        report = RiskScanner().scan_file(manifest)
+    except ManifestError as exc:
+        err_console.print(f"[red]Not scanned:[/red] {escape(str(exc))}", soft_wrap=True)
+        raise typer.Exit(2) from None
 
     if format == "json":
         print(json.dumps(report.model_dump_report(), indent=2))

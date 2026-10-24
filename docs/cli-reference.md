@@ -923,9 +923,12 @@ its exposed tools.
 
 ### nova mcp scan
 
-Scan an MCP server manifest for OWASP LLM supply-chain risks.  Exits 0 if no
-findings at or above `--threshold`; exits 1 on violations; exits 2 if the
-manifest file is not found.
+Scan an MCP server manifest for OWASP LLM supply-chain risks. The document is a manifest
+with a top-level `tools` array, or a saved MCP `tools/list` response (`result.tools`).
+Exits 0 if no findings at or above `--threshold`; exits 1 on violations; exits 2 if the
+manifest file is not found, is not valid JSON/YAML, or has no `tools` list (a document
+that was not scanned never reports "0 findings"). `nova mcp risk-report` applies the
+same rule.
 
 ```
 nova mcp scan MANIFEST [--threshold {HIGH,MEDIUM,LOW}]
