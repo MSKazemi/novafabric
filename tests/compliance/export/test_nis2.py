@@ -67,10 +67,15 @@ class TestNIS2Exporter:
             phase=1,
         )
         assert report.incident_id == "INC-2024-001"
-        assert report.first_detection_timestamp
-        assert report.preliminary_classification == "unclassified"
-        assert report.preliminary_severity_indicator == "medium"
-        assert isinstance(report.cross_border_dimensions_flag, bool)
+        assert report.first_detection_timestamp  # from the capsule's created_at
+        # Review compliance-privacy-14: no operator input -> no fabricated values.
+        assert report.preliminary_classification is None
+        assert report.preliminary_severity_indicator is None
+        assert report.cross_border_dimensions_flag is None
+        by_field = {e.field_name: e for e in report.completeness_summary}
+        for field in ("preliminary_classification", "preliminary_severity_indicator",
+                      "cross_border_dimensions_flag"):
+            assert by_field[field].status == COMPLETENESS_MISSING, field
 
     def test_completeness_summary_present(self, minimal_capsule_dir: Path) -> None:
         exporter = NIS2Exporter(cap006_available=False)

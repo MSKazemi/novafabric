@@ -183,23 +183,25 @@ class NIS2IncidentReport(BaseModel):
     # ------------------------------------------------------------------
 
     incident_id: str = Field(..., description="Operator-assigned incident identifier")
-    first_detection_timestamp: str = Field(
-        ...,
+    # Review compliance-privacy-14: a Phase 1 field nobody supplied is None (and
+    # reported missing), never a fabricated default ("medium", "no cross-border").
+    first_detection_timestamp: str | None = Field(
+        default=None,
         description="ISO 8601 UTC timestamp of first incident detection",
     )
-    preliminary_classification: str = Field(
-        ...,
+    preliminary_classification: str | None = Field(
+        default=None,
         description=(
             "Preliminary incident classification per NIS2 taxonomy "
             "(e.g. 'unauthorized_tool_use', 'data_exfiltration_attempt')"
         ),
     )
-    preliminary_severity_indicator: str = Field(
-        ...,
+    preliminary_severity_indicator: str | None = Field(
+        default=None,
         description="Severity: critical|high|medium|low",
     )
-    cross_border_dimensions_flag: bool = Field(
-        ...,
+    cross_border_dimensions_flag: bool | None = Field(
+        default=None,
         description="True if the incident has potential cross-border impact (NIS2 Art. 23(6))",
     )
 

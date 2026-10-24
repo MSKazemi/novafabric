@@ -266,16 +266,14 @@ class NIS2Exporter:
         # Phase 1 fields
         if "first_detection_timestamp" not in op and manifest.get("created_at"):
             capsule_derived.add("first_detection_timestamp")
-        first_detection = op.get(
-            "first_detection_timestamp",
-            manifest.get("created_at", generated_at),
-        )
-        classification = op.get(
-            "preliminary_classification",
-            "unclassified",
-        )
-        severity = op.get("preliminary_severity_indicator", "medium")
-        cross_border = bool(op.get("cross_border_dimensions_flag", False))
+        # Review compliance-privacy-14: never a fabricated value. What neither the
+        # operator nor the capsule supplied stays None and is reported missing —
+        # "medium severity, no cross-border impact" is a regulatory statement.
+        first_detection = op.get("first_detection_timestamp", manifest.get("created_at"))
+        classification = op.get("preliminary_classification")
+        severity = op.get("preliminary_severity_indicator")
+        raw_cross_border = op.get("cross_border_dimensions_flag")
+        cross_border = None if raw_cross_border is None else bool(raw_cross_border)
 
         # Phase 2 fields
         root_cause_path: list[str] | None = None  # cap-006 required

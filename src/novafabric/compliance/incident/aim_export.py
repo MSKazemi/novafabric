@@ -103,6 +103,7 @@ def build_nis2_report_from_incident(
             evidence_source=EvidenceSource.operator_asserted,
         )
         for name in (
+            "cross_border_dimensions_flag",
             "initial_root_cause_path",
             "initial_scope_estimate",
             "actions_taken",
@@ -117,7 +118,7 @@ def build_nis2_report_from_incident(
         first_detection_timestamp=incident.clock_anchor.isoformat(),
         preliminary_classification=incident.classification,
         preliminary_severity_indicator=incident.severity.value,
-        cross_border_dimensions_flag=False,
+        cross_border_dimensions_flag=None,  # not recorded on the incident (compliance-privacy-14)
         affected_systems_list=list(incident.run_ids) or None,
         completeness_summary=completeness,
         generated_at=stamp.isoformat(),
