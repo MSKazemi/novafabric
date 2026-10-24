@@ -7547,7 +7547,9 @@ scoped membership or service account, ADR-0178). Until then it grants nothing,
 and the command prints `Role '<role>' recorded for '<user>'` plus a
 `warning: this assignment is not in force` on stderr (exit 0) instead of
 `assigned to`. Grant a role in a stock deployment through the token itself (OIDC
-`nova_roles`/`roles` claim, or `nova server issue-token --roles`).
+`nova_roles`/`roles` claim, or `nova server issue-token --roles`). A row never
+widens an API key or an offline token issued with `--roles`: those carry their
+whole grant.
 
 ```bash
 nova server assign-role user@example.com writer

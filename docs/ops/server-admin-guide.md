@@ -100,6 +100,22 @@ in the token instead (OIDC `nova_roles`/`roles` claim, or `issue-token --roles`)
 [ADR-0178](../decisions.md). Creating the first membership or service account is
 what switches `role_assignments` rows on.
 
+What a binding grants, when a credential's own roles fall short:
+
+- A **global** `role_assignments` row grants its role everywhere.
+- A **workspace or org membership** grants its role in full only on that
+  workspace's own routes (`/v0/workspaces/{ws_id}/…`): a workspace `admin` can
+  manage that workspace's memberships, not another's. On every other route a
+  membership grants at most `writer` — enough for the data plane (the capsule store
+  is not partitioned by workspace), never server-wide `admin`: a workspace admin
+  cannot mint API keys, create orgs or assign global roles.
+- A credential that carries **its own role set** — an API key, or an offline token
+  issued with `--roles` — gets exactly those roles and never its owner's bindings,
+  so a least-privilege key stays least-privilege. A role-less service-account token
+  takes its roles from its bindings.
+- **SCIM:** a user who is `active: false` gets no role from any mapped group, even
+  when the IdP adds them to one; reactivation restores the roles of their groups.
+
 ## 4. Tenancy and isolation
 
 **Status: experimental** (Postgres backend only).

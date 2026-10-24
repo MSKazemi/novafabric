@@ -28,11 +28,10 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from novafabric.server import usage
@@ -42,7 +41,7 @@ from novafabric.server.deps import get_capsule_dir, get_config, get_db_path
 from novafabric.server.errors import BadRequestError, error_response
 from novafabric.server.pagination import clamp_limit, decode_cursor, paginate
 from novafabric.server.quotas import measure_capsule_store
-from novafabric.server.rbac import Role, require_role
+from novafabric.server.rbac import Role, check_role
 from novafabric.server.usage_export import (
     ExportFormat,
     InvalidPeriodRangeError,
@@ -138,6 +137,7 @@ def _export_filename(start: str, end: str, fmt: ExportFormat) -> str:
 
 
 async def _require_usage_viewer(
+    request: Request,
     auth: Annotated[AuthContext, Depends(verify_token)],
 ) -> AuthContext:
     """Reader-or-auditor gate for the usage resources (ADR-0208 D2).
@@ -151,12 +151,7 @@ async def _require_usage_viewer(
     """
     if _PRIVILEGED_ROLES & set(auth.roles):
         return auth
-    # require_role's factory is typed as returning a sync callable, but the
-    # dependency it builds is ``async`` — await it through a cast.
-    reader_check = cast(
-        "Callable[[AuthContext], Awaitable[AuthContext]]", require_role(Role.reader)
-    )
-    return await reader_check(auth)
+    return check_role(request, auth, Role.reader)
 
 
 @router.get("", response_model=None)

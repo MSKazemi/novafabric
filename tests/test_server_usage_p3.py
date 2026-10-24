@@ -258,12 +258,17 @@ class TestRbac:
     def test_role_less_principal_is_still_forbidden(self, db_path: Path) -> None:
         import asyncio
 
+        from starlette.requests import Request
+
         from novafabric.server.auth import AuthContext
         from novafabric.server.rbac import _Forbidden
         from novafabric.server.routes.usage import _require_usage_viewer
 
+        request = Request({"type": "http", "path_params": {}, "app": _client(db_path).app})
         with pytest.raises(_Forbidden):
-            asyncio.run(_require_usage_viewer(AuthContext(subject="nobody@x", roles=[])))
+            asyncio.run(
+                _require_usage_viewer(request, AuthContext(subject="nobody@x", roles=[]))
+            )
 
     def test_admin_key_sees_all_workspaces(self, db_path: Path) -> None:
         _seed(db_path)

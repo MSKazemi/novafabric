@@ -522,8 +522,9 @@ nova server assign-role ci-runner@cluster admin --assigned-by ops-team
 
 Roles are stored in the `role_assignments` table. When using OIDC, roles can
 also be carried in the `nova_roles` (or `roles`) JWT claim. **The token's own
-roles are checked first;** `role_assignments` rows are only a fallback, and that
-fallback is consulted only once the workspace/org model is in use (at least one
+roles are checked first;** `role_assignments` rows are only a fallback — never for
+an API key or an offline token issued with `--roles`, whose roles are their whole
+grant — and that fallback is consulted only once the workspace/org model is in use (at least one
 scoped membership or service account exists, ADR-0178). ⚠ In a stock deployment
 that has neither, a recorded row has **no effect** on OIDC or offline-token
 principals. `assign-role` still writes the row (the last-admin guard counts it,

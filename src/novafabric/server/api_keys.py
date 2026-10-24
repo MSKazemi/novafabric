@@ -467,7 +467,10 @@ def verify_key(
         # ADR-0208: surface the key's workspace binding as attribution
         # context (metering consumes it; it is still not enforced).
         return AuthContext(
-            subject=row["owner"], roles=list(roles), workspace=row["workspace"]
+            subject=row["owner"],
+            roles=list(roles),
+            workspace=row["workspace"],
+            inherits_subject_roles=False,  # the key's roles are its whole grant
         )
     finally:
         conn.close()

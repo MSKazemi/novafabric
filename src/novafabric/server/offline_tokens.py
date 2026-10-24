@@ -315,7 +315,9 @@ def verify_offline_token(
     subject: str = payload.get("sub", "")
     raw_roles: object = payload.get("nova_roles") or payload.get("roles") or []
     roles: list[str] = list(raw_roles) if isinstance(raw_roles, list) else []
-    return AuthContext(subject=subject, roles=roles)
+    # A token minted with roles carries its whole grant; a role-less one (a
+    # service account, ADR-0178 I3) takes its roles from bindings.
+    return AuthContext(subject=subject, roles=roles, inherits_subject_roles=not roles)
 
 
 # ---------------------------------------------------------------------------

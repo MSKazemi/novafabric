@@ -548,16 +548,20 @@ def reconcile_subject_roles(
     granted: set[str] = set()
     revoked: set[str] = set()
 
-    for role in sorted(desired - prev):
+    # Every desired role, not only ``desired - prev``: an intent row can outlive
+    # its role assignment (de-provisioning revokes the assignments of a user who
+    # stays in the group), and reactivation must then grant the role again.
+    for role in sorted(desired):
         existing = rbac_store.get_assigned_by(subject, role, db_path=db_path)
         if existing is None:
             rbac_store.assign_role(subject, role, SCIM_ROLE_SOURCE, db_path=db_path)
             _record_scim_grant(subject, role, db_path=db_path)
             granted.add(role)
-        elif existing == SCIM_ROLE_SOURCE:
+        elif existing == SCIM_ROLE_SOURCE and role not in prev:
             _record_scim_grant(subject, role, db_path=db_path)
             granted.add(role)
-        # else: an operator/OIDC grant owns this role — defer, do not seize it.
+        # else: already SCIM-owned and assigned, or an operator/OIDC grant owns
+        # this role — defer, do not seize it.
 
     for role in sorted(prev - desired):
         # revoke_role may raise LastAdminError; let it propagate before we drop

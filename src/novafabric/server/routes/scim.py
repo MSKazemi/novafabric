@@ -507,6 +507,7 @@ async def patch_user(user_id: str, request: Request, actor: _Actor) -> JSONRespo
     changes = _parse_patch_operations(payload)
 
     deactivating = changes.get("active") is False and user.active
+    reactivating = changes.get("active") is True and not user.active
     operation = "user.update"
     if deactivating:
         # Revoke first: if the last-admin guard refuses, nothing has mutated
@@ -529,6 +530,10 @@ async def patch_user(user_id: str, request: Request, actor: _Actor) -> JSONRespo
     updated = scim_store.update_user(user_id, changes=store_changes)
     if updated is None:  # pragma: no cover — row deleted between read and write
         raise _ScimError(404, f"User {user_id} not found", "invalidValue")
+    if reactivating:
+        # Group memberships granted nothing while inactive; restore them now.
+        _reconcile_member(request, user_id, actor)
+        roles_after = sorted(rbac_store.get_roles(updated.user_name))
 
     scim_store.append_audit_event(
         actor=actor,
@@ -614,6 +619,10 @@ def _group_resource(group: scim_store.ScimGroup) -> dict[str, Any]:
 def _reconcile_member(request: Request, user_id: str, actor: str) -> None:
     """Recompute and apply the RBAC roles a SCIM member should have from all groups.
 
+    An inactive user should have none: de-provisioning (``active: false``) revoked
+    them, and a later group change — an IdP re-sync, a PUT replacing the member
+    list, a disabled user provisioned straight into a mapped group — must not hand
+    them back (review server-03). Reactivation re-derives them (``patch_user``).
     Unknown member ids are ignored (SCIM allows references the server doesn't hold).
     A LastAdminError from the reconcile surfaces as a SCIM 409 with no mutation.
     """
@@ -623,8 +632,10 @@ def _reconcile_member(request: Request, user_id: str, actor: str) -> None:
     config: ServerConfig = request.app.state.config
     from novafabric.server.scim_group_mapping import resolve_roles
 
-    display_names = scim_store.group_display_names_for_user(user_id)
-    desired = resolve_roles(display_names, config.scim.role_mapping())
+    desired: set[str] = set()
+    if user.active:
+        display_names = scim_store.group_display_names_for_user(user_id)
+        desired = resolve_roles(display_names, config.scim.role_mapping())
     try:
         scim_store.reconcile_subject_roles(
             user.user_name, desired, actor, oidc_configured=config.oidc.enabled

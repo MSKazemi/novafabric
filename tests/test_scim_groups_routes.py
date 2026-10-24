@@ -253,3 +253,74 @@ def test_deleting_group_preserves_a_manually_granted_role(client: TestClient) ->
         rbac_store.get_assigned_by("frank@example.com", "writer")
         == "operator-admin"
     )
+
+
+# --- server-02/03 review: an inactive user is never granted a role ----------
+
+
+def _patch_group(client: TestClient, group_id: str, op: str, path: str, value: Any = None) -> None:
+    operation: dict[str, Any] = {"op": op, "path": path}
+    if value is not None:
+        operation["value"] = value
+    resp = client.patch(
+        f"/scim/v2/Groups/{group_id}",
+        json={"schemas": [PATCH_OP_URN], "Operations": [operation]},
+        headers=_hdrs(),
+    )
+    assert resp.status_code in (200, 204), resp.text
+
+
+def test_user_provisioned_inactive_gets_no_role_from_a_mapped_group(client: TestClient) -> None:
+    rbac_store.assign_role("root@example.com", "admin", "bootstrap")  # keeps the last-admin guard quiet
+    resp = client.post(
+        "/scim/v2/Users",
+        json={"schemas": [USER_URN], "userName": "mallory@example.com", "active": False},
+        headers=_hdrs(),
+    )
+    assert resp.status_code == 201, resp.text
+    _create_group(client, "SRE-Admins", [resp.json()["id"]])
+    assert rbac_store.get_roles("mallory@example.com") == []
+
+
+def test_deactivated_user_readded_to_a_group_gets_no_role_back(client: TestClient) -> None:
+    rbac_store.assign_role("root@example.com", "admin", "bootstrap")
+    alice = _create_user(client, "alice@example.com")
+    group = _create_group(client, "SRE-Admins", [alice["id"]])
+    assert "admin" in rbac_store.get_roles("alice@example.com")
+
+    resp = client.patch(
+        f"/scim/v2/Users/{alice['id']}",
+        json={
+            "schemas": [PATCH_OP_URN],
+            "Operations": [{"op": "replace", "path": "active", "value": False}],
+        },
+        headers=_hdrs(),
+    )
+    assert resp.status_code == 200, resp.text
+    assert rbac_store.get_roles("alice@example.com") == []
+
+    _patch_group(client, group["id"], "remove", f'members[value eq "{alice["id"]}"]')
+    _patch_group(client, group["id"], "add", "members", [{"value": alice["id"]}])
+    assert rbac_store.get_roles("alice@example.com") == []
+
+
+def test_reactivation_restores_the_roles_of_the_users_groups(client: TestClient) -> None:
+    rbac_store.assign_role("root@example.com", "admin", "bootstrap")
+    bob = _create_user(client, "bob@example.com")
+    _create_group(client, "Engineering", [bob["id"]])
+
+    def set_active(value: bool) -> None:
+        resp = client.patch(
+            f"/scim/v2/Users/{bob['id']}",
+            json={
+                "schemas": [PATCH_OP_URN],
+                "Operations": [{"op": "replace", "path": "active", "value": value}],
+            },
+            headers=_hdrs(),
+        )
+        assert resp.status_code == 200, resp.text
+
+    set_active(False)
+    assert rbac_store.get_roles("bob@example.com") == []
+    set_active(True)
+    assert rbac_store.get_roles("bob@example.com") == ["writer"]

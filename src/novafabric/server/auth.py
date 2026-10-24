@@ -42,6 +42,12 @@ class AuthContext:
                consumed as usage-metering *attribution*; enforced at request
                time only when ``server.api_keys.enforce_workspace_binding``
                is on (ADR-0294 D2, experimental — ``server.key_binding``).
+    inherits_subject_roles: whether ``require_role`` may add the subject's
+               ``role_assignments`` and workspace/org memberships when the
+               credential's own roles fall short (ADR-0178 §3). False for a
+               credential that carries an explicit role set — an API key, an
+               offline token minted with roles — so a least-privilege
+               credential never acts with its owner's roles (review server-02).
     """
 
     subject: str
@@ -52,6 +58,7 @@ class AuthContext:
     # classes without one (API keys, local token) — the step-up gate treats
     # those as exempt in slice 1.
     auth_time: float | None = None
+    inherits_subject_roles: bool = True
 
     def has_role(self, role: str) -> bool:
         return role in self.roles

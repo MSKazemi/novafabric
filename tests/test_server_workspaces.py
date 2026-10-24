@@ -514,3 +514,96 @@ class TestAuthGating:
         generate_keypair(_key_path(tmp_path))
         resp = client.get("/v0/orgs", headers=_bearer("a.b.c"))
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# server-02: a scoped binding never becomes server-wide privilege
+# ---------------------------------------------------------------------------
+
+
+class TestScopedBindingsDoNotEscalate:
+    """ADR-0178 §3 (amended 2026-10-24): a membership is a grant *on its workspace*.
+
+    On a route that names no workspace, a membership contributes only ``reader``
+    and ``writer`` (the data-plane access this slice gives memberships; the
+    capsule store is not partitioned). ``admin`` and the orthogonal roles from a
+    membership count only on that workspace's own routes. A credential that
+    carries its own role set (an API key, an offline token minted with roles)
+    never inherits its owner's roles. Review finding server-02 / repro
+    ``02_scoped_escalation.py``: a workspace admin minted a server-wide admin API
+    key, created orgs and granted himself global admin; a reader API key listed
+    every API key.
+    """
+
+    def _setup(self, tmp_path: Path) -> tuple[TestClient, dict[str, Any], dict[str, str]]:
+        key = _key_path(tmp_path)
+        generate_keypair(key)
+        # No config.db_path: API keys are verified against the default registry
+        # (review server-05 — a db_path split that is fixed separately).
+        cfg = ServerConfig(local_token=TEST_TOKEN, offline_key_path=str(key))
+        client = TestClient(create_app(cfg), raise_server_exceptions=False)
+        org = _create_org(client)
+        ws = _create_workspace(client, org["id"])
+        resp = client.post(
+            f"/v0/workspaces/{ws['id']}/memberships",
+            json={"principal": "frank", "role": "admin"},
+            headers=ADMIN,
+        )
+        assert resp.status_code == 201, resp.text
+        frank = _bearer(issue_token("frank", [], 1, key))
+        return client, ws, frank
+
+    def test_workspace_admin_cannot_mint_a_server_wide_admin_api_key(
+        self, tmp_path: Path
+    ) -> None:
+        client, _ws, frank = self._setup(tmp_path)
+        resp = client.post("/v0/api-keys", json={"owner": "frank", "roles": ["admin"]}, headers=frank)
+        assert resp.status_code == 403, resp.text
+
+    def test_workspace_admin_cannot_grant_global_roles_or_create_orgs(
+        self, tmp_path: Path
+    ) -> None:
+        client, _ws, frank = self._setup(tmp_path)
+        resp = client.post("/v0/admin/roles", json={"subject": "frank", "role": "admin"}, headers=frank)
+        assert resp.status_code == 403, resp.text
+        assert client.post("/v0/orgs", json={"slug": "other", "name": "O"}, headers=frank).status_code == 403
+        assert "admin" not in rbac_store.get_roles("frank")
+
+    def test_workspace_admin_administers_its_own_workspace_only(self, tmp_path: Path) -> None:
+        client, ws, frank = self._setup(tmp_path)
+        other = _create_workspace(client, ws["org_id"], slug="other-team")
+        own = client.post(
+            f"/v0/workspaces/{ws['id']}/memberships",
+            json={"principal": "grace", "role": "reader"},
+            headers=frank,
+        )
+        assert own.status_code == 201, own.text
+        foreign = client.post(
+            f"/v0/workspaces/{other['id']}/memberships",
+            json={"principal": "frank", "role": "admin"},
+            headers=frank,
+        )
+        assert foreign.status_code == 403, foreign.text
+
+    def test_workspace_admin_keeps_data_plane_access(self, tmp_path: Path) -> None:
+        client, _ws, frank = self._setup(tmp_path)
+        assert client.get("/v0/assets", headers=frank).status_code == 200  # writer ⊂ admin
+
+    def test_reader_api_key_never_inherits_its_owners_roles(self, tmp_path: Path) -> None:
+        client, _ws, _frank = self._setup(tmp_path)
+        assert client.post(
+            "/v0/admin/roles", json={"subject": "frank", "role": "admin"}, headers=ADMIN
+        ).status_code == 201
+        resp = client.post("/v0/api-keys", json={"owner": "frank", "roles": ["reader"]}, headers=ADMIN)
+        assert resp.status_code == 201, resp.text
+        reader_key = _bearer(resp.json()["key"])
+        assert client.get("/v0/assets", headers=reader_key).status_code == 200
+        assert client.get("/v0/api-keys", headers=reader_key).status_code == 403
+
+    def test_offline_token_with_explicit_roles_never_inherits(self, tmp_path: Path) -> None:
+        client, _ws, _frank = self._setup(tmp_path)
+        assert client.post(
+            "/v0/admin/roles", json={"subject": "frank", "role": "admin"}, headers=ADMIN
+        ).status_code == 201
+        reader_token = _bearer(issue_token("frank", ["reader"], 1, _key_path(tmp_path)))
+        assert client.get("/v0/api-keys", headers=reader_token).status_code == 403
