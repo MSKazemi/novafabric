@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from novafabric.runners import (
     LocalRunner,
@@ -241,9 +242,15 @@ class TestInterruptedCaptureStopsTheWorkload:
         from novafabric.runners import _local
 
         pidfile = tmp_path / "pid"
-        real_communicate = subprocess.Popen.communicate
+        real_wait = subprocess.Popen.wait
+        calls: list[object] = []
 
-        def interrupted(self: subprocess.Popen[bytes], *a: object, **k: object) -> object:
+        # The first wait is the runner waiting for the workload's exit: Ctrl-C there.
+        # Later waits (the runner stopping the group) behave normally.
+        def interrupted(self: subprocess.Popen[bytes], *a: Any, **k: Any) -> Any:
+            calls.append(k.get("timeout"))
+            if len(calls) > 1:
+                return real_wait(self, *a, **k)
             deadline = time.monotonic() + 30
             while not (pidfile.exists() and pidfile.read_text().strip()):
                 assert time.monotonic() < deadline
@@ -251,8 +258,8 @@ class TestInterruptedCaptureStopsTheWorkload:
             raise KeyboardInterrupt
 
         monkeypatch.setattr(_local, "INTERRUPT_GRACE_S", 5.0)
-        monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+        monkeypatch.setattr(subprocess.Popen, "wait", interrupted)
         with pytest.raises(KeyboardInterrupt):
             LocalRunner().run(_spec(tmp_path, ["sh", "-c", f"echo $$ > {pidfile}; exec sleep 60"]))
-        monkeypatch.setattr(subprocess.Popen, "communicate", real_communicate)
+        monkeypatch.setattr(subprocess.Popen, "wait", real_wait)
         assert _wait_dead(int(pidfile.read_text()), within=10)

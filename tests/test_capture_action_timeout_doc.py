@@ -26,13 +26,14 @@ def test_local_runner_default_deadline_is_the_named_constant(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seen: dict[str, Any] = {}
-    real_communicate = subprocess.Popen.communicate
+    real_wait = subprocess.Popen.wait
 
+    # The runner waits for the workload's exit (review capture-runners-10).
     def spy(self: subprocess.Popen[bytes], *args: Any, **kwargs: Any) -> Any:
         seen.setdefault("timeout", kwargs.get("timeout"))
-        return real_communicate(self, *args, **kwargs)
+        return real_wait(self, *args, **kwargs)
 
-    monkeypatch.setattr(subprocess.Popen, "communicate", spy)
+    monkeypatch.setattr(subprocess.Popen, "wait", spy)
     spec = RunnerJobSpec(
         run_id="01TESTRUN0000000000000000",
         command=["true"],

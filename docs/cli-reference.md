@@ -347,7 +347,7 @@ nova capture --output-dir /mnt/runs python agent.py
 Options:
 - `--output-dir, -o PATH` — base directory for capsule storage (default: `$NOVAFABRIC_HOME/capsules/`)
 - `--timeout FLOAT` — wall-clock deadline in seconds for the captured command. Unset, `local`, `docker` and `kubernetes` use 600 s. For `slurm`, `lsf` and `pbs` the value becomes the job's time limit (`--time` in whole minutes, `-W`, `-l walltime=`; an explicit `time`/`walltime` runner option wins); unset, Slurm uses the partition default, LSF `1:00` and PBS `01:00:00`, and NovaFabric stops polling the job after 3600 s. Increase for long-running agents: `nova capture --timeout 3600 python agent.py`
-- **When `--timeout` passes**, the runner stops the job before the capsule is sealed, so it cannot keep writing into it: `local` kills the process group, `docker` removes the container (`docker rm -f`), and `slurm`/`lsf`/`pbs` cancel the job (`scancel`/`bkill`/`qdel`). `runner_metadata` records `cancelled` (and `cancel_error` when the cancel failed). Before, batch jobs and containers ran on after the timeout.
+- **When `--timeout` passes**, the runner stops the job before the capsule is sealed, so it cannot keep writing into it: `local` kills the process group, `docker` removes the container (`docker rm -f`), and `slurm`/`lsf`/`pbs` cancel the job (`scancel`/`bkill`/`qdel`). `runner_metadata` records `cancelled` (and `cancel_error` when the cancel failed). Before, batch jobs and containers ran on after the timeout. For `local` the deadline applies to the workload's own exit: a detached child (`setsid`, a daemon it started) that keeps stdout or stderr open neither stretches the run nor turns a success into a timeout — the capsule records the workload's exit code and notes that later output was not captured (releases up to v0.107.0 waited for the pipes to close, recorded `exit_code: 124`, and could block for the detached child's whole life).
 - **Interrupting a capture** (`local` runner): Ctrl-C, or SIGTERM/SIGHUP sent to `nova capture` (a scheduler, `kill`, a closing terminal), is forwarded to the workload's process group; the workload gets 10 s to exit, then SIGKILL, and `nova capture` exits `130` (Ctrl-C) or `128+signal`. Once the workload has stopped, the capsule is finalised as usual — secret scan, redaction proof, `capsule.yaml`, seal if configured — with `status: aborted`, the workload's `exit_code` (130 or 128+signal) and `error.type: WorkloadInterrupted`. A second Ctrl-C during that finalisation abandons it. Releases up to v0.107.0 left the workload running unsupervised and the capsule unfinalised, with the streams it had written unscanned.
 - **Interrupting a remote capture** (`slurm`, `lsf`, `pbs`, `docker`, `kubernetes`): the same
   Ctrl-C or forwarded signal cancels the job — `scancel`/`bkill`/`qdel`, `docker rm -f`, or
@@ -876,8 +876,12 @@ owned by the agent UID; connections from other UIDs are rejected
 ### novacap \<cmd...\>
 
 Stdlib-only thin client (no `novafabric` import, so ~tens of ms to start). It
-forwards the command, cwd, and environment to the daemon and passes your
-stdin/stdout/stderr through, so the workload's terminal behaves normally.
+forwards the command, cwd, environment and your stdin/stdout/stderr to the daemon.
+As with `nova capture`, the workload's stdout and stderr are **captured, not shown**:
+they are written to the capsule (`outputs/stdout.txt`, `outputs/stderr.txt`), up to
+64 MiB each (the rest is counted in `runner_metadata.stdout_truncated_bytes` /
+`stderr_truncated_bytes` and noted in the stream). Earlier docs said the streams
+passed through to the terminal; they never did.
 
 ```bash
 novacap python agent.py

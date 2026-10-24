@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from types import FrameType
+from typing import Any
 
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import (
@@ -36,6 +37,75 @@ DEFAULT_TIMEOUT_S = 600.0
 #: Seconds an interrupted workload gets to exit after the forwarded signal, before SIGKILL.
 INTERRUPT_GRACE_S = 10.0
 _DRAIN_TIMEOUT_S = 5.0
+#: Bytes of each of stdout and stderr kept in memory (and in the capsule); the rest
+#: is read and counted, never buffered (review capture-runners-10).
+OUTPUT_CAP_BYTES = 64 * 1024 * 1024
+_READ_CHUNK = 64 * 1024
+
+
+class _Drain:
+    """Read one workload pipe on a daemon thread into a bounded buffer.
+
+    The runner waits for the workload to *exit*, not for its pipes to close: a
+    detached child (``setsid``, a double-forked server) inherits them and may hold
+    them open for its whole life. Reading continues in the background so the
+    workload never blocks on a full pipe; what was read by the time the runner
+    stops waiting is the captured output.
+    """
+
+    def __init__(self, pipe: Any, name: str) -> None:
+        self.name = name
+        # A private duplicate: once the Popen object closes its pipe the number may
+        # be reused, and this thread must never read some other file. The thread
+        # closes it at EOF.
+        self._fd = os.dup(pipe.fileno())
+        self._buf = bytearray()
+        self.dropped = 0
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._run, name=f"nf-drain-{name}", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            while True:
+                chunk = os.read(self._fd, _READ_CHUNK)
+                if not chunk:
+                    return
+                with self._lock:
+                    keep = max(0, OUTPUT_CAP_BYTES - len(self._buf))
+                    self._buf += chunk[:keep]
+                    self.dropped += len(chunk) - min(keep, len(chunk))
+        except OSError:
+            return
+        finally:
+            os.close(self._fd)
+
+    def collect(self, grace: float) -> tuple[bytes, bool]:
+        """``(output, complete)``: complete is False when a process still holds the pipe."""
+        self._thread.join(grace)
+        with self._lock:
+            data = bytes(self._buf)
+            if self.dropped:
+                data += (
+                    f"\n[novafabric] {self.dropped} byte(s) of {self.name} not kept "
+                    f"(capture keeps the first {OUTPUT_CAP_BYTES})\n"
+                ).encode()
+        return data, not self._thread.is_alive()
+
+
+def _collect(drains: tuple[_Drain, _Drain], grace: float) -> tuple[bytes, bytes, dict[str, Any]]:
+    """Both streams, a note when output may be incomplete, and truncation counts."""
+    stdout, out_done = drains[0].collect(grace)
+    stderr, err_done = drains[1].collect(grace if out_done else 0.0)
+    if not (out_done and err_done):
+        stderr += (
+            b"\n[novafabric] a process that outlived the workload still holds its output "
+            b"open; output written after the workload exited is not captured\n"
+        )
+    metadata: dict[str, Any] = {
+        f"{d.name}_truncated_bytes": d.dropped for d in drains if d.dropped
+    }
+    return stdout, stderr, metadata
 
 #: Signals that end ``nova capture`` and are forwarded to the workload's process group.
 _FORWARDED_SIGNALS = tuple(
@@ -62,16 +132,16 @@ def _stop_group(proc: subprocess.Popen[bytes], pgid: int, first: int) -> None:
     _signal_group(pgid, signal.SIGKILL)
 
 
-def _interrupted(proc: subprocess.Popen[bytes], exc: BaseException) -> RunnerJobResult:
+def _interrupted(drains: tuple[_Drain, _Drain], exc: BaseException) -> RunnerJobResult:
     """What an interrupted, already stopped workload left behind."""
     try:
         # The group is dead, so the pipes are at EOF; the bound covers a
         # descendant that escaped the group and still holds one open.
-        stdout, stderr = proc.communicate(timeout=_DRAIN_TIMEOUT_S)
+        stdout, stderr, metadata = _collect(drains, _DRAIN_TIMEOUT_S)
     except (Exception, KeyboardInterrupt):
         # A repeated Ctrl-C here is the same request as the first: stop.
-        stdout, stderr = b"", b""
-    return interrupted_job_result(exc, stdout=stdout or b"", stderr=stderr or b"")
+        stdout, stderr, metadata = b"", b"", {}
+    return interrupted_job_result(exc, stdout=stdout, stderr=stderr, runner_metadata=metadata)
 
 
 class _ForwardTarget:
@@ -145,29 +215,37 @@ class LocalRunner:
     def _supervise(
         proc: subprocess.Popen[bytes], pgid: int, target: _ForwardTarget, timeout: float
     ) -> RunnerJobResult:
-        """Wait for the workload; stop its whole group on a timeout or an interruption."""
+        """Wait for the workload; stop its whole group on a timeout or an interruption.
+
+        The deadline applies to the workload's *exit* (``proc.wait``); its pipes are
+        drained in the background (:class:`_Drain`), so a detached child that keeps
+        them open can neither stretch the run nor turn a success into a timeout
+        (review capture-runners-10).
+        """
+        drains = (_Drain(proc.stdout, "stdout"), _Drain(proc.stderr, "stderr"))
         try:
             target.attach(pgid)  # delivers a signal that arrived during the spawn
-            stdout, stderr = proc.communicate(timeout=timeout)
+            proc.wait(timeout=timeout)
+            stdout, stderr, metadata = _collect(drains, _DRAIN_TIMEOUT_S)
             return RunnerJobResult(
                 exit_code=proc.returncode,
                 runner_status="completed",
                 stdout=stdout,
                 stderr=stderr,
+                runner_metadata=metadata,
             )
         except subprocess.TimeoutExpired:
             # Kill the entire process group (agent + all descendants).
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            stdout, stderr = proc.communicate()
+            _signal_group(pgid, signal.SIGKILL)
+            proc.wait()
+            stdout, stderr, metadata = _collect(drains, _DRAIN_TIMEOUT_S)
             return RunnerJobResult(
                 exit_code=124,
                 runner_status="timeout",
-                stdout=stdout or b"",
-                stderr=(stderr or b"") + b"\n[novafabric] capture timeout",
+                stdout=stdout,
+                stderr=stderr + b"\n[novafabric] capture timeout",
                 runner_error=f"workload exceeded {timeout}s wall-clock deadline",
+                runner_metadata=metadata,
             )
         except BaseException as exc:
             # Ctrl-C (SIGINT reaches only nova capture's own group) or a
@@ -178,7 +256,7 @@ class LocalRunner:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 # The workload is stopped, so the orchestrator may finalise
                 # the capsule before the interruption ends the capture.
-                attach_interrupted_result(exc, _interrupted(proc, exc))
+                attach_interrupted_result(exc, _interrupted(drains, exc))
             raise
 
     def run(self, spec: RunnerJobSpec) -> RunnerJobResult:
