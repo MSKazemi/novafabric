@@ -74,8 +74,23 @@ def _interrupted(proc: subprocess.Popen[bytes], exc: BaseException) -> RunnerJob
     return interrupted_job_result(exc, stdout=stdout or b"", stderr=stderr or b"")
 
 
+class _ForwardTarget:
+    """The process group :func:`_forward_termination` forwards to, once it exists."""
+
+    def __init__(self) -> None:
+        self.pgid: int | None = None
+        self.pending: int | None = None
+
+    def attach(self, pgid: int) -> None:
+        """Start forwarding to *pgid*; deliver a signal that arrived before it existed."""
+        self.pgid = pgid
+        if self.pending is not None:
+            _signal_group(pgid, self.pending)
+            raise SystemExit(128 + self.pending)
+
+
 @contextmanager
-def _forward_termination(pgid: int) -> Iterator[None]:
+def _forward_termination() -> Iterator[_ForwardTarget]:
     """While the workload runs, SIGTERM/SIGHUP to ``nova capture`` reach the workload too.
 
     The workload runs in its own session (so a timeout can kill its whole tree), so
@@ -85,18 +100,27 @@ def _forward_termination(pgid: int) -> Iterator[None]:
     capture-runners-03). The handler forwards the signal and exits ``128 + signum``;
     :meth:`LocalRunner.run` then waits out the grace period. Signal handlers can be
     set only on the main thread; elsewhere this is a no-op.
+
+    The handler is installed *before* the workload is spawned: installed after
+    ``Popen`` returned, a signal landing in between killed ``nova capture`` outright
+    and orphaned the workload. A signal that arrives before the group exists is
+    held and delivered by :meth:`_ForwardTarget.attach`.
     """
+    target = _ForwardTarget()
     if threading.current_thread() is not threading.main_thread():
-        yield
+        yield target
         return
 
     def forward(signum: int, _frame: FrameType | None) -> None:
-        _signal_group(pgid, signum)
+        if target.pgid is None:
+            target.pending = signum  # no workload yet: attach() delivers it
+            return
+        _signal_group(target.pgid, signum)
         raise SystemExit(128 + signum)
 
     previous = {sig: signal.signal(sig, forward) for sig in _FORWARDED_SIGNALS}
     try:
-        yield
+        yield target
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
@@ -117,6 +141,46 @@ class LocalRunner:
         # Local execution is always available — that's the contract.
         return True, ""
 
+    @staticmethod
+    def _supervise(
+        proc: subprocess.Popen[bytes], pgid: int, target: _ForwardTarget, timeout: float
+    ) -> RunnerJobResult:
+        """Wait for the workload; stop its whole group on a timeout or an interruption."""
+        try:
+            target.attach(pgid)  # delivers a signal that arrived during the spawn
+            stdout, stderr = proc.communicate(timeout=timeout)
+            return RunnerJobResult(
+                exit_code=proc.returncode,
+                runner_status="completed",
+                stdout=stdout,
+                stderr=stderr,
+            )
+        except subprocess.TimeoutExpired:
+            # Kill the entire process group (agent + all descendants).
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = proc.communicate()
+            return RunnerJobResult(
+                exit_code=124,
+                runner_status="timeout",
+                stdout=stdout or b"",
+                stderr=(stderr or b"") + b"\n[novafabric] capture timeout",
+                runner_error=f"workload exceeded {timeout}s wall-clock deadline",
+            )
+        except BaseException as exc:
+            # Ctrl-C (SIGINT reaches only nova capture's own group) or a
+            # forwarded SIGTERM/SIGHUP: stop the workload, then let the
+            # interruption end the capture. Never leave it running alone.
+            first = signal.SIGINT if isinstance(exc, KeyboardInterrupt) else signal.SIGTERM
+            _stop_group(proc, pgid, first)
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                # The workload is stopped, so the orchestrator may finalise
+                # the capsule before the interruption ends the capture.
+                attach_interrupted_result(exc, _interrupted(proc, exc))
+            raise
+
     def run(self, spec: RunnerJobSpec) -> RunnerJobResult:
         # The orchestrator passes a fully-prepared env (with
         # NOVAFABRIC_CAPSULE_DIR + NOVAFABRIC_SPAN_ID already set), but
@@ -136,48 +200,16 @@ class LocalRunner:
                 # start_new_session=True creates a new process group so that
                 # on timeout we can kill the entire tree (agent + any SSH/tool
                 # children it spawned), not just the immediate child.
-                proc = subprocess.Popen(
-                    spec.command,
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    start_new_session=True,
-                )
-                pgid = proc.pid  # start_new_session: the child leads its own group
-                try:
-                    with _forward_termination(pgid):
-                        stdout, stderr = proc.communicate(timeout=timeout)
-                    return RunnerJobResult(
-                        exit_code=proc.returncode,
-                        runner_status="completed",
-                        stdout=stdout,
-                        stderr=stderr,
+                with _forward_termination() as target:
+                    proc = subprocess.Popen(
+                        spec.command,
+                        env=env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        start_new_session=True,
                     )
-                except subprocess.TimeoutExpired:
-                    # Kill the entire process group (agent + all descendants).
-                    try:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    stdout, stderr = proc.communicate()
-                    return RunnerJobResult(
-                        exit_code=124,
-                        runner_status="timeout",
-                        stdout=stdout or b"",
-                        stderr=(stderr or b"") + b"\n[novafabric] capture timeout",
-                        runner_error=f"workload exceeded {timeout}s wall-clock deadline",
-                    )
-                except BaseException as exc:
-                    # Ctrl-C (SIGINT reaches only nova capture's own group) or a
-                    # forwarded SIGTERM/SIGHUP: stop the workload, then let the
-                    # interruption end the capture. Never leave it running alone.
-                    first = signal.SIGINT if isinstance(exc, KeyboardInterrupt) else signal.SIGTERM
-                    _stop_group(proc, pgid, first)
-                    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                        # The workload is stopped, so the orchestrator may finalise
-                        # the capsule before the interruption ends the capture.
-                        attach_interrupted_result(exc, _interrupted(proc, exc))
-                    raise
+                    pgid = proc.pid  # start_new_session: the child leads its own group
+                    return self._supervise(proc, pgid, target, timeout)
             except FileNotFoundError as exc:
                 # The commonest first-run mistake is a mistyped command name.
                 # Say so in plain words when argv[0] really does not resolve on
