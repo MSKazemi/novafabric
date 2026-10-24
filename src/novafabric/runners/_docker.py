@@ -24,6 +24,7 @@ Anti-patterns explicitly forbidden by this runner (per ADR-0025
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -43,6 +44,8 @@ from novafabric.runners._image import (
 from novafabric.runners._options import coerce_str_dict, coerce_str_list
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import ContainerEvalError, RunnerJobResult, RunnerJobSpec
+
+logger = logging.getLogger(__name__)
 
 # Both accept the CLI's string form as well as a config file's real list/dict —
 # see novafabric.runners._options for why that distinction was silently losing
@@ -164,6 +167,18 @@ class DockerRunner:
             return False, f"docker daemon not reachable: {tail}"
         return True, ""
 
+    def _remove_container(self, name: str, client_env: dict[str, str]) -> dict[str, Any]:
+        """``docker rm -f <name>`` after a timeout; the outcome, for ``runner_metadata``."""
+        try:
+            subprocess.run(
+                [self._docker, "rm", "-f", name],
+                capture_output=True, check=True, timeout=30, env=client_env,
+            )
+        except Exception as exc:  # noqa: BLE001 — the timeout result must still be returned
+            logger.warning("could not remove container %s after its deadline: %s", name, exc)
+            return {"cancelled": False, "cancel_error": f"{type(exc).__name__}: {exc}"[:300]}
+        return {"cancelled": True, "container": name}
+
     def _inspect_image(self, image: str) -> ImageInspection:
         """What the local runtime says *image* resolves to right now (ADR-0307).
 
@@ -256,6 +271,10 @@ class DockerRunner:
         # docker run argv. Order matters: --rm, env, volumes, image-level
         # options, then image, then command.
         argv: list[str] = [self._docker, "run", "--rm"]
+        # A name the runner can address the container by: killing the `docker run`
+        # client on timeout does not stop the container (capture-runners-04).
+        container = f"novafabric-{spec.run_id.lower()}"
+        argv.extend(["--name", container])
 
         # Default-deny (ADR-0270): NOVAFABRIC_* plus the operator's explicit
         # extra_env. The orchestrator passes its full env in spec.env, and
@@ -312,13 +331,17 @@ class DockerRunner:
                 argv, capture_output=True, timeout=timeout, env=client_env,
             )
         except subprocess.TimeoutExpired as exc:
+            # The client is gone, the container is not: remove it (kill + rm) before
+            # the capsule is sealed, so it cannot keep writing into the mount.
+            metadata = self._metadata(image, before, ran=True)
+            metadata.update(self._remove_container(container, client_env))
             return RunnerJobResult(
                 exit_code=124,
                 runner_status="timeout",
                 stdout=exc.stdout or b"",
                 stderr=(exc.stderr or b"") + b"[novafabric] docker capture timeout",
                 runner_error=f"workload exceeded {timeout}s wall-clock deadline",
-                runner_metadata=self._metadata(image, before, ran=True),
+                runner_metadata=metadata,
             )
         except FileNotFoundError as exc:
             return RunnerJobResult(

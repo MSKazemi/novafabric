@@ -40,7 +40,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from novafabric.runners._poll import jittered_sleep
+from novafabric.runners._poll import cancel_after_deadline, jittered_sleep
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
@@ -271,6 +271,17 @@ class PBSRunner:
                 break
             jittered_sleep(poll_interval)
 
+        # Deadline passed with the job queued/running: cancel it (capture-runners-04).
+        cancel_outcome: dict[str, Any] = {}
+        if last_state not in _PBS_TERMINAL_STATES:
+            cancel_outcome = cancel_after_deadline(
+                job_id,
+                cancel=self.cancel,
+                query=lambda j: self._query_state(j)[0],
+                terminal=_PBS_TERMINAL_STATES,
+                poll_interval=poll_interval,
+            )
+
         # 5. Read stdout/stderr from the log files PBS wrote.
         stdout_path = output_dir / "stdout.log"
         stderr_path = output_dir / "stderr.log"
@@ -282,6 +293,7 @@ class PBSRunner:
             "queue": queue,
             "final_state": last_state,
             "pbs_exit_status": exit_status_str,
+            **cancel_outcome,
         }
 
         if last_state not in _PBS_TERMINAL_STATES:

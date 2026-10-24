@@ -33,7 +33,7 @@ from typing import Any
 
 from novafabric.runners._env import forwardable_env, scheduler_submit_env, shell_safe_env
 from novafabric.runners._options import coerce_str_dict
-from novafabric.runners._poll import jittered_sleep
+from novafabric.runners._poll import cancel_after_deadline, jittered_sleep
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
 
@@ -175,6 +175,14 @@ class SlurmRunner:
                 exit_code = token[len("ExitCode="):]
         return state, exit_code
 
+    def cancel(self, jobid: str, *, cluster: str | None = None) -> None:
+        """Cancel a SLURM job via ``scancel`` (``-M <cluster>`` on a multi-cluster setup).
+
+        Raises :class:`subprocess.CalledProcessError` if scancel fails.
+        """
+        argv = [self._scancel] + (["-M", cluster] if cluster else []) + [jobid]
+        subprocess.run(argv, capture_output=True, check=True, timeout=15, env=_client_env())
+
     def _query_state(self, jobid: str) -> tuple[str | None, str]:
         """Query the current state of ``jobid``.
 
@@ -237,8 +245,10 @@ class SlurmRunner:
         sbatch_bin: str = "sbatch",
         sacct_bin: str = "sacct",
         scontrol_bin: str = "scontrol",
+        scancel_bin: str = "scancel",
     ) -> None:
         self._sbatch = sbatch_bin
+        self._scancel = scancel_bin
         self._sacct = sacct_bin
         # scontrol added in v0.6.10 (live-cluster validation finding):
         # `sacct` requires slurmdbd, which is NOT installed in many
@@ -502,6 +512,18 @@ class SlurmRunner:
                 break
             jittered_sleep(poll_interval)
 
+        # Deadline passed with the job still queued/running: cancel it, so it cannot
+        # keep writing into a capsule the orchestrator is about to seal.
+        cancel_outcome: dict[str, Any] = {}
+        if last_state not in _SACCT_TERMINAL_STATES:
+            cancel_outcome = cancel_after_deadline(
+                jobid,
+                cancel=lambda j: self.cancel(j, cluster=parsable_cluster or None),
+                query=lambda j: self._query_state(j)[0],
+                terminal=_SACCT_TERMINAL_STATES,
+                poll_interval=poll_interval,
+            )
+
         # 3. Read stdout/stderr files.
         stdout_path = output_dir / f"slurm-{jobid}.out"
         stderr_path = output_dir / f"slurm-{jobid}.err"
@@ -519,6 +541,7 @@ class SlurmRunner:
         if parsable_cluster:
             runner_metadata["cluster"] = parsable_cluster
 
+        runner_metadata.update(cancel_outcome)
         if last_state not in _SACCT_TERMINAL_STATES:
             return RunnerJobResult(
                 exit_code=124, runner_status="timeout",

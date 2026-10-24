@@ -47,7 +47,7 @@ from typing import Any
 
 from novafabric.runners._env import scheduler_submit_env, shell_safe_env
 from novafabric.runners._options import coerce_str_dict
-from novafabric.runners._poll import jittered_sleep
+from novafabric.runners._poll import cancel_after_deadline, jittered_sleep
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
@@ -295,6 +295,17 @@ class LSFRunner:
                 break
             jittered_sleep(poll_interval)
 
+        # Deadline passed with the job pending/running: cancel it (capture-runners-04).
+        cancel_outcome: dict[str, Any] = {}
+        if last_state not in _LSF_TERMINAL_STATES:
+            cancel_outcome = cancel_after_deadline(
+                job_id,
+                cancel=self.cancel,
+                query=self._query_state,
+                terminal=_LSF_TERMINAL_STATES,
+                poll_interval=poll_interval,
+            )
+
         # 5. Read stdout/stderr from the log files LSF wrote.
         # LSF appends %J (job ID) to the log filenames.
         stdout_bytes, stderr_bytes = self._read_log_files(output_dir, job_id)
@@ -303,6 +314,7 @@ class LSFRunner:
             "job_id": job_id,
             "queue": queue,
             "final_state": last_state,
+            **cancel_outcome,
         }
 
         if last_state not in _LSF_TERMINAL_STATES:
