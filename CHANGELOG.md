@@ -13,6 +13,12 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **A configured policy that cannot be evaluated now refuses instead of allowing.** With
+  `NOVAFABRIC_POLICY_BUNDLE_PATH` set and no `opa` on `PATH`, every policy gate (`promote`, `evidence_export`,
+  `replay_mutating`) allowed everything, as if no policy existed; it now denies with a `policy.deny` that names the
+  variable and the missing binary. A protected label with a `policy_ref` applied the move when `opa` was absent (a
+  deny-all policy still moved the label); the move now stays pending. Local mode with no policy configured is
+  unchanged (gates disabled, with a warning).
 - **A workspace membership no longer grants server-wide privilege (`nova server`, ADR-0178, experimental).** Once
   the workspace/org model was in use, every membership a principal held counted on every route: a workspace-only
   `admin` could mint a server-wide admin API key, create organisations and assign himself global admin, and a
@@ -62,6 +68,18 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- `nova eval compare` reports only a **decrease** as a regression (eval metrics are higher-is-better: `threshold` is
+  a minimum). An improvement such as accuracy 0.80 → 0.95 failed CI with "REGRESSION DETECTED", while a candidate
+  that had lost the baseline's metric passed with exit 0. It now exits `2` ("CANNOT COMPARE") when a baseline metric
+  is missing from the candidate or the `suite_id`s differ; `POST /api/eval/compare` and the dashboard panel report
+  the same (`comparable`, `missing_metrics`, per-metric `improved`).
+- A NaN or infinite numeric score is refused. It was stored as `null`, after which every read of that capsule's
+  `scores.jsonl` failed and `nova query` / `nova trend` failed for the whole capsule directory.
+- RAPL energy: a counter wrap added 2⁶³ µJ (about 9.2 TJ) to the node total, so any run longer than one wrap period
+  (~17 minutes at 65 W) produced terajoule receipts, and a second wrap was lost. `core`/`uncore` subzones and `psys`
+  were also counted on top of the package. The sampler now records each zone's `max_energy_range_uj` and the
+  integrator adds it back once per wrap; capsules sampled before that, whose counter wrapped, get `unavailable`
+  receipts instead of a guess.
 - `server.db_path` (`NOVAFABRIC_SERVER_DB_PATH`) applies to every registry table. Orgs, workspaces, role
   assignments, service accounts and SCIM used `$NOVAFABRIC_HOME/registry.db` regardless, so with `db_path` set an
   API key was created in one database and refused (401) from the other, and the multi-org shared-store start-up
