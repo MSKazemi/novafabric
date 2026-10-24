@@ -110,6 +110,11 @@ export default function CapsuleInspector({ capsuleData, onCompareTo }: CapsuleIn
   const [ioFile, setIoFile] = useState<string | null>(null);
   const [ioContent, setIoContent] = useState<string | null>(null);
   const [ioLoading, setIoLoading] = useState(false);
+  // The capsule's own redaction proof (review frontend-dashboard-03): fetched for a
+  // live run, never the showcase literal.
+  const [proof, setProof] = useState<
+    { state: 'idle' | 'loading' | 'missing' | 'error'; text?: string } | { state: 'ok'; text: string }
+  >({ state: 'idle' });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerRuns, setPickerRuns] = useState<RunSummary[] | null>(null);
   const [pickerSearch, setPickerSearch] = useState('');
@@ -138,6 +143,23 @@ export default function CapsuleInspector({ capsuleData, onCompareTo }: CapsuleIn
   const outputFiles = data.outputs ?? [];
 
   const runId = (data.capsule as { run_id?: string }).run_id ?? '';
+  /** A real run (RunInspector) rather than the showcase fixture. */
+  const isLive = capsuleData !== undefined;
+
+  useEffect(() => {
+    if (!isLive || active !== 'redaction-proof.json' || !runId) return;
+    let cancelled = false;
+    setProof({ state: 'loading' });
+    api.getRedactionProof(runId).then(
+      body => { if (!cancelled) setProof({ state: 'ok', text: JSON.stringify(body, null, 2) }); },
+      (err: unknown) => {
+        if (cancelled) return;
+        const status = (err as { status?: number }).status;
+        setProof(status === 404 ? { state: 'missing' } : { state: 'error', text: String((err as Error).message ?? err) });
+      },
+    );
+    return () => { cancelled = true; };
+  }, [isLive, active, runId]);
 
   const handleOpenPicker = useCallback(async () => {
     setPickerOpen(o => !o);
@@ -205,7 +227,9 @@ export default function CapsuleInspector({ capsuleData, onCompareTo }: CapsuleIn
                 )}
               >
                 <span className="font-mono truncate">{f.label}</span>
-                <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">{f.size}</span>
+                {!isLive && (
+                  <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">{f.size}</span>
+                )}
               </button>
             </li>
           ))}
@@ -388,8 +412,17 @@ export default function CapsuleInspector({ capsuleData, onCompareTo }: CapsuleIn
             <ToolCallsView calls={toolLines} hoveredSpan={hoveredSpan} />
           )}
 
-          {active === 'env.lock' && (
+          {active === 'env.lock' && ioFile === null && isLive && (
+            <p className="text-xs text-[var(--color-text-faint)]">
+              env.lock is not served by the dashboard. It is in the capsule directory next to
+              capsule.yaml; <code>nova diff</code> compares it between two runs.
+            </p>
+          )}
+
+          {active === 'env.lock' && ioFile === null && !isLive && (
             <pre className="whitespace-pre text-[var(--color-text-muted)]">
+{`# Showcase sample — not a recorded run
+`}
 {`schema_version: 0.1.0
 host:
   arch: x86_64
@@ -412,9 +445,22 @@ captured_at: "2026-04-15T10:00:00+00:00"`}
             </pre>
           )}
 
-          {active === 'redaction-proof.json' && ioFile === null && (
+          {active === 'redaction-proof.json' && ioFile === null && isLive && (
+            proof.state === 'ok'
+              ? <pre className="whitespace-pre-wrap break-all text-[var(--color-text-muted)]">{proof.text}</pre>
+              : proof.state === 'missing'
+                ? <p className="text-xs text-[var(--color-text-faint)]">
+                    This capsule has no redaction-proof.json (run <code>nova redact</code> on it to scan it).
+                  </p>
+                : proof.state === 'error'
+                  ? <p className="text-xs text-[var(--color-status-failure)]">Could not read the redaction proof: {proof.text}</p>
+                  : <p className="text-[var(--color-text-faint)] text-xs">loading…</p>
+          )}
+
+          {active === 'redaction-proof.json' && ioFile === null && !isLive && (
             <pre className="whitespace-pre text-[var(--color-text-muted)]">
-{`{
+{`// Showcase sample — not a recorded run
+{
   "schema_version": "0.1.0",
   "scanner": "novafabric.redact@0.6.12",
   "scanned_at": "2026-04-15T10:00:04+00:00",
