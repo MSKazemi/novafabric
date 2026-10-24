@@ -89,7 +89,9 @@ strictly: back up → migrate schema → roll the one writer.
 ```bash
 # 1. Back up (pg_dump; see backup-restore.md §1.2)
 export NOVAFABRIC_POSTGRES_DSN="$NOVA_DSN"   # what nova db upgrade / nova server read
-pg_dump --format=custom --dbname="$NOVA_DSN" --file=pre-upgrade.dump
+# `nova backup create` keeps the password out of pg_dump's argv (PGPASSWORD);
+# a raw `pg_dump --dbname="$NOVA_DSN"` would show it to every local user in `ps`.
+nova backup create --profile pg -o pre-upgrade.tar.gz   # reads NOVA_DSN
 
 # 2. Upgrade the package on the server host
 pip install -U 'novafabric[server]'

@@ -55,14 +55,21 @@ the writer, use SQLite's online backup (`sqlite3 ~/.novafabric/registry.db
 experimental** (ADR-0211).
 
 ```bash
-# Backup — either the standard tool directly:
-pg_dump --format=custom --dbname="$NOVA_DSN" \
+# Backup — either the standard tool directly (password from PGPASSWORD or
+# ~/.pgpass, never in --dbname, which `ps` shows to every local user):
+pg_dump --format=custom --dbname="host=db user=nova dbname=nova" \
         --file=novafabric-$(date +%F).dump
 # …or the verified backup set (adds manifest + hashes + optional DSSE,
 # plus the pg_dump version and per-table row counts used by restore
-# verification — ADR-0211 D6):
-nova backup create --profile pg --dsn "$NOVA_DSN" -o pg-nightly.tar.gz
+# verification — ADR-0211 D6). NOVA_DSN is read from the environment:
+NOVA_DSN="postgresql://nova:…@db/nova" nova backup create --profile pg -o pg-nightly.tar.gz
 ```
+
+`nova backup create` and `nova restore` hand `pg_dump` / `pg_restore` a DSN with
+the password removed and pass the password in `PGPASSWORD`, so it never appears
+in the client's argv (`/proc/<pid>/cmdline`). Prefer `NOVA_DSN` over `--dsn` for
+the same reason: `--dsn` puts the password in `nova`'s own argv. Releases up to
+v0.107.0 passed the full DSN as `--dbname`.
 
 **Restore — the automated command (experimental, ADR-0217):**
 
