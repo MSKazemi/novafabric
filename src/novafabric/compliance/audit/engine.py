@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -145,14 +145,23 @@ class AuditEngine:
         profile: :class:`ControlProfile` loaded from a YAML file.
         capsules_dir: Where the capsules are, when not ``<data_dir>/capsules``
             (e.g. ``$NOVAFABRIC_CAPSULE_DIR``). Optional; additive.
+        capsule_paths: Scan exactly these capsule directories instead of every
+            sub-directory of *capsules_dir* — a single-capsule audit. Optional;
+            additive.
     """
 
     def __init__(
-        self, data_dir: Path, profile: ControlProfile, capsules_dir: Path | None = None
+        self,
+        data_dir: Path,
+        profile: ControlProfile,
+        capsules_dir: Path | None = None,
+        *,
+        capsule_paths: Sequence[Path] | None = None,
     ) -> None:
         self._data_dir = data_dir
         self._profile = profile
         self._capsules_dir = capsules_dir if capsules_dir is not None else data_dir / "capsules"
+        self._capsule_paths = list(capsule_paths) if capsule_paths is not None else None
 
     @property
     def capsules_dir(self) -> Path:
@@ -221,6 +230,9 @@ class AuditEngine:
 
     def _find_capsules(self) -> list[Path]:
         """Return sorted list of capsule directories under :attr:`capsules_dir`."""
+        if self._capsule_paths is not None:
+            # A scan never lists a linked entry, named or not.
+            return sorted(p for p in self._capsule_paths if p.is_dir() and not p.is_symlink())
         capsules_root = self._capsules_dir
         if not capsules_root.is_dir():
             return []

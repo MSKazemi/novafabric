@@ -4961,11 +4961,12 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        # AuditEngine scans capsules/ under data_dir; for a single-capsule audit
-        # we pass the parent dir as data_dir and filter by the specific capsule.
-        data_dir = capsule_path.parent
+        # Exactly the requested capsule (review serve-05: data_dir=capsule.parent
+        # made the engine look in <store>/capsules and report 0 capsules).
         try:
-            engine = AuditEngine(data_dir=data_dir, profile=ctrl_profile)
+            engine = AuditEngine(
+                data_dir=capsule_dir, profile=ctrl_profile, capsule_paths=[capsule_path]
+            )
             report = engine.scan()
         except Exception as exc:
             raise HTTPException(
@@ -7713,7 +7714,10 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
-            engine = AuditEngine(data_dir=capsule_dir.parent, profile=ctrl_profile)
+            # The server's own capsule store, not <its parent>/capsules (serve-05).
+            engine = AuditEngine(
+                data_dir=capsule_dir.parent, profile=ctrl_profile, capsules_dir=capsule_dir
+            )
             report = engine.scan()
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"audit scan failed: {exc}") from exc
@@ -7752,7 +7756,10 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
-            engine = AuditEngine(data_dir=capsule_dir.parent, profile=ctrl_profile)
+            # The server's own capsule store, not <its parent>/capsules (serve-05).
+            engine = AuditEngine(
+                data_dir=capsule_dir.parent, profile=ctrl_profile, capsules_dir=capsule_dir
+            )
             report = engine.scan()
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"audit scan failed: {exc}") from exc
