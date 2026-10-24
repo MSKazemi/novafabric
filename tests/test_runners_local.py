@@ -159,3 +159,100 @@ class TestLocalRunnerSetupFailure:
         assert result.runner_status == "failed_setup"
         assert result.runner_error is not None
         assert "command not found" not in result.runner_error
+
+
+# --- review capture-runners-03: an interrupted capture never orphans its workload ---------
+
+import signal  # noqa: E402
+import subprocess  # noqa: E402
+import textwrap  # noqa: E402
+import time  # noqa: E402
+
+import pytest  # noqa: E402
+
+_DRIVER = textwrap.dedent(
+    """
+    import os, sys
+    from pathlib import Path
+    from novafabric.runners import _local
+    from novafabric.runners import LocalRunner, RunnerJobSpec
+    _local.INTERRUPT_GRACE_S = float(sys.argv[3])
+    cap = Path(sys.argv[1]); cap.mkdir(parents=True, exist_ok=True)
+    LocalRunner().run(RunnerJobSpec(
+        run_id="01TESTRUNNER0000000000000000",
+        command=["sh", "-c", sys.argv[2]],
+        capsule_dir=cap,
+        env={"PATH": os.environ["PATH"], "NOVAFABRIC_CAPSULE_DIR": str(cap)},
+        timeout_s=120,
+    ))
+    """
+)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _start(tmp_path: Path, workload: str, grace: float) -> tuple[subprocess.Popen[bytes], int]:
+    pidfile = tmp_path / "workload.pid"
+    driver = subprocess.Popen(
+        [sys.executable, "-c", _DRIVER, str(tmp_path / "cap"), workload.format(pid=pidfile), str(grace)],
+    )
+    deadline = time.monotonic() + 30
+    while not (pidfile.exists() and pidfile.read_text().strip()):
+        assert time.monotonic() < deadline, "workload never started"
+        assert driver.poll() is None, "driver exited early"
+        time.sleep(0.05)
+    return driver, int(pidfile.read_text())
+
+
+def _wait_dead(pid: int, within: float) -> bool:
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        if not _alive(pid):
+            return True
+        time.sleep(0.05)
+    return not _alive(pid)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+class TestInterruptedCaptureStopsTheWorkload:
+    def test_sigterm_to_nova_capture_is_forwarded_to_the_workload(self, tmp_path: Path) -> None:
+        driver, pid = _start(tmp_path, "echo $$ > {pid}; exec sleep 60", grace=10)
+        driver.send_signal(signal.SIGTERM)
+        assert driver.wait(timeout=30) == 128 + signal.SIGTERM
+        assert _wait_dead(pid, within=10), "workload kept running after nova capture was killed"
+
+    def test_a_workload_that_ignores_sigterm_is_killed_after_the_grace_period(
+        self, tmp_path: Path
+    ) -> None:
+        driver, pid = _start(tmp_path, "trap '' TERM; echo $$ > {pid}; while :; do sleep 0.1; done", grace=1)
+        driver.send_signal(signal.SIGTERM)
+        assert driver.wait(timeout=30) == 128 + signal.SIGTERM
+        assert _wait_dead(pid, within=10)
+
+    def test_ctrl_c_stops_the_workload_and_still_interrupts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from novafabric.runners import _local
+
+        pidfile = tmp_path / "pid"
+        real_communicate = subprocess.Popen.communicate
+
+        def interrupted(self: subprocess.Popen[bytes], *a: object, **k: object) -> object:
+            deadline = time.monotonic() + 30
+            while not (pidfile.exists() and pidfile.read_text().strip()):
+                assert time.monotonic() < deadline
+                time.sleep(0.05)
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(_local, "INTERRUPT_GRACE_S", 5.0)
+        monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            LocalRunner().run(_spec(tmp_path, ["sh", "-c", f"echo $$ > {pidfile}; exec sleep 60"]))
+        monkeypatch.setattr(subprocess.Popen, "communicate", real_communicate)
+        assert _wait_dead(int(pidfile.read_text()), within=10)

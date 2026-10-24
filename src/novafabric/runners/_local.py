@@ -15,7 +15,11 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from types import FrameType
 
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
@@ -23,6 +27,61 @@ from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 #: Wall-clock deadline when the caller passes none (``nova capture`` without
 #: ``--timeout``; the GitHub Action's empty ``timeout`` input).
 DEFAULT_TIMEOUT_S = 600.0
+
+#: Seconds an interrupted workload gets to exit after the forwarded signal, before SIGKILL.
+INTERRUPT_GRACE_S = 10.0
+
+#: Signals that end ``nova capture`` and are forwarded to the workload's process group.
+_FORWARDED_SIGNALS = tuple(
+    sig for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGHUP", None)) if sig
+)
+
+
+def _signal_group(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _stop_group(proc: subprocess.Popen[bytes], pgid: int, first: int) -> None:
+    """Send *first* to the workload's group, wait :data:`INTERRUPT_GRACE_S`, then SIGKILL."""
+    _signal_group(pgid, first)
+    try:
+        proc.wait(timeout=INTERRUPT_GRACE_S)
+    except subprocess.TimeoutExpired:
+        _signal_group(pgid, signal.SIGKILL)
+        proc.wait()
+    # Descendants that outlived the group leader still share its group.
+    _signal_group(pgid, signal.SIGKILL)
+
+
+@contextmanager
+def _forward_termination(pgid: int) -> Iterator[None]:
+    """While the workload runs, SIGTERM/SIGHUP to ``nova capture`` reach the workload too.
+
+    The workload runs in its own session (so a timeout can kill its whole tree), so
+    signals sent to ``nova capture`` — a scheduler's SIGTERM, ``kill``, a closing
+    terminal — never reached it: ``nova capture`` died and the workload ran on,
+    unsupervised, writing into a capsule nothing would finalise (review
+    capture-runners-03). The handler forwards the signal and exits ``128 + signum``;
+    :meth:`LocalRunner.run` then waits out the grace period. Signal handlers can be
+    set only on the main thread; elsewhere this is a no-op.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def forward(signum: int, _frame: FrameType | None) -> None:
+        _signal_group(pgid, signum)
+        raise SystemExit(128 + signum)
+
+    previous = {sig: signal.signal(sig, forward) for sig in _FORWARDED_SIGNALS}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 class LocalRunner:
@@ -66,8 +125,10 @@ class LocalRunner:
                     stderr=subprocess.PIPE,
                     start_new_session=True,
                 )
+                pgid = proc.pid  # start_new_session: the child leads its own group
                 try:
-                    stdout, stderr = proc.communicate(timeout=timeout)
+                    with _forward_termination(pgid):
+                        stdout, stderr = proc.communicate(timeout=timeout)
                     return RunnerJobResult(
                         exit_code=proc.returncode,
                         runner_status="completed",
@@ -88,6 +149,13 @@ class LocalRunner:
                         stderr=(stderr or b"") + b"\n[novafabric] capture timeout",
                         runner_error=f"workload exceeded {timeout}s wall-clock deadline",
                     )
+                except BaseException as exc:
+                    # Ctrl-C (SIGINT reaches only nova capture's own group) or a
+                    # forwarded SIGTERM/SIGHUP: stop the workload, then let the
+                    # interruption end the capture. Never leave it running alone.
+                    first = signal.SIGINT if isinstance(exc, KeyboardInterrupt) else signal.SIGTERM
+                    _stop_group(proc, pgid, first)
+                    raise
             except FileNotFoundError as exc:
                 # The commonest first-run mistake is a mistyped command name.
                 # Say so in plain words when argv[0] really does not resolve on
