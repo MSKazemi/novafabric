@@ -314,3 +314,68 @@ def test_wire_capture_state_covers_all_five_outcomes(tmp_path: Path) -> None:
         "scoped-truncated",
         "skipped-concurrent",
     }
+
+
+def test_a2a_interceptor_records_real_protobuf_messages(tmp_path: Path) -> None:
+    """Review eval-adapters-query-01: with a2a-sdk >= 1.1, ``BeforeArgs.input`` is a protobuf
+    ``SendMessageRequest``; ``json.dumps`` raised, the SDK awaits the interceptor
+    unguarded, so every ``send_message`` failed — and the wire hooks stayed installed."""
+    import asyncio
+    from unittest.mock import MagicMock, patch
+
+    a2a_interceptors = pytest.importorskip("a2a.client.interceptors")
+    a2a_types = pytest.importorskip("a2a.types")
+
+    from novafabric.adapters.a2a import NovaA2AInterceptor
+
+    request = a2a_types.SendMessageRequest(
+        message=a2a_types.Message(message_id="m1", role="ROLE_USER")
+    )
+    response = a2a_types.SendMessageResponse()
+    card = MagicMock()
+    card.name = "agent-a"
+    interceptor = NovaA2AInterceptor(tmp_path)
+
+    async def _one_call() -> None:
+        await interceptor.before(
+            a2a_interceptors.BeforeArgs(input=request, method="send_message", agent_card=card)
+        )
+        await interceptor.after(
+            a2a_interceptors.AfterArgs(result=response, method="send_message", agent_card=card)
+        )
+
+    with (
+        patch("novafabric.capture.hooks.install_all"),
+        patch("novafabric.capture.hooks.uninstall_all"),
+    ):
+        asyncio.run(_one_call())  # must not raise
+
+    (tasks,) = tmp_path.glob("*/a2a-tasks.jsonl")
+    lines = [json.loads(line) for line in tasks.read_text().splitlines()]
+    assert lines[0]["direction"] == "request"
+    assert lines[0]["input"]["message"]["message_id"] == "m1"
+    assert lines[1]["direction"] == "response"
+
+
+def test_a2a_capture_failure_never_breaks_the_call_and_releases_the_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    from unittest.mock import MagicMock
+
+    a2a_interceptors = pytest.importorskip("a2a.client.interceptors")
+    from novafabric.adapters import a2a as adapter
+    from novafabric.capture import hooks
+
+    released: list[object] = []
+    monkeypatch.setattr(hooks, "install_all_or_discard", lambda **_k: "token")
+    monkeypatch.setattr(hooks, "uninstall_all", lambda token: released.append(token))
+    monkeypatch.setattr(adapter, "_jsonable", lambda _v: (_ for _ in ()).throw(RuntimeError("boom")))
+    card = MagicMock()
+    card.name = "agent-a"
+    asyncio.run(
+        adapter.NovaA2AInterceptor(tmp_path).before(
+            a2a_interceptors.BeforeArgs(input={"q": 1}, method="send_message", agent_card=card)
+        )
+    )
+    assert released == ["token"]

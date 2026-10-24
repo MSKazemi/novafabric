@@ -51,6 +51,28 @@ _CALL_KEY: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 #: ownership lock would mean two answers to one question.
 
 
+def _jsonable(value: Any) -> Any:
+    """*value* as plain JSON data: a2a-sdk >= 1.1 passes protobuf messages, not dicts.
+
+    Protobuf → ``MessageToDict`` (field names as in the proto), pydantic → its JSON
+    dump, anything else not JSON-native → ``str``. ``json.dumps`` of the raw
+    ``SendMessageRequest`` raised, and the SDK awaits interceptors unguarded, so
+    every ``send_message`` through the interceptor failed (eval-adapters-query-01).
+    """
+    try:
+        from google.protobuf.json_format import MessageToDict
+        from google.protobuf.message import Message
+    except ImportError:  # pragma: no cover - protobuf ships with a2a-sdk
+        pass
+    else:
+        if isinstance(value, Message):
+            return MessageToDict(value, preserving_proto_field_name=True)
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        return dump(mode="json")
+    return json.loads(json.dumps(value, default=str))
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -77,6 +99,24 @@ class NovaA2AInterceptor:
         ] = {}
 
     async def before(self, args: Any) -> None:
+        """A2A ``before`` hook. Never raises: capture must not break the user's call."""
+        try:
+            await self._before(args)
+        except Exception as exc:  # noqa: BLE001 — fail-open (I-3)
+            from novafabric.capture.hooks._fail_open import note_capture_failure
+
+            note_capture_failure("a2a", "capsule", exc)
+
+    async def after(self, args: Any) -> None:
+        """A2A ``after`` hook. Never raises: capture must not break the user's call."""
+        try:
+            await self._after(args)
+        except Exception as exc:  # noqa: BLE001 — fail-open (I-3)
+            from novafabric.capture.hooks._fail_open import note_capture_failure
+
+            note_capture_failure("a2a", "capsule", exc)
+
+    async def _before(self, args: Any) -> None:
         if args.method not in _CAPTURE_METHODS:
             return
 
@@ -99,11 +139,20 @@ class NovaA2AInterceptor:
         # hooks; it is safe to hand straight back to uninstall_all().
         hook_token = install_all_or_discard(writer=writer, parent_span_id=span_id)
 
-        # Write A2A task input
-        task_log = writer.capsule_dir / "a2a-tasks.jsonl"
-        with task_log.open("a") as f:
-            f.write(json.dumps({"direction": "request", "method": args.method,
-                                 "agent": agent_name, "input": args.input}) + "\n")
+        # Write A2A task input. Capture never breaks the call: on any failure the
+        # hooks just installed are released and the call proceeds uncaptured.
+        try:
+            task_log = writer.capsule_dir / "a2a-tasks.jsonl"
+            with task_log.open("a") as f:
+                f.write(json.dumps({"direction": "request", "method": args.method,
+                                     "agent": agent_name, "input": _jsonable(args.input)}) + "\n")
+        except Exception as exc:  # noqa: BLE001 — fail-open (I-3)
+            from novafabric.capture.hooks import uninstall_all
+            from novafabric.capture.hooks._fail_open import note_capture_failure
+
+            uninstall_all(hook_token)
+            note_capture_failure("a2a", "a2a-tasks", exc)
+            return
 
         self._pending[key] = (
             writer, run_id, span_id, created_at, t0, agent_name, hook_token,
@@ -114,7 +163,7 @@ class NovaA2AInterceptor:
         _CALL_KEY.set(key)
         args._nova_key = key
 
-    async def after(self, args: Any) -> None:
+    async def _after(self, args: Any) -> None:
         if args.method not in _CAPTURE_METHODS:
             return
         key = getattr(args, "_nova_key", None) or _CALL_KEY.get()
@@ -148,7 +197,7 @@ class NovaA2AInterceptor:
         task_log = writer.capsule_dir / "a2a-tasks.jsonl"
         with task_log.open("a") as f:
             f.write(json.dumps({"direction": "response", "method": args.method,
-                                 "agent": agent_name, "result": args.result}) + "\n")
+                                 "agent": agent_name, "result": _jsonable(args.result)}) + "\n")
 
         finished_at = _now()
         duration_ms = int((time.monotonic() - t0) * 1000)
