@@ -28,6 +28,8 @@ import time
 from pathlib import Path
 from typing import Any, Union
 
+from novafabric._safe_path import fsync_dir
+
 # ---------------------------------------------------------------------------
 # Constants matching collector/internal/spool/segment.go
 # ---------------------------------------------------------------------------
@@ -201,8 +203,11 @@ class _PurePythonSpool:
             f.flush()
             os.fsync(f.fileno())
 
-        # Atomic rename — the ONLY commit primitive.
+        # Atomic rename — the ONLY commit primitive — then fsync the directory so
+        # the committed segment survives a crash (the discipline capsule/_atomic.py
+        # documents for this spool).
         os.rename(str(tmp_path), str(dst_path))
+        fsync_dir(self._dir)
 
     def _evict_if_needed(self) -> None:
         """Remove the oldest .jsonl files when the count exceeds *max_files*.

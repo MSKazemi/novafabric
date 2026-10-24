@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric._paths import dashboards_dir
+from novafabric._safe_path import fsync_dir
 from novafabric.dashboards._models import (
     Dashboard,
     DashboardError,
@@ -131,9 +132,10 @@ def _write_if_changed(path: Path, content: str) -> tuple[Path, bool]:
 
     The bytes go to a uniquely named temp file in the *same directory* (so
     ``os.replace`` is a same-filesystem rename), are flushed to disk, and then
-    replace the target. A failure at any point removes the temp file and leaves
-    the old target untouched: a reader sees the old document or the new one,
-    never a partial one, and a failed write leaves nothing behind.
+    replace the target; the directory is fsynced so the rename survives a crash.
+    A failure at any point removes the temp file and leaves the old target
+    untouched: a reader sees the old document or the new one, never a partial
+    one, and a failed write leaves nothing behind.
     """
     if path.is_file() and path.read_text(encoding="utf-8") == content:
         return path, False
@@ -150,6 +152,7 @@ def _write_if_changed(path: Path, content: str) -> tuple[Path, bool]:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
         raise
+    fsync_dir(path.parent)
     return path, True
 
 

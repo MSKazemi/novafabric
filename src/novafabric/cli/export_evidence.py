@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import os
-import shutil
 import zipfile
 from pathlib import Path
 from typing import Any, Optional  # noqa: UP007
@@ -15,6 +14,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
+from novafabric._safe_path import fsync_dir, fsync_file
 from novafabric.evidence.bundle import (
     CapsuleValidationError,
     EvidenceBundleBuilder,
@@ -108,6 +108,13 @@ def _record_artifact(
     entry["sha256"] = _sha256_hex(data)
 
 
+def _publish_bundle(tmp_path: Path, bundle_path: Path) -> None:
+    """Rename a rewritten bundle over the original, durably (fsync, rename, fsync dir)."""
+    fsync_file(tmp_path)
+    os.replace(tmp_path, bundle_path)
+    fsync_dir(bundle_path.parent)
+
+
 def _rewrite_zip_entry(bundle_path: Path, entry_name: str, new_data: bytes) -> None:
     """Replace a single file entry in a ZIP archive (atomic via temp file)."""
     tmp_path = bundle_path.with_suffix(".tmp.zip")
@@ -121,7 +128,7 @@ def _rewrite_zip_entry(bundle_path: Path, entry_name: str, new_data: bytes) -> N
                     zf_out.writestr(item, new_data)
                 else:
                     zf_out.writestr(item, zf_in.read(item.filename))
-        shutil.move(str(tmp_path), str(bundle_path))
+        _publish_bundle(tmp_path, bundle_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -230,7 +237,7 @@ def _add_timestamp_to_bundle(
                     zf_out.writestr(item, zf_in.read(item.filename))
             # Add the TSR as a new entry
             zf_out.writestr("manifest.dsse.tsr", tsr_der)
-        shutil.move(str(tmp_path), str(bundle_path))
+        _publish_bundle(tmp_path, bundle_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise

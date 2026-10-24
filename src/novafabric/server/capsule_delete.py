@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from novafabric._safe_path import is_safe_path_segment
+from novafabric._safe_path import fsync_dir, is_safe_path_segment
 from novafabric.server import capsule_index
 
 if TYPE_CHECKING:
@@ -442,6 +442,10 @@ def execute_delete(
     try:
         tomb_dir.mkdir(parents=True, exist_ok=True)
         os.rename(src, tomb)
+        # Durable before the index rows go: after a crash the capsule is either
+        # still in place or in the tombstone, never indexed-away and back.
+        fsync_dir(capsule_dir)
+        fsync_dir(tomb_dir)
     except OSError as exc:
         raise DeleteFailedError(
             f"could not remove capsule '{run_id}': {exc}",
@@ -477,6 +481,8 @@ def execute_delete(
             held = tomb  # marking failed; fall through to the plain rollback
         try:
             os.rename(held, src)
+            fsync_dir(capsule_dir)
+            fsync_dir(tomb_dir)
         except OSError as rb_exc:
             logger.error("rollback of %s failed; bytes remain at %s", run_id, held)
             raise DeleteFailedError(

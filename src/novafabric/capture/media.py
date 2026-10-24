@@ -41,9 +41,12 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from novafabric._capsule_fs import (
+    CapsuleEntryError,
     CapsuleRequiredFileError,
+    make_capsule_dir,
     read_required_capsule_file,
     read_required_capsule_member,
+    replace_capsule_file,
 )
 
 #: Opt-in gate for byte capture (ADR-0125 D2). Set by the orchestrator when
@@ -181,22 +184,22 @@ def _extract_inline_media(part: dict[str, Any]) -> tuple[str, str, bytes] | None
 def _store_blob(
     capsule_dir: Path, hex_digest: str, raw: bytes, media_type: str
 ) -> str | None:
-    """Write *raw* content-addressed under ``outputs/`` (dedup; atomic).
+    """Write *raw* content-addressed under ``outputs/`` (dedup; atomic, durable).
 
+    Written through :func:`~novafabric._capsule_fs.replace_capsule_file`: no link
+    in the capsule is followed, and the blob is fsynced and its directory too.
     Returns the ``outputs/<hex>.<ext>`` blob ref, or ``None`` when storage
-    fails (the part degrades to reference-only — capture never blocks).
+    fails, including a linked ``outputs/`` (the part degrades to reference-only
+    — capture never blocks).
     """
     rel = f"outputs/{hex_digest}.{blob_ext_for(media_type)}"
-    path = capsule_dir / rel
     try:
-        if path.exists():
+        make_capsule_dir(capsule_dir, "outputs", operation="media capture")
+        if (capsule_dir / rel).is_file():
             return rel  # dedup: identical bytes already stored once
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        tmp.write_bytes(raw)
-        os.replace(tmp, path)
+        replace_capsule_file(capsule_dir, rel, raw, operation="media capture")
         return rel
-    except OSError:
+    except (OSError, CapsuleEntryError):
         return None
 
 

@@ -50,6 +50,7 @@ from typing import IO, TYPE_CHECKING, Optional
 if TYPE_CHECKING:  # pragma: no cover
     from novafabric.object_capsule_store.worm.base import WormAdapter
 
+from novafabric._safe_path import fsync_dir
 from novafabric.backup.coverage import (
     CAPSULE_DIR_ARC,
     CAPSULE_DIR_ORIGIN,
@@ -457,6 +458,8 @@ def _prepare_external(
         aside = pre_restore / "external" / member.origin / strip_external_prefix(member.path)
         aside.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(dst), str(aside))
+        fsync_dir(dst.parent)
+        fsync_dir(aside.parent)
     return pre_restore
 
 
@@ -482,6 +485,9 @@ def _prepare_home(home: Path, member_paths: list[str], *, force: bool) -> Option
             pre_restore.mkdir(parents=True, exist_ok=True)
             shutil.move(str(existing), str(pre_restore / name))
             moved = True
+    if moved:
+        fsync_dir(home)
+        fsync_dir(pre_restore)
     return pre_restore if moved else None
 
 

@@ -91,11 +91,13 @@ import os
 import shutil
 import stat
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Final, Literal, ParamSpec, TypeVar
+
+from novafabric._safe_path import fsync_dir
 
 __all__ = [
     "CapsuleEntryError",
@@ -750,7 +752,10 @@ def _break_hard_link(fd: int, name: str, dir_fd: int, *, copy: bool) -> int:
                     os.write(new_fd, chunk)
             finally:
                 os.close(src)
+            os.fsync(new_fd)  # the copy is durable before it replaces the original
         os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        with suppress(OSError):  # best effort, like _safe_path.fsync_dir
+            os.fsync(dir_fd)
     except BaseException:
         os.close(new_fd)
         try:
@@ -839,7 +844,10 @@ def replace_capsule_file(
         )
         with os.fdopen(fd, "wb") as out:
             out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
         os.replace(tmp_path, parent / name)
+        fsync_dir(parent)
         return
     dir_fd = _parent_dir_fd(root, parts, rel_s, operation, error)
     try:
@@ -851,7 +859,11 @@ def replace_capsule_file(
                 if file_mode is not None:
                     os.fchmod(out.fileno(), file_mode)
                 out.write(data)
+                out.flush()
+                os.fsync(out.fileno())  # durable before it becomes visible
             os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            with suppress(OSError):  # best effort, like _safe_path.fsync_dir
+                os.fsync(dir_fd)  # ... and the rename itself survives a crash
         except BaseException:
             try:
                 os.unlink(tmp, dir_fd=dir_fd)

@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric import _paths as _nf_paths
+from novafabric._safe_path import write_private_file
 
 #: Mode for any file holding (or having held) a bearer secret.
 _SECRET_MODE = stat.S_IRUSR | stat.S_IWUSR  # 0600
@@ -72,20 +73,15 @@ def digest(token: str) -> str:
 
 
 def _write_all(path: Path, records: list[dict[str, Any]]) -> None:
-    """Replace *path* with *records*, never widening the mode.
+    """Replace *path* with *records*: mode 0600, durably, never through a link.
 
-    The previous rewrite used ``tmp.write_text()``, which creates the temp file
-    at the process umask — so even a 0600 original came back 0664 after one
-    revoke. Create the temp file with the mode we want, then rename.
+    :func:`~novafabric._safe_path.write_private_file` creates a fresh
+    ``O_EXCL | O_NOFOLLOW`` temp file at 0600, fsyncs it, renames it and fsyncs
+    the directory. The previous rewrite opened a fixed ``tokens.tmp`` with
+    ``O_TRUNC``, so a link planted at that name was written through (and then
+    renamed into place), and a crash could leave an empty store.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _SECRET_MODE)
-    with os.fdopen(fd, "w") as fh:
-        for record in records:
-            fh.write(json.dumps(record) + "\n")
-    os.chmod(tmp, _SECRET_MODE)
-    os.replace(tmp, path)
+    write_private_file(path, "".join(json.dumps(r) + "\n" for r in records).encode("utf-8"))
 
 
 def load() -> list[dict[str, Any]]:
@@ -148,6 +144,8 @@ def issue(label: str, token: str, scope: str = "admin") -> dict[str, Any]:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, _SECRET_MODE)
     with os.fdopen(fd, "a") as fh:
         fh.write(json.dumps(record) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())  # an issued token must survive a crash
     harden(path)
     return record
 

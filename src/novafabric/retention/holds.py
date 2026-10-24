@@ -51,6 +51,7 @@ import contextlib
 import json
 import logging
 import os
+import stat
 import uuid
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -59,6 +60,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric import _paths
+from novafabric._safe_path import atomic_write_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -533,9 +535,13 @@ def _release_in(path: Path, hold_id: str, released_at: str) -> bool:
             else:
                 out.append(line)
         if changed:
-            tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
-            tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
-            os.replace(tmp, path)
+            # Durable (fsync, rename, fsync dir): a crash must never leave an
+            # empty ledger, which would read as "no holds" (X2, fail open).
+            atomic_write_bytes(
+                path,
+                ("\n".join(out) + "\n").encode("utf-8"),
+                mode=stat.S_IMODE(os.lstat(path).st_mode),
+            )
     return changed
 
 

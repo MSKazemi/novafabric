@@ -60,6 +60,7 @@ from typing import Any, BinaryIO
 
 from pydantic import BaseModel, Field
 
+from novafabric._safe_path import fsync_dir, fsync_file, fsync_tree
 from novafabric.session.manifest import (
     SESSION_MANIFEST_FILENAME,
     SessionError,
@@ -396,7 +397,9 @@ def export_session_bundle(
                 _zip_info(BUNDLE_INDEX_FILENAME),
                 json.dumps(index, indent=2, sort_keys=True) + "\n",
             )
+        fsync_file(tmp)
         os.replace(tmp, output_path)
+        fsync_dir(output_path.parent)
     finally:
         if tmp.exists():
             tmp.unlink()
@@ -742,7 +745,9 @@ def import_session_bundle(
                 "remove it first; an import never overwrites local evidence"
             ) from exc
         try:
+            fsync_tree(payload)
             os.replace(payload, destination)  # replaces only the empty dir we claimed
+            fsync_dir(base)
         except BaseException:
             # Release the claim so a retry is not blocked by our empty dir;
             # rmdir only succeeds while it is still empty (i.e. still ours).

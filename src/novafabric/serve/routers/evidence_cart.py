@@ -82,6 +82,7 @@ from pydantic import BaseModel, Field
 
 from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import CapsuleEntryError, CapsuleLinkError
+from novafabric._safe_path import fsync_dir, fsync_file
 
 logger = logging.getLogger(__name__)
 
@@ -497,7 +498,9 @@ def build_evidence_cart_router(
             logger.error("evidence cart export refused: chained audit append failed: %s", exc)
             _record_failure(f"audit append failed: {type(exc).__name__}")
             return _audit_unavailable()
+        fsync_file(partial)
         os.replace(partial, final_path)
+        fsync_dir(final_path.parent)
 
         extra: dict[str, Any] = {
             "bundle_sha256": bundle_sha,

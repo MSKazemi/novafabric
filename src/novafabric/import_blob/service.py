@@ -43,6 +43,8 @@ from novafabric._paths import default_capsule_dir, nova_home
 from novafabric._safe_path import (
     PathEscapeError,
     UnsafePathSegmentError,
+    fsync_dir,
+    fsync_tree,
     is_safe_path_segment,
     safe_child,
 )
@@ -566,7 +568,9 @@ def import_batch(
                     parent = parent_of.get(capsule_id)
                     try:
                         resolved_root.mkdir(parents=True, exist_ok=True)
+                        fsync_tree(staging_root / capsule_id)
                         (staging_root / capsule_id).rename(target)
+                        fsync_dir(resolved_root)
                     except OSError as exc:
                         record.action = "failed"
                         record.detail = f"atomic move failed: {exc}"

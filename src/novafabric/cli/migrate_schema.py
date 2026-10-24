@@ -18,7 +18,9 @@ Exit codes
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, List, Optional
@@ -29,6 +31,7 @@ from rich.table import Table
 
 from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import find_capsule_links
+from novafabric._safe_path import atomic_write_bytes, fsync_dir
 
 console = Console()
 
@@ -201,15 +204,18 @@ def migrate_capsule(
         if manifest_changed:
             if backup:
                 shutil.copy2(manifest_path, manifest_path.with_suffix(".json.v0.bak"))
-            manifest_path.write_text(
-                json.dumps(new_manifest, indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            # Atomic and durable: an in-place write_text could leave a torn manifest.
+            atomic_write_bytes(
+                manifest_path,
+                json.dumps(new_manifest, indent=2, ensure_ascii=False).encode("utf-8"),
+                mode=stat.S_IMODE(os.lstat(manifest_path).st_mode),
             )
 
         if rename_event_log:
             if backup:
                 shutil.copy2(legacy_path, legacy_path.with_suffix(".jsonl.v0.bak"))
             legacy_path.rename(model_calls_path)
+            fsync_dir(capsule_dir)
 
     except OSError as exc:
         return _CapsuleResult(

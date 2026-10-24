@@ -9,6 +9,7 @@ import os
 import uuid
 from pathlib import Path
 
+from novafabric._safe_path import fsync_dir, fsync_file
 from novafabric.promote.bypass_notify import (
     BypassEvent,
     BypassNotifier,
@@ -272,6 +273,7 @@ class PromoteBundleStore:
         staged = path.with_name(f".{bypass_uuid}.json.staged")
         try:
             staged.write_text(json.dumps(doc), encoding="utf-8")
+            fsync_file(staged)
         except OSError as exc:
             staged.unlink(missing_ok=True)
             raise BypassStoreError(
@@ -294,6 +296,7 @@ class PromoteBundleStore:
             raise
         try:
             os.replace(staged, path)
+            fsync_dir(path.parent)
         except BaseException as exc:
             staged.unlink(missing_ok=True)
             aborted = _audit_bypass_aborted(

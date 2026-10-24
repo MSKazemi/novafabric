@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.serialization import (
 from rich.console import Console
 
 from novafabric._paths import EVIDENCE_KEY_NAME, nova_home
+from novafabric._safe_path import fsync_dir
 
 console = Console()
 err_console = Console(stderr=True)
@@ -175,4 +176,6 @@ def _archive_keypair(root: Path, key_path: Path, pub_path: Path) -> Path:
     for source in (key_path, pub_path):
         if source.exists():
             shutil.move(str(source), str(target / source.name))
+            fsync_dir(source.parent)
+    fsync_dir(target)
     return target

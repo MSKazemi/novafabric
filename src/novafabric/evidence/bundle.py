@@ -22,7 +22,7 @@ from novafabric._capsule_fs import (
     refuse_capsule_links,
 )
 from novafabric._hashutil import sha256_file_prefixed, sha256_prefixed
-from novafabric._safe_path import UnsafePathSegmentError, require_path_segment
+from novafabric._safe_path import UnsafePathSegmentError, fsync_dir, require_path_segment
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
 from novafabric.evidence.admissibility import Custodian, admissibility_block
@@ -801,6 +801,7 @@ class EvidenceBundleBuilder:
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
+        fsync_dir(out.parent)
 
 
 def _set_member_run_ids(capsule_dirs: Sequence[Path]) -> list[str]:

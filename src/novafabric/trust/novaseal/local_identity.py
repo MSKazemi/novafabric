@@ -27,7 +27,6 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
-import os
 import shutil
 import stat
 from dataclasses import dataclass
@@ -38,6 +37,8 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
+
+from novafabric._safe_path import atomic_write_bytes, fsync_dir
 
 #: Subject ``O=`` attribute carried by every certificate ``nova seal init`` issues.
 LOCAL_IDENTITY_ORG = "NovaFabric local seal identity (self-asserted)"
@@ -346,6 +347,8 @@ def _archive(paths: LocalIdentityPaths, when: datetime.datetime, movable: list[P
     for source in movable:
         if source.exists():
             shutil.move(str(source), str(target / source.name))
+            fsync_dir(source.parent)
+    fsync_dir(target)
     return target
 
 
@@ -554,16 +557,9 @@ def _ensure_dir(path: Path) -> None:
 
 
 def _atomic_write(path: Path, data: bytes, mode: int) -> None:
-    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-        os.chmod(tmp, mode)  # O_CREAT mode is filtered by the umask
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    # A fresh O_EXCL | O_NOFOLLOW temp file at *mode*, fsynced, renamed, then the
+    # directory fsynced: never written through a planted link, never left empty.
+    atomic_write_bytes(path, data, mode=mode)
 
 
 def _write_private_key(path: Path, key: ec.EllipticCurvePrivateKey) -> None:

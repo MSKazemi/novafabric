@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from novafabric._capsule_fs import CapsuleEntryError, read_capsule_file
 from novafabric._paths import nova_home
+from novafabric._safe_path import atomic_write_bytes
 from novafabric.capture._ulid import new_ulid
 
 logger = logging.getLogger(__name__)
@@ -175,8 +176,9 @@ def new_session(
 def save_session(manifest: SessionManifest, root: Path | None = None) -> Path:
     """Write ``session.json`` atomically (after re-checking ordering).
 
-    The manifest is written to a sibling temp file and ``os.replace``-d into
-    place, so a concurrent reader never sees a torn manifest. When a P3
+    The manifest is written to a sibling temp file, fsynced and ``os.replace``-d
+    into place (then the directory is fsynced), so a concurrent reader never sees
+    a torn manifest and a crash never leaves an empty one. When a P3
     session index already exists, its row for this session is refreshed
     (best-effort — an index failure never fails the save; the index is a
     rebuildable cache and a stale row is detected on the next listing).
@@ -187,13 +189,11 @@ def save_session(manifest: SessionManifest, root: Path | None = None) -> Path:
     validate_ordering(manifest)
     path = session_manifest_path(manifest.session_id, root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        tmp.write_text(json.dumps(manifest.to_json_dict(), indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():  # pragma: no cover - only after a failed replace
-            tmp.unlink()
+    atomic_write_bytes(
+        path,
+        (json.dumps(manifest.to_json_dict(), indent=2) + "\n").encode("utf-8"),
+        mode=None,
+    )
     # Deferred import: the index module imports this one.
     from novafabric.session.index import upsert_session
 

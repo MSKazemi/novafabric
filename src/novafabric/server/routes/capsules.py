@@ -32,7 +32,13 @@ from novafabric._capsule_fs import (
     read_capsule_member_or_none,
     read_required_capsule_member,
 )
-from novafabric._safe_path import PathEscapeError, UnsafePathSegmentError, safe_child
+from novafabric._safe_path import (
+    PathEscapeError,
+    UnsafePathSegmentError,
+    fsync_dir,
+    fsync_tree,
+    safe_child,
+)
 
 # Imported eagerly, unlike the rest of this module's novafabric.eval imports:
 # the route decorator needs the model at import time to describe the request
@@ -447,7 +453,9 @@ def _unpack_and_publish(
         # rename; TOCTOU narrowing).
         if dest.exists():
             raise ConflictError(f"Capsule '{run_id}' already exists.")
+        fsync_tree(tmp_root)
         os.rename(tmp_root, dest)
+        fsync_dir(dest.parent)
         tmp_root = None
     finally:
         # Step 7 — cleanup invariant: spool + temp dir go away on every exit

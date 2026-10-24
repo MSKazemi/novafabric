@@ -32,6 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from novafabric._safe_path import atomic_write_bytes
+
 _OBJECTS_PREFIX = "objects/"
 
 
@@ -93,16 +95,11 @@ class LocalDirDestination:
 
     @staticmethod
     def _atomic_write(path: Path, data: bytes, *, worm: bool) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_bytes(data)
-        if worm:
-            # Local best-effort immutability; real retention is destination-side
-            # (ADR-0031 caveat — the manifest records the *intent*).
-            tmp.chmod(0o444)
-        if path.exists():
-            path.unlink()
-        tmp.rename(path)
+        # One durable rename over the old file: never an unlink-then-rename window
+        # with no file at *path*. ``worm`` is local best-effort immutability (0o444);
+        # real retention is destination-side (ADR-0031 caveat — the manifest
+        # records the *intent*).
+        atomic_write_bytes(path, data, mode=0o444 if worm else None)
 
 
 class S3Destination:

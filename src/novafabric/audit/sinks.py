@@ -43,6 +43,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import Final
 
+from novafabric._safe_path import fsync_dir
+
 #: Refuse absurd configurations rather than silently producing a file per
 #: line. Bounded-everything discipline: a sink that rotates on every write
 #: is a disk-filling bug, not a configuration.
@@ -101,6 +103,7 @@ class RotatingFileSink:
                     )
             if self._path.exists():
                 self._path.rename(self._path.with_suffix(self._path.suffix + ".1"))
+            fsync_dir(self._path.parent)  # the shifted generations survive a crash
         self._fh = self._path.open("a", encoding="utf-8")
         self._size = 0
         self.rotations += 1

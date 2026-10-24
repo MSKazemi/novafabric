@@ -23,7 +23,9 @@ The writers never write *through* a link or a hard link planted at the target
 name, because they write a fresh ``O_CREAT | O_EXCL | O_NOFOLLOW`` temporary
 file beside it, ``fsync`` it and rename it into place:
 
-* :func:`atomic_write_bytes` replaces the target (mode ``0o644`` by default);
+* :func:`atomic_write_bytes` replaces the target (mode ``0o644`` by default;
+  ``mode=None`` keeps the process umask's ``0o666 & ~umask``, for files that
+  must never become wider than a plain ``open()`` would make them);
 * :func:`write_private_file` does the same with mode ``0o600``, for signing
   keys and other secrets. With ``exclusive=True`` it refuses an existing target
   (:class:`FileExistsError`) instead of replacing it, so two concurrent creators
@@ -31,6 +33,12 @@ file beside it, ``fsync`` it and rename it into place:
 
 The mode is set on the open file descriptor before any byte is written, so a
 secret is never readable by others, not even for an instant.
+
+Durability: the temporary file is fsynced before the rename and the directory
+after it (:func:`fsync_dir`), so after a crash the target holds either the old
+bytes or the new ones — never an empty or missing file. A writer that streams
+into its own temporary file uses :func:`fsync_file` and :func:`fsync_dir` around
+its rename; ``tests/test_rename_sites_are_durable.py`` checks every rename site.
 
 **Limit:** :func:`safe_child` checks the child when it is called. Someone who
 can already create links *inside* *base* can swap one in between the check and
@@ -43,6 +51,7 @@ No import-time IO, no module state.
 from __future__ import annotations
 
 import os
+import stat
 import unicodedata
 from pathlib import Path
 from typing import Final
@@ -52,6 +61,9 @@ __all__ = [
     "PathEscapeError",
     "UnsafePathSegmentError",
     "atomic_write_bytes",
+    "fsync_dir",
+    "fsync_file",
+    "fsync_tree",
     "is_safe_path_segment",
     "require_path_segment",
     "safe_child",
@@ -146,7 +158,12 @@ def safe_child(base: Path, name: object, *, field: str = "name", suffix: str = "
     return child
 
 
-def _fsync_dir(directory: Path) -> None:
+def fsync_dir(directory: Path) -> None:
+    """fsync *directory*, so a rename or create inside it survives a crash.
+
+    Best effort: a platform or filesystem that cannot open or fsync a directory
+    is skipped (the rename itself already happened).
+    """
     try:
         fd = os.open(directory, os.O_RDONLY | _CLOEXEC)
     except OSError:  # pragma: no cover - a platform without directory fds
@@ -159,18 +176,53 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
-def _write_temp(path: Path, data: bytes, mode: int) -> Path:
-    """Write *data* to a new ``O_EXCL | O_NOFOLLOW`` temp file beside *path*; return its path."""
+
+def fsync_file(path: Path) -> None:
+    """fsync the bytes of an already written, closed file at *path* (not following a link).
+
+    For a writer that streams into its own temporary file (a ZIP, an export) and
+    cannot hand its bytes to :func:`atomic_write_bytes`: call it on the
+    temporary file before renaming it into place, then :func:`fsync_dir`.
+    """
+    fd = os.open(path, os.O_RDONLY | _NOFOLLOW | _CLOEXEC)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def fsync_tree(root: Path) -> None:
+    """fsync every regular file and directory under *root*, deepest first; no link is followed.
+
+    Before a whole directory (an uploaded or imported capsule, an imported
+    session) is published with one rename, so that after a crash the published
+    tree never holds empty or missing files. Call :func:`fsync_dir` on the
+    destination's parent after the rename.
+    """
+    for dirpath, _dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
+        for name in filenames:
+            path = Path(dirpath) / name
+            if stat.S_ISREG(os.lstat(path).st_mode):
+                fsync_file(path)
+        fsync_dir(Path(dirpath))
+
+
+def _write_temp(path: Path, data: bytes, mode: int | None) -> Path:
+    """Write *data* to a new ``O_EXCL | O_NOFOLLOW`` temp file beside *path*; return its path.
+
+    *mode* ``None``: ``0o666`` filtered by the umask, like a plain ``open()``.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _CLOEXEC
     for attempt in range(100):
         tmp = path.with_name(f".{path.name}.{os.getpid()}.{attempt}.tmp")
         try:
-            fd = os.open(tmp, flags, mode)
+            fd = os.open(tmp, flags, 0o666 if mode is None else mode)
         except FileExistsError:
             continue
         try:
-            os.fchmod(fd, mode)  # the open() mode is filtered by the umask
+            if mode is not None:
+                os.fchmod(fd, mode)  # the open() mode is filtered by the umask
             view = memoryview(data)
             while view:
                 written = os.write(fd, view)
@@ -185,11 +237,11 @@ def _write_temp(path: Path, data: bytes, mode: int) -> Path:
     raise FileExistsError(f"could not create a temporary file beside {path}")
 
 
-def atomic_write_bytes(path: Path, data: bytes, *, mode: int = 0o644) -> Path:
-    """Write *data* to *path* atomically, replacing it, without following a link at *path*.
+def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = 0o644) -> Path:
+    """Write *data* to *path* atomically and durably, replacing it, without following a link.
 
     A link, FIFO or hard link already at *path* is replaced by the rename, never
-    written through. Returns *path*.
+    written through. *mode* ``None`` gives ``0o666 & ~umask``. Returns *path*.
     """
     path = Path(path)
     tmp = _write_temp(path, data, mode)
@@ -198,7 +250,7 @@ def atomic_write_bytes(path: Path, data: bytes, *, mode: int = 0o644) -> Path:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    _fsync_dir(path.parent)
+    fsync_dir(path.parent)
     return path
 
 
@@ -217,5 +269,5 @@ def write_private_file(path: Path, data: bytes, *, exclusive: bool = False) -> P
         os.link(tmp, path, follow_symlinks=False)  # EEXIST if anything is at *path*
     finally:
         tmp.unlink(missing_ok=True)
-    _fsync_dir(path.parent)
+    fsync_dir(path.parent)
     return path

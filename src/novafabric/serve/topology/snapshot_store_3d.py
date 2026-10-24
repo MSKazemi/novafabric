@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from novafabric._safe_path import atomic_write_bytes
+
 try:
     from prometheus_client import Histogram
 
@@ -74,12 +76,10 @@ class SnapshotStore3D:
     def save(self, window_id: str, snapshot: dict[str, Any]) -> None:
         """Save a fine-tier snapshot. Atomic write."""
         path = self.fine_dir / f"{window_id}.snap"
-        tmp = path.with_suffix(".tmp")
         encoded = self._encode(snapshot)
         if snapshot_size_histogram is not None:
             snapshot_size_histogram.observe(len(encoded))
-        tmp.write_bytes(encoded)
-        tmp.rename(path)
+        atomic_write_bytes(path, encoded, mode=None)
         self._enforce_fine_retention()
 
     def get(self, window_id: str) -> dict[str, Any] | None:
