@@ -175,29 +175,21 @@ class TestVerifyBranches:
         assert result.exit_code == 1
         assert "seal file not found" in result.output
 
-    def test_check_redaction_valid(self, tmp_path, monkeypatch):
+    def test_check_redaction_refuses_a_capsule_positional(self, tmp_path, monkeypatch):
+        """cli-b-02: the positional is the report the seal covers, never a capsule."""
         cap = tmp_path / "cap"
         cap.mkdir()
         seal_file = tmp_path / "report.seal.json"
         seal_file.write_bytes(b'{"some": "envelope"}')
-
-        monkeypatch.setattr(
-            "novafabric.trust.novaseal.envelope.verify_envelope",
-            lambda b: True,
-        )
-        monkeypatch.setattr(
-            "novafabric.trust.novaseal.envelope.extract_intent",
-            lambda b: None,
-        )
         result = runner.invoke(
             app, ["verify", str(cap), "--check-redaction", str(seal_file)]
         )
-        assert result.exit_code == 0
-        assert "VALID" in result.output
+        assert result.exit_code == 2
+        assert "not a capsule" in result.output
 
     def test_check_redaction_invalid(self, tmp_path, monkeypatch):
-        cap = tmp_path / "cap"
-        cap.mkdir()
+        cap = tmp_path / "report.json"
+        cap.write_text("{}")
         seal_file = tmp_path / "report.seal.json"
         seal_file.write_bytes(b'{"bad": "envelope"}')
 

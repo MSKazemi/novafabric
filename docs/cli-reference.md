@@ -3528,7 +3528,7 @@ Options:
 
 - `--public-key PATH` — PEM-encoded Ed25519 public key. For an Evidence Bundle ZIP, every attestation must be signed with this key; for an `export-manifest.json` (batch export) it is required.
 - `--dest TEXT` — export-manifest verification only: read the exported member blobs from this destination instead of the manifest's recorded one.
-- `--check-redaction FILE` — verify the NovaSeal DSSE envelope of a `redaction_proof_report.seal.json` on its own; the capsule seal checks are **not** run in this mode. Exit `0` valid, `1` missing or invalid. Cannot be combined with `--json`/`--strict` (exit 2).
+- `--check-redaction FILE` — verify the NovaSeal seal of a `nova subject-proof` report instead of a capsule: `nova verify --check-redaction proof.seal.json proof.json`. The positional argument is the report JSON the seal must cover. Three checks: the DSSE signature verifies; the signed payload is exactly that report, sealed with intent `verified` (an edited report, or a seal over another document, fails); and the signer is reported as `SELF-ASSERTED` (any self-made key signs a valid envelope) unless `--ca-bundle` is given, which validates the signer chain (`--crl-dir`/`--crl-strict` apply) and fails when it does not reach the bundle. Exit `0` valid, `1` a missing seal or a failed check, `2` when the positional is a directory or does not exist. Cannot be combined with `--json`/`--strict` (exit 2). Releases up to v0.107.0 checked only the signature, under the envelope's own key, and ignored the positional.
 
 **Evidence Bundle ZIP.** `nova verify bundle.zip` runs the bundle's whole verification
 recipe (`evidence/bundle_verify.py`): it recomputes `manifest_hash` and every artifact

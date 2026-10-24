@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
@@ -42,9 +43,10 @@ def verify_cmd(
         typer.Option(
             "--check-redaction",
             help=(
-                "Path to a redaction_proof_report.seal.json file. "
-                "Verifies the NovaSeal DSSE envelope of the proof report "
-                "independently of the capsule seal check."
+                "Path to a redaction_proof_report.seal.json file. Verifies the "
+                "NovaSeal DSSE envelope of a nova subject-proof report instead of a "
+                "capsule: the positional argument is then the report JSON the seal "
+                "must cover. --ca-bundle validates the signer chain."
             ),
             exists=False,
             dir_okay=False,
@@ -250,8 +252,8 @@ def verify_cmd(
       # Fail unless signer, timestamp and log inclusion are all anchored
       nova verify --strict --ca-bundle ca.pem --tsa-ca-bundle tsa-ca.pem path/to/my-capsule/
 
-      # Verify a redaction proof report seal independently
-      nova verify --check-redaction path/to/report.seal.json path/to/my-capsule/
+      # Verify a subject-proof report seal: the seal must cover exactly this report
+      nova verify --check-redaction proof.seal.json proof.json
 
       # Verify a Sigstore bundle
       nova verify --backend sigstore --capsule-id <capsule-id> path/to/my-capsule/
@@ -277,7 +279,10 @@ def verify_cmd(
 
     # Handle --check-redaction standalone check
     if check_redaction is not None:
-        _verify_redaction_seal(check_redaction)
+        _verify_redaction_seal(
+            check_redaction, capsule_dir,
+            ca_bundle=ca_bundle, crl_dir=crl_dir, crl_strict=crl_strict,
+        )
         return
 
     # Evidence Bundle ZIP: the bundle manifest carries a sha256 for every
@@ -1137,33 +1142,91 @@ def _bundle_tsa_check(
     )
 
 
-def _verify_redaction_seal(seal_path: Path) -> None:
-    """Verify a redaction proof report DSSE seal (G-CROSS-004).
+def _verify_redaction_seal(
+    seal_path: Path,
+    report_path: Path | None = None,
+    *,
+    ca_bundle: Path | None = None,
+    crl_dir: Path | None = None,
+    crl_strict: bool = False,
+) -> None:
+    """Verify a ``nova subject-proof`` report seal (G-CROSS-004) against its report.
 
-    Checks the DSSE envelope in *seal_path* and reports the result.
-    Exits 0 on success, 1 on failure.
+    Three checks, all required (review cli-b-02): the envelope's signature verifies;
+    its signed payload is exactly *report_path* bound to intent ``verified`` — the
+    form ``nova subject-proof`` seals — so a valid seal over some other document
+    does not pass; and the signer's identity is reported: ``SELF-ASSERTED`` without
+    *ca_bundle* (any self-made key signs a valid envelope), chain-validated — or
+    failed — with it. *report_path* defaults to ``X.json`` for ``X.seal.json``.
+
+    Exits 0 when every check passes, 1 when one fails, 2 when *report_path* is a
+    directory or does not exist (a capsule is not what this seal covers).
     """
     if not seal_path.exists():
         console.print(f"[red]Error:[/red] seal file not found: {seal_path}")
         raise typer.Exit(code=1)
+    if report_path is None:
+        report_path = seal_path.with_name(seal_path.name.removesuffix(".seal.json") + ".json")
+    if not report_path.is_file():
+        what = "is a directory" if report_path.is_dir() else "does not exist"
+        err_console.print(
+            f"[red]Error:[/red] {report_path} {what}. With --check-redaction, pass the "
+            "report JSON the seal covers (proof.json for proof.seal.json), not a capsule."
+        )
+        raise typer.Exit(code=2)
 
+    console.print(f"\n[bold]Redaction proof seal:[/bold] {seal_path.name}")
     try:
         from novafabric.trust.novaseal.envelope import (
-            extract_intent,
+            EnvelopeError,
+            SigningIntent,
+            bind_intent,
+            extract_payload,
             verify_envelope,
         )
 
         seal_bytes = seal_path.read_bytes()
         verify_envelope(seal_bytes)
-        intent = extract_intent(seal_bytes)
-        console.print(f"\n[bold]Redaction proof seal:[/bold] {seal_path.name}")
-        _print_check("Signature (DSSE ECDSA P-256)", True)
-        if intent is not None:
-            console.print(f"    Intent: {intent.value}")
-        console.print("\n[green]Redaction proof seal is VALID[/green]")
     except Exception as exc:
-        console.print(f"\n[bold]Redaction proof seal:[/bold] {seal_path.name}")
         _print_check("Signature (DSSE ECDSA P-256)", False)
         console.print(f"\n[red]✗[/red] {exc}")
         console.print("\n[red]Redaction proof seal is INVALID[/red]")
+        raise typer.Exit(code=1) from exc
+    _print_check("Signature (DSSE ECDSA P-256)", True)
+
+    try:
+        expected = json.dumps(
+            bind_intent(json.loads(report_path.read_bytes()), SigningIntent.VERIFIED),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        covered = extract_payload(seal_bytes) == expected
+    except (OSError, ValueError, TypeError, AttributeError, EnvelopeError):
+        covered = False
+    _print_check(f"Seal covers the report {report_path.name} (intent: verified)", covered)
+    if not covered:
+        console.print(
+            f"\n[red]✗[/red] the signed payload does not cover {report_path}: the report "
+            "was edited, or the seal belongs to another document or intent"
+        )
+        console.print("\n[red]Redaction proof seal is INVALID[/red]")
         raise typer.Exit(code=1)
+
+    if ca_bundle is None:
+        console.print(
+            "  Signer: [yellow]SELF-ASSERTED[/yellow] — any key signs a valid envelope; "
+            "pass --ca-bundle to validate the signer chain"
+        )
+    else:
+        from novafabric.trust.novaseal.capsule_verify import signer_chain_check
+
+        chain = signer_chain_check(
+            seal_bytes, ca_bundle, crl_dir=crl_dir, crl_strict=crl_strict
+        )
+        _print_check(f"Signer chain ({ca_bundle.name})", chain.ok)
+        if not chain.ok:
+            console.print(f"\n[red]✗[/red] {chain.reason}")
+            console.print("\n[red]Redaction proof seal is INVALID[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"    {chain.reason}")
+    console.print("\n[green]Redaction proof seal is VALID[/green]")
