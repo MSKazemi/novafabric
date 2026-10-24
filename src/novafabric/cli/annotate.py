@@ -491,7 +491,11 @@ def annotate_confirm(
     """Checker step (maker-checker queues): confirm a submitted item.
 
     The checker's identity and Ed25519 keyring fingerprint must both differ
-    from the maker's (separation of duties, ADR-0118 D4 / ADR-0003).
+    from the maker's (separation of duties, ADR-0118 D4 / ADR-0003). The
+    checker's key must already exist (`nova promote keygen --identity NAME`);
+    confirm never creates one. With a signer trust list configured, the key
+    must be bound to the --as identity as an approver, and to a different
+    person than the maker's key.
     """
     from novafabric.eval.annotation_store import confirm_item
 

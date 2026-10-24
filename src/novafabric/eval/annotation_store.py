@@ -53,6 +53,7 @@ from novafabric._capsule_fs import (
     CapsuleRequiredFileError,
     read_required_capsule_member,
 )
+from novafabric._paths import promote_signers_path
 from novafabric.eval.annotation_queue import (
     AnnotationError,
     AnnotationQueue,
@@ -79,8 +80,9 @@ from novafabric.eval.scores import (
     ScoreValueType,
     append_score,
 )
+from novafabric.registry.signers import SignerVerificationError, load_signer_trust_list
 from novafabric.registry.store import get_connection
-from novafabric.trust.keyring import ensure_keypair, sign_payload
+from novafabric.trust.keyring import KeyNotFoundError, ensure_keypair, sign_payload
 
 __all__ = [
     "annotation_subject_digest",
@@ -779,6 +781,41 @@ def submit_item(
         conn.close()
 
 
+def _verify_checker_binding(
+    checker: str, key_fp: str, maker_fp: str | None, payload: bytes, signature: str
+) -> None:
+    """With a signer trust list configured, bind the checker's key to an identity.
+
+    The trust list (ADR-0312, shared with ``nova promote``) is what ties a key to a
+    person; without one, identity is the name typed and only the fingerprint
+    check above applies. With one, the checker's key must be bound to *checker*
+    with the ``approver`` role, and the bound identity must differ from the one
+    the maker's key is bound to — two keys of one person are one person. A list
+    that exists but cannot be read refuses, never "trust everyone".
+    """
+    if not promote_signers_path().is_file():
+        return
+    try:
+        trust = load_signer_trust_list()
+        trust.verify(
+            claimed_identity=checker,
+            key_fp=key_fp,
+            role="approver",
+            payload=payload,
+            signature=signature,
+            party="approver",
+        )
+    except SignerVerificationError as exc:
+        raise SeparationOfDutiesError(f"checker refused: {exc}") from None
+    maker = trust.by_fingerprint.get(maker_fp) if maker_fp else None
+    if maker is not None and maker.identity == checker:
+        raise SeparationOfDutiesError(
+            f"checker key {key_fp!r} and the maker's key {maker_fp!r} are both bound "
+            f"to {checker!r} in the signer trust list — a distinct reviewer must "
+            "confirm (ADR-0118 D4 / ADR-0003)"
+        )
+
+
 def confirm_item(
     item_id: str,
     checker: str,
@@ -789,7 +826,10 @@ def confirm_item(
 
     Separation of duties is enforced at the crypto level, mirroring
     :mod:`novafabric.registry.protected_labels`: the checker's identity **and**
-    Ed25519 keyring fingerprint must both differ from the maker's.
+    Ed25519 keyring fingerprint must both differ from the maker's. The checker's
+    key must already exist — it is loaded with ``create=False`` — and, when a
+    signer trust list is configured, :func:`_verify_checker_binding` ties it to a
+    person distinct from the maker's.
     """
     conn = get_connection(db_path)
     try:
@@ -805,7 +845,17 @@ def confirm_item(
                 "checker equals the maker — a distinct reviewer must confirm "
                 "(ADR-0118 D4 / ADR-0003)"
             )
-        private_key, key_fp = ensure_keypair(checker)
+        try:
+            # Never mint a key here: a fresh name would get a fresh key whose
+            # fingerprint differs from the maker's by construction, so one person
+            # could confirm their own work under a second name.
+            private_key, key_fp = ensure_keypair(checker, create=False)
+        except KeyNotFoundError:
+            raise SeparationOfDutiesError(
+                f"checker {checker!r} has no signing key — it was never created. "
+                f"Create it first (`nova promote keygen --identity {checker}`); a "
+                "confirmation never mints one (ADR-0118 D4)"
+            ) from None
         maker_fp = (item.extensions or {}).get(_EXT_MAKER_FP)
         if maker_fp is not None and key_fp == maker_fp:
             raise SeparationOfDutiesError(
@@ -813,9 +863,9 @@ def confirm_item(
                 "identities (keys) are required (ADR-0118 D4 / ADR-0003)"
             )
         confirmed_at = _now_iso()
-        signature = sign_payload(
-            private_key, confirmation_payload(item.item_id, checker, confirmed_at)
-        )
+        payload = confirmation_payload(item.item_id, checker, confirmed_at)
+        signature = sign_payload(private_key, payload)
+        _verify_checker_binding(checker, key_fp, maker_fp, payload, signature)
         extensions = dict(item.extensions or {})
         extensions.update(
             {

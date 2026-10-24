@@ -254,7 +254,8 @@ def promote_keygen_cmd(
 ) -> None:
     """Create a maker-checker signing key and print its signer trust-list entry.
 
-    The only command that creates a keyring key for `propose` / `approve` (ADR-0312).
+    The only command that creates a keyring key for `propose` / `approve` (ADR-0312)
+    and for the checker of `nova annotate confirm`.
     Idempotent: an existing key is never overwritten. The key is not trusted until an
     operator adds the printed entry to the signer trust list (keep only the roles the
     person actually holds).

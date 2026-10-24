@@ -230,6 +230,27 @@ def test_submit_bad_score_pair_is_a_usage_error(capsule: Path) -> None:
     assert result.exit_code != 0
 
 
+def _keygen(identity: str) -> None:
+    created = runner.invoke(app, ["promote", "keygen", "--identity", identity])
+    assert created.exit_code == 0, created.output
+
+
+def test_confirm_as_an_identity_with_no_key_is_refused(capsule: Path) -> None:
+    """Review eval-adapters-query-13: confirm used to mint the checker's key on the spot."""
+    _register_config()
+    _create_queue("--require-checker")
+    _add_item(capsule)
+    item_id = _claim("rev:maker")
+    submitted = runner.invoke(app, ["annotate", "submit", item_id, "--score", "factuality=true"])
+    assert submitted.exit_code == 0, submitted.output
+    refused = runner.invoke(app, ["annotate", "confirm", item_id, "--as", "rev:fresh-name"])
+    assert refused.exit_code == 1, refused.output
+    assert isinstance(refused.exception, SystemExit)
+    assert "never created" in refused.output
+    assert "nova promote keygen --identity rev:fresh-name" in refused.output
+    assert not kr.key_path_for("rev:fresh-name").exists()
+
+
 def test_maker_checker_cli_flow(capsule: Path) -> None:
     _register_config()
     _create_queue("--require-checker")
@@ -247,6 +268,7 @@ def test_maker_checker_cli_flow(capsule: Path) -> None:
     assert veto.exit_code == 1
     assert "checker equals the maker" in veto.output
 
+    _keygen("rev:checker")
     confirmed = runner.invoke(
         app, ["annotate", "confirm", item_id, "--as", "rev:checker", "--json"]
     )
@@ -343,6 +365,7 @@ def test_submit_human_output_shows_checker_hint(capsule: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     assert "Awaiting checker" in result.output
+    _keygen("rev:b")
     confirmed = runner.invoke(app, ["annotate", "confirm", item_id, "--as", "rev:b"])
     assert confirmed.exit_code == 0, confirmed.output
     assert "Confirmed" in confirmed.output

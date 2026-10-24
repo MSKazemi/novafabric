@@ -2176,6 +2176,7 @@ nova annotate submit 01KXMZ6JSKBR… --score answer_quality=4 --score polite=tru
 nova annotate confirm 01KXMZ6JSKBR… --as dana             # refused (exit 1):
 # checker equals the maker — a distinct reviewer must confirm (ADR-0118 D4 / ADR-0003)
 
+nova promote keygen --identity erin                      # once per checker: confirm never mints a key
 nova annotate confirm 01KXMZ6JSKBR… --as erin
 # Confirmed item 01KXMZ6JSKBR… by erin (maker: dana) — completed.
 

@@ -3266,7 +3266,16 @@ the item stays `assigned`, retryable), then appends one `HUMAN` score per criter
 checker's confirmation — is Ed25519-signed with the reviewer's keyring key (ADR-0058
 paths); fingerprints and signatures are carried in the item record's `extensions`. The
 checker's identity **and** key fingerprint must both differ from the maker's (separation
-of duties, ADR-0003 pattern). A bare `--capsule` enqueue uses the capsule's
+of duties, ADR-0003 pattern). `confirm` **never creates a key**: a checker identity with no
+keyring key is refused (exit 1) until `nova promote keygen --identity <checker>` has made
+one, since a key minted on the spot would let one person confirm their own work under a
+second name. When a signer trust list exists (`NOVAFABRIC_PROMOTE_SIGNERS`, else
+`$NOVAFABRIC_HOME/promote-signers.yaml`, the same file `nova promote approve` reads,
+ADR-0312), the checker's key must also be bound to the `--as` identity with the
+`approver` role, and the identity the maker's key is bound to must be a different one, so
+two keys bound to one person count as one person. A trust list that exists but cannot be
+parsed refuses every confirmation. Without a trust list, identity is the name typed and
+only the fingerprint check applies. A bare `--capsule` enqueue uses the capsule's
 content-addressed root digest **excluding the annotation streams** (`scores.jsonl`,
 `comments.jsonl`), so successive review rounds share one stable subject.
 
@@ -5701,7 +5710,8 @@ policy action returns an explicit allow. Today exactly one stage is protected:
 Create the Ed25519 keyring key that `propose` and `approve` sign with
 (`~/.config/novafabric/keyring/<identity>.pem`). Then print the **signer trust-list entry** an
 operator adds to bind that key to the identity. Idempotent: an existing key is never
-overwritten. This is the only command that creates a key for the maker-checker path. A
+overwritten. This is the only command that creates a key for the maker-checker path,
+including the checker of `nova annotate confirm`. A
 new key is **not trusted** until it is added to the trust list.
 
 ```bash

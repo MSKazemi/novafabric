@@ -372,6 +372,7 @@ def test_checker_flow_maker_to_checker_to_completed(db: Path, capsule: Path) -> 
     # The maker's scores are already ordinary immutable evidence on disk.
     assert len(read_scores(capsule / SCORES_FILENAME)) == 2
 
+    kr.ensure_keypair("reviewer:checker", create=True)  # explicit keygen, as in production
     confirmed = confirm_item(item.item_id, "reviewer:checker", db_path=db)
     assert confirmed.state is ItemState.COMPLETED
     assert confirmed.checker == "reviewer:checker"
@@ -458,3 +459,103 @@ def test_annotation_subject_digest_stable_across_annotation(capsule: Path) -> No
     # ...but changing the evidence itself must.
     (capsule / "trace.jsonl").write_text('{"event": "tampered"}\n')
     assert annotation_subject_digest(capsule) != before
+
+
+# ── review eval-adapters-query-13: the confirm path never mints a key ─────────
+
+
+def _submitted_maker_checker_item(db: Path, capsule: Path) -> str:
+    _mk_queue(db, require_checker=True)
+    item = _enqueue(db, capsule)
+    claim_next("reviewer:alice", db_path=db)
+    submit_item(item.item_id, {"factuality": "true", "toxicity": "0"}, db_path=db)
+    return item.item_id
+
+
+def test_a_checker_identity_with_no_key_is_refused(db: Path, capsule: Path) -> None:
+    """alice submitted, then confirmed as a fresh name: a key was minted on the spot,
+    its fingerprint differed, and the item completed with a "valid" checker signature."""
+    item_id = _submitted_maker_checker_item(db, capsule)
+    with pytest.raises(SeparationOfDutiesError, match="never created"):
+        confirm_item(item_id, "reviewer:alice-second-hat", db_path=db)
+    assert not kr._key_path("reviewer:alice-second-hat").exists()
+    assert get_item(item_id, db_path=db).state is ItemState.CHECKER_PENDING
+
+
+def _trust_list(tmp_path: Path, entries: list[tuple[str, str, list[str]]]) -> Path:
+    import base64
+
+    import yaml
+    from cryptography.hazmat.primitives import serialization
+
+    rows = []
+    for bound, holder, roles in entries:
+        key, _ = kr.ensure_keypair(holder, create=True)
+        raw = key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        rows.append({"identity": bound, "public_key": base64.b64encode(raw).decode(), "roles": roles})
+    path = tmp_path / "promote-signers.yaml"
+    path.write_text(yaml.safe_dump({"signers": rows}))
+    return path
+
+
+def test_with_a_trust_list_the_checker_must_be_a_bound_approver(
+    db: Path, capsule: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trust = _trust_list(tmp_path, [
+        ("reviewer:alice", "reviewer:alice", ["proposer"]),
+        ("reviewer:bob", "reviewer:bob", ["approver"]),
+    ])
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_SIGNERS", str(trust))
+    item_id = _submitted_maker_checker_item(db, capsule)
+    kr.ensure_keypair("reviewer:carol", create=True)  # a key, but not on the list
+    with pytest.raises(SeparationOfDutiesError):
+        confirm_item(item_id, "reviewer:carol", db_path=db)
+    assert confirm_item(item_id, "reviewer:bob", db_path=db).state is ItemState.COMPLETED
+
+
+def test_with_a_trust_list_a_second_key_of_the_maker_is_refused(
+    db: Path, capsule: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two keys bound to one person: SoD compares the bound identity, not the name typed."""
+    trust = _trust_list(tmp_path, [
+        ("reviewer:alice", "reviewer:alice", ["proposer", "approver"]),
+        ("reviewer:alice", "reviewer:alice-2", ["approver"]),
+    ])
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_SIGNERS", str(trust))
+    item_id = _submitted_maker_checker_item(db, capsule)
+    with pytest.raises(SeparationOfDutiesError):
+        confirm_item(item_id, "reviewer:alice-2", db_path=db)
+
+
+def test_with_a_trust_list_a_maker_key_bound_to_the_checker_is_refused(
+    db: Path, capsule: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """alice works under the queue name reviewer:alice-old, whose key the trust list
+    binds to reviewer:alice, then confirms as reviewer:alice with her approver key:
+    names and fingerprints differ, the checker signature verifies — one person."""
+    trust = _trust_list(tmp_path, [
+        ("reviewer:alice", "reviewer:alice-old", ["proposer"]),
+        ("reviewer:alice", "reviewer:alice", ["approver"]),
+    ])
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_SIGNERS", str(trust))
+    _mk_queue(db, require_checker=True)
+    item = _enqueue(db, capsule)
+    claim_next("reviewer:alice-old", db_path=db)
+    submit_item(item.item_id, {"factuality": "true", "toxicity": "0"}, db_path=db)
+    with pytest.raises(SeparationOfDutiesError, match="both bound"):
+        confirm_item(item.item_id, "reviewer:alice", db_path=db)
+    assert get_item(item.item_id, db_path=db).state is ItemState.CHECKER_PENDING
+
+
+def test_an_unreadable_trust_list_refuses_rather_than_trusting_everyone(
+    db: Path, capsule: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken = tmp_path / "promote-signers.yaml"
+    broken.write_text("signers: [ {identity: 1\n")
+    monkeypatch.setenv("NOVAFABRIC_PROMOTE_SIGNERS", str(broken))
+    item_id = _submitted_maker_checker_item(db, capsule)
+    kr.ensure_keypair("reviewer:bob", create=True)
+    with pytest.raises(SeparationOfDutiesError, match="trust list"):
+        confirm_item(item_id, "reviewer:bob", db_path=db)
