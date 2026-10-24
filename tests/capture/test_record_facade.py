@@ -317,6 +317,24 @@ class TestWrapRetriever:
         assert failed["status"] == "error"
         assert "unreachable" in failed["error"]
 
+    def test_forensic_level_never_consumes_a_generator_result(
+        self, live_recorder: EventRecorder, capsule_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Review capture-runners-08: ``list(result)`` for the record exhausted a
+        generator retriever's result, so the caller received an empty iterator."""
+        monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "forensic")
+
+        def streaming(q: str) -> Any:
+            yield {"id": "d1", "content": "one"}
+            yield {"id": "d2", "content": "two"}
+
+        wrapped = record.wrap_retriever(streaming, vector_store="qdrant")
+        assert [d["id"] for d in wrapped("query")] == ["d1", "d2"]
+        _, completed = _read_stream(capsule_dir, "vector_retrievals.jsonl")
+        assert completed["documents"] == []  # not recordable without consuming it
+        assert completed["returned_count"] is None
+
     def test_forensic_level_records_documents(
         self, live_recorder: EventRecorder, capsule_dir: Path,
         monkeypatch: pytest.MonkeyPatch,

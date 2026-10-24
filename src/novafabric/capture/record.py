@@ -46,7 +46,7 @@ from __future__ import annotations
 import functools
 import inspect
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, overload
 
@@ -274,13 +274,14 @@ def vector_retrieval(
         )
 
 
-def _documents_from(result: Sequence[Any]) -> list[dict[str, Any]]:
+def _documents_from(result: Any) -> list[dict[str, Any]]:
     """Best-effort ``RetrievedDocument`` payloads from a retriever result.
 
     Used by :func:`wrap_retriever` only at forensic/air_gapped level. Reads
     common id/content shapes (dicts, LangChain ``Document.page_content``,
     DSPy ``long_text``); anything unrecognized keeps a positional id with no
-    content. Never raises.
+    content. Only a re-iterable collection is read; an iterator or generator
+    result is left for the caller and yields no documents. Never raises.
     """
     id_keys = ("document_id", "id")
     content_keys = ("page_content", "content", "text", "long_text")
@@ -293,6 +294,10 @@ def _documents_from(result: Sequence[Any]) -> list[dict[str, Any]]:
         return None
 
     docs: list[dict[str, Any]] = []
+    if not isinstance(result, Collection) or isinstance(result, (str, bytes)):
+        # An iterator or generator can be read once, and that read belongs to the
+        # caller: consuming it here returned an empty result (capture-runners-08).
+        return docs
     try:
         items = list(result)
     except Exception:
