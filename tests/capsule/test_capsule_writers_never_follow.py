@@ -190,15 +190,19 @@ def test_write_back_verdicts_refuses_a_link_planted_after_the_read(
     )
     outside = tmp_path / "outside.jsonl"
     outside.write_text(CANARY)
-    real_read = schema_validation._read_tool_calls
+    real_read = schema_validation.read_capsule_text_or_none
 
-    def read_then_swap(cap: Path) -> list[dict[str, object]]:
-        records = real_read(cap)
+    def read_then_swap(cap: Path, rel: str, **kwargs: object) -> str | None:
+        text = real_read(cap, rel, **kwargs)  # type: ignore[arg-type]
         (cap / "tool-calls.jsonl").unlink()
         (cap / "tool-calls.jsonl").symlink_to(outside)
-        return records
+        return text
 
-    monkeypatch.setattr(schema_validation, "_read_tool_calls", read_then_swap)
+    monkeypatch.setattr(schema_validation, "read_capsule_text_or_none", read_then_swap)
+    # A record that gains a verdict, so the backfill really writes.
+    monkeypatch.setattr(
+        schema_validation, "compute_verdict", lambda *_a, **_k: {"arguments_valid": True}
+    )
     with pytest.raises(CapsuleLinkError):
         schema_validation.write_back_verdicts(capsule)
     assert outside.read_text() == CANARY

@@ -275,7 +275,13 @@ def _validate_tool_schemas(
     )
 
     if write:
-        annotated = write_back_verdicts(capsule_dir)
+        from novafabric.capsule._manifest_write import SealedCapsuleError
+
+        try:
+            annotated = write_back_verdicts(capsule_dir)
+        except SealedCapsuleError as exc:
+            console.print(f"[red]✗[/red] --write refused: {exc}", markup=True, highlight=False)
+            raise typer.Exit(code=1) from None
         console.print(
             f"[green]✓[/green] backfilled schema_validation verdicts "
             f"on {annotated} record(s)"

@@ -359,21 +359,52 @@ def validate_capsule_tool_calls(capsule_dir: Path) -> CapsuleToolSchemaReport:
 def write_back_verdicts(capsule_dir: Path) -> int:
     """Persist computed verdicts into tool-calls.jsonl (``--write`` backfill).
 
-    Records without a schema_ref are rewritten unchanged. Returns the number
-    of records annotated (existing verdicts are recomputed and replaced).
-    Raises :class:`~novafabric._capsule_fs.CapsuleLinkError` when
-    ``tool-calls.jsonl`` is a symlink at write time; it is never written through.
+    Only a line that gains a verdict is rewritten; every other line — a record
+    without a schema_ref, a truncated line, a non-object line — is kept
+    byte-for-byte, and the file is not written at all when no record was
+    annotated (review capture-runners-17: the backfill used to rewrite the file
+    from the parsed records alone, deleting every line it could not parse).
+    Returns the number of records annotated (existing verdicts are recomputed
+    and replaced).
+
+    Raises:
+        SealedCapsuleError: the capsule is NovaSeal-sealed; its tool calls are
+            covered by ``evidence_digests`` and are never rewritten in place.
+        CapsuleLinkError: ``tool-calls.jsonl`` is a symlink at write time; it
+            is never written through.
     """
-    records = _read_tool_calls(capsule_dir)
+    from novafabric.capsule._manifest_write import SealedCapsuleError, is_sealed
+
+    if is_sealed(capsule_dir):
+        raise SealedCapsuleError(
+            "the capsule is sealed: backfilling verdicts would change tool-calls.jsonl, "
+            "which its seal covers, and `nova verify` would then fail. "
+            "Run `nova validate --schemas` without --write for the report."
+        )
+    text = read_capsule_text_or_none(
+        capsule_dir, "tool-calls.jsonl", operation="nova validate --write"
+    )
+    if text is None:
+        return 0
     annotated = 0
     lines: list[str] = []
-    for record in records:
-        verdict = compute_verdict(record, capsule_dir, trusted=False)
-        if verdict is not None:
-            record["schema_validation"] = verdict
-            annotated += 1
+    for line in text.splitlines():
+        try:
+            record = json.loads(line) if line.strip() else None
+        except json.JSONDecodeError:
+            record = None
+        verdict = (
+            compute_verdict(record, capsule_dir, trusted=False)
+            if isinstance(record, dict) else None
+        )
+        if verdict is None:
+            lines.append(line)
+            continue
+        assert isinstance(record, dict)  # a verdict is computed only for an object
+        record["schema_validation"] = verdict
+        annotated += 1
         lines.append(json.dumps(record, separators=(",", ":")))
-    if records:
+    if annotated:
         # Never through a link, even one planted after the read above.
         with open_capsule_file_for_write(
             capsule_dir, "tool-calls.jsonl", mode="w", operation="nova validate --write"

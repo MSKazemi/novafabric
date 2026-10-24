@@ -372,6 +372,64 @@ def test_write_back_verdicts_backfills_records(tmp_path: Path) -> None:
     assert "schema_validation" not in second  # no schema → unchanged
 
 
+# Review capture-runners-17: --write rewrote the file from the parsed records only,
+# deleting every line it could not parse, and rewrote a sealed capsule in place.
+
+
+def test_write_back_keeps_every_line_it_does_not_annotate(tmp_path: Path) -> None:
+    cap = _capsule_with_tool_calls(tmp_path, [_record()])
+    no_schema = json.dumps(_record(arguments_schema_ref=None, result_schema_ref=None))
+    tool_calls = cap / "tool-calls.jsonl"
+    kept = ['{"tool_name": "web_sear', "[1, 2]", no_schema]  # truncated, non-object, no schema
+    tool_calls.write_text(tool_calls.read_text() + "\n".join(kept) + "\n")
+    assert write_back_verdicts(cap) == 1
+    lines = tool_calls.read_text().splitlines()
+    assert len(lines) == 4
+    assert json.loads(lines[0])["schema_validation"]["arguments_valid"] is True
+    assert lines[1:] == kept  # byte-for-byte
+
+
+def test_write_back_without_a_verdict_leaves_the_file_untouched(tmp_path: Path) -> None:
+    cap = _capsule_with_tool_calls(
+        tmp_path, [_record(arguments_schema_ref=None, result_schema_ref=None)]
+    )
+    tool_calls = cap / "tool-calls.jsonl"
+    before = tool_calls.read_bytes()
+    assert write_back_verdicts(cap) == 0
+    assert tool_calls.read_bytes() == before
+
+
+def test_write_back_refuses_a_sealed_capsule(tmp_path: Path) -> None:
+    from novafabric.capsule._manifest_write import SealedCapsuleError
+
+    cap = _capsule_with_tool_calls(tmp_path, [_record()])
+    (cap / ".seal").mkdir()
+    before = (cap / "tool-calls.jsonl").read_bytes()
+    with pytest.raises(SealedCapsuleError):
+        write_back_verdicts(cap)
+    assert (cap / "tool-calls.jsonl").read_bytes() == before
+
+
+def test_cli_write_on_a_sealed_capsule_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from novafabric.cli import validate
+    from novafabric.cli.main import app
+
+    # The fixture is not a full schema-valid capsule; only the --write path is under test.
+    monkeypatch.setattr(validate, "_validate_capsule", lambda _cap: None)
+    cap = _capsule_with_tool_calls(tmp_path, [_record()])
+    (cap / ".seal").mkdir()
+    before = (cap / "tool-calls.jsonl").read_bytes()
+    result = CliRunner().invoke(app, ["validate", str(cap), "--schemas", "--write"])
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert "sealed" in result.output
+    assert (cap / "tool-calls.jsonl").read_bytes() == before
+
+
 # ---------------------------------------------------------------- replay
 
 
