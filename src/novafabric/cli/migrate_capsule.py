@@ -45,7 +45,7 @@ def migrate_capsule_cmd(
 ) -> None:
     """Upgrade a capsule directory to the current schema format.
 
-    Copies SOURCE to OUTPUT and bumps all schema_version fields.
+    Copies SOURCE to --output and bumps all schema_version fields.
     The original source directory is not modified.
 
     A source holding a symbolic link is refused (exit 1, no output): a
@@ -55,7 +55,7 @@ def migrate_capsule_cmd(
 
     \b
     Examples:
-      nova migrate path/to/old-capsule/ path/to/new-capsule/
+      nova migrate path/to/old-capsule/ -o path/to/new-capsule/
     """
     migrator = CapsuleMigrator()
     try:

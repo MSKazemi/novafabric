@@ -324,3 +324,20 @@ def test_cli_migrate_error_exit_code(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert "Error" in result.output
+
+
+def test_cli_migrate_help_example_runs(src: Path, tmp_path: Path) -> None:
+    """Review cli-b-18: the --help example passed OUTPUT positionally, but it is the
+    required --output/-o option, so the example failed with "Missing option"."""
+    import re
+    import shlex
+
+    help_text = runner.invoke(app, ["migrate", "--help"]).output
+    (example,) = [ln.strip() for ln in help_text.splitlines() if ln.strip().startswith("nova migrate ")]
+    argv = shlex.split(example)[1:]
+    # Substitute the placeholder paths with a real source and a fresh output.
+    argv = [str(src) if a.startswith("path/to/old") else a for a in argv]
+    argv = [str(tmp_path / "migrated") if a.startswith("path/to/new") else a for a in argv]
+    assert re.search(r"\s(-o|--output)\s", f" {' '.join(argv)} ")
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 0, result.output
