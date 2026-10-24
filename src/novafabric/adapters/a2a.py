@@ -26,7 +26,7 @@ import yaml
 from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.teardown import TeardownSteps, novafabric_version
+from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
 
 _CAPTURE_METHODS = frozenset({"send_message", "send_message_streaming"})
 
@@ -130,15 +130,14 @@ class NovaA2AInterceptor:
             return
 
         from novafabric.capture._ulid import new_span_id, new_ulid
-        from novafabric.capture.capsule import CapsuleWriter
         from novafabric.capture.hooks import install_all_or_discard
 
         run_id = new_ulid()
         span_id = new_span_id()
         key = f"{args.method}:{run_id}"
-        self._data_dir.mkdir(parents=True, exist_ok=True)
-        writer = CapsuleWriter(run_id=run_id, base_dir=self._data_dir)
-        writer.open()
+        writer = open_capsule_writer(self._data_dir, run_id, hook="a2a")
+        if writer is None:  # an unusable capsule store: the call runs uncaptured
+            return
         created_at = _now()
         t0 = time.monotonic()
         agent_name = getattr(args.agent_card, "name", "unknown-agent")

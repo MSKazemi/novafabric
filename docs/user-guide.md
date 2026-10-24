@@ -273,6 +273,8 @@ stays opt-in. If finalization fails, your function's return value or exception i
 unchanged: the capsule is left unsealed and `metadata.finalization_error` says why.
 The same holds when an earlier capture step fails (for example, a full disk while
 writing `env.lock`): the reason reads `capture incomplete: env.lock: OSError`.
+The framework adapters behave the same way when the capsule cannot even be opened
+(an unwritable `data_dir`): the call runs uncaptured and the failure is logged.
 
 **Optional record-only tags (experimental, v0.59).** The decorator also accepts
 `deployment_environment=` (ADR-0126), `variant=` (ADR-0116, A/B attribution),

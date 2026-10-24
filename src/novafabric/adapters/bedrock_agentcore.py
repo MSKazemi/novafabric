@@ -23,7 +23,7 @@ import yaml
 from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.teardown import TeardownSteps, novafabric_version
+from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
 
 
 def _now() -> str:
@@ -51,7 +51,6 @@ class _WrappedBedrockClient:
 
     def invoke_agent(self, **kwargs: Any) -> dict[str, Any]:
         from novafabric.capture._ulid import new_span_id, new_ulid
-        from novafabric.capture.capsule import CapsuleWriter
         from novafabric.capture.hooks import (
             install_all_or_discard,
             uninstall_all,
@@ -61,9 +60,10 @@ class _WrappedBedrockClient:
 
         run_id = new_ulid()
         span_id = new_span_id()
-        self._data_dir.mkdir(parents=True, exist_ok=True)
-        writer = CapsuleWriter(run_id=run_id, base_dir=self._data_dir)
-        writer.open()
+        writer = open_capsule_writer(self._data_dir, run_id, hook="adapter-bedrock_agentcore")
+        if writer is None:  # an unusable capsule store: run uncaptured
+            response: dict[str, Any] = self._inner.invoke_agent(**kwargs)
+            return response
         created_at = _now()
         t0 = time.monotonic()
         _hook_token = install_all_or_discard(writer=writer, parent_span_id=span_id)

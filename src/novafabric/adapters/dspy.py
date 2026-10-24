@@ -22,7 +22,7 @@ from novafabric.capture.finalize import finalize_in_process_capsule
 
 # Module-level imports so tests can patch via ``novafabric.adapters.dspy.<name>``.
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.teardown import TeardownSteps, novafabric_version
+from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
 
 
 def _now() -> str:
@@ -170,7 +170,6 @@ def wrap_program(
 
     def wrapped_forward(*args: Any, **kwargs: Any) -> Any:
         from novafabric.capture._ulid import new_span_id, new_ulid
-        from novafabric.capture.capsule import CapsuleWriter
         from novafabric.capture.hooks import (
             install_all_or_discard,
             uninstall_all,
@@ -180,9 +179,9 @@ def wrap_program(
         run_id = new_ulid()
         root_span_id = new_span_id()
 
-        resolved_data_dir.mkdir(parents=True, exist_ok=True)
-        writer = CapsuleWriter(run_id=run_id, base_dir=resolved_data_dir)
-        writer.open()
+        writer = open_capsule_writer(resolved_data_dir, run_id, hook="adapter-dspy")
+        if writer is None:  # an unusable capsule store: run uncaptured
+            return original_forward(*args, **kwargs)
         cap_dir = writer.capsule_dir
 
         _hook_token = install_all_or_discard(writer=writer, parent_span_id=root_span_id)

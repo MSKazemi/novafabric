@@ -384,6 +384,15 @@ Python process:
   `metadata.finalization_error` reads `capture incomplete: <step>: <error type>`,
   e.g. `capture incomplete: env.lock: OSError`. Releases up to v0.107.0 let the exception
   escape the wrapped call's `finally:`, replacing its result or exception.
+- Opening the capsule is fail-open as well. Every framework adapter and the shared
+  adapter core open it through `capture.teardown.open_capsule_writer`: if the capsule
+  store cannot be created or the capsule directory cannot be opened (a read-only or
+  full disk, a file where the store should be), the failure is logged and counted, no
+  capsule is written, and the framework call runs **uncaptured** — as `@agent` already
+  did. Releases up to v0.107.0 raised that `OSError` from the user's own `kickoff()`,
+  `forward()` or `run()` in the CrewAI, AutoGen, DSPy, LangGraph, OpenAI Agents and
+  Bedrock AgentCore adapters and in the Haystack, LlamaIndex and Pydantic AI ones, so
+  the call never ran. Strict mode's `ConcurrentCaptureRefused` still refuses, as before.
 
 OTLP-ingested capsules (`capture_mode: otel-import`, `metadata.capture_level:
 ingested-otlp`, written by `otel/genai_ingest.py` for `POST /api/otlp/v1/traces`)

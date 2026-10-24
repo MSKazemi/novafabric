@@ -35,7 +35,7 @@ from novafabric.capture.finalize import finalize_in_process_capsule
 
 # Module-level so tests can patch via ``novafabric.adapters._capsule.<name>``.
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.teardown import TeardownSteps, novafabric_version
+from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
 
 
 def _now() -> str:
@@ -203,21 +203,46 @@ class AdapterCapture:
         )
 
 
+@dataclass
+class UncapturedRun:
+    """What :func:`begin_capture` returns when the capsule could not be opened.
+
+    The framework call then runs uncaptured (the failure was logged and counted
+    by :func:`~novafabric.capture.teardown.open_capsule_writer`); every capture
+    method is a no-op, so the adapters drive it exactly like an
+    :class:`AdapterCapture`.
+    """
+
+    tags: dict[str, str] = field(default_factory=dict)
+
+    def fail(self, exc: BaseException) -> None:
+        """Nothing to record."""
+
+    def mark_partial(self, reason: str) -> None:
+        """Nothing to record."""
+
+    def finish(self) -> None:
+        """Nothing to write."""
+
+
 def begin_capture(
     *, framework: str, run_name: str, data_dir: Path | None
-) -> AdapterCapture:
-    """Open a capsule and claim the wire hooks for one framework invocation."""
+) -> AdapterCapture | UncapturedRun:
+    """Open a capsule and claim the wire hooks for one framework invocation.
+
+    An unusable capsule store returns an :class:`UncapturedRun` instead of
+    raising: capture never blocks the framework call.
+    """
     from novafabric.capture._ulid import new_span_id, new_ulid
-    from novafabric.capture.capsule import CapsuleWriter
     from novafabric.capture.hooks import install_all_or_discard
 
-    resolved = resolve_data_dir(data_dir)
-    resolved.mkdir(parents=True, exist_ok=True)
-
     run_id = new_ulid()
+    writer = open_capsule_writer(
+        resolve_data_dir(data_dir), run_id, hook=f"adapter-{framework}"
+    )
+    if writer is None:
+        return UncapturedRun()
     root_span_id = new_span_id()
-    writer = CapsuleWriter(run_id=run_id, base_dir=resolved)
-    writer.open()
 
     return AdapterCapture(
         framework=framework,

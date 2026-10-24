@@ -48,7 +48,7 @@ from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
 from novafabric.capture.record import _payloads_enabled
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.teardown import TeardownSteps, novafabric_version
+from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
 
 #: Set while a wrapped run is producing — in this context, and in the node
 #: threads and tasks LangGraph starts from it (its executors ``copy_context()``
@@ -198,10 +198,16 @@ class _GraphRun:
         from novafabric.capture.hooks import install_all_or_discard
 
         self._graph = graph
-        self.writer, self.run_id, self.root_span_id, self.cap_dir = graph._make_writer()
-        self.hook_token = install_all_or_discard(
-            writer=self.writer, parent_span_id=self.root_span_id
-        )
+        made = graph._make_writer()
+        #: False when the capsule store was unusable: the graph runs uncaptured.
+        self.captured = made is not None
+        self.writer: Any = None
+        self.hook_token = ""
+        if made is not None:
+            self.writer, self.run_id, self.root_span_id, self.cap_dir = made
+            self.hook_token = install_all_or_discard(
+                writer=self.writer, parent_span_id=self.root_span_id
+            )
         self.created_at = _now()
         self.t0 = time.monotonic()
         self.exit_code = 0
@@ -219,6 +225,8 @@ class _GraphRun:
     def finish(self) -> None:
         from novafabric.capture.hooks import uninstall_all, wire_capture_state
 
+        if not self.captured:
+            return
         # eval-adapters-query-04: teardown never replaces the graph call's outcome.
         steps = TeardownSteps("adapter-langgraph")
         wire_state = steps.run(
@@ -320,21 +328,17 @@ class _WrappedGraph:
         self._data_dir = data_dir
         self._tags = tags
 
-    def _make_writer(self) -> tuple[Any, str, str, Path]:
-        """Allocate a fresh run ID, span ID, and CapsuleWriter."""
+    def _make_writer(self) -> tuple[Any, str, str, Path] | None:
+        """Allocate a fresh run ID, span ID, and CapsuleWriter; ``None`` when the
+        capsule store is unusable (the graph then runs uncaptured)."""
         from novafabric.capture._ulid import new_span_id, new_ulid
-        from novafabric.capture.capsule import CapsuleWriter
 
         run_id = new_ulid()
         root_span_id = new_span_id()
-
-        base_dir = self._data_dir
-        base_dir.mkdir(parents=True, exist_ok=True)
-
-        writer = CapsuleWriter(run_id=run_id, base_dir=base_dir)
-        writer.open()
-        cap_dir = writer.capsule_dir
-        return writer, run_id, root_span_id, cap_dir
+        writer = open_capsule_writer(self._data_dir, run_id, hook="adapter-langgraph")
+        if writer is None:
+            return None
+        return writer, run_id, root_span_id, writer.capsule_dir
 
     def _start_invoke(self, input: Any) -> tuple[_GraphRun, str, dict[str, Any] | None]:
         # ADR-0209 D2.2 (experimental): invoke() emits a start→end

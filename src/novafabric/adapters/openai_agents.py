@@ -21,7 +21,7 @@ import yaml
 from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.teardown import TeardownSteps, novafabric_version
+from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
 
 try:
     from agents.tracing import TracingProcessor as _TracingProcessor
@@ -49,14 +49,13 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
 
     def on_trace_start(self, trace: Any) -> None:
         from novafabric.capture._ulid import new_span_id, new_ulid
-        from novafabric.capture.capsule import CapsuleWriter
         from novafabric.capture.hooks import install_all_or_discard
 
         run_id = new_ulid()
         span_id = new_span_id()
-        self._data_dir.mkdir(parents=True, exist_ok=True)
-        writer = CapsuleWriter(run_id=run_id, base_dir=self._data_dir)
-        writer.open()
+        writer = open_capsule_writer(self._data_dir, run_id, hook="adapter-openai_agents")
+        if writer is None:  # an unusable capsule store: this trace runs uncaptured
+            return
         created_at = _now()
         t0 = time.monotonic()
         hook_token = install_all_or_discard(writer=writer, parent_span_id=span_id)
