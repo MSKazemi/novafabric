@@ -508,13 +508,17 @@ This format is stable across providers and is the basis for two things:
 The environment lock records the full execution environment at capture time:
 
 - Python version and interpreter path
-- All installed packages (up to 200)
+- All installed packages, sorted by name (releases up to v0.107.0 kept an arbitrary 200)
 - Safe environment variables (secrets are excluded)
 - Host OS, CPU architecture, CPU count, total memory (read from `/proc/meminfo`;
   `0` where that file does not exist)
 - A GPU field (`hardware.gpus`), which is not populated today: no GPU inventory
   is collected
-- Detected package manager (`uv.lock`, `poetry.lock`, `requirements.txt`, etc.)
+- Detected package manager (`uv.lock`, `poetry.lock`, `pdm.lock`, `requirements.txt`) and the
+  SHA-256 of the **whole** lock file (`python.lock_file_hash`; releases up to v0.107.0 hashed
+  only its first 64 KiB, so two lock files differing past that hashed the same). Only a
+  hash-pinned `uv.lock` makes the lock `deterministic`; the others are `best-effort` with a
+  reason, as ADR-0007 specifies, so `--mode exact` refuses them
 
 `nova replay` uses `env.lock` to warn about environment mismatches before
 re-executing the command. This is what makes the `exact` replay mode

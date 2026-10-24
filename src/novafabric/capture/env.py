@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric import __version__
+from novafabric._hashutil import sha256_file_prefixed
 
 _DEFAULT_DENY_PATTERNS = [
     r"(?i).*api[_-]?key.*",
@@ -60,7 +61,10 @@ def _installed_packages() -> list[dict[str, Any]]:
                 })
     except Exception:
         pass
-    return pkgs[:200]
+    # Every distribution, in a stable order: a silent cut to the first 200 (in
+    # arbitrary order) once hid packages from a lock that claimed to be complete
+    # (review capture-runners-11).
+    return sorted(pkgs, key=lambda p: (str(p["name"]).lower(), str(p["version"])))
 
 
 def _runtime_env() -> dict[str, Any]:
@@ -394,8 +398,19 @@ def capture_environment(created_at: str, run_id: str) -> dict[str, Any]:
     if lock_kind != "none":
         lock_path = cwd / lock_kind
         if lock_path.exists():
-            content = lock_path.read_bytes()[:65536]
-            lock_file_hash = _stable_hash(content.decode("utf-8", errors="replace"))
+            # The whole raw file, streamed: hashing only the first 64 KiB made two
+            # different uv.lock files (this repo's is 1.3 MB) hash the same
+            # (review capture-runners-11). For a UTF-8 lock under 64 KiB the value
+            # is unchanged.
+            lock_file_hash = sha256_file_prefixed(lock_path)
+            if lock_kind != "uv.lock":
+                # ADR-0007: only uv.lock is hash-pinned for exact replay; the others
+                # are accepted "with a best-effort downgrade note".
+                best_effort_reasons.append({
+                    "kind": "other",
+                    "detail": f"{lock_kind} is not a hash-pinned uv.lock; exact replay "
+                              "needs one (ADR-0007)",
+                })
         else:
             lock_kind = "none"
             lock_file_hash = None
