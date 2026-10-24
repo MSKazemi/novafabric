@@ -539,6 +539,26 @@ def test_custom_policy_allow_applies(
     assert get_label("triage", "production", db_path=db_path)["target_version"] == "2"
 
 
+def test_policy_ref_without_opa_fails_closed(
+    db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review rlr-03: a named policy that cannot be *evaluated* refuses, like one that cannot be read."""
+    import shutil
+
+    rego = tmp_path / "deny.rego"
+    rego.write_text("package novafabric.authz\n\ndefault allow := false\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: None)  # no opa on PATH
+
+    _protected_prod(db_path, policy_ref=str(rego))
+    move = propose_move("triage", "production", "2", identity="alice", db_path=db_path)
+    record, detail = approve_move(
+        "triage", "production", move["move_id"], identity="bob", db_path=db_path
+    )
+    assert record["state"] == "pending"
+    assert "fail-closed" in detail and "opa" in detail
+    assert get_label("triage", "production", db_path=db_path)["target_version"] == "1"
+
+
 def test_unprotect_midflight_uses_snapshot(db_path: Path) -> None:
     """Un-protecting leaves an in-flight move resolving under its snapshot."""
     _protected_prod(db_path, required_approvals=2)

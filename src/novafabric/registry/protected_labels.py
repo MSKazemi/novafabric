@@ -1154,7 +1154,7 @@ def _policy_gate(record: dict[str, Any], approver: str) -> tuple[bool, str]:
     ``policy_ref`` absent → the built-in default protected-label policy,
     which is exactly the ADR-0003 distinctness invariants — already enforced
     in code before this gate runs, so the default allows. A named policy that
-    cannot be read fails closed.
+    cannot be read, or cannot be evaluated (no ``opa``), fails closed.
     """
     policy_ref = record.get("policy_ref")
     if not policy_ref:
@@ -1166,6 +1166,7 @@ def _policy_gate(record: dict[str, Any], approver: str) -> tuple[bool, str]:
         return False, f"policy_ref '{policy_ref}' unreadable (fail-closed): {exc}"
 
     from novafabric.policy import (  # noqa: PLC0415 — lazy: only custom policies
+        NoopEngine,
         OpaEngine,
         PolicyInput,
         PolicyResource,
@@ -1183,10 +1184,16 @@ def _policy_gate(record: dict[str, Any], approver: str) -> tuple[bool, str]:
         context={"pending_move": record},
     )
     engine = get_policy_engine()
+    if isinstance(engine, NoopEngine):
+        # A named policy that cannot be evaluated refuses, exactly like one that
+        # cannot be read: NoopEngine's "allow" means "nothing checked" (rlr-03).
+        return False, (
+            f"policy_ref '{policy_ref}' is set but no policy engine is available "
+            "(opa not found) — fail-closed"
+        )
     if isinstance(engine, OpaEngine):
         decision = engine.evaluate(input_, policy_source=source)
     else:
-        # NoopEngine — get_policy_engine already warned that gates are disabled.
         decision = engine.evaluate(input_)
     return decision.allow, decision.reason or (
         "allowed" if decision.allow else "denied"

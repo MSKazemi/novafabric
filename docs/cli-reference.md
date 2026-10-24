@@ -8298,6 +8298,19 @@ failed).
 
 ## Policy and governance (v0.8)
 
+**When `opa` is not installed.** OPA is optional in local mode. With no `opa` on `PATH`
+and no `NOVAFABRIC_POLICY_BUNDLE_PATH`, the built-in policy gates (`promote`,
+`evidence_export`, `replay_mutating`) are disabled with a warning and allow — except
+the gates that require an explicit allow (`promote direct` into `production`, protected
+labels). Two cases now **fail closed** instead, because a policy was asked for:
+
+- `NOVAFABRIC_POLICY_BUNDLE_PATH` is set: every gated action is refused (a recorded
+  `policy.deny` naming the variable and the missing `opa`). Install OPA or unset the
+  variable.
+- A protected label has a `policy_ref`: a move that needs it stays pending
+  (`… no policy engine is available (opa not found) — fail-closed`), just as when the
+  referenced file cannot be read.
+
 ### nova policy test
 
 Run the Rego unit test suite on the built-in policy bundle (requires `opa` installed).
