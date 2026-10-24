@@ -16,6 +16,7 @@ import yaml
 from opentelemetry import trace
 
 from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
 from novafabric.capture.hooks._fail_open import note_capture_failure
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.teardown import TeardownSteps, novafabric_version
@@ -249,7 +250,7 @@ class _SdkCapture:
         tool_call_count = steps.run("tool-calls", lambda: _count_lines(cap_dir), 0)
 
         manifest: dict[str, Any] = {
-            "schema_version": "0.1.0",
+            "schema_version": CAPSULE_SCHEMA_VERSION,
             "run_id": self.run_id,
             "created_at": self.created_at,
             "finished_at": finished_at,

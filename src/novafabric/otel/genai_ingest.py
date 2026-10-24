@@ -69,6 +69,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
 from novafabric.capture.log_level import (
     LogLevelSource,
     from_otel_severity,
@@ -717,7 +718,7 @@ def write_ingest_capsule_finalized(
 
     working_dir = str(Path.cwd()).replace(str(Path.home()), "~")
     manifest: dict[str, Any] = {
-        "schema_version": "0.1.0",
+        "schema_version": CAPSULE_SCHEMA_VERSION,
         "run_id": run_id,
         "created_at": created_at,
         "finished_at": finished_at,

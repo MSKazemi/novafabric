@@ -30,6 +30,12 @@ older version, the supported action is: upgrade to latest.
   rebuildable).
 - **Old capsules stay readable forever.** Schema changes are additive; every capsule
   carries a `schema_version`. This holds across every upgrade path.
+- **One label per format generation.** Every writer — `nova capture`, `@agent`, OTLP
+  ingest and each framework adapter — stamps `schema_version: 0.1.0`, the pre-freeze
+  Run Capsule draft. Only `nova migrate` produces `1.0.0`, and it records the conversion as
+  a `migration_source` lineage edge. Capsules written before this rule by the `a2a`,
+  `google_adk`, `openai_agents` or `bedrock_agentcore` adapters say `1.0.0` without having
+  been migrated; their content is the 0.1.0 format.
 
 ### Runtime support matrix (works today)
 

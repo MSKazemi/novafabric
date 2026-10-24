@@ -15,11 +15,12 @@ from typing import Any
 import yaml
 
 from novafabric._capsule_fs import CapsuleLinkError, copy_capsule_tree, refuse_capsule_links
+from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
 from novafabric._hashutil import sha256_file_prefixed
 from novafabric.capture._ulid import new_ulid
 from novafabric.lineage._types import LineageEdge
 
-SOURCE_VERSION = "0.1.0"
+SOURCE_VERSION = CAPSULE_SCHEMA_VERSION  # what every writer stamps
 TARGET_VERSION = "1.0.0"
 
 _OPERATION = "a migration"

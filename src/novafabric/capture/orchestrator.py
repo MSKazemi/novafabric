@@ -20,6 +20,7 @@ from novafabric._capsule_fs import (
     replace_capsule_file,
     with_capsule_root_pins,
 )
+from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
 from novafabric.capture._ulid import new_span_id, new_ulid
 from novafabric.capture.capsule import CapsuleWriter
 from novafabric.capture.deployment_env import (
@@ -625,7 +626,7 @@ class CaptureOrchestrator:
             media_artifacts = []
 
         manifest: dict[str, Any] = {
-            "schema_version": "0.1.0",
+            "schema_version": CAPSULE_SCHEMA_VERSION,
             "run_id": run_id,
             "created_at": created_at,
             "finished_at": finished_at,
