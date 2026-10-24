@@ -4412,7 +4412,7 @@ Derives scores for all four NIST AI RMF Core functions:
   non-compliant metric or as `missing_evidence`. A capsule that does carry the file (written
   by your own code through `CapsuleWriter.append_tool_permission_event`) is scored as before.
 - **MEASURE** (MS-2.5 eval performance score, MS-2.6 regression detection)
-- **MANAGE** (MG-2.2 PII redaction rate, MG-4.1 lifecycle management score)
+- **MANAGE** (MG-2.2 PII redaction records — a count of `redaction_manifest.json` entries, with no threshold or verdict, because no detection denominator is recorded; releases up to v0.107.0 reported a 1.0 "rate", compliant, from a single entry — and MG-4.1 lifecycle management score)
 
 `risk_level` = `low|medium|high|critical` based on overall score and non-compliant metric count.
 `completeness` = `complete|partial` based on whether all expected evidence files are present.
@@ -5312,7 +5312,7 @@ nova export-compliance pmm --system triage --findings findings.json --occurred-a
 ```
 
 Subcommands and key options:
-- `genai-profile <capsule>` — `--evidence a,b` (governance-evidence kinds present), `--out`.
+- `genai-profile <capsule>` — `--evidence a,b` (governance-evidence kinds present), `--out`. A focus area is evidenced from the base report only by a positive metric read from a recorded artifact (audit coverage, eval results, a regression report, a redaction manifest); default-derived scores and mere file presence do not count. Releases up to v0.107.0 marked governance, content provenance and incident disclosure evidenced for a capsule holding only `run_id:`.
 - `iso42001 --catalog c.json` — `--evidence a,b`, `--capsule-id ID` (supplies the
   re-performable reference evidenced controls require; without it, evidenced controls
   honestly degrade to `not_evidenced`), `--out`.

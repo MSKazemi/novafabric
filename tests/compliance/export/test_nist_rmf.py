@@ -91,8 +91,11 @@ class TestNISTAIRMFReporter:
 
         report = NISTAIRMFReporter().build_report(capsule_dir_full)
         mg22 = next(m for m in report.metrics if m.metric_id == "MG-2.2")
-        assert mg22.value == pytest.approx(1.0)
-        assert mg22.compliant is True
+        # Review compliance-privacy-11: a count of redaction records, not a rate —
+        # nothing records how much PII was detected, so there is no denominator.
+        assert mg22.name == "PII Redaction Records"
+        assert mg22.value is not None and mg22.value >= 1
+        assert mg22.compliant is None and mg22.threshold is None
 
     def test_risk_level_low_for_high_score(self, capsule_dir_full: Path) -> None:
         from novafabric.compliance.export.nist_rmf import NISTAIRMFReporter

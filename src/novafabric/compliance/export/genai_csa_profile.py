@@ -71,6 +71,27 @@ CSA_AGENTIC_SUBCATEGORIES: tuple[dict[str, str], ...] = (
      "evidence_kind": "incident_record"},
 )
 
+#: Measurement methods that read a recorded artifact. A metric derived from a
+#: default (``capsule_derived`` with the field absent), from a file's mere
+#: presence, or marked not captured is not evidence of anything (review
+#: compliance-privacy-11).
+_EVIDENCING_METHODS = frozenset({
+    "audit_coverage_json", "eval_result_json", "regression_report_json",
+    "redaction_manifest_json",
+})
+
+
+def _function_evidenced(report: NISTRMFReport, rmf_function: str) -> bool:
+    """True when *rmf_function* has a positive metric read from a recorded artifact."""
+    return any(
+        m.rmf_function == rmf_function
+        and m.measurement_method in _EVIDENCING_METHODS
+        and m.value is not None
+        and m.value > 0
+        for m in report.metrics
+    )
+
+
 _RMF_SCORE_ATTR = {
     "GOVERN": "govern_score",
     "MAP": "map_score",
@@ -136,8 +157,9 @@ def build_genai_csa_profile(
 ) -> GenAiCsaProfileReport:
     """Map a base NIST-RMF report to the GenAI + CSA Agentic profiles.
 
-    A GenAI focus area is ``evidenced`` when the base report carries a score for its RMF
-    function (extending the shipped evidence) **or** its evidence kind is in
+    A GenAI focus area is ``evidenced`` when the base report carries a positive metric for
+    its RMF function read from a recorded artifact (extending the shipped evidence) **or**
+    its evidence kind is in
     ``present_evidence``. A CSA subcategory is ``evidenced`` when its evidence kind is
     present. Anything in ``declared`` is ``declared`` (operator-asserted, unbacked); the
     rest is an honest ``not_evidenced`` gap.
@@ -148,11 +170,12 @@ def build_genai_csa_profile(
 
     for area in NIST_GENAI_FOCUS_AREAS:
         rmf_function = area["rmf_function"]
-        score = getattr(rmf_report, _RMF_SCORE_ATTR[rmf_function], None)
         status, provenance = _resolve(
             area_id=area["id"],
             evidence_kind=area["evidence_kind"],
-            auto_evidenced=score is not None,
+            # A score is never None for GOVERN/MANAGE: they always carry default
+            # metrics. Only a metric read from a recorded artifact evidences.
+            auto_evidenced=_function_evidenced(rmf_report, rmf_function),
             present=present,
             declared=declared_set,
         )

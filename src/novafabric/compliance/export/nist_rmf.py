@@ -406,21 +406,19 @@ class NISTAIRMFReporter:
                 )
                 data = json.loads(capsule_text)
                 entries = data.get("entries", data.get("redacted_items", []))
-                # Presence of a redaction manifest is itself the evidence; the
-                # rate is the share of detections that carry a redaction record.
-                redacted = len(entries)
-                rate = 1.0 if redacted > 0 else 0.0
+                # A count, not a rate (review compliance-privacy-11): nothing records
+                # how much PII was *detected*, so "1.0, compliant" from one entry
+                # said nothing about what went unredacted. No threshold, no verdict.
                 metrics.append(
                     RMFMetric(
                         metric_id="MG-2.2",
-                        name="PII Redaction Rate",
+                        name="PII Redaction Records",
                         rmf_function="MANAGE",
                         risk_category="privacy",
-                        value=rate,
+                        value=float(len(entries)),
                         measurement_method="redaction_manifest_json",
                         data_source="redaction-manifest.json",
-                        threshold=self._THRESHOLDS["privacy_redaction_rate"],
-                        compliant=rate >= self._THRESHOLDS["privacy_redaction_rate"],
+                        notes="count of redaction records; no detection denominator is recorded",
                     )
                 )
             except Exception:

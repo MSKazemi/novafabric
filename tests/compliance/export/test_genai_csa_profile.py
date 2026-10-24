@@ -22,13 +22,15 @@ against the governance evidence present, and marked evidenced / not_evidenced / 
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from novafabric.compliance.export.genai_csa_profile import (
     CSA_AGENTIC_SUBCATEGORIES,
     NIST_GENAI_FOCUS_AREAS,
     ProfileMappingStatus,
     build_genai_csa_profile,
 )
-from novafabric.compliance.export.nist_rmf import NISTRMFReport
+from novafabric.compliance.export.nist_rmf import NISTRMFReport, RMFMetric
 from novafabric.compliance.export.provenance import EvidenceSource
 
 
@@ -38,7 +40,14 @@ def _report(**scores: float) -> NISTRMFReport:
 
 class TestGenAiFocusAreas:
     def test_governance_area_auto_evidenced_from_base_govern_score(self) -> None:
-        report = build_genai_csa_profile(_report(govern_score=0.8), present_evidence=set())
+        coverage = RMFMetric(
+            metric_id="GV-1.1", name="Policy Coverage", rmf_function="GOVERN",
+            risk_category="transparency", value=0.8, measurement_method="audit_coverage_json",
+            data_source="audit_coverage.json",
+        )
+        base = _report(govern_score=0.8)
+        base.metrics.append(coverage)
+        report = build_genai_csa_profile(base, present_evidence=set())
         gov = next(m for m in report.mappings if m.area == "governance")
         assert gov.status is ProfileMappingStatus.evidenced
         assert gov.provenance is EvidenceSource.operator_asserted
@@ -91,4 +100,21 @@ def test_report_references_the_base_rmf() -> None:
     report = build_genai_csa_profile(_report(govern_score=0.5), present_evidence=set())
     assert report.base_capsule_id == "cap-1"
     assert report.base_run_id == "run-1"
-    assert report.evidenced_count >= 1
+    assert report.evidenced_count == 0  # a bare score, with no metric behind it, evidences nothing
+
+
+def test_a_bare_capsule_evidences_no_genai_area(tmp_path: Path) -> None:
+    """Review compliance-privacy-11: GOVERN/MANAGE always carry default metrics (a 0.0
+    "no signing", a 0.2 "unknown lifecycle"), so their score was never None and a
+    capsule holding only `run_id:` read as evidencing governance, content provenance
+    and incident disclosure."""
+    from novafabric.compliance.export.nist_rmf import NISTAIRMFReporter
+
+    cap = tmp_path / "cap"
+    cap.mkdir()
+    (cap / "capsule.yaml").write_text("run_id: r1\n")
+    base = NISTAIRMFReporter().build_report(cap)
+    assert base.govern_score is not None  # the default metrics are still reported...
+    report = build_genai_csa_profile(base, present_evidence=set())
+    statuses = {m.area: m.status for m in report.mappings if m.profile == "nist_genai"}
+    assert set(statuses.values()) == {ProfileMappingStatus.not_evidenced}, statuses
