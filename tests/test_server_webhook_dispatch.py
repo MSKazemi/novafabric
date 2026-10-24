@@ -146,6 +146,59 @@ def _rows(db: Path, hook_id: str, status: str | None = None) -> list[dict[str, A
 # ---------------------------------------------------------------------------
 
 
+class TestTargetIsRecheckedAtDelivery:
+    """review server-17: the SSRF guard ran only when a hook was registered, so a
+    name that resolved to a public address then and to ``169.254.169.254`` later
+    (DNS rebinding) received every signed delivery."""
+
+    def test_a_target_that_now_resolves_internally_receives_nothing(
+        self,
+        db: Path,
+        receiver: _Receiver,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _, record = store.create_webhook(receiver.url, actor="test", db_path=db)
+        hook_id = record["hook_id"]
+        monkeypatch.setattr(store, "_is_loopback_host", lambda host: False)
+        monkeypatch.setattr(store, "_blocked_ssrf_addresses", lambda host: ["169.254.169.254"])
+        d = WebhookDispatcher(
+            db_path=db,
+            config=DispatchConfig(
+                schedule_s=FAST_SCHEDULE, timeout_s=2.0, max_attempts=1,
+                allow_insecure_url=True,
+            ),
+        )
+        d.start()
+        try:
+            d.enqueue_event(_event())
+            assert _wait_for(lambda: bool(_rows(db, hook_id, "failed")))
+        finally:
+            d.stop()
+        assert receiver.received == []
+        assert "169.254.169.254" in (_rows(db, hook_id)[0]["last_error"] or "")
+
+    def test_the_operator_opt_in_still_allows_internal_targets(
+        self,
+        db: Path,
+        receiver: _Receiver,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _, record = store.create_webhook(receiver.url, actor="test", db_path=db)
+        monkeypatch.setattr(store, "_blocked_ssrf_addresses", lambda host: ["10.0.0.5"])
+        d = WebhookDispatcher(
+            db_path=db,
+            config=DispatchConfig(
+                schedule_s=FAST_SCHEDULE, timeout_s=2.0, allow_internal_targets=True
+            ),
+        )
+        d.start()
+        try:
+            d.enqueue_event(_event())
+            assert _wait_for(lambda: bool(_rows(db, record["hook_id"], "delivered")))
+        finally:
+            d.stop()
+
+
 class TestDeliverySuccess:
     def test_signed_delivery_reaches_receiver(
         self, db: Path, dispatcher: WebhookDispatcher, receiver: _Receiver

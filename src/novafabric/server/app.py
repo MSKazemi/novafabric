@@ -257,6 +257,8 @@ def create_app(config: ServerConfig) -> FastAPI:
                     timeout_s=config.webhooks.timeout_s,
                     retention_days=config.webhooks.delivery_retention_days,
                     retention_rows=config.webhooks.delivery_retention_rows,
+                    allow_insecure_url=config.webhooks.allow_insecure_url,
+                    allow_internal_targets=config.webhooks.allow_internal_targets,
                 ),
                 wrapping_backend=resolve_wrapping_backend(),
             )

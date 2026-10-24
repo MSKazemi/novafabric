@@ -74,6 +74,10 @@ class DispatchConfig:
     # ADR-0192 dedup discipline for ops.* events (bounded map).
     dedup_window_s: float = 300.0
     dedup_max_entries: int = 10_000
+    # server.webhooks.allow_insecure_url / allow_internal_targets: the URL policy
+    # registration applies, re-applied before every delivery attempt.
+    allow_insecure_url: bool = False
+    allow_internal_targets: bool = False
 
     def delay_for(self, chain_attempt: int) -> float:
         """Offset (from chain start) of *chain_attempt* (0-based)."""
@@ -399,6 +403,21 @@ class WebhookDispatcher:
                 next_attempt_at=None,
                 db_path=self._db_path,
             )
+            return
+
+        # The SSRF guard ran only at registration, so a name resolving to a
+        # public address then and to 169.254.169.254 or 10.x now (DNS
+        # rebinding) received every signed delivery (review server-17). Resolve
+        # and classify again before each POST; a refused attempt is recorded
+        # and retried like any failed one, and nothing is sent.
+        try:
+            store.validate_url(
+                hook["url"],
+                allow_insecure_url=self._config.allow_insecure_url,
+                allow_internal_targets=self._config.allow_internal_targets,
+            )
+        except store.InvalidWebhookUrlError as exc:
+            self._record_result(attempt, DeliveryResult(ok=False, attempts=0, error=str(exc)))
             return
 
         timestamp = int(time.time())

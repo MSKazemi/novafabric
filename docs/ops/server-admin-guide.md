@@ -412,7 +412,12 @@ Operating notes:
 - **SSRF guard (v0.98.0, works today).** A webhook URL whose host resolves to a
   private, link-local, reserved, or unspecified address is **rejected at
   create/update time** — the server refuses to be used as a probe of your
-  internal network. **Loopback is always allowed**, so local webhooks keep
+  internal network. The host is resolved and checked again before **every
+  delivery attempt**, so a name that later resolves to an internal address
+  (DNS rebinding) receives nothing: the attempt is recorded as failed, with the
+  blocked address in `last_error`, and retried on the normal schedule. A
+  rebinding faster than the gap between that check and the connection itself is
+  not caught. **Loopback is always allowed**, so local webhooks keep
   working unchanged. A self-hosted deployment that legitimately posts to an
   internal receiver (`http://alertmanager.internal/...`) sets
   `webhooks.allow_internal_targets: true` — a documented, auditable opt-out,
