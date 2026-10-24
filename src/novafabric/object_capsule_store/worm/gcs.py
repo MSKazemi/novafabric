@@ -42,7 +42,7 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from novafabric.object_capsule_store.exceptions import CASMismatchError
+from novafabric.object_capsule_store.exceptions import CASMismatchError, WormPolicyViolation
 from novafabric.object_capsule_store.worm.base import (
     ConditionalPutConflict,
     WormAdapter,
@@ -109,14 +109,22 @@ class GcsWormAdapter(WormAdapter):
         on the blob.  GCS will reject DELETE and overwrite requests until the
         retention period expires.
 
+        The upload carries a CRC32C checksum that GCS verifies (in-flight
+        corruption is refused). Retention is a second call, so the object is
+        reloaded and must read back ``LOCKED`` until at least the requested time;
+        if locking fails, the still-unlocked object is deleted before raising, so
+        a retried put uploads and locks it again rather than finding it present
+        and committing it unlocked (review storage-backup-12).
+
         Raises:
             CASMismatchError: if the GCS backend rejects the upload due to a
                 checksum mismatch (HTTP 400).
+            WormPolicyViolation: retention could not be applied or did not hold.
         """
         locked_until = datetime.now(tz=timezone.utc) + timedelta(days=retention_days)
         blob = self._blob(key)
         try:
-            blob.upload_from_string(data, content_type=content_type)
+            blob.upload_from_string(data, content_type=content_type, checksum="crc32c")
         except Exception as exc:
             exc_str = str(exc)
             if (
@@ -129,10 +137,26 @@ class GcsWormAdapter(WormAdapter):
                 ) from exc
             raise
 
-        # Apply per-object retention (LOCKED mode)
-        blob.retention.mode = "LOCKED"
-        blob.retention.retain_until_time = locked_until
-        blob.patch()
+        # Apply per-object retention (LOCKED mode), then read back what holds.
+        try:
+            blob.retention.mode = "LOCKED"
+            blob.retention.retain_until_time = locked_until
+            blob.patch()
+            blob.reload()
+            mode = blob.retention.mode
+            until = blob.retention.retain_until_time
+        except Exception as exc:  # noqa: BLE001 — any failure leaves it unlocked
+            self._discard_unlocked(blob, key)
+            raise WormPolicyViolation(
+                f"could not apply WORM retention to gs://{self._bucket_name}/{key}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        if mode != "LOCKED" or until is None or until < locked_until - timedelta(seconds=5):
+            self._discard_unlocked(blob, key)
+            raise WormPolicyViolation(
+                f"gs://{self._bucket_name}/{key} is not LOCKED until {locked_until.isoformat()} "
+                f"after the retention update (mode={mode!r}, until={until!r})"
+            )
 
         generation: str = str(getattr(blob, "generation", "") or "")
         return WormPutResult(
@@ -140,6 +164,14 @@ class GcsWormAdapter(WormAdapter):
             confirmation_token=generation,
             locked_until_ms=int(locked_until.timestamp() * 1000),
         )
+
+    @staticmethod
+    def _discard_unlocked(blob: Any, key: str) -> None:
+        """Delete an object whose retention never took; it is still deletable."""
+        try:
+            blob.delete()
+        except Exception:  # noqa: BLE001 — report the original failure
+            log.exception("could not delete unlocked GCS object %s", key)
 
     def apply_identical(
         self,

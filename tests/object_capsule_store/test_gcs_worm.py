@@ -74,9 +74,37 @@ class TestPutObject:
 
         adapter.put_object(_KEY, _DATA, _SHA256, _RETENTION_DAYS)
 
+        # Review storage-backup-12: the upload carries a checksum GCS verifies.
         blob.upload_from_string.assert_called_once_with(
-            _DATA, content_type="application/octet-stream"
+            _DATA, content_type="application/octet-stream", checksum="crc32c"
         )
+
+    def test_a_failed_lock_removes_the_unlocked_object_and_raises(self) -> None:
+        """Review storage-backup-12: a patch() that failed left the object mutable;
+        a retried put saw it present, skipped the upload and committed it to the
+        chain as WORM evidence with no retention at all."""
+        from novafabric.object_capsule_store.exceptions import WormPolicyViolation
+
+        adapter, mock_client = _make_adapter()
+        blob = mock_client.bucket.return_value.blob.return_value
+        blob.patch.side_effect = RuntimeError("403 retention not permitted")
+        with pytest.raises(WormPolicyViolation, match="retention"):
+            adapter.put_object(_KEY, _DATA, _SHA256, _RETENTION_DAYS)
+        blob.delete.assert_called_once()
+
+    def test_a_lock_the_backend_did_not_keep_is_refused(self) -> None:
+        from novafabric.object_capsule_store.exceptions import WormPolicyViolation
+
+        adapter, mock_client = _make_adapter()
+        blob = mock_client.bucket.return_value.blob.return_value
+
+        def reload_unlocked(*_a: object, **_k: object) -> None:
+            blob.retention.mode = None  # what the server actually holds
+
+        blob.reload.side_effect = reload_unlocked
+        with pytest.raises(WormPolicyViolation, match="not LOCKED"):
+            adapter.put_object(_KEY, _DATA, _SHA256, _RETENTION_DAYS)
+        blob.delete.assert_called_once()
 
     def test_retention_locked_mode_set(self) -> None:
         adapter, mock_client = _make_adapter()
@@ -102,7 +130,7 @@ class TestPutObject:
         adapter.put_object(_KEY, _DATA, _SHA256, _RETENTION_DAYS, content_type="application/json")
 
         blob.upload_from_string.assert_called_once_with(
-            _DATA, content_type="application/json"
+            _DATA, content_type="application/json", checksum="crc32c"
         )
 
     def test_cas_mismatch_error_on_upload_failure(self) -> None:
