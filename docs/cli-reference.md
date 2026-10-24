@@ -6841,6 +6841,13 @@ with the `proposer` role, the target version must exist, the label must be prote
 labels use `set`), and at most one pending move per `(asset, label)` may exist at a time.
 `--identity` defaults to the OS user.
 
+The signature covers the move id, `asset:label`, `from → to` versions, the proposal time and
+the SHA-256 of the target version's registered spec (`spec_sha256`, pre-image tag
+`label-move/v2`) — the **content**, not only the version string. Releases up to v0.107.0
+signed the version alone, so content swapped under the proposed version before approval
+(a direct registry edit, or `unregister` + `register` under the same version) was applied
+with the original sign-offs.
+
 ```bash
 nova label propose-move prompt:triage production --to 8 --reason "v8 passed the eval gate"
 ```
@@ -6860,6 +6867,12 @@ with its audit row. A duplicate approver is recorded but counts once; a stored a
 no longer verifies (for example one made before the trust-list binding) is kept but never
 counted. A pending move whose maker no longer verifies cannot be approved — a trusted checker
 can `--reject` it to free the label for a new proposal.
+
+Both re-verifications run over the target version's content **as it is now**: if its spec
+changed since the move was proposed, approve is refused with exit `3` (the label stays put),
+and an approval signed over different content is never counted. A move proposed before
+content binding (the v1 pre-image) is refused the same way — `--reject` it and propose again.
+A target version that no longer exists refuses approve with exit `1`; `--reject` still works.
 
 Exit codes (propose-move / approve-move, consistent with `nova promote`): `1` usage or state
 error, missing keyring key, or self-approval; `3` maker-side trust-list or signature failure;

@@ -64,11 +64,13 @@ from novafabric.registry.labels import (
     ReservedLabelError,
 )
 from novafabric.registry.signers import (
+    InvalidSignatureError,
     SignerTrustList,
     SignerVerificationError,
     TrustedSigner,
     load_signer_trust_list,
 )
+from novafabric.registry.store import spec_digest
 from novafabric.spec.asset_labels import (
     RESERVED_LABEL_LATEST,
     validate_label_name,
@@ -263,19 +265,32 @@ def proposal_payload(
     from_version: str | None,
     proposed_version: str,
     proposed_at: str,
+    *,
+    spec_sha256: str,
 ) -> bytes:
-    """The canonical bytes the maker signs when proposing a move."""
+    """The canonical bytes the maker signs when proposing a move.
+
+    Scheme v2 also covers *spec_sha256*, the :func:`spec_digest` of the proposed
+    version's stored content, so content swapped under that version before approval
+    no longer verifies. v1 signed the version string only.
+    """
     return (
-        f"label-move|{move_id}|{asset_name}:{label}|"
-        f"{from_version or ''}->{proposed_version}|{proposed_at}"
+        f"label-move/v2|{move_id}|{asset_name}:{label}|"
+        f"{from_version or ''}->{proposed_version}|{proposed_at}|{spec_sha256}"
     ).encode()
 
 
 def approval_payload(
-    move_id: str, decision: str, approver: str, approved_at: str
+    move_id: str, decision: str, approver: str, approved_at: str, *, spec_sha256: str
 ) -> bytes:
-    """The canonical bytes a checker signs when approving/rejecting."""
-    return f"label-move-approval|{move_id}|{decision}|{approver}|{approved_at}".encode()
+    """The canonical bytes a checker signs when approving/rejecting.
+
+    *spec_sha256* is the content the checker saw (scheme v2); a rejection of a move
+    whose target is gone signs an empty digest.
+    """
+    return (
+        f"label-move-approval/v2|{move_id}|{decision}|{approver}|{approved_at}|{spec_sha256}"
+    ).encode()
 
 
 # ---------------------------------------------------------------------------
@@ -1076,7 +1091,8 @@ def propose_move(
         move_id = new_ulid()
         proposed_at = _now()
         payload = proposal_payload(
-            move_id, asset_name, label, from_version, proposed_version, proposed_at
+            move_id, asset_name, label, from_version, proposed_version, proposed_at,
+            spec_sha256=spec_digest(target["spec_json"]),
         )
         sig = sign_payload(private_key, payload)
         maker = trust.verify(
@@ -1200,37 +1216,57 @@ def _policy_gate(record: dict[str, Any], approver: str) -> tuple[bool, str]:
     )
 
 
-def _verify_maker(trust: SignerTrustList, row: sqlite3.Row) -> TrustedSigner:
+def _verify_maker(
+    trust: SignerTrustList, row: sqlite3.Row, spec_sha256: str
+) -> TrustedSigner:
     """Re-verify the stored maker signature against the trust list (``proposer`` role).
 
-    Refuses a move whose row was edited after proposing, whose maker has since
-    been removed from the list, or that was proposed before the trust-list
-    binding (an unlisted, possibly auto-minted key).
+    The pre-image is rebuilt over *spec_sha256*, the proposed version's content as
+    it is **now**, so content changed since proposing is refused. Also refuses a
+    move whose row was edited after proposing, whose maker has since been removed
+    from the list, or that was proposed before the trust-list binding (an
+    unlisted, possibly auto-minted key).
     """
-    return trust.verify(
-        claimed_identity=str(row["proposed_by"]),
-        key_fp=str(row["proposer_key_fp"]),
-        role="proposer",
-        payload=proposal_payload(
-            row["move_id"],
-            row["asset_name"],
-            row["label"],
-            row["from_version"],
-            row["proposed_version"],
-            row["proposed_at"],
-        ),
-        signature=str(row["proposer_sig"]),
-        party="proposer",
-    )
+    try:
+        return trust.verify(
+            claimed_identity=str(row["proposed_by"]),
+            key_fp=str(row["proposer_key_fp"]),
+            role="proposer",
+            payload=proposal_payload(
+                row["move_id"],
+                row["asset_name"],
+                row["label"],
+                row["from_version"],
+                row["proposed_version"],
+                row["proposed_at"],
+                spec_sha256=spec_sha256,
+            ),
+            signature=str(row["proposer_sig"]),
+            party="proposer",
+        )
+    except InvalidSignatureError as exc:
+        raise InvalidSignatureError(
+            f"{exc} — the move does not cover '{row['asset_name']}@"
+            f"{row['proposed_version']}' as it is now: its content changed since it "
+            "was proposed, the move row was edited, or it was signed before content "
+            "binding (scheme v1). Reject it and propose again to review the current "
+            "content.",
+            party="proposer",
+        ) from exc
 
 
 def _verified_approvers(
-    conn: sqlite3.Connection, trust: SignerTrustList, move_id: str, maker: TrustedSigner
+    conn: sqlite3.Connection,
+    trust: SignerTrustList,
+    move_id: str,
+    maker: TrustedSigner,
+    spec_sha256: str,
 ) -> set[str]:
     """Bound identities of the stored ``approve`` decisions that verify today.
 
-    An approval that does not verify against the current trust list (written
-    before the binding, signed by a key since removed, or edited) is kept in the
+    An approval that does not verify against the current trust list and the
+    target's current content *spec_sha256* (written before the binding, signed by a
+    key since removed, edited, or made over different content) is kept in the
     append-only table but never counted; neither is one that resolves to the maker.
     """
     identities: set[str] = set()
@@ -1245,7 +1281,8 @@ def _verified_approvers(
                 key_fp=str(a["approver_key_fp"]),
                 role="approver",
                 payload=approval_payload(
-                    move_id, "approve", str(a["approver"]), str(a["approved_at"])
+                    move_id, "approve", str(a["approver"]), str(a["approved_at"]),
+                    spec_sha256=spec_sha256,
                 ),
                 signature=str(a["approver_sig"]),
                 party="approver",
@@ -1330,13 +1367,23 @@ def approve_move(
                 "SoD violation: maker and checker must be different identities."
             )
 
+        # The proposed version's content as it is now: both sign-offs cover it.
+        target = _labels._asset_version_row(conn, asset_name, row["proposed_version"])
+        current_sha256 = spec_digest(target["spec_json"]) if target is not None else ""
         maker: TrustedSigner | None = None
         if not reject:
-            maker = _verify_maker(trust, row)
+            if target is None:
+                raise LabelTargetNotFoundError(
+                    f"Version '{row['proposed_version']}' no longer exists in "
+                    "the registry — move not applied; reject it instead."
+                )
+            maker = _verify_maker(trust, row, current_sha256)
 
         decision = "reject" if reject else "approve"
         approved_at = _now()
-        payload = approval_payload(move_id, decision, approver, approved_at)
+        payload = approval_payload(
+            move_id, decision, approver, approved_at, spec_sha256=current_sha256
+        )
         sig = sign_payload(private_key, payload)
         checker = trust.verify(
             claimed_identity=approver,
@@ -1377,7 +1424,7 @@ def approve_move(
             return _refreshed(conn, asset_name, move_id), "rejected"
 
         assert maker is not None  # verified above for every non-reject decision
-        distinct = _verified_approvers(conn, trust, move_id, maker)
+        distinct = _verified_approvers(conn, trust, move_id, maker, current_sha256)
         required: int = row["required_approvals"]
         if len(distinct) < required:
             conn.commit()
@@ -1396,14 +1443,7 @@ def approve_move(
         current = _labels._current_pointer_row(conn, asset_name, label)
         previous = current["target_version"] if current else None
         if previous != row["proposed_version"]:
-            target = _labels._asset_version_row(
-                conn, asset_name, row["proposed_version"]
-            )
-            if target is None:
-                raise LabelTargetNotFoundError(
-                    f"Version '{row['proposed_version']}' no longer exists in "
-                    "the registry — move not applied."
-                )
+            assert target is not None  # checked before the maker was verified
             conn.execute(
                 """
                 INSERT INTO asset_label_history

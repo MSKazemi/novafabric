@@ -36,9 +36,11 @@ from novafabric.registry.labels import get_label, set_label
 from novafabric.registry.prompts import register_prompt_version
 from novafabric.registry.protected_labels import (
     SelfApprovalError,
+    approval_payload,
     approve_move,
     get_move,
     list_moves,
+    proposal_payload,
     propose_move,
     protect_label,
 )
@@ -46,8 +48,10 @@ from novafabric.registry.signers import (
     InvalidSignatureError,
     SignerIdentityMismatchError,
     SignerTrustListError,
+    SignerVerificationError,
     UntrustedSignerError,
 )
+from novafabric.registry.store import spec_digest
 from novafabric.trust.keyring import KeyNotFoundError
 
 runner = CliRunner()
@@ -97,6 +101,16 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
 
 def _propose(env: Env, identity: str = "alice") -> dict[str, Any]:
     return propose_move("triage", "production", "2", identity=identity, db_path=env.db)
+
+
+def _sha256(env: Env, version: str = "2") -> str:
+    """The proposed version's content digest, as both sign-offs cover it."""
+    conn = sqlite3.connect(env.db)
+    (spec_json,) = conn.execute(
+        "SELECT spec_json FROM assets WHERE name = 'triage' AND version = ?", (version,)
+    ).fetchone()
+    conn.close()
+    return spec_digest(spec_json)
 
 
 # ---------------------------------------------------------------------------
@@ -242,10 +256,10 @@ def test_unverifiable_stored_approval_does_not_count(env: Env) -> None:
     move = _propose(env)
     key, fp = kr.ensure_keypair("alice-alt", create=True)
     approved_at = "2026-10-22T00:00:00+00:00"
-    from novafabric.registry.protected_labels import approval_payload
-
     sig = kr.sign_payload(
-        key, approval_payload(move["move_id"], "approve", "alice-alt", approved_at)
+        key, approval_payload(
+            move["move_id"], "approve", "alice-alt", approved_at, spec_sha256=_sha256(env)
+        )
     )
     conn = sqlite3.connect(env.db)
     conn.execute(
@@ -285,10 +299,10 @@ def test_a_stored_maker_approval_of_a_move_is_never_counted(env: Env) -> None:
     move = _propose(env)
     key, fp = kr.ensure_keypair("alice", create=False)
     approved_at = "2026-10-22T00:00:00+00:00"
-    from novafabric.registry.protected_labels import approval_payload
-
     sig = kr.sign_payload(
-        key, approval_payload(move["move_id"], "approve", "alice", approved_at)
+        key, approval_payload(
+            move["move_id"], "approve", "alice", approved_at, spec_sha256=_sha256(env)
+        )
     )
     conn = sqlite3.connect(env.db)
     conn.execute(
@@ -398,3 +412,61 @@ def test_cli_happy_path(env: Env) -> None:
     assert approved.exit_code == 0, approved.output
     assert "applied" in approved.output
     assert env.target() == "2"
+
+
+# ---------------------------------------------------------------------------
+# The sign-offs cover the target version's content, not only its name
+# ---------------------------------------------------------------------------
+# Both signatures covered ``asset:label`` and the ``from->to`` version strings only.
+# Content swapped under the proposed version between propose and approve (a direct
+# registry edit, or unregister + re-register under the same version) was applied
+# with the original sign-offs. Same gap as replay-lineage-registry-04 for promote.
+
+def _swap_content(db: Path, version: str = "2") -> None:
+    conn = sqlite3.connect(db)
+    cur = conn.execute(
+        "UPDATE assets SET spec_json = ? WHERE name = 'triage' AND version = ?",
+        ('{"template": "SWAPPED body nobody reviewed"}', version),
+    )
+    assert cur.rowcount == 1
+    conn.commit()
+    conn.close()
+
+
+def test_content_swapped_after_the_proposal_is_not_applied(env: Env) -> None:
+    move = _propose(env)
+    _swap_content(env.db)
+    with pytest.raises(SignerVerificationError, match="content changed") as exc_info:
+        approve_move("triage", "production", move["move_id"], identity="bob", db_path=env.db)
+    assert exc_info.value.party == "proposer"
+    assert env.target() == "1"
+    assert get_move("triage", move["move_id"], db_path=env.db)["state"] == "pending"
+
+
+def test_unchanged_content_is_applied(env: Env) -> None:
+    move = _propose(env)
+    _, detail = approve_move("triage", "production", move["move_id"], identity="bob", db_path=env.db)
+    assert detail == "applied"
+    assert env.target() == "2"
+
+
+def test_a_checker_can_still_reject_a_move_whose_content_changed(env: Env) -> None:
+    """Rejection retires the move without vouching for any content."""
+    move = _propose(env)
+    _swap_content(env.db)
+    _, detail = approve_move(
+        "triage", "production", move["move_id"], identity="bob", reject=True, db_path=env.db
+    )
+    assert detail == "rejected"
+    assert env.target() == "1"
+
+
+def test_both_pre_images_carry_the_digest() -> None:
+    args = ("01HX", "triage", "production", "1", "2", "2026-10-24T00:00:00Z")
+    assert proposal_payload(*args, spec_sha256="a" * 64) != proposal_payload(
+        *args, spec_sha256="b" * 64
+    )
+    approval = ("01HX", "approve", "bob", "2026-10-24T00:00:00Z")
+    assert approval_payload(*approval, spec_sha256="a" * 64) != approval_payload(
+        *approval, spec_sha256="b" * 64
+    )

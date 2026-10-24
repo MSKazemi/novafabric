@@ -57,6 +57,7 @@ from novafabric.registry.protected_labels import (
     propose_move,
     protect_label,
 )
+from novafabric.registry.store import spec_digest
 from novafabric.spec.protected_labels import (
     LabelProtectionConfig,
     PendingLabelMove,
@@ -116,6 +117,16 @@ def _register(db_path: Path, prompt_id: str = "triage", body: str = "v1 body") -
         prompt_id=prompt_id, template=body, db_path=db_path
     )
     return record
+
+
+def _sha256(db_path: Path, version: str, prompt_id: str = "triage") -> str:
+    """The content digest both sign-offs cover (scheme v2)."""
+    conn = sqlite3.connect(db_path)
+    (spec_json,) = conn.execute(
+        "SELECT spec_json FROM assets WHERE name = ? AND version = ?", (prompt_id, version)
+    ).fetchone()
+    conn.close()
+    return spec_digest(spec_json)
 
 
 def _protected_prod(db_path: Path, **kwargs: Any) -> None:
@@ -309,7 +320,8 @@ def test_propose_creates_signed_pending_move(db_path: Path) -> None:
     key, fp = ensure_keypair("alice")
     assert record["proposer_key_fp"] == fp
     payload = proposal_payload(
-        record["move_id"], "triage", "production", "1", "2", record["proposed_at"]
+        record["move_id"], "triage", "production", "1", "2", record["proposed_at"],
+        spec_sha256=_sha256(db_path, "2"),
     )
     assert verify_sig(key.public_key(), record["proposer_signature"], payload)
     # The label did NOT move.
@@ -352,7 +364,8 @@ def test_approve_by_distinct_principal_applies(db_path: Path) -> None:
     key, fp = ensure_keypair("bob")
     assert approval["approver_key_fp"] == fp
     payload = approval_payload(
-        record["move_id"], "approve", "bob", approval["approved_at"]
+        record["move_id"], "approve", "bob", approval["approved_at"],
+        spec_sha256=_sha256(db_path, "2"),
     )
     assert verify_sig(key.public_key(), approval["approver_signature"], payload)
 
