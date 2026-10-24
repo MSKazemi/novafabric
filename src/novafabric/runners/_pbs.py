@@ -40,7 +40,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from novafabric.runners._poll import cancel_after_deadline, jittered_sleep
+from novafabric.runners._poll import (
+    cancel_after_deadline,
+    cancel_on_interrupt,
+    jittered_sleep,
+    read_log_pair,
+)
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
@@ -261,15 +266,29 @@ class PBSRunner:
         last_state = "Q"
         exit_status_str = ""
 
-        while time.monotonic() < deadline:
-            state, exit_status_candidate = self._query_state(job_id)
-            if state is not None:
-                last_state = state
-                if exit_status_candidate:
-                    exit_status_str = exit_status_candidate
-            if last_state in _PBS_TERMINAL_STATES:
-                break
-            jittered_sleep(poll_interval)
+        try:
+            while time.monotonic() < deadline:
+                state, exit_status_candidate = self._query_state(job_id)
+                if state is not None:
+                    last_state = state
+                    if exit_status_candidate:
+                        exit_status_str = exit_status_candidate
+                if last_state in _PBS_TERMINAL_STATES:
+                    break
+                jittered_sleep(poll_interval)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            cancel_on_interrupt(
+                exc, job_id,
+                cancel=self.cancel,
+                query=lambda j: self._query_state(j)[0],
+                terminal=_PBS_TERMINAL_STATES,
+                poll_interval=poll_interval,
+                runner_metadata={"job_id": job_id, "queue": queue, "final_state": last_state},
+                read_output=lambda: read_log_pair(
+                    output_dir / "stdout.log", output_dir / "stderr.log"
+                ),
+            )
+            raise
 
         # Deadline passed with the job queued/running: cancel it (capture-runners-04).
         cancel_outcome: dict[str, Any] = {}

@@ -6,6 +6,7 @@ module — never on a concrete runner.
 """
 from __future__ import annotations
 
+import signal
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -89,6 +90,36 @@ def interrupted_result(exc: BaseException) -> RunnerJobResult | None:
     """The result :func:`attach_interrupted_result` put on *exc*, if any."""
     result = getattr(exc, _INTERRUPTED_RESULT_ATTR, None)
     return result if isinstance(result, RunnerJobResult) else None
+
+
+def interrupt_exit(exc: BaseException) -> tuple[int, str]:
+    """``(exit code, cause)`` for an interruption: ``128 + signal`` for the
+    ``SystemExit`` a forwarded signal raises, ``130`` (SIGINT) for Ctrl-C."""
+    if isinstance(exc, SystemExit) and isinstance(exc.code, int):
+        try:
+            return exc.code, signal.Signals(exc.code - 128).name
+        except ValueError:
+            return exc.code, f"exit {exc.code}"
+    return 130, "SIGINT"
+
+
+def interrupted_job_result(
+    exc: BaseException,
+    *,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+    runner_metadata: dict[str, Any] | None = None,
+) -> RunnerJobResult:
+    """The ``interrupted`` result for a workload the runner has already stopped."""
+    exit_code, cause = interrupt_exit(exc)
+    return RunnerJobResult(
+        exit_code=exit_code,
+        runner_status="interrupted",
+        stdout=stdout,
+        stderr=stderr,
+        runner_error=f"nova capture was interrupted ({cause}); the workload was stopped",
+        runner_metadata=runner_metadata or {},
+    )
 
 
 class ContainerEvalError(Exception):

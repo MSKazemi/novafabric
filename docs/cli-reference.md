@@ -349,6 +349,18 @@ Options:
 - `--timeout FLOAT` — wall-clock deadline in seconds for the captured command. Unset, `local`, `docker` and `kubernetes` use 600 s. For `slurm`, `lsf` and `pbs` the value becomes the job's time limit (`--time` in whole minutes, `-W`, `-l walltime=`; an explicit `time`/`walltime` runner option wins); unset, Slurm uses the partition default, LSF `1:00` and PBS `01:00:00`, and NovaFabric stops polling the job after 3600 s. Increase for long-running agents: `nova capture --timeout 3600 python agent.py`
 - **When `--timeout` passes**, the runner stops the job before the capsule is sealed, so it cannot keep writing into it: `local` kills the process group, `docker` removes the container (`docker rm -f`), and `slurm`/`lsf`/`pbs` cancel the job (`scancel`/`bkill`/`qdel`). `runner_metadata` records `cancelled` (and `cancel_error` when the cancel failed). Before, batch jobs and containers ran on after the timeout.
 - **Interrupting a capture** (`local` runner): Ctrl-C, or SIGTERM/SIGHUP sent to `nova capture` (a scheduler, `kill`, a closing terminal), is forwarded to the workload's process group; the workload gets 10 s to exit, then SIGKILL, and `nova capture` exits `130` (Ctrl-C) or `128+signal`. Once the workload has stopped, the capsule is finalised as usual — secret scan, redaction proof, `capsule.yaml`, seal if configured — with `status: aborted`, the workload's `exit_code` (130 or 128+signal) and `error.type: WorkloadInterrupted`. A second Ctrl-C during that finalisation abandons it. Releases up to v0.107.0 left the workload running unsupervised and the capsule unfinalised, with the streams it had written unscanned.
+- **Interrupting a remote capture** (`slurm`, `lsf`, `pbs`, `docker`, `kubernetes`): the same
+  Ctrl-C or forwarded signal cancels the job — `scancel`/`bkill`/`qdel`, `docker rm -f`, or
+  `kubectl delete job`. A batch scheduler is then polled (at most every 1 s, up to 6 times) until
+  it reports the job stopped; `docker rm -f` returns once the container is gone; a Kubernetes pod
+  writes only inside the pod (nothing is copied back), so an accepted delete suffices. Only then
+  is the capsule finalised as `status: aborted`, as above, with `runner_metadata.cancelled: true`;
+  `nova capture` exits `130` or `128+signal`. A job whose cancel failed, or that still reports
+  running, is **left unfinalised** and a warning names it, because it may still write into the
+  capsule. A second Ctrl-C during the cancel stops at once.
+  An interrupt during submission itself (before the scheduler returned a job id) cannot cancel
+  anything. Releases up to v0.107.0 abandoned the job on any interrupt — it ran on, on the
+  allocation, with no capsule finalised.
 - `--runner {local,docker,kubernetes,slurm,lsf,pbs}` — execution backend (default: `local`). Tab-completion available via `nova --install-completion`.
   - Every runner except `local` forwards **only** `NOVAFABRIC_*` environment
     variables into the workload, plus `PATH` for `slurm` and whatever you name in

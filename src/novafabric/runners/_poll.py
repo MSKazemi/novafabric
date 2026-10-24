@@ -15,12 +15,18 @@ import logging
 import random
 import time
 from collections.abc import Callable, Collection
+from pathlib import Path
 from typing import Any
+
+from novafabric.runners._types import attach_interrupted_result, interrupted_job_result
 
 logger = logging.getLogger(__name__)
 
 #: Polls after a cancel, to see the job leave the queue before the capsule is sealed.
 CANCEL_SETTLE_POLLS = 6
+
+#: Upper bound on the settle-poll interval after an interrupt: the user asked to stop.
+INTERRUPT_SETTLE_INTERVAL_S = 1.0
 
 # Fractional jitter applied to each poll interval (±15%).
 _JITTER = 0.15
@@ -58,7 +64,7 @@ def cancel_after_deadline(
     try:
         cancel(job_id)
     except Exception as exc:  # noqa: BLE001 — the timeout result must still be returned
-        logger.warning("could not cancel job %s after its deadline: %s", job_id, exc)
+        logger.warning("could not cancel job %s: %s", job_id, exc)
         return {"cancelled": False, "cancel_error": f"{type(exc).__name__}: {exc}"[:300]}
     state: str | None = None
     for _ in range(CANCEL_SETTLE_POLLS):
@@ -70,3 +76,61 @@ def cancel_after_deadline(
             break
         jittered_sleep(poll_interval)
     return {"cancelled": True, "final_state_after_cancel": state}
+
+
+def cancel_on_interrupt(
+    exc: BaseException,
+    job_id: str,
+    *,
+    cancel: Callable[[str], None],
+    query: Callable[[str], str | None],
+    terminal: Collection[str],
+    poll_interval: float,
+    runner_metadata: dict[str, Any],
+    read_output: Callable[[], tuple[bytes, bytes]] | None = None,
+) -> None:
+    """Cancel the job an interruption (Ctrl-C, a forwarded SIGTERM) left behind.
+
+    The runner's poll loop was the only thing watching the job; abandoning it left
+    the job queued or running on the cluster, writing into a capsule nobody would
+    finalise (review capture-runners-03). The job is cancelled fail-open like a
+    timed-out one, with settle polls of at most :data:`INTERRUPT_SETTLE_INTERVAL_S`.
+    Only when the scheduler then reports a terminal state is the collected result
+    attached to *exc* (:func:`attach_interrupted_result`), so the orchestrator
+    finalises the capsule as ``aborted``; a job that may still run gets nothing.
+    The caller re-raises *exc* unchanged. A repeated interrupt during the cancel
+    stops at once, attaching nothing.
+    """
+    try:
+        outcome = cancel_after_deadline(
+            job_id,
+            cancel=cancel,
+            query=query,
+            terminal=terminal,
+            poll_interval=min(poll_interval, INTERRUPT_SETTLE_INTERVAL_S),
+        )
+        if not outcome["cancelled"] or outcome.get("final_state_after_cancel") not in terminal:
+            logger.warning(
+                "interrupted capture: job %s may still be running (%s); "
+                "the capsule is left unfinalised", job_id, outcome,
+            )
+            return
+    except (KeyboardInterrupt, SystemExit):
+        return
+    stdout = stderr = b""
+    if read_output is not None:
+        try:
+            stdout, stderr = read_output()
+        except (Exception, KeyboardInterrupt):  # noqa: BLE001 — the job is stopped; logs are best-effort
+            pass
+    attach_interrupted_result(exc, interrupted_job_result(
+        exc, stdout=stdout, stderr=stderr, runner_metadata={**runner_metadata, **outcome},
+    ))
+
+
+def read_log_pair(stdout_path: Path, stderr_path: Path) -> tuple[bytes, bytes]:
+    """The bytes of a job's stdout and stderr log files; empty for one that is absent."""
+    return (
+        stdout_path.read_bytes() if stdout_path.exists() else b"",
+        stderr_path.read_bytes() if stderr_path.exists() else b"",
+    )

@@ -43,7 +43,13 @@ from novafabric.runners._image import (
 )
 from novafabric.runners._options import coerce_str_dict, coerce_str_list
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
-from novafabric.runners._types import ContainerEvalError, RunnerJobResult, RunnerJobSpec
+from novafabric.runners._types import (
+    ContainerEvalError,
+    RunnerJobResult,
+    RunnerJobSpec,
+    attach_interrupted_result,
+    interrupted_job_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +336,19 @@ class DockerRunner:
             proc = subprocess.run(
                 argv, capture_output=True, timeout=timeout, env=client_env,
             )
+        except (KeyboardInterrupt, SystemExit) as exc:
+            # Ctrl-C / a forwarded SIGTERM killed the client, not the container
+            # (review capture-runners-03): remove it, then let the orchestrator
+            # finalise the capsule — only once the container is gone.
+            try:
+                removed = self._remove_container(container, client_env)
+            except (KeyboardInterrupt, SystemExit):
+                raise exc from None
+            if removed["cancelled"]:
+                attach_interrupted_result(exc, interrupted_job_result(
+                    exc, runner_metadata={**self._metadata(image, before, ran=True), **removed},
+                ))
+            raise
         except subprocess.TimeoutExpired as exc:
             # The client is gone, the container is not: remove it (kill + rm) before
             # the capsule is sealed, so it cannot keep writing into the mount.

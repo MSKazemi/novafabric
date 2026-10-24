@@ -33,7 +33,12 @@ from typing import Any
 
 from novafabric.runners._env import forwardable_env, scheduler_submit_env, shell_safe_env
 from novafabric.runners._options import coerce_str_dict
-from novafabric.runners._poll import cancel_after_deadline, jittered_sleep
+from novafabric.runners._poll import (
+    cancel_after_deadline,
+    cancel_on_interrupt,
+    jittered_sleep,
+    read_log_pair,
+)
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
 
@@ -502,15 +507,31 @@ class SlurmRunner:
         deadline = time.monotonic() + timeout
         last_state = "PENDING"
         exit_code_str = ""
-        while time.monotonic() < deadline:
-            state, exit_code_str_candidate = self._query_state(jobid)
-            if state is not None:
-                last_state = state
-                if exit_code_str_candidate:
-                    exit_code_str = exit_code_str_candidate
-            if last_state in _SACCT_TERMINAL_STATES:
-                break
-            jittered_sleep(poll_interval)
+        try:
+            while time.monotonic() < deadline:
+                state, exit_code_str_candidate = self._query_state(jobid)
+                if state is not None:
+                    last_state = state
+                    if exit_code_str_candidate:
+                        exit_code_str = exit_code_str_candidate
+                if last_state in _SACCT_TERMINAL_STATES:
+                    break
+                jittered_sleep(poll_interval)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            cancel_on_interrupt(
+                exc, jobid,
+                cancel=lambda j: self.cancel(j, cluster=parsable_cluster or None),
+                query=lambda j: self._query_state(j)[0],
+                terminal=_SACCT_TERMINAL_STATES,
+                poll_interval=poll_interval,
+                runner_metadata={
+                    "job_id": jobid, "partition": partition, "final_state": last_state,
+                },
+                read_output=lambda: read_log_pair(
+                    output_dir / f"slurm-{jobid}.out", output_dir / f"slurm-{jobid}.err"
+                ),
+            )
+            raise
 
         # Deadline passed with the job still queued/running: cancel it, so it cannot
         # keep writing into a capsule the orchestrator is about to seal.

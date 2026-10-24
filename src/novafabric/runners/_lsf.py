@@ -47,7 +47,11 @@ from typing import Any
 
 from novafabric.runners._env import scheduler_submit_env, shell_safe_env
 from novafabric.runners._options import coerce_str_dict
-from novafabric.runners._poll import cancel_after_deadline, jittered_sleep
+from novafabric.runners._poll import (
+    cancel_after_deadline,
+    cancel_on_interrupt,
+    jittered_sleep,
+)
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
@@ -287,13 +291,25 @@ class LSFRunner:
         deadline = time.monotonic() + timeout
         last_state = "PEND"
 
-        while time.monotonic() < deadline:
-            state = self._query_state(job_id)
-            if state is not None:
-                last_state = state
-            if last_state in _LSF_TERMINAL_STATES:
-                break
-            jittered_sleep(poll_interval)
+        try:
+            while time.monotonic() < deadline:
+                state = self._query_state(job_id)
+                if state is not None:
+                    last_state = state
+                if last_state in _LSF_TERMINAL_STATES:
+                    break
+                jittered_sleep(poll_interval)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            cancel_on_interrupt(
+                exc, job_id,
+                cancel=self.cancel,
+                query=self._query_state,
+                terminal=_LSF_TERMINAL_STATES,
+                poll_interval=poll_interval,
+                runner_metadata={"job_id": job_id, "queue": queue, "final_state": last_state},
+                read_output=lambda: self._read_log_files(output_dir, job_id),
+            )
+            raise
 
         # Deadline passed with the job pending/running: cancel it (capture-runners-04).
         cancel_outcome: dict[str, Any] = {}

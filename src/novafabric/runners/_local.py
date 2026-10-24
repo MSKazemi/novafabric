@@ -22,7 +22,12 @@ from pathlib import Path
 from types import FrameType
 
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
-from novafabric.runners._types import RunnerJobResult, RunnerJobSpec, attach_interrupted_result
+from novafabric.runners._types import (
+    RunnerJobResult,
+    RunnerJobSpec,
+    attach_interrupted_result,
+    interrupted_job_result,
+)
 
 #: Wall-clock deadline when the caller passes none (``nova capture`` without
 #: ``--timeout``; the GitHub Action's empty ``timeout`` input).
@@ -66,21 +71,7 @@ def _interrupted(proc: subprocess.Popen[bytes], exc: BaseException) -> RunnerJob
     except (Exception, KeyboardInterrupt):
         # A repeated Ctrl-C here is the same request as the first: stop.
         stdout, stderr = b"", b""
-    if isinstance(exc, SystemExit) and isinstance(exc.code, int):
-        exit_code = exc.code
-        try:
-            cause = signal.Signals(exit_code - 128).name
-        except ValueError:
-            cause = f"exit {exit_code}"
-    else:
-        exit_code, cause = 130, "SIGINT"
-    return RunnerJobResult(
-        exit_code=exit_code,
-        runner_status="interrupted",
-        stdout=stdout or b"",
-        stderr=stderr or b"",
-        runner_error=f"nova capture was interrupted ({cause}); the workload was stopped",
-    )
+    return interrupted_job_result(exc, stdout=stdout or b"", stderr=stderr or b"")
 
 
 @contextmanager

@@ -37,7 +37,12 @@ from novafabric.runners._image import (
 )
 from novafabric.runners._options import coerce_str_dict
 from novafabric.runners._poll import jittered_sleep
-from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
+from novafabric.runners._types import (
+    RunnerJobResult,
+    RunnerJobSpec,
+    attach_interrupted_result,
+    interrupted_job_result,
+)
 
 _DEFAULT_IN_POD_CAPSULE = "/novafabric/capsule"
 
@@ -179,6 +184,21 @@ class KubernetesRunner:
             return False, "kubectl found but cluster not reachable (check kubeconfig)"
         return True, ""
 
+    def _delete_job(self, job_name: str, namespace: str) -> dict[str, Any]:
+        """``kubectl delete job`` (background propagation removes its pod); the outcome."""
+        try:
+            done = subprocess.run(
+                [self._kubectl, "delete", "job", job_name,
+                 "-n", namespace, "--wait=false"],
+                capture_output=True, timeout=10,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return {"cancelled": False, "cancel_error": f"{type(exc).__name__}: {exc}"[:300]}
+        if done.returncode != 0:
+            tail = (done.stderr or b"").decode(errors="replace").strip()[-300:]
+            return {"cancelled": False, "cancel_error": tail or f"exit {done.returncode}"}
+        return {"cancelled": True}
+
     def run(self, spec: RunnerJobSpec) -> RunnerJobResult:
         opts = spec.runner_options or {}
         image = opts.get("image") if isinstance(opts.get("image"), str) else None
@@ -279,29 +299,43 @@ class KubernetesRunner:
         pod_name: str | None = None
         succeeded = False
         failed = False
-        while time.monotonic() < deadline:
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    status = subprocess.run(
+                        [self._kubectl, "get", "job", job_name,
+                         "-n", namespace, "-o", "json"],
+                        capture_output=True, timeout=10,
+                    )
+                except (subprocess.TimeoutExpired, OSError):
+                    break
+                if status.returncode != 0:
+                    break
+                try:
+                    doc = json.loads(status.stdout.decode())
+                except json.JSONDecodeError:
+                    break
+                jstatus = doc.get("status", {})
+                if jstatus.get("succeeded", 0) >= 1:
+                    succeeded = True
+                    break
+                if jstatus.get("failed", 0) >= 1:
+                    failed = True
+                    break
+                jittered_sleep(poll_interval)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            # Review capture-runners-03: the Job would otherwise run on. Its pod
+            # writes only inside the pod (nothing was copied back), so once the
+            # delete is accepted the local capsule can be finalised.
             try:
-                status = subprocess.run(
-                    [self._kubectl, "get", "job", job_name,
-                     "-n", namespace, "-o", "json"],
-                    capture_output=True, timeout=10,
-                )
-            except (subprocess.TimeoutExpired, OSError):
-                break
-            if status.returncode != 0:
-                break
-            try:
-                doc = json.loads(status.stdout.decode())
-            except json.JSONDecodeError:
-                break
-            jstatus = doc.get("status", {})
-            if jstatus.get("succeeded", 0) >= 1:
-                succeeded = True
-                break
-            if jstatus.get("failed", 0) >= 1:
-                failed = True
-                break
-            jittered_sleep(poll_interval)
+                deleted = self._delete_job(job_name, namespace)
+            except (KeyboardInterrupt, SystemExit):
+                raise exc from None
+            if deleted["cancelled"]:
+                attach_interrupted_result(exc, interrupted_job_result(exc, runner_metadata={
+                    "image": image, "namespace": namespace, "job_name": job_name, **deleted,
+                }))
+            raise
 
         # 3. Find the pod (for log retrieval and kubectl cp). The same `get pods`
         # also returns the workload container's status.imageID, the digest the
@@ -351,14 +385,7 @@ class KubernetesRunner:
                 stderr_bytes += f"[novafabric] kubectl cp failed: {exc}".encode()
 
         # 6. Best-effort cleanup of the Job (and its Pod).
-        try:
-            subprocess.run(
-                [self._kubectl, "delete", "job", job_name,
-                 "-n", namespace, "--wait=false"],
-                capture_output=True, timeout=10,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            pass
+        self._delete_job(job_name, namespace)
 
         runner_metadata: dict[str, Any] = {
             "image": image, "namespace": namespace, "job_name": job_name,
