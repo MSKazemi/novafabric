@@ -27,13 +27,14 @@ credentials — auth is only for server-mode operations.
 from __future__ import annotations
 
 import json
-import stat
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
+
+from novafabric._safe_path import write_private_file
 
 _CRED_DIR = Path.home() / ".config" / "novafabric"
 _CRED_FILE = _CRED_DIR / "credentials.json"
@@ -64,10 +65,9 @@ def _load_credentials() -> dict[str, object]:
 
 
 def _save_credentials(creds: dict[str, object]) -> None:
-    _CRED_DIR.mkdir(parents=True, exist_ok=True)
-    _CRED_FILE.write_text(json.dumps(creds, indent=2))
-    # Restrict to owner read/write only
-    _CRED_FILE.chmod(0o600)
+    # Owner-only from the first byte, durable, never written through a link
+    # (write_text then chmod left the tokens at the umask mode meanwhile).
+    write_private_file(_CRED_FILE, json.dumps(creds, indent=2).encode("utf-8"))
 
 
 def get_token(server_url: str) -> str | None:
@@ -254,11 +254,6 @@ def login_cmd(
     creds = _load_credentials()
     creds[server_url] = _build_entry(server_url, poll_data)
     _save_credentials(creds)
-
-    # Verify mode bits
-    mode = stat.S_IMODE(_CRED_FILE.stat().st_mode)
-    if mode != 0o600:
-        _CRED_FILE.chmod(0o600)
 
     typer.echo(f"Logged in to {server_url} as {poll_data.get('subject', 'unknown')}.")
     typer.echo(f"Credentials stored in {_CRED_FILE}")

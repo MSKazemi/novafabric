@@ -40,7 +40,6 @@ import json
 import logging
 import os
 import sqlite3
-import stat
 import threading
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -52,6 +51,7 @@ from pydantic import BaseModel, Field
 from novafabric import _paths as _nf_paths
 from novafabric.audit import resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
+from novafabric.pii._private_sqlite import prepare_private_database
 from novafabric.pii.dek import ErasureDeferredReceipt, ErasureHeldReceipt, open_dek_store
 
 logger = logging.getLogger(__name__)
@@ -263,15 +263,12 @@ class ErasureQueue:
         self._db_path = db_path
         self._lock = threading.Lock()
         db_path.parent.mkdir(parents=True, exist_ok=True)
+        prepare_private_database(db_path)  # 0600 before SQLite writes a byte
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.executescript(_DDL)
         self._conn.commit()
-        try:
-            os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
-        except OSError:  # pragma: no cover - platform-dependent
-            pass
 
     # -- writes ---------------------------------------------------------
 

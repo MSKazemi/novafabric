@@ -12,6 +12,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from novafabric._safe_path import write_private_file
+
 # user-global: a per-user XDG config keyring (~/.config), deliberately NOT under
 # NOVAFABRIC_HOME, so it survives a throwaway or per-project home.
 _KEYRING_DIR = Path.home() / ".config" / "novafabric" / "keyring"
@@ -65,10 +67,7 @@ def ensure_keypair(
     ident = identity or _default_identity()
     path = _key_path(ident)
     if path.exists():
-        pem = path.read_bytes()
-        private_key = serialization.load_pem_private_key(pem, password=None)
-        if not isinstance(private_key, Ed25519PrivateKey):
-            raise ValueError(f"Key at {path} is not Ed25519")
+        private_key = _load_key(path)
     elif not create:
         raise KeyNotFoundError(
             f"No keyring key for identity {ident!r} (expected {path}). "
@@ -83,10 +82,21 @@ def ensure_keypair(
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        path.write_bytes(pem)
-        path.chmod(0o600)
+        try:
+            # 0600 from the first byte; exclusive, so two first callers never
+            # overwrite each other's key (the loser reads the winner's).
+            write_private_file(path, pem, exclusive=True)
+        except FileExistsError:
+            private_key = _load_key(path)
     fp = _fingerprint(private_key.public_key())
     return private_key, fp
+
+
+def _load_key(path: Path) -> Ed25519PrivateKey:
+    private_key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise ValueError(f"Key at {path} is not Ed25519")
+    return private_key
 
 
 def sign_payload(private_key: Ed25519PrivateKey, payload: bytes) -> str:

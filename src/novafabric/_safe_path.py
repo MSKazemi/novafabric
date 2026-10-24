@@ -29,7 +29,10 @@ file beside it, ``fsync`` it and rename it into place:
 * :func:`write_private_file` does the same with mode ``0o600``, for signing
   keys and other secrets. With ``exclusive=True`` it refuses an existing target
   (:class:`FileExistsError`) instead of replacing it, so two concurrent creators
-  cannot overwrite each other's key.
+  cannot overwrite each other's key;
+* :func:`ensure_private_file` creates (or narrows) a ``0o600`` file that another
+  library then opens itself — a SQLite database of key material, an append-only
+  log — so it is never created at the umask mode.
 
 The mode is set on the open file descriptor before any byte is written, so a
 secret is never readable by others, not even for an instant.
@@ -61,6 +64,7 @@ __all__ = [
     "PathEscapeError",
     "UnsafePathSegmentError",
     "atomic_write_bytes",
+    "ensure_private_file",
     "fsync_dir",
     "fsync_file",
     "fsync_tree",
@@ -270,4 +274,38 @@ def write_private_file(path: Path, data: bytes, *, exclusive: bool = False) -> P
     finally:
         tmp.unlink(missing_ok=True)
     fsync_dir(path.parent)
+    return path
+
+
+def ensure_private_file(path: Path) -> Path:
+    """Make *path* a regular file with mode ``0o600``, creating it empty if absent; return it.
+
+    For a secret that something else writes (SQLite opens ``dek.db`` itself; an
+    audit log is appended to): call this first, so the file exists at ``0o600``
+    before its first byte, instead of being created at the umask mode and
+    narrowed afterwards. An existing file keeps its bytes and is narrowed to
+    ``0o600``. SQLite creates ``-wal``/``-shm`` sidecars with the database's
+    mode, so they follow.
+
+    Raises:
+        PathEscapeError: *path* is a symbolic link or not a regular file; a
+            secret is never written through one.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDONLY | os.O_CREAT | _NOFOLLOW | _CLOEXEC
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        if os.path.islink(path):
+            raise PathEscapeError(
+                f"{path} is a symbolic link; a secret is never written through one"
+            ) from exc
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise PathEscapeError(f"{path} is not a regular file")
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
     return path

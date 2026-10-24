@@ -31,6 +31,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import BaseModel
 
 from novafabric._paths import nova_home
+from novafabric._safe_path import write_private_file
 
 _CHAIN_INFO = b"novaseal-ratchet-v1"
 _SIGNING_INFO = b"novaseal-ratchet-v1-signing"
@@ -103,24 +104,32 @@ def _public_pem(key: Ed25519PrivateKey) -> str:
     ).decode()
 
 
-def _secure_overwrite_delete(path: Path) -> None:
-    """Best-effort secure erase: overwrite with random bytes, then unlink."""
-    try:
-        size = path.stat().st_size
-        with open(path, "r+b") as fh:
-            fh.write(secrets.token_bytes(max(size, 64)))
-            fh.flush()
-            os.fsync(fh.fileno())
-    except OSError:
-        pass
-    path.unlink(missing_ok=True)
+def _write_state(state_dir: Path, state: RatchetState, *, erase_previous: bool = False) -> None:
+    """Replace the node's state file: 0600, durable, and (on rotation) erase the old key.
 
-
-def _write_state(state_dir: Path, state: RatchetState) -> None:
+    The new state is written and renamed into place first; only then are the
+    previous file's bytes overwritten, through a descriptor opened on the old
+    inode before the rename. A crash at any point leaves a loadable state (the
+    old or the new one), and the previous chain key does not survive in the
+    replaced file (best effort, as before: a filesystem may keep old blocks).
+    """
     state_dir.mkdir(parents=True, exist_ok=True)
     path = _state_path(state_dir, state.node_id)
-    path.write_text(state.model_dump_json(indent=2) + "\n")
-    path.chmod(0o600)
+    old_fd: int | None = None
+    if erase_previous:
+        try:
+            old_fd = os.open(path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
+        except OSError:
+            old_fd = None
+    try:
+        write_private_file(path, (state.model_dump_json(indent=2) + "\n").encode("utf-8"))
+        if old_fd is not None:
+            size = os.fstat(old_fd).st_size
+            os.pwrite(old_fd, secrets.token_bytes(max(size, 64)), 0)
+            os.fsync(old_fd)
+    finally:
+        if old_fd is not None:
+            os.close(old_fd)
 
 
 def _append_registry(state_dir: Path, record: EpochRecord) -> None:
@@ -174,7 +183,6 @@ def rotate(node_id: str, state_dir: Path | None = None) -> RatchetState:
     """Advance to the next epoch; best-effort erase the previous chain key."""
     directory = state_dir if state_dir is not None else ratchet_dir()
     state = load_state(node_id, directory)
-    old_path = _state_path(directory, node_id)
     next_key = _next_chain_key(bytes.fromhex(state.chain_key_hex))
     new_state = RatchetState(
         node_id=node_id,
@@ -182,8 +190,7 @@ def rotate(node_id: str, state_dir: Path | None = None) -> RatchetState:
         chain_key_hex=next_key.hex(),
         rotated_at=_now(),
     )
-    _secure_overwrite_delete(old_path)
-    _write_state(directory, new_state)
+    _write_state(directory, new_state, erase_previous=True)
     _append_registry(
         directory,
         EpochRecord(

@@ -14,11 +14,11 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
-import stat
 from pathlib import Path
 from typing import Final
 
 from novafabric._paths import server_token_path
+from novafabric._safe_path import write_private_file
 
 TOKEN_ENV: Final[str] = "NOVAFABRIC_SERVER_TOKEN"
 
@@ -68,11 +68,9 @@ def write_token_file(token: str) -> Path:
 
     Returns the path.
     """
-    path = server_token_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token + "\n")
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-    return path
+    # 0600 from the first byte (write_text then chmod left it at the umask mode
+    # meanwhile), durable, and never written through a link planted at the name.
+    return write_private_file(server_token_path(), (token + "\n").encode("utf-8"))
 
 
 def ensure_local_token() -> tuple[str, Path]:

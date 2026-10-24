@@ -46,6 +46,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from novafabric import _paths as _nf_paths
+from novafabric.pii._private_sqlite import prepare_private_database
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +241,7 @@ class DEKStore:
         self._db_path = db_path
         self._lock = threading.Lock()
         db_path.parent.mkdir(parents=True, exist_ok=True)
+        prepare_private_database(db_path)  # 0600 before the first key is written
         self._conn = sqlite3.connect(
             str(db_path),
             check_same_thread=False,

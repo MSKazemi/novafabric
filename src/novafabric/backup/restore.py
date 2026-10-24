@@ -395,11 +395,15 @@ def _reject_non_regular_members(set_path: Path, paths: list[str]) -> None:
                 )
 
 
-def _write_member_bytes(fh: IO[bytes], dst: Path) -> None:
-    """Write *fh* to *dst*, never following a symlink at *dst* itself."""
+def _write_member_bytes(fh: IO[bytes], dst: Path, *, mode: int = 0o644) -> None:
+    """Write *fh* to *dst* at *mode*, never following a symlink at *dst* itself.
+
+    The mode is set on the descriptor before the first byte, so a sensitive
+    member (a signing key) is never readable at a wider mode, not even briefly.
+    """
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(dst, flags, 0o644)
+        fd = os.open(dst, flags, mode)
     except OSError as exc:
         if dst.is_symlink():
             raise RestoreError(
@@ -407,7 +411,10 @@ def _write_member_bytes(fh: IO[bytes], dst: Path) -> None:
             ) from exc
         raise
     with os.fdopen(fd, "wb") as out:
+        os.fchmod(out.fileno(), mode)  # O_CREAT's mode is umask-filtered and ignored if it exists
         shutil.copyfileobj(fh, out)
+        out.flush()
+        os.fsync(out.fileno())
 
 
 def _dest_for(
@@ -520,9 +527,7 @@ def _extract_members(
                 _check_capsule_dir_member(member, dst, home, roots)
             dst.parent.mkdir(parents=True, exist_ok=True)
             with fh:
-                _write_member_bytes(fh, dst)
-            if member.sensitive:
-                os.chmod(dst, 0o600)
+                _write_member_bytes(fh, dst, mode=0o600 if member.sensitive else 0o644)
             count += 1
     ratchet_dir = home / "seal" / "ratchet"
     if ratchet_dir.is_dir():

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import os
 import shutil
 import stat
 from pathlib import Path
@@ -18,7 +17,7 @@ from cryptography.hazmat.primitives.serialization import (
 from rich.console import Console
 
 from novafabric._paths import EVIDENCE_KEY_NAME, nova_home
-from novafabric._safe_path import fsync_dir
+from novafabric._safe_path import atomic_write_bytes, fsync_dir, write_private_file
 
 console = Console()
 err_console = Console(stderr=True)
@@ -95,12 +94,10 @@ def init_cmd(
     priv_pem = private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
     pub_pem = private_key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
 
-    # Created 0600 from the first byte — never briefly readable under the umask.
-    fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(priv_pem)
-    key_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    pub_path.write_bytes(pub_pem)
+    # 0600 from the first byte, durable; exclusive (the old pair was archived
+    # above), so a link or file planted at the name is refused, never written through.
+    write_private_file(key_path, priv_pem, exclusive=True)
+    atomic_write_bytes(pub_path, pub_pem)
 
     action = "Reinitialized" if already_existed else "Initialized"
     console.print(f"[green]{action}:[/green] {root}")

@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import stat
 import threading
 import uuid
 from collections.abc import Iterator
@@ -20,6 +19,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from novafabric._paths import dashboard_audit_path
+from novafabric._safe_path import ensure_private_file
 
 AUDIT_ENV: Final[str] = "NOVAFABRIC_DASHBOARD_AUDIT_FILE"
 
@@ -192,14 +192,9 @@ def append(
 
     p = _path()
     with _lock:
-        p.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_file(p)  # owner-only before the first record is appended
         with p.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, separators=(",", ":")) + "\n")
-        # Ensure read/write only by owner
-        try:
-            os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
-        except OSError:
-            pass
     return record
 
 

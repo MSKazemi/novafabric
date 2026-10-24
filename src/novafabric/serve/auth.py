@@ -11,11 +11,11 @@ import hashlib
 import hmac
 import os
 import secrets
-import stat
 from pathlib import Path
 from typing import Final
 
 from novafabric._paths import serve_token_path
+from novafabric._safe_path import write_private_file
 
 TOKEN_ENV: Final[str] = "NOVAFABRIC_SERVE_TOKEN"
 
@@ -104,15 +104,9 @@ def write_token_file(token: str) -> Path:
     something removes it. :func:`clear_token_file` is that something, and it has
     no caller — nothing in the shipped product deletes this file.
     """
-    path = serve_token_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Create with 0600 atomically — a write-then-chmod sequence leaves a window
-    # where the token is readable at the umask default.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
-    with os.fdopen(fd, "w") as f:
-        f.write(token + "\n")
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-    return path
+    # 0600 from the first byte, durable, and never written through a link planted
+    # at the name (the old O_TRUNC open followed one).
+    return write_private_file(serve_token_path(), (token + "\n").encode("utf-8"))
 
 
 def clear_token_file() -> None:
