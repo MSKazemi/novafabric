@@ -1767,3 +1767,65 @@ def test_layered_requests_urllib3_single_network_event(tmp_path: Path) -> None:
         f"{[e['library'] for e in events]}"
     )
     assert events[0]["library"] == "requests"
+
+
+def test_urllib3_hook_keeps_urllib3_retries_and_redirects_working(tmp_path: Path) -> None:
+    """Review capture-runners-01: urllib3 calls itself back *positionally* on a retry or
+    redirect; the patched urlopen took no positionals, so under capture the second
+    attempt raised TypeError where the uncaptured request succeeded."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    import urllib3
+    from urllib3.util.retry import Retry
+
+    from novafabric.capture.hooks._urllib3 import Urllib3Hook
+
+    hits: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 — http.server API
+            hits.append(self.path)
+            if self.path == "/redirect":
+                self.send_response(302)
+                self.send_header("Location", "/flaky")
+                self.end_headers()
+                return
+            status = 503 if hits.count("/flaky") == 1 else 200
+            self.send_response(status)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *_a: object) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    hook = Urllib3Hook(writer=make_writer(tmp_path), parent_span_id="0" * 16)
+    hook.install()
+    try:
+        http = urllib3.PoolManager(retries=Retry(total=3, status_forcelist=[503], backoff_factor=0))
+        resp = http.request("GET", f"http://127.0.0.1:{server.server_port}/redirect")
+        assert resp.status == 200
+        assert hits == ["/redirect", "/flaky", "/flaky"]  # a redirect, then a retry
+    finally:
+        hook.uninstall()
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_urllib3_hook_records_a_positional_body(tmp_path: Path) -> None:
+    from novafabric.capture.hooks._urllib3 import Urllib3Hook
+
+    hook = Urllib3Hook(writer=make_writer(tmp_path), parent_span_id="0" * 16)
+    original = MagicMock(return_value=MagicMock(status=200))
+    body = b'{"model":"gpt-4o","messages":[]}'
+    hook._wrapped_urlopen(
+        _fake_pool(host="api.openai.com"), "POST", "/v1/chat/completions", body, {},
+        original=original,
+    )
+    original.assert_called_once_with("POST", "/v1/chat/completions", body, {})
+    (record,) = _model_calls(tmp_path)
+    assert record["gen_ai.request.model"] == "gpt-4o"

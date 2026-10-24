@@ -89,6 +89,18 @@ def _extract_body_from_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+#: urllib3 ``HTTPConnectionPool.urlopen`` positionals after ``method, url``, in order.
+_URLOPEN_POSITIONALS = ("body", "headers")
+
+
+def _named_arguments(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """*kwargs* plus ``body``/``headers`` given positionally, for the record only."""
+    named = dict(kwargs)
+    for name, value in zip(_URLOPEN_POSITIONALS, args):
+        named.setdefault(name, value)
+    return named
+
+
 class Urllib3Hook:
     def __init__(
         self,
@@ -110,13 +122,17 @@ class Urllib3Hook:
 
             @functools.wraps(self._original_urlopen)
             def patched_urlopen(
-                pool_self: Any, method: str, url: str, **kwargs: Any
+                pool_self: Any, method: str, url: str, *args: Any, **kwargs: Any
             ) -> Any:
+                # *args: urllib3 calls itself back POSITIONALLY on a retry or a
+                # redirect (urlopen(method, url, body, headers, retries, …)); a
+                # signature without them made every retry raise TypeError under
+                # capture (review capture-runners-01).
                 original_bound = hook_self._original_urlopen.__get__(
                     pool_self, type(pool_self)
                 )
                 return hook_self._wrapped_urlopen(
-                    pool_self, method, url, original=original_bound, **kwargs
+                    pool_self, method, url, *args, original=original_bound, **kwargs
                 )
 
             connectionpool.HTTPConnectionPool.urlopen = patched_urlopen  # type: ignore[method-assign, assignment]
@@ -149,20 +165,23 @@ class Urllib3Hook:
         pool_self: Any,
         method: str,
         url_path: str,
+        *args: Any,
         original: Any = None,
         **kwargs: Any,
     ) -> Any:
+        """Pass the call through unchanged — same positionals, same keywords — and
+        record it when its URL is a known model endpoint."""
         # If a higher-layer hook (e.g. requests) is already recording
         # this call, do not double-record.
         if is_inside_higher_layer():
             if original is not None:
-                return original(method, url_path, **kwargs)
+                return original(method, url_path, *args, **kwargs)
             raise RuntimeError("original urlopen function required")
 
         full_url = self._target_url(pool_self, url_path)
         if full_url is None:
             if original is not None:
-                return original(method, url_path, **kwargs)
+                return original(method, url_path, *args, **kwargs)
             raise RuntimeError("original urlopen function required")
 
         started = _now()
@@ -171,12 +190,12 @@ class Urllib3Hook:
         error_status: int | None = None
         try:
             if original is not None:
-                response = original(method, url_path, **kwargs)
+                response = original(method, url_path, *args, **kwargs)
         except Exception:
             error_status = 599
             raise
         finally:
-            self._record(method, full_url, kwargs, response, started,
+            self._record(method, full_url, _named_arguments(args, kwargs), response, started,
                          int((time.monotonic() - t0) * 1000), error_status)
         return response
 
