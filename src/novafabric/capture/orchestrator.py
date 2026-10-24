@@ -56,6 +56,7 @@ from novafabric.capture.tamper import (
 from novafabric.capture.variant import resolve_variant_attribution
 from novafabric.cost.usage_types import usage_totals_from_model_calls
 from novafabric.runners import LocalRunner, RunnerJobSpec, RunnerSpec
+from novafabric.runners._types import interrupted_result
 
 logger = logging.getLogger(__name__)
 
@@ -467,21 +468,38 @@ class CaptureOrchestrator:
             capture_environment, created_at=created_at, run_id=run_id,
         )
 
-        runner_result = self._runner.run(RunnerJobSpec(
-            run_id=run_id,
-            command=command,
-            capsule_dir=capsule_dir,
-            env=runner_env,
-            runner_options=runner_options,
-            timeout_s=timeout_s,
-        ))
+        # Review capture-runners-03: an interruption (Ctrl-C, a forwarded SIGTERM)
+        # used to end the capture here, leaving the streams the workload wrote
+        # unscanned and the capsule without capsule.yaml. A runner that has
+        # stopped its workload attaches what it collected to the interruption;
+        # the capsule is then finalised as ``aborted`` on the normal path below,
+        # and the same interruption is re-raised at the end.
+        interruption: BaseException | None = None
+        try:
+            runner_result = self._runner.run(RunnerJobSpec(
+                run_id=run_id,
+                command=command,
+                capsule_dir=capsule_dir,
+                env=runner_env,
+                runner_options=runner_options,
+                timeout_s=timeout_s,
+            ))
+        except (KeyboardInterrupt, SystemExit) as exc:
+            stopped = interrupted_result(exc)
+            if stopped is None:  # the workload may still be running: do not finalise
+                env_executor.shutdown(wait=False)
+                raise
+            runner_result, interruption = stopped, exc
         exit_code = runner_result.exit_code
         stdout_bytes = runner_result.stdout
         stderr_bytes = runner_result.stderr
 
         finished_at = _now()
         duration_ms = int((time.monotonic() - t0) * 1000)
-        status = "success" if exit_code == 0 else "failure"
+        if interruption is not None:
+            status = "aborted"  # the schema's status for a run killed by a signal
+        else:
+            status = "success" if exit_code == 0 else "failure"
 
         # The workload has run, so the capsule directory is untrusted input from
         # here on (a container runner bind-mounts it). Before any host-side read
@@ -499,6 +517,8 @@ class CaptureOrchestrator:
             clear_current_recorder(_event_recorder)
             if _spool_sink is not None:
                 _spool_sink.close()
+            if interruption is not None:
+                raise interruption
             return CaptureResult(
                 run_id=run_id,
                 capsule_dir=capsule_dir,
@@ -664,6 +684,12 @@ class CaptureOrchestrator:
                 "type": "WorkloadNotStarted",
                 "message": runner_result.runner_error
                 or "the runner could not start the workload",
+                "traceback_ref": None,
+            }
+        elif status == "aborted":
+            manifest["error"] = {
+                "type": "WorkloadInterrupted",
+                "message": runner_result.runner_error or "nova capture was interrupted",
                 "traceback_ref": None,
             }
         elif status == "failure":
@@ -832,6 +858,8 @@ class CaptureOrchestrator:
         except Exception:  # noqa: BLE001 — emission must never block the run
             pass
 
+        if interruption is not None:
+            raise interruption  # finalised; now end the capture as interrupted
         return CaptureResult(
             run_id=run_id,
             capsule_dir=capsule_dir,

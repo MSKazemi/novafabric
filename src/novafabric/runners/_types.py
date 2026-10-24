@@ -47,7 +47,9 @@ class RunnerJobResult:
         exit_code: workload's exit code (0 = success). When the runner
             failed to start the workload, ``exit_code`` is ``127`` and
             ``runner_status`` is ``"failed_setup"``.
-        runner_status: ``"completed"`` | ``"failed_setup"`` | ``"timeout"`` | ``"killed"``.
+        runner_status: ``"completed"`` | ``"failed_setup"`` | ``"timeout"`` | ``"killed"``
+            | ``"interrupted"`` (carried on an interruption, see
+            :func:`attach_interrupted_result`).
         stdout: captured stdout bytes.
         stderr: captured stderr bytes.
         runner_error: human-readable detail when ``runner_status``
@@ -63,6 +65,30 @@ class RunnerJobResult:
     stderr: bytes = b""
     runner_error: str | None = None
     runner_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+_INTERRUPTED_RESULT_ATTR = "_novafabric_runner_result"
+
+
+def attach_interrupted_result(exc: BaseException, result: RunnerJobResult) -> None:
+    """Attach *result* to the interruption a runner is about to re-raise.
+
+    A runner that was interrupted (Ctrl-C, or a forwarded SIGTERM raising
+    ``SystemExit``) and has **already stopped its workload** attaches what it
+    collected, then re-raises the *same* exception. Every caller still sees exactly
+    the interruption it would have seen — exit code 130 / 128+signal, the same
+    ``KeyboardInterrupt`` for a Python API caller — while the orchestrator can
+    finalise the capsule first (review capture-runners-03). A runner that could not
+    stop its workload attaches nothing: finalising a capsule a live workload may
+    still write into would seal a snapshot that is already stale.
+    """
+    setattr(exc, _INTERRUPTED_RESULT_ATTR, result)
+
+
+def interrupted_result(exc: BaseException) -> RunnerJobResult | None:
+    """The result :func:`attach_interrupted_result` put on *exc*, if any."""
+    result = getattr(exc, _INTERRUPTED_RESULT_ATTR, None)
+    return result if isinstance(result, RunnerJobResult) else None
 
 
 class ContainerEvalError(Exception):

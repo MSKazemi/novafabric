@@ -22,7 +22,7 @@ from pathlib import Path
 from types import FrameType
 
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
-from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
+from novafabric.runners._types import RunnerJobResult, RunnerJobSpec, attach_interrupted_result
 
 #: Wall-clock deadline when the caller passes none (``nova capture`` without
 #: ``--timeout``; the GitHub Action's empty ``timeout`` input).
@@ -30,6 +30,7 @@ DEFAULT_TIMEOUT_S = 600.0
 
 #: Seconds an interrupted workload gets to exit after the forwarded signal, before SIGKILL.
 INTERRUPT_GRACE_S = 10.0
+_DRAIN_TIMEOUT_S = 5.0
 
 #: Signals that end ``nova capture`` and are forwarded to the workload's process group.
 _FORWARDED_SIGNALS = tuple(
@@ -54,6 +55,32 @@ def _stop_group(proc: subprocess.Popen[bytes], pgid: int, first: int) -> None:
         proc.wait()
     # Descendants that outlived the group leader still share its group.
     _signal_group(pgid, signal.SIGKILL)
+
+
+def _interrupted(proc: subprocess.Popen[bytes], exc: BaseException) -> RunnerJobResult:
+    """What an interrupted, already stopped workload left behind."""
+    try:
+        # The group is dead, so the pipes are at EOF; the bound covers a
+        # descendant that escaped the group and still holds one open.
+        stdout, stderr = proc.communicate(timeout=_DRAIN_TIMEOUT_S)
+    except (Exception, KeyboardInterrupt):
+        # A repeated Ctrl-C here is the same request as the first: stop.
+        stdout, stderr = b"", b""
+    if isinstance(exc, SystemExit) and isinstance(exc.code, int):
+        exit_code = exc.code
+        try:
+            cause = signal.Signals(exit_code - 128).name
+        except ValueError:
+            cause = f"exit {exit_code}"
+    else:
+        exit_code, cause = 130, "SIGINT"
+    return RunnerJobResult(
+        exit_code=exit_code,
+        runner_status="interrupted",
+        stdout=stdout or b"",
+        stderr=stderr or b"",
+        runner_error=f"nova capture was interrupted ({cause}); the workload was stopped",
+    )
 
 
 @contextmanager
@@ -155,6 +182,10 @@ class LocalRunner:
                     # interruption end the capture. Never leave it running alone.
                     first = signal.SIGINT if isinstance(exc, KeyboardInterrupt) else signal.SIGTERM
                     _stop_group(proc, pgid, first)
+                    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                        # The workload is stopped, so the orchestrator may finalise
+                        # the capsule before the interruption ends the capture.
+                        attach_interrupted_result(exc, _interrupted(proc, exc))
                     raise
             except FileNotFoundError as exc:
                 # The commonest first-run mistake is a mistyped command name.
