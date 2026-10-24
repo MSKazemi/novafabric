@@ -2921,8 +2921,26 @@ def create_app(
         # a path confined to the read roots (serve.paths).
         cap_dir = _capsule_target(str(capsule_path_str), require_manifest=False)
         try:
-            from novafabric.lineage._importer import import_capsule_dir  # noqa: PLC0415
-            results = import_capsule_dir(cap_dir)
+            from novafabric.lineage._importer import (  # noqa: PLC0415
+                import_capsule_dir,
+                index_capsule_lineage,
+            )
+
+            # A run id resolves to the capsule itself; import_capsule_dir walks a
+            # directory's *children*, so it imported nothing (review serve-06).
+            if (cap_dir / "capsule.yaml").is_file():
+                results = [index_capsule_lineage(cap_dir)]
+            else:
+                results = import_capsule_dir(cap_dir)
+            if not results:
+                return {
+                    "ok": False,
+                    "capsule_path": capsule_path_str,
+                    "imported": 0,
+                    "skipped": 0,
+                    "file_count": 0,
+                    "note": "no capsule found: neither a capsule nor a directory of capsules",
+                }
             imported = sum(r.edges_indexed for r in results)
             skipped = sum(1 for r in results if r.skipped)
             return {
