@@ -165,8 +165,10 @@ oidc:
 
 - Roles are read from the `nova_roles` claim (falling back to `roles`); the claim
   name is not configurable.
-- The JWKS is cached for 3600 s; the interval is not configurable (flush it on key
-  rotation, below).
+- The JWKS is cached for 3600 s; the interval is not configurable. A token whose
+  `kid` is not in the cache triggers a re-fetch, but the server fetches at most
+  once every 30 s (failed fetches included), so a key the IdP has just rotated
+  in is picked up within 30 s; flush the cache (below) to pick it up at once.
 - OIDC is configured **in YAML only** — there are no OIDC environment variables.
 
 ### Login from the CLI
@@ -200,7 +202,10 @@ nova logout                                           # remove all servers
 
 ### JWKS cache management
 
-The server caches the OIDC provider's JWKS for 3600 seconds (fixed). On key rotation, flush the cache without restarting the server:
+The server caches the OIDC provider's JWKS for 3600 seconds (fixed), and re-fetches it for an
+unknown `kid` at most once every 30 seconds, so a random `kid` cannot make the server call the
+IdP on every request. To pick up a rotated key immediately, flush the cache without restarting
+the server:
 
 ```bash
 nova server flush-jwks-cache \

@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import logging
 import secrets
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 import jwt
 from fastapi import Request
@@ -80,18 +82,35 @@ _ALLOWED_JWT_ALGS = frozenset(
 # ---------------------------------------------------------------------------
 
 
+#: Floor between two JWKS fetch attempts, failed or not (review server-10).
+JWKS_MIN_REFETCH_SECONDS = 30.0
+
+
 class JwksCache:
     """Fetches and caches JWKS from an OIDC issuer.
 
-    Thread-safe for single-process use via the GIL.  The cache is invalidated
-    when a ``kid`` is not found (key rotation) or when the TTL expires.
+    The cache is refreshed when the TTL expires or a ``kid`` is unknown (key
+    rotation), but never more than once per ``min_refetch_seconds``, failed
+    attempts included: an unauthenticated token with a random ``kid`` must not
+    buy an IdP round-trip, and a down IdP must not be retried per request
+    (review server-10). A lock makes concurrent misses share one attempt.
+    :meth:`get_key` does blocking IO; async callers run it in a worker thread.
     """
 
-    def __init__(self, issuer_url: str, ttl_seconds: int = 3600) -> None:
+    def __init__(
+        self,
+        issuer_url: str,
+        ttl_seconds: int = 3600,
+        *,
+        min_refetch_seconds: float = JWKS_MIN_REFETCH_SECONDS,
+    ) -> None:
         self._issuer_url = issuer_url.rstrip("/")
         self._ttl = ttl_seconds
+        self._min_refetch = min_refetch_seconds
         self._keys: dict[str, Any] = {}  # kid → JWK dict
         self._fetched_at: float = float("-inf")  # never fetched → always stale
+        self._attempted_at: float = float("-inf")
+        self._lock = threading.Lock()
 
     @property
     def _jwks_uri(self) -> str:
@@ -121,22 +140,32 @@ class JwksCache:
     def _is_stale(self) -> bool:
         return (time.monotonic() - self._fetched_at) > self._ttl
 
+    def _try_fetch(self) -> None:
+        """Fetch unless an attempt was made within ``min_refetch_seconds``."""
+        now = time.monotonic()
+        if now - self._attempted_at < self._min_refetch:
+            return
+        self._attempted_at = now
+        self._fetch()
+
     def get_key(self, kid: str | None) -> dict[str, Any] | None:
         """Return the JWK for *kid*, refreshing if stale or unknown."""
-        if self._is_stale():
-            self._fetch()
         lookup = kid or ""
-        if lookup not in self._keys:
-            # Unknown kid — could be key rotation; try one re-fetch.
-            self._fetch()
-        return self._keys.get(lookup) or (
-            self._keys.get("") if not kid else None
-        )
+        with self._lock:
+            if self._is_stale():
+                self._try_fetch()
+            if lookup not in self._keys:
+                # Unknown kid — could be key rotation; re-fetch, rate-limited.
+                self._try_fetch()
+            keys = self._keys
+        return keys.get(lookup) or (keys.get("") if not kid else None)
 
     def flush(self) -> None:
         """Force a re-fetch on the next request (e.g. after ``flush-jwks``)."""
-        self._fetched_at = float("-inf")
-        self._keys = {}
+        with self._lock:
+            self._fetched_at = float("-inf")
+            self._attempted_at = float("-inf")
+            self._keys = {}
 
 
 # Module-level singleton; created lazily per-config.
@@ -362,7 +391,8 @@ async def verify_token(request: Request) -> AuthContext:
         request.state.auth = LOCAL_AUTH
         return LOCAL_AUTH
 
-    jwk = cache.get_key(kid)
+    # Blocking IdP IO: never on the event loop (review server-10).
+    jwk = await anyio.to_thread.run_sync(cache.get_key, kid)
     if jwk is None:
         raise _unauthenticated("Unknown key ID — no matching JWKS key")
 
