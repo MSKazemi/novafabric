@@ -2133,7 +2133,12 @@ Failure semantics (the contract your masker lives under):
   manifest (before `capsule.yaml` is written), and every *line* of each text file
   under `inputs/` and `outputs/` (`target_ref` `outputs/stdout.txt#L3`). Binary files
   and files over the 64 MiB scan limit are not offered to maskers; the built-in
-  scanner still covers them.
+  scanner still covers them, streaming a file that large in 8 MiB windows that
+  overlap by 64 KiB, so it is never held in memory. A text file is redacted in
+  place exactly as a small one would be; a binary that carries a secret is
+  dropped. Residual: a single match longer than 64 KiB, or a cut forced inside a
+  whitespace-free run longer than 32 MiB, may differ at that one point. Releases
+  up to v0.107.0 skipped such files entirely and sealed them unscanned.
 - **Built-ins last, too.** After every masker has run, a final built-in pass
   rescans the finished capsule. A masker whose output looks like a key cannot leak
   it: the pass redacts it and records it in `residual_check`.

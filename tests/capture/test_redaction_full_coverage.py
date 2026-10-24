@@ -183,20 +183,22 @@ def test_binary_is_not_dropped_on_an_unprefixed_generic_match(tmp_path: Path) ->
     assert proof["findings"] == []
 
 
-def test_oversize_artifact_is_recorded_as_skipped(
+def test_oversize_artifact_is_scanned_in_a_stream_not_skipped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """capture-runners-02: an oversize file used to be skipped and sealed unscanned.
+    See tests/capture/test_large_artifacts_are_scanned.py for the stream itself."""
     monkeypatch.setattr(secrets_mod, "MAX_ARTIFACT_SCAN_BYTES", 16)
     out = tmp_path / "outputs" / "big.txt"
     out.parent.mkdir()
-    out.write_text("x" * 64)
+    out.write_text("x" * 64 + f" token={ANTHROPIC_KEY}\n")
 
     proof = _scan(tmp_path)
 
     entry = next(t for t in proof["targets"] if t["ref"] == "outputs/big.txt")
-    assert entry["skipped"] is True
-    assert "16" in entry["skip_reason"]
-    assert out.read_text() == "x" * 64
+    assert entry["skipped"] is False
+    assert entry["findings_count"] >= 1
+    assert ANTHROPIC_KEY not in out.read_text()
 
 
 def test_symlink_in_outputs_is_not_followed(tmp_path: Path) -> None:

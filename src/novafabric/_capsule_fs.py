@@ -90,7 +90,7 @@ import logging
 import os
 import shutil
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -806,10 +806,18 @@ def _parent_dir_fd(
     return dir_fd
 
 
+def _write_all(out: BinaryIO, data: bytes | Iterable[bytes]) -> None:
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        out.write(data)
+        return
+    for chunk in data:
+        out.write(chunk)
+
+
 def replace_capsule_file(
     root: Path,
     rel: str | PurePosixPath,
-    data: bytes,
+    data: bytes | Iterable[bytes],
     *,
     operation: str = "this operation",
     error: type[CapsuleLinkError] = CapsuleLinkError,
@@ -827,6 +835,9 @@ def replace_capsule_file(
     ``O_NOFOLLOW`` and must already exist. The new file gets ``0o666 & ~umask``,
     or *file_mode* when given (a redaction rewrite keeps the original's mode).
 
+    *data* may be an iterable of chunks, so a file larger than memory can be
+    rewritten (the streamed redaction of a large artifact).
+
     Raises:
         ValueError: *rel* is absolute, empty or holds ``..``.
         CapsuleLinkError: a parent directory of *rel* is a symlink (as *error*).
@@ -843,7 +854,7 @@ def replace_capsule_file(
             tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _CLOEXEC, 0o666
         )
         with os.fdopen(fd, "wb") as out:
-            out.write(data)
+            _write_all(out, data)
             out.flush()
             os.fsync(out.fileno())
         os.replace(tmp_path, parent / name)
@@ -858,7 +869,7 @@ def replace_capsule_file(
             with os.fdopen(fd, "wb") as out:
                 if file_mode is not None:
                     os.fchmod(out.fileno(), file_mode)
-                out.write(data)
+                _write_all(out, data)
                 out.flush()
                 os.fsync(out.fileno())  # durable before it becomes visible
             os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)

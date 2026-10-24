@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import logging
@@ -422,6 +423,93 @@ def _is_binary(data: bytes) -> bool:
     return False
 
 
+#: Window and overlap for streaming an artifact over MAX_ARTIFACT_SCAN_BYTES.
+#: The overlap bounds the longest match that is always seen whole.
+_STREAM_WINDOW_BYTES = 8 * 1024 * 1024
+_STREAM_OVERLAP_BYTES = 64 * 1024
+_WHITESPACE_RE = re.compile(r"\s")
+#: How many windows of whitespace-free text are carried before cutting inside it.
+_STREAM_MAX_CARRY_WINDOWS = 4
+
+
+def _looks_binary(head: bytes) -> bool:
+    """:func:`_is_binary` for the first window of a stream (a cut UTF-8 sequence is fine)."""
+    if b"\x00" in head:
+        return True
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(head, final=False)
+    except UnicodeDecodeError:
+        return True
+    return False
+
+
+def _byte_windows(fh: BinaryIO, digest: Any) -> Iterator[tuple[int, bytes, bool]]:
+    """``(offset, window, final)`` over *fh*: windows overlapping by the stream overlap."""
+    carry = b""
+    base = 0
+    step = max(1, _STREAM_WINDOW_BYTES - _STREAM_OVERLAP_BYTES)
+    while True:
+        raw = fh.read(step if carry else _STREAM_WINDOW_BYTES)
+        if digest is not None:
+            digest.update(raw)
+        window = carry + raw
+        final = not raw or len(raw) < (step if carry else _STREAM_WINDOW_BYTES)
+        if window:
+            yield base, window, final
+        if final:
+            return
+        keep = min(len(window), _STREAM_OVERLAP_BYTES)
+        base += len(window) - keep
+        carry = window[len(window) - keep:]
+
+
+def _text_segments(fh: BinaryIO, digest: Any) -> Iterator[str]:
+    """Decoded text of *fh* as consecutive segments that tile it exactly.
+
+    Each segment ends at least :data:`_STREAM_OVERLAP_BYTES` before the decoded
+    window's end, extended to the end of any match that starts before that point,
+    so a match up to the overlap's length is never split. *digest*, if given, is
+    updated with the raw bytes.
+    """
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    carry = ""
+    while True:
+        raw = fh.read(_STREAM_WINDOW_BYTES)
+        if digest is not None:
+            digest.update(raw)
+        final = not raw
+        text = carry + decoder.decode(raw, final=final)
+        if final:
+            if text:
+                yield text
+            return
+        safe = max(0, len(text) - _STREAM_OVERLAP_BYTES)
+        cut = safe
+        # Only a match starting within one overlap of *safe* can cross it (the
+        # overlap bounds the match length); a compiled pattern given *pos* still
+        # sees the text before it for look-behinds and word boundaries.
+        lookback = max(0, safe - _STREAM_OVERLAP_BYTES)
+        for rule in _RULES:
+            for m in rule["pattern"].finditer(text, lookback):
+                if m.start() >= safe:
+                    break
+                if m.end() > cut:
+                    cut = m.end()
+        # Cut just after whitespace: rules anchor on word boundaries and
+        # look-behinds, so a cut inside a run of word characters would give the
+        # next segment a different context than the whole file has.
+        space = _WHITESPACE_RE.search(text, cut)
+        if space is not None:
+            cut = space.end()
+        elif len(text) < _STREAM_MAX_CARRY_WINDOWS * _STREAM_WINDOW_BYTES:
+            cut = 0  # no clean cut yet: carry the whole window into the next read
+        # else: a whitespace-free run longer than the carry bound is cut where
+        # it is (documented residual: matches at that one point may differ).
+        if cut:
+            yield text[:cut]
+        carry = text[cut:]
+
+
 def _stream_hash(fh: BinaryIO) -> str:
     h = hashlib.sha256()
     for chunk in iter(lambda: fh.read(1 << 20), b""):
@@ -722,27 +810,10 @@ class SecretScannerV0:
         st = os.fstat(fh.fileno())
         size = st.st_size
         if size > MAX_ARTIFACT_SCAN_BYTES:
-            digest = _stream_hash(fh)
-            logger.warning(
-                "novafabric.secrets: %s is %d bytes, over the %d-byte scan limit; "
-                "recorded as skipped in redaction-proof.json",
-                ref, size, MAX_ARTIFACT_SCAN_BYTES,
-            )
-            return (
-                self._target(
-                    kind, ref,
-                    bytes_scanned=0,
-                    findings_count=0,
-                    hash_before=digest,
-                    hash_after=digest,
-                    skip_reason=(
-                        f"artifact is {size} bytes; scan limit is "
-                        f"{MAX_ARTIFACT_SCAN_BYTES} bytes"
-                    ),
-                ),
-                [],
-                0,
-            )
+            # Review capture-runners-02: this file was skipped — sealed unscanned,
+            # so a key anywhere in a long agent's stdout stayed in the clear. It
+            # is too big to hold in memory, so it is scanned in a stream.
+            return self._scan_large_artifact(path, fh, ref, kind, size, stat.S_IMODE(st.st_mode))
         original = fh.read()
         if not _is_binary(original):
             return self._scan_text_bytes(ref, kind, original, stat.S_IMODE(st.st_mode))
@@ -791,6 +862,113 @@ class SecretScannerV0:
             ),
             findings,
             len(original),
+        )
+
+    def _scan_large_artifact(
+        self, path: Path, fh: BinaryIO, ref: str, kind: str, size: int, file_mode: int
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+        """Scan an artifact over :data:`MAX_ARTIFACT_SCAN_BYTES` without loading it.
+
+        Text is read in :data:`_STREAM_WINDOW_BYTES` windows that overlap by
+        :data:`_STREAM_OVERLAP_BYTES` (:func:`_text_segments`), so every match up to
+        the overlap's length lies whole in one segment. A first pass collects the
+        findings; only if there are any is the file rewritten, by a second pass that
+        streams the redacted segments into an atomic replace. A binary is
+        string-scanned the same way and, as below the limit, dropped if it carries a
+        secret. Residual: a single match longer than the overlap (64 KiB) can be
+        split across two segments.
+        """
+        first = fh.read(_STREAM_WINDOW_BYTES)
+        fh.seek(0)
+        if _looks_binary(first):
+            return self._scan_large_binary(path, fh, ref, kind, size)
+        before = hashlib.sha256()
+        findings: list[dict[str, Any]] = []
+        offset = 0
+        for segment in _text_segments(fh, before):
+            for rule in _RULES:
+                strategy = self._strategy_for(str(rule["id"]))
+                for m in rule["pattern"].finditer(segment):
+                    at, secret = _secret_span(rule, m)
+                    findings.append(self._finding(rule, kind, ref, offset + at, secret, strategy))
+            offset += len(segment)
+        hash_before = "sha256:" + before.hexdigest()
+        if not findings:
+            return (
+                self._target(
+                    kind, ref, bytes_scanned=size, findings_count=0,
+                    hash_before=hash_before, hash_after=hash_before,
+                ),
+                [],
+                0,
+            )
+        fh.seek(0)
+        after = hashlib.sha256()
+        written = 0
+
+        def redacted() -> Iterator[bytes]:
+            nonlocal written
+            for segment in _text_segments(fh, None):
+                chunk = self._redact_text(segment).encode("utf-8")
+                after.update(chunk)
+                written += len(chunk)
+                yield chunk
+
+        replace_capsule_file(
+            self._dir, ref, redacted(), operation=_SCAN_OPERATION, file_mode=file_mode
+        )
+        return (
+            self._target(
+                kind, ref, bytes_scanned=size, findings_count=len(findings),
+                hash_before=hash_before, hash_after="sha256:" + after.hexdigest(),
+            ),
+            findings,
+            max(0, size - written),
+        )
+
+    def _scan_large_binary(
+        self, path: Path, fh: BinaryIO, ref: str, kind: str, size: int
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+        """String-scan a large binary in overlapping windows; drop it if it has a secret."""
+        before = hashlib.sha256()
+        findings: list[dict[str, Any]] = []
+        for base, window, final in _byte_windows(fh, before):
+            safe = len(window) if final else max(0, len(window) - _STREAM_OVERLAP_BYTES)
+            for run in _BINARY_STRING_RE.finditer(window):
+                if run.start() >= safe:
+                    continue  # seen whole in the next window
+                text = run.group().decode("ascii")
+                for rule in _RULES:
+                    if rule["id"] in _BINARY_EXCLUDED_RULES:
+                        continue
+                    for m in rule["pattern"].finditer(text):
+                        at, secret = _secret_span(rule, m)
+                        findings.append(self._finding(
+                            rule, kind, ref, base + run.start() + at, secret, "drop"
+                        ))
+        hash_before = "sha256:" + before.hexdigest()
+        if not findings:
+            return (
+                self._target(
+                    kind, ref, bytes_scanned=size, findings_count=0,
+                    hash_before=hash_before, hash_after=hash_before, binary=True,
+                ),
+                [],
+                0,
+            )
+        path.unlink()
+        logger.warning(
+            "novafabric.secrets: binary artifact %s contains %d secret match(es) "
+            "and was dropped from the capsule",
+            ref, len(findings),
+        )
+        return (
+            self._target(
+                kind, ref, bytes_scanned=size, findings_count=len(findings),
+                hash_before=hash_before, hash_after=_EMPTY_HASH, binary=True,
+            ),
+            findings,
+            size,
         )
 
     def scan_and_redact_refs(
