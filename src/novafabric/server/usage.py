@@ -521,6 +521,50 @@ def record_entries_in_transaction(
     return recorded
 
 
+#: Separates a run_id from its upload generation in a ledger ``ref``. ``/``
+#: cannot occur in a run_id (one safe path segment), so ``r-1/2`` is never
+#: another run's first upload.
+_GENERATION_SEP = "/"
+_DELETE_SUFFIX = ":delete"
+
+
+def _lifetime_ref(run_id: str, generation: int) -> str:
+    """The upload ``ref`` of *run_id*'s *generation*-th stored lifetime."""
+    return run_id if generation == 1 else f"{run_id}{_GENERATION_SEP}{generation}"
+
+
+def _latest_lifetime(conn: sqlite3.Connection, run_id: str) -> tuple[int, bool]:
+    """``(generation, reversed)`` of *run_id*'s latest metered lifetime, ``(0, False)`` if none.
+
+    Each upload after a metered delete is a new lifetime with its own ``ref``
+    (``run_id``, then ``run_id/2``, ``run_id/3``…), so the ``(metric, ref)``
+    index keeps a replay within one lifetime a no-op without swallowing a
+    re-upload (review server-19). Derived from the refs present, never from a
+    count, so ledger pruning cannot make a new ref collide with a kept one.
+    """
+    latest, reversed_ = 0, False
+    rows = conn.execute(
+        "SELECT DISTINCT ref FROM usage_ledger WHERE metric = ? AND substr(ref, 1, ?) = ?",
+        (METRIC_CAPSULES, len(run_id), run_id),
+    ).fetchall()
+    for (ref,) in rows:
+        rest = str(ref)[len(run_id):]
+        deleted = rest.endswith(_DELETE_SUFFIX)
+        if deleted:
+            rest = rest[: -len(_DELETE_SUFFIX)]
+        if rest == "":
+            generation = 1
+        elif rest.startswith(_GENERATION_SEP) and rest[1:].isdigit():
+            generation = int(rest[1:])
+        else:
+            continue  # another run whose id merely starts with this one
+        if generation > latest:
+            latest, reversed_ = generation, deleted
+        elif generation == latest and deleted:
+            reversed_ = True
+    return latest, reversed_
+
+
 def record_capsule_upload(
     *,
     run_id: str,
@@ -534,15 +578,23 @@ def record_capsule_upload(
 ) -> int:
     """Meter one successful capsule upload: count + unpacked bytes (spec P1).
 
-    ``ref = run_id`` for both metrics — the second idempotency guard behind
-    the route's 409-on-duplicate. Ledger + counters commit atomically; the
-    caller invokes this only **after** the unpack/publish succeeded.
+    ``ref`` is the capsule's current lifetime (``run_id``, or ``run_id/<n>``
+    after *n-1* metered deletes) for both metrics — the second idempotency
+    guard behind the route's 409-on-duplicate. Ledger + counters commit
+    atomically; the caller invokes this only **after** the unpack/publish
+    succeeded.
     """
+    conn = _get_conn(db_path)
+    try:
+        latest, reversed_ = _latest_lifetime(conn, run_id)
+    finally:
+        conn.close()
+    ref = _lifetime_ref(run_id, latest + 1 if reversed_ or latest == 0 else latest)
     entries = [
         LedgerEntry(
             metric=METRIC_CAPSULES,
             amount=1,
-            ref=run_id,
+            ref=ref,
             workspace=attribution.workspace,
             org=attribution.org,
             attribution=attribution.source,
@@ -551,7 +603,7 @@ def record_capsule_upload(
         LedgerEntry(
             metric=METRIC_BYTES,
             amount=size_bytes,
-            ref=run_id,
+            ref=ref,
             workspace=attribution.workspace,
             org=attribution.org,
             attribution=attribution.source,
@@ -579,10 +631,11 @@ def record_capsule_delete(
     """Append negative adjustment rows for a deleted capsule (ADR-0206 compose).
 
     Mirrors the capsule's original metered rows (workspace, org, attribution,
-    amount) with negated amounts and ``ref = "<run_id>:delete"`` — the ledger
-    stays append-only and the adjustment is itself idempotent under the
-    ``(metric, ref)`` unique index. A capsule with **no** metered upload rows
-    (pre-metering, or already reversed) records nothing: attributing
+    amount) with negated amounts and ``ref = "<upload ref>:delete"`` for the
+    capsule's latest lifetime — the ledger stays append-only and the
+    adjustment is itself idempotent under the ``(metric, ref)`` unique index.
+    A capsule with **no** unreversed metered upload rows (pre-metering, or
+    already reversed) records nothing: attributing
     unmetered bytes to a workspace would be guesswork, which the spec refuses
     — such deletes surface only through the ``drift`` block.
 
@@ -590,10 +643,14 @@ def record_capsule_delete(
     """
     conn = _get_conn(db_path)
     try:
+        latest, reversed_ = _latest_lifetime(conn, run_id)
+        if latest == 0 or reversed_:
+            return None
+        upload_ref = _lifetime_ref(run_id, latest)
         rows = conn.execute(
             "SELECT metric, amount, workspace, org, attribution FROM usage_ledger"
             " WHERE ref = ? AND metric IN (?, ?) AND amount > 0",
-            (run_id, METRIC_CAPSULES, METRIC_BYTES),
+            (upload_ref, METRIC_CAPSULES, METRIC_BYTES),
         ).fetchall()
     finally:
         conn.close()
@@ -603,7 +660,7 @@ def record_capsule_delete(
         LedgerEntry(
             metric=r["metric"],
             amount=-int(r["amount"]),
-            ref=f"{run_id}:delete",
+            ref=f"{upload_ref}{_DELETE_SUFFIX}",
             workspace=r["workspace"],
             org=r["org"],
             attribution=r["attribution"],

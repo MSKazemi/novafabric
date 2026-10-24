@@ -182,7 +182,10 @@ construction: a retried upload hits the 409-duplicate path, and a replayed
 ledger insert is a no-op under the `(metric, ref)` unique index. Deleting a
 capsule (single or bulk, ADR-0206) appends **negative** ledger rows so
 budgets reflect reclaimed storage; capsules uploaded before metering shipped
-appear only in the derived `global`/`drift` figures.
+appear only in the derived `global`/`drift` figures. A capsule uploaded again
+after a delete is metered again: each stored lifetime of a run has its own ledger
+`ref` (`<run_id>`, then `<run_id>/2`, `<run_id>/3`…), and a delete reverses the
+latest one.
 
 Monthly rollups freeze each finished period lazily at the first write of the
 next one (no cron) and are retention-bounded

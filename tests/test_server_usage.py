@@ -219,6 +219,43 @@ class TestLedgerStore:
         assert _counter(db_path, "team-a", METRIC_CAPSULES) == 0
         assert len(_ledger_rows(db_path, ref="r-del:delete")) == 2
 
+    def test_a_capsule_re_uploaded_after_a_delete_is_metered_again(
+        self, db_path: Path
+    ) -> None:
+        # review server-19: the re-upload reused ref=run_id, which the unique
+        # (metric, ref) index ignored, so the workspace carried net 0 for a
+        # stored capsule and a second delete was ignored too.
+        def upload(size: int) -> int:
+            return usage.record_capsule_upload(
+                run_id="r-again", size_bytes=size, attribution=_ATT, actor="t", db_path=db_path
+            )
+
+        upload(100)
+        usage.record_capsule_delete(run_id="r-again", actor="t", db_path=db_path)
+        assert upload(70) == 2
+        assert _counter(db_path, "default", METRIC_CAPSULES) == 1
+        assert _counter(db_path, "default", METRIC_BYTES) == 70
+        assert upload(70) == 0  # a replay within one lifetime stays a no-op
+        assert usage.record_capsule_delete(run_id="r-again", actor="t", db_path=db_path)
+        assert _counter(db_path, "default", METRIC_CAPSULES) == 0
+        assert _counter(db_path, "default", METRIC_BYTES) == 0
+        assert sorted(r["amount"] for r in _ledger_rows(db_path, ref="r-again/2:delete")) == [
+            -70, -1,
+        ]
+
+    def test_lifetimes_of_runs_sharing_a_prefix_stay_apart(self, db_path: Path) -> None:
+        for run_id in ("r-1", "r-10"):
+            usage.record_capsule_upload(
+                run_id=run_id, size_bytes=5, attribution=_ATT, actor="t", db_path=db_path
+            )
+        usage.record_capsule_delete(run_id="r-10", actor="t", db_path=db_path)
+        assert usage.record_capsule_delete(run_id="r-1", actor="t", db_path=db_path)
+        assert _counter(db_path, "default", METRIC_CAPSULES) == 0
+        assert usage.record_capsule_upload(
+            run_id="r-1", size_bytes=5, attribution=_ATT, actor="t", db_path=db_path
+        ) == 2
+        assert _ledger_rows(db_path, ref="r-1/2")
+
     def test_delete_of_unmetered_capsule_records_nothing(self, db_path: Path) -> None:
         # Pre-metering capsule: attribution would be guesswork — refused.
         assert (
