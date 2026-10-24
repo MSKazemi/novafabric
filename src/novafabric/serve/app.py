@@ -1862,8 +1862,11 @@ def create_app(
         Emits ``data: <run_json>\\n\\n`` whenever a new run capsule is detected.
         The token is validated inline (SSE cannot use streaming + Depends easily).
         """
-        candidate = extract_bearer(authorization) or t
-        if not candidate or not _consteq(candidate, token):
+        # The same check as every other route, issued (ADR-0252) tokens included:
+        # comparing against the session token alone 401'd them (review serve-14).
+        try:
+            verify_token(t, authorization)
+        except HTTPException:
             return StreamingResponse(
                 iter([]),
                 status_code=401,
