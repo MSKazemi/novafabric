@@ -4505,7 +4505,7 @@ validator (checker) identity differs from the developer (maker) identity.
 **It asserts only that independence was recorded — never that validation was
 sufficient, and never a rating.** A single-identity approval is `missing` with
 reason `single-identity approval`; an open proposal, a bypass, or a record that
-failed SoD verification is `missing` with its reason. A `--capsule-id` record is
+failed SoD verification is `missing` with its reason. So is a registry row written before ADR-0312 (no `signoff_scheme`): its identities were never checked against the signer trust list, so it cannot evidence independence (releases up to v0.107.0 rendered it `complete`). A `--capsule-id` record is
 verified against that capsule's content (`capsule.yaml`, resolved like `nova seal verify`):
 an approval of content changed since, or of a capsule that does not exist here, failed SoD
 and is `missing` — releases up to v0.107.0 exported it as complete independence. The

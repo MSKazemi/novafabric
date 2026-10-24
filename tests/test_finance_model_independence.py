@@ -150,7 +150,8 @@ def _registry(tmp_path: Path, rows: list[tuple[object, ...]]) -> Path:
     conn.executemany(
         "INSERT INTO promotion_proposals (proposal_id, asset_name, asset_version, to_status, "
         "proposer, proposer_key_fp, proposer_sig, proposed_at, state, approver, "
-        "approver_key_fp, approver_sig, approved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "approver_key_fp, approver_sig, approved_at, signoff_scheme) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'nova-promote-signoff/v2')",
         rows,
     )
     conn.commit()
@@ -514,3 +515,22 @@ def test_seal_record_of_a_capsule_that_does_not_exist_is_missing(tmp_path: Path)
     )
     assert rec is not None and rec.state == "unverified"
     assert classify_record(rec).status == "missing"
+
+
+def test_an_unverified_legacy_registry_row_is_not_independence() -> None:
+    """Review compliance-privacy-13: classify_record ignored signature_verification, so a
+    pre-ADR-0312 row with two self-declared names rendered independence complete."""
+    from novafabric.compliance.export.finance.model_independence import (
+        REASON_UNVERIFIED_LEGACY,
+        MakerCheckerRecord,
+    )
+
+    legacy = MakerCheckerRecord(
+        source="registry_promotion", record_ref="registry://promotion_proposals/p1",
+        subject="scorer@1", state="approved", maker="alice", checker="alice-2nd-identity",
+        maker_key_fp="fp-a", checker_key_fp="fp-b", signature_verification="unverified",
+    )
+    rendered = classify_record(legacy)
+    assert rendered.status == "missing"
+    assert rendered.reason == REASON_UNVERIFIED_LEGACY
+    assert classify_record(legacy.model_copy(update={"signature_verification": "verified"})).status == "complete"

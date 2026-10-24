@@ -45,6 +45,10 @@ REASON_SINGLE_IDENTITY = "single-identity approval"
 REASON_NO_CHECKER = "no checker (validator) counter-signature recorded (state={state})"
 REASON_BYPASS = "SoD bypass used — no independent checker recorded"
 REASON_UNVERIFIED = "maker-checker record failed SoD verification: {detail}"
+REASON_UNVERIFIED_LEGACY = (
+    "unverified legacy maker-checker row: written before signatures were checked "
+    "against the signer trust list (ADR-0312), so its identities are self-declared"
+)
 REASON_PARTIAL = (
     "independence recorded for {n} of {m} maker-checker records; see per-record reasons"
 )
@@ -134,6 +138,11 @@ def classify_record(record: MakerCheckerRecord) -> IndependenceRecord:
         reason = REASON_BYPASS
     elif record.verification_failure is not None:
         reason = REASON_UNVERIFIED.format(detail=record.verification_failure)
+    elif record.signature_verification == "unverified":
+        # Review compliance-privacy-13: a pre-ADR-0312 row with proposer=alice,
+        # approver=alice-2nd-identity is exactly the self-approval the trust list
+        # closed; the registry itself no longer accepts such rows.
+        reason = REASON_UNVERIFIED_LEGACY
     elif record.checker is None:
         reason = REASON_NO_CHECKER.format(state=record.state)
     elif _same_identity(record):

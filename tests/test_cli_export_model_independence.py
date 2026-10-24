@@ -27,7 +27,8 @@ def _db(tmp_path: Path, approver: str) -> Path:
     conn.execute(
         "INSERT INTO promotion_proposals (proposal_id, asset_name, asset_version, to_status, "
         "proposer, proposer_key_fp, proposer_sig, proposed_at, state, approver, "
-        "approver_key_fp, approver_sig, approved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "approver_key_fp, approver_sig, approved_at, signoff_scheme) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'nova-promote-signoff/v2')",
         (
             "p1",
             "scorer",
