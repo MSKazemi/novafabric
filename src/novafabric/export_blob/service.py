@@ -299,24 +299,49 @@ class ExportResult:
     skipped: int
 
 
+class UnsafeSkipsExportError(RuntimeError):
+    """A batch member's redaction proof records unsafe_skips (export refused)."""
+
+
+class RedactionProofError(UnsafeSkipsExportError):
+    """A batch member has no usable redaction proof, so its redaction is unproven."""
+
+
 def _check_unsafe_skips(capsule_dir: Path) -> int:
-    """Count ``unsafe_skips`` entries in the capsule's redaction proof (0 if absent)."""
-    # Present but unusable (a link, FIFO, directory): CapsuleRequiredFileError,
-    # never "0 unsafe skips" -- that would wave the batch through the gate.
+    """Count ``unsafe_skips`` entries in the capsule's redaction proof.
+
+    Fails closed, as the ``nova export-evidence`` gate does (review
+    storage-backup-05): an absent proof (redaction never ran), one that is not
+    valid JSON (a torn write), not an object, or whose ``unsafe_skips`` is not a
+    list raises :class:`RedactionProofError` — it used to read as "0 unsafe
+    skips" (or crash), so an incompletely redacted capsule left quietly.
+
+    Raises:
+        RedactionProofError: no usable redaction proof.
+        CapsuleRequiredFileError: the proof is a link, FIFO or directory.
+    """
+    name = capsule_dir.name
     text = read_required_capsule_member(
         capsule_dir / "redaction-proof.json", operation="export-blob"
     )
     if text is None:
-        return 0
+        raise RedactionProofError(
+            f"capsule {name} has no redaction-proof.json: its redaction never ran"
+        )
     try:
         data = json.loads(text)
     except ValueError:
-        return 0
-    return len(data.get("unsafe_skips") or [])
-
-
-class UnsafeSkipsExportError(RuntimeError):
-    """A batch member's redaction proof records unsafe_skips (export refused)."""
+        raise RedactionProofError(
+            f"capsule {name}: redaction-proof.json is not valid JSON (a torn write?)"
+        ) from None
+    if not isinstance(data, dict):
+        raise RedactionProofError(f"capsule {name}: redaction-proof.json is not a JSON object")
+    skips = data.get("unsafe_skips") or []
+    if not isinstance(skips, list):
+        raise RedactionProofError(
+            f"capsule {name}: redaction-proof.json's unsafe_skips is not a list"
+        )
+    return len(skips)
 
 
 def export_batch(
@@ -334,14 +359,22 @@ def export_batch(
     the final object written. Source capsules are never mutated.
 
     Mirrors the ``nova export-evidence`` redaction gate (THREAT_MODEL I-11): a
-    member whose ``redaction-proof.json`` records ``unsafe_skips`` refuses the
-    whole batch unless *allow_unsafe_skips* is set — exporting distributes the
-    capsule bytes, so an incompletely-redacted capsule must not leave quietly.
+    member whose ``redaction-proof.json`` records ``unsafe_skips`` — or that has
+    no usable proof at all — refuses the whole batch unless *allow_unsafe_skips*
+    is set: exporting distributes the capsule bytes, so an incompletely-redacted
+    capsule must not leave quietly.
     """
     members: list[ExportMember] = []
     payloads: dict[str, bytes] = {}
     for capsule_dir in selection.capsule_dirs:
-        skips = _check_unsafe_skips(capsule_dir)
+        try:
+            skips = _check_unsafe_skips(capsule_dir)
+        except RedactionProofError as exc:
+            if not allow_unsafe_skips:
+                raise RedactionProofError(
+                    f"{exc}; pass --allow-unsafe-skips to export anyway"
+                ) from None
+            skips = 0
         if skips and not allow_unsafe_skips:
             raise UnsafeSkipsExportError(
                 f"capsule {capsule_dir.name} has {skips} unsafe_skips entries in "

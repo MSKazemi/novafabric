@@ -23,4 +23,8 @@ def make_capsule(
         meta["run_id"] = run_id
     (capsule / "capsule.yaml").write_text(yaml.dump(meta))
     (capsule / "outputs" / "stdout.txt").write_text(content)
+    # Every real capsule carries one; export-blob refuses a capsule without it.
+    (capsule / "redaction-proof.json").write_text(
+        '{"schema_version": "0.1.0", "findings": [], "unsafe_skips": []}'
+    )
     return capsule

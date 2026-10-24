@@ -5367,6 +5367,11 @@ atomic completion marker: it lists every member's `capsule_id`, `content_hash`, 
 integrity **and completeness** offline. Source capsules are never modified.
 A capsule holding a symbolic link is refused (exit 2, "Export refused", nothing written):
 packing used to follow links and store their targets. See [Concepts](concepts.md#links-inside-a-capsule-are-never-followed-works-today).
+A member whose `redaction-proof.json` records `unsafe_skips` refuses the whole batch, as
+`nova export-evidence` does — and so does a member with **no usable proof**: none at all
+(redaction never ran), one that is not valid JSON (a torn write), or one that is not a JSON
+object. `--allow-unsafe-skips` overrides both. Releases up to v0.107.0 read a missing or
+truncated proof as "0 unsafe skips" and exported the capsule.
 
 **experimental** — implemented; API may change.
 

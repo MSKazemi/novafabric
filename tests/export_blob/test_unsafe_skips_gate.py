@@ -61,13 +61,40 @@ def test_allow_unsafe_skips_waives_the_gate(tmp_path: Path, signer: LocalSigner)
     assert result.manifest.count == 1
 
 
-def test_clean_or_absent_proof_exports_normally(
-    tmp_path: Path, signer: LocalSigner
-) -> None:
-    no_proof = make_capsule(tmp_path / "caps", "run-none")
+def test_a_clean_proof_exports_normally(tmp_path: Path, signer: LocalSigner) -> None:
+    no_field = make_capsule(tmp_path / "caps", "run-none")
+    _write_proof(no_field, None)
     empty_skips = make_capsule(tmp_path / "caps", "run-empty")
     _write_proof(empty_skips, [])
     dest = LocalDirDestination(tmp_path / "dest", uri=str(tmp_path / "dest"))
 
-    result = export_batch(_selection([no_proof, empty_skips]), dest, signer)
+    result = export_batch(_selection([no_field, empty_skips]), dest, signer)
     assert result.manifest.count == 2
+
+
+# Review storage-backup-05: an absent proof, a torn write and a non-object proof all
+# read as "0 unsafe skips" (or crashed), so an incompletely redacted capsule left.
+
+@pytest.mark.parametrize(("proof", "why"), [
+    (None, "no redaction-proof.json"),
+    ('{"unsafe_skips": [{"path": "x"}', "not valid JSON"),
+    ('[{"path": "x"}]', "not a JSON object"),
+    ('{"unsafe_skips": "x"}', "not a list"),
+])
+def test_an_unusable_proof_refuses_the_batch(
+    tmp_path: Path, signer: LocalSigner, proof: str | None, why: str
+) -> None:
+    from novafabric.export_blob.service import RedactionProofError
+
+    cap = make_capsule(tmp_path / "caps", "run-torn")
+    target = cap / "redaction-proof.json"
+    if proof is None:
+        target.unlink()
+    else:
+        target.write_text(proof)
+    dest = LocalDirDestination(tmp_path / "dest", uri=str(tmp_path / "dest"))
+    with pytest.raises(RedactionProofError, match=why):
+        export_batch(_selection([cap]), dest, signer)
+    assert not (tmp_path / "dest" / "export-manifest.json").exists()
+    # The explicit operator override still applies.
+    assert export_batch(_selection([cap]), dest, signer, allow_unsafe_skips=True).written == 1
