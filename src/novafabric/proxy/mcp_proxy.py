@@ -36,11 +36,13 @@ import json
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
+from novafabric.capture.hooks._fail_open import note_capture_failure
 from novafabric.mcp.exchanges import ExchangeTracker
 
 
@@ -167,7 +169,7 @@ class MCPProxy:
                     server_stdin.flush()
                 except (BrokenPipeError, ValueError):
                     return
-                self._inspect_client_message(raw)
+                self._inspect_fail_open(self._inspect_client_message, raw)
         finally:
             try:
                 server_stdin.close()
@@ -181,7 +183,21 @@ class MCPProxy:
                 self._client_out.flush()
             except (BrokenPipeError, ValueError):
                 return
-            self._inspect_server_message(raw)
+            self._inspect_fail_open(self._inspect_server_message, raw)
+
+    @staticmethod
+    def _inspect_fail_open(inspect: Callable[[bytes], None], raw: bytes) -> None:
+        """Run one inspection without letting it stop the pump (review capture-runners-12).
+
+        The message has already been forwarded; an inspector that raised — a capsule
+        write refused with ENOSPC, say — used to escape the pump thread, so every later
+        message was silently dropped and the client hung on its next call. A recording
+        failure costs that record, never the user's session.
+        """
+        try:
+            inspect(raw)
+        except Exception as exc:
+            note_capture_failure("mcp-proxy", "tool-calls", exc)
 
     # ------------------------------------------------------------ inspection
 

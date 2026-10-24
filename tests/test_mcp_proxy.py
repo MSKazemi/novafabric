@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+import pytest
 
 from novafabric.capture.capsule import CapsuleWriter
 from novafabric.proxy.mcp_proxy import MCPProxy
@@ -366,3 +367,48 @@ def test_elicited_secret_never_reaches_the_capsule(tmp_path: Path) -> None:
         if p.is_file() and secret in p.read_text(errors="ignore")
     ]
     assert not leaked, f"elicited secret leaked into: {[str(p) for p in leaked]}"
+
+
+def test_a_failing_record_write_never_stops_responses_reaching_the_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review capture-runners-12: a capsule write that raised (ENOSPC, a no-follow refusal)
+    escaped the server→client pump thread; every later response was dropped and the
+    client hung on its next tools/call."""
+    from novafabric.capture.capsule import CapsuleWriter
+
+    def broken(self: CapsuleWriter, record: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(CapsuleWriter, "append_tool_call", broken)
+    calls = [
+        {"jsonrpc": "2.0", "id": str(i), "method": "tools/call",
+         "params": {"name": "echo", "arguments": {"text": f"m{i}"}}}
+        for i in range(1, 4)
+    ]
+    out, _records = _drive(tmp_path, *calls)
+    replies = [json.loads(line) for line in out.decode().splitlines() if line.strip()]
+    assert [r.get("id") for r in replies] == ["1", "2", "3"]  # every response forwarded
+
+
+def test_a_raising_client_inspector_never_stops_requests_reaching_the_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The client→server pump carries the same guard: requests keep flowing upstream."""
+
+    def broken(self: MCPProxy, raw: bytes) -> None:
+        raise RuntimeError("inspector bug")
+
+    monkeypatch.setattr(MCPProxy, "_inspect_client_message", broken)
+    calls = [
+        {
+            "jsonrpc": "2.0",
+            "id": str(i),
+            "method": "tools/call",
+            "params": {"name": "echo", "arguments": {}},
+        }
+        for i in range(1, 4)
+    ]
+    out, _records = _drive(tmp_path, *calls)
+    replies = [json.loads(line) for line in out.decode().splitlines() if line.strip()]
+    assert [r.get("id") for r in replies] == ["1", "2", "3"]
