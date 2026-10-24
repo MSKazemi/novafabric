@@ -207,9 +207,11 @@ def export_prov_json(capsule_dir: Path) -> dict[str, Any]:
         line = line.strip()
         if line:
             try:
-                edges.append(json.loads(line))
+                edge = json.loads(line)
             except json.JSONDecodeError:
-                pass
+                continue
+            if isinstance(edge, dict):  # a non-object line is not an edge
+                edges.append(edge)
 
     if not edges:
         return doc

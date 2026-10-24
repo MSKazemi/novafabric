@@ -1090,3 +1090,44 @@ def test_cli_missing_source_file_is_empty_export(
     monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "does-not-exist.jsonl"))
     result = runner.invoke(app, ["audit-log", "export", "--source", "audit"])
     assert result.exit_code == 0, result.output
+
+
+def test_a_clean_rotation_reports_only_the_chain_restart(
+    tmp_path: Path, audit_path: Path
+) -> None:
+    """Review compliance-privacy-16: the chain was reset *before* the old file's
+    drained tail was consumed, so a routine logrotate raised two prev_hash
+    mismatches — a tamper alarm for a clean, verifiable log."""
+    state = {"cycle": 0}
+
+    def _sleep(_seconds: float) -> None:
+        state["cycle"] += 1
+        if state["cycle"] == 1:
+            log = AuditLog(audit_path)
+            log.append(AuditEventType.PROMOTE, actor="bob", resource_id="old-1")
+            log.append(AuditEventType.PROMOTE, actor="bob", resource_id="old-2")
+            audit_path.rename(tmp_path / "rotated.jsonl")
+            AuditLog(audit_path).append(AuditEventType.PROMOTE, actor="bob", resource_id="new-1")
+
+    result = follow_entries(
+        source="audit", fmt="jsonl", out=io.StringIO(), path=audit_path,
+        from_start=True, stop=_stop_after(4), sleep=_sleep,
+    )
+    assert result.rotations == 1
+    assert AuditLog(tmp_path / "rotated.jsonl").verify() == []
+    assert [e for e in result.chain_errors if "chain restarted" not in e] == []
+    assert any("chain restarted" in e for e in result.chain_errors)
+
+
+def test_a_follow_error_names_the_lines_own_number(tmp_path: Path, audit_path: Path) -> None:
+    """Every line of a batch was reported with the batch's last line number; and a
+    non-object line crashed the export (review compliance-privacy-16/-21)."""
+    existing = len(audit_path.read_text().splitlines())
+    with audit_path.open("a", encoding="utf-8") as fh:
+        fh.write("[1, 2]\n")
+    AuditLog(audit_path).append(AuditEventType.PROMOTE, actor="bob", resource_id="after")
+    result = follow_entries(
+        source="audit", fmt="jsonl", out=io.StringIO(), path=audit_path,
+        from_start=True, stop=_stop_after(2), sleep=lambda _s: None,
+    )
+    assert f"line {existing + 1}: not a JSON object" in result.chain_errors

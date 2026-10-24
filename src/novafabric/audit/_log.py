@@ -272,6 +272,11 @@ class AuditLog:
                 except json.JSONDecodeError as exc:
                     errors.append(f"line {lineno}: invalid JSON — {exc}")
                     continue
+                if not isinstance(d, dict):
+                    # A corrupted or hand-edited line ([1, 2]) is a chain error,
+                    # never an AttributeError (review compliance-privacy-21).
+                    errors.append(f"line {lineno}: not a JSON object")
+                    continue
 
                 stored_entry_hash: str = d.get("entry_hash", "")
                 stored_prev_hash: str | None = d.get("prev_hash")

@@ -724,11 +724,17 @@ class _ChainVerifier:
         if not stripped:
             return None
         try:
-            record: dict[str, Any] = json.loads(stripped)
+            parsed: Any = json.loads(stripped)
         except json.JSONDecodeError as exc:
             if self._enabled:
                 self._record_error(f"line {lineno}: invalid JSON — {exc}")
             return None
+        if not isinstance(parsed, dict):
+            # Review compliance-privacy-21: a chain error, never a traceback.
+            if self._enabled:
+                self._record_error(f"line {lineno}: not a JSON object")
+            return None
+        record: dict[str, Any] = parsed
 
         if self._enabled:
             stored_entry_hash = record.get("entry_hash", "")
@@ -895,42 +901,51 @@ class _TailReader:
             fh = self._path.open("r", encoding="utf-8")
         except OSError:
             return
+        lineno = 0
         if not from_start:
-            fh.seek(0, 2)  # tail semantics: start at EOF
+            # Tail semantics: start at EOF, but count the lines skipped so an
+            # error names the file's real line number.
+            for chunk in iter(lambda: fh.read(1 << 20), ""):
+                lineno += chunk.count("\n")
         self._fh = fh
         self._identity = self._identity_of(self._path)
         self._pending = ""
-        self.lineno = 0
+        self.lineno = lineno
 
     def open_initial(self, *, from_start: bool) -> None:
         self._open(from_start=from_start)
 
-    def _drain(self) -> list[str]:
-        """Read every complete line currently available from the open handle."""
+    def _drain(self) -> list[tuple[int, str]]:
+        """Every complete line now available from the open handle, with its number."""
         if self._fh is None:
             return []
-        lines: list[str] = []
+        lines: list[tuple[int, str]] = []
         while True:
             chunk = self._fh.readline()
             if not chunk:
                 break
             self._pending += chunk
             if self._pending.endswith("\n"):
-                lines.append(self._pending)
-                self._pending = ""
                 self.lineno += 1
+                lines.append((self.lineno, self._pending))
+                self._pending = ""
         return lines
 
-    def read_available(self) -> tuple[list[str], bool]:
-        """Return ``(complete_lines, rotated)`` for this poll cycle."""
+    def read_available(self) -> tuple[list[tuple[int, str]], bool, list[tuple[int, str]]]:
+        """``(old_lines, rotated, new_lines)`` for this poll cycle.
+
+        The lines of the file being followed come first; when it was rotated or
+        truncated, the new file's lines are returned separately, so the caller
+        can consume the old file's tail *before* restarting the chain walk —
+        restarting first raised a prev_hash mismatch on every clean rotation
+        (review compliance-privacy-16). Each line carries its own number.
+        """
         if self._fh is None:
             self._open(from_start=True)  # file appeared after we started
             if self._fh is None:
-                return [], False
+                return [], False, []
 
         lines = self._drain()
-        rotated = False
-
         current = self._identity_of(self._path)
         if current is not None and current != self._identity:
             # Renamed/replaced: drain the old handle, then follow the new file.
@@ -938,20 +953,17 @@ class _TailReader:
             self.close()
             self._open(from_start=True)
             self.rotations += 1
-            rotated = True
-        else:
-            try:
-                size = self._path.stat().st_size
-                if self._fh is not None and size < self._fh.tell():
-                    self.close()
-                    self._open(from_start=True)
-                    self.rotations += 1
-                    rotated = True
-                    lines += self._drain()
-            except OSError:
-                pass
-
-        return lines, rotated
+            return lines, True, self._drain()
+        try:
+            size = self._path.stat().st_size
+            if self._fh is not None and size < self._fh.tell():
+                self.close()
+                self._open(from_start=True)
+                self.rotations += 1
+                return lines, True, self._drain()
+        except OSError:
+            pass
+        return lines, False, []
 
     def close(self) -> None:
         if self._fh is not None:
@@ -1006,16 +1018,20 @@ def follow_entries(
 
     try:
         while stop is None or not stop():
-            lines, rotated = reader.read_available()
+            old_lines, rotated, new_lines = reader.read_available()
+            batches = [old_lines]
             if rotated:
-                verifier.reset(f"{src_path.name} rotated or truncated")
-            for raw_line in lines:
-                record = verifier.consume(raw_line, reader.lineno)
-                if record is None:
-                    continue
-                out.write(render_record(record, source=source, fmt=fmt) + "\n")
-                emitted += 1
-            if lines:
+                batches.append(new_lines)
+            for i, batch in enumerate(batches):
+                if i == 1:  # the old file's tail is consumed before the restart
+                    verifier.reset(f"{src_path.name} rotated or truncated")
+                for lineno, raw_line in batch:
+                    record = verifier.consume(raw_line, lineno)
+                    if record is None:
+                        continue
+                    out.write(render_record(record, source=source, fmt=fmt) + "\n")
+                    emitted += 1
+            if old_lines or new_lines:
                 out.flush()  # a stalled pipe must not hide fresh events
             else:
                 sleep(poll_interval)
