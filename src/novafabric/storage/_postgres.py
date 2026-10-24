@@ -68,6 +68,7 @@ def _read_schema_version(conn: Any) -> int | None:
             return int(row[0])
         return None
     except Exception:  # noqa: BLE001
+        _rollback(conn)
         return None
 
 
@@ -79,5 +80,18 @@ def _read_row_counts(conn: Any) -> dict[str, int]:
             if row:
                 counts[table] = int(row[0])
         except Exception:  # noqa: BLE001
-            pass
+            _rollback(conn)
     return counts
+
+
+def _rollback(conn: Any) -> None:
+    """End a transaction a failed query aborted, so the next query can run.
+
+    psycopg runs these in one implicit transaction: without this, one missing
+    table made every later count raise ``InFailedSqlTransaction`` and the whole
+    report read ``{}`` (review storage-backup-18).
+    """
+    try:
+        conn.rollback()
+    except Exception:  # noqa: BLE001 — the connection itself may be gone
+        pass
