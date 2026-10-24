@@ -10336,15 +10336,70 @@ def _resolve_capsule(run_id: str, capsule_dir: Path) -> Path:
         return _refuse_top_level_links(candidate)
     if candidate.is_dir() and (candidate / "capsule.yaml").is_symlink():
         return _refuse_top_level_links(candidate)  # a dangling linked manifest: 403
-    # Fallback: scan in case run_id is the manifest's run_id, not the directory name
-    for d in discover_capsule_dirs(capsule_dir):
-        try:
-            m = load_capsule_manifest(d)
-        except FileNotFoundError:
-            continue
-        if m.get("run_id") == run_id:
-            return _refuse_top_level_links(d)
+    # Fallback: run_id may be the manifest's run_id, not the directory name. Run
+    # ids are ULIDs; anything else cannot match, and a miss costs no manifest
+    # parse per request (review serve-10).
+    found = _manifest_run_ids.lookup(run_id, capsule_dir) if _ULID_RE.match(run_id) else None
+    if found is not None:
+        return _refuse_top_level_links(found)
     raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+
+
+_ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+
+
+class _ManifestRunIdIndex:
+    """``run_id -> capsule dir`` for the manifest-run-id fallback, rebuilt on change.
+
+    Valid while the store's own mtime is unchanged — capsule directories are
+    direct children, so adding or removing one changes it. A directory that had
+    no manifest when the index was built (a capture still writing) is rechecked
+    on a miss, since writing the manifest inside it does not touch the store.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._by_store: dict[Path, tuple[int, dict[str, Path], set[Path]]] = {}
+
+    def lookup(self, run_id: str, store: Path) -> Path | None:
+        try:
+            mtime = store.stat().st_mtime_ns
+        except OSError:
+            return None
+        with self._lock:
+            cached = self._by_store.get(store)
+            if cached is None or cached[0] != mtime:
+                cached = (mtime, *self._build(store))
+                self._by_store[store] = cached
+            _, index, pending = cached
+            if run_id not in index and pending:
+                for d in [d for d in pending if (d / "capsule.yaml").exists()]:
+                    pending.discard(d)
+                    self._add(index, d)
+            return index.get(run_id)
+
+    @staticmethod
+    def _add(index: dict[str, Path], d: Path) -> None:
+        try:
+            run_id = load_capsule_manifest(d).get("run_id")
+        except (FileNotFoundError, ValueError, OSError):
+            return
+        if isinstance(run_id, str) and run_id not in index:
+            index[run_id] = d
+
+    def _build(self, store: Path) -> tuple[dict[str, Path], set[Path]]:
+        index: dict[str, Path] = {}
+        for d in discover_capsule_dirs(store):
+            self._add(index, d)
+        try:
+            listed = {d for d in store.iterdir() if d.is_dir() and not d.is_symlink()}
+        except OSError:
+            listed = set()
+        pending = {d for d in listed if not (d / "capsule.yaml").exists()}
+        return index, pending
+
+
+_manifest_run_ids = _ManifestRunIdIndex()
 
 
 def _resolve_sealed_capsule(run_id: str, capsule_dir: Path) -> Path:
