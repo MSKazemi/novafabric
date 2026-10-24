@@ -7,6 +7,7 @@ artifact or a mutated case body yields a non-zero exit code; an honest case yiel
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -134,7 +135,9 @@ class TestI1Gauntlet:
             subject=Subject(
                 kind=SubjectKind.RUN_CAPSULE,
                 run_ids=["01HXAY7M5JZ8R7K4P9DPBYK2WX"],
-                capsule_hash="sha256:" + "b" * 64,
+                # The verifier binds the case to the capsule it is given (misc-1-03).
+                capsule_hash="sha256:"
+                + hashlib.sha256((cap / "capsule.yaml").read_bytes()).hexdigest(),
             ),
             top_claim_id="C-root",
             nodes=[claim, ev],

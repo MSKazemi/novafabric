@@ -138,9 +138,14 @@ def verify_cmd(
         str, typer.Option("--capsule", help="Capsule directory the case was built from")
     ],
 ) -> None:
-    """Re-verify a safety case: artifact hashes, case_hash, and invariant I1.
+    """Re-verify a safety case against its capsule: artifacts, case_hash, I1, subject.
 
-    Exit codes: 0 OK; 3 case_hash mismatch; 4 artifact failure; 5 I1 violation.
+    Every artifact the case names is re-hashed (read no-follow inside the capsule;
+    a path outside it is refused); every reference must resolve; and the case's
+    subject must be this capsule (its capsule.yaml hash, and the run id).
+
+    Exit codes: 0 OK; 3 case_hash mismatch; 4 artifact failure; 5 I1 violation;
+    6 the case describes another capsule (or the capsule changed since).
 
     \b
     Examples:

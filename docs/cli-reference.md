@@ -10752,8 +10752,20 @@ nova safety-case build ./my-capsule --replay-pubkey ed25519.pub.pem --output cas
 
 ### nova safety-case verify
 
-Re-verify a safety case: artifact-reference hashes, the recomputed `case_hash`, and the
-no-naked-claims invariant (I1). Requires the source capsule for artifact re-hashing.
+Re-verify a safety case against the capsule it was built from:
+
+- **artifacts** — every in-bundle artifact the case cites is re-hashed. The paths come from
+  the case file, so each is read without following links and must lie inside the capsule;
+  an absolute path, `..` or a link is refused (exit `4`).
+- **`case_hash`** — recomputed over the body (exit `3`). It is an unkeyed digest anyone can
+  recompute, so it detects an edit, not a forgery.
+- **I1** — no naked claims, and every `evidence_ids`/`children` entry and `top_claim_id`
+  resolves to a node of the right type (exit `5`).
+- **subject** — `subject.capsule_hash` must be the SHA-256 of the capsule's `capsule.yaml` now,
+  and a capsule directory named by a run ULID must be among `subject.run_ids` (exit `6`).
+
+Releases up to v0.107.0 checked none of the subject, accepted dangling references, and hashed
+any path the case named, so a case built for one capsule verified against another.
 
 ```bash
 nova safety-case verify case.json --capsule ./my-capsule
