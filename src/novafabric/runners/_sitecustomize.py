@@ -14,6 +14,10 @@ Why string-not-importable: the loader cannot be a regular Python
 module imported by the runner, because it needs to execute inside the
 *captured* workload's Python — which is a separate process whose
 ``sys.path`` we control via ``PYTHONPATH``.
+
+Because it is the first ``sitecustomize`` on ``sys.path``, it shadows any other;
+after installing the hooks it runs the next one, so a user's own site setup still
+applies under capture.
 """
 from __future__ import annotations
 
@@ -45,4 +49,39 @@ HOOK_LOADER: str = textwrap.dedent("""\
             _rwf(_P(_capsule_dir))
         except Exception as _e:
             print(f"[novafabric] hook install failed: {_e}", file=_sys.stderr)
+
+    # Python imports exactly one ``sitecustomize``: this one, because the runner put
+    # its directory first. Run the one it shadows — the user's, the venv's or the
+    # distro's — so the workload under capture is the program the user ran (review
+    # capture-runners-09). Same contract as ``site.py``: an error is reported and
+    # the workload still starts.
+    def _chain_shadowed_sitecustomize():
+        import importlib.machinery as _im
+        import importlib.util as _iu
+        # Every loader directory seen so far is skipped, so two loaders on the
+        # path (a capture nested in a capture) never chain back into each other.
+        _seen = _sys.__dict__.setdefault("_novafabric_loader_dirs", set())
+        _seen.add(_os.path.dirname(_os.path.abspath(__file__)))
+        _rest = [
+            _p for _p in _sys.path
+            if _os.path.abspath(_p or _os.curdir) not in _seen
+        ]
+        _spec = _im.PathFinder.find_spec("sitecustomize", _rest)
+        if _spec is None or _spec.loader is None:
+            return
+        _mod = _iu.module_from_spec(_spec)
+        _sys.modules["sitecustomize"] = _mod
+        try:
+            _spec.loader.exec_module(_mod)
+        except Exception as _e:
+            print(
+                "Error in sitecustomize; set PYTHONVERBOSE for traceback:\\n"
+                f"{type(_e).__name__}: {_e}",
+                file=_sys.stderr,
+            )
+
+    try:
+        _chain_shadowed_sitecustomize()
+    except Exception as _e:
+        print(f"[novafabric] could not run the shadowed sitecustomize: {_e}", file=_sys.stderr)
 """)
