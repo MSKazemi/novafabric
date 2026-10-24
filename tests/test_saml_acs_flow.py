@@ -137,7 +137,11 @@ def test_acs_still_501_without_opt_in(tmp_path: Path) -> None:
     assert resp.json()["error"]["code"] == "saml_not_available"
 
 
-def test_acs_accepts_signed_assertion_and_mints_token(tmp_path: Path) -> None:
+def test_acs_verifies_a_signed_assertion_but_issues_no_unusable_token(tmp_path: Path) -> None:
+    # review server-12: a verified assertion was answered 200 with an HS256 demo
+    # token that no server auth path accepts — SSO "succeeded" and could not
+    # authenticate a single request. Until the ACS can issue a credential the
+    # verifier honours, it says so instead.
     key_pem, cert_pem = _idp_keypair()
     cert_path = tmp_path / "idp.crt"
     cert_path.write_bytes(cert_pem)
@@ -146,11 +150,17 @@ def test_acs_accepts_signed_assertion_and_mints_token(tmp_path: Path) -> None:
     saml_response = base64.b64encode(_signed_saml_response(key_pem)).decode()
     resp = client.post("/v0/auth/saml/acs", data={"SAMLResponse": saml_response})
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 501, resp.text
     body = resp.json()
-    assert body["token_type"] == "Bearer"
-    assert body["roles"] == ["writer"]
-    assert body["access_token"]
+    assert body["error"]["code"] == "saml_session_unavailable"
+    assert body["error"]["details"] == {"assertion_verified": True}
+    assert "access_token" not in body
+    assert "alice@example.com" not in resp.text  # never echo assertion contents
+
+    # The assertion was still consumed under the replay rule.
+    again = client.post("/v0/auth/saml/acs", data={"SAMLResponse": saml_response})
+    assert again.status_code == 401
+    assert "replayed" in again.json()["error"]["message"]
 
 
 def test_acs_rejects_tampered_assertion(tmp_path: Path) -> None:
@@ -175,3 +185,19 @@ def test_login_redirects_when_enabled(tmp_path: Path) -> None:
     resp = client.get("/v0/auth/saml/login", follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers["location"].startswith("https://idp.example.org/sso?SAMLRequest=")
+
+
+def test_unauthenticated_logins_cannot_grow_the_pending_set_without_bound(
+    tmp_path: Path,
+) -> None:
+    from novafabric.server.saml import PendingAuthnRequests
+
+    _, cert_pem = _idp_keypair()
+    cert_path = tmp_path / "idp.crt"
+    cert_path.write_bytes(cert_pem)
+    app_client = _client(tmp_path, _config(cert_path, experimental=True))
+    for _ in range(5):
+        assert app_client.get("/v0/auth/saml/login", follow_redirects=False).status_code == 302
+    pending = app_client.app.state.saml_pending_requests  # type: ignore[attr-defined]
+    assert isinstance(pending, PendingAuthnRequests)
+    assert len(pending) == 5

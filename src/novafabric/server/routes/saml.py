@@ -35,7 +35,7 @@ from novafabric.server.saml import (
 )
 
 if TYPE_CHECKING:
-    from novafabric.server.saml import AssertionReplayStore
+    from novafabric.server.saml import AssertionReplayStore, PendingAuthnRequests
 
 router = APIRouter(prefix="/auth/saml", tags=["auth"])
 
@@ -73,6 +73,17 @@ def _acs_replay_store(request: Request) -> "AssertionReplayStore":
         store = AssertionReplayStore()
         request.app.state.saml_replay_store = store
     return store
+
+
+def _pending_requests(request: Request) -> "PendingAuthnRequests":
+    """Return the app-scoped, bounded set of outstanding AuthnRequest IDs (V9)."""
+    from novafabric.server.saml import PendingAuthnRequests
+
+    pending = getattr(request.app.state, "saml_pending_requests", None)
+    if pending is None:
+        pending = PendingAuthnRequests()
+        request.app.state.saml_pending_requests = pending
+    return pending
 
 
 @router.get("/login", response_model=None)
@@ -117,11 +128,7 @@ async def sp_initiated_login(request: Request) -> Response:
     sep = "&" if "?" in saml.idp.sso_url else "?"
     redirect_url = f"{saml.idp.sso_url}{sep}SAMLRequest={urllib.parse.quote(saml_request)}"
     # Remember the request id so the ACS can enforce InResponseTo (V7).
-    pending = getattr(request.app.state, "saml_pending_requests", None)
-    if pending is None:
-        pending = set()
-        request.app.state.saml_pending_requests = pending
-    pending.add(request_id)
+    _pending_requests(request).add(request_id)
     return RedirectResponse(redirect_url, status_code=302)
 
 
@@ -131,9 +138,11 @@ async def assertion_consumer_service(request: Request) -> Response:
 
     Refuses (501) unless the experimental ACS is opted in. When enabled: verify
     the XML-DSIG signature and parse under an XXE-hardened parser (V1/V2/V10),
-    apply the policy rules (V3–V9, V11), map attributes to roles, resolve the
-    subject, and mint a bearer token. Any failure rejects with 401 and issues no
-    session; error messages never carry assertion contents (the closed audit rule).
+    apply the policy rules (V3–V9, V11), map attributes to roles and resolve the
+    subject. Any failure rejects with 401. A verified assertion is answered 501
+    ``saml_session_unavailable``: the server has no session credential for a SAML
+    login yet (review server-12). Error messages never carry assertion contents
+    (the closed audit rule).
     """
     saml = _enabled_saml_config(request)
     try:
@@ -145,7 +154,6 @@ async def assertion_consumer_service(request: Request) -> Response:
     import binascii
     from pathlib import Path
 
-    from novafabric.server.routes.auth import _build_demo_jwt
     from novafabric.server.saml import (
         SamlValidationError,
         map_attributes_to_roles,
@@ -168,7 +176,7 @@ async def assertion_consumer_service(request: Request) -> Response:
     except OSError:
         return error_response(500, "saml_idp_cert_unreadable", "IdP certificate could not be read")
 
-    pending = getattr(request.app.state, "saml_pending_requests", None)
+    pending = _pending_requests(request)
     try:
         parsed = parse_and_verify_response(response_xml, idp_cert_pem=idp_cert_pem)
         validate_assertion_policy(
@@ -187,10 +195,19 @@ async def assertion_consumer_service(request: Request) -> Response:
             401, "saml_assertion_rejected", f"SAML assertion rejected: {exc.reason}"
         )
 
-    if pending is not None and parsed.in_response_to:
+    if parsed.in_response_to:
         pending.discard(parsed.in_response_to)
+    del subject, roles  # resolved and validated; nothing can carry them yet
 
-    token = _build_demo_jwt(subject=subject, roles=roles)
-    return JSONResponse(
-        {"access_token": token, "token_type": "Bearer", "expires_in": 3600, "roles": roles}
+    # The assertion verified, but no credential this server issues for it is
+    # accepted by any auth path: the HS256 demo token it once returned was
+    # refused in every mode, so "200 + access_token" was a login that could not
+    # authenticate a request (review server-12). Say so until a session
+    # credential exists (ADR-0138).
+    return error_response(
+        501,
+        "saml_session_unavailable",
+        "The SAML assertion verified, but this server cannot yet issue a session "
+        "for a SAML login. Authenticate with OIDC, an API key or an offline token.",
+        {"assertion_verified": True},
     )

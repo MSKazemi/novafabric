@@ -420,6 +420,65 @@ class TestReplayStore:
         with pytest.raises(ValueError):
             AssertionReplayStore(ttl_seconds=0)
 
+    def test_an_id_is_kept_while_its_assertion_is_still_valid(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # review server-12: a 600 s TTL is shorter than a typical assertion
+        # validity, so an IdP-initiated assertion was replayable once it lapsed.
+        clock = [1000.0]
+        monkeypatch.setattr("novafabric.server.saml.time.monotonic", lambda: clock[0])
+        store = AssertionReplayStore(ttl_seconds=10)
+        assert store.check_and_record("_x", valid_for_seconds=100) is True
+        clock[0] += 50
+        assert store.check_and_record("_x") is False
+        clock[0] += 60
+        assert store.check_and_record("_x") is True
+
+    def test_the_policy_remembers_an_assertion_until_not_on_or_after_plus_skew(
+        self, monkeypatch: pytest.MonkeyPatch, saml_config: SamlConfig
+    ) -> None:
+        clock = [1000.0]
+        monkeypatch.setattr("novafabric.server.saml.time.monotonic", lambda: clock[0])
+        store = AssertionReplayStore(ttl_seconds=10)
+        now = datetime.now(timezone.utc)
+        assertion = _assertion(not_on_or_after=now + timedelta(hours=1))
+        _validate(assertion, saml_config, store=store, now=now)
+        clock[0] += 1800  # well past the store TTL, well inside the validity
+        with pytest.raises(SamlValidationError) as exc:
+            _validate(assertion, saml_config, store=store, now=now + timedelta(seconds=1800))
+        assert exc.value.reason == "replayed"
+
+
+class TestPendingAuthnRequests:
+    def test_a_pending_id_expires(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from novafabric.server.saml import PendingAuthnRequests
+
+        clock = [1000.0]
+        monkeypatch.setattr("novafabric.server.saml.time.monotonic", lambda: clock[0])
+        pending = PendingAuthnRequests(ttl_seconds=60)
+        pending.add("_r1")
+        assert "_r1" in pending
+        clock[0] += 61
+        assert "_r1" not in pending
+
+    def test_the_set_is_bounded(self) -> None:
+        from novafabric.server.saml import PendingAuthnRequests
+
+        pending = PendingAuthnRequests(max_entries=10)
+        for i in range(100):
+            pending.add(f"_r{i}")
+        assert len(pending) == 10
+        assert "_r99" in pending and "_r0" not in pending
+
+    def test_discard(self) -> None:
+        from novafabric.server.saml import PendingAuthnRequests
+
+        pending = PendingAuthnRequests()
+        pending.add("_r1")
+        pending.discard("_r1")
+        pending.discard("_absent")
+        assert "_r1" not in pending
+
 
 # ---------------------------------------------------------------------------
 # Redacted audit record

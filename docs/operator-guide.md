@@ -1382,7 +1382,8 @@ a readable PEM certificate, the metadata embeds it as the SP signing key.
 | `server.saml` config block (closed schema, role allow-list, skew cap) | works today |
 | `nova server saml-metadata` + `GET /v0/auth/saml/metadata` | works today |
 | Attribute→role mapping and assertion validation policy (issuer, audience, time bounds, recipient, replay store, `InResponseTo`, status — spec rules V3–V9, V11) | implemented and tested against synthetic assertions |
-| `GET /v0/auth/saml/login`, `POST /v0/auth/saml/acs` — live SSO | **experimental, opt-in.** Refuses with HTTP 501 (`saml_not_available`) unless `saml.experimental_acs_enabled: true` **and** the `novafabric[saml]` extra is installed |
+| `GET /v0/auth/saml/login`, `POST /v0/auth/saml/acs` — assertion verification | **experimental, opt-in.** Refuses with HTTP 501 (`saml_not_available`) unless `saml.experimental_acs_enabled: true` **and** the `novafabric[saml]` extra is installed. Opted in, the ACS verifies the assertion (401 on any failed rule) |
+| SAML login session | **planned** — no credential exists yet: a verified assertion is answered HTTP 501 `saml_session_unavailable` (`details.assertion_verified: true`), not a token. Until then authenticate with OIDC, an API key or an offline token |
 | Single Logout (SLO) | future design (ADR-0138 P4) |
 
 **Why it is off by default:** XML-DSIG signature verification (spec rules V1/V2)
@@ -1427,7 +1428,7 @@ still-genuine gaps are listed below the shipped-items note.
 | NovaSeal: Cloud KMS (AWS KMS, Azure KV, GCP KMS) | **experimental, works today** | Signing backends `AwsKmsSigningBackend`/`AzureKvSigningBackend`/`GcpKmsSigningBackend` (`novafabric[seal-aws\|seal-azure\|seal-gcp]`); the parallel envelope-encryption *wrapping* backends (`AwsKmsWrappingBackend` etc., ADR-0185) are separately shipped — see [encryption-at-rest.md §4](ops/encryption-at-rest.md). Verified against unit tests and in-memory SDK fakes; end-to-end verification against live cloud credentials is the one piece still outstanding |
 | NovaSeal: Postgres Merkle log | **experimental, works today** | `PostgresMerkleLog` (`trust/novaseal/merkle.py`, `novafabric[seal-postgres]`); pass a `postgresql://` DSN as `merkle_db:`. `verify_consistency()` on this backend is a *sampled* check, not full re-hash |
 | Parent/child capsule relationships | **implemented, tested** | `src/novafabric/capsule/{tree_assembler,env_contract,orphan,edge_typer,writer,schema}.py` + `schemas/parent_child_capsule_v1.schema.json` (257 passing tests in `tests/capsule/`) |
-| SAML SSO: live login (assertion consumption at the ACS) | **experimental, opt-in** | The ADR-0138 §D5 library gate closed in v0.73.0 (`signxml` + `lxml`, Tier A). `POST /v0/auth/saml/acs` consumes assertions when `saml.experimental_acs_enabled: true` and `novafabric[saml]` is installed; otherwise it still refuses with 501. Security-Architect review remains a pre-production blocking condition — see §5c |
+| SAML SSO: live login (assertion consumption at the ACS) | **experimental, opt-in** | The ADR-0138 §D5 library gate closed in v0.73.0 (`signxml` + `lxml`, Tier A). `POST /v0/auth/saml/acs` consumes assertions when `saml.experimental_acs_enabled: true` and `novafabric[saml]` is installed; otherwise it still refuses with 501. Security-Architect review remains a pre-production blocking condition — see §5c. A verified assertion is answered 501 `saml_session_unavailable`: no SAML login session exists yet |
 
 **Genuinely still not implemented:**
 

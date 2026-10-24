@@ -28,6 +28,7 @@ import base64
 import enum
 import hashlib
 import time
+from collections.abc import Container
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -257,18 +258,65 @@ class AssertionReplayStore:
             ]:
                 del self._seen[k]
 
-    def check_and_record(self, assertion_id: str) -> bool:
-        """Record *assertion_id*; return False if it was already seen (replay)."""
+    def check_and_record(
+        self, assertion_id: str, *, valid_for_seconds: float | None = None
+    ) -> bool:
+        """Record *assertion_id*; return False if it was already seen (replay).
+
+        The ID is kept for the store TTL or, when longer, *valid_for_seconds* —
+        how long the assertion could still pass the time rules. A TTL shorter
+        than that validity made an assertion replayable once its ID lapsed
+        (review server-12).
+        """
         now = time.monotonic()
         self._purge(now)
         if assertion_id in self._seen:
             return False
-        self._seen[assertion_id] = now + self._ttl
+        keep = max(self._ttl, valid_for_seconds or 0.0)
+        self._seen[assertion_id] = now + keep
         return True
 
     def __len__(self) -> int:
         self._purge(time.monotonic())
         return len(self._seen)
+
+
+class PendingAuthnRequests:
+    """IDs of AuthnRequests this SP sent and has not seen answered (rule V9).
+
+    Bounded and expiring: ``GET /login`` is unauthenticated, and each call adds
+    an ID, so an unbounded set grew by one entry per request (review server-12).
+    An ID older than ``ttl_seconds`` no longer matches an ``InResponseTo``;
+    above ``max_entries`` the oldest IDs are dropped. Single-process only.
+    """
+
+    def __init__(self, ttl_seconds: float = 600.0, max_entries: int = 10_000) -> None:
+        self._ttl = ttl_seconds
+        self._max = max_entries
+        self._issued: dict[str, float] = {}  # request ID → expiry (monotonic), oldest first
+
+    def _purge(self, now: float) -> None:
+        for request_id in [k for k, exp in self._issued.items() if exp <= now]:
+            del self._issued[request_id]
+        while len(self._issued) > self._max:
+            del self._issued[next(iter(self._issued))]
+
+    def add(self, request_id: str) -> None:
+        now = time.monotonic()
+        self._issued.pop(request_id, None)
+        self._issued[request_id] = now + self._ttl
+        self._purge(now)
+
+    def discard(self, request_id: str) -> None:
+        self._issued.pop(request_id, None)
+
+    def __contains__(self, request_id: object) -> bool:
+        self._purge(time.monotonic())
+        return request_id in self._issued
+
+    def __len__(self) -> int:
+        self._purge(time.monotonic())
+        return len(self._issued)
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +329,7 @@ def validate_assertion_policy(
     config: SamlConfig,
     *,
     replay_store: AssertionReplayStore,
-    pending_request_ids: set[str] | None = None,
+    pending_request_ids: Container[str] | None = None,
     now: datetime | None = None,
 ) -> None:
     """Apply validation rules V3–V9 and V11 to an already-verified assertion.
@@ -340,7 +388,7 @@ def validate_assertion_policy(
                 "unsolicited (IdP-initiated) assertion and allow_idp_initiated is false",
             )
     else:
-        if parsed.in_response_to not in (pending_request_ids or set()):
+        if pending_request_ids is None or parsed.in_response_to not in pending_request_ids:
             raise SamlValidationError(
                 "in_response_to_mismatch",
                 "InResponseTo does not match a pending AuthnRequest from this SP",
@@ -348,7 +396,12 @@ def validate_assertion_policy(
 
     # V8 — assertion-ID replay (checked last so rejected assertions
     # do not consume replay-store slots)
-    if not replay_store.check_and_record(parsed.assertion_id):
+    valid_for = (
+        parsed.not_on_or_after.timestamp() + skew - now.timestamp()
+        if parsed.not_on_or_after is not None
+        else None
+    )
+    if not replay_store.check_and_record(parsed.assertion_id, valid_for_seconds=valid_for):
         raise SamlValidationError("replayed", "assertion ID was already consumed")
 
 
