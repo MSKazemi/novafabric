@@ -50,12 +50,24 @@ def _check_tool_permissions(capsule_dir: Path) -> bool:
 
 
 def _check_pii_scan(capsule_dir: Path) -> bool:
-    pii_dir = capsule_dir / "compliance" / "pii"
-    if pii_dir.is_dir():
-        # Any file in the pii directory is sufficient evidence
-        return any(pii_dir.iterdir())
-    # Also accept a top-level redaction-proof.json
-    return (capsule_dir / "redaction-proof.json").exists()
+    """The ``--pii-subject`` stage's ``redaction_manifest.json``, parsed (compliance-privacy-04).
+
+    Every capture writes ``redaction-proof.json`` — the *secret* scanner's proof — so
+    accepting it scored GDPR Art.17 erasure "covered" for runs no PII scan ever saw.
+    Neither is any file under ``compliance/pii/`` (nothing writes one there) evidence.
+    """
+    from novafabric.compliance.pii.manifest import RedactionManifest  # noqa: PLC0415
+
+    text = read_capsule_member_or_none(
+        capsule_dir / "redaction_manifest.json", operation="compliance export"
+    )
+    if text is None:
+        return False
+    try:
+        RedactionManifest.model_validate_json(text)
+    except ValueError:
+        return False
+    return True
 
 
 def _check_policy_events(capsule_dir: Path) -> bool:

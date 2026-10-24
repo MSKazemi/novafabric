@@ -9207,6 +9207,9 @@ always exited 0). The `seal_signature` evidence type, and the summary's `Seals: 
 a capsule's NovaSeal seal **verifies** — signature, content binding and capsule id, the signer
 self-asserted; a file merely named `seal-bundle.json` no longer counts, and a genuine `.seal/`
 now does.
+The `pii_scan` evidence type is the PII redaction manifest `redaction_manifest.json` that
+`nova capture --pii-subject` writes (it must parse); every capture's `redaction-proof.json` is
+the *secret* scanner's proof and no longer makes GDPR Art.17 / Art.5 / Art.25 "covered".
 
 **Not captured by this version.** The `tool_permissions` and `policy_events` evidence types
 read `tool-permission-events.jsonl`, which no NovaFabric producer writes today. When no scanned

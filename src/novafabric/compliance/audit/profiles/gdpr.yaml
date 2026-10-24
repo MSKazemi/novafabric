@@ -33,7 +33,7 @@ controls:
     evidence_requirements:
       - evidence_type: pii_scan
         required: true
-        description: PII erasure proof records (redaction-proof.json) per data subject
+        description: PII redaction manifest (redaction_manifest.json, written by nova capture --pii-subject) per data subject
 
   - id: GDPR-ART22-AUTOMATED-DECISIONS
     title: Automated individual decision-making (Art. 22)

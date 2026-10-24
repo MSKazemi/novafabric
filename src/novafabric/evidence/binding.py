@@ -33,7 +33,7 @@ _EVIDENCE_FILES: dict[str, str] = {
     "policy_events": "tool-permission-events.jsonl",
     "seal_signature": ".seal/manifest.dsse",
     "lineage": "lineage.jsonl",
-    "pii_scan": "redaction-proof.json",
+    "pii_scan": "redaction_manifest.json",
 }
 
 
@@ -54,6 +54,12 @@ class CriterionBinding(BaseModel):
     criterion_id: str
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     binding_status: Literal["satisfied", "partial", "unsatisfied"]
+
+
+def _pii_manifest_parses(capsule_dir: Path) -> bool:
+    from novafabric.compliance.audit.engine import _check_pii_scan  # noqa: PLC0415
+
+    return _check_pii_scan(capsule_dir)
 
 
 def _seal_verifies(capsule_dir: Path) -> bool:
@@ -94,6 +100,8 @@ def build_bindings(
             wanted += 1
             if req.evidence_type == "seal_signature" and not _seal_verifies(capsule_dir):
                 continue  # a seal is evidence only when it verifies (review cli-a-03)
+            if req.evidence_type == "pii_scan" and not _pii_manifest_parses(capsule_dir):
+                continue  # compliance-privacy-04: the PII manifest, parsed
             ref = _ref_for(capsule_dir, rel)
             if ref is not None:
                 refs.append(ref)

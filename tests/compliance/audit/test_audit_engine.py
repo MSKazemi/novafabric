@@ -70,10 +70,12 @@ def make_full_capsule(tmp_path: Path) -> Path:
         json.dumps({"signature": "abc123"}),
         encoding="utf-8",
     )
-    pii_dir = capsule_dir / "compliance" / "pii"
-    pii_dir.mkdir(parents=True)
-    (pii_dir / "manifest.json").write_text(
-        json.dumps({"scanned": True}),
+    # PII evidence is the --pii-subject stage's manifest (compliance-privacy-04);
+    # a seal counts only when .seal/ verifies, so seal-bundle.json above is inert.
+    from novafabric.compliance.pii.manifest import RedactionManifest
+
+    (capsule_dir / "redaction_manifest.json").write_text(
+        RedactionManifest(capsule_id="full-run-001", entries=[]).model_dump_json(),
         encoding="utf-8",
     )
     return tmp_path
