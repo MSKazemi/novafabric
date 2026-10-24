@@ -342,7 +342,11 @@ the portable Agent Card and the Task/Message/Artifact mapping (ADR-0149). The
 `nova capture <cmd>` works without modifying application code. It injects a
 `sitecustomize.py` loader into the subprocess via `PYTHONPATH`. When Python
 starts the subprocess, it imports this loader automatically, which installs
-monkey-patches for:
+monkey-patches for the libraries below. Python imports only one `sitecustomize`, so the
+loader then runs the one it shadows — your own on `PYTHONPATH`, the virtualenv's or the
+distribution's — with `site.py`'s contract (an error is printed, the workload still starts);
+releases up to v0.107.0 skipped it, so certificates, proxies or warning filters set up there
+were missing under capture (**works today**). It patches:
 
 - **OpenAI** — `Completions.create`; since v0.105.0 also `AsyncCompletions.create`, `Responses.create` and `AsyncResponses.create`, in `openai.resources` (`capture/hooks/_openai.py`). A `stream=True` call is folded into one record when the stream ends (ADR-0304) — and that record goes to the capture that *opened* the stream, whichever task, thread or later capture ends it; a stream that ends after its own capture has finished is dropped and counted (`nova_event=capture.stream_record_dropped`), never filed into another capsule (**works today**) — and a call that raised is recorded with the SDK error detail (`io.novafabric.sdk_error`, `capture/hooks/_sdk_errors.py`) that mocked replay needs to raise it again.
 - **Anthropic** — `anthropic.resources.messages.Messages.create`; since v0.105.0 also `AsyncMessages.create`, streamed or not (`capture/hooks/_anthropic.py`).
