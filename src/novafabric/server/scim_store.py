@@ -461,6 +461,20 @@ def delete_group(group_id: str, *, db_path: Path | None = None) -> bool:
         conn.close()
 
 
+def groups_for_user(user_id: str, *, db_path: Path | None = None) -> list[tuple[str, str]]:
+    """``(group id, displayName)`` of every group the given SCIM User id belongs to."""
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT g.id, g.display_name FROM scim_groups g "
+            "JOIN scim_group_members m ON m.group_id = g.id WHERE m.user_id = ?",
+            (user_id,),
+        ).fetchall()
+        return [(r["id"], r["display_name"]) for r in rows]
+    finally:
+        conn.close()
+
+
 def group_display_names_for_user(user_id: str, *, db_path: Path | None = None) -> list[str]:
     """Return the displayNames of every group the given SCIM User id belongs to."""
     conn = _get_conn(db_path)
@@ -522,6 +536,48 @@ def _drop_scim_grant(subject: str, role: str, *, db_path: Path | None) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def last_admin_stranded(
+    group_names_after: dict[str, list[str]],
+    mapping: Any,
+    *,
+    oidc_configured: bool,
+    db_path: Path | None = None,
+) -> str | None:
+    """The subject a group change would strip of the last admin role, else None.
+
+    *group_names_after* maps each affected SCIM User id to the group displayNames
+    it would have once the change is applied. The roles each would then hold are
+    resolved exactly as :func:`reconcile_subject_roles` would apply them (none
+    for an inactive user), and the change strands the last admin when the
+    SCIM-owned admin grants it revokes are every admin assignment there is.
+    Routes call this *before* mutating a group, so a refused change leaves the
+    group as it was (review server-20); the guard in ``revoke_role`` still
+    backs it under a concurrent change.
+    """
+    if oidc_configured:
+        return None  # ADR-0060: an IdP is an admin path; revoke_role never refuses
+    from novafabric.server import rbac_store
+    from novafabric.server.scim_group_mapping import resolve_roles
+
+    losing: list[str] = []
+    for user_id, names in group_names_after.items():
+        user = get_user(user_id, db_path=db_path)
+        if user is None:
+            continue
+        desired = resolve_roles(names, mapping) if user.active else set()
+        if "admin" in desired or "admin" not in _scim_owned_roles(user.user_name, db_path=db_path):
+            continue
+        if rbac_store.get_assigned_by(user.user_name, "admin", db_path=db_path) == SCIM_ROLE_SOURCE:
+            losing.append(user.user_name)
+    if not losing:
+        return None
+    remaining = [
+        a for a in rbac_store.list_assignments(db_path=db_path)
+        if a["role"] == "admin" and a["subject"] not in losing
+    ]
+    return None if remaining else losing[0]
 
 
 def reconcile_subject_roles(

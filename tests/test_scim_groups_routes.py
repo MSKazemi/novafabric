@@ -323,3 +323,76 @@ def test_reactivation_restores_the_roles_of_the_users_groups(client: TestClient)
     assert rbac_store.get_roles("bob@example.com") == []
     set_active(True)
     assert rbac_store.get_roles("bob@example.com") == ["writer"]
+
+
+# review server-20: PATCH/DELETE (and PUT) committed the membership change and
+# only then hit the last-admin 409, so the IdP saw a failure while the group had
+# already changed — SCIM state and RBAC diverged until the next sync.
+
+
+def _members(client: TestClient, group_id: str) -> list[str]:
+    resp = client.get(f"/scim/v2/Groups/{group_id}", headers=_hdrs())
+    assert resp.status_code == 200, resp.text
+    return [m["value"] for m in resp.json()["members"]]
+
+
+def test_patch_removing_the_last_admin_is_refused_before_any_change(
+    client: TestClient,
+) -> None:
+    fay = _create_user(client, "last-fay@example.com")
+    group = _create_group(client, "SRE-Admins", [fay["id"]])
+    resp = client.patch(
+        f"/scim/v2/Groups/{group['id']}",
+        json={"schemas": [PATCH_OP_URN],
+              "Operations": [{"op": "remove", "path": f'members[value eq "{fay["id"]}"]'}]},
+        headers=_hdrs(),
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["scimType"] == "mutability"
+    assert _members(client, group["id"]) == [fay["id"]]
+    assert "admin" in rbac_store.get_roles("last-fay@example.com")
+
+
+def test_deleting_the_last_admins_group_is_refused_before_any_change(
+    client: TestClient,
+) -> None:
+    gus = _create_user(client, "last-gus@example.com")
+    group = _create_group(client, "SRE-Admins", [gus["id"]])
+    resp = client.delete(f"/scim/v2/Groups/{group['id']}", headers=_hdrs())
+    assert resp.status_code == 409, resp.text
+    assert _members(client, group["id"]) == [gus["id"]]
+    assert "admin" in rbac_store.get_roles("last-gus@example.com")
+
+
+def test_put_removing_the_last_admin_leaves_the_membership_unchanged(
+    client: TestClient,
+) -> None:
+    hal = _create_user(client, "last-hal@example.com")
+    group = _create_group(client, "SRE-Admins", [hal["id"]])
+    assert _put_group(client, group["id"], "SRE-Admins", []).status_code == 409
+    assert _members(client, group["id"]) == [hal["id"]]
+
+
+def test_removing_an_admin_while_another_remains_is_allowed(client: TestClient) -> None:
+    ivy = _create_user(client, "last-ivy@example.com")
+    jon = _create_user(client, "last-jon@example.com")
+    group = _create_group(client, "SRE-Admins", [ivy["id"], jon["id"]])
+    _patch_group(client, group["id"], "remove", f'members[value eq "{ivy["id"]}"]')
+    assert _members(client, group["id"]) == [jon["id"]]
+    assert "admin" not in rbac_store.get_roles("last-ivy@example.com")
+
+
+def test_a_malformed_patch_operation_applies_none_of_them(client: TestClient) -> None:
+    kim = _create_user(client, "patch-kim@example.com")
+    group = _create_group(client, "Engineering", [])
+    resp = client.patch(
+        f"/scim/v2/Groups/{group['id']}",
+        json={"schemas": [PATCH_OP_URN], "Operations": [
+            {"op": "add", "path": "members", "value": [{"value": kim["id"]}]},
+            {"op": "replace", "path": "displayName", "value": "x"},
+        ]},
+        headers=_hdrs(),
+    )
+    assert resp.status_code == 400, resp.text
+    assert _members(client, group["id"]) == []
+    assert "writer" not in rbac_store.get_roles("patch-kim@example.com")

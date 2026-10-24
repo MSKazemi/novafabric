@@ -635,7 +635,9 @@ def _reconcile_member(request: Request, user_id: str, actor: str, *, db_path: Pa
     list, a disabled user provisioned straight into a mapped group — must not hand
     them back (review server-03). Reactivation re-derives them (``patch_user``).
     Unknown member ids are ignored (SCIM allows references the server doesn't hold).
-    A LastAdminError from the reconcile surfaces as a SCIM 409 with no mutation.
+    A LastAdminError from the reconcile surfaces as a SCIM 409. Group routes refuse
+    such a change before mutating (:func:`_refuse_stranding_the_last_admin`), so
+    this is the backstop for a concurrent change.
     """
     user = scim_store.get_user(user_id, db_path=db_path)
     if user is None:
@@ -653,6 +655,40 @@ def _reconcile_member(request: Request, user_id: str, actor: str, *, db_path: Pa
         )
     except rbac_store.LastAdminError as exc:
         raise _ScimError(409, str(exc), "mutability") from exc
+
+
+def _names_after(
+    user_id: str, group_id: str, display_name: str | None, *, db_path: Path | None
+) -> list[str]:
+    """*user_id*'s group displayNames once *group_id* is named *display_name*.
+
+    ``display_name=None`` means the user is no longer in that group.
+    """
+    names = [
+        name for gid, name in scim_store.groups_for_user(user_id, db_path=db_path)
+        if gid != group_id
+    ]
+    if display_name is not None:
+        names.append(display_name)
+    return names
+
+
+def _refuse_stranding_the_last_admin(
+    request: Request, after: dict[str, list[str]], *, db_path: Path | None
+) -> None:
+    """409 before any mutation when the change would revoke the last admin (server-20)."""
+    config: ServerConfig = request.app.state.config
+    subject = scim_store.last_admin_stranded(
+        after, config.scim.role_mapping(), oidc_configured=config.oidc.enabled, db_path=db_path
+    )
+    if subject is not None:
+        raise _ScimError(
+            409,
+            f"refusing the group change: it would revoke the last admin role, from "
+            f"{subject!r}, and no other admin assignment remains and no OIDC issuer "
+            "is configured",
+            "mutability",
+        )
 
 
 @router.post("/Groups")
@@ -712,7 +748,9 @@ async def patch_group(
     if not isinstance(operations, list) or not operations:
         raise _ScimError(400, "Operations must be a non-empty array", "invalidValue")
 
-    affected: list[str] = []
+    # Parse every operation before applying any, so a malformed one, or a
+    # refusal below, leaves the group unchanged.
+    changes: list[tuple[str, str]] = []  # (verb, member id), in request order
     for op in operations:
         if not isinstance(op, dict):
             raise _ScimError(400, "each Operation must be an object", "invalidSyntax")
@@ -721,17 +759,34 @@ async def patch_group(
         if verb == "add" and path == "members":
             for entry in op.get("value") or []:
                 if isinstance(entry, dict) and isinstance(entry.get("value"), str):
-                    scim_store.add_group_member(group_id, entry["value"], db_path=db_path)
-                    affected.append(entry["value"])
+                    changes.append(("add", entry["value"]))
         elif verb == "remove" and isinstance(path, str):
             match = _MEMBER_PATH_RE.match(path)
             if match is None:
                 raise _ScimError(400, f"unsupported patch path {path!r}", "invalidPath")
-            uid = match.group("value")
-            scim_store.remove_group_member(group_id, uid, db_path=db_path)
-            affected.append(uid)
+            changes.append(("remove", match.group("value")))
         else:
             raise _ScimError(400, f"unsupported patch op {verb!r}", "invalidValue")
+
+    final = set(group.members)
+    for verb, uid in changes:
+        (final.add if verb == "add" else final.discard)(uid)
+    affected = list(dict.fromkeys(uid for _, uid in changes))
+    _refuse_stranding_the_last_admin(
+        request,
+        {
+            uid: _names_after(
+                uid, group_id, group.display_name if uid in final else None, db_path=db_path
+            )
+            for uid in affected
+        },
+        db_path=db_path,
+    )
+    for verb, uid in changes:
+        if verb == "add":
+            scim_store.add_group_member(group_id, uid, db_path=db_path)
+        else:
+            scim_store.remove_group_member(group_id, uid, db_path=db_path)
 
     for uid in affected:
         _reconcile_member(request, uid, actor, db_path=db_path)
@@ -762,6 +817,18 @@ async def put_group(
     fields = _parse_group_payload(payload)
 
     old_members = set(group.members)
+    new_members = set(fields["member_ids"])
+    _refuse_stranding_the_last_admin(
+        request,
+        {
+            uid: _names_after(
+                uid, group_id, fields["display_name"] if uid in new_members else None,
+                db_path=db_path,
+            )
+            for uid in sorted(old_members | new_members)
+        },
+        db_path=db_path,
+    )
     updated = scim_store.replace_group(
         group_id,
         display_name=fields["display_name"],
@@ -785,6 +852,11 @@ async def delete_group(group_id: str, request: Request, actor: _Actor, db_path: 
     if group is None:
         raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
     members = list(group.members)
+    _refuse_stranding_the_last_admin(
+        request,
+        {uid: _names_after(uid, group_id, None, db_path=db_path) for uid in members},
+        db_path=db_path,
+    )
     scim_store.delete_group(group_id, db_path=db_path)
     # After the group is gone, each member's role set is recomputed from the
     # groups that remain — dropping the role this group granted (if unique).

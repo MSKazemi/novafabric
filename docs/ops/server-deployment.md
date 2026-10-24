@@ -608,7 +608,9 @@ the NovaFabric `/v0/` error model.
 - The ADR-0060 **last-admin lockout guard** applies: a SCIM deprovision that
   would remove the last admin (with no OIDC configured in the server YAML) is refused
   with a SCIM `409` and *nothing* is mutated — the user stays active and
-  keeps its roles.
+  keeps its roles. The same holds for a Group `PATCH`, `PUT` or `DELETE` whose
+  membership change would revoke the last admin: it is refused with `409`
+  before the group changes. A `PATCH` applies all of its operations or none.
 - Every mutation appends an event (`user.create` / `user.update` /
   `user.deactivate` / `user.delete`, with `roles_before`/`roles_after`) to
   the append-only `scim_audit_events` table.
