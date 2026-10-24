@@ -249,14 +249,16 @@ def create_backup(
                     "(or NOVAFABRIC_POSTGRES_DSN)"
                 )
             dump_path = stage / PG_DUMP_MEMBER
-            _run_pg_dump(resolved_dsn, dump_path)
+            # ADR-0217 D5/D6: dump-time verification anchors, taken in the dump's
+            # own snapshot. Best-effort — psycopg may be absent (dump needs only
+            # the client tools); restore then reports count verification as
+            # honestly skipped.
+            pg_schema_revision, pg_table_counts = _dump_with_consistent_counts(
+                resolved_dsn, dump_path
+            )
             db_target = _redact_dsn(resolved_dsn)
             db_dump_ref = PG_DUMP_MEMBER
             members.append(_member(dump_path, PG_DUMP_MEMBER, kind="db_dump"))
-            # ADR-0217 D5/D6: dump-time verification anchors. Best-effort —
-            # psycopg may be absent (dump needs only the client tools); restore
-            # then reports count verification as honestly skipped.
-            pg_schema_revision, pg_table_counts = _pg_verification_fields(resolved_dsn)
             pg_client_version = _pg_client_version()
 
         # --- registry.db via the SQLite online-backup API (live-writer safe) ---
@@ -492,8 +494,11 @@ def _dsn_from_env() -> Optional[str]:
 _redact_dsn = redact_dsn
 
 
-def _run_pg_dump(dsn: str, dump_path: Path) -> None:
+def _run_pg_dump(dsn: str, dump_path: Path, *, snapshot: Optional[str] = None) -> None:
     """Run ``pg_dump --format=custom`` into *dump_path*. The DSN is never logged.
+
+    With *snapshot* (an exported snapshot id) the dump reads exactly that
+    snapshot; the exporting transaction must stay open while it runs.
 
     Raises:
         PgDumpNotFoundError: no ``pg_dump`` binary on PATH.
@@ -513,7 +518,10 @@ def _run_pg_dump(dsn: str, dump_path: Path) -> None:
     except ValueError as exc:
         raise BackupCreateError(f"the database DSN cannot be parsed: {exc}") from None
     proc = subprocess.run(  # noqa: S603 — fixed binary, no shell
-        [pg_dump, "--format=custom", "--file", str(dump_path), "--dbname", dbname],
+        [
+            pg_dump, "--format=custom", "--file", str(dump_path), "--dbname", dbname,
+            *([f"--snapshot={snapshot}"] if snapshot else []),
+        ],
         capture_output=True,
         text=True,
         env={**os.environ, **pg_env},
@@ -641,6 +649,63 @@ def _collect_object_store(
         backend_tag,
         listing.backend_fingerprint.fingerprint_sha256,
     )
+
+
+def _dump_with_consistent_counts(
+    dsn: str, dump_path: Path
+) -> tuple[Optional[str], Optional[dict[str, int]]]:
+    """``pg_dump`` *dsn* into *dump_path*; return the revision and counts it holds.
+
+    The counts used to be taken on a new connection after the dump, so on a busy
+    server they described a later database than the dump and restoring a correct
+    dump reported a mismatch (review storage-backup-08). Now one ``REPEATABLE
+    READ`` transaction exports its snapshot, counts inside it (each query under
+    a savepoint, so a missing table cannot end the transaction), and stays open
+    while ``pg_dump --snapshot`` reads the same snapshot.
+
+    Without psycopg, or when the snapshot cannot be exported, it falls back to
+    dump-then-count (the earlier behaviour). Dump failures raise as
+    :func:`_run_pg_dump` does; count failures never fail the backup.
+    """
+    try:
+        import psycopg
+    except ImportError:
+        _run_pg_dump(dsn, dump_path)
+        return None, None
+    try:
+        conn = psycopg.connect(dsn)
+    except psycopg.Error:
+        _run_pg_dump(dsn, dump_path)
+        return None, None
+    with conn:
+        try:
+            conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+            row = conn.execute("SELECT pg_export_snapshot()").fetchone()
+            snapshot = str(row[0]) if row else None
+        except psycopg.Error:
+            snapshot = None
+        if snapshot is None:
+            conn.rollback()
+            _run_pg_dump(dsn, dump_path)
+            return _pg_verification_fields(dsn)
+        revision: Optional[str] = None
+        try:
+            with conn.transaction():
+                row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+                revision = str(row[0]) if row else None
+        except psycopg.Error:
+            pass  # table may not exist on older deployments
+        counts: dict[str, int] = {}
+        for table in PG_COUNT_TABLES:
+            try:
+                with conn.transaction():
+                    row = conn.execute(f"SELECT count(*) FROM {table}").fetchone()  # noqa: S608
+                    counts[table] = int(row[0]) if row else 0
+            except psycopg.Error:
+                continue
+        _run_pg_dump(dsn, dump_path, snapshot=snapshot)
+        conn.commit()
+    return revision, counts or None
 
 
 def _pg_verification_fields(

@@ -65,6 +65,12 @@ pg_dump --format=custom --dbname="host=db user=nova dbname=nova" \
 NOVA_DSN="postgresql://nova:…@db/nova" nova backup create --profile pg -o pg-nightly.tar.gz
 ```
 
+The row counts are taken in the dump's own snapshot: one `REPEATABLE READ`
+transaction exports its snapshot, counts, and stays open while `pg_dump --snapshot`
+reads that snapshot, so restoring a correct dump of a busy server verifies (releases
+up to v0.107.0 counted after the dump on a new connection, and reported a mismatch).
+Without psycopg the dump runs alone and restore reports count verification as skipped.
+
 `nova backup create` and `nova restore` hand `pg_dump` / `pg_restore` a DSN with
 the password removed and pass the password in `PGPASSWORD`, so it never appears
 in the client's argv (`/proc/<pid>/cmdline`). Prefer `NOVA_DSN` over `--dsn` for
