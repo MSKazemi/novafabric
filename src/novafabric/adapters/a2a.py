@@ -99,9 +99,18 @@ class NovaA2AInterceptor:
         ] = {}
 
     async def before(self, args: Any) -> None:
-        """A2A ``before`` hook. Never raises: capture must not break the user's call."""
+        """A2A ``before`` hook. Never raises: capture must not break the user's call.
+
+        The one exception is strict mode's :class:`ConcurrentCaptureRefused`: an
+        operator who asked for strict capture asked for that refusal to be an
+        error, and it is raised before anything is written or installed.
+        """
+        from novafabric.capture.hooks import ConcurrentCaptureRefused
+
         try:
             await self._before(args)
+        except ConcurrentCaptureRefused:
+            raise
         except Exception as exc:  # noqa: BLE001 — fail-open (I-3)
             from novafabric.capture.hooks._fail_open import note_capture_failure
 
