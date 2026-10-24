@@ -397,9 +397,9 @@ def report_evidence_inventory(
     from_ts: str | None = None,
     to_ts: str | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    import hashlib
-    import json as _json
     import zipfile
+
+    from novafabric.evidence.bundle_verify import verify_bundle_archive
 
     evidence_dir = _nf_paths.evidence_dir()
     if not evidence_dir.is_dir():
@@ -414,17 +414,15 @@ def report_evidence_inventory(
         verified = False
         try:
             with zipfile.ZipFile(zp, "r") as zf:
-                if "manifest.json" in zf.namelist():
-                    m = _json.loads(zf.read("manifest.json"))
-                    run_id = m.get("run_id", bundle_id)
-                    created_at = m.get("created_at") or m.get("timestamp")
-                    stored = m.get("manifest_hash", "")
-                    work = {k: v for k, v in m.items() if k != "manifest_hash"}
-                    recomputed = hashlib.sha256(
-                        _json.dumps(work, sort_keys=True, separators=(",", ":")).encode()
-                    ).hexdigest()
-                    verified = stored == recomputed
-        except Exception:  # noqa: BLE001
+                # The recipe `nova verify <bundle>.zip` and the verify route run
+                # (review serve-17: a home-grown manifest_hash recomputation used a
+                # different canonicalisation, so every valid bundle read False).
+                outcome = verify_bundle_archive(zf)
+                m = outcome.manifest
+                run_id = m.get("run_id", bundle_id)
+                created_at = m.get("created_at") or m.get("timestamp")
+                verified = outcome.ok
+        except Exception:  # noqa: BLE001 — an unreadable bundle is listed unverified
             pass
         out.append({
             "bundle_id": bundle_id,
