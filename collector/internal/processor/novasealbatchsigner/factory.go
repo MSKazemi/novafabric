@@ -25,9 +25,19 @@ func NewFactory() processor.Factory {
 	)
 }
 
-// createLogsProcessor constructs the novaSealBatchSignerProcessor.  The signer
-// is not set at construction time; it must be injected via WithSigner before
-// the processor is started so that tests can substitute a mock.
+// createLogsProcessor constructs the novaSealBatchSignerProcessor from its config.
+//
+// Review go-collector-ts-packages-01: it used to build no signer at all, so every
+// build forwarded every batch UNSIGNED — even with `fail_open: false`. Now:
+//   - local_wal: true → the local dev-key keystore; the signer is fetched in Start
+//     (the keystore refuses NOVAFABRIC_ENV=production);
+//   - keystore_endpoint set → refused: the KMS keystore needs an mTLS client
+//     certificate the config has no fields for yet (planned), and silently
+//     ignoring a configured keystore is the defect this replaces;
+//   - neither, fail_open: false → refused: unsigned batches would be forwarded;
+//   - neither, fail_open: true → explicit pass-through (logged at Start).
+//
+// Tests may still inject a signer with WithSigner.
 func createLogsProcessor(
 	_ context.Context,
 	set processor.Settings,
@@ -39,11 +49,26 @@ func createLogsProcessor(
 		return nil, fmt.Errorf("novaseal_batch_signer: invalid config type %T", cfg)
 	}
 
+	if c.KeystoreEndpoint != "" {
+		return nil, fmt.Errorf(
+			"novaseal_batch_signer: keystore_endpoint %q is set, but this build cannot use a "+
+				"KMS keystore: it needs an mTLS client certificate the processor config has no "+
+				"fields for yet (planned). Remove keystore_endpoint, or set local_wal: true for "+
+				"development", c.KeystoreEndpoint)
+	}
 	p := &novaSealBatchSignerProcessor{
 		cfg:          c,
 		nextConsumer: nextConsumer,
 		telemetry:    set.TelemetrySettings,
 		signLatency:  defaultSignLatency(),
+	}
+	switch {
+	case c.LocalWAL:
+		p.keystore = novaseal.NewLocalWALKeystore(novaseal.LocalWALConfig{})
+	case !c.FailOpen:
+		return nil, fmt.Errorf(
+			"novaseal_batch_signer: no signer configured (set local_wal: true) and fail_open " +
+				"is false: refusing to start a processor that would forward every batch unsigned")
 	}
 	return p, nil
 }

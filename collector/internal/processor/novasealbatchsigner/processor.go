@@ -46,6 +46,15 @@ type novaSealBatchSignerProcessor struct {
 	// invalidEnvelopeVersion counts log records rejected due to unknown
 	// envelope_version.  May be nil when running in tests without a registry.
 	invalidEnvelopeVersion *prometheus.CounterVec
+
+	// keystore supplies the signer at Start when the config names one
+	// (local_wal); nil when a signer was injected or fail_open passes through.
+	keystore signerSource
+}
+
+// signerSource is the part of a NovaSeal keystore the processor needs.
+type signerSource interface {
+	GetActiveSigner(ctx context.Context) (novaseal.Signer, error)
 }
 
 // Capabilities implements processor.Logs.
@@ -54,9 +63,21 @@ func (p *novaSealBatchSignerProcessor) Capabilities() consumer.Capabilities {
 }
 
 // Start implements component.Component.
-func (p *novaSealBatchSignerProcessor) Start(_ context.Context, _ component.Host) error {
+func (p *novaSealBatchSignerProcessor) Start(ctx context.Context, _ component.Host) error {
+	if p.signer == nil && p.keystore != nil {
+		s, err := p.keystore.GetActiveSigner(ctx)
+		if err != nil {
+			if !p.cfg.FailOpen {
+				return fmt.Errorf("novaseal_batch_signer: cannot get a signer: %w", err)
+			}
+			slog.Warn("novaseal_batch_signer: cannot get a signer; forwarding unsigned (fail_open=true)",
+				"error", err)
+		} else {
+			p.signer = s
+		}
+	}
 	if p.signer == nil {
-		slog.Warn("novaseal_batch_signer: no signer configured; processor will operate in pass-through mode")
+		slog.Warn("novaseal_batch_signer: no signer configured; forwarding batches UNSIGNED (fail_open=true)")
 	}
 	return nil
 }

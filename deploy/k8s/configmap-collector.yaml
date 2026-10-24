@@ -26,6 +26,9 @@ data:
       # NovaSeal Batch Signer — signs each OTLP batch with Ed25519 before export.
       # This is a custom OTel processor extension from the novafabric-collector image.
       # fail_open: false — drop the batch if NovaSeal is unreachable (never forward unsigned events).
+      # NOTE: keystore_endpoint is not usable yet (the KMS keystore needs an mTLS client
+      # certificate the processor config has no fields for); with it set the collector
+      # refuses to start instead of forwarding unsigned. See docs/cli-reference.md.
       novaseal_batch_signer:
         keystore_endpoint: "${NOVASEAL_KMS_ENDPOINT}"
         fail_open: false

@@ -8978,9 +8978,11 @@ novafabric-collector --config collector.yaml
 novafabric-collector --config /etc/novafabric/collector.yaml
 ```
 
-The collector is built using the OpenTelemetry Collector Builder (OCB) with the
-`novaseal_batch_signer` custom processor registered. It accepts standard OTel
-Collector configuration YAML.
+**experimental.** Two builds exist, and neither runs the reference pipeline below as written:
+`collector/cmd/novafabric-collector` registers **only** the `novaseal_batch_signer` processor (no
+receivers or exporters), and the OCB build (`collector/ocb/builder-config.yaml`) adds the `otlp`
+receiver, `batch` and the `debug`/`otlp` exporters — but no `kafka` exporter (**planned**). Use the
+OCB build and an `otlp` exporter until then.
 
 **Reference pipeline** (see `deploy/k8s/configmap-collector.yaml`):
 ```yaml
@@ -8996,11 +8998,11 @@ processors:
     send_batch_size: 1000
     timeout: 5s
   novaseal_batch_signer:
-    keystore_endpoint: "${NOVASEAL_KMS_ENDPOINT}"
+    keystore_endpoint: "${NOVASEAL_KMS_ENDPOINT}"   # not yet usable — see below
     fail_open: false          # default: fail-closed — unsigned batches are refused
     cache_ttl: 5m
     key_rotation_interval: 1h
-    local_wal: false          # true only in dev (sets NOVAFABRIC_KMS_LOCAL_WAL=1)
+    local_wal: false          # true only in dev
 exporters:
   kafka:
     brokers: ["${KAFKA_BOOTSTRAP_SERVERS}"]
@@ -9017,11 +9019,14 @@ service:
 
 | Option | Default | Description |
 |---|---|---|
-| `keystore_endpoint` | — | NovaSeal KMS mTLS endpoint (required unless `local_wal: true`) |
-| `fail_open` | `false` | `false` = fail-closed (unsigned batches refused); `true` = continue without signature if KMS is down |
+| `keystore_endpoint` | — | NovaSeal KMS mTLS endpoint. **Not yet usable** (**planned**): the KMS keystore needs an mTLS client certificate the processor config has no fields for, so a set `keystore_endpoint` makes the collector refuse to start rather than ignore it |
+| `fail_open` | `false` | `false` = fail-closed: with no signer the collector **refuses to start**, and a batch that fails to sign is dropped; `true` = forward without a signature (logged as `forwarding batches UNSIGNED`) |
 | `cache_ttl` | `5m` | How long a fetched key is cached |
 | `key_rotation_interval` | `1h` | How often to rotate signing key |
 | `local_wal` | `false` | **Dev only.** Use a local Ed25519 key from `~/.novafabric/dev-keys/`. Emits a WARN on every signing call. Refuses when `NOVAFABRIC_ENV=production`. |
+
+Today the only working signer is `local_wal: true`. Releases up to v0.107.0 built **no** signer from
+the config in any build: every batch was forwarded unsigned, also with `fail_open: false`.
 
 The processor places each batch's signature and key ID in `Resource.attributes`:
 - `nova.batch.signature` — base64-encoded Ed25519 signature (88 chars)
@@ -9040,7 +9045,9 @@ Deployment, DaemonSet (Fluent Bit node collector), and Service manifest set.
 ### novafabric-verifier
 
 Verify a NovaSeal Ed25519 batch signature offline. Returns exit 0 if the
-signature is valid, exit 1 if invalid.
+signature is valid, exit 1 if invalid or an input cannot be read, exit 2 on a usage error.
+Releases up to v0.107.0 panicked on every signed batch (a nil context reached `Verify`) and could
+never print `OK`; they also refused a standard SPKI public-key PEM as the wrong size.
 
 ```bash
 # Verify with a PEM public key from the KMS
@@ -9055,7 +9062,7 @@ novafabric-verifier --batch batch.pb --local-wal
 | Flag | Required | Description |
 |---|---|---|
 | `--batch PATH` | yes | Path to a serialized OTLP `ResourceLogs` proto file |
-| `--pubkey PATH` | one of | PEM-encoded Ed25519 public key file |
+| `--pubkey PATH` | one of | PEM Ed25519 public key: the standard SPKI `PUBLIC KEY` encoding a KMS exports, or a raw 32-byte body |
 | `--key-id UUID` | with `--pubkey` | Key ID to verify against |
 | `--local-wal` | one of | Use the dev key from `~/.novafabric/dev-keys/` |
 
