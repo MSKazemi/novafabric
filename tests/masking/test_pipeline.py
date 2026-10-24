@@ -337,3 +337,62 @@ def test_a_file_whose_structured_masking_fails_is_masked_as_text(
     assert _EMAIL not in (capsule / "model-calls.jsonl").read_text()
     (err,) = errors
     assert err["reason"] == "raised" and err["action_taken"] == "redact"
+
+
+# --- review compliance-privacy-06: a hanging masker never keeps nova capture alive ----
+
+class _HangingMasker:
+    masker_id = "hanging-masker"
+    masker_version = "1"
+    pattern_ids = ("hang",)
+    calls = 0
+
+    def mask(self, field: object, value: str, context: object) -> object:
+        type(self).calls += 1
+        import time
+
+        time.sleep(3600)
+        return value
+
+
+def test_a_hanging_masker_is_called_once_then_skipped_fail_closed(capsule_dir: Path) -> None:
+    import threading
+
+    _HangingMasker.calls = 0
+    before = {t.ident for t in threading.enumerate() if not t.daemon}
+    findings, errors = _pipeline(_HangingMasker(), timeout_ms=50).run(capsule_dir, run_id="r1")
+    assert findings == []
+    assert len(errors) > 1 and all(e["reason"] == "timeout" for e in errors)
+    assert _HangingMasker.calls == 1  # not one stuck thread per value
+    leaked = [t for t in threading.enumerate() if not t.daemon and t.ident not in before]
+    assert leaked == []  # nothing the interpreter would wait for at exit
+
+
+def test_the_process_exits_after_a_masker_hung(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+    import textwrap
+
+    capsule = tmp_path / "cap"
+    capsule.mkdir()
+    (capsule / "model-calls.jsonl").write_text('{"a": "x"}\n{"b": "y"}\n{"c": "z"}\n')
+    script = textwrap.dedent(
+        f"""
+        import time
+        from pathlib import Path
+        from novafabric.masking import MaskerSpec, MaskingPipeline
+        from novafabric.masking._registry import LoadedMasker
+
+        class Hang:
+            masker_id = "hang"; masker_version = "1"; pattern_ids = ("h",)
+            def mask(self, field, value, context):
+                time.sleep(3600)
+
+        pipe = MaskingPipeline([LoadedMasker(masker=Hang(), spec=MaskerSpec(id="hang", timeout_ms=50))])
+        pipe.run(Path({str(capsule)!r}), run_id="r1", targets=[("model-calls.jsonl", "model_call")])
+        print("done")
+        """
+    )
+    proc = subprocess.run([sys.executable, "-c", script], capture_output=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr.decode()[-500:]
+    assert b"done" in proc.stdout

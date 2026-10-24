@@ -23,8 +23,10 @@ import hashlib
 import json
 import logging
 import os
+import queue
+import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -57,13 +59,45 @@ class _MaskerTimeout(Exception):
     """Internal: a masker call exceeded its ``timeout_ms`` budget."""
 
 
+#: One queued masker call: its future, the callable and its arguments.
+_Job = tuple[Future[Any], Callable[..., Any], tuple[Any, ...]]
+
+
+class _DaemonWorker:
+    """One daemon thread running masker calls in order; never joined at interpreter exit."""
+
+    def __init__(self) -> None:
+        self._queue: queue.SimpleQueue[_Job | None] = queue.SimpleQueue()
+        threading.Thread(target=self._loop, name="nova-masker", daemon=True).start()
+
+    def _loop(self) -> None:
+        while (item := self._queue.get()) is not None:
+            future, fn, args = item
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                future.set_result(fn(*args))
+            except BaseException as exc:  # noqa: BLE001 — handed to the caller
+                future.set_exception(exc)
+
+    def submit(self, fn: Callable[..., Any], *args: Any) -> Future[Any]:
+        future: Future[Any] = Future()
+        self._queue.put((future, fn, args))
+        return future
+
+    def close(self) -> None:
+        self._queue.put(None)
+
+
 class MaskingPipeline:
     """Ordered chain of operator-registered maskers (ADR-0135 D3–D5)."""
 
     def __init__(self, maskers: list[LoadedMasker], tenant: str = "local") -> None:
         self._maskers = list(maskers)
         self._tenant = tenant
-        self._executor: ThreadPoolExecutor | None = None
+        self._worker: _DaemonWorker | None = None
+        #: Maskers that overran their budget once: skipped (fail-closed) from then on.
+        self._timed_out: set[str] = set()
 
     # -- public entry point -------------------------------------------------
 
@@ -386,27 +420,37 @@ class MaskingPipeline:
     def _call_bounded(
         self, loaded: LoadedMasker, field: MaskField, value: str, context: MaskContext
     ) -> Any:
-        """Run one masker call under its ``timeout_ms`` budget (D5)."""
-        if self._executor is None:
-            self._executor = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="nova-masker"
-            )
-        future = self._executor.submit(loaded.masker.mask, field, value, context)
+        """Run one masker call under its ``timeout_ms`` budget (D5).
+
+        A masker that overran its budget once is not called again: every later
+        value it would see times out at once (fail-closed). Calls run on a daemon
+        thread, which the interpreter never waits for at exit — the
+        ``ThreadPoolExecutor`` used before was joined by an exit hook whatever
+        ``shutdown(wait=False)`` said, and a fresh one per timed-out value left one
+        stuck thread per value: ``nova capture`` could never exit
+        (compliance-privacy-06).
+        """
+        masker_id = loaded.spec.id
+        if masker_id in self._timed_out:
+            raise _MaskerTimeout()
+        if self._worker is None:
+            self._worker = _DaemonWorker()
+        future = self._worker.submit(loaded.masker.mask, field, value, context)
         try:
             return future.result(timeout=loaded.spec.timeout_ms / 1000.0)
         except TimeoutError:
             if future.done():
                 raise  # the masker itself raised TimeoutError → reason "raised"
-            # Abandon the (possibly stuck) worker; a fresh executor is created
-            # lazily on the next call. The stuck thread cannot block capture.
-            self._executor.shutdown(wait=False, cancel_futures=True)
-            self._executor = None
+            # Abandon the (stuck) worker — a daemon, so it never blocks exit — and
+            # stop calling this masker; others get a fresh worker on their next call.
+            self._worker = None
+            self._timed_out.add(masker_id)
             raise _MaskerTimeout() from None
 
     def _close(self) -> None:
-        if self._executor is not None:
-            self._executor.shutdown(wait=False, cancel_futures=True)
-            self._executor = None
+        if self._worker is not None:
+            self._worker.close()
+            self._worker = None
 
 
 #: Files parsed as structured data; anything else under ``inputs/`` / ``outputs/``
