@@ -114,6 +114,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   --replay-pubkey` and issued for this capsule. `nova safety-case verify` now checks that the case's subject is
   the capsule it is given (exit `6`, new), that every reference resolves, and refuses artifact paths outside the
   capsule (it read `/etc/hostname` when a case named it) (ADR-0095 Amendment 1).
+- **`nova evidence check-admissibility` re-witnesses the FRE-902(14) gate.** It re-ran the five points over the
+  custody block's own booleans, so a hand-written JSON with them set to `true` was "self-authenticating" (exit 0).
+  The block now carries the signature itself, and the checker verifies it under `--pubkey`, recomputes the Merkle
+  root from `--capsule`, and matches the custody events against the local audit chain; a point it has no material
+  for fails. `bind-custody` records an `oidc`/`novaseal-identity` custodian with nothing vouching for it (no `--key`)
+  as `operator_declared`. **Scripts must now pass `--capsule` and `--pubkey`.**
+- **`nova assure` LLM02, LLM04 and LLM07 check real fields.** They read keys no writer produces and passed for every
+  capsule. LLM02 now reads the proof's `findings_count.total` (and fails on `unsafe_skips`), LLM04 sums
+  `gen_ai.usage.input_tokens`, and LLM07 fails when a response reproduces a recorded system prompt (SKIP when none
+  is recorded).
 - **Compliance evidence is no longer inferred from unrelated files.** The GDPR audit profile scored Art.17 erasure
   "covered" from every capture's secret-scan proof (`redaction-proof.json`); only the `--pii-subject` redaction
   manifest counts now. The HIPAA Safe Harbor proof reported every identifier without redaction evidence as
