@@ -251,7 +251,12 @@ def submit_request(
         raise SubmissionInvalidError(f"invalid score: {exc}") from exc
 
     scores_path = root / SCORES_FILENAME
-    existing = read_scores(scores_path, capsule_member=True)
+    try:
+        existing = read_scores(scores_path, capsule_member=True)
+    except ValueError as exc:  # a record no reader accepts (e.g. a pre-fix NaN, eval-02)
+        raise CapsuleUnusableError(
+            f"{SCORES_FILENAME} holds an unreadable record; nothing was written: {exc}"
+        ) from exc
 
     # Rule 6 — idempotency by score_id.
     for prior in existing:

@@ -277,3 +277,28 @@ def test_all_rejections_share_the_base_class() -> None:
         IdempotencyConflictError,
     ):
         assert issubclass(exc_type, ScoreSubmissionError)
+
+
+# --- review eval-02: a non-finite score never reaches the append-only log -------
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_numeric_score_is_refused_and_nothing_is_written(
+    capsule: Path, db_path: Path, bad: float
+) -> None:
+    with pytest.raises(SubmissionInvalidError, match="finite"):
+        _submit(capsule, db_path, value=bad)
+    assert not (capsule / SCORES_FILENAME).exists()
+
+
+def test_a_log_poisoned_before_this_fix_is_a_submission_error_not_a_crash(
+    capsule: Path, db_path: Path
+) -> None:
+    _submit(capsule, db_path)
+    line = (capsule / SCORES_FILENAME).read_text().splitlines()[0]
+    poisoned = json.loads(line)
+    poisoned.update(score_id=new_ulid(), value=None)  # what NaN serialised to
+    with (capsule / SCORES_FILENAME).open("a") as fh:
+        fh.write(json.dumps(poisoned) + "\n")
+    with pytest.raises(ScoreSubmissionError, match="scores.jsonl"):
+        _submit(capsule, db_path, value=0.5)

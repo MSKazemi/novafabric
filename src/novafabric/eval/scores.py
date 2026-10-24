@@ -34,6 +34,7 @@ The signed *eval card* that a score references lives in ``eval/card.py`` (NF-002
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime, timezone
 from enum import Enum
@@ -153,6 +154,11 @@ class Score(BaseModel):
             isinstance(self.value, bool) or not isinstance(self.value, (int, float))
         ):
             raise ValueError("value_type 'numeric' requires a numeric (non-bool) value")
+        # NaN and ±inf are not numbers a score can carry: JSON has no spelling for
+        # them, pydantic writes them as ``null``, and that record then fails every
+        # later read of the append-only log (review eval-02).
+        if isinstance(self.value, float) and not math.isfinite(self.value):
+            raise ValueError(f"a numeric score must be finite, got {self.value!r}")
         return self
 
 

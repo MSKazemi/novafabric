@@ -238,3 +238,26 @@ def test_boolean_metric_outcomes_empty_when_no_match() -> None:
     assert boolean_metric_outcomes([_score(name="x", value=True,
                                            value_type=ScoreValueType.BOOLEAN,
                                            source=ScoreSource.CODE)], "task_pass") == []
+
+
+def test_score_model_rejects_non_finite_numeric_values() -> None:
+    """Review eval-02: pydantic writes NaN as ``null``, which no reader accepts."""
+    import math
+
+    import pytest
+    from pydantic import ValidationError
+
+    from novafabric.eval.scores import Score
+
+    base = {
+        "subject": "sha256:" + "a" * 64,
+        "name": "acc",
+        "value_type": "numeric",
+        "source": "code",
+        "evaluator_id": "e",
+        "eval_card_digest": "sha256:" + "b" * 64,
+    }
+    for bad in (math.nan, math.inf, -math.inf):
+        with pytest.raises(ValidationError, match="finite"):
+            Score(value=bad, **base)
+    assert Score(value=0.5, **base).value == 0.5
