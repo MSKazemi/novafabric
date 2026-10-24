@@ -66,3 +66,14 @@ def test_a_corrupt_hold_line_still_blocks_through_the_per_run_form(tmp_path: Pat
     _, run = _layout(tmp_path)
     (tmp_path / "registries" / "default" / "holds.jsonl").write_text("{not json\n")
     assert capsule_holds(run) == ("__corrupt__:default",)
+
+
+def test_a_run_directory_with_a_capsule_json_manifest_resolves_to_its_base(
+    tmp_path: Path,
+) -> None:
+    # review trust-evidence-17: only capsule.yaml marked a run directory, so a
+    # run carrying capsule.json (a supported manifest name) read as "no holds".
+    _, run = _layout(tmp_path)
+    (run / "capsule.yaml").unlink()
+    (run / "capsule.json").write_text('{"run_id": "run-1"}')
+    assert capsule_holds(run) == ("H-ACTIVE",)

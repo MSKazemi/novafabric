@@ -271,6 +271,20 @@ def test_an_unknown_hold_status_is_not_reported_as_no_hold() -> None:
     assert "legal-hold status could not be established" in (
         resolved.items[0].unresolved_reason or ""
     )
+    # review trust-evidence-06: the machine-readable fields said "no holds"
+    # (legal_holds_present: []) and only a free-text reason differed.
+    manifest = resolved.as_dict()
+    assert manifest["items"][0]["legal_hold_status"] == "unknown"
+    assert manifest["legal_hold_status_unknown_count"] == 1
+    assert [i.ref for i in resolved.hold_status_unknown] == ["mystery"]
+
+
+def test_an_established_hold_status_carries_no_unknown_marker() -> None:
+    cart = EvidenceCart(owner="alice")
+    cart.add(_item("free"))
+    manifest = _resolve(cart, holds_for=lambda i: []).as_dict()
+    assert "legal_hold_status" not in manifest["items"][0]
+    assert manifest["legal_hold_status_unknown_count"] == 0
 
 
 def test_holds_are_not_queried_for_an_unresolvable_item() -> None:

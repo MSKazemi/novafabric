@@ -139,6 +139,9 @@ class ResolvedItem:
     #: hold status is invisible invites being treated as unencumbered.
     legal_holds: tuple[str, ...] = ()
     unresolved_reason: str | None = None
+    #: The hold lookup failed: ``legal_holds`` being empty then means "unknown",
+    #: never "no hold" (review trust-evidence-06).
+    legal_hold_status_unknown: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -156,6 +159,8 @@ class ResolvedItem:
             payload["legal_holds"] = list(self.legal_holds)
         if self.unresolved_reason:
             payload["unresolved_reason"] = self.unresolved_reason
+        if self.legal_hold_status_unknown:
+            payload["legal_hold_status"] = "unknown"
         return payload
 
 
@@ -176,6 +181,11 @@ class ResolvedCart:
         aggregate (ADR-0234): the artifact looks whole and is not.
         """
         return tuple(item for item in self.items if item.digest is None)
+
+    @property
+    def hold_status_unknown(self) -> tuple[ResolvedItem, ...]:
+        """Resolved items whose legal-hold status could not be established."""
+        return tuple(item for item in self.items if item.legal_hold_status_unknown)
 
     @property
     def complete(self) -> bool:
@@ -201,6 +211,8 @@ class ResolvedCart:
             "legal_holds_present": sorted(
                 {hold for item in self.items for hold in item.legal_holds}
             ),
+            # Non-zero: legal_holds_present is incomplete, not "no holds".
+            "legal_hold_status_unknown_count": len(self.hold_status_unknown),
         }
 
 
@@ -282,11 +294,13 @@ class EvidenceCart:
             if digest is None and reason is None:
                 reason = "reference could not be resolved at the read point"
             holds: tuple[str, ...] = ()
+            hold_unknown = False
             if holds_for is not None and digest is not None:
                 try:
                     holds = tuple(holds_for(item))
                 except Exception:  # noqa: BLE001 — an unknown hold status is not "no hold"
                     holds = ()
+                    hold_unknown = True
                     reason = "legal-hold status could not be established"
             resolved.append(
                 ResolvedItem(
@@ -299,6 +313,7 @@ class EvidenceCart:
                     digest=digest,
                     legal_holds=holds,
                     unresolved_reason=reason,
+                    legal_hold_status_unknown=hold_unknown,
                 )
             )
         return ResolvedCart(
@@ -319,10 +334,10 @@ def capsule_holds(capsule_dir: Path) -> tuple[str, ...]:
 
     Holds are registry-global at ``<capsule base>/../registries/*/holds.jsonl``,
     so the lookup needs the capsule *base*. A per-run directory (one that holds
-    a ``capsule.yaml``) is resolved to its parent base, because reading
-    ``<run>/../registries`` -- inside the base, where none exists -- used to
-    report "no holds" for a held capsule. A path that is not a directory cannot
-    name a registry location and raises :class:`HoldLookupError`.
+    a manifest, ``capsule.yaml`` or ``capsule.json``) is resolved to its parent
+    base, because reading ``<run>/../registries`` -- inside the base, where none
+    exists -- used to report "no holds" for a held capsule. A path that is not a
+    directory cannot name a registry location and raises :class:`HoldLookupError`.
 
     Thin wrapper over the shipped `server.capsule_delete.active_hold_ids` rather
     than a second reader of `holds.jsonl`: two readers of one file drift, and the
@@ -335,7 +350,12 @@ def capsule_holds(capsule_dir: Path) -> tuple[str, ...]:
             f"cannot determine the legal-hold registry location from {capsule_dir!s}: "
             "not an existing directory"
         )
-    base = capsule_dir.parent if (capsule_dir / "capsule.yaml").is_file() else capsule_dir
+    from novafabric._capsule_manifest import MANIFEST_NAMES
+
+    # Any manifest name marks a run directory, not only capsule.yaml (review
+    # trust-evidence-17).
+    is_run = any((capsule_dir / name).is_file() for name in MANIFEST_NAMES)
+    base = capsule_dir.parent if is_run else capsule_dir
     return tuple(active_hold_ids(base))
 
 
