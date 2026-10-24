@@ -213,6 +213,29 @@ class TestVerify:
         report = verify_export_manifest(path, public_pem)
         assert report.status is VerifyStatus.INVALID
 
+    @pytest.mark.parametrize("field,value", [
+        ("payload", "abc"),  # bad padding: binascii.Error escaped as a traceback
+        ("payload", "not base64 at all!"),
+        ("sig", "abc"),
+    ])
+    def test_a_malformed_signature_field_is_invalid_not_a_crash(
+        self, capsule_root: Path, tmp_path: Path, signer: LocalSigner, public_pem: bytes,
+        field: str, value: str,
+    ) -> None:
+        """Review storage-backup-20: a schema-valid manifest whose signature.payload
+        was not base64 crashed verify (and `nova import`) with no receipt."""
+        dest, _ = self._exported(capsule_root, tmp_path, signer)
+        path = _manifest_path(dest)
+        raw = json.loads(path.read_text())
+        if field == "payload":
+            raw["signature"]["payload"] = value
+        else:
+            raw["signature"]["signatures"][0]["sig"] = value
+        path.write_text(json.dumps(raw))
+        report = verify_export_manifest(path, public_pem)
+        assert report.status is VerifyStatus.INVALID
+        assert any("base64" in p for p in report.problems), report.problems
+
     def test_dropped_member_is_invalid(
         self, capsule_root: Path, tmp_path: Path, signer: LocalSigner, public_pem: bytes
     ) -> None:

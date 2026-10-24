@@ -490,16 +490,30 @@ def verify_export_manifest(
         batch_digest=manifest.batch_digest,
     )
     envelope = manifest.signature
-    if envelope.payload is not None and base64.b64decode(envelope.payload) != payload:
-        problems.append("embedded DSSE payload does not match the manifest fields")
+    # Untrusted input: malformed base64 is INVALID, never a traceback that skips
+    # the import receipt (review storage-backup-20).
+    if envelope.payload is not None:
+        try:
+            embedded = base64.b64decode(envelope.payload, validate=True)
+        except ValueError:
+            problems.append("embedded DSSE payload is not valid base64")
+        else:
+            if embedded != payload:
+                problems.append("embedded DSSE payload does not match the manifest fields")
+    if not problems and not envelope.signatures:
+        problems.append("the DSSE envelope carries no signature")
     if not problems:
         pae = dsse_pae(envelope.payloadType, payload)
         try:
-            sig = base64.b64decode(envelope.signatures[0].sig)
-            if not verify_with_pem(public_key_pem, pae, sig):
-                problems.append("DSSE signature verification failed")
-        except ValueError as exc:
-            problems.append(f"signature check failed: {exc}")
+            sig = base64.b64decode(envelope.signatures[0].sig, validate=True)
+        except ValueError:
+            problems.append("the DSSE signature is not valid base64")
+        else:
+            try:
+                if not verify_with_pem(public_key_pem, pae, sig):
+                    problems.append("DSSE signature verification failed")
+            except ValueError as exc:
+                problems.append(f"signature check failed: {exc}")
 
     # 2. Internal consistency: count and batch digest.
     if manifest.count != len(manifest.members):
