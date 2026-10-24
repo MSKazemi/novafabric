@@ -1,8 +1,9 @@
 """NovaFabric adapter for DSPy.
 
 Wraps a ``dspy.Module`` (or any ``dspy.Program``) so that each
-``forward()`` / ``__call__`` invocation creates a nova run capsule.
-Wire-level HTTP hooks capture every model call automatically.
+``forward()`` / ``__call__`` invocation, and each ``aforward()`` / ``acall``,
+creates a nova run capsule. Wire-level HTTP hooks capture every model call
+automatically.
 
 DSPy is an **optional** dependency — this module must be importable
 even when ``dspy`` is not installed.  The :func:`wrap_program` function
@@ -10,115 +11,16 @@ will raise :class:`ImportError` at call time if the framework is missing.
 """
 from __future__ import annotations
 
-import time
-from datetime import datetime, timezone
+import contextvars
 from pathlib import Path
 from typing import Any
 
-import yaml
+from novafabric.adapters._entry_points import wrap_entry_points
 
-from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
-from novafabric.capture.env import capture_environment, host_info
-from novafabric.capture.finalize import finalize_in_process_capsule
-
-# Module-level imports so tests can patch via ``novafabric.adapters.dspy.<name>``.
-from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-
-def _write_capsule(
-    *,
-    run_name: str,
-    data_dir: Path,
-    tags: dict[str, str],
-    error: dict[str, Any] | None,
-    t0: float,
-    created_at: str,
-    exit_code: int,
-    writer: Any,
-    root_span_id: str,
-    run_id: str,
-    cap_dir: Path,
-    steps: TeardownSteps,
-) -> None:
-    """Write the capsule. Never raises: a failed step is recorded, not propagated."""
-    from novafabric.capture.replay import minimal_replay_policy
-
-    finished_at = _now()
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    status = "success" if exit_code == 0 else "failure"
-
-    steps.do("trace", lambda: writer.append_trace_span({
-        "span_id": root_span_id,
-        "parent_span_id": None,
-        "name": f"novafabric.adapter.dspy.{run_name}",
-        "started_at": created_at,
-        "finished_at": finished_at,
-        "duration_ms": duration_ms,
-        "status": "ok" if exit_code == 0 else "error",
-        "attributes": {"run_name": run_name, **tags},
-    }))
-    steps.do("env.lock", lambda: writer.write_text("env.lock", yaml.dump(
-        capture_environment(created_at=created_at, run_id=run_id), allow_unicode=True
-    )))
-    steps.do("replay.yaml", lambda: writer.write_text(
-        "replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True)
-    ))
-    model_call_count = steps.run(
-        "model-calls",
-        lambda: count_logical_model_calls_in_file(cap_dir / "model-calls.jsonl"),
-        0,
-    )
-    tool_call_count = steps.run("tool-calls", lambda: sum(
-        1
-        for line in (cap_dir / "tool-calls.jsonl").read_text().splitlines()
-        if line.strip()
-    ), 0)
-    host: dict[str, Any] = steps.run("host", host_info, {})
-
-    manifest: dict[str, Any] = {
-        "schema_version": CAPSULE_SCHEMA_VERSION,
-        "run_id": run_id,
-        "created_at": created_at,
-        "finished_at": finished_at,
-        "duration_ms": duration_ms,
-        "status": status,
-        "command": [f"@dspy:{run_name}"],
-        "capture_mode": "sdk-decorator",
-        "novafabric_version": novafabric_version(),
-        "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-        "host": host,
-        "environment_ref": "env.lock",
-        "replay_policy_ref": "replay.yaml",
-        "redaction_proof_ref": "redaction-proof.json",
-        "trace_ref": "trace.jsonl",
-        "trace_root_span_id": root_span_id,
-        "model_calls_ref": "model-calls.jsonl",
-        "tool_calls_ref": "tool-calls.jsonl",
-        "assets_ref": "assets.jsonl",
-        "inputs": [],
-        "outputs": [],
-        "model_call_count": model_call_count,
-        "tool_call_count": tool_call_count,
-        "mutating_tool_count": 0,
-        "exit_code": exit_code,
-        "metadata": tags,
-    }
-    if error:
-        manifest["error"] = error
-
-    # Main scan (after replay.yaml), manifest redaction, lineage, residual
-    # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
-    # uses. Never raises; a failure — or a failed step above — leaves the capsule
-    # unsealed and says why in metadata.finalization_error.
-    finalize_in_process_capsule(
-        cap_dir, manifest, run_id=run_id, writer=writer,
-        incomplete_reason=steps.incomplete_reason,
-    )
+#: Set while a captured call runs, so a call it makes records into its capsule.
+_in_flight: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "novafabric_dspy_in_flight", default=False
+)
 
 
 def wrap_program(
@@ -129,9 +31,9 @@ def wrap_program(
 ) -> Any:
     """Wrap a DSPy ``Module`` / ``Program`` for NovaFabric capture.
 
-    Patches the program's ``forward`` method in-place so that each
-    invocation creates a nova capsule.  Because DSPy's ``__call__``
-    delegates to ``forward``, both call styles are captured.
+    Patches the program's ``forward`` (and ``aforward``) in-place so that each
+    invocation creates a nova capsule.  Because DSPy's ``__call__`` delegates to
+    ``forward`` and ``acall`` to ``aforward``, every call style is captured.
 
     The original program object is returned (same identity) so existing
     references continue to work.
@@ -160,65 +62,12 @@ def wrap_program(
             "Install it with: pip install dspy-ai"
         )
 
-    from novafabric._paths import adapter_default_runs_dir
-
-    resolved_data_dir = data_dir or adapter_default_runs_dir()
-
-    resolved_name: str = run_name or type(program).__name__ or "dspy-run"
-    tags: dict[str, str] = {"framework": "dspy"}
-
-    original_forward = program.forward
-
-    def wrapped_forward(*args: Any, **kwargs: Any) -> Any:
-        from novafabric.capture._ulid import new_span_id, new_ulid
-        from novafabric.capture.hooks import (
-            install_all_or_discard,
-            uninstall_all,
-            wire_capture_state,
-        )
-
-        run_id = new_ulid()
-        root_span_id = new_span_id()
-
-        writer = open_capsule_writer(resolved_data_dir, run_id, hook="adapter-dspy")
-        if writer is None:  # an unusable capsule store: run uncaptured
-            return original_forward(*args, **kwargs)
-        cap_dir = writer.capsule_dir
-
-        _hook_token = install_all_or_discard(writer=writer, parent_span_id=root_span_id)
-        created_at = _now()
-        t0 = time.monotonic()
-        exit_code = 0
-        error: dict[str, Any] | None = None
-        result: Any = None
-        try:
-            result = original_forward(*args, **kwargs)
-        except Exception as exc:
-            exit_code = 1
-            error = {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
-            raise
-        finally:
-            # eval-adapters-query-04: teardown never replaces the call's outcome.
-            steps = TeardownSteps("adapter-dspy")
-            _wire_state = steps.run(
-                "wire-state", lambda: wire_capture_state(_hook_token), "unknown"
-            )
-            steps.do("hooks", lambda: uninstall_all(_hook_token))
-            _write_capsule(
-                run_name=resolved_name,
-                data_dir=resolved_data_dir,
-                tags={**tags, "wire_capture": _wire_state},
-                error=error,
-                t0=t0,
-                created_at=created_at,
-                exit_code=exit_code,
-                writer=writer,
-                root_span_id=root_span_id,
-                run_id=run_id,
-                cap_dir=cap_dir,
-                steps=steps,
-            )
-        return result
-
-    program.forward = wrapped_forward
+    wrap_entry_points(
+        program,
+        ("forward", "aforward"),
+        framework="dspy",
+        run_name=run_name or type(program).__name__ or "dspy-run",
+        data_dir=data_dir,
+        in_flight=_in_flight,
+    )
     return program

@@ -82,7 +82,12 @@ def test_the_shared_core_finishes_and_records_a_failed_step(
     assert manifest["metadata"]["finalization_error"] == "capture incomplete: env.lock: OSError"
 
 
-# ---------------------------------------------------- the per-adapter copies
+# ---------------------------------------- adapters wrapping entry points on the core
+# autogen, crewai and dspy carried their own copy of the capsule body until
+# eval-adapters-query-19 moved them onto adapters/_entry_points.py; teardown runs
+# in the shared core, so that is where the env.lock write is made to fail.
+
+from novafabric.adapters import _capsule as _capsule_core  # noqa: E402
 
 _LEGACY = [
     ("autogen", "autogen", "wrap_agent", "initiate_chat"),
@@ -110,7 +115,7 @@ def test_a_teardown_failure_never_replaces_the_return_value(
     getattr(target, method).return_value = {"reply": "done"}
     with patch.dict(sys.modules, {framework: MagicMock()}):
         adapter = __import__(f"novafabric.adapters.{module}", fromlist=[wrap])
-        with patch.object(adapter, "capture_environment", _enospc):
+        with patch.object(_capsule_core, "capture_environment", _enospc):
             getattr(adapter, wrap)(target, run_name="r", data_dir=tmp_path)
             call = getattr(target, method)
             result = call(MagicMock()) if method == "initiate_chat" else call()
@@ -130,7 +135,7 @@ def test_a_teardown_failure_never_replaces_the_framework_exception(
     getattr(target, method).side_effect = ValueError("the framework's own error")
     with patch.dict(sys.modules, {framework: MagicMock()}):
         adapter = __import__(f"novafabric.adapters.{module}", fromlist=[wrap])
-        with patch.object(adapter, "capture_environment", _enospc):
+        with patch.object(_capsule_core, "capture_environment", _enospc):
             getattr(adapter, wrap)(target, run_name="r", data_dir=tmp_path)
             call = getattr(target, method)
             with pytest.raises(ValueError, match="the framework's own error"):
@@ -166,5 +171,5 @@ def test_every_in_process_writer_reports_failed_teardown_steps() -> None:
             sites.append(where)
             if "incomplete_reason" not in {k.arg for k in call.keywords}:
                 missing.append(where)
-    assert len(sites) >= 9, sites  # the SDK, the shared core and the seven own-body adapters
+    assert len(sites) >= 6, sites  # the SDK, the shared core and the four own-body adapters
     assert missing == []

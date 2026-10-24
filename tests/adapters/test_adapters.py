@@ -240,7 +240,7 @@ class TestAutoGenWrap:
             from novafabric.adapters.autogen import wrap_agent
 
             with (
-                patch("novafabric.adapters.autogen.capture_environment", return_value={}),
+                patch("novafabric.adapters._capsule.capture_environment", return_value={}),
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
@@ -264,7 +264,7 @@ class TestAutoGenWrap:
             from novafabric.adapters.autogen import wrap_agent
 
             with (
-                patch("novafabric.adapters.autogen.capture_environment", return_value={}),
+                patch("novafabric.adapters._capsule.capture_environment", return_value={}),
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
@@ -319,7 +319,7 @@ class TestCrewAIWrap:
             from novafabric.adapters.crewai import wrap_crew
 
             with (
-                patch("novafabric.adapters.crewai.capture_environment", return_value={}),
+                patch("novafabric.adapters._capsule.capture_environment", return_value={}),
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
@@ -340,7 +340,7 @@ class TestCrewAIWrap:
             from novafabric.adapters.crewai import wrap_crew
 
             with (
-                patch("novafabric.adapters.crewai.capture_environment", return_value={}),
+                patch("novafabric.adapters._capsule.capture_environment", return_value={}),
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
@@ -394,7 +394,7 @@ class TestDSPyWrap:
             from novafabric.adapters.dspy import wrap_program
 
             with (
-                patch("novafabric.adapters.dspy.capture_environment", return_value={}),
+                patch("novafabric.adapters._capsule.capture_environment", return_value={}),
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
@@ -415,7 +415,7 @@ class TestDSPyWrap:
             from novafabric.adapters.dspy import wrap_program
 
             with (
-                patch("novafabric.adapters.dspy.capture_environment", return_value={}),
+                patch("novafabric.adapters._capsule.capture_environment", return_value={}),
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
@@ -437,7 +437,7 @@ class TestDSPyWrap:
             from novafabric.adapters.dspy import wrap_program
 
             with (
-                patch("novafabric.adapters.dspy.capture_environment", return_value={}),
+                patch("novafabric.adapters._capsule.capture_environment", return_value={}),
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):

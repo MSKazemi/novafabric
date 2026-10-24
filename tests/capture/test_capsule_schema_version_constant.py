@@ -39,8 +39,8 @@ def _manifest_versions() -> dict[str, ast.expr]:
 
 
 def test_the_writers_are_found() -> None:
-    """Guard the guard: orchestrator, @agent, OTLP ingest, the core and 7 adapters."""
-    assert len(_manifest_versions()) >= 11, sorted(_manifest_versions())
+    """Guard the guard: orchestrator, @agent, OTLP ingest, the core and 4 own-body adapters."""
+    assert len(_manifest_versions()) >= 8, sorted(_manifest_versions())
 
 
 def test_every_manifest_literal_uses_the_constant() -> None:

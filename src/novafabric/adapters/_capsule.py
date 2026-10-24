@@ -2,16 +2,18 @@
 
 Every adapter does the same thing around a framework's call path: open a
 capsule, claim the wire hooks, run the framework, then write the manifest and
-supporting files. The seven adapters that predate this module each carry their
-own copy of that body: ``a2a``, ``autogen``, ``crewai``, ``dspy``,
-``google_adk``, ``langgraph`` and ``openai_agents``.
+supporting files. The four adapters that predate this module each carry their
+own copy of that body: ``a2a``, ``google_adk``, ``langgraph`` and
+``openai_agents``.
 
-New adapters use this instead (``bedrock_agentcore``, ``haystack``,
-``llamaindex`` and ``pydantic_ai`` do). It is **additive**: an existing adapter
-moves onto it only when its own body is broken — ``bedrock_agentcore`` did for
-review eval-adapters-query-12 (no capsule for an abandoned stream, ``success``
-for a failed one) — because rewriting seven working, tested adapters is a blast
-radius that buys nothing today. ``tests/adapters/test_capsule_core_adoption.py``
+New adapters use this instead (``autogen``, ``bedrock_agentcore``, ``crewai``,
+``dspy``, ``haystack``, ``llamaindex`` and ``pydantic_ai`` do). It is
+**additive**: an existing adapter moves onto it only when its own body is broken
+— ``bedrock_agentcore`` did for review eval-adapters-query-12 (no capsule for an
+abandoned stream), and ``autogen``, ``crewai`` and ``dspy`` for -19 (a changed
+call signature, no async twins), through ``_entry_points.wrap_entry_points`` —
+because rewriting four working, tested adapters is a blast radius that buys
+nothing today. ``tests/adapters/test_capsule_core_adoption.py``
 keeps this list in step with the code.
 
 The manifest literal lives here, so

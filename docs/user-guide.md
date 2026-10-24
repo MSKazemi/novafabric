@@ -397,9 +397,9 @@ Adapters ship for eleven frameworks. Each is importable by name from
 | Framework | Entry point | Wraps |
 |---|---|---|
 | LangGraph | `wrap_langgraph(graph)` | a compiled graph |
-| AutoGen | `wrap_autogen(agent)` | an agent |
-| CrewAI | `wrap_crewai(crew)` | a crew |
-| DSPy | `wrap_dspy(program)` | a program |
+| AutoGen | `wrap_autogen(agent)` | an agent (`initiate_chat`, `a_initiate_chat`) |
+| CrewAI | `wrap_crewai(crew)` | a crew (`kickoff`, `kickoff_async`) |
+| DSPy | `wrap_dspy(program)` | a program (`forward` / `__call__`, `aforward` / `acall`) |
 | LlamaIndex | `wrap_llamaindex(engine)` | a query/chat engine or agent |
 | Pydantic AI | `wrap_pydantic_ai(agent)` | an `Agent` |
 | Haystack | `wrap_haystack(pipeline)` | a `Pipeline` |
@@ -409,7 +409,10 @@ Adapters ship for eleven frameworks. Each is importable by name from
 | A2A SDK | `make_a2a_interceptor()` | returns an interceptor |
 
 The OpenAI Agents SDK, Google ADK and A2A entry points are not wrappers — they hook the framework's own extension point
-(ADR-0078) rather than patching a method.
+(ADR-0078) rather than patching a method. A wrapper patches the listed methods on the object you pass and returns the
+same object; the patched methods take exactly the arguments the framework's do, positional ones included, and each
+call (sync or async) is one capsule — a captured call that makes another, such as `kickoff_async` running `kickoff`,
+records into the outer capsule.
 
 **Evidence and sealing (since v0.105.0).** Every adapter finalizes its
 capsule through the same path as `nova capture`: secret scan, manifest redaction,

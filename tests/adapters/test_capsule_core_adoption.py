@@ -30,7 +30,8 @@ def _public_adapter_sources() -> dict[str, str]:
 
 
 def _uses_shared_core(src: str) -> bool:
-    return "novafabric.adapters._capsule" in src
+    # directly, or through _entry_points.wrap_entry_points (which builds on it)
+    return "novafabric.adapters._capsule" in src or "novafabric.adapters._entry_points" in src
 
 
 def _own_body_adapters() -> set[str]:
@@ -74,7 +75,8 @@ def test_docstring_names_the_adapters_on_the_shared_core() -> None:
 
 
 def test_counts_are_the_ones_the_review_found() -> None:
-    """Seven with their own body plus four on the core = the eleven framework adapters
-    (bedrock_agentcore moved onto the core for review eval-adapters-query-12)."""
-    assert len(_own_body_adapters()) == 7
-    assert len(_shared_core_adapters()) == 4
+    """Four with their own body plus seven on the core = the eleven framework adapters
+    (bedrock_agentcore moved onto the core for eval-adapters-query-12; autogen, crewai
+    and dspy for -19)."""
+    assert len(_own_body_adapters()) == 4
+    assert len(_shared_core_adapters()) == 7
