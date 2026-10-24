@@ -159,3 +159,7 @@ class WalEntry(BaseModel):
     tenant: str
     run_id: str
     uploaded_at: str = Field(description="ISO-8601 UTC")
+    #: Additive (review storage-backup-02): the put's compression dictionary and
+    #: stats, so the drained chain commit matches what a direct put records.
+    compression_dict_id: str | None = None
+    stats: dict[str, Any] = Field(default_factory=dict)

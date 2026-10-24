@@ -235,7 +235,10 @@ class ObjectCapsuleStore:
 
         except NovaSealUnavailable as exc:
             log.warning("NovaSeal unavailable — falling back to WAL: %s", exc)
-            row_id = self._wal.enqueue(data_key, sha256, tenant, run_id)
+            row_id = self._wal.enqueue(
+                data_key, sha256, tenant, run_id,
+                compression_dict_id=compression_dict_id, stats=stats,
+            )
             return CapsuleReceipt(
                 capsule_uri=data_key,
                 capsule_sha256=sha256,
@@ -460,6 +463,8 @@ class ObjectCapsuleStore:
                     capsule_sha256=entry.capsule_sha256,
                     novaseal_leaf_hash=leaf.leaf_hash,
                     signed_at=leaf.signed_at,
+                    stats=entry.stats,
+                    compression_dict_id=entry.compression_dict_id,
                 )
                 self._wal.mark_drained(row_id)
                 drained += 1

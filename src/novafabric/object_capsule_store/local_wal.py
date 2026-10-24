@@ -26,10 +26,12 @@ dependency.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from novafabric.object_capsule_store.models import WalEntry
 
@@ -78,6 +80,7 @@ class LocalWal:
         self._conn.execute("PRAGMA busy_timeout=5000")  # wait, don't fail, on lock
         self._conn.executescript(_DDL)
         self._migrate_add_attempts()
+        self._migrate_add_put_metadata()
         self._conn.commit()
 
     def _migrate_add_attempts(self) -> None:
@@ -87,6 +90,20 @@ class LocalWal:
             self._conn.execute(
                 "ALTER TABLE wal_entries ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
             )
+
+    def _migrate_add_put_metadata(self) -> None:
+        """Additive migration: the put metadata the drained chain commit must carry.
+
+        Review storage-backup-02: without ``compression_dict_id`` the commit a
+        drain wrote said "not compressed", so ``get_capsule`` returned the zstd
+        frame as the capsule — and the hash, taken over the compressed bytes,
+        still verified.
+        """
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(wal_entries)")}
+        if "compression_dict_id" not in cols:
+            self._conn.execute("ALTER TABLE wal_entries ADD COLUMN compression_dict_id TEXT")
+        if "stats_json" not in cols:
+            self._conn.execute("ALTER TABLE wal_entries ADD COLUMN stats_json TEXT")
 
     # -----------------------------------------------------------------------
     # Write
@@ -98,8 +115,14 @@ class LocalWal:
         capsule_sha256: str,
         tenant: str,
         run_id: str,
+        *,
+        compression_dict_id: str | None = None,
+        stats: dict[str, Any] | None = None,
     ) -> int:
         """Enqueue a capsule for deferred NovaSeal signing.
+
+        *compression_dict_id* and *stats* are kept so the drained chain commit
+        records the put exactly as a direct put would.
 
         The write is fsync-durable before returning (PRAGMA synchronous=FULL).
 
@@ -109,10 +132,14 @@ class LocalWal:
         now_iso = datetime.now(tz=timezone.utc).isoformat()
         cur = self._conn.execute(
             """
-            INSERT INTO wal_entries (capsule_uri, capsule_sha256, tenant, run_id, uploaded_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO wal_entries (capsule_uri, capsule_sha256, tenant, run_id, uploaded_at,
+                                     compression_dict_id, stats_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (capsule_uri, capsule_sha256, tenant, run_id, now_iso),
+            (
+                capsule_uri, capsule_sha256, tenant, run_id, now_iso,
+                compression_dict_id, json.dumps(stats) if stats else None,
+            ),
         )
         self._conn.commit()
         row_id = cur.lastrowid
@@ -127,7 +154,8 @@ class LocalWal:
         """Return all undrained WAL entries as ``(row_id, WalEntry)`` tuples."""
         cur = self._conn.execute(
             """
-            SELECT id, capsule_uri, capsule_sha256, tenant, run_id, uploaded_at
+            SELECT id, capsule_uri, capsule_sha256, tenant, run_id, uploaded_at,
+                   compression_dict_id, stats_json
             FROM wal_entries
             WHERE drained = 0
             ORDER BY id
@@ -135,7 +163,8 @@ class LocalWal:
         )
         result = []
         for row in cur.fetchall():
-            row_id, capsule_uri, capsule_sha256, tenant, run_id, uploaded_at = row
+            (row_id, capsule_uri, capsule_sha256, tenant, run_id, uploaded_at,
+             compression_dict_id, stats_json) = row
             result.append((
                 row_id,
                 WalEntry(
@@ -144,6 +173,8 @@ class LocalWal:
                     tenant=tenant,
                     run_id=run_id,
                     uploaded_at=uploaded_at,
+                    compression_dict_id=compression_dict_id,
+                    stats=json.loads(stats_json) if stats_json else {},
                 ),
             ))
         return result

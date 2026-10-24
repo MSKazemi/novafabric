@@ -251,3 +251,65 @@ def test_no_capsule_loss_after_wal_drain(mock_novaseal_client: NovaSealClient):
     retrieved = store_with_seal.get_capsule("acme", "run-loss", capsule_uri)
     assert retrieved == content
     wal.close()
+
+
+# ---------------------------------------------------------------------------
+# Review storage-backup-02: a compressed capsule survives the WAL detour
+# ---------------------------------------------------------------------------
+
+
+def _registry():  # type: ignore[no-untyped-def]
+    from novafabric.object_capsule_store.zstd_dict import ZstdDictRegistry
+
+    chunk = b'{"schema_version":"1.0","run_id":"run-abc","event_type":"llm_call"}'
+    registry = ZstdDictRegistry()
+    registry.train(samples=[(chunk * 80)[:4096] for _ in range(20)], dict_id="d1")
+    return registry, (chunk * 64)
+
+
+def test_a_compressed_capsule_put_while_novaseal_is_down_reads_back_decompressed(
+    mock_novaseal_client: NovaSealClient,
+):
+    """The WAL kept neither ``compression_dict_id`` nor ``stats``, so the drained chain
+    commit said "not compressed" and ``get_capsule`` returned the zstd frame."""
+    adapter = InMemoryWormAdapter()
+    wal = LocalWal(":memory:")
+    registry, original = _registry()
+    common = {"adapter": adapter, "wal": wal, "retention_days": 365, "zstd_registry": registry}
+    down = ObjectCapsuleStore(novaseal_client=NovaSealDisabledClient(), **common)  # type: ignore[arg-type]
+    receipt = down.put_capsule(
+        tenant="t", run_id="r", content_bytes=original,
+        compression_dict_id="d1", stats={"events": 3},
+    )
+    assert receipt.status == ReceiptStatus.PENDING_SIGNATURE
+
+    up = ObjectCapsuleStore(novaseal_client=mock_novaseal_client, **common)
+    assert up.drain_wal() == 1
+    (commit,) = ManifestChainWriter(adapter).read_chain("t", "r")
+    assert commit.compression_dict_id == "d1"
+    assert commit.stats == {"events": 3}
+    assert up.get_capsule("t", "r", receipt.capsule_uri) == original
+    wal.close()
+
+
+def test_an_old_wal_database_gains_the_new_columns(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "wal.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE wal_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, capsule_uri TEXT"
+        " NOT NULL, capsule_sha256 TEXT NOT NULL, tenant TEXT NOT NULL, run_id TEXT NOT NULL,"
+        " uploaded_at TEXT NOT NULL, drained INTEGER NOT NULL DEFAULT 0,"
+        " created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
+    conn.execute(
+        "INSERT INTO wal_entries (capsule_uri, capsule_sha256, tenant, run_id, uploaded_at)"
+        " VALUES ('u', ?, 't', 'r', 'now')", ("a" * 64,)
+    )
+    conn.commit()
+    conn.close()
+    wal = LocalWal(db)
+    ((_, entry),) = wal.pending_entries()
+    assert entry.compression_dict_id is None and entry.stats == {}
+    wal.close()
