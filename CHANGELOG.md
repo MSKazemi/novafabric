@@ -13,6 +13,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **A failed webhook delivery no longer writes the webhook URL to logs or the audit trail.** A Slack, Discord or
+  Teams webhook URL is the credential itself; every failed delivery logged it in full and stored the HTTP client's
+  error text — which embeds the URL — in the append-only hash-chained audit log (lifecycle webhooks, alert routing,
+  `nova server` webhooks). Only `scheme://host/…` is shown now.
+- **The hash-chained `approve` entry from `nova serve` names the authenticated token.** The request body's `actor`
+  was recorded as the approver, so anyone holding a dashboard token could log an approval in someone else's name. The
+  label is still shown in the approvals list and kept in the entry as `approver_label`.
 - **A configured policy that cannot be evaluated now refuses instead of allowing.** With
   `NOVAFABRIC_POLICY_BUNDLE_PATH` set and no `opa` on `PATH`, every policy gate (`promote`, `evidence_export`,
   `replay_mutating`) allowed everything, as if no policy existed; it now denies with a `policy.deny` that names the
@@ -68,6 +75,12 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- A PII erasure through the dashboard (`POST /api/compliance/pii/erase`) appends the same hash-only
+  `erasure.request` audit entry as `nova pii erase`; it recorded nothing. The response reports `audit_recorded`.
+- Cost-attribution facets: `verify_conservation` rejected too little — agents attributed more than the run
+  (hidden by a negative `unattributed`), a check whose total was not the run total, an agent in another currency, or
+  a missing dimension all verified. A model priced in a non-USD currency was recorded as that amount in USD
+  (`cost_usd_estimated`, ClickHouse `cost_usd`); it is now unpriced in USD, since NovaFabric converts no currency.
 - `nova eval compare` reports only a **decrease** as a regression (eval metrics are higher-is-better: `threshold` is
   a minimum). An improvement such as accuracy 0.80 → 0.95 failed CI with "REGRESSION DETECTED", while a candidate
   that had lost the baseline's metric passed with exit 0. It now exits `2` ("CANNOT COMPARE") when a baseline metric
