@@ -22,6 +22,7 @@ from typing import Any, Union
 
 from novafabric._capsule_fs import read_capsule_text_or_none
 from novafabric.capture._ulid import new_span_id, new_ulid
+from novafabric.capture.hooks._fail_open import note_capture_failure
 from novafabric.capture.record_roles import read_logical_model_calls
 from novafabric.collector_cffi.spool import NovaPySpool
 
@@ -44,6 +45,9 @@ class SpoolSink:
 
     def __init__(self, spool_dir: Union[str, Path]) -> None:
         self._spool = NovaPySpool(spool_dir)
+        #: Events that could not be written (a full spool, an I/O error); each is
+        #: also logged (``capture.record_dropped``). Never silent.
+        self.dropped = 0
 
     def emit_event(
         self,
@@ -59,7 +63,9 @@ class SpoolSink:
     ) -> None:
         """Build a schema-valid EventEnvelope v1 and write it to the spool.
 
-        Fail-open: any error is swallowed so the agent workflow is never blocked.
+        Fail-open: an error never blocks the agent workflow; the dropped event is
+        logged as a warning and counted in :attr:`dropped` — review
+        capture-runners-16 found a full spool losing events with no trace.
         """
         try:
             envelope = {
@@ -80,8 +86,9 @@ class SpoolSink:
                 "payload_hash": None,
             }
             self._spool.write(json.dumps(envelope, separators=(",", ":")).encode())
-        except Exception:
-            pass  # fail-open: never block the workload
+        except Exception as exc:  # noqa: BLE001 — fail-open: never block the workload
+            self.dropped += 1
+            note_capture_failure("spool-sink", "spool", exc)
 
     def close(self) -> None:
         """Release the underlying spool."""
@@ -158,6 +165,8 @@ def emit_call_events_from_capsule(
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):  # valid JSON, but not a record
                 continue
             tool_name = record.get("tool_name")
             if not tool_name:

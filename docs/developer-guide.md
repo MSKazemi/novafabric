@@ -1907,15 +1907,21 @@ experimenting with the backend), remove it explicitly and intentionally:
 
 `NovaPySpool` (`src/novafabric/collector_cffi/spool.py`) provides a Python-native spool
 compatible with the Go collector's binary segment format. When `libnovaspool.so` is
-present it binds via cffi; otherwise it falls back to pure-Python atomic rename:
+present it binds via cffi; otherwise it falls back to a pure-Python writer with the same rules
+as the Go one: each segment is committed with `link(2)` (never replacing another process's
+segment), sequence numbers start above every committed segment and the forwarder's
+`checkpoint.json`, and only segments the checkpoint acknowledges are evicted — a spool already
+holding `max_files` unforwarded segments raises `SpoolFullError` (an `OSError`) instead of
+deleting them. Releases up to v0.107.0 evicted unforwarded events silently at 100 segments and
+let two writers overwrite each other's segments:
 
 ```python
 from novafabric.collector_cffi.spool import NovaPySpool
 
-spool = NovaPySpool(Path("/var/nova/spool"), max_files=1000)  # max_files default 100
+spool = NovaPySpool(Path("/var/nova/spool"), max_files=1000)  # default DEFAULT_MAX_FILES (10 000)
 spool.write(b'{"event":"capture","ts":1234567890}')
 spool.drain()  # returns None: a flush signal (a no-op on the pure-Python path,
-               # where every write() is already durable by atomic rename)
+               # where every write() is already durable when it returns)
 ```
 
 There is no `pip install`-able extra for this — `libnovaspool.so` is a Go shared

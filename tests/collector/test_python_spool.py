@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -121,19 +120,18 @@ class TestNovaPySpoolPurePython:
                 if line.strip():
                     json.loads(line)  # must not raise
 
-    def test_eviction_removes_oldest_files(self, tmp_path: Path) -> None:
-        """When max_files is exceeded, oldest committed files are evicted."""
+    def test_eviction_removes_oldest_acknowledged_files(self, tmp_path: Path) -> None:
+        """At max_files, only segments the forwarder acknowledged are evicted
+        (review capture-runners-16: unforwarded ones were deleted silently)."""
         spool = NovaPySpool(tmp_path, max_files=3)
-        # Write enough events that each write creates a new file (use unique timestamps).
-        # We force unique filenames by sleeping briefly between writes.
-        for _ in range(6):
+        for _ in range(3):
             spool.write(b'{"x": 1}')
-            time.sleep(0.011)  # ensure unique ms-resolution filename
-        # Eviction runs before each write, so after N writes with max_files=3
-        # the retained count is at most max_files+1 (the just-written file).
-        committed = sorted(tmp_path.glob("*.jsonl"))
-        assert len(committed) <= 4, f"Expected ≤4 files, got {len(committed)}: {committed}"
-        assert len(committed) >= 3, "Expect at least max_files files retained"
+        (tmp_path / "checkpoint.json").write_text(
+            json.dumps({"last_ack_seq": 1, "last_ack_offset": 0, "initialized": True})
+        )
+        spool.write(b'{"x": 2}')
+        committed = sorted(p.name for p in tmp_path.glob("*.jsonl"))
+        assert committed == [f"{n:020d}.jsonl" for n in (1, 2, 3)]
 
     def test_key_rotation_new_spool_dir(self, tmp_path: Path) -> None:
         """Creating a new NovaPySpool with a different dir mid-stream loses nothing."""

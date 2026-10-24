@@ -114,37 +114,49 @@ def _encode_segment_header(pid: int, seq: int, write_complete: bool) -> bytes:
     )
 
 
-class _PurePythonSpool:
-    """Pure-Python atomic-rename spool writer.
+#: Default cap on committed segments (each holds one event, typically < 1 KiB).
+DEFAULT_MAX_FILES = 10_000
+#: Attempts to find a free sequence when other processes keep committing first.
+_MAX_COMMIT_ATTEMPTS = 1000
+#: ``checkpoint.json`` is a few dozen bytes; anything larger is not one.
+_MAX_CHECKPOINT_BYTES = 64 * 1024
+#: Go's "never acknowledged" sentinel (``math.MaxUint64``) and anything near it.
+_NEVER_ACKED = 2**63
 
-    Each call to ``write()`` produces a new segment file:
-        <spool_dir>/<20-digit-zero-padded-seq>.jsonl
 
-    Files are staged as ``.jsonl.tmp`` and atomically renamed to ``.jsonl``
-    on commit — the same invariant as the Go spool.
+class SpoolFullError(OSError):
+    """The spool holds ``max_files`` segments and none is acknowledged yet.
 
-    Thread-safe: a ``threading.Lock`` serialises the sequence counter and
-    file rename so that concurrent writers never collide on the same sequence
-    number.
+    Raised instead of evicting events no forwarder has drained; the caller counts
+    the drop (review capture-runners-16).
     """
 
-    def __init__(self, spool_dir: Path, max_files: int = 100) -> None:
+
+class _PurePythonSpool:
+    """Pure-Python spool writer; the same on-disk format and rules as the Go writer.
+
+    Each call to ``write()`` commits one new segment ``<seq:020d>.jsonl``: a
+    16-byte header plus the event. It is staged as ``<seq>.<pid>.jsonl.tmp`` and
+    committed with ``link(2)``, which fails when the name exists — ``rename(2)``
+    silently replaced another process's segment. The sequence starts above every
+    committed segment and the forwarder's ``checkpoint.json``, so a new writer
+    never reuses an acknowledged number the reader would skip. Only segments the
+    checkpoint acknowledges are ever evicted; a spool full of unforwarded events
+    raises :class:`SpoolFullError` (review capture-runners-16, mirroring
+    go-collector-ts-packages-03).
+
+    Thread-safe: a ``threading.Lock`` serialises writes in this process; ``link``
+    arbitrates between processes (it is a POSIX commit primitive, not a lock, and
+    works on NFS and Lustre).
+    """
+
+    def __init__(self, spool_dir: Path, max_files: int = DEFAULT_MAX_FILES) -> None:
         self._dir = spool_dir
         self._dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._seq: int = 0
+        self._seq: int = 0  # this process's floor: one above its last commit
         self._max_files = max_files
         self._pid = os.getpid()
-
-        # Scan existing .jsonl files to set the starting sequence number so
-        # that new files never overwrite committed segments from a prior run.
-        existing = sorted(self._dir.glob("*.jsonl"))
-        if existing:
-            last_name = existing[-1].stem  # e.g. "00000000000000000042"
-            try:
-                self._seq = int(last_name) + 1
-            except ValueError:
-                self._seq = len(existing)
 
     # ------------------------------------------------------------------
     # Public API
@@ -155,6 +167,10 @@ class _PurePythonSpool:
 
         ``event_json`` must be a valid JSON object (no embedded newlines).
         Bytes or str are both accepted; str is encoded as UTF-8.
+
+        Raises:
+            SpoolFullError: ``max_files`` segments are present and none is
+                acknowledged, so none may be evicted.
         """
         if isinstance(event_json, str):
             data = event_json.encode("utf-8")
@@ -162,17 +178,19 @@ class _PurePythonSpool:
             data = event_json
 
         with self._lock:
-            self._evict_if_needed()
-            seq = self._seq
-            self._seq += 1
-
-        self._write_segment(seq, data)
+            committed = self._committed()
+            acked = self._acked_seq()
+            self._make_room(committed, acked)
+            floor = max([self._seq, *(n + 1 for n, _ in committed)])
+            if acked is not None:
+                floor = max(floor, acked + 1)
+            self._seq = self._write_segment(floor, data) + 1
 
     def drain(self) -> None:
         """Flush all pending events.
 
-        The pure-Python spool is always durable after each ``write()`` (atomic
-        rename).  This method is a no-op for API compatibility with the cffi
+        The pure-Python spool is always durable after each ``write()`` (fsynced
+        commit).  This method is a no-op for API compatibility with the cffi
         path.
         """
 
@@ -183,47 +201,84 @@ class _PurePythonSpool:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _write_segment(self, seq: int, data: bytes) -> None:
-        """Write one segment file for *seq* containing *data*."""
-        tmp_name = f"{seq:020d}.jsonl.tmp"
-        dst_name = f"{seq:020d}.jsonl"
-        tmp_path = self._dir / tmp_name
-        dst_path = self._dir / dst_name
+    def _committed(self) -> list[tuple[int, Path]]:
+        """Committed segments as ``(seq, path)``, oldest first."""
+        found: list[tuple[int, Path]] = []
+        for path in self._dir.glob("*.jsonl"):
+            try:
+                found.append((int(path.stem), path))
+            except ValueError:
+                continue
+        return sorted(found)
 
-        # Stage to .tmp — write incomplete header first.
-        incomplete_hdr = _encode_segment_header(self._pid, seq, write_complete=False)
-        body = data if data.endswith(b"\n") else data + b"\n"
+    def _acked_seq(self) -> int | None:
+        """The forwarder's last acknowledged sequence, or ``None`` (none, or unreadable)."""
+        try:
+            with open(self._dir / "checkpoint.json", "rb") as fh:
+                raw = fh.read(_MAX_CHECKPOINT_BYTES + 1)
+            doc = json.loads(raw) if len(raw) <= _MAX_CHECKPOINT_BYTES else None
+        except (OSError, ValueError):
+            return None
+        seq = doc.get("last_ack_seq") if isinstance(doc, dict) else None
+        if isinstance(seq, bool) or not isinstance(seq, int) or not 0 <= seq < _NEVER_ACKED:
+            return None
+        return seq
 
-        with open(tmp_path, "wb") as f:
-            f.write(incomplete_hdr)
-            f.write(body)
-            # Seek back to byte 12 and set WriteComplete = 1.
-            f.seek(12)
-            f.write(b"\x01")
-            f.flush()
-            os.fsync(f.fileno())
-
-        # Atomic rename — the ONLY commit primitive — then fsync the directory so
-        # the committed segment survives a crash (the discipline capsule/_atomic.py
-        # documents for this spool).
-        os.rename(str(tmp_path), str(dst_path))
-        fsync_dir(self._dir)
-
-    def _evict_if_needed(self) -> None:
-        """Remove the oldest .jsonl files when the count exceeds *max_files*.
-
-        Must be called with ``self._lock`` held.
-        """
+    def _make_room(self, committed: list[tuple[int, Path]], acked: int | None) -> None:
+        """Evict acknowledged segments until one more fits; refuse if none can go."""
         if self._max_files <= 0:
             return
-        committed = sorted(self._dir.glob("*.jsonl"))
-        overflow = len(committed) - self._max_files
-        if overflow > 0:
-            for path in committed[:overflow]:
+        excess = len(committed) - self._max_files + 1
+        for seq, path in committed:
+            if excess <= 0:
+                return
+            if acked is None or seq > acked:
+                break  # oldest-first: everything from here on is unforwarded
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass  # another writer evicted it
+            excess -= 1
+        if excess > 0:
+            raise SpoolFullError(
+                f"spool {self._dir} holds {len(committed)} unforwarded segment(s) "
+                f"(max_files={self._max_files}); the event is not written"
+            )
+
+    def _write_segment(self, seq: int, data: bytes) -> int:
+        """Commit *data* at the first free sequence from *seq*; return that sequence."""
+        tmp_path = self._dir / f"{seq:020d}.{self._pid}.jsonl.tmp"
+        body = data if data.endswith(b"\n") else data + b"\n"
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(_encode_segment_header(self._pid, seq, write_complete=False))
+                f.write(body)
+                f.seek(12)  # WriteComplete = 1 only once the body is on disk
+                f.write(b"\x01")
+                f.flush()
+                os.fsync(f.fileno())
+            for _ in range(_MAX_COMMIT_ATTEMPTS):
                 try:
-                    path.unlink()
-                except OSError:  # pragma: no cover
-                    pass
+                    os.link(tmp_path, self._dir / f"{seq:020d}.jsonl")
+                except FileExistsError:
+                    # Another process committed this sequence first; the header
+                    # records the sequence, so rewrite it before the next try.
+                    seq += 1
+                    with open(tmp_path, "r+b") as f:
+                        f.seek(4)
+                        f.write(struct.pack("<Q", seq))
+                        f.flush()
+                        os.fsync(f.fileno())
+                    continue
+                fsync_dir(self._dir)
+                return seq
+            raise OSError(f"spool {self._dir}: no free sequence after {_MAX_COMMIT_ATTEMPTS} tries")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -290,9 +345,11 @@ class NovaPySpool:
     Args:
         spool_dir: Directory where spool segment files are written.  Created
             automatically if it does not exist.
-        max_files: Maximum number of committed ``.jsonl`` files to retain in
-            the spool directory before evicting the oldest ones.  Applies to
-            the pure-Python backend only.  Defaults to 100.
+        max_files: Maximum number of committed ``.jsonl`` segments. At the cap,
+            only segments the forwarder's ``checkpoint.json`` acknowledges are
+            evicted; with none, :meth:`write` raises :class:`SpoolFullError`.
+            Applies to the pure-Python backend only. Defaults to
+            :data:`DEFAULT_MAX_FILES`.
 
     Example::
 
@@ -306,7 +363,7 @@ class NovaPySpool:
         self,
         spool_dir: Union[str, Path],
         *,
-        max_files: int = 100,
+        max_files: int = DEFAULT_MAX_FILES,
     ) -> None:
         self._spool_dir = Path(spool_dir)
         self._backend: _PurePythonSpool | _CFFISpool
@@ -338,6 +395,8 @@ class NovaPySpool:
 
         Raises:
             OSError: If the cffi backend returns an error.
+            SpoolFullError: pure-Python backend, ``max_files`` unforwarded
+                segments are present (an :class:`OSError`).
             ValueError: If ``event_json`` is empty.
         """
         if not event_json:
