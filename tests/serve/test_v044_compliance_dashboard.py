@@ -184,3 +184,47 @@ class TestHipaaProofRoute:
             assert "name" in cat
             assert "status" in cat
             assert "evidence_source" in cat
+
+
+# ---------- review serve-04: an erasure through serve is audited ----------
+
+
+class TestPiiEraseIsAudited:
+    """An Art.17 erasure through the dashboard left no record; the CLI always wrote one."""
+
+    def _erase(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, months: int
+    ) -> tuple[dict, list[dict]]:  # type: ignore[type-arg]
+        from novafabric.pii.dek.store import open_dek_store
+
+        home = tmp_path / "nova_home"
+        log = tmp_path / "audit.jsonl"
+        monkeypatch.setenv("NOVAFABRIC_HOME", str(home))
+        monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(log))
+        open_dek_store(home).get_or_create_dek("alice@example.com")
+        res = client.post(
+            f"/api/compliance/pii/erase?{TOKEN_Q}",
+            json={"subject_id": "alice@example.com", "retention_months": months},
+            headers=AUTH,
+        )
+        assert res.status_code == 200, res.text
+        entries = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+        return res.json(), [e for e in entries if e["event_type"] == "erasure.request"]
+
+    def test_completed_erasure_appends_one_hash_only_audit_entry(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        body, entries = self._erase(client, tmp_path, monkeypatch, months=0)
+        assert body["erased"] is True and body["audit_recorded"] is True
+        (entry,) = entries
+        assert entry["details"]["state"] == "COMPLETED"
+        assert entry["details"]["via"] == "POST /api/compliance/pii/erase"
+        assert "alice@example.com" not in (tmp_path / "audit.jsonl").read_text()
+
+    def test_deferred_erasure_is_audited_too(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        body, entries = self._erase(client, tmp_path, monkeypatch, months=12)
+        assert body["erased"] is False
+        (entry,) = entries
+        assert entry["details"]["state"] == "DEFERRED"

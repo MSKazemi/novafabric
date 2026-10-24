@@ -8279,9 +8279,10 @@ def create_app(
 
     # ---------- PII DEK crypto-shredding (nova pii erase — ADR-0069) ----------
 
-    @app.post("/api/compliance/pii/erase", dependencies=[Depends(verify_token)])
+    @app.post("/api/compliance/pii/erase")
     async def compliance_pii_erase_endpoint(
         body: dict[str, Any] = Body(...),
+        actor_fp: str = Depends(verify_token),
     ) -> Any:
         """Destroy a data subject's DEK — nova pii erase (experimental, --pii-subject PII)."""
         subject_id: str = body.get("subject_id", "")
@@ -8321,6 +8322,21 @@ def create_app(
                 retention_months,
                 hold_roots=(capsule_base_holds_root(capsule_dir),),
             )
+            # Every outcome is recorded, as `nova pii erase` does (review serve-04).
+            # The DEK may already be gone, so a failed append is reported, not raised.
+            audit_recorded = True
+            try:
+                from novafabric.pii.erasure_audit import audit_erasure  # noqa: PLC0415
+
+                audit_erasure(
+                    subject_id,
+                    receipt,
+                    actor=actor_fp,
+                    via="POST /api/compliance/pii/erase",
+                )
+            except Exception:  # noqa: BLE001 — the erasure itself cannot be undone
+                logger.error("erasure.request audit append failed", exc_info=True)
+                audit_recorded = False
             if isinstance(receipt, ErasureHeldReceipt):
                 return JSONResponse(
                     status_code=409,
@@ -8331,6 +8347,7 @@ def create_app(
                         "erased": False,
                         "receipt": receipt.model_dump(mode="json"),
                         "note": receipt.reason,
+                        "audit_recorded": audit_recorded,
                     },
                 )
             erased = isinstance(receipt, ErasureReceipt)
@@ -8349,6 +8366,7 @@ def create_app(
                 "erased": erased,
                 "receipt": receipt.model_dump(mode="json"),
                 "note": note,
+                "audit_recorded": audit_recorded,
             }
         except KeyError:
             return {

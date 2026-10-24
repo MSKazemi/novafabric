@@ -38,6 +38,7 @@ from novafabric.pii.dek import (
     ErasureReceipt,
     open_dek_store,
 )
+from novafabric.pii.erasure_audit import audit_erasure
 from novafabric.pii.status import PIIStatusError, build_pii_status
 
 console = Console()
@@ -196,7 +197,7 @@ def erase_cmd(
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(receipt_json, encoding="utf-8")
-    _audit_erasure(subject_id, result)
+    audit_erasure(subject_id, result, actor="cli-user", via="nova pii erase")
 
     if isinstance(result, ErasureReceipt):
         console.print(
@@ -224,43 +225,6 @@ def erase_cmd(
         sys.stdout.write(receipt_json + "\n")
     if isinstance(result, ErasureHeldReceipt):
         raise typer.Exit(code=EXIT_HELD)
-
-
-def _audit_erasure(
-    subject_id: str,
-    result: ErasureReceipt | ErasureDeferredReceipt | ErasureHeldReceipt,
-) -> None:
-    """Append one hash-only ``erasure.request`` event for this CLI erasure outcome."""
-    import hashlib
-
-    from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
-
-    extra: dict[str, object]
-    if isinstance(result, ErasureReceipt):
-        state, extra = "COMPLETED", {"capsule_ids": list(result.capsule_ids_affected)}
-    elif isinstance(result, ErasureDeferredReceipt):
-        state, extra = "DEFERRED", {"earliest_erasure_at": result.earliest_erasure_at.isoformat()}
-    else:
-        state, extra = "HELD", {
-            "hold_ids": [h.hold_id for h in result.holds],
-            "held_capsule_ids": [c.capsule_id for c in result.held_capsules],
-            "dek_retained": True,
-        }
-    subject_hash = hashlib.sha256(subject_id.encode("utf-8")).hexdigest()
-    AuditLog(resolve_audit_log_path()).append(
-        event_type=AuditEventType.ERASURE_REQUEST,
-        actor="cli-user",
-        resource_id=f"sha256:{subject_hash[:12]}",
-        details={
-            "via": "nova pii erase",
-            "subject_sha256": subject_hash,
-            "state": state,
-            "receipt_sha256": hashlib.sha256(
-                result.model_dump_json().encode("utf-8")
-            ).hexdigest(),
-            **extra,
-        },
-    )
 
 
 _DEK_STATE_STYLE = {"active": "green", "erased": "red", "unknown": "yellow"}
