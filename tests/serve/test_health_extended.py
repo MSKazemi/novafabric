@@ -113,3 +113,14 @@ def test_health_db_path_follows_env_when_not_passed(
     app = create_app(token="testtoken", capsule_dir=capsule_dir)
     data = TestClient(app).get("/api/health", headers=LOCALHOST_HEADERS).json()
     assert data["db_path"] == str(env_db)
+
+
+def test_health_does_not_disclose_the_absolute_home_path(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Review serve-15: the unauthenticated health route returned the registry's
+    absolute path (home directory, user name). It is shown home-relative."""
+    monkeypatch.setenv("HOME", str(tmp_path))  # the fixture's registry is tmp_path/registry.db
+    data = client.get("/api/health", headers=LOCALHOST_HEADERS).json()
+    assert str(tmp_path) not in data["db_path"]
+    assert data["db_path"] == "~/registry.db"

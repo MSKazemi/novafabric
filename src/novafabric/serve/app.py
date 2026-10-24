@@ -1077,6 +1077,11 @@ def create_app(
             # The same resolution the connection uses ($NOVAFABRIC_DB_PATH, then
             # $NOVAFABRIC_HOME), so the health panel names the file actually read.
             resolved_db_path = str(db_path or _resolved_registry_db())
+            # Unauthenticated route: home-relative, never the absolute path with
+            # the user's home directory in it (review serve-15).
+            home = str(Path.home())
+            if resolved_db_path == home or resolved_db_path.startswith(home + os.sep):
+                resolved_db_path = "~" + resolved_db_path[len(home):]
         except Exception:  # noqa: BLE001
             resolved_db_path = ""
 
