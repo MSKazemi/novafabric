@@ -610,7 +610,9 @@ class EventRecorder:
             )
             self._append("file_events.jsonl", event.model_dump())
         except Exception:
-            pass  # fail-open
+            # Fail-open, never fail-silent: an event its model rejects is
+            # counted (review capture-runners-06).
+            self._note_drop("file_events.jsonl")
 
     def record_network_event(
         self,
@@ -642,7 +644,9 @@ class EventRecorder:
             )
             self._append("network_events.jsonl", event.model_dump())
         except Exception:
-            pass  # fail-open
+            # Fail-open, never fail-silent: an event its model rejects is
+            # counted (review capture-runners-06).
+            self._note_drop("network_events.jsonl")
 
     def record_human_approval(
         self,
@@ -668,7 +672,9 @@ class EventRecorder:
             )
             self._append("human_approvals.jsonl", event.model_dump())
         except Exception:
-            pass  # fail-open
+            # Fail-open, never fail-silent: an event its model rejects is
+            # counted (review capture-runners-06).
+            self._note_drop("human_approvals.jsonl")
 
     # ------------------------------------------------------------------
     # Extended span taxonomy (ADR-0082, gap-011) — capture-side wiring.
@@ -707,7 +713,9 @@ class EventRecorder:
             )
             self._append_typed("state_transitions.jsonl", "StateTransition", event.model_dump())
         except Exception:
-            pass  # fail-open
+            # Fail-open, never fail-silent: an event its model rejects is
+            # counted (review capture-runners-06).
+            self._note_drop("state_transitions.jsonl")
 
     def record_memory_operation(
         self,
@@ -744,7 +752,9 @@ class EventRecorder:
             )
             self._append_typed("memory_operations.jsonl", "MemoryOperation", event.model_dump())
         except Exception:
-            pass  # fail-open
+            # Fail-open, never fail-silent: an event its model rejects is
+            # counted (review capture-runners-06).
+            self._note_drop("memory_operations.jsonl")
 
     def record_guardrail(
         self,
@@ -770,7 +780,9 @@ class EventRecorder:
             )
             self._append_typed("guardrail_events.jsonl", "GuardrailEvaluated", event.model_dump())
         except Exception:
-            pass  # fail-open
+            # Fail-open, never fail-silent: an event its model rejects is
+            # counted (review capture-runners-06).
+            self._note_drop("guardrail_events.jsonl")
 
     def record_evaluator(
         self,
@@ -798,7 +810,9 @@ class EventRecorder:
             )
             self._append_typed("evaluator_events.jsonl", "EvaluatorScored", event.model_dump())
         except Exception:
-            pass  # fail-open
+            # Fail-open, never fail-silent: an event its model rejects is
+            # counted (review capture-runners-06).
+            self._note_drop("evaluator_events.jsonl")
 
     def record_reranker(
         self,
@@ -822,7 +836,9 @@ class EventRecorder:
             )
             self._append_typed("reranker_events.jsonl", "RerankerApplied", event.model_dump())
         except Exception:
-            pass  # fail-open
+            # Fail-open, never fail-silent: an event its model rejects is
+            # counted (review capture-runners-06).
+            self._note_drop("reranker_events.jsonl")
 
     def record_vector_retrieval(
         self,
@@ -864,4 +880,6 @@ class EventRecorder:
             )
             self._append_typed("vector_retrievals.jsonl", event_type, event.model_dump())
         except Exception:
-            pass  # fail-open
+            # Fail-open, never fail-silent: an event its model rejects is
+            # counted (review capture-runners-06).
+            self._note_drop("vector_retrievals.jsonl")
