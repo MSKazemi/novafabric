@@ -427,3 +427,47 @@ def test_promote_delegates_for_a_real_prompt(monkeypatch: pytest.MonkeyPatch) ->
     assert result.exit_code == 0, result.output
     assert calls and calls[0][0] == "triage" and calls[0][1] == "1.2.0"
     assert "Promoted" in result.output
+
+
+# ── review cli-b-07: prompt text is shown verbatim, never as Rich markup ──────
+
+
+def _register_text(template: str, message: str = "first") -> None:
+    result = runner.invoke(
+        app, ["prompt", "register", "brk", "--template", template, "--var", "q", "-m", message]
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_get_shows_bracketed_template_text_verbatim() -> None:
+    """`Use [tool_a] to answer {q}` printed as `Use  to answer {q}`."""
+    _register_text("Use [tool_a] to answer {q}", message="adds [beta] flag")
+    result = runner.invoke(app, ["prompt", "get", "brk@1"])
+    assert result.exit_code == 0, result.output
+    assert "[tool_a]" in result.output
+    assert "[beta]" in result.output
+
+
+def test_a_closing_tag_in_a_template_does_not_crash_get() -> None:
+    """`Reply then [/end]` raised MarkupError (traceback, exit 1)."""
+    _register_text("Reply {q} then [/end]")
+    result = runner.invoke(app, ["prompt", "get", "brk"])
+    assert result.exit_code == 0, result.output
+    assert isinstance(result.exception, (type(None), SystemExit))
+    assert "[/end]" in result.output
+
+
+def test_diff_shows_the_bracketed_change() -> None:
+    """Both sides rendered as `Use  to answer {q}`: the reviewer saw no change."""
+    _register_text("Use [tool_a] to answer {q}")
+    _register_text("Use [tool_b] to answer {q}", message="second")
+    result = runner.invoke(app, ["prompt", "diff", "brk@1", "brk@2"])
+    assert result.exit_code == 1, result.output
+    assert "[tool_a]" in result.output and "[tool_b]" in result.output
+
+
+def test_history_shows_a_bracketed_commit_message() -> None:
+    _register_text("Use [x] {q}", message="fix [/bold] typo")
+    result = runner.invoke(app, ["prompt", "history", "brk"])
+    assert result.exit_code == 0, result.output
+    assert "[/bold]" in result.output

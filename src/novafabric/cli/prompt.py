@@ -29,6 +29,7 @@ from typing import Annotated, Any, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -235,7 +236,7 @@ def prompt_register_cmd(
     except (
         ValueError, PromptRegistrationError, CompositionError, DuplicateAssetError
     ) as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
 
     if json_output:
@@ -243,7 +244,7 @@ def prompt_register_cmd(
         return
 
     for warning in variable_mismatch_warnings(body, variables):
-        console.print(f"[yellow]warning:[/yellow] {warning}")
+        console.print(f"[yellow]warning:[/yellow] {escape(warning)}")
 
     ref = frozen_ref(record)
     if created:
@@ -303,24 +304,29 @@ def prompt_get_cmd(
     try:
         record = get_prompt_version(prompt_id, version)
     except PromptNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
 
     if json_output:
         typer.echo(json.dumps(record, indent=2, ensure_ascii=False))
         return
 
-    lines = [
-        f"[bold]ref:[/bold] {frozen_ref(record)}",
-        f"[bold]status:[/bold] {record['status']}",
-        f"[bold]created_at:[/bold] {record['created_at']}",
-        f"[bold]commit_message:[/bold] {record['commit_message']}",
-        f"[bold]variables:[/bold] {json.dumps(record['variables'])}",
-        f"[bold]config:[/bold] {json.dumps(record['config'], ensure_ascii=False)}",
-        "[bold]template:[/bold]",
+    # Every value is the user's text: escaped, so `[tool_a]` stays visible and a
+    # `[/end]` cannot raise MarkupError (review cli-b-07).
+    template = (
         json.dumps(record["template"], indent=2, ensure_ascii=False)
         if not isinstance(record["template"], str)
-        else record["template"],
+        else record["template"]
+    )
+    lines = [
+        f"[bold]ref:[/bold] {escape(frozen_ref(record))}",
+        f"[bold]status:[/bold] {escape(str(record['status']))}",
+        f"[bold]created_at:[/bold] {escape(str(record['created_at']))}",
+        f"[bold]commit_message:[/bold] {escape(str(record['commit_message']))}",
+        f"[bold]variables:[/bold] {escape(json.dumps(record['variables']))}",
+        f"[bold]config:[/bold] {escape(json.dumps(record['config'], ensure_ascii=False))}",
+        "[bold]template:[/bold]",
+        escape(template),
     ]
     console.print(
         Panel("\n".join(lines), title=f"{record['prompt_id']}@{record['version']}")
@@ -378,7 +384,7 @@ def prompt_list_cmd(
     try:
         records = list_prompt_versions(prompt_id, status=status)
     except PromptNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
 
     table = Table(title=f"Versions of '{prompt_id}'")
@@ -416,7 +422,7 @@ def prompt_history_cmd(
     try:
         records = list_prompt_versions(prompt_id)
     except PromptNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
 
     if json_output:
@@ -435,7 +441,7 @@ def prompt_history_cmd(
             str(r["created_at"])[:19],
             r["status"],
             _short_hash(r["content_hash"]) + "…",
-            r["commit_message"],
+            escape(str(r["commit_message"])),
         )
     console.print(table)
 
@@ -476,7 +482,7 @@ def prompt_diff_cmd(
         try:
             records.append(get_prompt_version(prompt_id, version))
         except PromptNotFoundError as exc:
-            console.print(f"[red]{exc}[/red]")
+            console.print(f"[red]{escape(str(exc))}[/red]")
             raise typer.Exit(code=1) from None
     body_a, body_b = _body_view(records[0]), _body_view(records[1])
 
@@ -521,7 +527,7 @@ def prompt_diff_cmd(
         console.print("[green]No differences found.[/green]")
         return
     for line in diff_lines:
-        stripped = line.rstrip("\n")
+        stripped = escape(line.rstrip("\n"))  # prompt text, never markup
         if stripped.startswith(("+++", "---")):
             console.print(f"[bold]{stripped}[/bold]")
         elif stripped.startswith("+"):
@@ -584,7 +590,7 @@ def prompt_compose_cmd(
     try:
         manifest, assembled_template = resolve_composition(prompt_id, selector)
     except (PromptNotFoundError, CompositionError, ValueError) as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
 
     if json_output:
@@ -657,7 +663,7 @@ def prompt_tree_cmd(
     try:
         manifest, _ = resolve_composition(prompt_id, selector)
     except (PromptNotFoundError, CompositionError, ValueError) as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
 
     children: dict[str, list[dict[str, Any]]] = {}
