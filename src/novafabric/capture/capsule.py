@@ -121,6 +121,15 @@ class CapsuleWriter:
             pass
         self._append("tool-calls.jsonl", record)
 
+    def append_jsonl(self, filename: str, record: dict) -> None:  # type: ignore[type-arg]
+        """Append *record* to a capsule-root JSONL stream of the caller's own.
+
+        For a vendor stream an adapter points at from manifest ``extensions``
+        (e.g. ``bedrock-traces.jsonl``); the standard streams have their own
+        methods. Opened like every capsule write: no link, no special file.
+        """
+        self._append(filename, record)
+
     def append_trace_span(self, record: dict) -> None:  # type: ignore[type-arg]
         self._append("trace.jsonl", record)
 

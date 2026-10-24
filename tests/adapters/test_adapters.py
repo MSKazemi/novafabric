@@ -629,15 +629,18 @@ class TestBedrockAgentCoreAdapter:
             from novafabric.adapters.bedrock_agentcore import wrap_client
 
             mock_client = MagicMock()
-            # Simulate a streaming response with an orchestration trace chunk
+            # A streaming response with an orchestration trace chunk, in botocore's
+            # shape: ResponseStream.trace is a TracePart wrapping the Trace kinds.
             mock_event_stream = [
                 {"chunk": {"bytes": b"Hello"}},
-                {"trace": {"orchestrationTrace": {"invocationInput": {"actionGroupInvocationInput": {"actionGroupName": "TestAction"}}}}},
+                {"trace": {"agentId": "agent-1", "trace": {"orchestrationTrace": {
+                    "invocationInput": {"actionGroupInvocationInput": {"actionGroupName": "TestAction"}},
+                }}}},
             ]
             mock_client.invoke_agent.return_value = {"completion": iter(mock_event_stream)}
 
             with (
-                patch("novafabric.adapters.bedrock_agentcore.capture_environment", return_value={}),
+                patch("novafabric.adapters._capsule.capture_environment", return_value={}),
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
@@ -653,6 +656,7 @@ class TestBedrockAgentCoreAdapter:
         manifest = yaml.safe_load(capsules[0].read_text())
         assert manifest["capture_mode"] == "sdk-decorator"
         assert manifest["metadata"]["framework"] == "bedrock-agentcore"
+        assert (capsules[0].parent / "bedrock-traces.jsonl").is_file()
 
     def test_passthrough_for_non_invoke_methods(self, tmp_path: Path) -> None:
         with patch.dict(sys.modules, {"boto3": MagicMock()}):

@@ -74,6 +74,7 @@ def test_docstring_names_the_adapters_on_the_shared_core() -> None:
 
 
 def test_counts_are_the_ones_the_review_found() -> None:
-    """Eight with their own body plus three on the core = the eleven framework adapters."""
-    assert len(_own_body_adapters()) == 8
-    assert len(_shared_core_adapters()) == 3
+    """Seven with their own body plus four on the core = the eleven framework adapters
+    (bedrock_agentcore moved onto the core for review eval-adapters-query-12)."""
+    assert len(_own_body_adapters()) == 7
+    assert len(_shared_core_adapters()) == 4

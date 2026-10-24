@@ -166,5 +166,5 @@ def test_every_in_process_writer_reports_failed_teardown_steps() -> None:
             sites.append(where)
             if "incomplete_reason" not in {k.arg for k in call.keywords}:
                 missing.append(where)
-    assert len(sites) >= 10, sites  # the SDK, the shared core and the eight own-body adapters
+    assert len(sites) >= 9, sites  # the SDK, the shared core and the seven own-body adapters
     assert missing == []

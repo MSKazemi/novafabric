@@ -10569,9 +10569,17 @@ for event in response["completion"]:
         print(event["chunk"]["bytes"].decode())
 ```
 
-The adapter wraps `invoke_agent()` and parses the EventStream for
-`orchestrationTrace`, `preProcessingTrace`, `postProcessingTrace` chunks (written to
-`bedrock-traces.jsonl`). The capsule is finalized when the stream is exhausted.
+The adapter wraps `invoke_agent()` and passes the `completion` EventStream through unchanged.
+Each trace part it carries (with `enableTrace=True`) becomes one record in
+`bedrock-traces.jsonl`, one per `Trace` kind present (orchestration, pre-/post-processing,
+routing classifier, custom orchestration, guardrail, failure). A record holds the agent
+identifiers and event time plus the trace body at the `forensic` capture level, or only its
+`sha256` digest otherwise: an orchestration trace contains the full model prompt. The
+manifest points at the file (`extensions."com.amazonaws.bedrock".traces_ref`) only when
+one was written, and it never copies `inputText`. The capsule closes when the stream ends:
+`success` when exhausted, `failure` when it raises (e.g. throttling; the exception still
+reaches you) or when `invoke_agent` itself fails, and `partial` (`metadata.partial_reason:
+abandoned`) when you stop reading, close it, or drop it unread.
 `capture_mode` is `sdk-decorator` and `command` is an `@bedrock-agentcore:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
 
 All non-`invoke_agent` methods are delegated transparently to the underlying client

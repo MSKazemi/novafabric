@@ -555,8 +555,8 @@ def test_the_writer_list_is_not_empty() -> None:
         "sdk/agent.py",
         "otel/genai_ingest.py",
     } <= found
-    # nova capture, AdapterCapture, eight own-writer adapters, @agent, OTel ingest.
-    assert len(found) >= 12, sorted(found)
+    # nova capture, AdapterCapture, seven own-writer adapters, @agent, OTel ingest.
+    assert len(found) >= 11, sorted(found)
 
 
 def test_the_capsule_yaml_pattern_matches_both_spellings() -> None:

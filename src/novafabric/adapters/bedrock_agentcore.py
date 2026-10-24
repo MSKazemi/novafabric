@@ -1,44 +1,103 @@
 """NovaFabric adapter for AWS Bedrock AgentCore.
 
-Wraps a ``boto3`` ``bedrock-agent-runtime`` client.  ``invoke_agent()`` is
-intercepted: the response EventStream is consumed and AgentCore trace chunks
-(``orchestrationTrace``, ``preProcessingTrace``, ``postProcessingTrace``) are
-written to ``bedrock-traces.jsonl`` inside the capsule alongside the standard
-capsule artifacts.
+Wraps a ``boto3`` ``bedrock-agent-runtime`` client. ``invoke_agent()`` is
+intercepted and its ``completion`` EventStream is passed through unchanged while
+each AgentCore trace part (every ``Trace`` kind: orchestration, pre-/post-
+processing, routing, custom orchestration, guardrail, failure) is appended to
+``bedrock-traces.jsonl`` — the body at the ``forensic`` capture level, a digest
+otherwise. The capsule is written on the shared adapter core and closes when the
+stream ends, however it ends (``success`` / ``failure`` / ``partial``).
 
 ``boto3`` is an **optional** dependency.  :func:`wrap_client` raises
 :class:`ImportError` at call time if not installed.
 """
 from __future__ import annotations
 
+import contextvars
+import hashlib
 import json
-import time
-from collections.abc import Iterator
-from datetime import datetime, timezone
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
-import yaml
+from novafabric.adapters._capsule import AdapterCapture, begin_capture
+from novafabric.adapters._streaming import (
+    Closer,
+    close_when_collected,
+    guard_iterator,
+    record_outcome,
+)
+from novafabric.capture._jsonable import json_default
+from novafabric.capture.record import _payloads_enabled
 
-from novafabric.capture.env import capture_environment, host_info
-from novafabric.capture.finalize import finalize_in_process_capsule
-from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
+_FRAMEWORK = "bedrock-agentcore"
+_TRACES_FILE = "bedrock-traces.jsonl"
+#: ``Trace`` members in the ``bedrock-agent-runtime`` service model (2023-07-26).
+_TRACE_KINDS = (
+    "orchestrationTrace",
+    "preProcessingTrace",
+    "postProcessingTrace",
+    "routingClassifierTrace",
+    "customOrchestrationTrace",
+    "guardrailTrace",
+    "failureTrace",
+)
+
+#: Set while this adapter is producing a stream event, so a nested
+#: ``invoke_agent`` records into the running capsule instead of opening a second.
+_in_flight: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "novafabric_bedrock_in_flight", default=False
+)
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+def _digest(value: Any) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), default=json_default)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _count_jsonl(path: Path) -> int:
-    if not path.exists():
-        return 0
-    return sum(1 for line in path.read_text().splitlines() if line.strip())
+def trace_records(event: Any, *, payloads: bool) -> list[dict[str, Any]]:
+    """The ``bedrock-traces.jsonl`` records for one ``ResponseStream`` event.
+
+    botocore yields ``{"trace": TracePart}``, and a ``TracePart`` carries the
+    trace kinds under its own ``trace`` member. Each kind present becomes one
+    record: identifiers and the event time always; the trace body itself only
+    when the capture level keeps payloads (``forensic``/``air_gapped``,
+    ADR-0066 Amendment 1), otherwise its digest — an orchestration trace holds
+    the full model prompt.
+    """
+    part = event.get("trace") if isinstance(event, Mapping) else None
+    if not isinstance(part, Mapping):
+        return []
+    inner = part.get("trace")
+    if not isinstance(inner, Mapping):
+        return []
+    records: list[dict[str, Any]] = []
+    for kind in _TRACE_KINDS:
+        if kind not in inner:
+            continue
+        record: dict[str, Any] = {
+            "trace_type": kind,
+            "agent_id": part.get("agentId"),
+            "agent_alias_id": part.get("agentAliasId"),
+            "agent_version": part.get("agentVersion"),
+            "collaborator_name": part.get("collaboratorName"),
+            "event_time": part.get("eventTime"),
+        }
+        if payloads:
+            record[kind] = inner[kind]
+        else:
+            record["digest"] = _digest(inner[kind])
+        records.append(record)
+    return records
 
 
-def _extract_trace_events(event_stream: Any) -> Iterator[dict[str, Any]]:
-    """Yield raw event dicts from a bedrock-agent-runtime EventStream."""
-    for event in event_stream:
+def _recorded(stream: Iterator[Any], cap: AdapterCapture) -> Iterator[Any]:
+    """Yield *stream* unchanged; append its trace parts to the capsule."""
+    payloads = _payloads_enabled()
+    for event in stream:
+        for record in trace_records(event, payloads=payloads):
+            cap.writer.append_jsonl(_TRACES_FILE, record)
+            cap.extensions.setdefault("com.amazonaws.bedrock", {"traces_ref": _TRACES_FILE})
         yield event
 
 
@@ -50,135 +109,36 @@ class _WrappedBedrockClient:
         self._data_dir = data_dir
 
     def invoke_agent(self, **kwargs: Any) -> dict[str, Any]:
-        from novafabric.capture._ulid import new_span_id, new_ulid
-        from novafabric.capture.hooks import (
-            install_all_or_discard,
-            uninstall_all,
-            wire_capture_state,
-        )
-        from novafabric.capture.replay import minimal_replay_policy
+        """``invoke_agent`` with the run captured until its completion stream ends.
 
-        run_id = new_ulid()
-        span_id = new_span_id()
-        writer = open_capsule_writer(self._data_dir, run_id, hook="adapter-bedrock_agentcore")
-        if writer is None:  # an unusable capsule store: run uncaptured
-            response: dict[str, Any] = self._inner.invoke_agent(**kwargs)
-            return response
-        created_at = _now()
-        t0 = time.monotonic()
-        _hook_token = install_all_or_discard(writer=writer, parent_span_id=span_id)
-
+        The capsule closes where the run really ends: the stream exhausted
+        (``success``), raising (``failure``, the error still propagates), or
+        closed, abandoned or garbage-collected unread (``partial``). The input
+        text is never copied into the manifest.
+        """
+        if _in_flight.get():
+            nested: dict[str, Any] = self._inner.invoke_agent(**kwargs)
+            return nested
+        agent_id = str(kwargs.get("agentId", "agent"))
+        cap = begin_capture(framework=_FRAMEWORK, run_name=agent_id, data_dir=self._data_dir)
+        if not isinstance(cap, AdapterCapture):  # an unusable capsule store: run uncaptured
+            uncaptured: dict[str, Any] = self._inner.invoke_agent(**kwargs)
+            return uncaptured
+        cap.tags["agent_id"] = str(kwargs.get("agentId", ""))
+        cap.tags["agent_alias_id"] = str(kwargs.get("agentAliasId", ""))
         try:
-            response = self._inner.invoke_agent(**kwargs)
-        except Exception:
-            uninstall_all(_hook_token)
+            response: dict[str, Any] = self._inner.invoke_agent(**kwargs)
+        except BaseException as exc:
+            record_outcome(cap, exc)
+            cap.finish()
             raise
-
-        cap_dir = writer.capsule_dir
-        trace_log = cap_dir / "bedrock-traces.jsonl"
-
-        def _streaming_completion(raw_stream: Any) -> Iterator[dict[str, Any]]:
-            for event in _extract_trace_events(raw_stream):
-                # Capture trace chunks to bedrock-traces.jsonl
-                _trace_keys = ("orchestrationTrace", "preProcessingTrace", "postProcessingTrace")
-                for trace_key in _trace_keys:
-                    if "trace" in event and trace_key in event["trace"]:
-                        with trace_log.open("a") as f:
-                            f.write(json.dumps({trace_key: event["trace"][trace_key]}) + "\n")
-                yield event
-            # Finalize capsule when stream exhausted. Read the wire state
-            # BEFORE teardown: uninstall_all forgets the contention record.
-            # eval-adapters-query-04: teardown never replaces the call's outcome.
-            steps = TeardownSteps("adapter-bedrock_agentcore")
-            _wire_state = steps.run(
-                "wire-state", lambda: wire_capture_state(_hook_token), "unknown"
-            )
-            steps.do("hooks", lambda: uninstall_all(_hook_token))
-            finished_at = _now()
-            duration_ms = int((time.monotonic() - t0) * 1000)
-
-            steps.do("trace", lambda: writer.append_trace_span({
-                "span_id": span_id,
-                "parent_span_id": None,
-                "name": f"novafabric.adapter.bedrock_agentcore.{kwargs.get('agentId', 'agent')}",
-                "started_at": created_at,
-                "finished_at": finished_at,
-                "duration_ms": duration_ms,
-                "status": "ok",
-                "attributes": {
-                    "framework": "bedrock-agentcore",
-                    "agent_id": kwargs.get("agentId", ""),
-                    "agent_alias_id": kwargs.get("agentAliasId", ""),
-                },
-            }))
-
-            steps.do("env.lock", lambda: writer.write_text("env.lock", yaml.dump(
-                capture_environment(created_at=created_at, run_id=run_id), allow_unicode=True
-            )))
-            steps.do("replay.yaml", lambda: writer.write_text(
-                "replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True)
-            ))
-            model_call_count = steps.run(
-                "model-calls",
-                lambda: count_logical_model_calls_in_file(cap_dir / "model-calls.jsonl"),
-                0,
-            )
-            tool_call_count = steps.run(
-                "tool-calls", lambda: _count_jsonl(cap_dir / "tool-calls.jsonl"), 0
-            )
-            host: dict[str, Any] = steps.run("host", host_info, {})
-
-            manifest: dict[str, Any] = {
-                "schema_version": "1.0.0",
-                "run_id": run_id,
-                "created_at": created_at,
-                "finished_at": finished_at,
-                "duration_ms": duration_ms,
-                "status": "success",
-                "command": [f"@bedrock-agentcore:{kwargs.get('agentId', 'agent')}"],
-                "capture_mode": "sdk-decorator",
-                "novafabric_version": novafabric_version(),
-                "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-                "host": host,
-                "environment_ref": "env.lock",
-                "replay_policy_ref": "replay.yaml",
-                "redaction_proof_ref": "redaction-proof.json",
-                "trace_ref": "trace.jsonl",
-                "trace_root_span_id": span_id,
-                "model_calls_ref": "model-calls.jsonl",
-                "tool_calls_ref": "tool-calls.jsonl",
-                "assets_ref": "assets.jsonl",
-                "inputs": [{"type": "text", "value": kwargs.get("inputText", "")}],
-                "outputs": [],
-                "model_call_count": model_call_count,
-                "tool_call_count": tool_call_count,
-                "mutating_tool_count": 0,
-                "exit_code": 0,
-                "metadata": {
-                    "framework": "bedrock-agentcore",
-                    "wire_capture": _wire_state,
-                    "agent_id": kwargs.get("agentId", ""),
-                },
-                # A bare `bedrock_traces_ref` is not a run-capsule property, and
-                # the schema is additionalProperties:false — it made every
-                # capsule this adapter wrote fail `nova validate`. Vendor-
-                # specific stream pointers belong under `extensions`, keyed by
-                # reverse DNS.
-                "extensions": {
-                    "com.amazonaws.bedrock": {"traces_ref": "bedrock-traces.jsonl"},
-                },
-            }
-            # Main scan (after replay.yaml), manifest redaction, lineage, residual
-            # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
-            # uses. Never raises; a failure — or a failed step above — leaves the capsule
-            # unsealed and says why in metadata.finalization_error.
-            finalize_in_process_capsule(
-                cap_dir, manifest, run_id=run_id, writer=writer,
-                incomplete_reason=steps.incomplete_reason,
-            )
-
-        raw_stream = response.get("completion", iter([]))
-        return {**response, "completion": _streaming_completion(raw_stream)}
+        closer = Closer(cap)
+        stream = response.get("completion")
+        guarded = guard_iterator(
+            _recorded(iter(stream if stream is not None else ()), cap), closer, _in_flight
+        )
+        close_when_collected(guarded, closer)
+        return {**response, "completion": guarded}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)

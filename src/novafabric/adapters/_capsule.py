@@ -2,15 +2,17 @@
 
 Every adapter does the same thing around a framework's call path: open a
 capsule, claim the wire hooks, run the framework, then write the manifest and
-supporting files. The eight adapters that predate this module each carry their
-own copy of that body: ``a2a``, ``autogen``, ``bedrock_agentcore``, ``crewai``,
-``dspy``, ``google_adk``, ``langgraph`` and ``openai_agents``.
+supporting files. The seven adapters that predate this module each carry their
+own copy of that body: ``a2a``, ``autogen``, ``crewai``, ``dspy``,
+``google_adk``, ``langgraph`` and ``openai_agents``.
 
-New adapters use this instead (``haystack``, ``llamaindex`` and ``pydantic_ai``
-do). It is deliberately **additive** — no existing adapter was changed to adopt
-it, because rewriting eight working, tested adapters is a blast radius that buys
-nothing today. ``tests/adapters/test_capsule_core_adoption.py`` keeps this list
-in step with the code.
+New adapters use this instead (``bedrock_agentcore``, ``haystack``,
+``llamaindex`` and ``pydantic_ai`` do). It is **additive**: an existing adapter
+moves onto it only when its own body is broken — ``bedrock_agentcore`` did for
+review eval-adapters-query-12 (no capsule for an abandoned stream, ``success``
+for a failed one) — because rewriting seven working, tested adapters is a blast
+radius that buys nothing today. ``tests/adapters/test_capsule_core_adoption.py``
+keeps this list in step with the code.
 
 The manifest literal lives here, so
 ``tests/adapters/test_adapter_manifests_match_the_schema.py`` still checks it:
@@ -85,6 +87,9 @@ class AdapterCapture:
     #: Why the run stopped before it finished, when it did — a stream the caller
     #: abandoned, or a run cancelled mid-flight. Sets ``status: partial``.
     partial_reason: str | None = None
+    #: Vendor-specific manifest ``extensions``, keyed by reverse DNS (e.g. a
+    #: pointer to a framework's own trace stream). Omitted when empty.
+    extensions: dict[str, Any] = field(default_factory=dict)
 
     def fail(self, exc: BaseException) -> None:
         """Record *exc* as the run's failure. Never swallows it."""
@@ -192,6 +197,8 @@ class AdapterCapture:
         }
         if self.error:
             manifest["error"] = self.error
+        if self.extensions:
+            manifest["extensions"] = self.extensions
 
         # Main scan (after replay.yaml), manifest redaction, lineage, residual pass,
         # evidence_digests, gate and opt-in seal: the path `nova capture` uses.
