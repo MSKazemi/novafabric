@@ -179,3 +179,69 @@ def test_store_build_hot_index_returns_equivalent_index(tmp_path: Path) -> None:
     index_rows = index.query_blast_radius(
         ref="local:model:foo@1.0.0", kind="asset", depth=5)
     assert _ids(index_rows) == _ids(store_rows)
+
+
+# --- review replay-lineage-registry-16: an eviction never leaves a truncated answer ---
+
+def _truncated_index() -> HotLineageIndex:
+    """A->T and B->A are held; adding T->X evicts A (the LRU), so T lost its source A."""
+    index = HotLineageIndex(max_nodes=3)
+    index.add_edge("A", "T", "consumed")
+    index.add_edge("B", "A", "consumed")
+    assert {r["node_id"] for r in index.query_blast_radius_by_node_id("T")} == {"A", "B"}
+    assert index.is_complete_for("T")
+    index.add_edge("T", "X", "consumed")
+    return index
+
+
+def test_a_node_whose_edges_were_evicted_answers_as_a_miss_not_a_truncated_set() -> None:
+    index = _truncated_index()
+    assert not index.has_node("A")
+    assert index.has_node("T")
+    assert not index.is_complete_for("T")
+    # Not [A, B] (the truth), and not a plausible-looking partial: a miss, so the
+    # caller falls back to the durable store.
+    assert index.query_blast_radius_by_node_id("T") == []
+
+
+def test_a_query_that_reaches_an_incomplete_node_is_a_miss_too() -> None:
+    index = HotLineageIndex(max_nodes=4)
+    index.add_edge("S", "R", "consumed")   # R's source
+    index.add_edge("R", "Q", "consumed")   # Q <- R <- S
+    index.add_edge("Z1", "Z2", "consumed")  # evicts S -> R lost its source
+    assert not index.has_node("S")
+    assert not index.is_complete_for("Q")  # Q's upstream walk reaches incomplete R
+    assert index.query_blast_radius_by_node_id("Q") == []
+
+
+def test_an_unaffected_node_still_answers() -> None:
+    index = HotLineageIndex(max_nodes=6)
+    index.add_edge("P", "Q", "consumed")
+    index.add_edge("U", "V", "consumed")
+    index.add_edge("W1", "W2", "consumed")
+    index.add_edge("W3", "W4", "consumed")  # evicts P, then Q (the two LRU nodes)
+    assert not index.has_node("P")
+    assert not index.is_complete_for("P")
+    assert index.is_complete_for("V")
+    assert [r["node_id"] for r in index.query_blast_radius_by_node_id("V")] == ["U"]
+
+
+def test_rebuild_clears_the_incomplete_marks(tmp_path: Path) -> None:
+    store = _build_fixture_graph(tmp_path)
+    index = _truncated_index()
+    index.max_nodes = 100_000
+    index.rebuild_from_store(store)
+    assert all(index.is_complete_for(n) for n in list(index._nodes))
+
+
+def test_eviction_does_not_scan_every_edge() -> None:
+    index = HotLineageIndex(max_nodes=3000)
+    for i in range(3000):
+        index.add_edge(f"s{i}", f"t{i}", "consumed")
+    import time
+
+    started = time.perf_counter()
+    for i in range(3000):
+        index.add_edge(f"x{i}", f"y{i}", "consumed")  # every add evicts
+    assert time.perf_counter() - started < 3.0
+    assert index.node_count <= 3000

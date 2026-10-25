@@ -11,9 +11,12 @@ Design constraints (see ADR-0083):
   cache that can be dropped and rebuilt at any time.
 * :meth:`HotLineageIndex.query_blast_radius` returns the **same node set** as
   ``LineageStore.blast_radius`` (equivalence invariant I-2).
-* The index is **bounded** (``max_nodes``) with LRU eviction; a query that spans an
-  evicted/absent node returns an empty result so the caller falls back to the
-  durable store. The cache never returns a wrong answer for nodes it holds.
+* The index is **bounded** (``max_nodes``) with LRU eviction. Evicting a node drops
+  the edges it carried, so a node that lost an upstream edge can no longer answer
+  completely: it is marked incomplete, and a query whose walk reaches an incomplete
+  (or absent) node returns an empty result, the cache-miss signal for the caller to
+  fall back to the durable store. :meth:`HotLineageIndex.is_complete_for` says which
+  case an empty result is. The cache never returns a truncated answer as if whole.
 
 Stdlib only (``collections.OrderedDict``) — Tier-A per ADR-0024.
 """
@@ -59,6 +62,10 @@ class HotLineageIndex:
     _by_ref: dict[str, str] = field(default_factory=dict)
     _by_kind_ref: dict[tuple[str, str], str] = field(default_factory=dict)
     _edge_count: int = 0
+    # source_node_id -> targets it has edges to (makes eviction O(degree), not O(E)).
+    _out: dict[str, set[str]] = field(default_factory=dict)
+    # nodes that lost at least one upstream edge to an eviction (cleared on rebuild).
+    _incomplete: set[str] = field(default_factory=set)
 
     # --- introspection ---------------------------------------------------
 
@@ -90,14 +97,26 @@ class HotLineageIndex:
         if rec is not None:
             self._by_ref.pop(rec.ref, None)
             self._by_kind_ref.pop((rec.kind, rec.ref), None)
-        # Drop edges referencing the evicted node from the reverse adjacency.
+        # The evicted node's own upstream edges go with it.
         removed = self._reverse.pop(node_id, [])
         self._edge_count -= len(removed)
-        for tgt, sources in list(self._reverse.items()):
+        for _src, _etype in removed:
+            targets = self._out.get(_src)
+            if targets is not None:
+                targets.discard(node_id)
+        self._incomplete.discard(node_id)
+        # Edges FROM the evicted node leave their targets with a missing source:
+        # those targets keep their other edges but can no longer answer completely.
+        for tgt in self._out.pop(node_id, set()):
+            sources = self._reverse.get(tgt)
+            if sources is None:
+                continue
             kept = [(s, t) for (s, t) in sources if s != node_id]
             if len(kept) != len(sources):
                 self._edge_count -= len(sources) - len(kept)
                 self._reverse[tgt] = kept
+                if tgt in self._nodes:
+                    self._incomplete.add(tgt)
 
     def _register_node(
         self, node_id: str, kind: str, ref: str, payload: str
@@ -133,6 +152,7 @@ class HotLineageIndex:
         else:
             self._register_node(target_id, "", target_id, "{}")
         self._reverse.setdefault(target_id, []).append((source_id, edge_type))
+        self._out.setdefault(source_id, set()).add(target_id)
         self._edge_count += 1
 
     # --- rebuild ---------------------------------------------------------
@@ -149,6 +169,8 @@ class HotLineageIndex:
         self._nodes.clear()
         self._by_ref.clear()
         self._by_kind_ref.clear()
+        self._out.clear()
+        self._incomplete.clear()
         self._edge_count = 0
 
         conn = store._conn  # read-only access to the durable connection
@@ -181,6 +203,37 @@ class HotLineageIndex:
             return self._by_kind_ref.get((kind, ref))
         return self._by_ref.get(ref)
 
+    def is_complete_for(self, node_id: str, depth: int = _DEFAULT_DEPTH) -> bool:
+        """Whether the index holds every upstream edge a ``depth`` walk from *node_id* needs.
+
+        False when *node_id* is absent, or the walk reaches a node that lost an
+        upstream edge to an eviction; an empty query result then means "ask the
+        durable store", not "no upstream".
+        """
+        return self._walk(node_id, depth, None) is not None
+
+    def _walk(self, start: str, depth: int, edge_type: str | None) -> set[str] | None:
+        """Backward BFS from *start*; ``None`` if it touches an absent/incomplete node."""
+        if start not in self._nodes:
+            return None
+        reached: set[str] = set()
+        frontier = [start]
+        current_depth = 0
+        while frontier and current_depth < depth:
+            current_depth += 1
+            next_frontier: list[str] = []
+            for node in frontier:
+                if node in self._incomplete:
+                    return None
+                for source_id, etype in self._reverse.get(node, []):
+                    if edge_type is not None and etype != edge_type:
+                        continue
+                    if source_id not in reached:
+                        reached.add(source_id)
+                        next_frontier.append(source_id)
+            frontier = next_frontier
+        return reached
+
     def query_blast_radius(
         self,
         ref: str,
@@ -211,23 +264,13 @@ class HotLineageIndex:
             return []  # cache miss -> caller falls back to the durable store
         self._touch(start)
 
-        # BFS mirroring the CTE: frontier holds node ids at the current depth.
-        # The CTE's root is depth 1 (direct sources of `start`) and it recurses
-        # while depth < N, so the deepest level reached is `depth`.
-        reached: set[str] = set()
-        frontier = [start]
-        current_depth = 0
-        while frontier and current_depth < depth:
-            current_depth += 1
-            next_frontier: list[str] = []
-            for node in frontier:
-                for source_id, etype in self._reverse.get(node, []):
-                    if edge_type is not None and etype != edge_type:
-                        continue
-                    if source_id not in reached:
-                        reached.add(source_id)
-                        next_frontier.append(source_id)
-            frontier = next_frontier
+        # BFS mirroring the CTE: the root is depth 1 (direct sources of `start`) and
+        # it recurses while depth < N, so the deepest level reached is `depth`. A
+        # walk that touches a node an eviction left incomplete is a miss, not a
+        # truncated answer (review replay-lineage-registry-16).
+        reached = self._walk(start, depth, edge_type)
+        if reached is None:
+            return []
 
         rows: list[dict[str, Any]] = []
         for node_id in reached:
