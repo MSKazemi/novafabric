@@ -439,3 +439,46 @@ def test_module_exposes_no_capsule_mutation_entry_point() -> None:
 
     assert not hasattr(context, "attach_facet")
     assert "attach_facet" not in context.__all__
+
+
+# ── review misc-2-12: the digest is unkeyed, so verification re-derives the budget too ──
+
+
+def _entries_for_budget_tests():  # type: ignore[no-untyped-def]
+    from novafabric.context.receipt import entry_from_content
+
+    return [
+        entry_from_content("a", source="system", position=0, token_count=400),
+        entry_from_content("b", source="tool", position=1, token_count=600),
+    ]
+
+
+def test_a_budget_that_disagrees_with_the_entries_does_not_verify_even_if_the_digest_is_recomputed():
+    from novafabric.context.receipt import (
+        TokenBudget,
+        build_receipt,
+        receipt_digest,
+        verify_receipt_digest,
+    )
+
+    receipt = build_receipt(_entries_for_budget_tests())
+    assert verify_receipt_digest(receipt)
+    forged = receipt.model_copy(update={"token_budget": TokenBudget(used=5, by_source={"system": 5})})
+    forged.receipt_digest = receipt_digest(forged)  # the tamperer recomputes the unkeyed digest
+    assert verify_receipt_digest(forged) is False
+
+
+def test_a_by_source_that_disagrees_with_the_entries_does_not_verify():
+    from novafabric.context.receipt import (
+        TokenBudget,
+        build_receipt,
+        receipt_digest,
+        verify_receipt_digest,
+    )
+
+    receipt = build_receipt(_entries_for_budget_tests())
+    forged = receipt.model_copy(
+        update={"token_budget": TokenBudget(used=1000, by_source={"system": 1000})}
+    )
+    forged.receipt_digest = receipt_digest(forged)
+    assert verify_receipt_digest(forged) is False

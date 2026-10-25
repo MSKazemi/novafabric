@@ -203,7 +203,21 @@ def verify_receipt_digest(receipt: ContextReceipt) -> bool:
     """
     if receipt.receipt_digest is None:
         return False
+    # The digest is unkeyed: anyone who edits the budget can recompute it. So the budget
+    # is re-derived from the entries as well (review misc-2-12), and a ``used`` of 5 over
+    # entries summing to 1000 does not verify.
+    if not budget_matches_entries(receipt):
+        return False
     return receipt.receipt_digest == receipt_digest(receipt)
+
+
+def budget_matches_entries(receipt: ContextReceipt) -> bool:
+    """Whether ``token_budget.used`` and ``by_source`` are what the entries sum to."""
+    by_source: dict[str, int] = {}
+    for entry in receipt.entries:
+        by_source[entry.source] = by_source.get(entry.source, 0) + entry.token_count
+    budget = receipt.token_budget
+    return budget.used == sum(by_source.values()) and budget.by_source == by_source
 
 
 # ── Construction ──────────────────────────────────────────────────────────
