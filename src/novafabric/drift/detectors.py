@@ -31,6 +31,18 @@ _EPS = 1e-9
 NUMERIC_STATISTICS: tuple[str, ...] = ("psi", "ks")
 
 
+def _require_finite(name: str, sample: Sequence[float]) -> None:
+    """Refuse a sample holding NaN or an infinity (review misc-1-09).
+
+    ``json.loads`` accepts ``NaN`` and ``Infinity``, and NaN compares false with
+    everything, so a corrupt value used to sort, bin and subtract into a statistic
+    of ``0.0``: no evidence serialised as no drift.
+    """
+    for x in sample:
+        if not math.isfinite(x):
+            raise ValueError(f"{name} must contain only finite numbers, got {x!r}")
+
+
 def psi(baseline: Sequence[float], window: Sequence[float], *, bins: int = 10) -> float:
     """Population Stability Index between two numeric samples over ``bins`` equal-width buckets.
 
@@ -40,10 +52,14 @@ def psi(baseline: Sequence[float], window: Sequence[float], *, bins: int = 10) -
     """
     if not baseline or not window:
         raise ValueError("psi requires non-empty baseline and window samples")
+    _require_finite("baseline", baseline)
+    _require_finite("window", window)
     lo = min(min(baseline), min(window))
     hi = max(max(baseline), max(window))
-    if hi - lo <= _EPS:
-        return 0.0  # no spread across either sample — no measurable shift
+    # No spread at all. Relative to the data's own scale: an absolute epsilon read two
+    # disjoint samples at 1e-10 as one point (psi 0.0 where ks said 1.0).
+    if hi == lo:
+        return 0.0
     width = (hi - lo) / bins
 
     def fractions(sample: Sequence[float]) -> list[float]:
@@ -71,6 +87,8 @@ def ks_statistic(baseline: Sequence[float], window: Sequence[float]) -> float:
     """
     if not baseline or not window:
         raise ValueError("ks_statistic requires non-empty baseline and window samples")
+    _require_finite("baseline", baseline)
+    _require_finite("window", window)
     b = sorted(baseline)
     w = sorted(window)
     nb, nw = len(b), len(w)
@@ -91,6 +109,11 @@ def ks_statistic(baseline: Sequence[float], window: Sequence[float]) -> float:
 
 
 def _normalize(dist: Mapping[str, float]) -> dict[str, float]:
+    for key, value in dist.items():
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(
+                f"distribution mass must be finite and non-negative, got {value!r} for {key!r}"
+            )
     total = sum(dist.values())
     if total <= _EPS:
         raise ValueError("distribution must have positive total mass")

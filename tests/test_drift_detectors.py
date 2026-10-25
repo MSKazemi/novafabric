@@ -132,7 +132,7 @@ def test_build_behavioral_drift_tool_mix_uses_js():
     assert isinstance(rec.drifted, bool)
 
 
-def test_build_behavioral_drift_numeric_dimension_uses_psi():
+def test_build_behavioral_drift_numeric_dimension_usespsi():
     rec = build_behavioral_drift(
         dimension="cost-per-run",
         distance="psi",
@@ -149,3 +149,41 @@ def test_records_have_no_remediation_or_promote_verdict():
     for model in (OutputDriftRecord, BehavioralDriftRecord):
         for forbidden in ("remediated", "promote", "passed", "failed", "verdict", "gate"):
             assert forbidden not in model.model_fields
+
+
+# ── review misc-1-09: non-finite and negative input is refused, not read as "no drift" ──
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_psi_and_ks_refuse_non_finite_samples(bad):
+    for fn in (psi, ks_statistic):
+        with pytest.raises(ValueError, match="finite"):
+            fn([1.0] * 10, [bad] + [1.0] * 9)
+        with pytest.raises(ValueError, match="finite"):
+            fn([bad, 1.0, 2.0], [1.0, 2.0, 3.0])
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -1.0])
+def test_jensen_shannon_refuses_non_finite_or_negative_mass(bad):
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        jensen_shannon_distance({"a": bad, "b": 1.0}, {"a": 100.0, "b": 1.0})
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        jensen_shannon_distance({"a": 1.0, "b": 1.0}, {"a": bad, "b": 1.0})
+
+
+def test_psi_sees_a_shift_at_a_tiny_scale():
+    # An absolute epsilon read two fully disjoint tiny-scale samples as "no spread".
+    baseline, window = [0.0] * 50, [5e-10] * 50
+    assert ks_statistic(baseline, window) == 1.0
+    assert psi(baseline, window) > 0.25
+
+
+def test_psi_of_a_genuinely_constant_pair_is_still_zero():
+    assert psi([3.0] * 20, [3.0] * 20) == 0.0
+    assert psi([1e-12] * 20, [1e-12] * 20) == 0.0
+
+
+def test_ordinary_inputs_are_unchanged():
+    assert ks_statistic([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]) == 0.0
+    assert jensen_shannon_distance({"a": 1, "b": 1}, {"a": 1, "b": 1}) == 0.0
+    assert jensen_shannon_distance({"a": 1}, {"b": 1}) == 1.0
