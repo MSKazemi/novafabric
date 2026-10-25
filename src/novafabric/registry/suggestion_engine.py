@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from novafabric._capsule_fs import iter_capsule_dirs, read_capsule_text_or_none
 from novafabric.capture.record_roles import read_logical_model_calls
 
@@ -22,7 +24,8 @@ _SEMVER_RE = re.compile(
 
 # YAML plain-scalar indicator characters that must be quoted when leading.
 # Includes '@', '`', and the flow/block indicators listed in the YAML 1.2 spec.
-_YAML_LEADING_SPECIAL = set("@`!&*,[]{}#|>?:-")
+# A value of these characters only is a plain YAML scalar of the same text.
+_YAML_PLAIN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+/-]*")
 
 
 def _read_stream(capsule_dir: Path, name: str) -> str:
@@ -32,24 +35,18 @@ def _read_stream(capsule_dir: Path, name: str) -> str:
 
 
 def _yaml_str(value: str) -> str:
-    """Return a safely-quoted YAML scalar for *value*.
+    """Return *value* as a YAML scalar that parses back to exactly that string.
 
-    Wraps in double-quotes when the value starts with a YAML indicator
-    character (e.g. ``@``) or contains a colon-space / trailing colon that
-    would be mis-parsed as a mapping key.
+    Plain when it is made of ordinary name characters, else a double-quoted
+    scalar (JSON string syntax is valid YAML) with newlines, quotes and
+    backslashes escaped. Names, versions and tool names come from a workload or
+    an LLM; interpolated raw, a newline added keys to the spec the user then
+    registered (review replay-lineage-registry-20). Plain-looking values that
+    YAML would read as another type (``true``, ``1.0``, ``null``) are quoted too.
     """
-    if not value:
-        return '""'
-    needs_quoting = (
-        value[0] in _YAML_LEADING_SPECIAL
-        or ": " in value
-        or value.endswith(":")
-        or "#" in value
-    )
-    if needs_quoting:
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    return value
+    if value and _YAML_PLAIN.fullmatch(value) and isinstance(yaml.safe_load(value), str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
 
 
 @dataclass
@@ -313,12 +310,12 @@ def _model_draft_yaml(name: str, version: str, system: str, model_id: str) -> st
         f'novafabric_spec_version: "1"\n'
         f"asset_type: model\n"
         f"name: {_yaml_str(name)}\n"
-        f"version: {version}\n"
+        f"version: {_yaml_str(version)}\n"
         f"status: development\n"
         f"description: \"\"\n"
         f"spec:\n"
-        f"  framework: {system}\n"
-        f"  artifact_path: {model_id}\n"
+        f"  framework: {_yaml_str(system)}\n"
+        f"  artifact_path: {_yaml_str(model_id)}\n"
     )
 
 
@@ -332,7 +329,7 @@ def _tool_draft_yaml(tool_name: str, transport: str, provider: str) -> str:
         f"status: development\n"
         f"description: \"\"\n"
         f"spec:\n"
-        f'  entrypoint: "{entrypoint}"\n'
+        f"  entrypoint: {json.dumps(entrypoint, ensure_ascii=False)}\n"
     )
 
 
@@ -365,12 +362,14 @@ def _agent_draft_yaml(
             provider = "ollama"
         else:
             provider = "unknown"
-        model_block = f"  model:\n    provider: {provider}\n    name: {top_model}\n"
+        model_block = (
+            f"  model:\n    provider: {provider}\n    name: {_yaml_str(top_model)}\n"
+        )
     else:
         model_block = "  model:\n    provider: unknown\n    name: unknown\n"
 
     tools_block = (
-        "  tools:\n" + "".join(f"    - {t}\n" for t in tool_names)
+        "  tools:\n" + "".join(f"    - {_yaml_str(t)}\n" for t in tool_names)
         if tool_names
         else "  tools: []\n"
     )
@@ -379,7 +378,7 @@ def _agent_draft_yaml(
         f'novafabric_spec_version: "1"\n'
         f"asset_type: agent\n"
         f"name: {_yaml_str(name)}\n"
-        f"version: {version}\n"
+        f"version: {_yaml_str(version)}\n"
         f"status: development\n"
         f"description: \"\"\n"
         f"spec:\n"
