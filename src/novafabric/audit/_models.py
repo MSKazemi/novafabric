@@ -21,6 +21,7 @@ class AuditEventType(str, enum.Enum):
     UNREGISTER = "unregister"
     PROMOTE_PROPOSE = "promote.propose"
     PROMOTE_APPROVE = "promote.approve"
+    PROMOTE_APPROVE_REVERTED = "promote.approve_reverted"  # approval whose promotion was refused
     RETENTION_ACTION = "retention.action"
     ALERT_DELIVERY = "alert.delivery"  # ADR-0192: one entry per attempted alert delivery
     ROLE_ASSIGN = "role.assign"  # ADR-0246 slice 1: privileged mutations join the chained log

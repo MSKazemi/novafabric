@@ -138,6 +138,7 @@ OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     "unregister": (_APP_LIFECYCLE, "Application Lifecycle", 2),  # Remove
     "promote.propose": (_APP_LIFECYCLE, "Application Lifecycle", _ACTIVITY_OTHER),
     "promote.approve": (_APP_LIFECYCLE, "Application Lifecycle", _ACTIVITY_OTHER),
+    "promote.approve_reverted": (_APP_LIFECYCLE, "Application Lifecycle", _ACTIVITY_OTHER),
     "retention.action": (_API_ACTIVITY, "API Activity", _ACTIVITY_OTHER),
     # ADR-0192: one entry per attempted ops-alert delivery (outbound webhook
     # attempt made through the product surface — API Activity, Create).

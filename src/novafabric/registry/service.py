@@ -1843,6 +1843,22 @@ def propose_promotion(
     }
 
 
+def _revert_approval(db_path: Path | None, proposal_id: str) -> None:
+    """Return an approved-but-unexecuted proposal to ``open`` (clears the approval)."""
+    conn = get_connection(db_path)
+    init_schema(conn)
+    try:
+        conn.execute(
+            "UPDATE promotion_proposals SET state = 'open', approver = NULL, "
+            "approver_key_fp = NULL, approver_sig = NULL, approved_at = NULL "
+            "WHERE proposal_id = ? AND state = 'approved'",
+            (proposal_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def approve_promotion(
     name: str,
     version: str,
@@ -1971,13 +1987,32 @@ def approve_promotion(
         },
     )
 
-    result = promote_asset(
-        name,
-        version,
-        AssetStatus(to_status),
-        actor=checker.identity,
-        db_path=db_path,
-    )
+    try:
+        result = promote_asset(
+            name,
+            version,
+            AssetStatus(to_status),
+            actor=checker.identity,
+            db_path=db_path,
+        )
+    except (PromotionBlockedError, InvalidLifecycleTransitionError, AssetNotFoundError) as exc:
+        # The promote gates (policy, agent eval, lifecycle) refused after the
+        # approval was recorded: the asset did not move, so the proposal returns
+        # to open (it can be approved again once the gate clears) and the log
+        # records that the approval took no effect (review
+        # replay-lineage-registry-17).
+        _revert_approval(db_path, proposal_id)
+        AuditLog(resolve_audit_log_path()).append(
+            event_type=AuditEventType.PROMOTE_APPROVE_REVERTED,
+            actor=checker.identity,
+            resource_id=f"{name}@{version}",
+            details={
+                "proposal_id": proposal_id,
+                "to_status": to_status,
+                "reason": f"{type(exc).__name__}: {exc}"[:500],
+            },
+        )
+        raise
     result["proposal_id"] = proposal_id
     result["approver"] = checker.identity
     result["approved_at"] = approved_at

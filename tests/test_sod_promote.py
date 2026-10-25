@@ -17,6 +17,7 @@ from novafabric.registry.service import (
     SoDViolationError,
     approve_promotion,
     asset_spec_sha256,
+    get_asset,
     get_open_proposal,
     new_proposal_id,
     promote_asset,
@@ -355,3 +356,44 @@ def test_unregistering_supersedes_the_open_proposal(tmp_path: Path, trust: Signe
     unregister_asset(NAME, VERSION, actor="mallory", db_path=tmp_db)
     _register_model(tmp_db)  # different content may now be registered under this version
     assert get_open_proposal(NAME, VERSION, db_path=tmp_db) is None
+
+
+def test_a_refused_promotion_leaves_the_proposal_open_and_audits_the_revert(
+    tmp_path: Path, trust: SignerTrustList, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review replay-lineage-registry-17: the proposal was marked approved and the
+    approval audited before the promote gates ran, so a refusal stranded it."""
+    from unittest.mock import MagicMock, patch
+
+    from novafabric.policy._models import PolicyDecision
+    from novafabric.registry.service import PromotionBlockedError
+
+    log = tmp_path / "revert-audit.jsonl"
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(log))
+    tmp_db = tmp_path / "reg.db"
+    _register_model(tmp_db)
+    _promote_to_validated(tmp_db)
+    _propose(tmp_db, trust)
+
+    deny = MagicMock()
+    deny.evaluate.return_value = PolicyDecision(allow=False, reason="not today", decision_id="d1")
+    with patch("novafabric.registry.service.get_policy_engine", return_value=deny):
+        with pytest.raises(PromotionBlockedError, match="not today"):
+            _approve(tmp_db, trust)
+
+    open_ = get_open_proposal(NAME, VERSION, db_path=tmp_db)
+    assert open_ is not None and open_["state"] == "open"
+    assert not open_.get("approver")
+    assert get_asset(NAME, VERSION, db_path=tmp_db)["status"] == "validated"
+
+    # Once the gate clears, the same proposal can be approved.
+    allow = MagicMock()
+    allow.evaluate.return_value = PolicyDecision(allow=True, reason="ok", decision_id="d2")
+    with patch("novafabric.registry.service.get_policy_engine", return_value=allow):
+        result = _approve(tmp_db, trust)
+    assert result["status"] == "staging"
+
+    import json as _json
+
+    events = [_json.loads(line)["event_type"] for line in log.read_text().splitlines()]
+    assert events.count("promote.approve_reverted") == 1

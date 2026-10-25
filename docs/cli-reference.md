@@ -5819,7 +5819,10 @@ Before anything changes:
 
 `--identity NAME` is **required** and must name an existing key. A missing key exits `1`
 and creates nothing. On success, promotes the asset and records a `promote.approve` audit
-event naming both bound identities and fingerprints.
+event naming both bound identities and fingerprints. If the promote gates then refuse
+(`promote` policy, an agent's eval, the lifecycle), the asset does not move, the proposal
+returns to `open` so it can be approved again once the gate clears, and a
+`promote.approve_reverted` event records that the approval took no effect.
 
 Rows written before ADR-0312 still read. `nova export-model-independence` reports them
 with `signature_verification: unverified`.
