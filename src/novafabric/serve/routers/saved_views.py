@@ -293,7 +293,7 @@ def build_saved_views_router(
         if not is_valid_view_id(view_id):
             raise HTTPException(status_code=422, detail="invalid view id")
         try:
-            path = delete_view(view_id, resolve_dir())
+            path = delete_view(view_id, resolve_dir(), by_id_only=True)
         except ViewNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         audit_append(

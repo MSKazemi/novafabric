@@ -151,6 +151,27 @@ def test_delete_removes_the_file_and_both_writes_are_audited(
     assert "view_save" in actions and "view_delete" in actions
 
 
+def test_delete_by_another_views_name_is_404_and_deletes_nothing(
+    client: TestClient, views_dir: Path
+) -> None:
+    # review misc-1-07: the route fell back to matching `name`, removed the wrong
+    # view and audited `view:beta`.
+    from novafabric.views import SavedView, save_view
+
+    save_view(
+        SavedView.model_validate({
+            "view_id": "alpha", "name": "beta", "query": {"select": ["count()"]},
+            "created_at": "2026-07-15T10:00:00Z",
+        }),
+        views_dir,
+    )
+    r = client.delete(f"/api/views/beta?{Q}", headers=H)
+    assert r.status_code == 404
+    assert (views_dir / "alpha.yaml").is_file()
+    assert "view_delete" not in [rec["action"] for rec in audit.read_recent(10)]
+    assert client.delete(f"/api/views/alpha?{Q}", headers=H).status_code == 200
+
+
 def test_routes_are_classified() -> None:
     from novafabric.serve.authz import ROUTE_SCOPES, Scope
 

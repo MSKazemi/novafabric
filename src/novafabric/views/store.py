@@ -97,8 +97,14 @@ def _files_for_id(views_dir: Path, view_id: str) -> list[Path]:
     ]
 
 
-def resolve_view_file(ref: str, views_dir: Path | None = None) -> Path:
+def resolve_view_file(
+    ref: str, views_dir: Path | None = None, *, by_id_only: bool = False
+) -> Path:
     """Find the file for a view referenced by ``view_id`` or ``name``.
+
+    ``by_id_only`` never matches a ``name``: a caller that deletes by an exact id
+    (the HTTP route) must not remove another view that merely carries that name
+    (review misc-1-07).
 
     Filename-stem match wins first (the spec says the stem SHOULD equal
     ``view_id``); otherwise every parseable view file is scanned for a matching
@@ -115,7 +121,7 @@ def resolve_view_file(ref: str, views_dir: Path | None = None) -> Path:
             view = _parse_view_file(path)
         except ViewParseError:
             continue
-        if ref in (view.view_id, view.name):
+        if ref == view.view_id or (not by_id_only and ref == view.name):
             return path
     known = ", ".join(p.stem for p in _view_files(base)) or "none"
     raise ViewNotFoundError(
@@ -197,8 +203,11 @@ def save_view(
     return path
 
 
-def delete_view(ref: str, views_dir: Path | None = None) -> Path:
-    """Remove the file backing a saved view; returns the removed path."""
-    path = resolve_view_file(ref, views_dir)
+def delete_view(ref: str, views_dir: Path | None = None, *, by_id_only: bool = False) -> Path:
+    """Remove the file backing a saved view; returns the removed path.
+
+    With ``by_id_only`` only a view whose id (or file stem) is *ref* is removed.
+    """
+    path = resolve_view_file(ref, views_dir, by_id_only=by_id_only)
     path.unlink()
     return path

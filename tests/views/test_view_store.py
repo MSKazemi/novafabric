@@ -176,6 +176,28 @@ def test_delete_view(views_dir: Path) -> None:
         resolve_view_file("avg-cost", views_dir)
 
 
+def test_delete_by_name_still_works_for_the_cli(views_dir: Path) -> None:
+    save_view(_view("alpha", name="beta"), views_dir)
+    assert not delete_view("beta", views_dir).exists()
+
+
+def test_an_exact_id_delete_never_matches_another_views_name(views_dir: Path) -> None:
+    # review misc-1-07: DELETE /api/views/beta removed alpha.yaml (name: beta).
+    save_view(_view("alpha", name="beta"), views_dir)
+    with pytest.raises(ViewNotFoundError):
+        delete_view("beta", views_dir, by_id_only=True)
+    assert (views_dir / "alpha.yaml").is_file()
+    assert not delete_view("alpha", views_dir, by_id_only=True).exists()
+
+
+def test_an_exact_id_delete_finds_a_file_whose_stem_differs_from_its_view_id(
+    views_dir: Path,
+) -> None:
+    views_dir.mkdir(parents=True)
+    (views_dir / "legacy-file.yaml").write_text(yaml.safe_dump(_view("real-id").model_dump(mode="json")))
+    assert not delete_view("real-id", views_dir, by_id_only=True).exists()
+
+
 def test_delete_unknown_raises(views_dir: Path) -> None:
     with pytest.raises(ViewNotFoundError):
         delete_view("nope", views_dir)
