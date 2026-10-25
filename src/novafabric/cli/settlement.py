@@ -185,11 +185,17 @@ def chain_cmd(
     from novafabric.settlement import (
         MAX_CHAIN_HOPS,
         BrokenA2AChainError,
+        DiscrepancyLaunderedError,
         InvalidIdentityRefError,
         InvalidReferenceError,
+        InvoiceMatchLaunderedError,
         MalformedA2AChainError,
+        MalformedAgreementError,
+        MalformedInvoiceError,
+        NonCanonicalTermsError,
         PaymentSecretRejectedError,
         SettlementFacet,
+        UnconfirmedFinalityError,
         chain_from_facet,
         verify_a2a_chain,
         walk_back,
@@ -212,6 +218,15 @@ def chain_cmd(
             BrokenA2AChainError,
             InvalidIdentityRefError,
             PaymentSecretRejectedError,
+            # The facet's validators raise named errors that are deliberately not
+            # ValueErrors (so a caller sees WHICH rule rejected it); the catch list
+            # must know them all, or a bad record is a traceback (review misc-2-08).
+            UnconfirmedFinalityError,
+            DiscrepancyLaunderedError,
+            InvoiceMatchLaunderedError,
+            MalformedInvoiceError,
+            MalformedAgreementError,
+            NonCanonicalTermsError,
         ) as exc:
             raise _BrokenEvidence(str(exc)) from exc
         if hops is None:

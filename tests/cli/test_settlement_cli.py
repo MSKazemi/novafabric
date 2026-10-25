@@ -228,3 +228,39 @@ def test_capsule_is_never_modified(tmp_path: Path) -> None:
     before = (capsule / "capsule.yaml").read_bytes()
     _invoke("--capsule", str(capsule), "--json")
     assert (capsule / "capsule.yaml").read_bytes() == before
+
+
+# review misc-2-08: the facet's named validator errors are deliberately not ValueErrors, and
+# the CLI's catch list did not know them: a traceback and exit 1 instead of "Broken".
+
+
+def _facet_file(tmp_path: Path, mutate: Any) -> Path:
+    doc = json.loads(VALID.read_text())
+    mutate(doc)
+    path = tmp_path / "facet.json"
+    path.write_text(json.dumps(doc))
+    return path
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        # finality claims a network confirmation but carries none (UnconfirmedFinalityError)
+        lambda d: d["finality"].pop("confirmation_ref"),
+        # reconciled=true while recording discrepancies (DiscrepancyLaunderedError)
+        lambda d: d.update(
+            {"mandate_reconciliation": {"reconciled": True, "compared": ["amount"],
+                                        "discrepancies": ["amount"]}}
+        ),
+        # reconciled=true with nothing compared (DiscrepancyLaunderedError)
+        lambda d: d.update({"mandate_reconciliation": {"reconciled": True, "compared": []}}),
+    ],
+)
+def test_an_invalid_record_in_the_facet_is_a_clean_broken_verdict(
+    tmp_path: Path, mutate: Any
+) -> None:
+    result = _invoke("--facet", str(_facet_file(tmp_path, mutate)))
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == cli_mod.EXIT_BROKEN, result.output + result.stderr
+    assert "Broken" in result.stderr and "Traceback" not in result.stderr
+    assert _has_boundary(result)
