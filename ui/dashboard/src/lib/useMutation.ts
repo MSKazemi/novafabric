@@ -85,6 +85,9 @@ export function useMutation<TArgs extends unknown[], TResult>(
       const ticket = ++inflight.current;
       setPending(true);
       setError(null);
+      // A new run starts from no result: a failed second run must not leave the first
+      // run's verdict on screen next to its error (review frontend-dashboard-11).
+      setResult(null);
       try {
         const r = await fn(...args);
         if (ticket !== inflight.current) return r; // superseded — drop state update

@@ -58,7 +58,14 @@ export function useRunSearch({
   const [liveConnected, setLiveConnected] = useState(false);
   const sseRef = useRef<RunStreamHandle | null>(null);
 
+  // Each refresh starts a new "generation"; a response from an older one is dropped, so
+  // typing "ab" cannot end with the results for "a", and a loadMore begun before a filter
+  // change cannot append the old filter's page to the new filter's list (review
+  // frontend-dashboard-12).
+  const generation = useRef(0);
+
   const refresh = useCallback(async () => {
+    const mine = ++generation.current;
     setError(null);
     setNextCursor(null);
     try {
@@ -69,6 +76,7 @@ export function useRunSearch({
         since: since || undefined,
         until: until || undefined,
       });
+      if (mine !== generation.current) return;
       setRuns(r.items);
       setNextCursor(r.next_cursor);
       setTotalApprox(r.total_approx);
@@ -76,12 +84,13 @@ export function useRunSearch({
       setHasMore(r.next_cursor !== null);
       onCountChange?.(r.total_approx);
     } catch (e) {
-      setError((e as Error).message);
+      if (mine === generation.current) setError((e as Error).message);
     }
   }, [onCountChange, search, since, until, statusFilter]);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
+    const mine = generation.current;
     setLoadingMore(true);
     try {
       const r = await api.searchRuns({
@@ -92,11 +101,12 @@ export function useRunSearch({
         since: since || undefined,
         until: until || undefined,
       });
+      if (mine !== generation.current) return; // the list was refreshed meanwhile
       setRuns(prev => [...(prev ?? []), ...r.items]);
       setNextCursor(r.next_cursor);
       setHasMore(r.next_cursor !== null);
     } catch (e) {
-      setError((e as Error).message);
+      if (mine === generation.current) setError((e as Error).message);
     } finally {
       setLoadingMore(false);
     }

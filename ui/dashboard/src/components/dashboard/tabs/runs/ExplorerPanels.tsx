@@ -10,7 +10,7 @@
  * - `LineageNeighbours` — the run's spool lineage edges (`nova run lineage`) as
  *                       navigable neighbours, each with a Compare action.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { api, type CapsuleVerifyResult, type FullCapsule, type RunSummary } from '../../../../lib/api';
 import StatusPill from '../../../ui/primitives/StatusPill';
@@ -100,13 +100,23 @@ export function IntegrityPanel({
   });
 
   // A different run is a different verification — never show the last one's verdict.
-  useEffect(() => { setState({ busy: false, result: null, error: null }); }, [runId]);
+  const currentRun = useRef(runId);
+  useEffect(() => {
+    currentRun.current = runId;
+    setState({ busy: false, result: null, error: null });
+  }, [runId]);
 
   async function run() {
+    const asked = runId;
     setState({ busy: true, result: null, error: null });
     try {
-      setState({ busy: false, result: await verify(runId), error: null });
+      const result = await verify(asked);
+      // Verify on run A, switch to B before it returns: A's verdict must not land in B's
+      // panel under B's id (review frontend-dashboard-11).
+      if (currentRun.current !== asked) return;
+      setState({ busy: false, result, error: null });
     } catch (e) {
+      if (currentRun.current !== asked) return;
       setState({ busy: false, result: null, error: (e as Error).message });
     }
   }
