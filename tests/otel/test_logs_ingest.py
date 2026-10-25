@@ -453,3 +453,22 @@ class TestRoute:
             "/api/otlp/v1/logs", json={"nope": 1}, headers={"Authorization": "Bearer t"}
         )
         assert bad.status_code == 400
+
+
+class TestOutOfRangeTimestamps:
+    """review misc-3-08: timeUnixNano beyond year 9999 raised ValueError out of the batch."""
+
+    @pytest.mark.parametrize("nanos", ["9" * 25, "253402300800000000000", str(10**30)])
+    def test_an_unlinked_record_with_a_huge_time_is_stored_under_today(
+        self, tmp_path: Path, nanos: str
+    ) -> None:
+        payload = _record(timeUnixNano=nanos, body={"stringValue": "x"})
+        result = _ingest(payload, tmp_path / "s")
+        assert result.unlinked == 1
+        assert (tmp_path / "s" / "unlinked" / "2026-10-02.jsonl").is_file()
+
+    def test_a_good_record_in_the_same_batch_is_still_stored(self, tmp_path: Path) -> None:
+        good = {"timeUnixNano": "1790000000000000000"}
+        bad = {"timeUnixNano": "9" * 25}
+        payload = {"resourceLogs": [{"scopeLogs": [{"logRecords": [bad, good]}]}]}
+        assert _ingest(payload, tmp_path / "s").unlinked == 2

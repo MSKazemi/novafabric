@@ -237,13 +237,27 @@ def _to_nanos(value: Any) -> int:
         return 0
 
 
-def _iso(nanos: int) -> str | None:
-    """Unix nanoseconds → ISO-8601 UTC (inverse of the emitter's ``_unix_nano``)."""
+def utc_from_nanos(nanos: int) -> datetime | None:
+    """Unix nanoseconds → aware UTC datetime, or ``None`` when absent or unrepresentable.
+
+    ``_to_nanos`` accepts any integer, so ``"9" * 25`` reached
+    ``datetime.fromtimestamp`` and raised ``ValueError`` (year out of range) out of
+    the whole export: HTTP 500 for one bad span or log record (review misc-3-08).
+    A value no datetime can hold is an absent timestamp, not a failed batch.
+    """
     if nanos <= 0:
         return None
     secs, rem = divmod(nanos, 1_000_000_000)
-    dt = datetime.fromtimestamp(secs, tz=timezone.utc).replace(microsecond=rem // 1000)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    try:
+        return datetime.fromtimestamp(secs, tz=timezone.utc).replace(microsecond=rem // 1000)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _iso(nanos: int) -> str | None:
+    """Unix nanoseconds → ISO-8601 UTC (inverse of the emitter's ``_unix_nano``)."""
+    dt = utc_from_nanos(nanos)
+    return None if dt is None else dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _is_error(status: Any) -> bool:

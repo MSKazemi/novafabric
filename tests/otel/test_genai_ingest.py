@@ -369,3 +369,37 @@ def test_empty_result_capsule_falls_back_to_now(tmp_path: Path) -> None:
     assert manifest["model_call_count"] == 0
     assert manifest["created_at"] == manifest["finished_at"]
     assert manifest["duration_ms"] == 0
+
+
+# review misc-3-08: an out-of-range timestamp raised ValueError out of the whole
+# batch (HTTP 500); it is now a span without that timestamp.
+
+
+@pytest.mark.parametrize("nanos", ["9" * 25, "253402300800000000000", str(10**30)])
+def test_an_out_of_range_span_timestamp_ingests_without_started_at(nanos: str) -> None:
+    payload = {"resourceSpans": [{"scopeSpans": [{"spans": [
+        {"name": "execute_tool a", "startTimeUnixNano": nanos, "endTimeUnixNano": nanos,
+         "attributes": {"gen_ai.tool.name": "a"}},
+        {"name": "execute_tool b", "startTimeUnixNano": "1000000000", "endTimeUnixNano": "2000000000",
+         "attributes": {"gen_ai.tool.name": "b"}},
+    ]}]}]}
+    result = ingest_otlp_json(payload)
+    assert len(result.tool_calls) == 2  # the good span in the same batch is kept
+    assert not result.tool_calls[0].get("started_at")
+
+
+def test_iso_returns_none_beyond_year_9999() -> None:
+    from novafabric.otel.genai_ingest import _iso
+
+    assert _iso(10**30) is None
+    assert _iso(253402300800 * 10**9) is None  # 10000-01-01
+    assert _iso(1_700_000_000 * 10**9) is not None
+
+
+@pytest.mark.parametrize("nanos", [str(2**63), "99999999999999999999"])
+def test_a_large_but_representable_timestamp_is_kept(nanos: str) -> None:
+    payload = {"resourceSpans": [{"scopeSpans": [{"spans": [
+        {"name": "execute_tool a", "startTimeUnixNano": nanos, "endTimeUnixNano": nanos,
+         "attributes": {"gen_ai.tool.name": "a"}},
+    ]}]}]}
+    assert ingest_otlp_json(payload).tool_calls[0]["started_at"].endswith("Z")

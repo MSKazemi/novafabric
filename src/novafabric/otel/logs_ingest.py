@@ -70,6 +70,7 @@ from novafabric.otel.genai_ingest import (
     _iso,
     _severity_number,
     _to_nanos,
+    utc_from_nanos,
 )
 
 __all__ = [
@@ -470,9 +471,8 @@ def ingest_otlp_logs(
             traces.add(record["trace_id"])
         else:
             nanos = record["time_unix_nano"] or record["observed_time_unix_nano"]
-            day = (
-                datetime.fromtimestamp(nanos / 1e9, tz=timezone.utc) if nanos > 0 else now
-            ).strftime("%Y-%m-%d")
+            # A time no datetime can hold files the record under the ingest day.
+            day = (utc_from_nanos(nanos) or now).strftime("%Y-%m-%d")
             key = ("unlinked", day)
             result.unlinked += 1
         shaped = _shape(
