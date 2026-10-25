@@ -149,3 +149,41 @@ def test_card_handles_missing_optional_files(
         lambda pae, sig: verify_with_pem(signer.public_pem, pae, sig),
     )
     assert statement["predicate"]["run_id"] == "r1"
+
+
+# ── review compliance-privacy-23 ────────────────────────────────────────────
+
+
+def test_the_model_is_read_from_model_calls_when_the_manifest_has_none(tmp_path: Path) -> None:
+    cap = tmp_path / "01HCAPSULE000000000000001"
+    cap.mkdir()
+    (cap / "capsule.yaml").write_text(yaml.safe_dump({"run_id": "run-x"}))
+    rows = [
+        {"gen_ai.response.model": "claude-sonnet-4-6", "gen_ai.system": "anthropic"},
+        {"gen_ai.request.model": "gpt-4o", "gen_ai.system": "openai"},
+        {"gen_ai.response.model": "claude-sonnet-4-6", "gen_ai.system": "anthropic"},
+    ]
+    (cap / "model-calls.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+
+    card = SystemCardGenerator().build_card(cap)
+
+    assert card["model"]["models"] == ["claude-sonnet-4-6", "gpt-4o"]
+    assert card["model"]["name"] == "claude-sonnet-4-6, gpt-4o"
+    assert card["model"]["provider"] == "anthropic, openai"
+
+
+def test_a_run_with_no_model_calls_still_says_unknown(tmp_path: Path) -> None:
+    cap = tmp_path / "01HCAPSULE000000000000002"
+    cap.mkdir()
+    (cap / "capsule.yaml").write_text(yaml.safe_dump({"run_id": "run-y"}))
+    card = SystemCardGenerator().build_card(cap)
+    assert card["model"]["name"] == "unknown" and card["model"]["models"] == []
+
+
+def test_a_capsule_without_a_manifest_is_refused_not_signed_as_run_unknown(tmp_path: Path) -> None:
+    from novafabric.compliance.system_card import SystemCardError
+
+    cap = tmp_path / "01HCAPSULE000000000000003"
+    cap.mkdir()
+    with pytest.raises(SystemCardError, match="capsule.yaml"):
+        SystemCardGenerator().build_card(cap)

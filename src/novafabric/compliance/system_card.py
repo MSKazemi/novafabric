@@ -48,6 +48,10 @@ def _nova_version() -> str:
         return "0.0.0"
 
 
+class SystemCardError(ValueError):
+    """The capsule cannot yield a truthful system card."""
+
+
 class SystemCardGenerator:
     """Assemble and seal a system/audit card from capsule + eval + lineage facts."""
 
@@ -61,14 +65,21 @@ class SystemCardGenerator:
         signed card never states facts read from an empty stand-in.
         """
         manifest = self._load_manifest(capsule_dir)
+        models, providers = self._models_from_calls(capsule_dir)
 
         card: dict[str, Any] = {
             "schema_version": "0.1.0",
             "card_type": "system-audit",
             "run_id": manifest.get("run_id", "unknown"),
+            # Capture never writes `model` into capsule.yaml, so the card said "unknown" for
+            # every captured run; the models the run actually called are read from
+            # model-calls.jsonl (review compliance-privacy-23).
             "model": {
-                "name": manifest.get("model") or manifest.get("model_id", "unknown"),
-                "provider": manifest.get("provider", ""),
+                "name": manifest.get("model")
+                or manifest.get("model_id")
+                or (", ".join(models) if models else "unknown"),
+                "models": models,
+                "provider": manifest.get("provider") or ", ".join(providers),
                 "version": manifest.get("model_version", ""),
             },
             "evaluation": self._eval_facts(capsule_dir),
@@ -107,7 +118,37 @@ class SystemCardGenerator:
         text = read_required_capsule_member(
             capsule_dir / "capsule.yaml", operation="compliance export"
         )
-        return (yaml.safe_load(text) or {}) if text is not None else {}
+        if text is None:
+            # capsule.yaml is required: a signed card for "run unknown" states nothing true.
+            raise SystemCardError(
+                f"{capsule_dir} has no capsule.yaml; refusing to sign a card for an unknown run"
+            )
+        data = yaml.safe_load(text) or {}
+        return data if isinstance(data, dict) else {}
+
+    def _models_from_calls(self, capsule_dir: Path) -> tuple[list[str], list[str]]:
+        """Distinct models and providers named by ``model-calls.jsonl``, in first-seen order."""
+        text = read_required_capsule_member(
+            capsule_dir / "model-calls.jsonl", operation="compliance export"
+        ) or ""
+        models: list[str] = []
+        providers: list[str] = []
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            model = row.get("gen_ai.response.model") or row.get("gen_ai.request.model")
+            provider = row.get("gen_ai.system")
+            if isinstance(model, str) and model and model not in models:
+                models.append(model)
+            if isinstance(provider, str) and provider and provider not in providers:
+                providers.append(provider)
+        return models, providers
 
     def _eval_facts(self, capsule_dir: Path) -> dict[str, Any] | None:
         capsule_text = read_required_capsule_member(
