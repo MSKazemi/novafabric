@@ -153,7 +153,22 @@ class InvoiceVerification(BaseModel):
 
     @property
     def ok(self) -> bool:
-        """True only for a bound, consistent, recomputed match (fail-closed)."""
+        """True only for a bound, consistent, recomputed match whose document was re-checked.
+
+        Fail-closed (review misc-2-07): with no document bytes supplied the ``unbound``
+        flag is the *record's* claim and nothing was re-derived, so an untrusted record
+        asserting ``unbound: false`` must not read as verified.
+        :attr:`ok_on_recorded_binding` is the weaker answer for a caller that knowingly
+        accepts the producer's resolution.
+        """
+        return self.ok_on_recorded_binding and self.document_rechecked is True
+
+    @property
+    def ok_on_recorded_binding(self) -> bool:
+        """Bound, consistent and a recomputed match, taking the recorded binding on trust.
+
+        Not a verification of the document: ``document_rechecked`` may be ``None``.
+        """
         return (
             self.consistent
             and self.recomputed_matches is True

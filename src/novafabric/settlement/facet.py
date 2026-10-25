@@ -767,18 +767,30 @@ def verify_non_repudiation(
     An already-broken binding stays broken without further checking — there is
     nothing to re-verify once a reference is missing.
 
-    Supplying neither ``artifact`` nor ``capsule_root`` returns the binding's
-    own recorded state rather than re-deriving it: a verifier given nothing to
-    check against has learned nothing, and returning True on that basis would
-    turn "not checked" into "checked and intact".
+    Supplying neither ``artifact`` nor ``capsule_root`` returns **False**: a
+    verifier given nothing to check against has learned nothing, and a binding
+    parsed from an untrusted record can assert ``non_repudiation_broken: false``;
+    returning True would turn "not checked" into "checked and intact" (review
+    misc-2-07). :func:`recorded_non_repudiation_intact` answers the weaker
+    question "what does the binding itself claim?".
     """
     if binding.non_repudiation_broken:
+        return False
+    if artifact is None and capsule_root is None:
         return False
     if artifact is not None and not verify_ref_binding(binding.signed_digest, artifact):
         return False
     if capsule_root is not None and binding.bound_root != capsule_root:
         return False
     return True
+
+
+def recorded_non_repudiation_intact(binding: NonRepudiationBinding) -> bool:
+    """The binding's own recorded state: True unless it records that it is broken.
+
+    Nothing is re-derived; for an untrusted record this is a claim, not a verification.
+    """
+    return not binding.non_repudiation_broken
 
 
 def build_non_repudiation(

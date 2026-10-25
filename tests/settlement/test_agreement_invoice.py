@@ -268,7 +268,10 @@ def test_golden_invoice_fixture_verifies() -> None:
     record = invoice_from_facet(facet)
     assert record is not None
     result = verify_invoice(record, facet)
-    assert result.ok and result.document_rechecked is None
+    # No document bytes were supplied, so `unbound` rests on the producer's claim:
+    # not a verification (review misc-2-07), though consistent and recomputed.
+    assert result.document_rechecked is None
+    assert result.ok_on_recorded_binding and not result.ok
 
 
 def test_unresolvable_document_is_unbound_never_fatal() -> None:

@@ -727,8 +727,8 @@ def test_verification_against_the_wrong_root_is_false() -> None:
     assert verify_non_repudiation(binding, capsule_root=OTHER_ROOT_REF) is False
 
 
-def test_verification_with_nothing_to_check_reports_the_recorded_state() -> None:
-    """"Not checked" must not become "checked and intact"."""
+def test_verification_with_nothing_to_check_is_not_a_pass() -> None:
+    """"Not checked" must not become "checked and intact" (review misc-2-07)."""
     intact = build_non_repudiation(
         sig_scheme="iso20022_cms",
         signed_digest=CONFIRMATION_REF,
@@ -736,8 +736,20 @@ def test_verification_with_nothing_to_check_reports_the_recorded_state() -> None
         bound_root=ROOT_REF,
     )
     broken = NonRepudiationBinding(sig_scheme="iso20022_cms")
-    assert verify_non_repudiation(intact) is True
+    assert verify_non_repudiation(intact) is False  # nothing supplied, nothing verified
     assert verify_non_repudiation(broken) is False
+    # The binding's own claim is available under its own name.
+    from novafabric.settlement.facet import recorded_non_repudiation_intact
+
+    assert recorded_non_repudiation_intact(intact) is True
+    assert recorded_non_repudiation_intact(broken) is False
+    # An untrusted record asserting non_repudiation_broken=false verifies nothing by itself.
+    forged = NonRepudiationBinding.model_construct(
+        sig_scheme="iso20022_cms", signed_digest=None, signer_ref=None, bound_root=None,
+        non_repudiation_broken=False,
+    )
+    assert verify_non_repudiation(forged) is False
+    assert verify_non_repudiation(intact, artifact=CONFIRMATION, capsule_root=ROOT_REF) is True
 
 
 # ══ Facet integration — additive-first, secret-free ═══════════════════════
