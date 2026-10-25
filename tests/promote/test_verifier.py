@@ -461,3 +461,115 @@ def test_verify_garbage_approval_envelope_exits_4(
     result = verify_sod(capsule_id, policy_store, bundle_store)
     assert result.passed is False
     assert result.exit_code == 4
+
+
+# ---------------------------------------------------------------------------
+# review replay-lineage-registry-01: the policy is the one in force at
+# verification time, never the version the proposal names
+# ---------------------------------------------------------------------------
+
+
+def test_verify_a_revoked_approver_fails_even_when_the_proposal_cites_the_old_policy(
+    tmp_path: Path,
+    proposer_key_path: Path,
+    proposer_cert_path: Path,
+    approver_key_path: Path,
+    approver_cert_path: Path,
+) -> None:
+    policy_store = PolicyStore(tmp_path / "merkle.db")
+    bundle_store = PromoteBundleStore(tmp_path)
+    v1 = policy_store.put(_policy_json(["proposer"], ["approver"]))
+    # The operator revokes the approver by publishing a newer policy.
+    policy_store.put(_policy_json(["proposer"], ["someone-else"]))
+
+    proposal = _make_proposal_envelope(
+        CAPSULE_ID, str(v1), proposer_key_path, proposer_cert_path, "proposer"
+    )
+    proposal_uuid = bundle_store.put_proposal(CAPSULE_ID, proposal)
+    time.sleep(0.05)
+    approval = _make_approval_envelope(
+        proposal, approver_key_path, approver_cert_path, "approver"
+    )
+    bundle_store.put_approval(CAPSULE_ID, approval, proposal_uuid)
+
+    result = verify_sod(CAPSULE_ID, policy_store, bundle_store)
+    assert result.passed is False
+    assert result.exit_code == 4
+    assert "approver_key_ids" in result.message
+
+
+def test_verify_a_proposer_dropped_by_a_newer_policy_fails(
+    tmp_path: Path,
+    proposer_key_path: Path,
+    proposer_cert_path: Path,
+    approver_key_path: Path,
+    approver_cert_path: Path,
+) -> None:
+    policy_store = PolicyStore(tmp_path / "merkle.db")
+    bundle_store = PromoteBundleStore(tmp_path)
+    v1 = policy_store.put(_policy_json(["proposer"], ["approver"]))
+    policy_store.put(_policy_json(["other"], ["approver"]))
+    proposal = _make_proposal_envelope(
+        CAPSULE_ID, str(v1), proposer_key_path, proposer_cert_path, "proposer"
+    )
+    proposal_uuid = bundle_store.put_proposal(CAPSULE_ID, proposal)
+    time.sleep(0.05)
+    bundle_store.put_approval(
+        CAPSULE_ID,
+        _make_approval_envelope(proposal, approver_key_path, approver_cert_path, "approver"),
+        proposal_uuid,
+    )
+    result = verify_sod(CAPSULE_ID, policy_store, bundle_store)
+    assert (result.passed, result.exit_code) == (False, 3)
+
+
+def test_verify_a_policy_change_that_keeps_the_signers_does_not_invalidate_a_proposal(
+    tmp_path: Path,
+    proposer_key_path: Path,
+    proposer_cert_path: Path,
+    approver_key_path: Path,
+    approver_cert_path: Path,
+) -> None:
+    # ADR-0059 Proposal-time policy: a newer policy that still lists both signers
+    # (here it adds a third approver) leaves the in-flight proposal valid.
+    policy_store = PolicyStore(tmp_path / "merkle.db")
+    bundle_store = PromoteBundleStore(tmp_path)
+    v1 = policy_store.put(_policy_json(["proposer"], ["approver"]))
+    policy_store.put(_policy_json(["proposer"], ["approver", "extra"]))
+    proposal = _make_proposal_envelope(
+        CAPSULE_ID, str(v1), proposer_key_path, proposer_cert_path, "proposer"
+    )
+    proposal_uuid = bundle_store.put_proposal(CAPSULE_ID, proposal)
+    time.sleep(0.05)
+    bundle_store.put_approval(
+        CAPSULE_ID,
+        _make_approval_envelope(proposal, approver_key_path, approver_cert_path, "approver"),
+        proposal_uuid,
+    )
+    assert verify_sod(CAPSULE_ID, policy_store, bundle_store).passed is True
+
+
+def test_verify_a_signer_added_only_by_a_newer_policy_is_not_valid_under_the_cited_one(
+    tmp_path: Path,
+    proposer_key_path: Path,
+    proposer_cert_path: Path,
+    approver_key_path: Path,
+    approver_cert_path: Path,
+) -> None:
+    # Grants are never retroactive: the approver is in v2 only, the proposal cites v1.
+    policy_store = PolicyStore(tmp_path / "merkle.db")
+    bundle_store = PromoteBundleStore(tmp_path)
+    v1 = policy_store.put(_policy_json(["proposer"], ["someone-else"]))
+    policy_store.put(_policy_json(["proposer"], ["someone-else", "approver"]))
+    proposal = _make_proposal_envelope(
+        CAPSULE_ID, str(v1), proposer_key_path, proposer_cert_path, "proposer"
+    )
+    proposal_uuid = bundle_store.put_proposal(CAPSULE_ID, proposal)
+    time.sleep(0.05)
+    bundle_store.put_approval(
+        CAPSULE_ID,
+        _make_approval_envelope(proposal, approver_key_path, approver_cert_path, "approver"),
+        proposal_uuid,
+    )
+    result = verify_sod(CAPSULE_ID, policy_store, bundle_store)
+    assert (result.passed, result.exit_code) == (False, 4)

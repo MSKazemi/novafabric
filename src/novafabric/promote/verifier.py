@@ -170,9 +170,28 @@ def verify_sod(
         log.warning(msg)
         return VerifyResult(passed=False, exit_code=3, message=msg)
 
+    # Revocation takes effect at once (review replay-lineage-registry-01): the
+    # cited policy decides who was entitled when the proposal was made (ADR-0059
+    # Proposal-time policy: later GRANTS never apply retroactively), but a signer
+    # the policy in force now no longer lists has been revoked and cannot carry a
+    # proposal or approval through, however old the policy it cites.
+    try:
+        current_policy = _load_policy(policy_store.get_latest(), trust)
+    except (ValueError, PolicyNotFoundError, EnvelopeError) as exc:
+        msg = f"current policy could not be loaded: {exc}"
+        log.warning(msg)
+        return VerifyResult(passed=False, exit_code=3, message=msg)
+
     proposer_key_ids: list[str] = policy.get("proposer_key_ids", [])
     if proposer_subject not in proposer_key_ids:
         msg = f"proposer key {proposer_subject!r} not in policy proposer_key_ids"
+        log.warning(msg)
+        return VerifyResult(passed=False, exit_code=3, message=msg)
+    if proposer_subject not in current_policy.get("proposer_key_ids", []):
+        msg = (
+            f"proposer key {proposer_subject!r} is no longer in the current policy's "
+            "proposer_key_ids (revoked since the proposal was made)"
+        )
         log.warning(msg)
         return VerifyResult(passed=False, exit_code=3, message=msg)
 
@@ -210,6 +229,13 @@ def verify_sod(
     approver_key_ids: list[str] = policy.get("approver_key_ids", [])
     if approver_subject not in approver_key_ids:
         msg = f"approver key {approver_subject!r} not in policy approver_key_ids"
+        log.warning(msg)
+        return VerifyResult(passed=False, exit_code=4, message=msg)
+    if approver_subject not in current_policy.get("approver_key_ids", []):
+        msg = (
+            f"approver key {approver_subject!r} is no longer in the current policy's "
+            "approver_key_ids (revoked since the proposal was made)"
+        )
         log.warning(msg)
         return VerifyResult(passed=False, exit_code=4, message=msg)
 

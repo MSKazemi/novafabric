@@ -6048,7 +6048,7 @@ fails any condition is ignored and the five checks run as usual.
 `NOVAFABRIC_PROMOTE_BYPASS_AUDIT_OPTIONAL=1` skips the audit-entry check, for a bundle store
 copied without its audit log; the message then says `audit entry not checked`.
 
-**Policy-time loading:** the verifier loads the policy version recorded in the Proposal's `policy_version` field, not the latest policy. A policy change after proposal creation does not retroactively invalidate in-flight proposals (ADR-0059 §Proposal-time policy).
+**Policy-time loading:** the verifier loads the policy version recorded in the Proposal's `policy_version` field, so a policy change after proposal creation does not *grant* anyone retroactively (ADR-0059 §Proposal-time policy). It also loads the latest policy, and a proposer or approver the latest policy no longer lists is **revoked**: SoD fails (exit `3` for the proposer, `4` for the approver) however old the policy the proposal cites. A newer policy that still lists both signers leaves an in-flight proposal valid.
 
 ---
 
