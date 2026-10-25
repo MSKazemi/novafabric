@@ -18,6 +18,7 @@ import type { Tab } from '../Sidebar';
 import type { DetailView, RunAction, RunSort, StatusFilter, ValidationState, ReplayResult } from './runs/types';
 import { buildActionMeta } from './runs/actionMeta';
 import { useRunSearch } from './runs/useRunSearch';
+import { replayReportCounts } from './runs/replayReport';
 import RunFilters from './runs/RunFilters';
 import RunList from './runs/RunList';
 import RunInspector, { type SecretsState, type ChildrenState, type ForensicsState } from './runs/RunInspector';
@@ -228,8 +229,8 @@ export default function RunsTab({
         setReplayResult({ runId: run.run_id, result: r });
         setSelected(run);
         setDetailView('replay');
-        const blocked = r.dry_run_report ? (r.dry_run_report.match(/BLOCK/g) ?? []).length : 0;
-        onFlash(blocked > 0 ? 'error' : 'success', `Dry-run: ${blocked} tool(s) would be blocked`);
+        const blocked = replayReportCounts(r.dry_run_report).denied;
+        onFlash(blocked > 0 ? 'error' : 'success', `Dry-run: ${blocked} tool(s) would be denied`);
       } else if (action === 'semantic') {
         const res = await api.semanticReplay(run.run_id);
         const r = res.result as unknown as ReplayResult;

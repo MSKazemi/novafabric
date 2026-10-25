@@ -4,14 +4,14 @@
  * Extracted verbatim from the former RunsTab monolith — behavior frozen.
  */
 import { clsx } from 'clsx';
+import { replayReportCounts } from './replayReport';
 import type { ReplayResult } from './types';
 
 export function ForensicResultPane({ result }: { result: ReplayResult }) {
   const isDryRun = result.status === 'dry_run';
   const ok = result.status === 'success' || isDryRun;
-  const blockedCount = isDryRun && result.dry_run_report
-    ? (result.dry_run_report.match(/\bBLOCK\b/g) ?? []).length
-    : 0;
+  const reportCounts = replayReportCounts(isDryRun ? result.dry_run_report : null);
+  const blockedCount = reportCounts.denied;
   const statusColor = ok && (!isDryRun || blockedCount === 0)
     ? 'text-[var(--color-status-success)]'
     : isDryRun && blockedCount > 0
@@ -50,7 +50,7 @@ export function ForensicResultPane({ result }: { result: ReplayResult }) {
           // ADR-0300/0304: in mocked mode these count what was SERVED from the
           // capsule; no other mode serves tool results (tool_calls_mocked is 0).
           { label: isDryRun ? 'model calls (skipped)' : result.mode === 'mocked' ? 'model calls served' : 'model calls inspected', value: result.model_calls_mocked },
-          { label: isDryRun ? 'tool calls checked' : 'tool calls served', value: result.tool_calls_mocked },
+          { label: isDryRun ? 'tool calls checked' : 'tool calls served', value: isDryRun ? reportCounts.checked : result.tool_calls_mocked },
           { label: 'env warnings', value: result.env_warnings.length },
         ].map(({ label, value }) => (
           <div key={label} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-3 text-center">
@@ -120,7 +120,7 @@ export function ForensicResultPane({ result }: { result: ReplayResult }) {
           <h4 className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] font-mono mb-2">
             Policy report
             {blockedCount > 0 && (
-              <span className="ml-2 text-[var(--color-status-pending)]">— {blockedCount} BLOCK{blockedCount !== 1 ? 'S' : ''}</span>
+              <span className="ml-2 text-[var(--color-status-pending)]">— {blockedCount} DENIED</span>
             )}
           </h4>
           <pre className="text-xs font-mono text-[var(--color-text-muted)] whitespace-pre-wrap break-all leading-relaxed overflow-auto max-h-80">
