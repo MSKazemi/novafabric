@@ -163,8 +163,22 @@ interface SnapshotWindow {
   tier: string;
 }
 
+/**
+ * TV-5 endpoint URLs carry the serve token as `?token=` like every other request of the SPA
+ * (the server answers 401 / closes the socket with 4401 without it — review
+ * go-collector-ts-packages-08).
+ */
+export function tv5Url(path: string, token: string): string {
+  return `${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+}
+
+export function tv5WsUrl(token: string, loc: { protocol: string; host: string }): string {
+  const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${loc.host}${tv5Url("/api/tv5/ws", token)}`;
+}
+
 /** TV-5 panel with time-slider and 3D canvas. */
-export function TV5Panel() {
+export function TV5Panel({ token }: { token: string }) {
   const [nodes, setNodes] = useState<NodeData[]>([]);
   const [edges, setEdges] = useState<EdgeData[]>([]);
   const [windows, setWindows] = useState<SnapshotWindow[]>([]);
@@ -180,7 +194,7 @@ export function TV5Panel() {
   const loadSnapshot = async (windowId: string) => {
     try {
       // Prefer msgpack if available; fall back to JSON
-      const resp = await fetch(`/api/tv5/snapshot/${windowId}`, {
+      const resp = await fetch(tv5Url(`/api/tv5/snapshot/${encodeURIComponent(windowId)}`, token), {
         headers: { Accept: "application/msgpack, application/json;q=0.9" },
       });
       if (!resp.ok) return;
@@ -237,7 +251,7 @@ export function TV5Panel() {
 
   // Fetch available windows on mount
   useEffect(() => {
-    fetch("/api/tv5/windows")
+    fetch(tv5Url("/api/tv5/windows", token))
       .then((r) => {
         if (r.status === 404) {
           throw new Error("TV-5 router not mounted — restart the server (--topology implies --tv5 in v0.42+)");
@@ -258,8 +272,7 @@ export function TV5Panel() {
 
   // WebSocket connection for live updates
   useEffect(() => {
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${location.host}/api/tv5/ws`);
+    const ws = new WebSocket(tv5WsUrl(token, location));
     ws.onopen = () => {
       setWsConnected(true);
       ws.send(JSON.stringify({ type: "subscribe", topologyId: "default" }));

@@ -241,7 +241,7 @@ export default function App(): React.ReactElement {
         )}
         {mode === "tv5" && (
           <div style={{ position: "absolute", inset: 0, background: "#111827" }}>
-            <TV5Panel />
+            <TV5Panel token={token} />
           </div>
         )}
       </div>

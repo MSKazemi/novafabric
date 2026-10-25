@@ -16,6 +16,8 @@
  * This client decodes both frame types from the same onmessage handler.
  */
 
+import { type Table, tableFromIPC } from "apache-arrow";
+
 import type {
   TdpDeltaEvent,
   TdpClientMessage,
@@ -42,8 +44,12 @@ export class TDPClient {
   private deltaHandlers: DeltaHandler[] = [];
   private metricHandlers: MetricHandler[] = [];
   private expandHandlers: ExpandHandler[] = [];
-  private _pendingExpandClusterId: number | null = null;
-  private _pendingNodesBatch: Uint8Array | null = null;
+  /**
+   * Expand requests awaiting their two binary frames (nodes, then edges), oldest first.
+   * The server answers requests in order, but a click on B before A's frames arrive must not
+   * re-assign A's frames to B (review go-collector-ts-packages-14).
+   */
+  private _pendingExpands: Array<{ clusterId: number; nodes: Uint8Array | null }> = [];
 
   /**
    * Open WS + SSE connections.
@@ -81,9 +87,12 @@ export class TDPClient {
   }
 
   sendExpandRequest(clusterId: number): void {
-    this._pendingExpandClusterId = clusterId;
-    this._pendingNodesBatch = null;
-    this._sendMessage({ type: "subgraph_expand", cluster_id: clusterId });
+    // Pending state exists only for a request that was actually sent: a dropped request
+    // would otherwise make the next unrelated binary frame read as a nodes batch.
+    if (this._pendingExpands.some((p) => p.clusterId === clusterId)) return;
+    if (this._sendMessage({ type: "subgraph_expand", cluster_id: clusterId })) {
+      this._pendingExpands.push({ clusterId, nodes: null });
+    }
   }
 
   sendCollapseRequest(clusterId: number): void {
@@ -94,10 +103,13 @@ export class TDPClient {
   // Private
   // -----------------------------------------------------------------------
 
-  private _sendMessage(msg: TdpClientMessage): void {
+  /** True when the message was handed to an open socket. */
+  private _sendMessage(msg: TdpClientMessage): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+      return true;
     }
+    return false;
   }
 
   private _connectWs(wsUrl: string): void {
@@ -123,6 +135,8 @@ export class TDPClient {
     };
 
     ws.onclose = () => {
+      // Frames still owed by the old socket never arrive.
+      this._pendingExpands = [];
       if (!this.closed) {
         this._scheduleReconnect(wsUrl);
       }
@@ -150,120 +164,75 @@ export class TDPClient {
       const buf = data instanceof Blob ? await data.arrayBuffer() : data;
       const bytes = new Uint8Array(buf);
 
-      // Peek at the Arrow IPC schema_id metadata to distinguish frame types.
-      // We decode the schema lazily: only attempt JSON parse for delta frames.
-      const schemaId = this._peekArrowSchemaId(buf);
+      // Decode once; the frame type is the schema's `schema_id` custom metadata (read from
+      // the decoded schema, not by scanning bytes — review go-collector-ts-packages-07).
+      let table: Table | null = null;
+      try {
+        table = tableFromIPC(bytes);
+      } catch {
+        table = null; // not an IPC stream
+      }
+      const schemaId = table?.schema.metadata.get("schema_id") ?? "";
 
-      if (schemaId === "ads.v1.delta_event") {
+      if (table && schemaId === "ads.v1.delta_event") {
         // A-2: TDP delta event — decode payload column and route as TdpDeltaEvent
-        this._decodeDeltaEventFrame(buf);
+        this._decodeDeltaEventFrame(table);
         return;
       }
 
-      // subgraph_expand frames (nodes + edges) arrive in two consecutive binary
-      // messages.  We accumulate them using the pending-expand state machine.
-      if (this._pendingExpandClusterId !== null) {
-        if (this._pendingNodesBatch === null) {
-          // First binary frame: nodes IPC
-          this._pendingNodesBatch = bytes;
-        } else {
-          // Second binary frame: edges IPC — dispatch to expand handlers
-          const clusterId = this._pendingExpandClusterId;
-          const nodesBatch = this._pendingNodesBatch;
-          this._pendingExpandClusterId = null;
-          this._pendingNodesBatch = null;
-          for (const h of this.expandHandlers) h(clusterId, nodesBatch, bytes);
-        }
-      }
+      // subgraph_expand frames (nodes + edges) arrive as two consecutive binary
+      // messages per request, in request order.
+      this._routeSubgraphFrame(bytes, table);
     } catch (e) {
       console.error("[TDPClient] failed to handle binary frame:", e);
     }
   }
 
   /**
-   * Read the Arrow IPC stream header to extract the ``schema_id`` custom metadata
-   * value without fully decoding the batch.  Returns an empty string on failure.
-   *
-   * Arrow IPC stream format layout (little-endian):
-   *   - Magic + continuation markers vary by version, but the schema_id is encoded
-   *     as a UTF-8 key in the schema's custom_metadata flatbuffer.  Rather than
-   *     implementing a full flatbuffer parser we use a fast heuristic: search the
-   *     first 4 KiB of bytes for the null-terminated UTF-8 string "schema_id" and
-   *     read the value that follows it in the Arrow metadata encoding.
-   *
-   * This is intentionally heuristic — it covers all ADS v1 frames produced by
-   * pyarrow's IPC stream writer.  A full flatbuffer decode is not needed because
-   * we only need to distinguish three schema IDs.
+   * Assign a nodes/edges frame to the expand request it answers: by the frame's own
+   * `cluster_id` column when it has a row (the ADS subgraph schemas carry it), else the
+   * request already mid-way, else the oldest. A frame nobody asked for is ignored.
    */
-  private _peekArrowSchemaId(buf: ArrayBuffer): string {
-    try {
-      const view = new Uint8Array(buf, 0, Math.min(buf.byteLength, 4096));
-      const key = "schema_id";
-      const keyBytes = new TextEncoder().encode(key);
-      // Search for the key string in the header region
-      outer: for (let i = 0; i < view.length - keyBytes.length - 8; i++) {
-        for (let k = 0; k < keyBytes.length; k++) {
-          if (view[i + k] !== keyBytes[k]) continue outer;
-        }
-        // Found the key string. In Arrow flatbuffer metadata the key and value
-        // are each stored as a 4-byte length-prefixed UTF-8 string.
-        // Skip the key length prefix (4 bytes before 'i' pointing to first char)
-        // and find the value length prefix after the key string.
-        const afterKey = i + keyBytes.length;
-        // Look for value length int32 LE in the next few bytes (within 8 bytes)
-        for (let off = 0; off < 8 && afterKey + off + 4 <= view.length; off++) {
-          const valLen =
-            view[afterKey + off] |
-            (view[afterKey + off + 1] << 8) |
-            (view[afterKey + off + 2] << 16) |
-            (view[afterKey + off + 3] << 24);
-          if (valLen > 0 && valLen <= 128 && afterKey + off + 4 + valLen <= view.length) {
-            const valBytes = view.slice(afterKey + off + 4, afterKey + off + 4 + valLen);
-            const val = new TextDecoder().decode(valBytes);
-            // Sanity check: ADS schema IDs start with "ads."
-            if (val.startsWith("ads.")) return val;
-          }
-        }
-      }
-    } catch (_e) {
-      // fall through
+  private _routeSubgraphFrame(bytes: Uint8Array, table: Table | null): void {
+    if (this._pendingExpands.length === 0) return;
+    const frameCluster = TDPClient._frameClusterId(table);
+    const target =
+      frameCluster !== null
+        ? this._pendingExpands.find((p) => p.clusterId === frameCluster)
+        : (this._pendingExpands.find((p) => p.nodes !== null) ?? this._pendingExpands[0]);
+    if (!target) return;
+    if (target.nodes === null) {
+      target.nodes = bytes; // first frame: nodes IPC
+      return;
     }
-    return "";
+    // Second frame: edges IPC — complete the request.
+    this._pendingExpands = this._pendingExpands.filter((p) => p !== target);
+    for (const h of this.expandHandlers) h(target.clusterId, target.nodes, bytes);
+  }
+
+  private static _frameClusterId(table: Table | null): number | null {
+    const column = table?.getChild("cluster_id");
+    if (!table || !column || table.numRows === 0) return null;
+    const v = column.get(0);
+    return v === null || v === undefined ? null : Number(v);
   }
 
   /**
-   * Decode an ADS v1 delta_event Arrow IPC frame and dispatch to deltaHandlers.
+   * Dispatch an ADS v1 delta_event frame to deltaHandlers.
    *
-   * The frame has two columns: event_type (utf8) and payload (binary/JSON).
-   * We extract the payload bytes, parse as JSON, and route identically to
-   * _handleTextFrame so existing handlers need no changes.
+   * The frame has two columns: event_type (utf8) and payload (binary, the event as UTF-8
+   * JSON). The payload cell is read from the decoded column, not found by scanning the
+   * buffer for braces: the scan started on a `{` byte inside the offsets buffer for about
+   * 1 payload length in 256 and miscounted a brace inside a JSON string, silently dropping
+   * those events (review go-collector-ts-packages-07).
    */
-  private _decodeDeltaEventFrame(buf: ArrayBuffer): void {
+  private _decodeDeltaEventFrame(table: Table): void {
     try {
-      // Extract the payload column value from the Arrow IPC frame.
-      // We use a heuristic scan: find the JSON object bytes embedded in the
-      // binary payload column.  The payload is JSON-encoded so we look for
-      // the outermost '{' ... '}' in the buffer's tail region.
-      const view = new Uint8Array(buf);
-      let start = -1;
-      let depth = 0;
-      for (let i = 0; i < view.length; i++) {
-        const c = view[i];
-        if (c === 0x7b /* '{' */ && start === -1) {
-          start = i;
-          depth = 1;
-        } else if (start !== -1) {
-          if (c === 0x7b) depth++;
-          else if (c === 0x7d /* '}' */) {
-            depth--;
-            if (depth === 0) {
-              const jsonBytes = view.slice(start, i + 1);
-              const jsonStr = new TextDecoder().decode(jsonBytes);
-              this._handleTextFrame(jsonStr);
-              return;
-            }
-          }
-        }
+      const payload = table.getChild("payload");
+      for (let row = 0; row < table.numRows; row++) {
+        const cell = payload?.get(row) as Uint8Array | string | null | undefined;
+        if (cell === null || cell === undefined) continue;
+        this._handleTextFrame(typeof cell === "string" ? cell : new TextDecoder().decode(cell));
       }
     } catch (e) {
       console.error("[TDPClient] failed to decode delta_event Arrow frame:", e);

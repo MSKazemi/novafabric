@@ -237,11 +237,13 @@ export class GraphologyModel {
   // -----------------------------------------------------------------------
 
   private _collapseClusterInternal(clusterId: number): void {
-    // Remove all agent nodes for this cluster
+    // Remove every node the expand added for this cluster — agent AND model nodes — so the
+    // LOD ceiling bounds the node count (review go-collector-ts-packages-13); only the
+    // cluster's own super-node stays (it is re-added below).
     const toRemove: string[] = [];
     this.graph.forEachNode((nodeId) => {
       if (this.graph.getNodeAttribute(nodeId, "cluster_id") === clusterId &&
-          this.graph.getNodeAttribute(nodeId, "type") === "agent") {
+          this.graph.getNodeAttribute(nodeId, "type") !== "cluster") {
         toRemove.push(nodeId);
       }
     });

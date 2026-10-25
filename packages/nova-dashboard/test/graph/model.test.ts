@@ -112,3 +112,34 @@ describe("GraphologyModel LOD ceiling", () => {
     expect(expandedClusters.length).toBe(5);
   });
 });
+
+describe("GraphologyModel.collapseCluster (review go-collector-ts-packages-13)", () => {
+  // Real Arrow IPC, as the server sends: one agent row and one model row.
+  async function ipcFrames() {
+    const { Table, Utf8, tableToIPC, vectorFromArray } = await import("apache-arrow");
+    const nodes = new Table({
+      node_id: vectorFromArray(["agent-1", "model-1"], new Utf8()),
+      agent_type: vectorFromArray(["llm", "model"], new Utf8()),
+      status: vectorFromArray(["idle", "idle"], new Utf8()),
+    });
+    const edges = new Table({
+      source_id: vectorFromArray(["agent-1"], new Utf8()),
+      target_id: vectorFromArray(["model-1"], new Utf8()),
+      edge_type: vectorFromArray(["calls"], new Utf8()),
+    });
+    return { nodes: tableToIPC(nodes, "stream"), edges: tableToIPC(edges, "stream") };
+  }
+
+  it("removes the cluster's model nodes along with its agents, leaving only the super-node", async () => {
+    const model = new GraphologyModel();
+    model.graph.mergeNode("cluster:3", { type: "cluster", cluster_id: 3, x: 0, y: 0 });
+    const { nodes, edges } = await ipcFrames();
+    model.expandCluster(3, nodes, edges);
+    expect(model.graph.hasNode("model-1")).toBe(true);
+
+    model.collapseCluster(3);
+    expect(model.graph.hasNode("agent-1")).toBe(false);
+    expect(model.graph.hasNode("model-1")).toBe(false);
+    expect(model.graph.nodes()).toEqual(["cluster:3"]);
+  });
+});
