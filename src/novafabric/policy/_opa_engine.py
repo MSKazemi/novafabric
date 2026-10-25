@@ -255,5 +255,16 @@ def _parse_decision(stdout: str) -> tuple[bool, str]:
     if isinstance(raw, bool):
         return raw, ""
     if isinstance(raw, dict):
-        return bool(raw.get("allow", False)), str(raw.get("reason", ""))
-    return bool(raw), ""
+        allow = raw.get("allow", False)
+        reason = str(raw.get("reason", ""))
+        if isinstance(allow, bool):
+            return allow, reason
+        return False, _non_boolean(allow) + (f" ({reason})" if reason else "")
+    # Python truthiness is not a policy decision: allow := "false" is truthy, and
+    # an empty set or 0 falsy for the wrong reason. A type error denies (review
+    # misc-3-09).
+    return False, _non_boolean(raw)
+
+
+def _non_boolean(value: object) -> str:
+    return f"non-boolean allow ({type(value).__name__}): a policy decision must be true or false"

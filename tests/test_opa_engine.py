@@ -15,6 +15,7 @@ from novafabric.policy import (
     PolicyResource,
     PolicySubject,
 )
+from novafabric.policy._opa_engine import _parse_decision
 
 
 @pytest.fixture(autouse=True)
@@ -257,3 +258,36 @@ def test_opa_engine_empty_policy_source_uses_bundle() -> None:
     call_args = mock_run.call_args[0][0]
     bundle_arg = call_args[call_args.index("--data") + 1]
     assert "novafabric" in bundle_arg
+
+
+# review misc-3-09: a non-boolean `allow` is a policy type error, and a type error
+# must deny, not be coerced by Python truthiness (`allow := "false"` allowed).
+
+
+def _opa_output(value: object) -> str:
+    return json.dumps({"result": [{"expressions": [{"value": value}]}]})
+
+
+@pytest.mark.parametrize("value", ["false", "no", "", "true", 1, 0, 1.5, [], [1], None])
+def test_a_non_boolean_allow_denies(value: object) -> None:
+    allow, reason = _parse_decision(_opa_output(value))
+    assert allow is False
+    assert "non-boolean" in reason
+
+
+@pytest.mark.parametrize("value", [{"allow": "false"}, {"allow": 1}, {"allow": []}, {"allow": None}])
+def test_a_non_boolean_allow_inside_an_object_denies(value: object) -> None:
+    allow, reason = _parse_decision(_opa_output(value))
+    assert allow is False
+    assert "non-boolean" in reason
+
+
+def test_booleans_and_objects_with_boolean_allow_still_work() -> None:
+    assert _parse_decision(_opa_output(True)) == (True, "")
+    assert _parse_decision(_opa_output(False)) == (False, "")
+    assert _parse_decision(_opa_output({"allow": True, "reason": "ok"})) == (True, "ok")
+    assert _parse_decision(_opa_output({"allow": False, "reason": "no"})) == (False, "no")
+
+
+def test_an_object_without_allow_denies_as_before() -> None:
+    assert _parse_decision(_opa_output({"reason": "x"}))[0] is False
