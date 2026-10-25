@@ -106,16 +106,23 @@ class SigstoreSigner:
     4. Submits the certificate + signature to Rekor v2 for an inclusion proof.
     5. Returns a self-contained Sigstore bundle v0.3.
 
-    Private Rekor instances are supported via the ``SIGSTORE_REKOR_URL``
-    environment variable (passthrough to the sigstore SDK).
+    Signing and verification always use the public Sigstore instance
+    (``ClientTrustConfig.production()``). A private Rekor/Fulcio deployment is
+    not supported: the SDK has no per-call override to pass, and the
+    ``rekor_url`` parameter this class once took was stored and never read, so
+    a private URL silently sent requests to the public instance (review
+    trust-evidence-18).
 
     Args:
-        rekor_url: Optional Rekor URL override.  When None, the SDK's default
-                   (``https://rekor.sigstore.dev``) is used.
+        rekor_url: Must be None. A custom Rekor URL raises ``ValueError``.
     """
 
     def __init__(self, rekor_url: str | None = None) -> None:
-        self._rekor_url = rekor_url
+        if rekor_url is not None:
+            raise ValueError(
+                "a custom Rekor URL is not supported: SigstoreSigner signs and verifies "
+                "against the public Sigstore instance only"
+            )
 
     # ------------------------------------------------------------------
     # Sign
