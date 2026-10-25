@@ -74,7 +74,8 @@ test.describe('live nova serve', () => {
     await open(page, 'compliance');
     await page.getByText(/^Privacy/).first().click();
     await page.getByPlaceholder('subject-001 or run_...').fill('live-e2e-unknown-subject');
-    await page.getByRole('button', { name: 'Queue erasure request' }).click();
+    await page.getByRole('button', { name: 'Erase now…' }).click();
+    await page.getByRole('button', { name: 'Erase now', exact: true }).click(); // confirm dialog
     await expect(page.getByText('FAILED')).toBeVisible();
     await expect(page.getByText(/subject_not_found/)).toBeVisible();
   });

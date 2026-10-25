@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { clsx } from 'clsx';
 import { api } from '../../../../lib/api';
 import { SuggestInput } from '../../../ui/SuggestInput';
+import ConfirmDialog from '../../../ui/ConfirmDialog';
 import { useLocalMru } from './useLocalMru';
 
 // ---------- DB-ERA-1: GDPR erasure panel (v0.18.0, cap-003) ----------
@@ -10,6 +11,9 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
   const [subjectId, setSubjectId] = useState('');
   const [reason, setReason] = useState('gdpr_art_17');
   const [submitting, setSubmitting] = useState(false);
+  // Erasure executes immediately and cannot be undone (ADR-0210), so it is never one keystroke:
+  // the subject is named in a confirmation first (review frontend-dashboard-13).
+  const [confirming, setConfirming] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<{ state: string; erased: boolean; cap003_enabled: boolean; note: string } | null>(null);
   const [erasureSuggestions, pushErasureSubject] = useLocalMru('nova-erasure-subjects');
@@ -26,9 +30,13 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
     finally { setStatusLoading(false); }
   }, [statusSubjectId]);
 
-  const submit = useCallback(async () => {
+  const requestErasure = useCallback(() => {
     const id = subjectId.trim();
-    if (!id) return;
+    if (id) setConfirming(id);
+  }, [subjectId]);
+
+  const submit = useCallback(async (id: string) => {
+    setConfirming(null);
     setSubmitting(true);
     setErr(null);
     try {
@@ -52,7 +60,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
     } finally {
       setSubmitting(false);
     }
-  }, [subjectId, reason, pushErasureSubject]);
+  }, [reason, pushErasureSubject]);
 
   const stateColor: Record<string, string> = {
     PENDING: 'text-[var(--color-status-pending)]',
@@ -86,7 +94,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
             value={subjectId}
             onChange={setSubjectId}
             suggestions={[...new Set([...runIds, ...erasureSuggestions])]}
-            onEnter={submit}
+            onEnter={requestErasure}
             placeholder="subject-001 or run_..."
             className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono w-full"
           />
@@ -106,7 +114,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
       </div>
 
       <button
-        onClick={submit}
+        onClick={requestErasure}
         disabled={submitting || !subjectId.trim()}
         className={clsx(
           'text-xs font-mono px-4 py-1.5 rounded border transition-colors',
@@ -115,8 +123,27 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
             : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
         )}
       >
-        {submitting ? 'submitting…' : 'Queue erasure request'}
+        {submitting ? 'erasing…' : 'Erase now…'}
       </button>
+
+      {confirming && (
+        <ConfirmDialog
+          title="Erase this data subject?"
+          tone="danger"
+          confirmLabel="Erase now"
+          body={
+            <>
+              <p>
+                This executes the erasure for <code className="font-mono">{confirming}</code> now
+                ({reason}). It cannot be undone.
+              </p>
+              <p>A request the retention rules defer, or refuse, is reported as such.</p>
+            </>
+          }
+          onConfirm={() => void submit(confirming)}
+          onCancel={() => setConfirming(null)}
+        />
+      )}
 
       {result && (
         <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-3 py-2 space-y-1.5">

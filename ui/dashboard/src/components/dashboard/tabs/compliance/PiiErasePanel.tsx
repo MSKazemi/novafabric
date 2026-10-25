@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../../../../lib/api';
 import { SuggestInput } from '../../../ui/SuggestInput';
 import CopyButton from '../../../ui/CopyButton';
+import ConfirmDialog from '../../../ui/ConfirmDialog';
 import { useLocalMru } from './useLocalMru';
 
 // ---------- PII DEK crypto-shredding panel (nova pii erase — ADR-0069) ----------
@@ -15,9 +16,16 @@ export default function PiiErasePanel({ runIds }: { runIds: string[] }) {
   const [result, setResult] = useState<Awaited<ReturnType<typeof api.piiErase>> | null>(null);
   const [mruSubjects, pushSubject] = useLocalMru('nova-pii-subjects');
 
-  function handleErase() {
+  // Destroying the DEK makes the ciphertext permanently unrecoverable: confirm first.
+  const [confirming, setConfirming] = useState<string | null>(null);
+
+  function requestErase() {
     const id = subjectId.trim();
-    if (!id) return;
+    if (id) setConfirming(id);
+  }
+
+  function handleErase(id: string) {
+    setConfirming(null);
     setLoading(true);
     setError(null);
     setNoDek(false);
@@ -76,13 +84,30 @@ export default function PiiErasePanel({ runIds }: { runIds: string[] }) {
         </div>
         <button
           type="button"
-          onClick={handleErase}
+          onClick={requestErase}
           disabled={loading || !subjectId.trim()}
           className="px-3 py-1.5 text-xs rounded border border-[var(--color-status-failure)] text-[var(--color-status-failure)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] hover:bg-[color-mix(in_oklab,var(--color-status-failure)_18%,transparent)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap self-end"
         >
-          {loading ? 'Erasing…' : 'Erase DEK'}
+          {loading ? 'Erasing…' : 'Erase DEK…'}
         </button>
       </div>
+
+      {confirming && (
+        <ConfirmDialog
+          title="Destroy this subject's encryption key?"
+          tone="danger"
+          confirmLabel="Erase DEK"
+          body={
+            <p>
+              The data encryption key for <code className="font-mono">{confirming}</code> is destroyed
+              and their ciphertext becomes permanently unrecoverable. A legal hold or the retention
+              window ({retentionMonths} months) can defer or refuse it.
+            </p>
+          }
+          onConfirm={() => handleErase(confirming)}
+          onCancel={() => setConfirming(null)}
+        />
+      )}
 
       {error && (
         <div className="text-xs text-[var(--color-status-failure)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] border border-[color-mix(in_oklab,var(--color-status-failure)_25%,transparent)] rounded px-3 py-2">

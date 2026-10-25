@@ -339,6 +339,23 @@ function emitAuthChange(): void {
   }
 }
 
+/**
+ * The message of a failed response's JSON body: `detail` (FastAPI), else `note` / `error`
+ * (routes that answer a refusal as `{ok:false, error, note}`, e.g. the PII erase legal-hold
+ * 409 — the user saw only "409 Conflict", review frontend-dashboard-13).
+ */
+function bodyMessage(body: unknown, fallback: string): string {
+  if (!body || typeof body !== 'object') return fallback;
+  const b = body as Record<string, unknown>;
+  for (const key of ['detail', 'note', 'error']) {
+    const v = b[key];
+    if (typeof v === 'string' && v.trim()) return v;
+    // FastAPI validation errors carry a structured `detail`; keep it legible, not "[object Object]".
+    if (key === 'detail' && v !== null && v !== undefined && typeof v === 'object') return JSON.stringify(v);
+  }
+  return fallback;
+}
+
 async function request<T>(path: string, query: Record<string, unknown> = {}): Promise<T> {
   const { token, base } = getCfg();
   if (!token) throw new ServeApiError(401, 'no token configured — connect first');
@@ -362,8 +379,7 @@ async function request<T>(path: string, query: Record<string, unknown> = {}): Pr
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
-      const body = await res.json();
-      if (body && typeof body === 'object' && 'detail' in body) message = String(body.detail);
+      message = bodyMessage(await res.json(), message);
     } catch {
       /* ignore */
     }
@@ -389,8 +405,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
-      const b = await res.json();
-      if (b && typeof b === 'object' && 'detail' in b) message = String(b.detail);
+      message = bodyMessage(await res.json(), message);
     } catch { /* ignore */ }
     throw new ServeApiError(res.status, message);
   }

@@ -4,6 +4,7 @@ import { api, type HoldRecord, type HoldRegistry } from '../../../lib/api';
 import { ErrorBox, Loading } from '../helpers';
 import { SuggestInput } from '../../ui/SuggestInput';
 import EmptyState from '../../ui/EmptyState';
+import ConfirmDialog from '../../ui/ConfirmDialog';
 
 function HoldRow({
   hold,
@@ -13,9 +14,11 @@ function HoldRow({
   onRelease: (hold_id: string) => void;
 }) {
   const [releasing, setReleasing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleRelease = async () => {
+    setConfirming(false);
     setReleasing(true);
     setError(null);
     try {
@@ -48,7 +51,7 @@ function HoldRow({
         )}
       </div>
       <button
-        onClick={handleRelease}
+        onClick={() => setConfirming(true)}
         disabled={releasing}
         className={clsx(
           'shrink-0 text-[10px] font-mono px-2 py-1 rounded border',
@@ -59,6 +62,21 @@ function HoldRow({
       >
         {releasing ? 'releasing…' : 'release'}
       </button>
+      {confirming && (
+        <ConfirmDialog
+          title="Release this legal hold?"
+          tone="danger"
+          confirmLabel="Release hold"
+          body={
+            <p>
+              Releasing <code className="font-mono">{hold.hold_id}</code> ({hold.reason}) lets retention and
+              erasure act on the evidence it protects again.
+            </p>
+          }
+          onConfirm={() => void handleRelease()}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
     </li>
   );
 }

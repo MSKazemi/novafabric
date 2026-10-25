@@ -54,3 +54,25 @@ describe('request() URL construction', () => {
     expect(url.pathname).toBe('/api/runs/run-1/file/sub%20dir/a%23b%3Fc.json');
   });
 });
+
+describe('failed-response messages (review frontend-dashboard-13)', () => {
+  const reply = (status: number, body: unknown) =>
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })));
+
+  it('shows the note of a legal-hold refusal instead of "409 Conflict"', async () => {
+    reply(409, { ok: false, error: 'legal_hold_active', note: 'hold-77 protects this subject' });
+    await expect(api.piiErase('subj', [], 6)).rejects.toThrow('hold-77 protects this subject');
+  });
+
+  it('falls back to the error code, and keeps FastAPI detail first', async () => {
+    reply(409, { ok: false, error: 'legal_hold_active' });
+    await expect(api.piiErase('subj', [], 6)).rejects.toThrow('legal_hold_active');
+    reply(409, { detail: 'a detail', note: 'ignored' });
+    await expect(api.piiErase('subj', [], 6)).rejects.toThrow('a detail');
+  });
+
+  it('keeps a structured validation detail legible', async () => {
+    reply(422, { detail: [{ loc: ['body', 'subject_id'], msg: 'field required' }] });
+    await expect(api.piiErase('subj', [], 6)).rejects.toThrow(/field required/);
+  });
+});
