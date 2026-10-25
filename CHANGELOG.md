@@ -13,6 +13,12 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **A malformed `.seal/manifest.dsse` is a failed verification, not a crash, and the trust radar shows it `critical`.**
+  A list, a non-string payload or non-base64 text raised from every verifier (`nova verify` printed a traceback) and the
+  radar, swallowing it, showed a tampered sealed capsule as `unsealed`.
+- **Criterion bindings hash only regular files inside the capsule.** `nova evidence bind` and `POST
+  /api/evidence/{run_id}/bind` followed a link to any file and signed its digest, blocked forever on a FIFO (in `nova
+  serve`, the event loop), and `verify_binding` accepted an absolute or `..` path.
 - **`nova server` rate limiting can no longer be bypassed with a fresh invalid token per request.** The bucket key
   was the digest of whatever bearer token was sent, before authentication, so every garbage token got a full bucket and
   10,000 of them evicted every real principal's bucket. A token now has its own bucket only after a request carrying
@@ -236,6 +242,19 @@ longer forwards the submitting shell's environment (ADR-0270).
   `nova promote keygen --identity NAME`.
 - `nova validate --fail-on-schema-violation` / `--write` without `--schemas` exit `2` (they were ignored);
   `server issue-token` / `api-key create --expires-in` accept only a positive number of days (exit `2`).
+- The trust radar's log-integrity axis warns (verdict `partial`) for a log entry that could not be checked
+  (`log_inclusion: not-checked`, which `nova verify` accepts); it showed `critical`, the verdict of a forged entry.
+- `nova toolschema impact` exits `2` for a new schema that does not load, and lists the runs it could not check
+  (`unresolved_run_ids`, not counted in `checked`) instead of reporting `0 broken`.
+- `nova seal init` quotes every path it writes into `novaseal.yaml`; a home path containing ` #` or `: ` produced a
+  config that did not load, so capture sealed nothing.
+- A `merkle_db` that is a libpq keyword string (`host=… password=…`) is refused (it was opened as a SQLite file named
+  after the password), and a password containing `@` is redacted whole.
+- `SigstoreSigner(rekor_url=...)` raises `ValueError`: the parameter was ignored and signing used the public instance.
+- `nova verify <bundle.zip> --public-key` exits `1` with `cannot use --public-key` for a file that is not an Ed25519
+  PEM, and refuses an archive above 1 GiB uncompressed or 100,000 members, as `nova serve` does.
+- The evidence-cart manifest marks an item whose legal-hold lookup failed `legal_hold_status: unknown` and counts them
+  in `legal_hold_status_unknown_count`; `legal_holds_present: []` no longer means "unknown".
 - With `saml.experimental_acs_enabled`, a verified SAML assertion is answered `501 saml_session_unavailable`
   (`details.assertion_verified: true`); it returned `200` with an HS256 token that no auth path accepts.
 - `NOVAFABRIC_SERVER_*` overrides are held to the bounds of the matching `server.yaml` keys: an out-of-range value
@@ -477,6 +496,10 @@ longer forwards the submitting shell's environment (ADR-0270).
   reads verified.
 - `GET /api/runs/stream` (SSE) accepts tokens issued by `nova server issue-token`, as every other route does; it
   accepted only the startup token.
+- The evidence-fabric NATS consumer acks a message only after it was ingested and nacks it for redelivery when the
+  ingest failed (it acked first, so a ClickHouse/DuckDB outage lost every event); undecodable messages are still acked
+  and dead-lettered, and dead-letter records that did not fit are counted in `stats["dead_letter_dropped"]`.
+- The evidence-cart legal-hold lookup finds the holds of a run directory that carries `capsule.json`.
 - Offline and service-account tokens authenticate when OIDC is enabled; `POST /v0/service-accounts` answered `201`
   with a token that was always `401`.
 - A capsule uploaded again after a delete is metered again; it was stored off the books.
