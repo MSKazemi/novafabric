@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from enum import Enum
@@ -253,6 +254,18 @@ class EnergyReceipt(_Model):
             errors.append(f"confidence='{conf.value}' must have a measured_joules value")
         if self.carbon_g_co2e is not None and self.measured_joules is None:
             errors.append("carbon_g_co2e requires a non-null measured_joules")
+        # json.loads accepts NaN and Infinity, and a negative energy is not a
+        # measurement; both then break the per-agent split (review misc-3-05).
+        for name, value in (
+            ("measured_joules", self.measured_joules),
+            ("carbon_g_co2e", self.carbon_g_co2e),
+        ):
+            if value is None:
+                continue
+            if not math.isfinite(value):
+                errors.append(f"{name} must be finite, got {value!r}")
+            elif value < 0:
+                errors.append(f"{name} must not be negative, got {value!r}")
         return errors
 
 

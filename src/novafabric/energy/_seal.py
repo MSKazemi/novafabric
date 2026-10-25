@@ -41,7 +41,11 @@ def receipt_integrity_errors(receipt: EnergyReceipt) -> list[str]:
     """
     errors: list[str] = []
     expected = receipt.compute_payload_hash()
-    if receipt.payload_hash and receipt.payload_hash != expected:
+    if not receipt.payload_hash:
+        # An absent hash skipped the comparison, so deleting the field from a
+        # tampered receipt read as "verified" (review misc-3-05).
+        errors.append("payload_hash missing: the receipt carries no integrity hash to check")
+    elif receipt.payload_hash != expected:
         errors.append(
             f"payload_hash mismatch: recorded {receipt.payload_hash}, "
             f"recomputed {expected}"

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import math
+
+import pytest
+
 from novafabric.capsule.ulid_util import new_ulid
-from novafabric.energy import ActionRef, unavailable_receipt
+from novafabric.energy import ActionRef, Confidence, MeasurementSource, unavailable_receipt
 from novafabric.energy._seal import (
     ENERGY_PREDICATE_TYPE,
     attest_energy,
@@ -55,3 +59,34 @@ def test_receipt_integrity_errors_include_consistency_violations():
     errors = receipt_integrity_errors(forged)
     # source=unavailable with a joule value is an honesty violation
     assert any("unavailable" in e.lower() for e in errors)
+
+
+# review misc-3-05: an absent payload_hash skipped the integrity comparison, and
+# negative or non-finite joules passed the consistency guard.
+
+def test_a_receipt_without_a_payload_hash_is_an_integrity_error():
+    stripped = _receipt().model_copy(update={"payload_hash": ""})
+    errors = receipt_integrity_errors(stripped)
+    assert any("payload_hash" in e and "missing" in e for e in errors)
+
+
+def _measured(joules: float):
+    base = _receipt()
+    hw = base.hardware.model_copy(update={"counters_available": ("rapl_pkg",)})
+    return base.model_copy(update={
+        "measurement_source": MeasurementSource.RAPL_PKG,
+        "confidence": Confidence.MEASURED,
+        "measured_joules": joules,
+        "hardware": hw,
+    }).with_payload_hash()
+
+
+@pytest.mark.parametrize("joules", [-5e9, -0.001, math.nan, math.inf, -math.inf])
+def test_negative_or_non_finite_joules_are_inconsistent(joules):
+    errors = receipt_integrity_errors(_measured(joules))
+    assert any("measured_joules" in e and ("finite" in e or "negative" in e) for e in errors)
+
+
+def test_zero_and_positive_finite_joules_are_consistent():
+    assert receipt_integrity_errors(_measured(0.0)) == []
+    assert receipt_integrity_errors(_measured(123.5)) == []
