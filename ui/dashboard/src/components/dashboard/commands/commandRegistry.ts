@@ -24,6 +24,11 @@ export interface CommandDef {
   generated?: boolean;
 }
 
+/** POSIX-shell quoting: bare when safe, else `'…'` with embedded `'` as `'\\''`. */
+export function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 export function buildCommandString(
   cmd: CommandDef,
   values: Record<string, string>,
@@ -43,11 +48,11 @@ export function buildCommandString(
     if (field.type === 'toggle') {
       if (val === 'true') parts.push(flag);
     } else if (field.positional) {
-      parts.push(val);
+      parts.push(shellQuote(val));
     } else if (field.runnerOption) {
-      parts.push('--runner-option', `${field.key}=${val}`);
+      parts.push('--runner-option', shellQuote(`${field.key}=${val}`));
     } else {
-      parts.push(flag, val);
+      parts.push(flag, shellQuote(val));
     }
   }
 
@@ -976,14 +981,50 @@ export const JOURNEY_LABELS: Record<Journey, string> = {
 // A pytest guard (tests/dashboard/test_command_registry_coverage.py) fails CI if
 // any CLI command is missing from this registry.
 
+const _generatedByName = new Map(GENERATED_COMMANDS.map((c) => [c.name, c]));
 const _curatedNames = new Set(CURATED_COMMANDS.map((c) => c.name));
+
+const _flagOf = (f: CommandField): string => f.flag ?? `--${f.key}`;
+
+/**
+ * A curated def's copy (labels, hints, options, sections) on the real CLI's flags.
+ *
+ * The generated def is derived from the Typer app, so it is the authority on which
+ * options exist; a curated flag the CLI lacks (`nova capture --scenario`, `nova verify
+ * --verbose`, …) is dropped, and a real flag the curated list forgot is appended. Review
+ * frontend-dashboard-09: curated defs used to replace the generated ones outright, so a
+ * copied command failed with "No such option".
+ */
+export function reconcileWithGenerated(curated: CommandDef, generated: CommandDef | undefined): CommandDef {
+  if (!generated) return curated;
+  const real = new Map(generated.fields.filter((f) => !f.positional).map((f) => [_flagOf(f), f]));
+  const hasRunnerOption = real.has('--runner-option');
+  const used = new Set<string>();
+  const fields: CommandField[] = [];
+  for (const cf of curated.fields) {
+    if (cf.positional) {
+      fields.push(cf);
+    } else if (cf.runnerOption) {
+      if (hasRunnerOption) fields.push(cf);
+    } else if (real.has(_flagOf(cf))) {
+      used.add(_flagOf(cf));
+      fields.push({ ...real.get(_flagOf(cf))!, ...cf, flag: _flagOf(cf) } as CommandField);
+    }
+  }
+  const curatedPositional = curated.fields.some((f) => f.positional);
+  for (const gf of generated.fields) {
+    if (gf.positional ? curatedPositional : used.has(_flagOf(gf)) || (hasRunnerOption && _flagOf(gf) === '--runner-option')) continue;
+    fields.push(gf);
+  }
+  return { ...curated, fields };
+}
 
 /**
  * The complete command set shown in the dashboard: every hand-curated def, plus
  * a generated def for each remaining `nova` command not covered by a curated one.
  */
 export const COMMANDS: readonly CommandDef[] = [
-  ...CURATED_COMMANDS,
+  ...CURATED_COMMANDS.map((c) => reconcileWithGenerated(c, _generatedByName.get(c.name))),
   ...GENERATED_COMMANDS.filter((c) => !_curatedNames.has(c.name)),
 ];
 
