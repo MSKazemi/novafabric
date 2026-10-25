@@ -20,23 +20,12 @@ targets the incident-reporting framework, this targets the citizen/press audienc
 """
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel
 
 from ..provenance import EvidenceSource
-
-#: Compound tokens marking per-subject raw identifiers (lowercased match); aggregate text never has
-#: these. Curated to avoid false positives on plain-language aggregate summaries.
-_PER_SUBJECT_IDENTIFIER_PATTERNS: tuple[str, ...] = (
-    "ssn",
-    "social_security",
-    "social security",
-    "passport_number",
-    "passport number",
-    "credit_card",
-    "credit card",
-    "national_id",
-    "@",  # an email address in a public summary is a per-subject leak
-)
+from ._sensitive import mentions_raw_identifier
 
 
 class PublicIncidentDisclosure(BaseModel):
@@ -49,9 +38,17 @@ class PublicIncidentDisclosure(BaseModel):
     # Intentionally NO compliance_guaranteed / verdict / published field — adjudicates nothing.
 
 
+_EMAIL = re.compile(r"[^\s@]+@[^\s@]+")
+
+
 def _per_subject_identifiers(text: str) -> list[str]:
-    lowered = text.lower()
-    return [pat for pat in _PER_SUBJECT_IDENTIFIER_PATTERNS if pat in lowered]
+    """What marks ``text`` as per-subject: an identifier name or value, or an email address."""
+    found: list[str] = []
+    if mentions_raw_identifier(text):
+        found.append("raw identifier")
+    if _EMAIL.search(text):
+        found.append("email address")
+    return found
 
 
 def build_public_incident_disclosure(

@@ -27,37 +27,13 @@ from enum import Enum
 from pydantic import BaseModel
 
 from ..provenance import EvidenceSource
+from ._sensitive import mentions_model_internals, mentions_raw_identifier
 
 
 class HumanInvolvement(str, Enum):
     solely_automated = "solely_automated"
     human_in_the_loop = "human_in_the_loop"
     human_reviewed = "human_reviewed"
-
-
-#: Substrings marking a factor as model internals or a raw sensitive identifier (lowercased match).
-#: Curated so legitimate plain-language factors do not match; anything matching here is rejected.
-DISALLOWED_FACTOR_PATTERNS: tuple[str, ...] = (
-    # model internals
-    "weight",
-    "gradient",
-    "logit",
-    "activation",
-    "embedding",
-    "hyperparameter",
-    "neuron",
-    "softmax",
-    "hidden_state",
-    "attention_head",
-    "layer_",
-    "checkpoint_step",
-    # raw sensitive identifiers (compound tokens that never belong in a plain-language factor)
-    "ssn",
-    "social_security",
-    "passport_number",
-    "credit_card",
-    "national_id",
-)
 
 
 class CitizenExplanation(BaseModel):
@@ -72,11 +48,7 @@ class CitizenExplanation(BaseModel):
 
 def disallowed_factor_content(factors: Sequence[str]) -> list[str]:
     """Return the factors whose text matches a model-internals / raw-identifier shape."""
-    return [
-        f
-        for f in factors
-        if any(pat in f.lower() for pat in DISALLOWED_FACTOR_PATTERNS)
-    ]
+    return [f for f in factors if mentions_model_internals(f) or mentions_raw_identifier(f)]
 
 
 def build_citizen_explanation(

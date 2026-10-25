@@ -65,3 +65,13 @@ def test_no_compliance_guarantee_or_publish_field():
         "compliance_guaranteed", "verdict", "published", "notified", "transmitted", "compliant",
     ):
         assert forbidden not in PublicIncidentDisclosure.model_fields
+
+
+def test_an_ssn_value_is_rejected_and_a_word_containing_ssn_is_not():
+    # review compliance-privacy-23
+    with pytest.raises(ValueError):
+        build_public_incident_disclosure(incident_ref="i", affected_scope="record 123-45-6789 affected")
+    rec = build_public_incident_disclosure(
+        incident_ref="i", public_summary="support for homelessness services was affected"
+    )
+    assert rec.public_summary

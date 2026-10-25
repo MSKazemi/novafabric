@@ -82,3 +82,46 @@ def test_missing_required_raises():
 def test_no_legal_sufficiency_or_model_internals_field():
     for forbidden in ("legally_sufficient", "legal_sufficiency", "verdict", "compliant", "weights"):
         assert forbidden not in CitizenExplanation.model_fields
+
+
+# ── review compliance-privacy-23: whole-word matching and identifier values ──────────
+
+
+@pytest.mark.parametrize(
+    "ok_factor",
+    [
+        "applicant body weight above 120 kg",
+        "history of homelessness",
+        "weight of evidence supported the decision",
+        "reference 4111 is a valid case number",  # a short digit run is not a card
+    ],
+)
+def test_legitimate_plain_language_factors_are_accepted(ok_factor):
+    rec = build_citizen_explanation(
+        decision_ref="d", factors=[ok_factor], human_involvement="human_reviewed"
+    )
+    assert rec.factors == [ok_factor]
+
+
+@pytest.mark.parametrize(
+    "bad_factor",
+    [
+        "applicant 123-45-6789 on file",
+        "card 4111 1111 1111 1111 declined",
+        "card 4111-1111-1111-1111 declined",
+        "the model weights were updated",
+        "network weight matrix norm",
+    ],
+)
+def test_identifier_values_and_model_weights_are_still_rejected(bad_factor):
+    with pytest.raises(ValueError):
+        build_citizen_explanation(
+            decision_ref="d", factors=[bad_factor], human_involvement="human_reviewed"
+        )
+
+
+def test_a_digit_run_that_fails_the_luhn_check_is_not_a_card():
+    rec = build_citizen_explanation(
+        decision_ref="d", factors=["tracking id 1234 5678 9012 3456"], human_involvement="human_reviewed"
+    )
+    assert rec.factors
