@@ -907,7 +907,7 @@ class TestLineageProfile:
         assert result.exit_code == 0, result.output
         assert "janusgraph/janusgraph:2.2.2" in result.output
         assert "cassandra:2.2.2" in result.output
-        assert "novafabric/novafabric:2.2.2" in result.output
+        assert "ghcr.io/mskazemi/novafabric:2.2.2" in result.output
 
     def test_profile_kuzudb_vertical_image_tag_alias_still_works(self):
         """--image-tag must still work for kuzudb-vertical (single image)."""
@@ -923,7 +923,7 @@ class TestLineageProfile:
             ],
         )
         assert result.exit_code == 0, result.output
-        assert "novafabric/novafabric:v0.9.0" in result.output
+        assert "ghcr.io/mskazemi/novafabric:v0.9.0" in result.output
 
 
 # Sanity: app import + a no-op assertion to keep the import path warm.

@@ -190,6 +190,9 @@ def _truncated_index() -> HotLineageIndex:
     index.add_edge("B", "A", "consumed")
     assert {r["node_id"] for r in index.query_blast_radius_by_node_id("T")} == {"A", "B"}
     assert index.is_complete_for("T")
+    # Make A the least recently used node, whatever the queries above touched.
+    index._touch("T")
+    index._touch("B")
     index.add_edge("T", "X", "consumed")
     return index
 

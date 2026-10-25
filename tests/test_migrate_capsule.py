@@ -100,7 +100,7 @@ def test_migrated_capsule_lineage_validates_against_the_in_force_schema(
     """
     import jsonschema  # type: ignore[import-untyped]  # noqa: PLC0415
 
-    from novafabric.lineage._importer import _SCHEMA, _validate_edge_record  # noqa: PLC0415
+    from novafabric.lineage._importer import _edge_schema, _validate_edge_record  # noqa: PLC0415
 
     out = tmp_path / "out"
     CapsuleMigrator().migrate(source=src, output=out)
@@ -111,7 +111,7 @@ def test_migrated_capsule_lineage_validates_against_the_in_force_schema(
         if line.strip()
     ]
     assert any(r["edge_type"] == "migration_source" for r in records)
-    validator = jsonschema.Draft202012Validator(_SCHEMA)
+    validator = jsonschema.Draft202012Validator(_edge_schema())
     problems = [
         f"line {i}: {'/'.join(map(str, e.absolute_path))}: {e.message}"
         for i, record in enumerate(records, 1)

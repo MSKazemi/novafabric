@@ -273,7 +273,9 @@ class HotLineageIndex:
             return []
 
         rows: list[dict[str, Any]] = []
-        for node_id in reached:
+        # Sorted: a set's iteration order varies with the hash seed, and the touch order
+        # decides which node the next eviction takes, so the cache must not depend on it.
+        for node_id in sorted(reached):
             rec = self._nodes.get(node_id)
             if rec is None:
                 continue
