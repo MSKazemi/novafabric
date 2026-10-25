@@ -16,6 +16,7 @@ import {
   propagateAgents,
   buildAgentColors,
   agentInitial,
+  minOf,
   type NormalizedModelCall,
   type NormalizedToolCall,
 } from '../../lib/traceUtils';
@@ -88,7 +89,7 @@ function buildLanes(
     return { lanes: [], totalMs: 0, t0: 0 };
   }
 
-  const t0 = Math.min(...allTs);
+  const t0 = minOf(allTs);
   let maxEnd = 0;
 
   // Assign bars to lanes

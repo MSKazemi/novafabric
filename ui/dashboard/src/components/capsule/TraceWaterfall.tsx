@@ -10,6 +10,7 @@ import {
   normalizeModelCall,
   normalizeToolCall,
   propagateAgents,
+  minOf,
 } from '../../lib/traceUtils';
 
 interface SpanNode {
@@ -52,7 +53,7 @@ function buildTree(
     ...normModels.map(m => m.startedMs),
     ...normTools.map(t => t.startedMs),
   ].filter(t => t > 0);
-  const t0 = allTs.length > 0 ? Math.min(...allTs) : 0;
+  const t0 = minOf(allTs);
 
   // Map from span_id to ms offset, using parent_span_id from calls
   const tsMap = new Map<string, number>();

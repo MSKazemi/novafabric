@@ -270,22 +270,29 @@ export function buildSpanAgentMap(spans: RawSpan[]): Map<string, string> {
 
   const agentOf = new Map<string, string>();
 
-  function findAgent(id: string): string {
-    if (agentOf.has(id)) return agentOf.get(id)!;
-    if (agentAttr.has(id)) {
-      const a = agentAttr.get(id)!;
-      agentOf.set(id, a);
-      return a;
+  // Iterative with a visited set (review frontend-dashboard-17): a parent cycle or a
+  // very deep chain recursed until the stack overflowed and blanked the inspector.
+  function findAgent(start: string): string {
+    const chain: string[] = [];
+    const visited = new Set<string>();
+    let id = start;
+    let agent: string;
+    for (;;) {
+      const known = agentOf.get(id);
+      if (known !== undefined) { agent = known; break; }
+      const attr = agentAttr.get(id);
+      if (attr !== undefined) { agent = attr; chain.push(id); break; }
+      const parent = parentOf.get(id);
+      chain.push(id);
+      if (!parent || parent === rootId || visited.has(parent)) {
+        agent = nameOf.get(id) ?? id.slice(0, 8);
+        break;
+      }
+      visited.add(id);
+      id = parent;
     }
-    const parent = parentOf.get(id);
-    if (!parent || parent === rootId) {
-      const name = nameOf.get(id) ?? id.slice(0, 8);
-      agentOf.set(id, name);
-      return name;
-    }
-    const a = findAgent(parent);
-    agentOf.set(id, a);
-    return a;
+    for (const member of chain) agentOf.set(member, agent);
+    return agent;
   }
 
   for (const s of spans) {
@@ -293,6 +300,13 @@ export function buildSpanAgentMap(spans: RawSpan[]): Map<string, string> {
   }
 
   return agentOf;
+}
+
+/** Smallest of `values` (0 when empty) — `Math.min(...values)` throws RangeError on a huge array. */
+export function minOf(values: readonly number[]): number {
+  let lo = Infinity;
+  for (const v of values) if (v < lo) lo = v;
+  return lo === Infinity ? 0 : lo;
 }
 
 export function spanStatusOk(status: RawSpan['status']): boolean {
