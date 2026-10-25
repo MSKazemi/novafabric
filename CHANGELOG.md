@@ -598,6 +598,26 @@ longer forwards the submitting shell's environment (ADR-0270).
   is promoted instead of deleted at recovery, and the local dev key is written atomically (a crash left an empty
   `.pem` that failed every start). **`novafabric-hpc-hub` exits `1` as not implemented** (it waited for a signal while
   processing nothing); docs label it planned.
+- **Compliance exports.** The system card names the models the run called (read from `model-calls.jsonl`; capture never
+  wrote `model`) and refuses a capsule with no `capsule.yaml` instead of signing a card for "run unknown". The citizen
+  explanation and incident disclosure guards match whole words and identifier values: "body weight" and "homelessness"
+  are accepted, a dashed SSN and a Luhn-valid card number are refused. The syslog sink truncates on a character
+  boundary and rejects a `max_datagram_bytes` that would cut the header.
+- **Proxies.** `nova api-proxy` relays the upstream response headers (`retry-after`, `x-should-retry`, `x-ratelimit-*`,
+  `request-id`); the HTTP MCP proxy forwards `Mcp-Session-Id`, `Authorization` and `MCP-Protocol-Version` upstream and
+  `Mcp-Session-Id` / `WWW-Authenticate` back (a session-requiring server answered 400 after `initialize`). Both still
+  **buffer** each response whole; the docs said otherwise and now say so (chunk relay is **planned**), and
+  `--upstream-timeout` is documented as per read, not wall clock.
+- **Object store.** A forged `.checkpoint.ndjson` is reported as an integrity warning by `rebuild-metadata-db` and never
+  used (it is not WORM-locked); a put no longer re-reads the whole run chain (O(n²) per run).
+- **NovaSeal Postgres Merkle log.** Appends are serialised by an advisory lock and numbered from the stored rows (a
+  rolled-back insert or two concurrent seals made genuine capsules fail verification forever); a connecting sealer no
+  longer deadlocks with an appending one (the schema script took exclusive locks on every connect and now runs only when
+  the schema is incomplete); `verify_consistency` samples the leaf indices that exist, so an edited entry beyond a gap is
+  detected.
+- **Restore.** The RLS proof requires row security to be **enabled** (FORCE alone enforces nothing) and `WITH CHECK` to
+  match the canonical policy, and reads the posture before re-applying it, so drift in the restored database is reported
+  in the step detail.
 
 ## [0.107.0] - 2026-10-23
 
