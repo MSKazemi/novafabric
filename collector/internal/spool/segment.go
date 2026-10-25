@@ -6,6 +6,7 @@ package spool
 import (
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -138,6 +139,12 @@ func (sw *segmentWriter) commit() error {
 	// Atomic rename: the ONLY commit primitive in the spool.
 	if err := os.Rename(sw.tmpPath, sw.dstPath); err != nil {
 		return fmt.Errorf("spool: rename segment %d to committed: %w", sw.seq, err)
+	}
+	// The segment is visible now; make the new directory entry durable. A failure leaves the
+	// event committed (a retry would duplicate it), so it is logged, not returned.
+	if err := syncDirFn(sw.dir); err != nil {
+		slog.Warn("spool: segment committed but directory fsync failed; it may not survive power loss",
+			"seq", sw.seq, "error", err)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package spool
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -111,6 +112,11 @@ func (cp *Checkpoint) Advance(seq uint64, offset int64) error {
 	if err := os.Rename(tmpPath, dstPath); err != nil {
 		return fmt.Errorf("spool: rename checkpoint: %w", err)
 	}
+	// The data was fdatasynced before the rename; fsync the directory so the rename itself
+	// survives power loss. Reclaiming acknowledged segments depends on this being durable.
+	if err := syncDirFn(cp.dir); err != nil {
+		return fmt.Errorf("spool: checkpoint: %w", err)
+	}
 	return nil
 }
 
@@ -147,6 +153,13 @@ func recoverSegments(dir string) ([]string, error) {
 			if info, statErr := e.Info(); statErr == nil && time.Since(info.ModTime()) < tmpGrace {
 				continue
 			}
+			// A temp that finished writing (header WriteComplete=1, fsynced) whose rename a
+			// power loss did not persist holds an acknowledged-to-the-writer event: promote it
+			// (review go-collector-ts-packages-16). Never over an existing segment.
+			if promoted, ok := promoteCompleteTmp(dir, fullPath); ok {
+				segments = append(segments, promoted)
+				continue
+			}
 			// Incomplete segment from a crashed writer — discard it.
 			slog.Warn("spool: discarding incomplete segment from crashed writer",
 				"path", fullPath)
@@ -164,4 +177,41 @@ func recoverSegments(dir string) ([]string, error) {
 	// Sort by filename, which sorts by sequence number (zero-padded 20-digit format).
 	sort.Strings(segments)
 	return segments, nil
+}
+
+// promoteCompleteTmp renames a completed <seq>[.pid].jsonl.tmp to <seq>.jsonl and returns the
+// new path. It reports false (leaving the file for the caller to discard) when the header is
+// unreadable, the writer had not finished, the sequence in the header disagrees with the
+// name, or a committed segment with that sequence already exists.
+func promoteCompleteTmp(dir, tmpPath string) (string, bool) {
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		return "", false
+	}
+	var buf [headerSize]byte
+	_, readErr := io.ReadFull(f, buf[:])
+	_ = f.Close()
+	if readErr != nil {
+		return "", false
+	}
+	hdr, err := decodeHeader(buf)
+	if err != nil || hdr.WriteComplete != 1 {
+		return "", false
+	}
+	base := filepath.Base(tmpPath)
+	if seqFromPath(strings.SplitN(base, ".", 2)[0]) != hdr.Seq {
+		return "", false
+	}
+	dst := filepath.Join(dir, fmt.Sprintf("%020d.jsonl", hdr.Seq))
+	// link(2) fails if dst exists, where rename(2) would replace a committed segment.
+	if err := os.Link(tmpPath, dst); err != nil {
+		return "", false
+	}
+	_ = os.Remove(tmpPath)
+	if err := syncDirFn(dir); err != nil {
+		slog.Warn("spool: promoted a completed temp segment but the directory fsync failed",
+			"path", dst, "error", err)
+	}
+	slog.Warn("spool: promoted a completed temp segment whose rename was not persisted", "path", dst)
+	return dst, true
 }

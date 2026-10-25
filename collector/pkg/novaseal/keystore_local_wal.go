@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 
 	"github.com/google/uuid"
 )
@@ -128,7 +129,17 @@ func (lw *LocalWALKeystore) loadExisting(dir string) (*Ed25519Signer, string, er
 	var pemFiles []string
 	for _, e := range entries {
 		if !e.IsDir() && filepath.Ext(e.Name()) == ".pem" {
-			pemFiles = append(pemFiles, filepath.Join(dir, e.Name()))
+			path := filepath.Join(dir, e.Name())
+			// A zero-length key file holds no key: an earlier version created it with O_EXCL
+			// and crashed before writing. Remove it so a new key can be generated.
+			if info, statErr := e.Info(); statErr == nil && info.Size() == 0 {
+				slog.Warn("novaseal: removing an empty dev key file left by a crash", "path", path)
+				if rmErr := os.Remove(path); rmErr != nil {
+					return nil, "", fmt.Errorf("novaseal: remove empty dev key %q: %w", path, rmErr)
+				}
+				continue
+			}
+			pemFiles = append(pemFiles, path)
 		}
 	}
 
@@ -187,14 +198,47 @@ func writePEM(path, keyID string, priv ed25519.PrivateKey) error {
 		Bytes: pkcs8,
 	}
 
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0400)
+	// Write to a temp file, fsync it, link it into place (link fails if the name exists, like
+	// O_EXCL did) and fsync the directory. A crash used to leave an empty .pem that wedged
+	// every later start (review go-collector-ts-packages-16); now the name only ever appears
+	// with its full content.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".dev-key-*.tmp")
 	if err != nil {
+		return fmt.Errorf("novaseal: create PEM temp file in %q: %w", filepath.Dir(path), err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(0400); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("novaseal: chmod PEM temp file: %w", err)
+	}
+	if err := pem.Encode(tmp, block); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("novaseal: write PEM: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("novaseal: fsync PEM: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("novaseal: close PEM: %w", err)
+	}
+	if err := os.Link(tmpPath, path); err != nil {
 		return fmt.Errorf("novaseal: create PEM file %q: %w", path, err)
 	}
-	defer f.Close()
+	return syncDir(filepath.Dir(path))
+}
 
-	if err := pem.Encode(f, block); err != nil {
-		return fmt.Errorf("novaseal: write PEM: %w", err)
+// syncDir fsyncs a directory so the new key file's entry survives power loss. A filesystem
+// without directory fsync is not an error.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("novaseal: open dir %q for fsync: %w", dir, err)
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.ENOTSUP) {
+		return fmt.Errorf("novaseal: fsync dir %q: %w", dir, err)
 	}
 	return nil
 }
