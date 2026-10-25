@@ -169,18 +169,34 @@ class TestCostStoreIngestCapsule:
         assert n == 0
         client.insert.assert_not_called()
 
-    def test_existing_query_error_is_tolerated(self, tmp_path: Any) -> None:
+    def test_a_failed_dedup_query_inserts_nothing(self, tmp_path: Any) -> None:
+        # review misc-2-09: the DDL has just run, so "the table might not exist" cannot be
+        # why the dedup SELECT failed; swallowing it inserted every model call of the run
+        # again (the table is a plain MergeTree), doubling sum(cost_usd) with no log line.
         mcalls = tmp_path / "model-calls.jsonl"
         with mcalls.open("w") as fh:
             fh.write(json.dumps({"model_call_id": "c1", "gen_ai.request.model": "m"}) + "\n")
 
         client = _mock_ch_client(query_rows=[])
-        client.query.side_effect = RuntimeError("no table yet")
+        client.query.side_effect = RuntimeError("timeout")
         with patch.object(clickhouse_store, "_get_client", return_value=client):
-            n = clickhouse_store.ingest_capsule("run1", tmp_path)
+            with pytest.raises(RuntimeError, match="timeout"):
+                clickhouse_store.ingest_capsule("run1", tmp_path)
 
-        assert n == 1
-        client.insert.assert_called_once()
+        client.insert.assert_not_called()
+
+    def test_ingest_all_records_a_failed_dedup_as_a_failed_run(self, tmp_path: Any) -> None:
+        capsules = tmp_path / "capsules"
+        (capsules / "runA").mkdir(parents=True)
+        (capsules / "runA" / "model-calls.jsonl").write_text(
+            json.dumps({"model_call_id": "c1", "gen_ai.request.model": "m"}) + "\n"
+        )
+        client = _mock_ch_client(query_rows=[])
+        client.query.side_effect = RuntimeError("network blip")
+        with patch.object(clickhouse_store, "_get_client", return_value=client):
+            results = clickhouse_store.ingest_all_capsules(capsules)
+        assert results == {"runA": -1}
+        client.insert.assert_not_called()
 
 
 class TestCostStoreIngestAll:

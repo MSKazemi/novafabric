@@ -171,15 +171,16 @@ def ingest_capsule(run_id: str, capsule_dir: Path, tenant_id: str = "default") -
     client = _get_client()
 
     # Check which model_call_ids are already in ClickHouse for this run
-    existing: set[str] = set()
-    try:
-        result = client.query(
-            "SELECT model_call_id FROM nova.cost_events WHERE run_id = {run_id:String}",
-            parameters={"run_id": run_id},
-        )
-        existing = {row[0] for row in result.result_rows}
-    except Exception:
-        pass  # table might not exist yet; insertions will create it
+    # _get_client() has just run the CREATE ... IF NOT EXISTS DDL, so the table exists. A
+    # failure here (timeout, network blip) is therefore NOT "no rows yet": swallowing it
+    # inserted every model call of the run again into a plain MergeTree and doubled
+    # sum(cost_usd), silently, on every 120 s auto-ingest tick (review misc-2-09). Let it
+    # raise; ingest_all_capsules records the run as failed (-1) and retries next tick.
+    result = client.query(
+        "SELECT model_call_id FROM nova.cost_events WHERE run_id = {run_id:String}",
+        parameters={"run_id": run_id},
+    )
+    existing = {row[0] for row in result.result_rows}
 
     rows: list[tuple[Any, ...]] = []
     from novafabric.capture.record_roles import read_logical_model_calls
