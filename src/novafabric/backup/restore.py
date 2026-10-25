@@ -961,11 +961,12 @@ def _verify_pg_counts(dsn: str, manifest: BackupManifest) -> RestoreStepResult:
 
 
 def _verify_pg_rls(dsn: str) -> RestoreStepResult:
-    """Re-apply and verify RLS posture (ADR-0217 D5.3).
+    """Verify, re-apply and re-verify the RLS posture (ADR-0217 D5.3).
 
-    ``--no-privileges`` restores may lose role-linked state; the idempotent
-    schema-ensure re-applies ENABLE/FORCE RLS + the tenant_isolation policy,
-    then the rls helpers assert it — proven, not assumed.
+    ``--no-privileges`` restores may lose role-linked state. The posture is read first, so
+    drift in the restored database is reported (not masked by the repair), then the idempotent
+    schema-ensure re-applies ENABLE/FORCE RLS + the tenant_isolation policy, then the rls
+    helpers assert the result — proven, not assumed.
 
     All three verifiers ADR-0229 names are run, and the role split is not
     optional among them. ``BYPASSRLS`` on a role makes Postgres skip row-level
@@ -989,6 +990,16 @@ def _verify_pg_rls(dsn: str) -> RestoreStepResult:
 
     name = "verify-rls"
     try:
+        # Read the posture BEFORE re-applying it. bootstrap() writes ENABLE + FORCE and
+        # recreates the policy, so a check made afterwards can only confirm what it just
+        # wrote: drift in the restored database was invisible (review storage-backup-19).
+        with psycopg.connect(dsn) as conn:
+            before_forced = verify_force_rls(conn, _TENANT_TABLES)
+            before_policies = verify_policy_text(conn, _TENANT_TABLES)
+        drifted = [
+            t for t in _TENANT_TABLES
+            if not before_forced.get(t) or not before_policies.get(t)
+        ]
         store = PostgresMetadataStore(dsn)
         store.bootstrap()
         with psycopg.connect(dsn) as conn:
@@ -1020,12 +1031,17 @@ def _verify_pg_rls(dsn: str) -> RestoreStepResult:
                 "regardless of FORCE RLS and policy text; tenant isolation is not enforced"
             ),
         )
+    drift_note = (
+        f"; DRIFT found in the restored database on {', '.join(drifted)} and re-applied"
+        if drifted else ""
+    )
     return RestoreStepResult(
         name=name,
         ok=True,
         detail=(
-            f"FORCE RLS + tenant_isolation verified on {len(_TENANT_TABLES)} table(s); "
-            "novafabric_app confirmed without BYPASSRLS"
+            f"ENABLE + FORCE RLS + tenant_isolation (USING and WITH CHECK) verified on "
+            f"{len(_TENANT_TABLES)} table(s); novafabric_app confirmed without BYPASSRLS"
+            f"{drift_note}"
         ),
     )
 

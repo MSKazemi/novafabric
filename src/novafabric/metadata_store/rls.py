@@ -37,24 +37,40 @@ CANONICAL_POLICY_QUAL = "(tenant_id = (current_setting('app.current_tenant_id'::
 
 
 def verify_force_rls(conn: psycopg.Connection[Any], tables: tuple[str, ...]) -> dict[str, bool]:
-    """Return {table_name: relforcerowsecurity_bool} for the given tables."""
+    """Return {table_name: bool} — True only when row security is ENABLED *and* FORCED.
+
+    ``relforcerowsecurity`` alone enforces nothing: FORCE only extends an enabled policy set to
+    the table owner, so FORCE without ENABLE (``relrowsecurity`` false) leaves every row
+    visible to every role (review storage-backup-19).
+    """
     rows = conn.execute(
-        "SELECT relname, relforcerowsecurity FROM pg_class WHERE relname = ANY(%s)",
+        "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class"
+        " WHERE relname = ANY(%s)",
         (list(tables),),
     ).fetchall()
-    return {row[0]: bool(row[1]) for row in rows}
+    return {row[0]: bool(row[1]) and bool(row[2]) for row in rows}
 
 
 def verify_policy_text(conn: psycopg.Connection[Any], tables: tuple[str, ...]) -> dict[str, bool]:
-    """Return {table_name: bool} — True if pg_policy.polqual matches canonical form."""
+    """Return {table_name: bool} — True if the policy's USING *and* WITH CHECK match the
+    canonical form.
+
+    The comment on :data:`CANONICAL_POLICY_QUAL` always said both must match, but only
+    ``polqual`` (USING) was compared, so a drifted ``WITH CHECK (true)`` — which lets any
+    tenant write rows into any other — passed (review storage-backup-19).
+    """
     rows = conn.execute(
-        """SELECT c.relname, pg_get_expr(p.polqual, p.polrelid) AS qual
+        """SELECT c.relname, pg_get_expr(p.polqual, p.polrelid) AS qual,
+                  pg_get_expr(p.polwithcheck, p.polrelid) AS withcheck
            FROM pg_policy p
            JOIN pg_class c ON c.oid = p.polrelid
            WHERE c.relname = ANY(%s) AND p.polname = 'tenant_isolation'""",
         (list(tables),),
     ).fetchall()
-    return {row[0]: row[1] == CANONICAL_POLICY_QUAL for row in rows}
+    return {
+        row[0]: row[1] == CANONICAL_POLICY_QUAL and row[2] == CANONICAL_POLICY_QUAL
+        for row in rows
+    }
 
 
 def verify_role_split(conn: psycopg.Connection[Any]) -> dict[str, Any]:
