@@ -566,6 +566,38 @@ longer forwards the submitting shell's environment (ADR-0270).
 - `nova safety-case build` takes the run id from `capsule.yaml` (it minted a random ULID for a directory not named by
   one), exits `1` for a directory that is not a capsule, and weighs every `eval-results/*.json` with the weakest state
   winning instead of only the first file.
+- `GET /api/runs/{id}/safety-case` answers `422` for a capsule whose `capsule.yaml` has no valid `run_id`.
+- The ClickHouse cost report is scoped to a tenant (`cost_report(tenant_id=...)`, default `"default"`); it summed every
+  tenant. Aggregate cost rows also carry `call_count`; `run_count` (a public CSV header) always counted calls and keeps
+  its name.
+- **Dashboard.** Safety-case requests no longer sign the user out (the URL had two `?`), and an `undefined` query value
+  is omitted instead of sent as the string `"undefined"` (the Cost tab's default view showed `$0`); a withheld cost
+  figure reads `n/a` instead of crashing the tab; file names with `#` or `?` are encoded. The replay dry-run pane counts
+  the report's `[DENY]` decisions and the calls it checked (it counted a word the report never prints). The compliance
+  audit panels offer the server's profile ids from one list (`eu-ai-act`, `iso-42001` and `eu_ai_act` raised
+  `ValueError`). The command builder drops flags the real CLI lacks and shell-quotes values. The trace diff reads
+  `parent_span_id` (any two traces diffed as identical) and survives parent cycles and huge traces. The Home tab no
+  longer shows a constant "0 violations" and an unconditional "Registry OK". A verify result for run A no longer lands
+  in run B's panel; run search and a mutation's result ignore stale responses. GDPR erasure, PII key destruction and
+  legal-hold release ask for confirmation (Enter used to execute an irreversible erasure), and a legal-hold refusal shows
+  its reason instead of "409 Conflict". A reload keeps the stored token unless the server answers `401`. KG ingest no
+  longer offers a "NovaSeal-verified (confidence = 1.0)" checkbox the server ignores. The manual classifier reads
+  `nist_rmf_impact` / `omb_flags`, an unchecked timestamp reads "not checked" instead of FAIL, the Admin tab no longer
+  says token values are stored on disk (a digest is), and `until` includes the whole selected day.
+- **`@novafabric/dashboard`.** Live topology events are no longer dropped (the delta-frame decoder scanned the Arrow
+  bytes for `{`, losing about one payload length in 256 and any event with a brace in a string); overlapping subgraph
+  expands keep their own frames; collapsing a cluster removes its model nodes; the 3D (TV-5) panel sends its token.
+- **`@novafabric/sdk`.** `submitScore` returns the stored record on a `200` idempotent replay instead of `null`.
+- **Collector.** `envelope.NewULID` draws from `crypto/rand` (ids collided and were not monotonic). `Leaf.Stop` no longer
+  runs `nats stream purge` (a delete-all command); it stops the server with `SIGTERM` and kills it only after the
+  timeout. An event the dead-letter queue failed to store is counted in the new `nova_collector_dlq_dropped_total`, not
+  in `nova_collector_dlq_events_total`. `Spool.Commit` unlinks the segments it acknowledges (they stayed until the
+  directory was full, slowing every write), an event up to `MaxEventBytes` (1 MiB) is drained intact and a larger one is
+  rejected with `ErrEventTooLarge` (a line over 64 KiB made the segment unreadable and the checkpoint skipped it), and a
+  skipped segment is counted. Spool and checkpoint renames are followed by a directory fsync, a completed temp segment
+  is promoted instead of deleted at recovery, and the local dev key is written atomically (a crash left an empty
+  `.pem` that failed every start). **`novafabric-hpc-hub` exits `1` as not implemented** (it waited for a signal while
+  processing nothing); docs label it planned.
 
 ## [0.107.0] - 2026-10-23
 
