@@ -259,3 +259,52 @@ def test_golden_reference_only_capsule_holds_no_secret_material() -> None:
     raw = json.dumps(capsule).lower()
     for forbidden in ("cookie", "authorization", "bearer", "private key", "password"):
         assert forbidden not in raw
+
+
+# review misc-2-05: the guard was an exact-name check, so any other spelling of a
+# credential (access_token, session_cookie, an Authorization header map, a redirect
+# hop's set_cookie) entered the capsule's facet.
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"access_token": "sk-live-SECRET"},
+        {"session_cookie": "sid=abc"},
+        {"headers": {"Authorization": "Bearer SECRET"}},
+        {"request": {"nested": [{"X-Api-Key": "k"}]}},
+        {"refreshToken": "r"},
+        {"client_secret": "s"},
+        {"x-csrf-token": "c"},
+        {"Proxy-Authorization": "p"},
+        {"db_password": "p"},
+        {"credential_blob": "c"},
+        {"privateKeyPem": "k"},
+    ],
+)
+def test_any_spelling_of_a_credential_field_is_refused(extra: dict[str, object]) -> None:
+    with pytest.raises(ForbiddenFetchFieldError):
+        _fetch(**extra)
+
+
+def test_a_credential_on_a_redirect_hop_is_refused() -> None:
+    with pytest.raises(ForbiddenFetchFieldError):
+        FetchProvenance(
+            final_url="https://news.example/report",
+            http_status=200,
+            fetched_at="2026-07-20T09:00:00Z",
+            redirect_chain=[{"url": "https://news.example/a", "status": 301, "set_cookie": "sid=1"}],
+        )
+
+
+@pytest.mark.parametrize("extra", [{"http_version": "2"}, {"server": "nginx"}, {"cache_status": "HIT"}])
+def test_ordinary_extra_fields_are_still_allowed(extra: dict[str, object]) -> None:
+    assert _fetch(**extra).model_extra == extra
+
+
+def test_a_deeply_nested_extra_is_refused_not_walked_forever() -> None:
+    deep: dict[str, object] = {"a": "x"}
+    for _ in range(40):
+        deep = {"a": deep}
+    with pytest.raises(ForbiddenFetchFieldError, match="nest"):
+        _fetch(meta=deep)

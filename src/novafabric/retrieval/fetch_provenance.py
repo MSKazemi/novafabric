@@ -74,6 +74,55 @@ _FORBIDDEN_EXTRA_KEYS = frozenset(
     }
 )
 
+#: Substrings of a key's normalised spelling (lower-cased, punctuation removed) that
+#: mark it credential-shaped wherever it appears, at any nesting depth: the exact
+#: names above are only the obvious spellings, and ``access_token``,
+#: ``session_cookie``, an ``Authorization`` header map or a hop's ``set_cookie`` got
+#: through them (review misc-2-05). The same normalise-and-substring walk the
+#: frontier-safety layer uses for the same evasion class.
+_CREDENTIAL_MARKERS = (
+    "token",
+    "cookie",
+    "auth",
+    "secret",
+    "password",
+    "passwd",
+    "apikey",
+    "session",
+    "credential",
+    "privatekey",
+    "bearer",
+)
+
+
+def _refuse_credential_fields(extra: dict[str, Any] | None) -> None:
+    """Raise :class:`ForbiddenFetchFieldError` for a credential-shaped key in *extra*."""
+    if not extra:
+        return
+    from novafabric.frontier_safety._common import (  # noqa: PLC0415
+        PayloadCaptureError,
+        find_marker_keys,
+        normalise_key,
+    )
+
+    exact = {normalise_key(k) for k in _FORBIDDEN_EXTRA_KEYS}
+    try:
+        marked = find_marker_keys(extra, _CREDENTIAL_MARKERS)
+    except PayloadCaptureError as exc:
+        raise ForbiddenFetchFieldError(
+            f"fetch record extra fields nest too deeply to inspect ({exc}); fetch provenance "
+            "is digests, URLs and fingerprints only (ADR-0153 I-2)"
+        ) from exc
+    named = [key for key in extra if normalise_key(key) in exact]
+    hits = sorted({*marked, *named})
+    if hits:
+        raise ForbiddenFetchFieldError(
+            f"fetch record carries credential-shaped field {hits[0]!r}; "
+            "fetch provenance is digests, URLs and fingerprints only "
+            "(ADR-0153 I-2)"
+        )
+
+
 #: PEM armour for private-key material of any flavour.
 _PRIVATE_KEY_MARKER = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 
@@ -129,13 +178,9 @@ class FetchProvenance(BaseModel):
 
     @model_validator(mode="after")
     def _guard_credentials(self) -> FetchProvenance:
-        for key in self.model_extra or {}:
-            if key.lower() in _FORBIDDEN_EXTRA_KEYS:
-                raise ForbiddenFetchFieldError(
-                    f"fetch record carries credential-shaped field {key!r}; "
-                    "fetch provenance is digests, URLs and fingerprints only "
-                    "(ADR-0153 I-2)"
-                )
+        _refuse_credential_fields(self.model_extra)
+        for hop in self.redirect_chain:
+            _refuse_credential_fields(hop.model_extra)
         for url in (self.final_url, *(hop.url for hop in self.redirect_chain)):
             # A userinfo component (https://user:pass@host) IS a credential, and
             # unlike a query parameter it is unambiguously one. Query strings are
