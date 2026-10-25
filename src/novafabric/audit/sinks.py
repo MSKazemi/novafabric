@@ -227,6 +227,15 @@ class SyslogSink:
         self.messages_sent = 0
         self.messages_truncated = 0
 
+        # The cut must leave the whole header, one byte of message and the marker. A smaller
+        # limit used to slice into the header the code promises never to shorten.
+        floor = len(self._header().encode("utf-8")) + 1 + len(TRUNCATION_MARKER.encode("utf-8"))
+        if max_datagram_bytes < floor:
+            raise SinkError(
+                f"max_datagram_bytes {max_datagram_bytes} is below {floor}, the smallest value "
+                "that keeps the syslog header, the truncation marker and one byte of message"
+            )
+
         self._transport = self._resolve_transport(address, transport)
         self._host = ""
         self._port = 0
@@ -317,7 +326,10 @@ class SyslogSink:
             # Shorten the MSG, never the header, and mark it — a silently
             # shortened audit record would read as a complete one.
             marker = TRUNCATION_MARKER.encode("utf-8")
-            encoded = encoded[: self._max_datagram_bytes - len(marker)] + marker
+            # Cut on a character boundary: slicing bytes could split a UTF-8 sequence and
+            # hand the receiver invalid UTF-8 (RFC 5424 requires UTF-8 in MSG).
+            head = encoded[: self._max_datagram_bytes - len(marker)]
+            encoded = head.decode("utf-8", errors="ignore").encode("utf-8") + marker
             self.messages_truncated += 1
 
         if self._stream:

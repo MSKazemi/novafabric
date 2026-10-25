@@ -401,3 +401,27 @@ def test_cli_tail_rejects_absurd_rotation_config(
         ],
     )
     assert result.exit_code == 2
+
+
+def test_syslog_truncation_never_splits_a_utf8_sequence() -> None:
+    # review compliance-privacy-23: slicing bytes cut a multi-byte character in two.
+    receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    receiver.bind(("127.0.0.1", 0))
+    receiver.settimeout(5)
+    port = receiver.getsockname()[1]
+    with SyslogSink(f"127.0.0.1:{port}", transport="udp", max_datagram_bytes=600) as sink:
+        for pad in range(4):  # shift the cut across every offset within a 3-byte character
+            sink.write("a" * pad + "日" * 400 + "\n")
+    for _ in range(4):
+        raw, _addr = receiver.recvfrom(65535)
+        text = raw.decode("utf-8")  # raises on a split sequence
+        assert text.endswith(TRUNCATION_MARKER)
+        assert len(raw) <= 600
+    receiver.close()
+
+
+def test_syslog_rejects_a_datagram_limit_that_would_cut_the_header() -> None:
+    with pytest.raises(SinkError, match="max_datagram_bytes"):
+        SyslogSink("127.0.0.1:514", transport="udp", max_datagram_bytes=20)
+    with pytest.raises(SinkError, match="max_datagram_bytes"):
+        SyslogSink("127.0.0.1:514", transport="udp", max_datagram_bytes=0)
