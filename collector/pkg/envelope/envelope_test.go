@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -222,4 +223,42 @@ func TestToCloudEvent_InvalidPayloadReturnsError(t *testing.T) {
 
 	_, err := envelope.ToCloudEvent(e)
 	assert.Error(t, err, "invalid JSON payload must cause an error")
+}
+
+// Review go-collector-ts-packages-15: NewULID is documented as monotonically increasing and
+// cryptographically seeded, but was seeded from the wall-clock nanosecond with math/rand —
+// ids within one millisecond were in random order, two calls in a coarse clock tick could
+// share an entropy seed, and the value was predictable. event_id is what downstream dedups on.
+func TestNewULIDIsStrictlyIncreasingWithinOneGoroutine(t *testing.T) {
+	prev := envelope.NewULID()
+	for i := 0; i < 20000; i++ {
+		next := envelope.NewULID()
+		if next <= prev {
+			t.Fatalf("ULID %d is not above its predecessor: %s <= %s", i, next, prev)
+		}
+		prev = next
+	}
+}
+
+func TestNewULIDIsUniqueUnderConcurrentBursts(t *testing.T) {
+	const workers, per = 8, 5000
+	seen := make(chan string, workers*per)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < per; i++ {
+				seen <- envelope.NewULID()
+			}
+		}()
+	}
+	wg.Wait()
+	close(seen)
+	unique := make(map[string]struct{}, workers*per)
+	for id := range seen {
+		require.Len(t, id, 26)
+		unique[id] = struct{}{}
+	}
+	require.Len(t, unique, workers*per)
 }

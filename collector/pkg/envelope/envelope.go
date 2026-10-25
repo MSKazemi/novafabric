@@ -7,7 +7,6 @@
 package envelope
 
 import (
-	"math/rand"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -131,12 +130,10 @@ func New(eventType, agentID, runID, globalRunID string) *EventEnvelope {
 	}
 }
 
-// NewULID returns a new, monotonically increasing ULID string using a
-// cryptographically seeded source. The ULID is encoded in Crockford Base32.
+// NewULID returns a new ULID string, encoded in Crockford Base32. ulid.Make draws its
+// entropy from crypto/rand through a mutex-guarded monotonic source, so ids are unique
+// across goroutines and strictly increasing within a millisecond (the earlier clock-seeded
+// math/rand source was neither unpredictable nor monotonic).
 func NewULID() string {
-	// Use a monotonic entropy source seeded from the default global rand.
-	// For production, callers that need strict monotonicity should use their
-	// own ulid.MonotonicEntropy with a mutex.
-	ms := ulid.MustNew(ulid.Timestamp(time.Now()), rand.New(rand.NewSource(time.Now().UnixNano())))
-	return ms.String()
+	return ulid.Make().String()
 }
