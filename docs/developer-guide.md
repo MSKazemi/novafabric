@@ -1420,24 +1420,26 @@ make spec-test
 **Development mode (no KMS required):**
 
 The local dev signer (`LocalWALKeystore`, `collector/pkg/novaseal/keystore_local_wal.go`) is
-reachable from two binaries today:
+reachable from two places today: the collector's `novaseal_batch_signer` processor
+(`local_wal: true`) and the verifier:
 
 ```bash
-# hpc-hub: --local-wal, whose default comes from NOVAFABRIC_KMS_LOCAL_WAL=1
-NOVAFABRIC_KMS_LOCAL_WAL=1 ./bin/novafabric-hpc-hub --cluster-id dev --spool /tmp/nova-spool
 # verifier: --local-wal verifies against the same dev key
 ./bin/novafabric-verifier --batch batch.pb --local-wal
 ```
+
+`novafabric-hpc-hub` does **not** use it: that binary is planned and exits `1` as not implemented.
 
 On first use it generates an Ed25519 key at `~/.novafabric/dev-keys/<uuid>.pem` (mode 0400)
 and logs a `USING LOCAL DEV KEY — NOT FOR PRODUCTION` warning; it refuses to run when
 `NOVAFABRIC_ENV=production`.
 
-> **Not wired in `novafabric-collector`.** The `novaseal_batch_signer` processor config accepts
-> `local_wal` and `keystore_endpoint`, but nothing in the collector binary reads them or
-> injects a signer, so under `novafabric-collector` the processor logs *no signer configured*
-> and runs in **pass-through mode** (records are forwarded unsigned). A signer reaches the
-> processor only through `WithSigner(...)`, which the tests use.
+> **Signer wiring in `novafabric-collector`.** The `novaseal_batch_signer` processor builds its
+> signer from its config: `local_wal: true` uses the dev-key keystore; `keystore_endpoint` is
+> refused (the KMS keystore needs an mTLS client certificate the config has no fields for yet —
+> **planned**); with neither set it refuses to start unless `fail_open: true`, which forwards
+> batches **unsigned** and says so at start. Releases up to v0.107.0 built no signer at all, so
+> every batch was forwarded unsigned.
 
 **Adding a new Go package:**
 

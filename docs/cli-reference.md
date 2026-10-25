@@ -9243,40 +9243,30 @@ signer and verifier, the signature will fail.
 
 ### novafabric-hpc-hub
 
-Run the HPC cluster-hub NATS message handler. Subscribes to
-`nova.<cluster_id>.aggregate`, signs each batch with NovaSeal, and publishes
-signed batches to the Kafka regional topic.
+**planned — not implemented.** The binary exists so the build target and the Prolog hook are in
+place, but it does nothing yet: it parses the flags below and **exits `1`** with
+`novafabric-hpc-hub is not implemented`. It does not subscribe to NATS, sign, or publish to Kafka,
+and it does not read or create a signing key or contact a KMS. (Up to v0.107.0 it took a key,
+logged "starting" and waited for a signal while processing nothing.)
 
-```bash
-# Production (uses NovaSeal KMS)
-novafabric-hpc-hub \
-  --cluster-id hpc01 \
-  --hub nats://hub.cluster.local:4222 \
-  --kms https://kms.internal:8443
+The intended design — **future design**, no implementation — is a cluster-boundary hub that
+subscribes to `nova.<cluster_id>.aggregate`, signs each batch with NovaSeal and publishes the signed
+batches to a Kafka regional topic, so compute nodes (leaf NATS instances) never touch the NovaSeal
+keystore and only the hub node needs KMS network access.
 
-# Development (uses local dev key)
-novafabric-hpc-hub \
-  --cluster-id dev \
-  --hub nats://localhost:4222 \
-  --local-wal
-```
-
-**Flags:**
+**Flags** (accepted today so an existing invocation gets the message above, not a flag error):
 
 | Flag | Env override | Default | Description |
 |---|---|---|---|
-| `--cluster-id` | `NOVAFABRIC_CLUSTER_ID` | — | **Required.** Cluster identifier |
-| `--hub` | `NOVAFABRIC_HUB_ADDRESS` | — | NATS hub address (`nats://...`) |
-| `--kms` | `NOVASEAL_KMS_ENDPOINT` | — | NovaSeal KMS endpoint (required unless `--local-wal`) |
-| `--local-wal` | `NOVAFABRIC_KMS_LOCAL_WAL=1` | false | Dev only. Use local Ed25519 key. |
-| `--job-id` | `SLURM_JOB_ID` | — | Slurm job ID (set automatically by Prolog) |
+| `--cluster-id` | `NOVAFABRIC_CLUSTER_ID` | — | **Required** (exit `2` without it). Cluster identifier |
+| `--hub` | `NOVAFABRIC_HUB_ADDRESS` | — | NATS hub address (`nats://...`) — unused |
+| `--kms` | `NOVASEAL_KMS_ENDPOINT` | — | NovaSeal KMS endpoint — unused |
+| `--local-wal` | `NOVAFABRIC_KMS_LOCAL_WAL=1` | false | Dev key — unused |
+| `--job-id` | `SLURM_JOB_ID` | — | Slurm job ID |
 | `--spool` | — | — | Spool directory for this job |
 
-The hub signs batches at the cluster boundary before forwarding to Kafka —
-compute nodes (leaf NATS instances) never touch the NovaSeal keystore. This
-preserves HPC air-gap security: only the hub node needs KMS network access.
-
-**Signals:** `SIGTERM` / `SIGINT` trigger a clean shutdown.
+For signing batches today, use the collector's `novaseal_batch_signer` processor
+(`local_wal: true`; see [novafabric-collector](#novafabric-collector)).
 
 ---
 
@@ -9299,7 +9289,7 @@ PrologFlags=Alloc
 ```
 
 **Per-job lifecycle:**
-1. **Prolog** — creates `/tmp/novafabric/$SLURM_JOB_ID/`, starts `novafabric-hpc-hub` as a leaf NATS instance bound to that directory. Exits 0.
+1. **Prolog** — creates `/tmp/novafabric/$SLURM_JOB_ID/` and, if a `novafabric-hpc-hub` binary is on `PATH`, starts it. **planned:** that binary is not implemented yet (it exits `1`), so no leaf NATS instance is started by it today. Exits 0.
 2. **Job runs** — agents write events to the spool via SDK hooks; the leaf node buffers and forwards to the cluster hub.
 3. **Epilog** — calls `nats stream flush --timeout=${NOVAFABRIC_EPILOG_FLUSH_TIMEOUT:-50}s` to drain the spool, stops the leaf process. **Always exits 0** to prevent Slurm from draining the node.
 

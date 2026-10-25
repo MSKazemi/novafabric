@@ -1,86 +1,61 @@
-// Command novafabric-hpc-hub runs the HPC cluster-hub NATS message handler.
+// Command novafabric-hpc-hub is the planned HPC cluster-hub NATS message handler.
 //
-// It subscribes to nova.<cluster_id>.aggregate, signs each batch with NovaSeal,
-// and publishes signed batches to the Kafka regional topic.
+// STATUS: planned, not implemented. The intended design subscribes to
+// nova.<cluster_id>.aggregate, signs each batch with NovaSeal, and publishes the signed
+// batches to a Kafka regional topic. No part of that is written: this binary parses its flags
+// and then exits non-zero. It used to obtain a signing key (generating a dev private key on
+// disk with --local-wal, or contacting the KMS with an EMPTY mTLS client certificate with
+// --kms), log "starting", and wait for SIGTERM while processing nothing — and the docs
+// described it as a working signer (review go-collector-ts-packages-09).
 //
-// Usage:
+// Usage (flags are accepted so existing invocations get this message, not a flag error):
 //
 //	novafabric-hpc-hub --cluster-id hpc01 --hub nats://hub:4222 --kafka kafka:9092
 package main
 
 import (
-	"context"
-	"crypto/tls"
 	"flag"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 )
 
+// Exit codes.
+const (
+	exitNotImplemented = 1
+	exitUsage          = 2
+)
+
+const notImplemented = "novafabric-hpc-hub is not implemented (planned): it does not subscribe to " +
+	"the hub, sign batches or publish to Kafka, and was exiting only after waiting for a signal. " +
+	"Nothing was started and no signing key was read or created"
+
 func main() {
-	clusterID := flag.String("cluster-id", os.Getenv("NOVAFABRIC_CLUSTER_ID"), "Cluster ID")
-	hubAddr := flag.String("hub", os.Getenv("NOVAFABRIC_HUB_ADDRESS"), "NATS hub address (nats://...)")
-	kmsEndpoint := flag.String("kms", os.Getenv("NOVASEAL_KMS_ENDPOINT"), "NovaSeal KMS endpoint")
-	localWAL := flag.Bool("local-wal", os.Getenv("NOVAFABRIC_KMS_LOCAL_WAL") == "1", "Use local dev key (dev only)")
-	jobID := flag.String("job-id", os.Getenv("SLURM_JOB_ID"), "Slurm job ID")
-	spoolDir := flag.String("spool", "", "Spool directory for this job")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Getenv, os.Stderr))
+}
+
+// run parses args and reports that the hub is not implemented. It never reads or creates a
+// key and never contacts a KMS.
+func run(args []string, getenv func(string) string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("novafabric-hpc-hub", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	clusterID := fs.String("cluster-id", getenv("NOVAFABRIC_CLUSTER_ID"), "Cluster ID")
+	_ = fs.String("hub", getenv("NOVAFABRIC_HUB_ADDRESS"), "NATS hub address (nats://...)")
+	_ = fs.String("kms", getenv("NOVASEAL_KMS_ENDPOINT"), "NovaSeal KMS endpoint (planned)")
+	_ = fs.Bool("local-wal", getenv("NOVAFABRIC_KMS_LOCAL_WAL") == "1", "Use local dev key (planned)")
+	jobID := fs.String("job-id", getenv("SLURM_JOB_ID"), "Slurm job ID")
+	_ = fs.String("spool", "", "Spool directory for this job")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
 
 	if *clusterID == "" {
-		slog.Error("--cluster-id or NOVAFABRIC_CLUSTER_ID is required")
-		os.Exit(2)
+		fmt.Fprintln(stderr, "--cluster-id or NOVAFABRIC_CLUSTER_ID is required")
+		return exitUsage
 	}
 
-	logger := slog.Default().With("cluster_id", *clusterID, "job_id", *jobID)
-
-	// Set up signer.
-	var signer novaseal.Signer
-	if *localWAL {
-		kstore := novaseal.NewLocalWALKeystore(novaseal.LocalWALConfig{})
-		s, err := kstore.GetActiveSigner(context.Background())
-		if err != nil {
-			logger.Error("local-wal: failed to get signer", "error", err)
-			os.Exit(1)
-		}
-		signer = s
-	} else if *kmsEndpoint != "" {
-		cfg := novaseal.KeystoreConfig{
-			Endpoint:         *kmsEndpoint,
-			CacheTTL:         5 * time.Minute,
-			RotationInterval: time.Hour,
-			FailOpen:         false,
-		}
-		kstore, err := novaseal.NewKeystore(cfg, tls.Certificate{})
-		if err != nil {
-			logger.Error("failed to create keystore", "error", err)
-			os.Exit(1)
-		}
-		defer kstore.Close()
-		s, err := kstore.GetActiveSigner(context.Background())
-		if err != nil {
-			logger.Error("failed to get active signer from KMS", "error", err)
-			os.Exit(1)
-		}
-		signer = s
-	} else {
-		logger.Error("one of --kms or --local-wal is required")
-		os.Exit(2)
-	}
-
-	_ = signer // used by NATS message handler (wired in production deployment)
-
-	logger.Info("novafabric-hpc-hub starting",
-		"hub", *hubAddr,
-		"spool_dir", *spoolDir,
-		"local_wal", *localWAL)
-
-	// Wait for shutdown signal.
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
-	<-ctx.Done()
-	logger.Info("novafabric-hpc-hub shutting down")
+	slog.New(slog.NewTextHandler(stderr, nil)).Error(notImplemented,
+		"cluster_id", *clusterID, "job_id", *jobID)
+	return exitNotImplemented
 }
