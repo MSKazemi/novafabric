@@ -275,15 +275,31 @@ def test_no_shared_component_reports_unknown_never_unchanged() -> None:
     assert comparison.note is not None and "unknown" in comparison.note
 
 
-def test_the_threshold_is_a_strict_boundary() -> None:
+def test_a_distance_at_the_threshold_is_shifted_like_the_detectors() -> None:
+    # review misc-1-13: ADR-0147 defines the alarm as value >= threshold and the
+    # detectors (nova drift detect) follow it; the fingerprint comparison used `>`, so
+    # the same policy number meant different things in sibling commands.
     # Scores-only, and both exactly representable, so the boundary is tested rather than a
     # floating-point artefact next to it.
     a = fingerprint_run("run-a", [], scores=[0.5])
     b = fingerprint_run("run-b", [], scores=[0.25])
     exact = compare_fingerprints(a, b, threshold=0.25)
     assert exact.distance == 0.25
-    assert exact.shifted is False  # equal to the threshold is not over it
+    assert exact.shifted is True  # equal to the threshold IS the alarm (ADR-0147)
+    assert compare_fingerprints(a, b, threshold=0.26).shifted is False
     assert compare_fingerprints(a, b, threshold=0.2).shifted is True
+
+
+def test_the_fingerprint_and_the_detectors_agree_at_the_boundary() -> None:
+    from novafabric.drift.detectors import build_behavioral_drift
+
+    record = build_behavioral_drift(
+        dimension="tool-mix", distance="psi", baseline=[1.0, 2.0, 3.0], window=[1.0, 2.0, 3.0],
+        threshold=0.0,
+    )
+    assert record.value == 0.0 and record.drifted is True  # value >= threshold
+    same = fingerprint_run("run-a", [], scores=[0.5])
+    assert compare_fingerprints(same, same, threshold=0.0).shifted is True
 
 
 @pytest.mark.parametrize("bad", [-0.1, 1.5])

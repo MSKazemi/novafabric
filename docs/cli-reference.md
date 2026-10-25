@@ -2427,6 +2427,9 @@ and `shifted: null` with a stated reason — *unknown* is not *unchanged*. Compa
 fingerprints built under different canonicalization rule versions is refused rather
 than scored.
 
+`shifted` is `distance >= threshold`, the rule `nova drift detect` uses for `drifted` (ADR-0147): a distance exactly at the
+threshold is the alarm in both. Releases up to v0.107.0 used `>` here.
+
 Exit codes: `0` (rendered, shifted or not — it is an observation, not a gate), `2` (bad input).
 
 ---

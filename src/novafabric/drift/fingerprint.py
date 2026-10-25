@@ -412,7 +412,8 @@ def compare_fingerprints(
         components=components,
         threshold=threshold,
         distance=distance,
-        shifted=distance > threshold,
+        # ADR-0147: the alarm is value >= threshold, as in the detectors (review misc-1-13).
+        shifted=distance >= threshold,
     )
 
 
