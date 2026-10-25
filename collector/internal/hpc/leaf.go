@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"text/template"
 	"time"
 )
@@ -141,7 +142,14 @@ func (l *Leaf) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop flushes pending JetStream data and terminates the NATS leaf node.
+// Stop asks the NATS leaf node to shut down gracefully and kills it only if it does not exit
+// within flushTimeout.
+//
+// nats-server writes its JetStream state to disk on SIGTERM, so a graceful stop is the flush.
+// This used to run `nats stream purge` "to flush" — a delete-all command that destroys every
+// message in a stream, would have erased un-forwarded evidence at job end had a stream name or
+// -f ever been added, and without them only failed in a non-interactive epilog (review
+// go-collector-ts-packages-10). No `nats` CLI command is run here.
 //
 // Stop always returns nil in compliance with FR-12 (the HPC spool agent must
 // exit 0 regardless of flush outcome so that Slurm epilog scripts complete
@@ -151,31 +159,24 @@ func (l *Leaf) Stop(_ context.Context, flushTimeout time.Duration) error {
 		return nil
 	}
 
-	// Attempt to flush JetStream streams via the nats CLI before killing the
-	// server.  Failures are logged but do not propagate (FR-12).
-	natsCLI, err := exec.LookPath("nats")
-	if err == nil {
-		flushCtx, cancel := context.WithTimeout(context.Background(), flushTimeout)
-		defer cancel()
-		flushCmd := exec.CommandContext(flushCtx, natsCLI, "stream", "purge",
-			"--timeout", flushTimeout.String())
-		if out, flushErr := flushCmd.CombinedOutput(); flushErr != nil {
-			slog.Warn("hpc leaf: flush failed (non-fatal)", "error", flushErr, "output", string(out))
-		}
-	} else {
-		slog.Warn("hpc leaf: nats CLI not found, skipping flush", "error", err)
+	if termErr := l.proc.Process.Signal(syscall.SIGTERM); termErr != nil {
+		slog.Warn("hpc leaf: SIGTERM nats-server (non-fatal)", "error", termErr)
 	}
 
-	// Terminate the server process.
-	if killErr := l.proc.Process.Kill(); killErr != nil {
-		slog.Warn("hpc leaf: kill nats-server (non-fatal)", "error", killErr)
-	}
-
-	// Wait for the goroutine monitoring proc.Wait to finish.
 	select {
 	case <-l.done:
-	case <-time.After(flushTimeout + 5*time.Second):
-		slog.Warn("hpc leaf: timed out waiting for nats-server to exit")
+	case <-time.After(flushTimeout):
+		slog.Warn("hpc leaf: nats-server did not exit within the flush timeout; killing it",
+			"timeout", flushTimeout)
+		if killErr := l.proc.Process.Kill(); killErr != nil {
+			slog.Warn("hpc leaf: kill nats-server (non-fatal)", "error", killErr)
+		}
+		// Wait for the goroutine monitoring proc.Wait to finish.
+		select {
+		case <-l.done:
+		case <-time.After(5 * time.Second):
+			slog.Warn("hpc leaf: timed out waiting for nats-server to exit")
+		}
 	}
 
 	slog.Info("hpc leaf: stopped", "job_id", l.cfg.JobID, "node_id", l.cfg.NodeID)
