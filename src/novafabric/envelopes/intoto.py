@@ -172,6 +172,15 @@ def capsule_statement(
     capsule_dir = Path(capsule_dir)
     subjects = capsule_subjects(capsule_dir)
     if expected_digests:
+        # A subject the caller expects but the capsule no longer holds is a failed
+        # expectation, not a skipped one: emitting the statement without it would be a
+        # verifying-but-wrong attestation (review misc-2-12).
+        present = {subject["name"] for subject in subjects}
+        absent = sorted(set(expected_digests) - present)
+        if absent:
+            raise SubjectDigestMismatch(
+                f"expected subject(s) not in the capsule: {', '.join(absent)}"
+            )
         for subject in subjects:
             expected = expected_digests.get(subject["name"])
             if expected is None:

@@ -125,3 +125,20 @@ def test_statement_is_dsse_payload_roundtrip(tmp_path: Path) -> None:
             return False
 
     assert dsse_verify(env, _verify) == stmt
+
+
+def test_an_expected_subject_that_is_not_in_the_capsule_raises(tmp_path: Path) -> None:
+    # review misc-2-12: a file named in expected_digests that was deleted was skipped
+    # silently and the statement emitted without it: a verifying-but-wrong attestation.
+    cap = _capsule(tmp_path)
+    with pytest.raises(SubjectDigestMismatch, match="not in the capsule: gone.jsonl"):
+        capsule_statement(cap, expected_digests={"gone.jsonl": "sha256:" + "0" * 64})
+
+
+def test_every_missing_expected_subject_is_named(tmp_path: Path) -> None:
+    cap = _capsule(tmp_path)
+    with pytest.raises(SubjectDigestMismatch) as excinfo:
+        capsule_statement(
+            cap, expected_digests={"a.jsonl": "0" * 64, "b.jsonl": "0" * 64}
+        )
+    assert "a.jsonl" in str(excinfo.value) and "b.jsonl" in str(excinfo.value)
