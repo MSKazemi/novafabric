@@ -475,6 +475,42 @@ def test_collect_fills_run_and_flags_foreign_run_claims() -> None:
     assert evidence.defective and "claims run" in evidence.findings[0]
 
 
+def test_read_ref_is_the_stored_rows_chain_digest_even_when_the_row_had_no_run() -> None:
+    # review misc-3-14: the digest was computed over the copy with `run` filled in, so it
+    # matched no prev_record_hash in the capsule's access chain and an auditor could
+    # not join a DerivationLink back to its stored row.
+    from novafabric.memstore.access import access_digest
+
+    rows = record_access(
+        [], agent="a", store_id=STORE, namespace="ns", entry_id="e",
+        access="read", allowed_scope="ns",
+    )
+    rows = record_access(
+        rows, agent="a", store_id=STORE, namespace="ns", entry_id="f",
+        access="read", allowed_scope="ns",
+    )
+    stored_first = access_digest(rows[0])
+    assert rows[1].prev_record_hash == stored_first  # the chain link an auditor holds
+    capsule = attach_access({"run_id": "r1"}, build_access_block(STORE, rows))
+    evidence = collect_store_evidence([capsule], STORE)
+    assert evidence.accesses[0].run == "r1"  # attributed...
+    assert access_digest(evidence.accesses[0]) == stored_first  # ...but still the stored link
+    link = derive_read(evidence.accesses[0], _index([]))
+    assert link.read_ref == stored_first
+
+
+def test_a_row_that_already_names_its_run_keeps_its_own_digest() -> None:
+    from novafabric.memstore.access import access_digest
+
+    rows = record_access(
+        [], agent="a", store_id=STORE, namespace="ns", entry_id="e",
+        access="read", allowed_scope="ns", run="r1",
+    )
+    capsule = attach_access({"run_id": "r1"}, build_access_block(STORE, rows))
+    evidence = collect_store_evidence([capsule], STORE)
+    assert access_digest(evidence.accesses[0]) == access_digest(rows[0])
+
+
 def test_collect_flags_malformed_and_tampered_blocks(doc: dict[str, Any]) -> None:
     good = doc["capsules"][1]
     bad_facet = {"run_id": "x", "facets": {"memstore_mutation": {"store_id": ""}}}

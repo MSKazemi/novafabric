@@ -87,6 +87,7 @@ from novafabric.memstore.access import (
     access_block_from_capsule,
     access_digest,
     verify_access_block,
+    with_attributed_run,
 )
 from novafabric.memstore.ledger import (
     FACET_NAME,
@@ -403,7 +404,7 @@ def _collect_accesses(
             )
             continue
         if record.run is None and run_id is not None:
-            record = record.model_copy(update={"run": run_id})
+            record = with_attributed_run(record, run_id)
         evidence.accesses.append(record)
 
 

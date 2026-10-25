@@ -68,7 +68,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from novafabric.memstore.ledger import (
     FACET_NAME,
@@ -415,6 +415,12 @@ class AccessRecord(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
+    #: The chain digest of the row as STORED. Set by a consumer that fills in the
+    #: capsule's ``run`` on a row stored without one (the derivation walk): the
+    #: attributed copy hashes differently, but the row's identity in the access chain
+    #: (``prev_record_hash`` of the next row) is the stored digest (review misc-3-14).
+    _stored_digest: str | None = PrivateAttr(default=None)
+
     schema_version: str = ACCESS_SCHEMA_VERSION
     agent: str
     store_id: str
@@ -540,7 +546,17 @@ def access_preimage(record: AccessRecord) -> str:
 
 def access_digest(record: AccessRecord) -> str:
     """Return the ``sha256:`` digest of one access row — its chain link."""
+    if record._stored_digest is not None:
+        return record._stored_digest
     return f"sha256:{hashlib.sha256(access_preimage(record).encode()).hexdigest()}"
+
+
+def with_attributed_run(record: AccessRecord, run: str) -> AccessRecord:
+    """A copy of *record* naming *run*, whose :func:`access_digest` is still the stored row's."""
+    stored = access_digest(record)
+    attributed = record.model_copy(update={"run": run})
+    attributed._stored_digest = stored
+    return attributed
 
 
 def access_head(records: Sequence[AccessRecord]) -> str | None:
