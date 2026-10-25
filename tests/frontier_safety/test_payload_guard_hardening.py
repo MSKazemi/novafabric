@@ -67,6 +67,7 @@ def _attempt(**kw: object) -> AutonomyAttempt:
         "report_ref": digest_ref("report"),
         "attempt_count": 3,
         "verdict_ref": digest_ref("verdict"),
+        "verdict_source": "scheming_eval",
     }
     base.update(kw)
     return AutonomyAttempt(**base)  # type: ignore[arg-type]

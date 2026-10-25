@@ -89,6 +89,7 @@ def populated(tmp_path: Path) -> Path:
                 report_ref=digest_ref("report-a"),
                 attempt_count=2,
                 verdict_ref=digest_ref("verdict-3"),
+                verdict_source="red_team",
             ),
             AutonomyAttempt(
                 attempt_type="self_exfiltration",
@@ -96,6 +97,7 @@ def populated(tmp_path: Path) -> Path:
                 report_ref=digest_ref("report-b"),
                 attempt_count=5,
                 verdict_ref=digest_ref("verdict-4"),
+                verdict_source="red_team",
             ),
         ],
         elicitation_records=[

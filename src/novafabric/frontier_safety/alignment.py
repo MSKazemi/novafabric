@@ -417,6 +417,13 @@ class AutonomyAttempt(_ExternalVerdict):
 
     @model_validator(mode="after")
     def _check_shape(self) -> AutonomyAttempt:
+        if self.verdict_source is None:
+            raise ComputedVerdictError(
+                f"AutonomyAttempt carries outcome={self.outcome!r} with no "
+                "verdict_source; the outcome is quoted from an external "
+                "evaluator's report, and unattributed it reads — once sealed — "
+                "as NovaFabric's own finding (ADR-0167 D3/D4)"
+            )
         _shared_extra_guard(self)
         _reject_keys(
             self.model_extra,

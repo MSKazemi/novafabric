@@ -107,6 +107,7 @@ def _attempt(**kw: object) -> AutonomyAttempt:
         "report_ref": digest_ref(REPORT),
         "attempt_count": 3,
         "verdict_ref": digest_ref(VERDICT),
+        "verdict_source": "scheming_eval",
     }
     base.update(kw)
     return AutonomyAttempt(**base)  # type: ignore[arg-type]
@@ -311,7 +312,7 @@ def test_autonomy_verdict_ref_is_required() -> None:
 
 def test_unattributed_autonomy_verdict_is_a_computed_verdict() -> None:
     with pytest.raises(ComputedVerdictError, match="verdict_source"):
-        _attempt(verdict="dangerous")
+        _attempt(verdict="dangerous", verdict_source=None)
 
 
 def test_inlined_c4_guardrail_decision_is_rejected() -> None:
@@ -527,3 +528,19 @@ def test_malformed_existing_facet_does_not_block_p3_recording(
 def test_p2_helpers_still_work_through_the_shared_append(capsule: dict[str, Any]) -> None:
     """The P2 helpers were refactored onto the shared fail-open body."""
     assert record_control_decision(capsule, {"protocol": "resample"}) is capsule
+
+
+def test_an_autonomy_outcome_must_name_who_reported_it() -> None:
+    # review misc-2-12: ``outcome`` is quoted from an evaluator's report; sealed
+    # with no verdict_source it reads as NovaFabric's own finding (ADR-0167 D3/D4).
+    base: dict[str, object] = {
+        "attempt_type": "sandbox_escape",
+        "outcome": "succeeded",
+        "report_ref": digest_ref(REPORT),
+        "attempt_count": 1,
+        "verdict_ref": digest_ref(VERDICT),
+    }
+    with pytest.raises(ComputedVerdictError, match="verdict_source"):
+        AutonomyAttempt(**base)  # type: ignore[arg-type]
+    named = AutonomyAttempt(**base, verdict_source="red_team")  # type: ignore[arg-type]
+    assert named.verdict_source == "red_team"
