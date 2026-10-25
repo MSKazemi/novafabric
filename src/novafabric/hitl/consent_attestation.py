@@ -376,9 +376,22 @@ def _compare_with_capsule(
     if loaded.defects:
         result.fail("capsule", f"{len(loaded.defects)} stored consent receipt(s) are malformed")
     current = {rec.consent_id: rec for _, rec in loaded.records}
+    # A dict keeps one receipt per id; a second one under an attested id (possibly
+    # broader, and self-consistent) would sit behind it unseen. The attestation
+    # certifies the consent state, so an id recorded more than once is a failure
+    # (review misc-1-06).
+    counts: dict[str, int] = {}
+    for _, stored in loaded.records:
+        counts[stored.consent_id] = counts.get(stored.consent_id, 0) + 1
     all_ok = not loaded.defects
     for e in attested:
         cid = str(e.get("consent_id"))
+        if counts.get(cid, 0) > 1:
+            result.fail(
+                "receipt", f"{cid}: recorded {counts[cid]} times; the attestation covers one"
+            )
+            all_ok = False
+            continue
         rec = current.get(cid)
         if rec is None:
             result.fail("receipt", f"{cid}: attested receipt is missing from the capsule")

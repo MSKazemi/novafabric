@@ -265,6 +265,35 @@ def test_receipt_edit_with_recomputed_digest_is_invalid(keys: tuple[Path, Path])
     assert "receipt" in _failed(result)
 
 
+def test_a_contradictory_duplicate_under_an_attested_id_is_invalid(
+    keys: tuple[Path, Path],
+) -> None:
+    # review misc-1-06: the comparison kept the LAST receipt per consent_id, so a second,
+    # internally valid, broader receipt prepended under an attested id verified "ok".
+    from novafabric.hitl.consent import compute_receipt_digest
+
+    data = _doc()
+    env = _attest(data, keys[0])
+    tampered = copy.deepcopy(data)
+    rows = _consents(tampered)
+    broader = copy.deepcopy(rows[0])
+    broader["purpose"] = "dpv:Marketing"
+    broader["receipt_digest"] = compute_receipt_digest(broader)
+    rows.insert(0, broader)
+    result = _verify(env, tampered, keys[1])
+    assert result.status == "invalid"
+    assert "receipt" in _failed(result)
+    assert any("recorded 2 times" in c.detail for c in result.checks if not c.ok)
+
+
+def test_an_exact_duplicate_of_an_attested_receipt_is_invalid_too(keys: tuple[Path, Path]) -> None:
+    data = _doc()
+    env = _attest(data, keys[0])
+    doubled = copy.deepcopy(data)
+    _consents(doubled).append(copy.deepcopy(_consents(doubled)[0]))
+    assert _verify(env, doubled, keys[1]).status == "invalid"
+
+
 def test_consent_dropped_is_invalid(keys: tuple[Path, Path]) -> None:
     data = _doc()
     env = _attest(data, keys[0])
