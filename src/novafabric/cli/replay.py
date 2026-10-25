@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric._paths import default_replays_dir
 from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
@@ -292,6 +293,21 @@ def replay_cmd(
         f"(replay_id={result.replay_id}  mode={result.mode})"
     )
 
+    if result.mode == "exact" and result.exact_eligible is not None:
+        if result.exact_eligible:
+            console.print(
+                f"  eligible for exact replay ({result.exact_hash_count or 0} "
+                "model request(s) with inputs)"
+            )
+        else:
+            console.print("  [red]not eligible for exact replay:[/red]")
+            for reason in result.exact_reasons or []:
+                console.print(f"    - {escape(reason)}")
+    if result.mode == "semantic":
+        if result.similarity_score is not None:
+            console.print(f"  similarity: {result.similarity_score:.4f}")
+        # a missing score is explained by the divergence line below
+
     if result.model_calls_available is not None:
         # ADR-0300: what was actually served, so "✓" never reads as more.
         errors = int((result.replay_contract or {}).get("model_errors_replayed") or 0)
@@ -346,7 +362,7 @@ def replay_cmd(
         )
     if result.divergence_reason:
         colour = "red" if result.status == "failure" else "yellow"
-        console.print(f"  [{colour}]divergence: {result.divergence_reason}[/{colour}]")
+        console.print(f"  [{colour}]divergence: {escape(result.divergence_reason)}[/{colour}]")
 
     if result.env_warnings:
         for w in result.env_warnings:

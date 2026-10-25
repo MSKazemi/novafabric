@@ -212,7 +212,7 @@ def test_exact_reports_the_capsule_ineligible(
     adapter_capsule: Path, tmp_path: Path, no_spawn: list[Any]
 ) -> None:
     result = _run(adapter_capsule, tmp_path, mode="exact")
-    assert result.status == "success"
+    assert result.status == "failure"  # ineligible is a verdict, not a success (rlr-09)
     assert result.exact_eligible is False
     assert any("records no command to re-run" in r for r in result.exact_reasons or [])
 

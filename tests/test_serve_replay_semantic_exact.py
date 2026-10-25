@@ -117,9 +117,22 @@ def _make_deterministic_capsule(capsule_dir: Path, run_id: str) -> Path:
 
 # ---------- Semantic endpoint ----------
 
+def _flat_call(call_id: str, content: str) -> dict:
+    """A model call in the shape real capture writes (flat OTel-GenAI keys)."""
+    return {
+        "model_call_id": call_id,
+        "gen_ai.request.model": "gpt-4o",
+        "gen_ai.response.choices": [{"message": {"role": "assistant", "content": content}}],
+    }
+
+
 def test_semantic_replay_returns_similarity_score(client: TestClient, capsule_dir: Path) -> None:
-    """Semantic endpoint returns a similarity_score in [0.0, 1.0] for a real capsule."""
-    run_id = _make_real_capsule(capsule_dir)
+    """Semantic endpoint returns a similarity_score in [0.0, 1.0] when two responses exist."""
+    run_id = "01SEMANTIC00SCORED0000001"
+    _make_capsule_with_model_calls(capsule_dir, run_id, [
+        _flat_call("01AAAAAAAAAAAAAAAAAAAAAAAA", "the quick brown fox"),
+        _flat_call("01BBBBBBBBBBBBBBBBBBBBBBBB", "the quick red fox"),
+    ])
     res = client.post(
         f"/api/runs/{run_id}/replay/semantic?token={VALID_TOKEN}",
         json={"confirmed": True},
@@ -132,32 +145,34 @@ def test_semantic_replay_returns_similarity_score(client: TestClient, capsule_di
     assert result["mode"] == "semantic"
     assert result["status"] == "success"
     assert "replay_id" in result
-    assert "similarity_score" in result
     score = result["similarity_score"]
     assert isinstance(score, (int, float))
-    assert 0.0 <= score <= 1.0
+    assert 0.0 < score < 1.0
+
+
+def test_semantic_replay_of_a_capsule_with_nothing_to_compare_has_no_score(
+    client: TestClient, capsule_dir: Path
+) -> None:
+    """review replay-lineage-registry-09: no responses is not a perfect 1.0."""
+    run_id = _make_real_capsule(capsule_dir)
+    res = client.post(
+        f"/api/runs/{run_id}/replay/semantic?token={VALID_TOKEN}",
+        json={"confirmed": True},
+        headers=HEADERS,
+    )
+    assert res.status_code == 200, res.text
+    result = res.json()["result"]
+    assert result.get("similarity_score") is None
+    assert "fewer than 2" in result["divergence_reason"]
 
 
 def test_semantic_replay_with_identical_model_calls(client: TestClient, capsule_dir: Path) -> None:
     """Capsule with two identical model call responses → similarity_score should be 1.0."""
     run_id = "01SEMANTIC00IDENTICAL00001"
-    model_calls = [
-        {
-            "model_call_id": "01AAAAAAAAAAAAAAAAAAAAAAAA",
-            "model": "gpt-4o",
-            "request": {"messages": [{"role": "user", "content": "hello"}]},
-            "response": {"choices": [{"message": {"role": "assistant",
-                                                   "content": "Same answer."}}]},
-        },
-        {
-            "model_call_id": "01BBBBBBBBBBBBBBBBBBBBBBBB",
-            "model": "gpt-4o",
-            "request": {"messages": [{"role": "user", "content": "hello again"}]},
-            "response": {"choices": [{"message": {"role": "assistant",
-                                                   "content": "Same answer."}}]},
-        },
-    ]
-    _make_capsule_with_model_calls(capsule_dir, run_id, model_calls)
+    _make_capsule_with_model_calls(capsule_dir, run_id, [
+        _flat_call("01AAAAAAAAAAAAAAAAAAAAAAAA", "Same answer."),
+        _flat_call("01BBBBBBBBBBBBBBBBBBBBBBBB", "Same answer."),
+    ])
     res = client.post(
         f"/api/runs/{run_id}/replay/semantic?token={VALID_TOKEN}",
         json={"confirmed": True},
@@ -170,7 +185,7 @@ def test_semantic_replay_with_identical_model_calls(client: TestClient, capsule_
 
 
 def test_semantic_replay_with_no_model_calls(client: TestClient, capsule_dir: Path) -> None:
-    """Capsule with zero model calls → similarity_score defaults to 1.0."""
+    """Capsule with zero model calls → no similarity_score (it used to default to 1.0)."""
     run_id = "01SEMANTIC00NOMODELCALLS01"
     _make_capsule_with_model_calls(capsule_dir, run_id, [])
     res = client.post(
@@ -180,7 +195,8 @@ def test_semantic_replay_with_no_model_calls(client: TestClient, capsule_dir: Pa
     )
     assert res.status_code == 200
     result = res.json()["result"]
-    assert result["similarity_score"] == 1.0
+    assert result.get("similarity_score") is None
+    assert result.get("matched_run_id") is None
 
 
 def test_semantic_replay_unconfirmed_returns_400(client: TestClient, capsule_dir: Path) -> None:

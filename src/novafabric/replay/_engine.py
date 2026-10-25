@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import difflib
-import hashlib
 import json
 import os
 import subprocess
@@ -532,9 +531,16 @@ class ReplayEngine:
                 for i in range(len(texts))
                 for j in range(i + 1, len(texts))
             ]
-            similarity_score = round(sum(pairs) / len(pairs), 4)
+            similarity_score: float | None = round(sum(pairs) / len(pairs), 4)
+            no_score_reason = None
         else:
-            similarity_score = 1.0
+            # A score needs two responses to compare. 1.0 here was a perfect
+            # score built from no data (review replay-lineage-registry-09).
+            similarity_score = None
+            no_score_reason = (
+                f"fewer than 2 model responses with text ({len(texts)}); "
+                "there is nothing to compare, so no similarity score"
+            )
 
         result = ReplayResult(
             replay_id=replay_id,
@@ -548,7 +554,8 @@ class ReplayEngine:
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=len(model_calls),
             similarity_score=similarity_score,
-            matched_run_id=run_id,
+            matched_run_id=run_id if similarity_score is not None else None,
+            divergence_reason=no_score_reason,
             schema_drift=schema_drift or None,
         )
         write_replay_result(result, result_dir)
@@ -587,10 +594,9 @@ class ReplayEngine:
         for mc in model_calls:
             # Records use flat OTel-GenAI keys; the request is the set of
             # gen_ai.request.* attributes, and the seed is gen_ai.request.seed.
-            inputs = {k: v for k, v in mc.items() if k.startswith("gen_ai.request.")}
-            if inputs:
-                canonical = json.dumps(inputs, sort_keys=True, ensure_ascii=False)
-                hashlib.sha256(canonical.encode()).hexdigest()
+            # hash_count is the number of requests that carry inputs to hash; a
+            # digest computed and thrown away verified nothing, so none is kept.
+            if any(k.startswith("gen_ai.request.") for k in mc):
                 hash_count += 1
             if mc.get("gen_ai.request.seed") in (None, ""):
                 reasons.append(
@@ -614,7 +620,12 @@ class ReplayEngine:
             replay_id=replay_id,
             replay_of_run_id=run_id,
             mode="exact",
-            status="success",
+            # Ineligible is a verdict, not a success: it was a green tick and
+            # exit 0 for a capsule that cannot be replayed exactly (review
+            # replay-lineage-registry-09).
+            status="success" if eligible else "failure",
+            exit_code=None if eligible else 1,
+            divergence_reason=None if eligible else "; ".join(reasons),
             start_time=start,
             end_time=_now(),
             duration_ms=int((time.monotonic() - t0) * 1000),
