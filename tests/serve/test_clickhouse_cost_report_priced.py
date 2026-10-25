@@ -120,3 +120,36 @@ def test_endpoint_flags_a_partial_clickhouse_window_as_lower_bound(
     assert notes["cost_is_lower_bound"] is True
     assert notes["unpriced_models"] == ["mystery-model"]
     assert notes["pricing_coverage_checked"] is True
+
+
+# ── review misc-2-09: tenant scope and the call/run count ───────────────────
+
+
+def test_cost_report_filters_by_tenant() -> None:
+    client = _client(calls=1, unpriced_calls=0, unpriced=[])
+    with patch.object(clickhouse_store, "_get_client", return_value=client):
+        clickhouse_store.cost_report(days=7, tenant_id="acme")
+    sqls = [c.args[0] for c in client.query.call_args_list]
+    assert sqls and all("tenant_id = {tenant_id:String}" in sql for sql in sqls)
+    assert all(c.kwargs["parameters"]["tenant_id"] == "acme" for c in client.query.call_args_list)
+
+
+def test_cost_report_defaults_to_the_default_tenant() -> None:
+    client = _client(calls=1, unpriced_calls=0, unpriced=[])
+    with patch.object(clickhouse_store, "_get_client", return_value=client):
+        clickhouse_store.cost_report(days=7)
+    assert all(
+        c.kwargs["parameters"]["tenant_id"] == "default" for c in client.query.call_args_list
+    )
+
+
+def test_the_aggregate_rows_report_a_call_count() -> None:
+    # ``run_count`` is countMerge over call rows: it counts calls. It stays (a public
+    # CSV header) and ``call_count`` says what it is.
+    client = MagicMock()
+    res = MagicMock()
+    res.result_rows = [["m", "2026-10-01", 1.5, 10, 5, 7]]
+    client.query.return_value = res
+    with patch.object(clickhouse_store, "_get_client", return_value=client):
+        rows = clickhouse_store.query_cost_report(tenant_id="acme", since_days=7)
+    assert rows[0]["call_count"] == 7 == rows[0]["run_count"]

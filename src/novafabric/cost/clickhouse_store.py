@@ -285,16 +285,22 @@ def ingest_all_capsules(
 def cost_report(
     run_id: str | None = None,
     days: int = 7,
+    tenant_id: str = "default",
 ) -> dict[str, Any]:
     """Query ClickHouse for aggregated cost data.
 
     Returns a dict matching the /api/cost/report response schema.
-    Queries the raw ``nova.cost_events`` table.
+    Queries the raw ``nova.cost_events`` table, for one tenant: the store is
+    tenancy-aware (``serve/tenancy.py``), so a report without the predicate would
+    add every tenant's spend together (review misc-2-09).
     """
     client = _get_client()
 
-    base_filter = "recorded_at >= now() - toIntervalDay(toInt32({days:Int32}))"
-    params: dict[str, Any] = {"days": days}
+    base_filter = (
+        "tenant_id = {tenant_id:String}"
+        " AND recorded_at >= now() - toIntervalDay(toInt32({days:Int32}))"
+    )
+    params: dict[str, Any] = {"days": days, "tenant_id": tenant_id}
 
     if run_id:
         base_filter += " AND run_id = {run_id:String}"
@@ -411,7 +417,11 @@ def query_cost_report(
 
     Returns:
         List of dicts with keys: model_id, date, total_usd, prompt_tokens,
-        completion_tokens, run_count.  Ordered by date DESC, total_usd DESC.
+        completion_tokens, call_count, run_count.  Ordered by date DESC,
+        total_usd DESC.  ``call_count`` is the number of model calls recorded;
+        ``run_count`` is the same number under its original, misleading name
+        (it was always ``countMerge`` over call rows) and is kept because it is
+        a public CSV/JSON field.
 
     Raises:
         RuntimeError: if NOVA_CLICKHOUSE_URL is not set.
@@ -447,6 +457,7 @@ def query_cost_report(
                 "total_usd": round(float(row[2]), 6),
                 "prompt_tokens": int(row[3]),
                 "completion_tokens": int(row[4]),
+                "call_count": int(row[5]),
                 "run_count": int(row[5]),
             }
         )
