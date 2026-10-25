@@ -32,6 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from novafabric._capsule_fs import read_capsule_file
 from novafabric.capsule.ulid_util import is_valid_ulid, new_ulid
 from novafabric.eval.significance import wilson_interval
@@ -104,6 +106,22 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+class NotACapsuleError(ValueError):
+    """The directory handed to the compiler is not a capsule with a run id.
+
+    Raised instead of attributing a signed case to a run that does not exist.
+    """
+
+
+#: Weakest first — the order :meth:`SafetyCaseCompiler._propagate` uses.
+_STATE_STRENGTH = {
+    BackingState.UNSUPPORTED: 0,
+    BackingState.CONTESTED: 1,
+    BackingState.UNKNOWN: 2,
+    BackingState.SUPPORTED: 3,
+}
 
 
 class _Resolved:
@@ -205,8 +223,31 @@ class SafetyCaseCompiler:
     # -- subject helpers -----------------------------------------------------
 
     def _run_id(self, capsule_dir: Path) -> str:
-        name = capsule_dir.name
-        return name if is_valid_ulid(name) else new_ulid()
+        """The capsule's own ``run_id`` — ``capsule.yaml``'s, else a ULID dir name.
+
+        Review misc-1-05: a freshly minted ULID for any other directory made the
+        signed case claim a run that never existed, and a different one per rebuild.
+        """
+        if not capsule_dir.is_dir():
+            raise NotACapsuleError(f"{capsule_dir} is not a directory")
+        manifest = capsule_dir / "capsule.yaml"
+        if manifest.exists():
+            try:
+                data = yaml.safe_load(
+                    read_capsule_file(capsule_dir, "capsule.yaml", operation="safety case")
+                )
+            except yaml.YAMLError as exc:
+                raise NotACapsuleError(f"{manifest} is not valid YAML") from exc
+            run_id = data.get("run_id") if isinstance(data, dict) else None
+            if isinstance(run_id, str) and is_valid_ulid(run_id):
+                return run_id
+            raise NotACapsuleError(f"{manifest} carries no valid ULID run_id")
+        if is_valid_ulid(capsule_dir.name):
+            return capsule_dir.name
+        raise NotACapsuleError(
+            f"{capsule_dir} has no capsule.yaml and its name is not a run id; "
+            "not a capsule"
+        )
 
     def _capsule_hash(self, capsule_dir: Path) -> str:
         manifest = capsule_dir / "capsule.yaml"
@@ -316,14 +357,7 @@ class SafetyCaseCompiler:
         """Weakest child state wins (UNSUPPORTED < CONTESTED < UNKNOWN < SUPPORTED)."""
         if not child_states:
             return BackingState.UNSUPPORTED
-        order = {
-            BackingState.UNSUPPORTED: 0,
-            BackingState.CONTESTED: 1,
-            BackingState.UNKNOWN: 2,
-            BackingState.SUPPORTED: 3,
-        }
-        weakest = min(child_states, key=lambda s: order[s])
-        return weakest
+        return min(child_states, key=lambda s: _STATE_STRENGTH[s])
 
     @staticmethod
     def _propagation_reason(
@@ -431,14 +465,22 @@ class SafetyCaseCompiler:
         eval_dir = capsule_dir / "eval-results"
         if not eval_dir.is_dir():
             return None
-        candidates = sorted(eval_dir.glob("*.json"))
-        if not candidates:
+        # Review misc-1-05: every eval file counts and the weakest state wins — the
+        # same rule the tree uses — so file names cannot choose the verdict. Each
+        # candidate is resolved from the same evidence counter; the chosen one keeps
+        # its id and the counter advances once.
+        start = self._evidence_counter
+        resolutions: list[_Resolved] = []
+        for path in sorted(eval_dir.glob("*.json")):
+            data = _load_json(path)
+            if data is None:
+                continue
+            self._evidence_counter = start
+            resolutions.append(self._eval_resolution(capsule_dir, path, data))
+        self._evidence_counter = start + 1 if resolutions else start
+        if not resolutions:
             return None
-        path = candidates[0]
-        data = _load_json(path)
-        if data is None:
-            return None
-        return self._eval_resolution(capsule_dir, path, data)
+        return min(resolutions, key=lambda r: _STATE_STRENGTH[r.state])
 
     def _eval_resolution(
         self, capsule_dir: Path, path: Path, data: dict[str, Any]

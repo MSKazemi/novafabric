@@ -139,13 +139,12 @@ class TestCriterionBindingResolver:
 
 
 class TestEdges:
-    def test_non_ulid_capsule_name_gets_fresh_run_id(self, tmp_path: Path) -> None:
+    def test_non_ulid_capsule_name_uses_the_manifest_run_id(self, tmp_path: Path) -> None:
+        # review misc-1-05: the run id is the capsule's own, never a minted one.
         cap = _capsule(tmp_path, name="not-a-ulid")
+        (cap / "capsule.yaml").write_text("run_id: 01HXAY7M5JZ8R7K4P9DPBYK2WX\n")
         case = SafetyCaseCompiler().build(cap, "clymer-generic-v0")
-        # subject run_id must still be a valid ULID
-        from novafabric.capsule.ulid_util import is_valid_ulid
-
-        assert is_valid_ulid(case.subject.run_ids[0])
+        assert case.subject.run_ids == ["01HXAY7M5JZ8R7K4P9DPBYK2WX"]
 
     def test_eval_without_process_ref_falls_back_to_file(self, tmp_path: Path) -> None:
         cap = _capsule(tmp_path)

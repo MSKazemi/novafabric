@@ -19,7 +19,7 @@ import typer
 from rich.console import Console
 
 from novafabric.compliance.export.safety_case import render_safety_case
-from novafabric.safetycase.compiler import SafetyCaseCompiler
+from novafabric.safetycase.compiler import NotACapsuleError, SafetyCaseCompiler
 from novafabric.safetycase.models import SafetyCase
 from novafabric.safetycase.templates import KNOWN_TEMPLATE_IDS, TemplateError
 from novafabric.safetycase.verifier import verify_exit_code, verify_safety_case
@@ -119,6 +119,9 @@ def build_cmd(
         case = SafetyCaseCompiler(replay_public_keys=keys).build(capsule_dir, template)
     except TemplateError as exc:
         console.print(f"[red]Template error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    except NotACapsuleError as exc:
+        console.print(f"[red]Not a capsule:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     payload = json.dumps(case.to_record(), indent=2)
     if output:
