@@ -2,6 +2,8 @@ import { clsx } from 'clsx';
 
 interface RawSpan {
   span_id?: string;
+  /** Capsule trace spans carry `parent_span_id`; `parent` is the older spelling. */
+  parent_span_id?: string;
   parent?: string;
   name?: string;
   duration_ms?: number;
@@ -16,27 +18,34 @@ interface FlatSpan {
   depth: number;
 }
 
-function flattenSpans(spans: RawSpan[]): FlatSpan[] {
+export function flattenSpans(spans: RawSpan[]): FlatSpan[] {
+  // Review frontend-dashboard-15: reading only `parent` made every capsule span a root,
+  // so two structurally different traces rendered as identical. Every parentless span is
+  // a root, and a visited set keeps a malformed trace (parent cycle, duplicate span id)
+  // from recursing without end (-17).
   const childrenOf = new Map<string, RawSpan[]>();
-  let rootSpan: RawSpan | null = null;
+  const roots: RawSpan[] = [];
   for (const s of spans) {
-    if (!s.parent) { rootSpan = s; }
+    const parent = s.parent_span_id || s.parent;
+    if (!parent) roots.push(s);
     else {
-      if (!childrenOf.has(s.parent)) childrenOf.set(s.parent, []);
-      childrenOf.get(s.parent)!.push(s);
+      if (!childrenOf.has(parent)) childrenOf.set(parent, []);
+      childrenOf.get(parent)!.push(s);
     }
   }
-  if (!rootSpan) return [];
 
   const result: FlatSpan[] = [];
+  const seen = new Set<RawSpan>();
   function walk(sp: RawSpan, parentPath: string, depth: number) {
+    if (seen.has(sp)) return;
+    seen.add(sp);
     const path = parentPath ? `${parentPath}/${sp.name ?? '?'}` : (sp.name ?? 'root');
     result.push({ path, name: sp.name ?? '?', duration_ms: sp.duration_ms ?? 0, kind: sp.kind ?? 'internal', depth });
     for (const child of childrenOf.get(sp.span_id ?? '') ?? []) {
       walk(child, path, depth + 1);
     }
   }
-  walk(rootSpan, '', 0);
+  for (const root of roots) walk(root, '', 0);
   return result;
 }
 
@@ -52,7 +61,7 @@ interface SpanDiff {
   durationPct?: number;   // % change
 }
 
-function diffSpans(aSpans: FlatSpan[], bSpans: FlatSpan[]): SpanDiff[] {
+export function diffSpans(aSpans: FlatSpan[], bSpans: FlatSpan[]): SpanDiff[] {
   const aByPath = new Map(aSpans.map(s => [s.path, s]));
   const bByPath = new Map(bSpans.map(s => [s.path, s]));
   const allPaths = new Set([...aByPath.keys(), ...bByPath.keys()]);
