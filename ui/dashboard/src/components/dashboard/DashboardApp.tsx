@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react';
-import { api, getConnection, clearConnection, ping, validateToken, onAuthChange, setConnection } from '../../lib/api';
+import { api, getConnection, clearConnection, ping, validateToken, onAuthChange, setConnection, ServeApiError } from '../../lib/api';
 
 function openTopology() {
   const { token, base } = getConnection();
@@ -160,9 +160,15 @@ function DashboardInner() {
         const h = await ping(base);
         setServerInfo({ version: h.version, base });
         setConnected(true);
-      } catch {
-        clearConnection();
-        setBootError('Token rejected — get the current token from the terminal: cat "${NOVAFABRIC_HOME:-$HOME/.novafabric}/.serve-token"');
+      } catch (e) {
+        // Only a 401 means the token is bad. A server that is briefly down, or a network
+        // error on reload, must not delete a good token (review frontend-dashboard-18).
+        if (e instanceof ServeApiError && e.status === 401) {
+          clearConnection();
+          setBootError('Token rejected — get the current token from the terminal: cat "${NOVAFABRIC_HOME:-$HOME/.novafabric}/.serve-token"');
+        } else {
+          setBootError(`Could not reach the server at ${base} (${e instanceof Error ? e.message : String(e)}). Your token was kept — check that \`nova serve\` is running, then reload.`);
+        }
       }
     })();
 

@@ -47,8 +47,11 @@ export default function ManualClassifyPanel() {
     'w-full text-[10px] rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2.5 py-2 font-mono focus:border-[var(--color-accent)] focus:outline-none resize-y min-h-[80px]';
 
   const euTier = typeof result?.eu_ai_act_tier === 'string' ? result.eu_ai_act_tier : null;
-  const nistLevel = typeof result?.nist_rmf_level === 'string' ? result.nist_rmf_level : null;
-  const ombTier = typeof result?.omb_tier === 'string' ? result.omb_tier : null;
+  // The server's ClassificationResult names these `nist_rmf_impact` and `omb_flags` (a list);
+  // reading `nist_rmf_level` / `omb_tier` meant they never showed (review frontend-dashboard-19).
+  const nistLevel = typeof result?.nist_rmf_impact === 'string' ? result.nist_rmf_impact : null;
+  const ombFlags = Array.isArray(result?.omb_flags) ? (result.omb_flags as unknown[]).map(String) : [];
+  const ombTier = ombFlags.length > 0 ? ombFlags.join(', ') : null;
   const rationale = typeof result?.rationale === 'string' ? result.rationale : null;
   const euConfig = euTier ? (EU_TIER_CONFIG[euTier] ?? { label: euTier, colorClass: 'text-[var(--color-text-muted)]' }) : null;
   const nistConfig = nistLevel ? (NIST_IMPACT_CONFIG[nistLevel] ?? { label: nistLevel, colorClass: 'text-[var(--color-text-muted)]' }) : null;
@@ -185,7 +188,7 @@ export default function ManualClassifyPanel() {
             )}
             {ombTier && (
               <div className="text-xs font-mono px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">
-                OMB: {ombTier}
+                OMB M-24-10: {ombTier}
               </div>
             )}
           </div>

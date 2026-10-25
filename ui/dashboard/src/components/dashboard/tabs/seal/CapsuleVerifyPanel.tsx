@@ -6,8 +6,18 @@ import { api, type CapsuleVerifyResult } from '../../../../lib/api';
 import { SuggestInput } from '../../../ui/SuggestInput';
 import CopyButton from '../../../ui/CopyButton';
 
-function CheckRow({ label, ok }: { label: string; ok: boolean | undefined }) {
+function CheckRow({ label, ok }: { label: string; ok: boolean | null | undefined }) {
   if (ok === undefined) return null;
+  // `null` = the server did not check it (no timestamp token present): not a failure.
+  if (ok === null) {
+    return (
+      <div className="flex items-center gap-2 text-[11px] font-mono">
+        <span className="text-[var(--color-text-faint)]">–</span>
+        <span className="text-[var(--color-text-muted)]">{label}</span>
+        <span className="ml-auto font-medium text-[var(--color-text-faint)]">NOT CHECKED</span>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-2 text-[11px] font-mono">
       <span className={ok ? 'text-[var(--color-status-success)]' : 'text-[var(--color-status-failure)]'}>

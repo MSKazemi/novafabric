@@ -15,6 +15,16 @@ import type { RunCostEntry, StatusFilter } from './types';
 
 const PAGE_SIZE = 50;
 
+/**
+ * The server keeps rows whose `created_at <= until` as a string comparison, so a bare
+ * `YYYY-MM-DD` excluded the whole selected day (the client-side filter used end of day).
+ * Review frontend-dashboard-19.
+ */
+export function endOfDay(until: string): string | undefined {
+  if (!until) return undefined;
+  return /^\d{4}-\d{2}-\d{2}$/.test(until) ? `${until}T23:59:59.999999` : until;
+}
+
 export interface RunSearchState {
   runs: RunSummary[] | null;
   setRuns: Dispatch<SetStateAction<RunSummary[] | null>>;
@@ -74,7 +84,7 @@ export function useRunSearch({
         q: search.trim() || undefined,
         status: statusFilter !== 'all' ? statusFilter : undefined,
         since: since || undefined,
-        until: until || undefined,
+        until: endOfDay(until),
       });
       if (mine !== generation.current) return;
       setRuns(r.items);
@@ -99,7 +109,7 @@ export function useRunSearch({
         q: search.trim() || undefined,
         status: statusFilter !== 'all' ? statusFilter : undefined,
         since: since || undefined,
-        until: until || undefined,
+        until: endOfDay(until),
       });
       if (mine !== generation.current) return; // the list was refreshed meanwhile
       setRuns(prev => [...(prev ?? []), ...r.items]);

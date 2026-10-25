@@ -86,7 +86,8 @@ export function CapsuleSummary({
   );
 }
 
-type Check = { label: string; ok: boolean | undefined };
+/** `ok: null` is "not checked" (e.g. no RFC 3161 token present) — not a failure. */
+type Check = { label: string; ok: boolean | null | undefined };
 
 export function IntegrityPanel({
   runId,
@@ -186,9 +187,9 @@ export function IntegrityPanel({
             <ul className="space-y-1">
               {checks.map(c => (
                 <li key={c.label} className="flex items-center gap-2 text-xs">
-                  <StatusPill status={c.ok ? 'passed' : 'failed'} variant="dot" />
+                  <StatusPill status={c.ok == null ? 'unknown' : c.ok ? 'passed' : 'failed'} variant="dot" />
                   <span>{c.label}</span>
-                  <span className="text-[var(--color-text-faint)]">{c.ok ? 'ok' : 'failed'}</span>
+                  <span className="text-[var(--color-text-faint)]">{c.ok == null ? 'not checked' : c.ok ? 'ok' : 'failed'}</span>
                 </li>
               ))}
             </ul>

@@ -121,8 +121,8 @@ export default function AdminTab() {
           </div>
         )}
         <p className="mt-3 text-[10px] font-mono text-[var(--color-text-faint)]">
-          Auto-refreshes every 30 seconds. Token values are stored locally in{' '}
-          <code>~/.novafabric/tokens.jsonl</code> — they are never transmitted again after issuance.
+          Auto-refreshes every 30 seconds. Only a SHA-256 digest of each token is stored, in{' '}
+          <code>$NOVAFABRIC_HOME/tokens.jsonl</code> — the value is shown once at issuance and cannot be recovered.
         </p>
       </Panel>
 
