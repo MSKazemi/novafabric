@@ -660,3 +660,24 @@ def test_has_node_distinguishes_absent_from_ancestorless(lineage) -> None:
     # A leaf node is present and has no ancestors — both facts must be observable.
     assert lineage.has_node("prompt-v1") is True
     assert lineage.provenance("prompt-v1") == []
+
+
+def test_the_window_period_is_the_earliest_and_latest_run_not_the_lexical_ends() -> None:
+    # review misc-1-12: window.from/to were the created_at of the first and last run_id in
+    # id order; imported capsules, other id schemes and same-millisecond ULIDs gave from > to.
+    from novafabric.drift.collect import RunRecord
+
+    def run(run_id: str, created_at: str) -> RunRecord:
+        return RunRecord(run_id=run_id, created_at=created_at, scores={"pass-rate": 1.0})
+
+    runs = [
+        run("run-b", "2026-07-01T00:00:00Z"),   # earliest, but not first by id
+        run("run-a", "2026-07-09T00:00:00Z"),   # latest, first by id
+        run("run-c", "2026-07-05T00:00:00Z"),
+    ]
+    doc = detect_document(
+        baseline=runs, window=runs, dimension="score:pass-rate", statistic="psi", threshold=0.2,
+    )
+    assert doc["window_meta"]["from"] == "2026-07-01T00:00:00Z"
+    assert doc["window_meta"]["to"] == "2026-07-09T00:00:00Z"
+    assert doc["window_meta"]["from"] <= doc["window_meta"]["to"]

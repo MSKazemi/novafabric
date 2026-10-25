@@ -504,8 +504,10 @@ def detect_document(
     if kind == "output":
         doc["metric"] = dimension
         doc["window_meta"] = {
-            "from": window[0].created_at if window else None,
-            "to": window[-1].created_at if window else None,
+            # The period the drift describes is the runs' own span, whatever their ids or
+            # their order in the list (review misc-1-12).
+            "from": min((r.created_at for r in window), default=None),
+            "to": max((r.created_at for r in window), default=None),
             "run_ids": [r.run_id for r in window],
         }
         if baseline_id is not None:
