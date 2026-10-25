@@ -90,7 +90,9 @@ def test_full_pg_backup_restore_cycle(
     assert by_name["pg-migrations"].ok
     assert "3" in by_name["check-target-db"].detail or by_name["check-target-db"].ok
     assert "match the manifest" in by_name["verify-db-counts"].detail
-    assert "tenant_isolation verified" in by_name["verify-rls"].detail
+    rls = by_name["verify-rls"].detail
+    assert "tenant_isolation (USING and WITH CHECK) verified" in rls
+    assert "DRIFT" not in rls, "a freshly restored database must not have drifted"
 
     # --- read the restored DB through the real store ---------------------------
     restored = PostgresMetadataStore(restore_target_dsn)
