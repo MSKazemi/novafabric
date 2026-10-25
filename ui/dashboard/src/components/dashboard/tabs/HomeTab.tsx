@@ -348,7 +348,9 @@ export default function HomeTab({ onNavigate }: { onNavigate: (tab: Tab) => void
               <StatusPill ok={counts.failedRuns === 0} label={counts.failedRuns === 0 ? 'All runs passing' : `${counts.failedRuns} failed run${counts.failedRuns === 1 ? '' : 's'}`} />
             )}
             <StatusPill ok={counts.pendingEval === 0} label={counts.pendingEval === 0 ? 'No pending evals' : `${counts.pendingEval} pending eval`} />
-            <StatusPill ok label="Registry OK" />
+            {/* Reachability only: the stats call just answered (or, if the latest poll
+                failed, did not). It says nothing about registry integrity. */}
+            <StatusPill ok={!error} label={error ? 'Registry unreachable' : 'Registry reachable'} />
           </>
         ) : (
           <span className="text-[var(--color-text-faint)]">Loading status…</span>
@@ -394,7 +396,14 @@ export default function HomeTab({ onNavigate }: { onNavigate: (tab: Tab) => void
           stats={[
             { value: evidenceCount !== null ? evidenceCount.total : '—', label: 'evidence bundles' },
             { value: evidenceCount !== null ? evidenceCount.verified : '—', label: 'verified', tone: 'success' },
-            { value: '0', label: 'violations', tone: 'success' },
+            // No policy-violation count is served to this page, so none is shown (it read a
+            // constant "0 violations" in green — review frontend-dashboard-14). What the
+            // page does know is how many bundles are not verified.
+            {
+              value: evidenceCount !== null ? Math.max(evidenceCount.total - evidenceCount.verified, 0) : '—',
+              label: 'unverified',
+              tone: evidenceCount !== null && evidenceCount.total > evidenceCount.verified ? 'pending' : 'normal',
+            },
           ]}
           cta="Go to Evidence"
           onClick={() => onNavigate('evidence')}
