@@ -7,9 +7,8 @@ import { SuggestInput } from '../../../ui/SuggestInput';
 
 export default function KGIngestPanel({ capsuleDirs }: { capsuleDirs: string[] }) {
   const [capsulePath, setCapsulePath] = useState('');
-  const [verified, setVerified] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; ingested?: number; written?: number; skipped?: number; error?: string } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; ingested?: number; written?: number; skipped?: number; novaseal_verified?: boolean; note?: string; error?: string } | null>(null);
 
   const inputClass = 'w-full text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none';
 
@@ -18,14 +17,14 @@ export default function KGIngestPanel({ capsuleDirs }: { capsuleDirs: string[] }
     setLoading(true);
     setResult(null);
     try {
-      const r = await api.kgIngest(capsulePath.trim(), verified);
+      const r = await api.kgIngest(capsulePath.trim());
       setResult(r);
     } catch (e) {
       setResult({ ok: false, error: (e as Error).message });
     } finally {
       setLoading(false);
     }
-  }, [capsulePath, verified]);
+  }, [capsulePath]);
 
   return (
     <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 space-y-3">
@@ -48,10 +47,10 @@ export default function KGIngestPanel({ capsuleDirs }: { capsuleDirs: string[] }
             onEnter={handleIngest}
           />
         </div>
-        <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] cursor-pointer">
-          <input type="checkbox" checked={verified} onChange={(e) => setVerified(e.target.checked)} className="rounded" />
-          Mark events as NovaSeal-verified (confidence = 1.0)
-        </label>
+        <p className="text-[10px] text-[var(--color-text-faint)]">
+          Events are marked NovaSeal-verified only when the capsule's own seal verifies; the server
+          reads that from the seal, and the browser cannot assert it.
+        </p>
       </div>
 
       <button
@@ -75,7 +74,13 @@ export default function KGIngestPanel({ capsuleDirs }: { capsuleDirs: string[] }
             : 'bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] border border-[color-mix(in_oklab,var(--color-status-failure)_25%,transparent)]',
         )}>
           {result.ok
-            ? <span className="text-[var(--color-status-success)]">✓ Ingested {result.ingested} events → wrote {result.written} KG edges{result.skipped ? ` (${result.skipped} skipped)` : ''}</span>
+            ? (
+              <span className="text-[var(--color-status-success)]">
+                ✓ Ingested {result.ingested} events → wrote {result.written} KG edges{result.skipped ? ` (${result.skipped} skipped)` : ''}
+                {' · '}{result.novaseal_verified ? 'NovaSeal-verified' : 'not NovaSeal-verified'}
+                {result.note ? ` — ${result.note}` : ''}
+              </span>
+            )
             : <span className="text-[var(--color-status-failure)]">✗ {result.error}</span>
           }
         </div>

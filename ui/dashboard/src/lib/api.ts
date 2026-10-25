@@ -1609,9 +1609,11 @@ export const api = {
     postJson<{ ok: boolean; db_path: string; note: string; error?: string }>(
       '/api/kg/init', {}
     ),
-  kgIngest: (capsule_path: string, verified = false) =>
-    postJson<{ ok: boolean; ingested: number; skipped: number; written: number; capsule_path: string; kg_path: string; note: string; error?: string }>(
-      '/api/kg/ingest', { capsule_path, verified }
+  // Whether the events count as NovaSeal-verified is read by the server from the capsule's own
+  // seal; the request carries no such claim (review frontend-dashboard-10).
+  kgIngest: (capsule_path: string) =>
+    postJson<{ ok: boolean; ingested: number; skipped: number; written: number; novaseal_verified?: boolean; capsule_path: string; kg_path: string; note: string; error?: string }>(
+      '/api/kg/ingest', { capsule_path }
     ),
   kgIngestAll: (capsule_base?: string) =>
     postJson<{ ok: boolean; total: number; newly_ingested: number; skipped: number; failed: number; capsule_base?: string; error?: string }>(
