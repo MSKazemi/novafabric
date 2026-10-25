@@ -1392,11 +1392,15 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
 | `--upstream-url` | (required) | The LLM API base URL to forward to |
 | `--listen` | `127.0.0.1:8765` | Proxy listener address as `host:port` |
 | `--capsule-dir` | auto-allocated | Where to write `model-calls.jsonl`; falls back to `NOVAFABRIC_CAPSULE_DIR` |
-| `--upstream-timeout` | `60.0` | Wall-clock timeout per upstream call (seconds) |
+| `--upstream-timeout` | `60.0` | Timeout per upstream read, in seconds (httpx applies it to each connect/read, not to the whole call) |
 
-Streaming responses (Server-Sent Events) are consumed by the proxy and merged
-into a synthesized non-streaming envelope for the record — the record captures
-the full content even when the client received it incrementally.
+**The proxy buffers every response.** It relays the upstream status, body and
+headers (including `retry-after`, `x-should-retry`, `x-ratelimit-*` and
+`request-id`, so client SDK retries see them) only after the whole upstream
+response has arrived. A `stream: true` client therefore receives nothing until
+the model finishes — time to first token equals total latency (**planned**:
+relaying chunks as they arrive). For the record, an SSE stream is merged into
+a synthesized non-streaming envelope.
 
 The proxy is base-URL override only. No TLS MITM, no local CA.
 

@@ -101,7 +101,7 @@ def api_proxy_cmd(
         float,
         typer.Option(
             "--upstream-timeout",
-            help="Wall-clock timeout in seconds for each upstream call.",
+            help="Timeout in seconds for each upstream connect/read (not the whole call).",
         ),
     ] = 60.0,
 ) -> None:

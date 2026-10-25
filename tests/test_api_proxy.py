@@ -940,3 +940,82 @@ class TestNoRewriting:
                 headers={}, body=original_bytes,
             )
         assert forwarded["content"] == original_bytes
+
+
+# ── review capture-runners-14: upstream response headers reach the client ────
+
+
+class TestResponseHeaders:
+    def _proxy(self, tmp_path: Path) -> ApiProxy:
+        return ApiProxy(
+            listen_host="127.0.0.1", listen_port=0,
+            upstream_url="https://api.openai.com",
+            writer=_writer(tmp_path), parent_span_id="0" * 16,
+        )
+
+    def test_retry_hints_and_request_id_are_relayed(self, tmp_path: Path) -> None:
+        resp = _mock_response(status=429, body=b'{"error":"rate"}')
+        resp.headers = {
+            "content-type": "application/json",
+            "retry-after": "7",
+            "x-should-retry": "true",
+            "x-ratelimit-remaining-requests": "0",
+            "request-id": "req_123",
+            "content-encoding": "gzip",
+            "transfer-encoding": "chunked",
+            "content-length": "999",
+            "connection": "keep-alive",
+        }
+        with patch("httpx.post", return_value=resp):
+            status, _body, ctype, headers = self._proxy(tmp_path).serve_one_request_with_headers_for_test(
+                method="POST", path="/v1/chat/completions",
+                headers={"content-type": "application/json"},
+                body=b'{"model":"gpt-4o","messages":[]}',
+            )
+        names = {k.lower(): v for k, v in headers}
+        assert status == 429 and ctype == "application/json"
+        assert names["retry-after"] == "7"
+        assert names["x-should-retry"] == "true"
+        assert names["x-ratelimit-remaining-requests"] == "0"
+        assert names["request-id"] == "req_123"
+        # re-set from the relayed body or hop-by-hop: never copied
+        for dropped in ("content-encoding", "transfer-encoding", "content-length", "connection", "content-type"):
+            assert dropped not in names
+
+    def test_a_non_post_relays_headers_too(self, tmp_path: Path) -> None:
+        resp = _mock_response(status=200, body=b"[]")
+        resp.headers = {"content-type": "application/json", "x-request-id": "r1"}
+        with patch("httpx.request", return_value=resp):
+            _s, _b, _c, headers = self._proxy(tmp_path).serve_one_request_with_headers_for_test(
+                method="GET", path="/v1/models", headers={}, body=b"",
+            )
+        assert ("x-request-id", "r1") in headers
+
+    def test_the_handler_writes_them_on_the_wire(self, tmp_path: Path) -> None:
+        import http.client
+        import threading
+        import time
+
+        proxy = ApiProxy(
+            listen_host="127.0.0.1", listen_port=0,
+            upstream_url="https://api.openai.com",
+            writer=_writer(tmp_path), parent_span_id="0" * 16,
+        )
+        resp = _mock_response(status=429, body=b"{}")
+        resp.headers = {"content-type": "application/json", "retry-after": "3"}
+        with patch("httpx.post", return_value=resp):
+            thread = threading.Thread(target=proxy.run, daemon=True)
+            thread.start()
+            deadline = time.time() + 5
+            while proxy._server is None and time.time() < deadline:
+                time.sleep(0.02)
+            assert proxy._server is not None, "proxy did not start"
+            port = proxy._server.server_address[1]
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("POST", "/v1/chat/completions", b'{"model":"m","messages":[]}',
+                         {"content-type": "application/json"})
+            got = conn.getresponse()
+            assert got.status == 429
+            assert got.getheader("retry-after") == "3"
+            conn.close()
+            proxy._server.shutdown()

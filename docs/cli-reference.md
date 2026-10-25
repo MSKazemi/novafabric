@@ -758,7 +758,7 @@ Options:
 - `--listen host:port` — listener address (default: `127.0.0.1:8765`)
 - `--capsule-dir PATH` — active capsule directory. Without it: inside a `nova capture` child (where the runner sets `NOVAFABRIC_SPAN_ID`) the capture's capsule `$NOVAFABRIC_CAPSULE_DIR`; otherwise `$NOVAFABRIC_CAPSULE_DIR` is the capsule store root and a fresh ULID capsule is created under it; with neither, under `$PWD/.novafabric/runs/`. Same rule as `nova mcp-proxy`
 - `--span-id HEX` — parent OTel span id (16 hex chars); falls back to `$NOVAFABRIC_SPAN_ID`
-- `--upstream-timeout FLOAT` — per-request timeout in seconds (default: `60.0`)
+- `--upstream-timeout FLOAT` — timeout in seconds for each upstream connect/read, not for the whole call (default: `60.0`)
 
 The proxy performs base-URL-override only — no TLS MITM, no local CA. Both
 streaming (`text/event-stream`) and non-streaming responses are captured.

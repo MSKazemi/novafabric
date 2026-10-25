@@ -14,9 +14,11 @@ Scope locked by ADR-0026:
   pipeline: URL registry → body adapter → OTel GenAI extractor.
 * **Stdlib + httpx only.**
 * **Non-streaming responses captured fully.** Streaming SSE responses
-  (OpenAI-style delta streams) are forwarded through unchanged with a
-  ``streaming: true`` flag in the record; full delta merge is queued for
-  v0.6.5.
+  (OpenAI-style delta streams) are recorded with a ``streaming: true`` flag.
+  Every response is BUFFERED: the whole upstream body arrives before the
+  client sees a byte, so a streaming client gets no early tokens (planned:
+  chunk relay with ``httpx.stream``). Upstream response headers (retry hints,
+  rate limits, request ids) are relayed.
 
 Anti-patterns (per ADR-0026):
 
@@ -339,6 +341,27 @@ def _filter_forwarded_headers(headers: dict[str, str]) -> dict[str, str]:
     }
 
 
+#: Response headers the listener sets itself or that no longer describe the relayed body:
+#: httpx has already decoded content-encoding, and the length/type are re-set from the
+#: relayed bytes.
+_RESPONSE_OWN_HEADERS = _HOP_BY_HOP_HEADERS | frozenset({"content-encoding", "content-type"})
+
+
+def _filter_response_headers(headers: Any) -> list[tuple[str, str]]:
+    """The upstream response headers a client must still see.
+
+    The proxy relayed only the status and ``Content-Type``, so ``retry-after``,
+    ``x-should-retry``, ``x-ratelimit-*`` and ``request-id`` never reached the client SDK,
+    whose retry and backoff logic then acted on a 429 with no hints (review
+    capture-runners-14). Hop-by-hop headers and the ones re-set from the relayed body are
+    dropped.
+    """
+    return [
+        (str(k), str(v)) for k, v in headers.items()
+        if str(k).lower() not in _RESPONSE_OWN_HEADERS
+    ]
+
+
 class ApiProxy:
     """Transparent LLM API proxy.
 
@@ -402,11 +425,31 @@ class ApiProxy:
         """
         return self._handle_request(method, path, headers, body)
 
+    def serve_one_request_with_headers_for_test(
+        self,
+        *,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        body: bytes,
+    ) -> tuple[int, bytes, str | None, list[tuple[str, str]]]:
+        """Like :meth:`serve_one_request_for_test`, also returning the relayed headers."""
+        return self._handle_request_ex(method, path, headers, body)
+
     # ── Core request handler (shared with BaseHTTPRequestHandler) ────────────
 
     def _handle_request(
         self, method: str, path: str, headers: dict[str, str], body: bytes,
     ) -> tuple[int, bytes, str | None]:
+        status, response_body, content_type, _headers = self._handle_request_ex(
+            method, path, headers, body
+        )
+        return status, response_body, content_type
+
+    def _handle_request_ex(
+        self, method: str, path: str, headers: dict[str, str], body: bytes,
+    ) -> tuple[int, bytes, str | None, list[tuple[str, str]]]:
+        """:meth:`_handle_request` plus the upstream response headers to relay."""
         import httpx
 
         full_upstream = f"{self._upstream_url}{path if path.startswith('/') else '/' + path}"
@@ -423,9 +466,9 @@ class ApiProxy:
             except httpx.HTTPError as exc:
                 return 502, json.dumps({
                     "error": {"message": f"upstream unreachable: {exc}"}
-                }).encode(), "application/json"
+                }).encode(), "application/json", []
             ct = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
-            return resp.status_code, resp.content, ct
+            return resp.status_code, resp.content, ct, _filter_response_headers(resp.headers)
 
         # POST: forward + record as model-call.
         started_at = _now()
@@ -455,7 +498,7 @@ class ApiProxy:
                 duration_ms=duration_ms,
                 upstream_error=str(exc),
             )
-            return 502, error_body, "application/json"
+            return 502, error_body, "application/json", []
 
         duration_ms = int((time.monotonic() - t0) * 1000)
         ct_header = response.headers.get("content-type", "application/json")
@@ -471,7 +514,10 @@ class ApiProxy:
             duration_ms=duration_ms,
             upstream_error=None,
         )
-        return response.status_code, response.content, content_type
+        return (
+            response.status_code, response.content, content_type,
+            _filter_response_headers(response.headers),
+        )
 
     # ── Recording ────────────────────────────────────────────────────────────
 
@@ -523,8 +569,8 @@ class ApiProxy:
         # synthesize a merged response envelope (content concatenation,
         # tool_calls accumulation, usage extraction), and treat the result
         # as if it were a non-streaming response for record purposes.
-        # The original byte stream was already forwarded to the client
-        # untouched — this merge only affects what we record.
+        # The client is sent the original bytes unmodified (after they were
+        # buffered) — this merge only affects what we record.
         if content_type == "text/event-stream":
             ext["io.novafabric.streaming"] = {
                 "streamed": True,
@@ -661,10 +707,12 @@ class ApiProxy:
                 body = self.rfile.read(length) if length > 0 else b""
                 # Convert headers to a plain dict (Message-like → dict[str,str]).
                 hdrs = {str(k): str(v) for k, v in self.headers.items()}
-                status, response_body, content_type = proxy_self._handle_request(
+                status, response_body, content_type, extra = proxy_self._handle_request_ex(
                     method, self.path, hdrs, body,
                 )
                 self.send_response(status)
+                for name, value in extra:
+                    self.send_header(name, value)
                 if content_type:
                     self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(response_body)))
