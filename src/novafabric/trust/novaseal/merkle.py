@@ -1184,6 +1184,11 @@ class MerkleLog:
 # PostgresMerkleLog — Postgres-backed, append-only (Scale-S4)
 # ---------------------------------------------------------------------------
 
+#: Key of the transaction-scoped advisory lock that serialises Postgres Merkle appends.
+_PG_APPEND_LOCK_KEY = 0x4E4F5641_5345414C  # "NOVASEAL"
+#: Serialises the schema bootstrap (see ``_ensure_connected``).
+_PG_SCHEMA_LOCK_KEY = 0x4E4F5641_53454348  # "NOVASECH"
+
 _PG_SCHEMA = """
 CREATE SEQUENCE IF NOT EXISTS nova_seal_leaf_seq START 0 MINVALUE 0;
 
@@ -1267,8 +1272,40 @@ class PostgresMerkleLog:
                 "Install: pip install novafabric[seal-postgres]"
             ) from exc
         self._conn = psycopg.connect(self._dsn, autocommit=False)
+        self._bootstrap_schema()
+
+    def _schema_current(self, cur: Any) -> bool:
+        """True when every object ``_PG_SCHEMA`` creates is already there."""
+        cur.execute(
+            "SELECT to_regclass('nova_seal_leaves') IS NOT NULL"
+            " AND to_regclass('nova_seal_tree_heads') IS NOT NULL"
+            " AND to_regclass('nova_seal_log_meta') IS NOT NULL"
+            " AND to_regclass('nova_seal_leaf_seq') IS NOT NULL"
+            " AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid ="
+            "   to_regclass('nova_seal_tree_heads') AND attname = 'root_version'"
+            "   AND NOT attisdropped)"
+            " AND (SELECT COUNT(*) FROM pg_trigger WHERE tgrelid ="
+            "   to_regclass('nova_seal_leaves')"
+            "   AND tgname IN ('reject_leaf_delete', 'reject_leaf_update')) = 2"
+        )
+        row = cur.fetchone()
+        return bool(row and row[0])
+
+    def _bootstrap_schema(self) -> None:
+        """Create the schema if (and only if) it is not complete.
+
+        ``_PG_SCHEMA`` is idempotent but not lock-free: ``ALTER TABLE … ADD COLUMN IF NOT
+        EXISTS`` and ``DROP TRIGGER`` take ACCESS EXCLUSIVE locks even when nothing changes.
+        Every new connection ran it, so a sealer connecting while another appended deadlocked
+        with it (each holds a lock the other's next statement needs). Now an existing,
+        complete schema is detected with a catalogue read and left alone; creation is
+        serialised by a transaction-scoped advisory lock, re-checked once it is held.
+        """
         with self._conn.cursor() as cur:
-            cur.execute(_PG_SCHEMA)
+            if not self._schema_current(cur):
+                cur.execute("SELECT pg_advisory_xact_lock(%s)", (_PG_SCHEMA_LOCK_KEY,))
+                if not self._schema_current(cur):
+                    cur.execute(_PG_SCHEMA)
         self._conn.commit()
 
     def close(self) -> None:
@@ -1329,12 +1366,25 @@ class PostgresMerkleLog:
 
         with self._conn.transaction():
             with self._conn.cursor() as cur:
+                # Serialise appends, and number the leaf from what is stored rather than from
+                # a sequence (review trust-evidence-08). A sequence value burned by any
+                # rolled-back insert left a gap, after which the newest leaves had
+                # leaf_index >= COUNT(*) and failed verification forever; two concurrent
+                # appends each read the other's absent row and recorded a tree_size no one
+                # could verify. Under the lock the index is the next free position, dense for
+                # a log written by this code; a legacy log with gaps keeps working (its next
+                # index stays above every existing one, so it never collides).
+                cur.execute("SELECT pg_advisory_xact_lock(%s)", (_PG_APPEND_LOCK_KEY,))
                 cur.execute(
-                    "INSERT INTO nova_seal_leaves (leaf_hash, entry_json)"
-                    " VALUES (%s, %s) RETURNING leaf_index",
-                    (leaf_hash, entry_json),
+                    "SELECT GREATEST(COUNT(*), COALESCE(MAX(leaf_index) + 1, 0))"
+                    " FROM nova_seal_leaves"
                 )
-                leaf_index: int = cur.fetchone()[0]
+                leaf_index: int = int(cur.fetchone()[0])
+                cur.execute(
+                    "INSERT INTO nova_seal_leaves (leaf_index, leaf_hash, entry_json)"
+                    " VALUES (%s, %s, %s)",
+                    (leaf_index, leaf_hash, entry_json),
+                )
 
                 # Recompute root using all stored leaf hashes
                 cur.execute(
@@ -1360,7 +1410,7 @@ class PostgresMerkleLog:
             "root_version": version,  # additive (ADR-0313)
             "entry": dict(entry),
         }
-        # A BIGSERIAL can leave gaps (rolled-back inserts), in which case the leaf's
+        # A legacy log written with a sequence can have gaps, in which case the leaf's
         # position differs from leaf_index and a proof would not verify against it —
         # carry the proof only when the two agree.
         if all_hashes and all_hashes[-1] == leaf_hash and leaf_index == tree_size - 1:
@@ -1539,16 +1589,21 @@ class PostgresMerkleLog:
 
         # ------ Sampled spot-check (fast path always runs) ------
         sample_size = min(_SAMPLE_SIZE, leaf_count)
+        # Sample from the leaf_index values that EXIST, not from range(leaf_count): a log with
+        # gaps has leaves whose index is >= COUNT(*), which a range never reaches, so an edited
+        # entry there went undetected (review trust-evidence-13).
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT leaf_index FROM nova_seal_leaves ORDER BY leaf_index")
+            stored_indices: list[int] = [int(row[0]) for row in cur.fetchall()]
         if leaf_count <= sample_size:
             # Small log: check all entries
-            sample_indices: list[int] = list(range(leaf_count))
+            sample_indices: list[int] = stored_indices
         else:
             # Cryptographic RNG: the sampled leaves are the only defense
             # against an entry whose entry_json was edited while its stored
             # leaf_hash was left intact, so the choice must be unpredictable.
-            sample_indices = secrets.SystemRandom().sample(
-                range(leaf_count), sample_size
-            )
+            sample_indices = secrets.SystemRandom().sample(stored_indices, sample_size)
+        sampled = set(sample_indices)  # membership in a list made full=True O(N x sample)
 
         with self._conn.cursor() as cur:
             placeholders = ",".join(["%s"] * len(sample_indices))
@@ -1580,7 +1635,7 @@ class PostgresMerkleLog:
                     if not batch:
                         break
                     for idx, stored_hash, entry_json in batch:
-                        if idx in sample_indices:
+                        if idx in sampled:
                             continue  # already checked
                         entry_bytes = entry_json.encode("utf-8")
                         expected = _leaf_hash(entry_bytes)

@@ -802,11 +802,19 @@ class _FakeCursor:
     def execute(self, sql, params=None):
         sql_norm = " ".join(sql.split())
         store = self._store
-        if sql_norm.startswith("INSERT INTO nova_seal_leaves"):
-            leaf_hash, entry_json = params
-            idx = len(store["leaves"])
+        if sql_norm.startswith("SELECT pg_advisory_xact_lock"):
+            self._result = []
+        elif sql_norm.startswith("SELECT to_regclass"):
+            self._result = [(True,)]  # the schema is already complete
+        elif sql_norm.startswith("SELECT GREATEST(COUNT(*)"):
+            indices = [r[0] for r in store["leaves"]]
+            self._result = [(max(len(indices), (max(indices) + 1) if indices else 0),)]
+        elif sql_norm.startswith("INSERT INTO nova_seal_leaves"):
+            idx, leaf_hash, entry_json = params
             store["leaves"].append((idx, leaf_hash, entry_json))
-            self._result = [(idx,)]
+            self._result = []
+        elif sql_norm.startswith("SELECT leaf_index FROM nova_seal_leaves ORDER BY"):
+            self._result = [(r[0],) for r in sorted(store["leaves"])]
         elif "SELECT leaf_hash FROM nova_seal_leaves ORDER BY leaf_index" in sql_norm:
             self._result = [(row[1],) for row in store["leaves"]]
         elif sql_norm.startswith("INSERT INTO nova_seal_tree_heads"):

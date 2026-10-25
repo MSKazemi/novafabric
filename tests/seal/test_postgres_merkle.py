@@ -240,6 +240,97 @@ class TestPostgresMerkleLogIntegration:
 
 
 @SKIP_INTEGRATION
+class TestPostgresMerkleLogConcurrencyAndGaps:
+    """Reviews trust-evidence-08 and -13: a burned sequence value or two concurrent seals made
+    genuine capsules fail verification forever, and a sparse index hid an edited entry."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_table(self):
+        conn = psycopg.connect(PG_DSN)
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS nova_seal_leaves CASCADE")
+            cur.execute("DROP TABLE IF EXISTS nova_seal_tree_heads CASCADE")
+            cur.execute("DROP TABLE IF EXISTS nova_seal_log_meta CASCADE")
+            cur.execute("DROP SEQUENCE IF EXISTS nova_seal_leaf_seq CASCADE")
+        conn.close()
+        yield
+
+    def test_concurrent_appends_and_a_burned_sequence_value_all_verify(self):
+        import threading
+
+        from novafabric.trust.novaseal.merkle import PostgresMerkleLog
+
+        first = PostgresMerkleLog(PG_DSN)
+        first.append({"capsule_id": "seed"})
+        # A rolled-back insert burns a sequence value (the old gap).
+        conn = psycopg.connect(PG_DSN)
+        with conn.cursor() as cur:
+            cur.execute("SELECT nextval('nova_seal_leaf_seq')")
+        conn.rollback()
+        conn.close()
+
+        results: list[dict] = []
+        errors: list[BaseException] = []
+        lock = threading.Lock()
+
+        def worker(n: int) -> None:
+            try:
+                log = PostgresMerkleLog(PG_DSN)
+                out = log.append({"capsule_id": f"cap-{n}"})
+                with lock:
+                    results.append(out)
+            except BaseException as exc:  # noqa: BLE001
+                with lock:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, errors
+        log = PostgresMerkleLog(PG_DSN)
+        assert log.tree_size() == 9
+        indices = sorted(int(r["leaf_index"]) for r in results)
+        assert indices == list(range(1, 9)), "dense, unique, gap-free"
+        sizes = sorted(int(r["tree_size"]) for r in results)
+        assert sizes == list(range(2, 10)), "every append recorded a tree_size a verifier can use"
+        for index in range(9):
+            assert log.verify_entry(index), f"entry {index} must verify"
+        assert log.verify_consistency().consistent
+
+    def test_an_edited_entry_beyond_a_gap_is_detected(self):
+        from novafabric.trust.novaseal.merkle import PostgresMerkleLog, _leaf_hash
+
+        log = PostgresMerkleLog(PG_DSN)
+        for n in range(3):
+            log.append({"capsule_id": f"ok-{n}"})
+        # A legacy-style sparse row (index 40) whose entry_json no longer matches its leaf_hash.
+        genuine = b'{"capsule_id":"genuine"}'
+        conn = psycopg.connect(PG_DSN)
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO nova_seal_leaves (leaf_index, leaf_hash, entry_json) VALUES (40, %s, %s)",
+                (_leaf_hash(genuine), '{"capsule_id":"EDITED"}'),
+            )
+        conn.close()
+
+        result = log.verify_consistency()  # small log: every entry is checked
+        assert any("leaf 40" in e for e in result.errors), result.errors
+
+    def test_full_audit_skips_the_sampled_leaves_without_a_quadratic_scan(self):
+        from novafabric.trust.novaseal.merkle import PostgresMerkleLog
+
+        log = PostgresMerkleLog(PG_DSN)
+        for n in range(30):
+            log.append({"capsule_id": f"c-{n}"})
+        assert log.verify_consistency(full=True).consistent
+
+
+@SKIP_INTEGRATION
 class TestPostgresMerkleLogBenchmark:
     @pytest.fixture(autouse=True)
     def _clean_table(self):
