@@ -121,3 +121,38 @@ class TestValidateStoresDiverged:
         reports = validate_stores(src, tgt, ["run-A", "run-C"], max_depth=3)
         run_ids_reported = {r.run_id for r in reports}
         assert "run-A" in run_ids_reported or "run-C" in run_ids_reported
+
+
+class TestSameCountDifferentIdentity:
+    """review replay-lineage-registry-18: the divergence check compared row counts, so
+    a target holding different nodes with the same count reported no divergence and
+    the migration committed."""
+
+    def test_different_nodes_with_the_same_count_are_diverged(self, tmp_path: Path) -> None:
+        src = _make_store(tmp_path, "_src")
+        tgt = _make_store(tmp_path, "_tgt")
+        src.insert(_edge("run-A", "run-B"))
+        tgt.insert(_edge("run-A", "run-OTHER"))
+        reports = validate_stores(src, tgt, ["run-A"], max_depth=3)
+        assert reports and all(r.is_diverged for r in reports)
+        assert all(r.source_count == r.target_count == 1 for r in reports if r.query_type == "provenance")
+        prov = next(r for r in reports if r.query_type == "provenance")
+        assert ("run", "run-B") in prov.missing_in_target
+        assert ("run", "run-OTHER") in prov.unexpected_in_target
+
+    def test_the_same_nodes_in_a_different_order_are_not_diverged(self, tmp_path: Path) -> None:
+        src = _make_store(tmp_path, "_src")
+        tgt = _make_store(tmp_path, "_tgt")
+        for store, order in ((src, ("B", "C")), (tgt, ("C", "B"))):
+            for name in order:
+                store.insert(_edge("run-A", f"run-{name}"))
+        assert validate_stores(src, tgt, ["run-A"], max_depth=3) == []
+
+    def test_the_listed_identities_are_bounded(self, tmp_path: Path) -> None:
+        src = _make_store(tmp_path, "_src")
+        tgt = _make_store(tmp_path, "_tgt")
+        for i in range(40):
+            src.insert(_edge("run-A", f"run-S{i}"))
+            tgt.insert(_edge("run-A", f"run-T{i}"))
+        prov = next(r for r in validate_stores(src, tgt, ["run-A"]) if r.query_type == "provenance")
+        assert len(prov.missing_in_target) <= 20 and len(prov.unexpected_in_target) <= 20
