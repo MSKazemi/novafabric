@@ -1,4 +1,11 @@
-"""Cross-site reference token verification (C-3)."""
+"""Cross-site reference token verification (C-3) — **future design, fails closed**.
+
+``novafabric.trust.novaseal`` exposes no ``verify`` function, so today
+:func:`verify_cross_site_token` returns ``False`` for every token and nothing in the
+tree calls it. It verifies nothing; it only refuses. A federation that trusts
+cross-site references needs a real verifier, with its own design and tests, before
+this can return ``True`` (review replay-lineage-registry-19).
+"""
 
 from __future__ import annotations
 

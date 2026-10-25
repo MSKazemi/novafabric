@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Sequence
 from typing import Any, AsyncIterator, Callable, Literal
+from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, FastAPI
-from pydantic import BaseModel
+from fastapi import APIRouter, FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
 from novafabric.lineage.federation.summary import (
     SiteSummaryEntry,
@@ -21,12 +23,18 @@ log = logging.getLogger(__name__)
 
 _SHARD_TIMEOUT = 5.0  # seconds per site
 
+#: Upper bound on the configured site list and on a request's subset of it.
+MAX_SITES = 64
+
 
 class FederationRequest(BaseModel):
     query_type: Literal["provenance", "blast_radius", "replay_chain"]
     root_run_id: str
     max_depth: int = 5
-    sites: list[str]
+    #: Optional subset of the CONFIGURED sites to query (default: all of them). A URL
+    #: the operator did not configure is refused: the request never names a host the
+    #: coordinator will POST to (review replay-lineage-registry-19).
+    sites: list[str] | None = Field(default=None, max_length=MAX_SITES)
 
 
 class FederationResponse(BaseModel):
@@ -36,12 +44,38 @@ class FederationResponse(BaseModel):
     dedup_count: int
 
 
+def _normalise_site(url: str) -> str:
+    return url.rstrip("/")
+
+
+def _validated_sites(sites: Sequence[str]) -> list[str]:
+    if len(sites) > MAX_SITES:
+        raise ValueError(
+            f"at most {MAX_SITES} federation sites may be configured, got {len(sites)}"
+        )
+    out: list[str] = []
+    for url in sites:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError(f"federation site must be an absolute http(s) URL, got {url!r}")
+        normalised = _normalise_site(url)
+        if normalised not in out:
+            out.append(normalised)
+    return out
+
+
 def create_coordinator_app(
     site_id: str,
     summary_fetch_fn: Callable[[], list[SiteSummaryEntry]] | None = None,
     summary_refresh_interval: float = 60.0,
+    sites: Sequence[str] = (),
 ) -> FastAPI:
-    """Return a FastAPI app hosting the federation coordinator."""
+    """Return a FastAPI app hosting the federation coordinator.
+
+    ``sites`` are the shard sites the coordinator may fan out to: operator
+    configuration, never request input. A request may only narrow them.
+    """
+    configured = _validated_sites(sites)
     fetch_fn = summary_fetch_fn or (lambda: [])
     cache = SummaryCache(fetch_fn=fetch_fn, refresh_interval=summary_refresh_interval)
 
@@ -54,24 +88,34 @@ def create_coordinator_app(
             cache.stop()
 
     app = FastAPI(title="NovaFabric Federation Coordinator", lifespan=_lifespan)
-    app.include_router(_build_coordinator_router(site_id=site_id))
+    app.include_router(_build_coordinator_router(site_id=site_id, sites=configured))
     app.include_router(build_summary_router(cache))
     return app
 
 
-def _build_coordinator_router(site_id: str) -> APIRouter:
+def _build_coordinator_router(site_id: str, sites: list[str]) -> APIRouter:
     router = APIRouter()
 
     @router.post("/federation/query", response_model=FederationResponse)
     async def federation_query(req: FederationRequest) -> FederationResponse:
-        """Fan out to all shard sites and return merged, deduplicated NodeRows."""
-        all_rows, partial = await _fan_out(req)
+        """Fan out to the configured shard sites and return merged, deduplicated NodeRows."""
+        if req.sites is None:
+            targets = list(sites)
+        else:
+            targets = [_normalise_site(u) for u in req.sites]
+            unknown = [u for u in targets if u not in sites]
+            if unknown:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"not configured federation site(s): {sorted(set(unknown))}",
+                )
+        all_rows, partial = await _fan_out(req, targets)
         pre_dedup = len(all_rows)
         deduped = _dedup_rows(all_rows)
         return FederationResponse(
             rows=deduped,
             partial=partial,
-            site_count=len(req.sites),
+            site_count=len(targets),
             dedup_count=pre_dedup - len(deduped),
         )
 
@@ -80,6 +124,7 @@ def _build_coordinator_router(site_id: str) -> APIRouter:
 
 async def _fan_out(
     req: FederationRequest,
+    targets: list[str],
 ) -> tuple[list[dict[str, Any]], bool]:
     """POST to each shard and collect NodeRow lists; mark partial on any failure."""
     shard_payload: dict[str, Any] = {
@@ -108,7 +153,7 @@ async def _fan_out(
             log.warning("Site %s unreachable or returned error: %s", site_url, exc)
             return [], True
 
-    results = await asyncio.gather(*[_query_one(s) for s in req.sites])
+    results = await asyncio.gather(*[_query_one(s) for s in targets])
 
     all_rows: list[dict[str, Any]] = []
     partial = False

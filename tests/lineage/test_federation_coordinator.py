@@ -102,7 +102,10 @@ def test_federation_query_merges_rows(tmp_path: Path) -> None:
         return httpx.Response(200, json=data)
 
     with patch.object(httpx.AsyncClient, "post", new=_mock_post):
-        app = create_coordinator_app(site_id="coordinator")
+        app = create_coordinator_app(
+            site_id="coordinator",
+            sites=["http://site-a:8000", "http://site-b:8000", "http://site-c:8000"],
+        )
         client = TestClient(app)
         resp = client.post(
             "/federation/query",
@@ -136,7 +139,9 @@ def test_federation_query_partial_on_offline_site(tmp_path: Path) -> None:
         return httpx.Response(200, json=resp_a)
 
     with patch.object(httpx.AsyncClient, "post", new=_mock_post_with_failure):
-        app = create_coordinator_app(site_id="coordinator")
+        app = create_coordinator_app(
+            site_id="coordinator", sites=["http://site-a:8000", "http://site-b:8000"]
+        )
         client = TestClient(app)
         resp = client.post(
             "/federation/query",
@@ -196,7 +201,9 @@ def test_dedup_count_in_response(tmp_path: Path) -> None:
         return httpx.Response(200, json=resp_b)
 
     with patch.object(httpx.AsyncClient, "post", new=_mock_dup):
-        app = create_coordinator_app(site_id="coordinator")
+        app = create_coordinator_app(
+            site_id="coordinator", sites=["http://site-a:8000", "http://site-b:8000"]
+        )
         client = TestClient(app)
         resp = client.post(
             "/federation/query",
@@ -262,3 +269,65 @@ def test_summary_with_fetch_fn() -> None:
     assert len(body["entries"]) == 1
     assert body["entries"][0]["source_site_id"] == "site-alpha"
     assert body["entries"][0]["count"] == 42
+
+
+# ---------------------------------------------------------------------------
+# review replay-lineage-registry-19: the site list is configuration, not a request field
+# ---------------------------------------------------------------------------
+
+
+def _post(app: Any, **body: Any) -> httpx.Response:
+    payload = {"query_type": "provenance", "root_run_id": "r", "max_depth": 5, **body}
+    return TestClient(app).post("/federation/query", json=payload)
+
+
+def test_a_url_the_operator_did_not_configure_is_refused_and_never_contacted() -> None:
+    contacted: list[str] = []
+
+    async def _spy(self: Any, url: str, **kwargs: Any) -> httpx.Response:
+        contacted.append(url)
+        return httpx.Response(200, json={"rows": [], "partial": False})
+
+    app = create_coordinator_app(site_id="c", sites=["http://site-a:8000"])
+    with patch.object(httpx.AsyncClient, "post", new=_spy):
+        resp = _post(app, sites=["http://169.254.169.254/latest/meta-data"])
+    assert resp.status_code == 422
+    assert contacted == []
+
+
+def test_an_omitted_site_list_queries_every_configured_site() -> None:
+    contacted: list[str] = []
+
+    async def _spy(self: Any, url: str, **kwargs: Any) -> httpx.Response:
+        contacted.append(url)
+        return httpx.Response(200, json={"rows": [], "partial": False})
+
+    app = create_coordinator_app(site_id="c", sites=["http://site-a:8000", "http://site-b:8000/"])
+    with patch.object(httpx.AsyncClient, "post", new=_spy):
+        resp = _post(app)
+    assert resp.status_code == 200 and resp.json()["site_count"] == 2
+    assert sorted(contacted) == [
+        "http://site-a:8000/lineage/shard-local-query",
+        "http://site-b:8000/lineage/shard-local-query",
+    ]
+
+
+def test_a_configured_site_may_be_named_with_or_without_a_trailing_slash() -> None:
+    async def _ok(self: Any, url: str, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(200, json={"rows": [], "partial": False})
+
+    app = create_coordinator_app(site_id="c", sites=["http://site-a:8000/"])
+    with patch.object(httpx.AsyncClient, "post", new=_ok):
+        assert _post(app, sites=["http://site-a:8000"]).status_code == 200
+
+
+def test_the_request_site_list_is_bounded() -> None:
+    app = create_coordinator_app(site_id="c", sites=["http://site-a:8000"])
+    assert _post(app, sites=[f"http://s{i}:1" for i in range(65)]).status_code == 422
+
+
+def test_the_configured_site_list_is_bounded_and_validated() -> None:
+    with pytest.raises(ValueError, match="at most"):
+        create_coordinator_app(site_id="c", sites=[f"http://s{i}:1" for i in range(65)])
+    with pytest.raises(ValueError, match="http"):
+        create_coordinator_app(site_id="c", sites=["file:///etc/passwd"])
