@@ -35,9 +35,14 @@ MAX_COLUMNS_PER_FACET = 64
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 _QUALIFIED = rf"{_IDENT}(?:\.{_IDENT})*"
 
-_SELECT_RE = re.compile(
-    rf"^\s*select\s+(?P<cols>.+?)\s+from\s+(?P<table>{_QUALIFIED})",
-    re.IGNORECASE | re.DOTALL,
+# SELECT is matched in two linear steps (review replay-lineage-registry-11): the
+# head, then the first FROM that names a table. One pattern,
+# ``select\s+(.+?)\s+from\s+…``, backtracked quadratically: ``"select a" + " " * n +
+# "x"`` cost minutes at the length cap. ``(?<=\S)`` starts a FROM candidate only at
+# the first blank of a run, so each whitespace run is scanned once.
+_SELECT_HEAD_RE = re.compile(r"^\s*select\s+", re.IGNORECASE)
+_FROM_RE = re.compile(
+    rf"(?<=\S)\s+from\s+(?P<table>{_QUALIFIED})", re.IGNORECASE
 )
 _INSERT_RE = re.compile(
     rf"^\s*insert\s+into\s+(?P<table>{_QUALIFIED})\s*\((?P<cols>[^)]+)\)",
@@ -102,9 +107,12 @@ def extract_column_facet(sql: str) -> ColumnFacet | None:
         if not _SQL_START_RE.match(sql):
             return None
 
-        m = _SELECT_RE.match(sql)
-        if m:
-            cols, exact = _split_idents(m.group("cols"))
+        head = _SELECT_HEAD_RE.match(sql)
+        if head:
+            m = _FROM_RE.search(sql, head.end())
+            if m is None:
+                return None
+            cols, exact = _split_idents(sql[head.end() : m.start()])
             if not cols:
                 return None  # SELECT * or pure expressions — unresolvable
             return _bounded(m.group("table"), cols, "read", exact)
