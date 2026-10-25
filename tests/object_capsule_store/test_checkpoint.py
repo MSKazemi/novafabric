@@ -136,3 +136,91 @@ def test_hypothesis_byte_equivalent_replay(n_before: int, n_after: int) -> None:
     assert len(replayed) == len(full)
     for r, f in zip(replayed, full):
         assert r.model_dump_json() == f.model_dump_json()
+
+
+# ---------------------------------------------------------------------------
+# review storage-backup-03 / -04
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+
+from novafabric.object_capsule_store.rebuild import rebuild_metadata_db  # noqa: E402
+
+
+def _tamper_checkpoint(adapter: InMemoryWormAdapter, tenant: str, run_id: str) -> str:
+    key = next(k for k in adapter.all_keys() if k.endswith(".checkpoint.ndjson"))
+    lines = adapter.get_object(key).split(b"\n")
+    victim = json.loads(lines[1])
+    victim["capsule_sha256"] = "f" * 64
+    lines[1] = json.dumps(victim, separators=(",", ":")).encode()
+    adapter.put_log_object(key, b"\n".join(lines))
+    return key
+
+
+def test_a_forged_checkpoint_is_reported_and_never_used():
+    adapter = InMemoryWormAdapter()
+    _write_commits(adapter, "org", "run1", 4)
+    compactor = CheckpointCompactor(adapter, checkpoint_every=4)
+    compactor.force_checkpoint("org", "run1")
+    _tamper_checkpoint(adapter, "org", "run1")
+
+    commits, problems = compactor.replay_checked("org", "run1")
+
+    assert len(problems) == 1 and "disagrees" in problems[0] and "version 1" in problems[0]
+    assert all(c.capsule_sha256 == "a" * 64 for c in commits), "the verified commit files win"
+    assert [c.capsule_sha256 for c in compactor.replay("org", "run1")] == ["a" * 64] * 4
+
+
+def test_an_honest_checkpoint_raises_no_problem():
+    adapter = InMemoryWormAdapter()
+    _write_commits(adapter, "org", "run1", 4)
+    compactor = CheckpointCompactor(adapter, checkpoint_every=4)
+    compactor.force_checkpoint("org", "run1")
+    _commits, problems = compactor.replay_checked("org", "run1")
+    assert problems == []
+
+
+def test_rebuild_warns_and_pins_the_real_sha_when_the_checkpoint_is_forged():
+    adapter = InMemoryWormAdapter()
+    _write_commits(adapter, "org", "run1", 4)
+    CheckpointCompactor(adapter, checkpoint_every=4).force_checkpoint("org", "run1")
+    _tamper_checkpoint(adapter, "org", "run1")
+
+    report = rebuild_metadata_db(adapter, "org/")
+
+    assert any("disagrees" in w for w in report.integrity_warnings)
+    assert report.capsules_found == 4
+
+
+class _CountingAdapter(InMemoryWormAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.gets = 0
+
+    def get_object(self, key: str) -> bytes:
+        self.gets += 1
+        return super().get_object(key)
+
+
+def test_maybe_checkpoint_reads_nothing_when_none_is_due():
+    adapter = _CountingAdapter()
+    _write_commits(adapter, "org", "run1", 7)
+    compactor = CheckpointCompactor(adapter, checkpoint_every=10)
+    adapter.gets = 0
+
+    assert compactor.maybe_checkpoint("org", "run1", last_version=7) is None
+    assert adapter.gets == 0, "no checkpoint is due, so no commit may be fetched"
+
+
+def test_maybe_checkpoint_still_writes_when_due():
+    adapter = _CountingAdapter()
+    _write_commits(adapter, "org", "run1", 10)
+    compactor = CheckpointCompactor(adapter, checkpoint_every=10)
+    result = compactor.maybe_checkpoint("org", "run1", last_version=10)
+    assert result is not None and result.commit_count == 10
+
+
+def test_maybe_checkpoint_without_a_version_keeps_the_old_behaviour():
+    adapter = _CountingAdapter()
+    _write_commits(adapter, "org", "run1", 10)
+    assert CheckpointCompactor(adapter, checkpoint_every=10).maybe_checkpoint("org", "run1") is not None

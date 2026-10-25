@@ -180,3 +180,25 @@ def test_get_capsule_raises_integrity_error_on_tampered_content(store, mem_adapt
     assert exc_info.value.capsule_uri == receipt.capsule_uri
     assert exc_info.value.expected_sha256 == receipt.capsule_sha256
     assert exc_info.value.observed_sha256 == compute_sha256(b"tampered content")
+
+
+def test_a_put_costs_a_constant_number_of_gets_when_no_checkpoint_is_due(store, mem_adapter):
+    """review storage-backup-04: every put re-read the whole run chain (O(n) per put)."""
+    gets = {"n": 0}
+    real_get = mem_adapter.get_object
+
+    def counting_get(key):
+        gets["n"] += 1
+        return real_get(key)
+
+    mem_adapter.get_object = counting_get  # type: ignore[method-assign]
+
+    per_put: list[int] = []
+    for i in range(30):
+        before = gets["n"]
+        store.put_capsule(tenant="org", run_id="chain-run", content_bytes=make_capsule(seed=100 + i))
+        per_put.append(gets["n"] - before)
+
+    every = store._compactor._checkpoint_every
+    quiet = [n for version, n in enumerate(per_put, start=1) if version % every != 0 and version > 1]
+    assert len(set(quiet)) == 1, f"GETs per put (no checkpoint due) grew with the chain: {per_put}"

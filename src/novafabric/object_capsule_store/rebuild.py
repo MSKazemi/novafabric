@@ -112,7 +112,7 @@ def rebuild_metadata_db(
     # (ADR-0175). `iter_objects` yields page-by-page from the backend paginator,
     # so peak memory is bounded by the number of distinct (tenant, run_id) pairs
     # rather than the total key count — safe for namespaces with millions of
-    # capsules (OQ-028). Checkpoint files remain the fast read path.
+    # capsules (OQ-028). (A checkpoint is no longer a read path: see the replay comment below.)
     log_prefix = f"_capsule_log/{prefix}"
 
     pairs: set[tuple[str, str]] = set()
@@ -121,18 +121,18 @@ def rebuild_metadata_db(
         if len(parts) >= 4:
             pairs.add((parts[1], parts[2]))
 
-    # Per-(tenant, run_id): replay via checkpoint + delta (AC-1).
-    # The CheckpointCompactor.replay() method reads the latest .checkpoint.ndjson
-    # (all historic commits in one object) and then only fetches individual files
-    # for the delta since the last checkpoint.  This reduces I/O from O(N commits)
-    # to O(1 checkpoint read + delta reads) and completes in minutes, not hours.
+    # Per-(tenant, run_id): replay from the individual, hash-verified commit files. A
+    # checkpoint is NOT trusted: it is not WORM-locked, so a forged one could put a wrong pin
+    # into this DB with no warning (review storage-backup-03). Any disagreement between a
+    # checkpoint and the verified commits becomes an integrity warning here.
     compactor = CheckpointCompactor(adapter)
     for (tenant, run_id) in sorted(pairs):
         try:
-            commits = compactor.replay(tenant, run_id)
+            commits, problems = compactor.replay_checked(tenant, run_id)
         except Exception as exc:
             warnings.append(f"Replay error for {tenant}/{run_id}: {exc}")
             continue
+        warnings.extend(f"{tenant}/{run_id}: {p}" for p in problems)
 
         for commit in commits:
             if commit.operation != "put":

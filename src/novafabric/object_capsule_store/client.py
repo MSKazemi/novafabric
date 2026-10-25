@@ -294,7 +294,7 @@ class ObjectCapsuleStore:
 
         # Periodic checkpoint (fire-and-forget; errors are logged, not raised)
         try:
-            self._compactor.maybe_checkpoint(tenant, run_id)
+            self._compactor.maybe_checkpoint(tenant, run_id, last_version=commit.version)
         except Exception as exc:
             log.warning("Checkpoint failed (non-fatal): %s", exc)
 

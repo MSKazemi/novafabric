@@ -83,12 +83,21 @@ class CheckpointCompactor:
         self._checkpoint_every = checkpoint_every
         self._chain_writer = ManifestChainWriter(adapter)
 
-    def maybe_checkpoint(self, tenant: str, run_id: str) -> CheckpointResult | None:
+    def maybe_checkpoint(
+        self, tenant: str, run_id: str, last_version: int | None = None
+    ) -> CheckpointResult | None:
         """Emit a checkpoint if the chain length is a multiple of ``checkpoint_every``.
+
+        Pass ``last_version`` (the version of the commit just written) to decide without
+        touching the store: the chain is listed and fetched only when a checkpoint is due.
+        Without it every put re-read and re-verified the whole run chain, O(n) per write and
+        O(n²) per run (review storage-backup-04).
 
         Returns the ``CheckpointResult`` if a checkpoint was written, or
         ``None`` if no checkpoint was needed.
         """
+        if last_version is not None and last_version % self._checkpoint_every != 0:
+            return None
         commits = self._chain_writer.read_chain(tenant, run_id)
         if not commits:
             return None
@@ -139,46 +148,62 @@ class CheckpointCompactor:
     # -----------------------------------------------------------------------
 
     def replay(self, tenant: str, run_id: str) -> list[ManifestCommit]:
-        """Reconstruct full commit sequence using checkpoint + delta.
+        """Reconstruct the full commit sequence, trusting only the verified chain.
 
-        Algorithm:
-        1. Find the latest checkpoint file in the chain log prefix.
-        2. Load all commits from that checkpoint (lines 1..N).
-        3. Load individual commit files with version > checkpoint_version.
-        4. Sort and return.
-
-        The result is byte-equivalent to ``read_chain()`` on the raw commits.
+        See :meth:`replay_checked`; a disagreeing checkpoint is logged and ignored.
         """
-        prefix = _chain_prefix(tenant, run_id)
-        keys = self._adapter.list_objects(prefix)
+        commits, problems = self.replay_checked(tenant, run_id)
+        for problem in problems:
+            log.warning("%s", problem)
+        return commits
 
-        # Find checkpoints (sorted descending to find the latest)
+    def replay_checked(
+        self, tenant: str, run_id: str
+    ) -> tuple[list[ManifestCommit], list[str]]:
+        """Return the commit sequence from the individual, hash-verified commit files, plus
+        a description of every way the latest checkpoint disagrees with them.
+
+        The ``.checkpoint.ndjson`` object is written with ``put_log_object``, so it is NOT
+        WORM-locked: anyone with bucket write access can rewrite it. The earlier replay took
+        commits 1..K from it without comparing them to the commit files, so editing one
+        ``capsule_sha256`` there put a forged pin into the rebuilt metadata DB with no warning,
+        although ``read_chain`` had already fetched and verified every one of those files
+        (review storage-backup-03). The commit files are the authority; a checkpoint is only
+        a cache, so a disagreement is reported and never used. This means a checkpoint saves
+        no I/O here — correctness over the old "O(1 checkpoint + delta)" claim.
+        """
+        chain = self._chain_writer.read_chain(tenant, run_id)
+        problems: list[str] = []
+
+        keys = self._adapter.list_objects(_chain_prefix(tenant, run_id))
         checkpoint_keys = sorted(
-            (k for k in keys if k.endswith(".checkpoint.ndjson")),
-            reverse=True,
+            (k for k in keys if k.endswith(".checkpoint.ndjson")), reverse=True
         )
-
         if not checkpoint_keys:
-            # No checkpoint — full replay from individual commits
-            return self._chain_writer.read_chain(tenant, run_id)
+            return chain, problems
 
-        latest_checkpoint_key = checkpoint_keys[0]
-        checkpoint_version = int(
-            latest_checkpoint_key.split("/")[-1].replace(".checkpoint.ndjson", "")
-        )
+        key = checkpoint_keys[0]
+        try:
+            lines = self._adapter.get_object(key).split(b"\n")
+            claimed = [
+                ManifestCommit.model_validate_json(line) for line in lines[1:] if line.strip()
+            ]
+        except Exception as exc:  # noqa: BLE001 — a corrupt checkpoint is reported, not fatal
+            problems.append(f"checkpoint {key} is unreadable and was ignored: {exc}")
+            return chain, problems
 
-        # Read commits from checkpoint
-        raw = self._adapter.get_object(latest_checkpoint_key)
-        lines = raw.split(b"\n")
-        # line 0 is the header, lines 1..N are commits
-        checkpoint_commits = [
-            ManifestCommit.model_validate_json(line)
-            for line in lines[1:]
-            if line.strip()
-        ]
-
-        # Read delta commits (version > checkpoint_version)
-        delta_commits = self._chain_writer.read_since(tenant, run_id, checkpoint_version)
-
-        all_commits = checkpoint_commits + delta_commits
-        return sorted(all_commits, key=lambda c: c.version)
+        by_version = {c.version: c for c in chain}
+        for commit in claimed:
+            real = by_version.get(commit.version)
+            if real is None:
+                problems.append(
+                    f"checkpoint {key} lists version {commit.version}, which has no verified "
+                    "commit file; the checkpoint was ignored"
+                )
+            elif real != commit:
+                problems.append(
+                    f"checkpoint {key} disagrees with the verified commit file at version "
+                    f"{commit.version} (capsule_sha256 {commit.capsule_sha256[:12]} vs "
+                    f"{real.capsule_sha256[:12]}); the commit file was used"
+                )
+        return chain, problems
