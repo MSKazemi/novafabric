@@ -81,6 +81,25 @@ def _capabilities() -> dict[str, Any]:
     }
 
 
+def _oidc_issuer(config: Any) -> str | None:
+    """The OIDC issuer the server enforces, or ``None``.
+
+    ``ServerConfig`` keeps OIDC in ``config.oidc`` and is on only when issuer and
+    audience are both set; reading a nonexistent ``oidc_issuer`` attribute made
+    an OIDC server advertise ``bearer`` with no issuer (review misc-2-06). A
+    duck-typed object carrying a bare ``oidc_issuer`` is still honoured.
+    """
+    if config is None:
+        return None
+    oidc = getattr(config, "oidc", None)
+    if oidc is not None:
+        if bool(getattr(oidc, "enabled", False)):
+            return str(getattr(oidc, "issuer_url", "") or "") or None
+        return None
+    legacy = getattr(config, "oidc_issuer", None)
+    return str(legacy) if legacy else None
+
+
 def build_server_card(
     config: Any = None,
     *,
@@ -90,14 +109,21 @@ def build_server_card(
 
     *config* is a ``ServerConfig``-shaped object (duck-typed so this module
     stays importable without the ``[server]`` extra). When it is ``None`` the
-    card still renders, describing an unauthenticated local endpoint — which is
-    the honest description of a default local `nova serve`, not a placeholder.
+    card still renders, describing the auth a default local `nova serve` enforces
+    (a local bearer token, ADR-0184), not a placeholder.
+
+    **Endpoints are advertised only when the operator says where they are.**
+    `nova serve` has no ``/mcp`` route (the MCP proxy is a separate process), so a
+    card that derived ``http://host:port/mcp`` from the server's own address named
+    an endpoint that does not exist. Pass *base_url* (``nova mcp card show
+    --base-url``) to publish the MCP endpoint's real root; without it the card
+    lists none, which is what is true (review misc-2-06).
     """
-    issuer = getattr(config, "oidc_issuer", None) if config is not None else None
+    issuer = _oidc_issuer(config)
     insecure = bool(getattr(config, "insecure_no_auth", False)) if config else False
 
     if issuer:
-        auth = ServerCardAuth(type="oidc", issuer=str(issuer))
+        auth = ServerCardAuth(type="oidc", issuer=issuer)
     elif insecure:
         # Report "none" rather than omitting the block. A discovery document
         # that stays silent about absent auth invites a client to assume there
@@ -106,9 +132,11 @@ def build_server_card(
     else:
         auth = ServerCardAuth(type="bearer")
 
-    host = getattr(config, "host", "127.0.0.1") if config is not None else "127.0.0.1"
-    port = getattr(config, "port", 7433) if config is not None else 7433
-    root = base_url or f"http://{host}:{port}"
+    endpoints = (
+        [ServerCardEndpoint(transport="streamable-http", url=f"{base_url.rstrip('/')}/mcp")]
+        if base_url
+        else []
+    )
 
     return ServerCard(
         name="novafabric-capture",
@@ -118,9 +146,7 @@ def build_server_card(
         ),
         capabilities=_capabilities(),
         auth=auth,
-        endpoints=[
-            ServerCardEndpoint(transport="streamable-http", url=f"{root}/mcp")
-        ],
+        endpoints=endpoints,
     )
 
 

@@ -68,13 +68,35 @@ def test_default_local_server_reports_bearer() -> None:
     assert build_server_card().auth.type == "bearer"
 
 
-def test_endpoint_url_follows_the_configured_host_and_port() -> None:
-    card = build_server_card(_Config(host="10.0.0.9", port=9999))
-    assert card.endpoints[0].url == "http://10.0.0.9:9999/mcp"
+def test_no_endpoint_is_advertised_without_an_explicit_base_url() -> None:
+    """`nova serve` has no /mcp route; deriving one from host:port named a ghost endpoint."""
+    assert build_server_card(_Config(host="10.0.0.9", port=9999)).endpoints == []
+    assert build_server_card().endpoints == []
+
+
+def test_an_oidc_server_config_advertises_oidc_with_its_issuer() -> None:
+    from novafabric.server.config import OidcConfig, ServerConfig
+
+    cfg = ServerConfig(oidc=OidcConfig(issuer_url="https://idp.example/realms/nova", audience="a"))
+    card = build_server_card(cfg)
+    assert (card.auth.type, card.auth.issuer) == ("oidc", "https://idp.example/realms/nova")
+
+
+def test_an_oidc_block_that_is_not_enabled_is_not_advertised() -> None:
+    from novafabric.server.config import OidcConfig, ServerConfig
+
+    assert build_server_card(ServerConfig(oidc=OidcConfig(issuer_url="https://i"))).auth.type == "bearer"
+
+
+def test_a_real_server_config_without_oidc_reports_bearer_or_none() -> None:
+    from novafabric.server.config import ServerConfig
+
+    assert build_server_card(ServerConfig()).auth.type == "bearer"
+    assert build_server_card(ServerConfig(insecure_no_auth=True)).auth.type == "none"
 
 
 def test_base_url_override_wins_for_public_deployments() -> None:
-    card = build_server_card(_Config(host="127.0.0.1"), base_url="https://nova.example")
+    card = build_server_card(_Config(host="127.0.0.1"), base_url="https://nova.example/")
     assert card.endpoints[0].url == "https://nova.example/mcp"
 
 

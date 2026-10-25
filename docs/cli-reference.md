@@ -1007,6 +1007,12 @@ What it reports:
   configured, `bearer` for the ADR-0184 local-token default, or `none` when
   `--insecure-no-auth` is set. It reports `none` explicitly rather than omitting
   the block, since silence would invite a client to assume there is some.
+- `endpoints` — **only what you tell it**: `nova serve` has no `/mcp` route (the MCP proxy is a
+  separate process), so the card lists no endpoint unless `--base-url` names the root where the MCP
+  endpoint is served (`<base-url>/mcp`). The card published at `/.well-known/mcp.json` by `nova
+  serve` therefore has an empty `endpoints` list. Releases up to v0.107.0 derived
+  `http://host:port/mcp` from the server's own address, and reported `bearer` with no issuer for an
+  OIDC-enabled server.
 
 `nova serve` publishes the card at `GET /.well-known/mcp.json`, **unauthenticated
 by design** — gating a discovery document behind the auth it describes would make
