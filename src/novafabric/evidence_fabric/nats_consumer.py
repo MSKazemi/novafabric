@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 _DEAD_LETTER_MAX = 1_000
 
+#: Pause after a batch with failed ingests so a down sink is not hit by an immediate
+#: redelivery storm (the failed messages are nak-ed, review trust-evidence-09).
+_REDELIVERY_BACKOFF_S = 1.0
+
 # -------------------------------------------------------------------
 # Optional import gate
 # -------------------------------------------------------------------
@@ -102,6 +106,7 @@ class NATSJetStreamConsumer:
         self._dead_letter: list[dict[str, Any]] = []
         self._processed = 0
         self._errors = 0
+        self._dead_letter_dropped = 0
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
@@ -209,6 +214,8 @@ class NATSJetStreamConsumer:
             "processed": self._processed,
             "errors": self._errors,
             "dead_letter": self.dead_letter_count,
+            # Records the bounded dead-letter list had no room for (log-only before).
+            "dead_letter_dropped": self._dead_letter_dropped,
         }
 
     # ------------------------------------------------------------------
@@ -235,13 +242,24 @@ class NATSJetStreamConsumer:
                         self._batch_size, timeout=self._fetch_timeout
                     )
                     raw_batch = [msg.data for msg in msgs]
-                    for msg in msgs:
-                        try:
-                            await msg.ack()
-                        except Exception:  # noqa: BLE001
-                            pass
                     if raw_batch:
-                        await self._process_raw(raw_batch)
+                        # Ack only what was ingested: acking first made a ClickHouse
+                        # or DuckDB outage permanent loss, as JetStream never
+                        # redelivers an acked message (review trust-evidence-09).
+                        settled = await self._process_raw(raw_batch)
+                        retry = False
+                        for msg, done in zip(msgs, settled, strict=True):
+                            try:
+                                if done:
+                                    await msg.ack()
+                                else:
+                                    await msg.nak()
+                                    retry = True
+                            except Exception:  # noqa: BLE001
+                                pass
+                        if retry:
+                            # Do not hammer a down sink with immediate redeliveries.
+                            await asyncio.sleep(_REDELIVERY_BACKOFF_S)
                     else:
                         # A fetch that returns no messages without blocking (e.g. an
                         # empty stream, or a mocked client) must still yield control,
@@ -253,13 +271,21 @@ class NATSJetStreamConsumer:
                 # No NATS connection — idle wait (test mode or not yet connected)
                 await asyncio.sleep(0.05)
 
-    async def _process_raw(self, raw_messages: list[bytes]) -> None:
-        """Decode JSON, route, and ingest a batch of raw event bytes."""
-        edges: list[dict[str, Any]] = []
-        capsule_events: list[dict[str, Any]] = []
-        failed: list[bytes] = []
+    async def _process_raw(self, raw_messages: list[bytes]) -> list[bool]:
+        """Decode JSON, route, and ingest a batch of raw event bytes.
 
-        for raw in raw_messages:
+        Returns one flag per message: True when it is settled (ingested, or
+        undecodable and dead-lettered, which no redelivery can fix), False when
+        its ingest failed and the broker should redeliver it.
+        """
+        edges: list[dict[str, Any]] = []
+        edge_idx: list[int] = []
+        capsule_events: list[dict[str, Any]] = []
+        event_idx: list[int] = []
+        failed: list[bytes] = []
+        settled = [True] * len(raw_messages)
+
+        for i, raw in enumerate(raw_messages):
             try:
                 event: dict[str, Any] = json.loads(raw)
             except (ValueError, UnicodeDecodeError) as exc:
@@ -268,8 +294,10 @@ class NATSJetStreamConsumer:
                 continue
             if event.get("event_type") == "lineage_edge":
                 edges.append(event)
+                edge_idx.append(i)
             else:
                 capsule_events.append(event)
+                event_idx.append(i)
 
         loop = asyncio.get_event_loop()
 
@@ -286,6 +314,8 @@ class NATSJetStreamConsumer:
                     exc,
                 )
                 self._errors += len(edges)
+                for i in edge_idx:
+                    settled[i] = False
                 self._add_to_dead_letter(
                     [{"_raw": m.decode(errors="replace"), "_error": str(exc)} for m in
                      [json.dumps(e).encode() for e in edges]]
@@ -304,6 +334,8 @@ class NATSJetStreamConsumer:
                     exc,
                 )
                 self._errors += len(capsule_events)
+                for i in event_idx:
+                    settled[i] = False
                 self._add_to_dead_letter(
                     [{"_raw": json.dumps(e), "_error": str(exc)} for e in capsule_events]
                 )
@@ -312,11 +344,13 @@ class NATSJetStreamConsumer:
             self._add_to_dead_letter(
                 [{"_raw": raw.decode(errors="replace"), "_error": "json_decode_error"}]
             )
+        return settled
 
     def _add_to_dead_letter(self, events: list[dict[str, Any]]) -> None:
         """Add failed event records to the dead-letter list (bounded)."""
         remaining = _DEAD_LETTER_MAX - len(self._dead_letter)
         if remaining <= 0:
+            self._dead_letter_dropped += len(events)
             logger.warning(
                 "NATSJetStreamConsumer: dead-letter list full (%d); "
                 "discarding %d events",
@@ -327,6 +361,7 @@ class NATSJetStreamConsumer:
         take = min(len(events), remaining)
         self._dead_letter.extend(events[:take])
         if take < len(events):
+            self._dead_letter_dropped += len(events) - take
             logger.warning(
                 "NATSJetStreamConsumer: dead-letter overflow, discarded %d events",
                 len(events) - take,

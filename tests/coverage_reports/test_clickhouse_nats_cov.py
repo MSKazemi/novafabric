@@ -390,7 +390,9 @@ class TestNatsInit:
         consumer = nc.NATSJetStreamConsumer()
         # DuckDBAccumulator created in-memory; just confirm it exists.
         assert consumer._accumulator is not None
-        assert consumer.stats == {"processed": 0, "errors": 0, "dead_letter": 0}
+        assert consumer.stats == {
+            "processed": 0, "errors": 0, "dead_letter": 0, "dead_letter_dropped": 0,
+        }
 
     def test_env_config_applied(
         self, monkeypatch: pytest.MonkeyPatch
@@ -599,3 +601,96 @@ class TestNatsDeadLetterBound:
         consumer._add_to_dead_letter([{"y": 1}, {"y": 2}, {"y": 3}])
         # Only one slot left -> exactly one taken.
         assert consumer.dead_letter_count == nc._DEAD_LETTER_MAX
+
+
+class TestNatsAckAfterIngest:
+    """review trust-evidence-09: messages were acked before ingest, so an outage
+    lost every event JetStream had already been told was handled."""
+
+    @staticmethod
+    def _msg(payload: bytes) -> MagicMock:
+        msg = MagicMock()
+        msg.data = payload
+        msg.ack = AsyncMock(return_value=None)
+        msg.nak = AsyncMock(return_value=None)
+        return msg
+
+    def _drive(self, consumer: nc.NATSJetStreamConsumer, msgs: list[Any]) -> None:
+        calls = {"n": 0}
+
+        async def fake_fetch(batch: int, timeout: float) -> list[Any]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return msgs
+            raise RuntimeError("timeout")
+
+        consumer._sub = MagicMock(fetch=fake_fetch)
+        consumer._running = True
+
+        async def scenario() -> None:
+            task = asyncio.create_task(consumer._drain_loop())
+            await asyncio.sleep(0.15)
+            consumer._running = False
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        _run(scenario())
+
+    def test_an_ingested_message_is_acked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(nc, "_REDELIVERY_BACKOFF_S", 0.0)
+        msg = self._msg(json.dumps({"event_type": "model_call", "run_id": "r"}).encode())
+        self._drive(_make_consumer(MagicMock()), [msg])
+        msg.ack.assert_awaited_once()
+        msg.nak.assert_not_awaited()
+
+    def test_a_failed_ingest_is_nacked_for_redelivery_never_acked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(nc, "_REDELIVERY_BACKOFF_S", 0.0)
+        acc = MagicMock()
+        acc.ingest_capsule_events.side_effect = RuntimeError("clickhouse down")
+        msg = self._msg(json.dumps({"event_type": "model_call", "run_id": "r"}).encode())
+        self._drive(_make_consumer(acc), [msg])
+        msg.nak.assert_awaited()
+        msg.ack.assert_not_awaited()
+
+    def test_one_failing_kind_does_not_nack_the_other(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(nc, "_REDELIVERY_BACKOFF_S", 0.0)
+        acc = MagicMock()
+        acc.ingest_edges.side_effect = RuntimeError("edges table down")
+        edge = self._msg(json.dumps({"event_type": "lineage_edge", "from_ref": "a"}).encode())
+        event = self._msg(json.dumps({"event_type": "model_call", "run_id": "r"}).encode())
+        self._drive(_make_consumer(acc), [edge, event])
+        edge.nak.assert_awaited()
+        event.ack.assert_awaited_once()
+
+    def test_an_undecodable_message_is_acked_because_redelivery_cannot_fix_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(nc, "_REDELIVERY_BACKOFF_S", 0.0)
+        msg = self._msg(b"{not json")
+        consumer = _make_consumer(MagicMock())
+        self._drive(consumer, [msg])
+        msg.ack.assert_awaited_once()
+        msg.nak.assert_not_awaited()
+        assert consumer.dead_letter_count == 1
+
+    def test_process_raw_reports_which_messages_settled(self) -> None:
+        acc = MagicMock()
+        acc.ingest_capsule_events.side_effect = RuntimeError("down")
+        consumer = _make_consumer(acc)
+        edge = json.dumps({"event_type": "lineage_edge", "from_ref": "a"}).encode()
+        event = json.dumps({"event_type": "model_call", "run_id": "r"}).encode()
+        flags = _run(consumer._process_raw([edge, event, b"{bad"]))
+        assert flags == [True, False, True]
+
+    def test_dead_letter_drops_are_counted(self) -> None:
+        consumer = _make_consumer(MagicMock())
+        consumer._dead_letter = [{"x": i} for i in range(nc._DEAD_LETTER_MAX)]
+        consumer._add_to_dead_letter([{"y": 1}, {"y": 2}])
+        assert consumer.stats["dead_letter_dropped"] == 2
