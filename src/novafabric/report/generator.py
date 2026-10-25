@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,6 +55,30 @@ def generate_report_pdf(db_path: Path | None = None) -> bytes:
     return pdf
 
 
+def _md_flat(value: object) -> str:
+    """*value* on one line with table-breaking characters neutralised (control chars, ``|``)."""
+    text = "".join(" " if (ord(c) < 32 or ord(c) == 127) else c for c in str(value))
+    return text.replace("\\", "\\\\").replace("|", "\\|")
+
+
+def _md_code_cell(value: object) -> str:
+    """*value* as a Markdown code span that is safe inside a table cell.
+
+    Asset names are arbitrary strings: raw, a ``|`` or a newline broke the row and
+    ``[x](javascript:...)``, raw HTML or ``#`` injected links and headings into a report
+    pasted into a PR, a wiki or a compliance pack, while the HTML report escapes them
+    (review misc-1-11). A code span renders its content literally; the fence is longer than
+    any backtick run inside, pipes are escaped, and line breaks and control characters
+    become spaces.
+    """
+    text = "".join(" " if (ord(c) < 32 or ord(c) == 127) else c for c in str(value))
+    text = text.replace("|", "\\|")
+    longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
 def generate_report(format_: str = "markdown", db_path: Path | None = None) -> str:
     assets = list_assets(asset_type=None, status=None, db_path=db_path)
 
@@ -81,7 +106,8 @@ def generate_report(format_: str = "markdown", db_path: Path | None = None) -> s
         for a in group:
             created = (a["created_at"] or "")[:19]
             lines.append(
-                f"| {a['name']} | {a['version']} | {a['status']} | {created} |"
+                f"| {_md_code_cell(a['name'])} | {_md_code_cell(a['version'])} "
+                f"| {_md_flat(a['status'])} | {created} |"
             )
         lines.append("")
     return "\n".join(lines)

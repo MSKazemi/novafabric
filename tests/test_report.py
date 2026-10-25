@@ -269,3 +269,50 @@ def test_pdf_report_bytes_when_weasyprint_present(
     register_asset(spec, fixtures_dir / "valid_model.yaml", db_path=tmp_db)
     pdf = generate_report_pdf(db_path=tmp_db)
     assert pdf.startswith(b"%PDF")
+
+
+# review misc-1-11: asset fields went into the Markdown table raw, so a `|` or a newline in
+# a name broke the row and injected headings or links into a report pasted into a PR or wiki.
+
+
+def _assets(*names: str) -> list[dict[str, object]]:
+    return [
+        {"name": n, "version": "1.0.0", "status": "development", "asset_type": "model",
+         "created_at": "2026-07-01T00:00:00Z", "spec_json": "{}"}
+        for n in names
+    ]
+
+
+def test_a_hostile_asset_name_stays_inside_one_table_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    import novafabric.report.generator as gen
+
+    monkeypatch.setattr(gen, "list_assets", lambda **kw: _assets("a|b\n# injected heading"))
+    report = generate_report("markdown")
+    rows = [line for line in report.splitlines() if line.startswith("| ") and "1.0.0" in line]
+    assert len(rows) == 1
+    assert "\n# injected" not in report
+    assert not any(line.startswith("# injected") for line in report.splitlines())
+    assert rows[0].count("|") - rows[0].count("\\|") == 5  # four cells => five unescaped pipes
+
+
+@pytest.mark.parametrize(
+    "name", ["[x](javascript:alert(1))", "<img src=x onerror=alert(1)>", "`; rm -rf /", "**bold**"]
+)
+def test_links_html_and_emphasis_in_a_name_are_neutralised(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    import novafabric.report.generator as gen
+
+    monkeypatch.setattr(gen, "list_assets", lambda **kw: _assets(name))
+    row = next(line for line in generate_report("markdown").splitlines() if "1.0.0" in line)
+    cell = row.split("|")[1].strip()
+    assert cell.startswith("`") and cell.endswith("`"), cell  # a code span renders it literally
+
+
+def test_ordinary_names_are_unchanged_apart_from_the_code_span(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import novafabric.report.generator as gen
+
+    monkeypatch.setattr(gen, "list_assets", lambda **kw: _assets("fraud-model"))
+    assert "| `fraud-model` | `1.0.0` | development |" in generate_report("markdown")
