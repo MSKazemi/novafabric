@@ -3,21 +3,14 @@ import { clsx } from 'clsx';
 import { api } from '../../../../lib/api';
 import { SuggestInput } from '../../../ui/SuggestInput';
 import CopyButton from '../../../ui/CopyButton';
+import { AUDIT_PROFILE_IDS, DEFAULT_AUDIT_PROFILE } from './auditProfiles';
 
 // ---------- Compliance Audit panel ----------
 
-const AUDIT_PROFILES = [
-  'nist-ai-rmf',
-  'eu-ai-act-high-risk',
-  'gdpr',
-  'soc2-type2',
-  'iso42001',
-  'scientific-reproducibility',
-];
 
 export default function AuditPanel({ runIds }: { runIds: string[] }) {
   const [runId, setRunId] = useState('');
-  const [profile, setProfile] = useState('nist-ai-rmf');
+  const [profile, setProfile] = useState<string>(DEFAULT_AUDIT_PROFILE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<Record<string, unknown> | null>(null);
@@ -72,7 +65,7 @@ export default function AuditPanel({ runIds }: { runIds: string[] }) {
           onChange={(e) => setProfile(e.target.value)}
           className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2.5 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none"
         >
-          {AUDIT_PROFILES.map((p) => (
+          {AUDIT_PROFILE_IDS.map((p) => (
             <option key={p} value={p}>{p}</option>
           ))}
         </select>

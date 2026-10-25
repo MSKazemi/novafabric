@@ -1,12 +1,12 @@
 import { useState, useCallback } from 'react';
 import { api } from '../../../../lib/api';
+import { AUDIT_PROFILE_IDS, DEFAULT_AUDIT_PROFILE } from './auditProfiles';
 
 // ---------- Audit Control Map panel (nova audit map --profile) ----------
 
-const AUDIT_MAP_PROFILES = ['nist-ai-rmf', 'eu-ai-act', 'iso-42001', 'nis2'];
 
 export default function AuditMapPanel() {
-  const [profile, setProfile] = useState('eu_ai_act');
+  const [profile, setProfile] = useState<string>(DEFAULT_AUDIT_PROFILE);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
     profile: string;
@@ -46,7 +46,7 @@ export default function AuditMapPanel() {
             onChange={(e) => setProfile(e.target.value)}
             className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono"
           >
-            {AUDIT_MAP_PROFILES.map((p) => <option key={p} value={p}>{p}</option>)}
+            {AUDIT_PROFILE_IDS.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
         </label>
         <button

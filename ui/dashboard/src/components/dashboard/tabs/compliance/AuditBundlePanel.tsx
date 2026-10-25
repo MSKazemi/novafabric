@@ -7,11 +7,11 @@ import { useCallback, useState } from 'react';
 import { api } from '../../../../lib/api';
 import { useMutation } from '../../../../lib/useMutation';
 import PanelScaffold from '../../PanelScaffold';
+import { AUDIT_PROFILE_IDS, DEFAULT_AUDIT_PROFILE } from './auditProfiles';
 
-const PROFILES = ['nist-ai-rmf', 'eu-ai-act', 'iso-42001'];
 
 export default function AuditBundlePanel() {
-  const [profile, setProfile] = useState('nist-ai-rmf');
+  const [profile, setProfile] = useState<string>(DEFAULT_AUDIT_PROFILE);
 
   const bundle = useMutation(
     () => api.auditBundle(profile),
@@ -49,7 +49,7 @@ export default function AuditBundlePanel() {
             onChange={e => setProfile(e.target.value)}
             className="block text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono"
           >
-            {PROFILES.map(p => <option key={p} value={p}>{p}</option>)}
+            {AUDIT_PROFILE_IDS.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </label>
       }
