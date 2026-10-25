@@ -1,6 +1,7 @@
 # src/novafabric/lineage/_importer.py
 from __future__ import annotations
 
+import functools
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,9 +17,19 @@ from novafabric.lineage._types import (
     node_ref_for_run,
 )
 
-# Load schema once at module level (cheap — small JSON file).
 _SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "lineage-edge.schema.json"
-_SCHEMA = json.loads(_SCHEMA_PATH.read_text())
+
+
+@functools.cache
+def _edge_schema() -> dict[str, Any]:
+    """The lineage-edge schema, read on first validation and then cached.
+
+    Not at import: importing ``novafabric.lineage`` must do no file IO, so a
+    packaging slip surfaces where the schema is used instead of as an ImportError
+    for every lineage user (review replay-lineage-registry-21).
+    """
+    schema: dict[str, Any] = json.loads(_SCHEMA_PATH.read_text())
+    return schema
 
 
 def _validate_edge_record(record: dict[str, Any]) -> None:
@@ -31,7 +42,7 @@ def _validate_edge_record(record: dict[str, Any]) -> None:
     top-level import accounted for ~57 ms per orchestrator invocation.
     """
     import jsonschema  # type: ignore[import-untyped]
-    jsonschema.validate(record, _SCHEMA)
+    jsonschema.validate(record, _edge_schema())
 
 
 def _edge_from_dict(record: dict[str, Any]) -> LineageEdge:
