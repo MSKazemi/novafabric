@@ -22,7 +22,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from novafabric.assure.case import AssuranceCase, NodeType, validate_case
+from novafabric.assure.case import AssuranceCase, NodeType, _normalise_digest, validate_case
 from novafabric.assure.currency import CurrencyLedger, IntervalStatus, compute_interval_status
 from novafabric.assure.defeater import Defeater, open_defeaters
 
@@ -69,7 +69,9 @@ def compute_argument_coverage(
     entries; when it carries entries an explicit ``as_of`` sealed time is **required** — currency is
     never computed against the system clock (ADR-0166 D2).
     """
-    resolvable = set(resolvable_digests)
+    # Normalised like validate_case's own set, so the two counts in one report cannot
+    # disagree on sha256:-prefixed versus bare digests (review misc-3-10).
+    resolvable = {_normalise_digest(d) for d in resolvable_digests}
     by_id = {n.id: n for n in case.nodes}
     edges = {n.id: list(n.supported_by) for n in case.nodes}
 
@@ -78,7 +80,7 @@ def compute_argument_coverage(
         n.id
         for n in case.nodes
         if n.type is NodeType.solution
-        and any(ref.digest in resolvable for ref in n.evidence_refs)
+        and any(_normalise_digest(ref.digest) in resolvable for ref in n.evidence_refs)
     }
 
     goal_ids = [n.id for n in case.nodes if n.type is NodeType.goal]

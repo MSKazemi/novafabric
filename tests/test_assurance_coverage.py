@@ -123,3 +123,16 @@ def test_multiple_goals_partial_coverage():
     # TOP reaches S1 (resolves) → covered; G1 reaches S1 → covered; G2 reaches only S2 → not.
     assert cov.goals_with_resolvable_leaf == 2
     assert cov.unsupported_leaves == ["S2"]
+
+
+@pytest.mark.parametrize(
+    ("evidence", "resolvable"),
+    [("sha256:" + "a" * 64, {"a" * 64}), ("a" * 64, {"sha256:" + "a" * 64})],
+)
+def test_sha256_prefixed_and_bare_digests_agree_in_one_report(evidence, resolvable):
+    # review misc-3-10: validate_case counted the leaf as supported but the coverage
+    # count compared raw strings, so one report contradicted itself.
+    case = AssuranceCase(case_id="c", nodes=[_goal("G", ["S"]), _solution("S", evidence)])
+    cov = compute_argument_coverage(case, resolvable_digests=resolvable)
+    assert cov.unsupported_leaves == []
+    assert cov.goals_with_resolvable_leaf == 1

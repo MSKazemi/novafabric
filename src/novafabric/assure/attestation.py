@@ -187,12 +187,17 @@ def check_overdue(
     the instant a run became due would report every on-time schedule as late.
     """
     moment = _parse_rfc3339(now, field="now")
-    due = _parse_rfc3339(attestation.next_due, field="next_due")
+    # Re-derived, never read back: next_due is "derived, never supplied", yet a facet
+    # model accepts any stored value, and a far-future one made every missed run read
+    # overdue: false (review misc-3-11).
+    due = _parse_rfc3339(attestation.ran_at, field="ran_at") + timedelta(
+        seconds=attestation.cadence_seconds
+    )
     late = int((moment - due).total_seconds())
     return OverdueVerdict(
         schedule_id=attestation.schedule_id,
         last_ran_at=attestation.ran_at,
-        next_due=attestation.next_due,
+        next_due=_to_rfc3339(due),
         checked_at=_to_rfc3339(moment),
         overdue=late > 0,
         late_by_seconds=max(0, late),

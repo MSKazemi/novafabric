@@ -201,3 +201,18 @@ def test_a_capsule_without_one_reads_as_none() -> None:
 def test_an_invalid_attestation_is_reported() -> None:
     with pytest.raises(AttestationError, match="invalid assurance attestation"):
         facet_from_capsule({"facets": {"assurance_attestation": {"schedule_id": "s"}}})
+
+
+# review misc-3-11: next_due is derived, never supplied; check_overdue trusted a stored one.
+
+
+def test_an_inconsistent_stored_next_due_is_ignored(attestation: AssuranceAttestation) -> None:
+    forged = attestation.model_copy(update={"next_due": "2099-01-01T00:00:00Z"})
+    verdict = check_overdue(forged, now="2026-07-20T00:00:00Z")  # 8 days after a daily run
+    assert verdict.overdue is True
+    assert verdict.next_due == "2026-07-13T00:00:00Z"  # ran_at + cadence, not the forged date
+
+
+def test_a_consistent_next_due_behaves_as_before(attestation: AssuranceAttestation) -> None:
+    assert check_overdue(attestation, now="2026-07-13T00:00:00Z").overdue is False  # exactly due
+    assert check_overdue(attestation, now="2026-07-13T00:00:01Z").overdue is True
