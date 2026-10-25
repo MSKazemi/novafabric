@@ -524,6 +524,13 @@ class BundleTooLargeError(BundleArchiveError):
     """The archive declares more uncompressed bytes or members than the caller allows."""
 
 
+#: Default bounds for a verifier: the capsule copy is held in memory to recompute
+#: its root, so an unbounded archive is an unbounded allocation (review
+#: trust-evidence-15). ``nova verify`` and ``nova serve`` both apply them.
+DEFAULT_MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+DEFAULT_MAX_MEMBERS = 100_000
+
+
 @dataclass
 class BundleVerification:
     """Outcome of the whole verification recipe over one Evidence Bundle archive.

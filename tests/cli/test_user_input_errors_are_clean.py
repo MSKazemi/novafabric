@@ -130,3 +130,34 @@ def test_verify_envelope_bad_inputs_are_clean(tmp_path: Path, problem: str) -> N
     result = runner.invoke(app, ["verify-envelope", str(envelope), "--key", str(key)])
     assert result.exit_code != 0, result.output
     assert isinstance(result.exception, SystemExit), result.exception
+
+
+# ── nova verify <bundle.zip> --public-key <not a key>, and its size bound ──────
+
+
+@pytest.mark.parametrize("content", [b"not a key", b"-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n"])
+def test_verify_bundle_with_a_malformed_public_key_is_clean(tmp_path: Path, content: bytes) -> None:
+    # review trust-evidence-15: a ValueError traceback from deep inside verification.
+    bundle = tmp_path / "b.zip"
+    with zipfile.ZipFile(bundle, "w") as zf:
+        zf.writestr("manifest.json", "{}")
+    key = tmp_path / "bad.pem"
+    key.write_bytes(content)
+    result = runner.invoke(app, ["verify", str(bundle), "--public-key", str(key)])
+    _clean(result, 1)
+    assert "--public-key" in result.output
+
+
+def test_verify_bundle_refuses_an_archive_above_the_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import novafabric.evidence.bundle_verify as bv
+
+    monkeypatch.setattr(bv, "DEFAULT_MAX_UNCOMPRESSED_BYTES", 10)
+    bundle = tmp_path / "b.zip"
+    with zipfile.ZipFile(bundle, "w") as zf:
+        zf.writestr("manifest.json", "{}")
+        zf.writestr("big.bin", b"x" * 1000)
+    result = runner.invoke(app, ["verify", str(bundle)])
+    _clean(result, 1)
+    assert "limit" in result.output

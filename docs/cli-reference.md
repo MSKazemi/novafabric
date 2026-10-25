@@ -3593,7 +3593,10 @@ on which of the two they read. So does a manifest `subject.run_id` that differs 
 manifest claims that no verified run statement signs: a fabricated `subject` entry, a repeated
 one, a `capsule_path_in_bundle` pointing at another run's copy, a top-level `run_id` that is
 not a signed run, or the label of a run whose files and statements were stripped. A signed run
-the manifest omits fails too. `manifest.json` is read with a 64 MiB bound. `POST /api/evidence/{bundle_id}/verify` in `nova serve` runs
+the manifest omits fails too. `manifest.json` is read with a 64 MiB bound, and an archive declaring more than 1 GiB uncompressed or
+100,000 members is refused (exit 1) before anything is read, as `nova serve` does. `--public-key` takes
+one or more Ed25519 `PUBLIC KEY` PEM blocks; a file that holds none, or a block that is not an Ed25519
+key, exits 1 with `cannot use --public-key`. `POST /api/evidence/{bundle_id}/verify` in `nova serve` runs
 this same verifier, with the operator's trust list in place of `--public-key`.
 
 **Every member is signed (works today; review r8).** A bundle carries a members statement,

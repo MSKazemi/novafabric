@@ -31,6 +31,8 @@ from typing import Any, BinaryIO, Final
 from novafabric import _paths as _nf_paths
 from novafabric._capsule_fs import open_capsule_file
 from novafabric.evidence.bundle_verify import (
+    DEFAULT_MAX_MEMBERS,
+    DEFAULT_MAX_UNCOMPRESSED_BYTES,
     BundleArchiveError,
     BundleTooLargeError,
     BundleVerification,
@@ -56,9 +58,9 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 #: ``nova serve`` holds a bundle's capsule copy in memory to recompute its root, so
-#: a request is bounded; ``nova verify`` on the command line has no such bound.
-MAX_VERIFY_UNCOMPRESSED_BYTES: Final[int] = 1024 * 1024 * 1024
-MAX_VERIFY_MEMBERS: Final[int] = 100_000
+#: a request is bounded, by the same defaults ``nova verify`` applies.
+MAX_VERIFY_UNCOMPRESSED_BYTES: Final[int] = DEFAULT_MAX_UNCOMPRESSED_BYTES
+MAX_VERIFY_MEMBERS: Final[int] = DEFAULT_MAX_MEMBERS
 
 _RUN_ENVELOPE: Final[str] = "attestations/run.intoto.json"
 _TOKEN: Final[str] = "manifest.dsse.tsr"

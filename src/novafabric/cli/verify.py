@@ -9,6 +9,7 @@ from typing import Annotated, Any, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
 
@@ -992,14 +993,24 @@ def _verify_evidence_bundle(
     """
     import zipfile
 
-    from novafabric.evidence.bundle_verify import BundleArchiveError, verify_bundle_archive
+    from novafabric.evidence.bundle_verify import (
+        DEFAULT_MAX_MEMBERS,
+        DEFAULT_MAX_UNCOMPRESSED_BYTES,
+        BundleArchiveError,
+        TrustedKeysError,
+        load_trusted_public_keys,
+        verify_bundle_archive,
+    )
 
     trusted_pems: list[bytes] = []
     if public_key is not None:
+        # The loader the server's trust list uses: a regular file, bounded, every
+        # block an Ed25519 public key. A malformed key was a traceback from deep
+        # inside verification (review trust-evidence-15).
         try:
-            trusted_pems.append(public_key.read_bytes())
-        except OSError as exc:
-            console.print(f"[red]Error:[/red] cannot read --public-key: {exc}")
+            trusted_pems = load_trusted_public_keys(public_key)
+        except TrustedKeysError as exc:
+            console.print(f"[red]Error:[/red] cannot use --public-key: {escape(str(exc))}")
             raise typer.Exit(code=1) from None
     try:
         zf = zipfile.ZipFile(bundle_path)
@@ -1014,6 +1025,8 @@ def _verify_evidence_bundle(
             outcome = verify_bundle_archive(
                 zf,
                 trusted_public_pems=trusted_pems,
+                max_uncompressed_bytes=DEFAULT_MAX_UNCOMPRESSED_BYTES,
+                max_members=DEFAULT_MAX_MEMBERS,
             )
         except BundleArchiveError as exc:
             console.print(f"[red]Error:[/red] {bundle_path}: {exc}")
