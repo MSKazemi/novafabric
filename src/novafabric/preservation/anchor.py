@@ -61,7 +61,7 @@ import re
 from collections.abc import Iterable, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 FACET_NAME = "preservation"
 SCHEMA_VERSION = "0.1.0"
@@ -90,6 +90,10 @@ MAX_REF_LENGTH = 2048
 #: would force P3 to break the schema. md5/sha1 are excluded: an archive
 #: checked under a broken hash has not really been checked.
 FixityAlg = Literal["sha256", "sha512", "sha3-256"]
+
+#: Hex length of each recordable algorithm's digest. A fixity digest is
+#: ``<alg>:<hex of that length>``, so the label and the bytes cannot disagree.
+_FIXITY_HEX_LEN: dict[str, int] = {"sha256": 64, "sha512": 128, "sha3-256": 64}
 
 #: What the fixity log says about the object as a whole.
 #:
@@ -142,17 +146,11 @@ class FixityLogRewriteError(PreservationError):
 # ── Reference and digest validation ───────────────────────────────────────
 
 
-def _validate_ref(value: object, *, field: str) -> str:
-    """Return ``value`` if it is an acceptable reference (digest or URI).
+def _reference_string(value: object, *, field: str) -> str:
+    """Return ``value`` if it is a string short enough to be an identifier.
 
-    Raises:
-        PayloadCaptureError: if ``value`` is bytes, or is too long to be an
-            identifier. Bytes are rejected rather than hashed on the caller's
-            behalf: hashing here would make it effortless to hand this module
-            the archived object itself and have it quietly do the right-looking
-            thing, and the one time it did the wrong thing nobody would know
-            the bytes had been in the process at all (I-2).
-        InvalidDigestError: if ``value`` is neither ``sha256:<hex>`` nor a URI.
+    The payload guard shared by every digest/reference validator: bytes and
+    over-long strings are I-2 violations whatever digest shape was expected.
     """
     if isinstance(value, (bytes, bytearray, memoryview)):
         raise PayloadCaptureError(
@@ -168,6 +166,22 @@ def _validate_ref(value: object, *, field: str) -> str:
             f"{field} is {len(value)} chars, over the {MAX_REF_LENGTH}-char "
             "reference limit; this looks like inlined archived content, not a ref"
         )
+    return value
+
+
+def _validate_ref(value: object, *, field: str) -> str:
+    """Return ``value`` if it is an acceptable reference (digest or URI).
+
+    Raises:
+        PayloadCaptureError: if ``value`` is bytes, or is too long to be an
+            identifier. Bytes are rejected rather than hashed on the caller's
+            behalf: hashing here would make it effortless to hand this module
+            the archived object itself and have it quietly do the right-looking
+            thing, and the one time it did the wrong thing nobody would know
+            the bytes had been in the process at all (I-2).
+        InvalidDigestError: if ``value`` is neither ``sha256:<hex>`` nor a URI.
+    """
+    value = _reference_string(value, field=field)
     if not (_DIGEST_RE.match(value) or _URI_RE.match(value)):
         raise InvalidDigestError(
             f"{field} must be 'sha256:<64 hex>' or a URI, got {value!r}"
@@ -193,10 +207,27 @@ def _validate_digest(value: object, *, field: str) -> str:
     return ref
 
 
-def digest_artifact(artifact: str | bytes) -> str:
-    """Return the ``sha256:`` fixity digest of a sealed artifact.
+def _validate_alg_digest(value: object, *, alg: str, field: str) -> str:
+    """Return ``value`` if it is a ``<alg>:<hex>`` digest of ``alg``'s length.
 
-    Plain ``hashlib.sha256`` over the artifact's bytes — no Merkle leaf prefix,
+    ``FixityAlg`` admits stronger hashes so a renewal can record them; this is
+    what makes such a record representable and keeps ``alg`` honest about the
+    digest it labels (review misc-2-11).
+    """
+    ref = _reference_string(value, field=field)
+    hex_len = _FIXITY_HEX_LEN[alg]
+    if not re.fullmatch(rf"{re.escape(alg)}:[0-9a-f]{{{hex_len}}}", ref):
+        raise InvalidDigestError(
+            f"{field} must be '{alg}:<{hex_len} lower-case hex>' to match "
+            f"alg={alg!r}; got {ref!r}"
+        )
+    return ref
+
+
+def digest_artifact(artifact: str | bytes, alg: FixityAlg = "sha256") -> str:
+    """Return the ``<alg>:`` fixity digest of a sealed artifact (``sha256`` by default).
+
+    Plain ``hashlib`` over the artifact's bytes — no Merkle leaf prefix,
     no tree, no domain separation (see the module docstring for why). Emitted
     in the same ``sha256:<hex>`` form the rest of the capsule uses, so a
     verifier does not have to know which subsystem wrote it.
@@ -204,7 +235,9 @@ def digest_artifact(artifact: str | bytes) -> str:
     The artifact is hashed and discarded; nothing here retains it (I-2).
     """
     raw = artifact.encode("utf-8") if isinstance(artifact, str) else artifact
-    return f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    if alg not in _FIXITY_HEX_LEN:
+        raise InvalidDigestError(f"unsupported fixity algorithm {alg!r}")
+    return f"{alg}:{hashlib.new(alg.replace('-', '_'), raw).hexdigest()}"
 
 
 # ── Objects ───────────────────────────────────────────────────────────────
@@ -229,7 +262,12 @@ class Fixity(BaseModel):
         # mode="before" on every digest field: Pydantic's own str coercion would
         # otherwise reject bytes first, with a generic "not a valid string" that
         # tells the caller nothing about *why* bytes are forbidden here (I-2).
-        return _validate_digest(v, field="digest")
+        return _reference_string(v, field="digest")
+
+    @model_validator(mode="after")
+    def _digest_matches_alg(self) -> Fixity:
+        _validate_alg_digest(self.digest, alg=self.alg, field="digest")
+        return self
 
 
 class ProvenanceEvent(BaseModel):
@@ -285,7 +323,12 @@ class FixityCheck(BaseModel):
     @field_validator("digest", mode="before")
     @classmethod
     def _check_digest(cls, v: object) -> str:
-        return _validate_digest(v, field="digest")
+        return _reference_string(v, field="digest")
+
+    @model_validator(mode="after")
+    def _digest_matches_alg(self) -> FixityCheck:
+        _validate_alg_digest(self.digest, alg=self.alg, field="digest")
+        return self
 
     @field_validator("agent_ref", mode="before")
     @classmethod
@@ -478,15 +521,57 @@ def append_provenance_event(
     )
 
 
+def anchor_rewrite_reason(before: PreservationFacet, after: PreservationFacet) -> str | None:
+    """Why ``after`` is not an append-only successor of ``before``'s anchor, or ``None``.
+
+    The checks every append-only verifier in this package shares (review
+    misc-2-11): the chain keeps its identity, its fixity algorithm and its bound
+    root, and every PREMIS provenance event survives unchanged at its index —
+    ADR-0165 I-1 says every longevity operation *adds* an event, so none may be
+    dropped or rewritten. A ``bound_root`` may be set once (``None`` → digest);
+    it is never changed or cleared.
+    """
+    if before.preservation_id != after.preservation_id:
+        return (
+            f"preservation_id changed ({before.preservation_id!r} → "
+            f"{after.preservation_id!r}); this is a different chain (ADR-0165 I-1)"
+        )
+    if before.fixity.alg != after.fixity.alg:
+        return (
+            f"fixity algorithm changed ({before.fixity.alg} → {after.fixity.alg}); "
+            "a baseline is never re-labelled, a stronger hash is a new fixity-log "
+            "entry (ADR-0165 I-1)"
+        )
+    if before.bound_root is not None and before.bound_root != after.bound_root:
+        return (
+            f"bound_root changed or was cleared ({before.bound_root} → "
+            f"{after.bound_root}); the facet was bound into a different root (ADR-0165 I-1)"
+        )
+    old, new = before.provenance_events, after.provenance_events
+    if len(new) < len(old):
+        return (
+            f"provenance_events shrank from {len(old)} to {len(new)}; a PREMIS "
+            "event is history and is never deleted (ADR-0165 I-1)"
+        )
+    for index, (a, b) in enumerate(zip(old, new, strict=False)):
+        if a != b:
+            return (
+                f"provenance event {index} was rewritten; PREMIS events are "
+                "history and are never edited (ADR-0165 I-1)"
+            )
+    return None
+
+
 def verify_append_only(before: PreservationFacet, after: PreservationFacet) -> None:
     """Assert ``after`` only appended to ``before`` (I-1).
 
     The guard a verifier runs against two versions of the same chain — the one
     it holds and the one an archive hands back after a decade of custody. It
-    checks three things, each a way an append-only log can be quietly
-    falsified: the anchor still preserves the same original, the baseline
-    digest was not redefined, and every prior check survives unchanged at its
-    original index.
+    checks each way an append-only log can be quietly falsified: the anchor
+    still preserves the same original under the same id, the baseline digest
+    and algorithm were not redefined, ``bound_root`` was not swapped, every
+    prior PREMIS provenance event survives (see :func:`anchor_rewrite_reason`),
+    and every prior fixity check survives unchanged at its original index.
 
     Raises:
         FixityLogRewriteError: on any of the three.
@@ -497,6 +582,9 @@ def verify_append_only(before: PreservationFacet, after: PreservationFacet) -> N
             f"preserving a different object ({before.original_root} → "
             f"{after.original_root}); ADR-0165 I-1"
         )
+    reason = anchor_rewrite_reason(before, after)
+    if reason is not None:
+        raise FixityLogRewriteError(reason)
     if before.fixity.digest != after.fixity.digest:
         raise FixityLogRewriteError(
             "fixity baseline was rewritten; a re-digest that redefines the "

@@ -63,6 +63,7 @@ from novafabric.preservation.anchor import (
     PreservationFacet,
     _validate_digest,
     _validate_ref,
+    anchor_rewrite_reason,
     append_provenance_event,
     provenance_event,
 )
@@ -702,6 +703,9 @@ def verify_migration_append_only(before: PreservationFacet, after: PreservationF
             f"({before.original_root} → {after.original_root}); the chain now "
             "preserves a different object (ADR-0165 I-1)"
         )
+    reason = anchor_rewrite_reason(before, after)
+    if reason is not None:
+        raise FormatMigrationRewriteError(reason)
     old = chain_from_facet(before)
     new = chain_from_facet(after)
     if len(new) < len(old):

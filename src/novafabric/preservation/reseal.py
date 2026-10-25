@@ -81,6 +81,7 @@ from novafabric.preservation.anchor import (
     PreservationError,
     PreservationFacet,
     _validate_ref,
+    anchor_rewrite_reason,
     append_provenance_event,
     provenance_event,
 )
@@ -1077,6 +1078,9 @@ def verify_p3_append_only(before: PreservationFacet, after: PreservationFacet) -
             f"original_root changed ({before.original_root} → {after.original_root}); "
             "the record now preserves a different object (ADR-0165 I-1)"
         )
+    reason = anchor_rewrite_reason(before, after)
+    if reason is not None:
+        raise P3RewriteError(reason)
     pairs: tuple[tuple[str, Sequence[BaseModel], Sequence[BaseModel]], ...] = (
         (
             CRYPTO_MIGRATION_FIELD,

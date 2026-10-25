@@ -393,7 +393,7 @@ def test_an_unrecomputable_algorithm_raises_rather_than_logging_a_failure() -> N
     out of a tooling limitation, which is exactly the kind of laundering I-4
     forbids.
     """
-    facet = _anchor(fixity_alg="sha3-256")
+    facet = _anchor(fixity_alg="sha3-256", fixity_digest=digest_artifact("x", alg="sha3-256"))
     with pytest.raises(PreservationError, match="cannot re-compute fixity"):
         check_fixity(facet, SEALED_ARTIFACT, checked_at="2031-01-01T00:00:00Z")
     assert facet.fixity_log == []
@@ -433,7 +433,8 @@ def test_matches_original_has_no_default() -> None:
 
 def test_verify_anchor_binding_is_false_for_an_uncheckable_algorithm() -> None:
     """False, not True: an unverifiable binding is what the check exists to find."""
-    assert verify_anchor_binding(_anchor(fixity_alg="sha512"), SEALED_ARTIFACT) is False
+    facet = _anchor(fixity_alg="sha512", fixity_digest=digest_artifact("x", alg="sha512"))
+    assert verify_anchor_binding(facet, SEALED_ARTIFACT) is False
 
 
 def test_verify_anchor_binding_detects_a_changed_artifact() -> None:
@@ -582,3 +583,83 @@ def test_digest_and_uri_refs_refuse_a_trailing_newline(value: str) -> None:
     """``$`` matches before a final ``\\n``; the validators anchor with ``\\Z``."""
     with pytest.raises(PreservationError):
         scan_for_payloads([value])
+
+
+# ── review misc-2-11: alg/digest agreement and the wider append-only guard ──
+
+
+@pytest.mark.parametrize(
+    ("alg", "hex_len"), [("sha256", 64), ("sha512", 128), ("sha3-256", 64)]
+)
+def test_digest_artifact_emits_the_algorithms_own_prefix_and_length(
+    alg: str, hex_len: int
+) -> None:
+    digest = digest_artifact("sealed", alg=alg)  # type: ignore[arg-type]
+    assert digest.startswith(f"{alg}:") and len(digest) == len(alg) + 1 + hex_len
+    assert Fixity(alg=alg, digest=digest).digest == digest  # type: ignore[arg-type]
+
+
+def test_a_stronger_algorithm_can_be_recorded() -> None:
+    facet = _anchor(fixity_alg="sha512", fixity_digest=digest_artifact("x", alg="sha512"))
+    assert facet.fixity.alg == "sha512"
+
+
+@pytest.mark.parametrize("alg", ["sha512", "sha3-256"])
+def test_a_digest_that_contradicts_its_algorithm_is_refused(alg: str) -> None:
+    # sha256 bytes labelled as another algorithm is a self-contradicting record.
+    with pytest.raises(InvalidDigestError):
+        Fixity(alg=alg, digest=ROOT)  # type: ignore[arg-type]
+    with pytest.raises(InvalidDigestError):
+        FixityCheck(
+            checked_at="2027-01-01T00:00:00Z", alg=alg, digest=ROOT, matches_original=True  # type: ignore[arg-type]
+        )
+
+
+def test_a_digest_of_the_wrong_length_for_its_algorithm_is_refused() -> None:
+    with pytest.raises(InvalidDigestError):
+        Fixity(alg="sha512", digest="sha512:" + "a" * 64)
+
+
+def _with_provenance() -> PreservationFacet:
+    return append_provenance_event(
+        _anchor(), provenance_event("ingestion", "2027-01-01T00:00:00Z")
+    )
+
+
+def test_verify_append_only_accepts_an_appended_event() -> None:
+    before = _with_provenance()
+    after = append_provenance_event(before, provenance_event("migration", "2028-01-01T00:00:00Z"))
+    verify_append_only(before, after)
+
+
+def test_verify_append_only_rejects_dropped_or_rewritten_provenance() -> None:
+    before = _with_provenance()
+    dropped = before.model_copy(update={"provenance_events": []})
+    with pytest.raises(FixityLogRewriteError, match="provenance"):
+        verify_append_only(before, dropped)
+    rewritten = before.model_copy(
+        update={"provenance_events": [provenance_event("ingestion", "1999-01-01T00:00:00Z")]}
+    )
+    with pytest.raises(FixityLogRewriteError, match="provenance"):
+        verify_append_only(before, rewritten)
+
+
+def test_verify_append_only_rejects_a_changed_identity_algorithm_or_bound_root() -> None:
+    before = _anchor(bound_root=digest_artifact("root-1"))
+    for update in (
+        {"preservation_id": "presv-other"},
+        {"bound_root": digest_artifact("root-2")},
+        {"bound_root": None},
+    ):
+        with pytest.raises(FixityLogRewriteError):
+            verify_append_only(before, before.model_copy(update=update))
+    swapped = before.model_copy(
+        update={"fixity": Fixity(alg="sha512", digest=digest_artifact("x", alg="sha512"))}
+    )
+    with pytest.raises(FixityLogRewriteError, match="algorithm"):
+        verify_append_only(before, swapped)
+
+
+def test_binding_a_previously_unbound_anchor_is_an_append() -> None:
+    before = _anchor()
+    verify_append_only(before, before.model_copy(update={"bound_root": digest_artifact("r")}))

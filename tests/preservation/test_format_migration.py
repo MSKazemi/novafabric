@@ -651,3 +651,12 @@ def test_chain_one_past_the_real_cap_is_refused() -> None:
     assert [(f.hop_index, f.code) for f in result.findings] == [
         (fm.MAX_CHAIN_LENGTH, "chain_too_long")
     ]
+
+
+def test_append_only_rejects_a_dropped_provenance_event() -> None:
+    # review misc-2-11: the migration event the appender added is history too.
+    one = append_format_migration(_anchor(), _hop())
+    assert one.provenance_events
+    stripped = one.model_copy(update={"provenance_events": []})
+    with pytest.raises(FormatMigrationRewriteError, match="provenance"):
+        verify_migration_append_only(one, stripped)

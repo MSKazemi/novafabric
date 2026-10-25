@@ -578,3 +578,12 @@ def test_module_is_record_only() -> None:
     src = Path(reseal_mod.__file__).read_text()
     for banned in ("import socket", "urllib", "requests", "httpx", "generate_private_key", "oqs"):
         assert banned not in src
+
+
+def test_p3_append_only_rejects_a_dropped_provenance_event() -> None:
+    # review misc-2-11: a later facet may not delete PREMIS events.
+    before = _facet()
+    assert before.provenance_events
+    stripped = before.model_copy(update={"provenance_events": []})
+    with pytest.raises(P3RewriteError, match="provenance"):
+        verify_p3_append_only(before, stripped)
