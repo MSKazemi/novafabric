@@ -77,9 +77,17 @@ describe("submitScore (POST /capsules/{run_id}/scores)", () => {
     );
   });
 
-  it("returns data:null on a 200 idempotent replay (no second line appended)", async () => {
+  it("returns the stored record on a 200 idempotent replay (no second line appended)", async () => {
     const { fetchImpl } = recordingFetch([
-      new Response(null, { status: 200 }),
+      jsonResponse(
+        {
+          score: { score_id: "score-abc" },
+          idempotent_replay: true,
+          config_bound: true,
+          submission: { principal: "svc:evals", scope: "scores:write" },
+        },
+        { status: 200 },
+      ),
     ]);
     const client = new NovaFabricClient({
       baseUrl: "https://nova.example.com/v0",
@@ -88,6 +96,19 @@ describe("submitScore (POST /capsules/{run_id}/scores)", () => {
 
     const { data, meta } = await client.submitScore("run-01H", validScore());
 
+    expect(meta.status).toBe(200);
+    expect(data?.idempotent_replay).toBe(true);
+    expect(data?.config_bound).toBe(true);
+    expect(data?.score.score_id).toBe("score-abc");
+  });
+
+  it("still returns data:null for a 200 with an empty body", async () => {
+    const { fetchImpl } = recordingFetch([new Response(null, { status: 200 })]);
+    const client = new NovaFabricClient({
+      baseUrl: "https://nova.example.com/v0",
+      fetch: fetchImpl,
+    });
+    const { data, meta } = await client.submitScore("run-01H", validScore());
     expect(meta.status).toBe(200);
     expect(data).toBeNull();
   });

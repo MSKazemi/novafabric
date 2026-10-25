@@ -55,9 +55,9 @@ export type ScoreSubmission =
   operations["submitCapsuleScore"]["requestBody"]["content"]["application/json"];
 
 /**
- * `201 Created` body returned when a score is appended — the stored record plus
- * idempotency/config-binding flags. A `200` idempotent replay carries no body
- * (see `submitScore`, which returns `data: null` in that case).
+ * Body returned when a score is submitted — the stored record plus
+ * idempotency/config-binding flags. A `201 Created` appended it; a `200` idempotent
+ * replay returns the same shape with `idempotent_replay: true`.
  */
 export type ScoreSubmissionResponse =
   operations["submitCapsuleScore"]["responses"][201]["content"]["application/json"];
@@ -289,7 +289,8 @@ export class NovaFabricClient {
    * Returns the stored record (`ApiResult<ScoreSubmissionResponse>`) on a
    * `201 Created`. On a `200` idempotent replay (an identical body for a
    * `score_id` already present) the server appends no second line and returns
-   * no body — `data` is then `null`; inspect `meta.status` to distinguish.
+   * the same body with `idempotent_replay: true`; inspect `meta.status` or that
+   * flag to distinguish. `data` is `null` only if a server sent an empty body.
    */
   async submitScore(
     runId: string,
@@ -301,9 +302,11 @@ export class NovaFabricClient {
       "POST /capsules/{run_id}/scores",
       { body: score },
     );
-    // 200 = idempotent replay, no body; 201 = the appended score record.
-    if (response.status === 200) return { data: null, meta };
-    const data = (await response.json()) as ScoreSubmissionResponse;
+    // 201 = the appended score record; 200 = an idempotent replay with the stored record
+    // (review go-collector-ts-packages-12: the body was discarded and, under undici, left
+    // unread, holding the connection). Read it either way.
+    const text = await response.text();
+    const data = text.trim() ? (JSON.parse(text) as ScoreSubmissionResponse) : null;
     return { data, meta };
   }
 

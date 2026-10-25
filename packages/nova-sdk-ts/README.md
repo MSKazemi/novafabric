@@ -19,8 +19,9 @@ design and asserted by test.
 - `getAsset(id)` / `listAssets({limit, cursor, asset_type, status})` — registry read + list
 - `submitScore(runId, score)` — submit an externally-computed evaluation into
   the capsule's append-only `scores.jsonl` (`POST /capsules/{run_id}/scores`,
-  ADR-0119). Typed request/response; a `200` idempotent replay returns
-  `data: null` (inspect `meta.status` to distinguish it from a `201`)
+  ADR-0119). Typed request/response; a `200` idempotent replay returns the
+  stored record with `idempotent_replay: true` (inspect `meta.status` or that
+  flag to distinguish it from a `201`)
 - `exportEvidence(request)` / `getEvidenceBundle(bundleId)` /
   `downloadEvidenceBundle(bundleId)` — build a signed Evidence Bundle ZIP
   (`POST /evidence`, `202`), poll its metadata (`GET /evidence/{bundle_id}`),
@@ -116,7 +117,7 @@ const { data, meta } = await client.submitScore("run-01H...", {
   eval_card_digest: "sha256:...",
 });
 if (meta.status === 200) {
-  // idempotent replay — identical body already present; data is null
+  // idempotent replay — identical body already present; data.idempotent_replay is true
 }
 
 // Build a signed Evidence Bundle, wait for it, then download the ZIP bytes.
