@@ -1,4 +1,6 @@
-version: "2024.1.0"
+# 2024.1.1: keywords match whole words; the two keyword-only prohibited practices need
+# co-occurring signals (strong_keywords / min_keyword_matches) — review misc-1-08.
+version: "2024.1.1"
 regulation: "Regulation (EU) 2024/1689 of the European Parliament and of the Council"
 effective_date: "2024-08-01"
 
@@ -20,12 +22,16 @@ prohibited:
     description: "AI systems that deploy subliminal techniques to manipulate persons against their will"
     citation: "Regulation (EU) 2024/1689 Article 5(1)(a)"
     triggers:
-      keywords: ["subliminal", "manipulate", "below threshold of consciousness"]
+      strong_keywords: ["subliminal", "below threshold of consciousness"]
+      keywords: ["manipulate", "manipulative", "manipulation", "dark pattern", "dark patterns"]
+      min_keyword_matches: 2
   - id: vulnerability_exploitation
     description: "AI systems exploiting vulnerabilities of specific groups (age, disability, social/economic situation)"
     citation: "Regulation (EU) 2024/1689 Article 5(1)(b)"
     triggers:
-      keywords: ["vulnerable", "exploit", "disability", "elderly", "children"]
+      keywords: ["vulnerable", "exploit", "exploits", "exploiting", "exploitation", "disability",
+                 "elderly", "children"]
+      min_keyword_matches: 2
       affects_fundamental_rights: true
 
 high_risk_annex_iii:

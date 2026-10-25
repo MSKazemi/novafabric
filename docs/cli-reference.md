@@ -9329,6 +9329,15 @@ nova classify run --name "Loan scorer" --domain finance --context credit_scoring
 
 The vocabulary versions in force are listed by `nova classify list-vocabularies`.
 
+**Keyword matching.** Vocabulary keywords match **whole words**, case-insensitively (`exam` does not
+match "example", `credit` does not match "accredited"), and a keyword-only prohibited practice needs
+co-occurring signals: *subliminal manipulation* fires on `subliminal` or `below threshold of
+consciousness` alone, or on two of `manipulate`/`manipulative`/`dark pattern`; *vulnerability exploitation*
+needs two of `vulnerable`/`exploit…`/`disability`/`elderly`/`children` together with
+`affects_fundamental_rights`. A vocabulary can set `strong_keywords` and `min_keyword_matches` the same way.
+The result is a rules-based screening aid, not a legal determination. Releases up to v0.107.0 matched raw
+substrings and tiered a parcel-handling robot arm "prohibited".
+
 **Exit codes:** `0` = classified; `1` = prohibited tier detected; `2` = bad input (file not found, YAML not a mapping, missing required flags).
 
 **AISystemRecord fields:** `name`, `description`, `use_case_domain`, `deployment_context`, `uses_biometrics` (bool), `affects_fundamental_rights` (bool), `is_general_purpose` (bool), `operator_role` (`provider` | `deployer`), `subject_count_estimate` (int, optional).

@@ -515,3 +515,69 @@ class TestCLI:
             ["classify", "run", "--name", "Incomplete"],
         )
         assert result.exit_code == 2, result.output
+
+
+# ── review misc-1-08: keywords match whole words, and weak keywords need company ─────
+
+
+def _rec(**kw: object) -> AISystemRecord:
+    base: dict[str, object] = {
+        "system_id": "s1", "name": "x", "description": "", "deployment_context": "",
+        "use_case_domain": "general", "operator_role": "deployer",
+    }
+    base.update(kw)
+    return AISystemRecord.model_validate(base)
+
+
+class TestKeywordMatching:
+    def test_a_robot_that_manipulates_parcels_is_not_prohibited(
+        self, classifier: RiskTierClassifier
+    ) -> None:
+        result = classifier.classify(_rec(description="Robotic arm that learns to manipulate parcels"))
+        assert result.eu_ai_act_tier != "prohibited"
+        assert [i.item_id for i in result.eu_ai_act_annex_iii_items] == []
+
+    def test_a_homework_tutor_for_children_is_not_prohibited(
+        self, classifier: RiskTierClassifier
+    ) -> None:
+        result = classifier.classify(
+            _rec(description="Homework tutor for children", affects_fundamental_rights=True)
+        )
+        assert result.eu_ai_act_tier != "prohibited"
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "uses subliminal cues in ads",
+            "plays content below threshold of consciousness",
+            "manipulate users with dark patterns",
+            "exploits vulnerable children",
+        ],
+    )
+    def test_a_real_prohibited_practice_still_is(
+        self, classifier: RiskTierClassifier, description: str
+    ) -> None:
+        result = classifier.classify(_rec(description=description, affects_fundamental_rights=True))
+        assert result.eu_ai_act_tier == "prohibited"
+
+    @pytest.mark.parametrize(
+        ("description", "domain", "absent"),
+        [
+            ("an example of a lesson", "education", "educational_assessment"),
+            ("accredited lab results", "finance", "creditworthiness_assessment"),
+            ("data visualization dashboard", "immigration", "migration_asylum_assessment"),
+            ("a courteous assistant", "legal", "court_legal_interpretation"),
+            ("gridded weather maps", "energy", "critical_infrastructure_management"),
+        ],
+    )
+    def test_a_keyword_inside_another_word_does_not_fire(
+        self, classifier: RiskTierClassifier, description: str, domain: str, absent: str
+    ) -> None:
+        result = classifier.classify(_rec(description=description, use_case_domain=domain))
+        assert absent not in [i.item_id for i in result.eu_ai_act_annex_iii_items]
+
+    def test_a_whole_word_keyword_still_fires(self, classifier: RiskTierClassifier) -> None:
+        result = classifier.classify(
+            _rec(description="Automated exam grading", use_case_domain="education")
+        )
+        assert "educational_assessment" in [i.item_id for i in result.eu_ai_act_annex_iii_items]

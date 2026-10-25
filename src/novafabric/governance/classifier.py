@@ -22,6 +22,7 @@ Deterministic, rules-based classification against:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -44,10 +45,26 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def _keyword_match(text_corpus: str, keywords: list[str]) -> bool:
-    """Return True if any keyword appears (case-insensitive) in *text_corpus*."""
+def _keyword_hits(text_corpus: str, keywords: list[str]) -> int:
+    """Count the distinct *keywords* that appear in *text_corpus* as whole words.
+
+    Case-insensitive, and a keyword must not sit inside a longer word: raw
+    substring matching fired ``exam`` in "example", ``credit`` in "accredited",
+    ``visa`` in "visualization" and ``manipulate`` for a robot arm, and the result
+    carries an Art. 5 or Annex III citation that reads as a regulatory finding
+    (review misc-1-08). A keyword may itself contain spaces or hyphens.
+    """
     corpus = text_corpus.lower()
-    return any(kw.lower() in corpus for kw in keywords)
+    hits = 0
+    for kw in dict.fromkeys(k.lower() for k in keywords):
+        if re.search(rf"(?<![a-z0-9]){re.escape(kw)}(?![a-z0-9])", corpus):
+            hits += 1
+    return hits
+
+
+def _keyword_match(text_corpus: str, keywords: list[str]) -> bool:
+    """Return True if any keyword appears as a whole word in *text_corpus*."""
+    return _keyword_hits(text_corpus, keywords) >= 1
 
 
 def _domain_match(record_domain: str, domains: list[str]) -> bool:
@@ -68,9 +85,17 @@ def _triggers_match(
 ) -> bool:
     """Return True if ALL conditions in *triggers* are satisfied."""
     # --- keyword gate ---
+    # ``strong_keywords``: one whole-word hit suffices. ``keywords``: at least
+    # ``min_keyword_matches`` distinct hits (default 1). A prohibited practice must
+    # not rest on one ordinary word ("manipulate", "children") on its own.
     kw_list: list[str] = triggers.get("keywords", [])
-    if kw_list and not _keyword_match(corpus, kw_list):
-        return False
+    strong_list: list[str] = triggers.get("strong_keywords", [])
+    if kw_list or strong_list:
+        needed = int(triggers.get("min_keyword_matches", 1))
+        strong = bool(strong_list) and _keyword_match(corpus, strong_list)
+        weak = bool(kw_list) and _keyword_hits(corpus, kw_list) >= needed
+        if not (strong or weak):
+            return False
 
     # --- domain gate (any match is sufficient) ---
     domain_list: list[str] = triggers.get("domains", [])
