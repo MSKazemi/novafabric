@@ -483,3 +483,68 @@ class TestMalformedUpstream:
 
         rec = _tool_calls(tmp_path)[0]
         assert rec["mcp"]["response_envelope"] == {}
+
+
+# ── review capture-runners-13: session and auth headers cross the proxy ──────
+
+
+class TestHeaderPassthrough:
+    def _proxy(self, tmp_path: Path) -> MCPHttpProxy:
+        return MCPHttpProxy(
+            listen_host="127.0.0.1", listen_port=0,
+            upstream_url="https://mcp.example.com/mcp",
+            writer=_writer(tmp_path), parent_span_id="0" * 16,
+        )
+
+    def test_the_session_id_comes_back_from_initialize_and_goes_upstream_afterwards(
+        self, tmp_path: Path
+    ) -> None:
+        proxy = self._proxy(tmp_path)
+        init = _mock_response(body=json.dumps({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {"protocolVersion": "2025-06-18", "serverInfo": {"name": "s", "version": "1"}},
+        }).encode())
+        init.headers = {"content-type": "application/json", "mcp-session-id": "sess-42"}
+        with patch("httpx.post", return_value=init):
+            _s, _b, _c, relayed = proxy._handle_request_ex(
+                json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}).encode(), {}
+            )
+        assert ("mcp-session-id", "sess-42") in relayed
+
+        listing = _mock_response(body=b'{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}')
+        with patch("httpx.post", return_value=listing) as post:
+            proxy._handle_request_ex(
+                json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}).encode(),
+                {
+                    "Mcp-Session-Id": "sess-42",
+                    "MCP-Protocol-Version": "2025-06-18",
+                    "Authorization": "Bearer tok",
+                    "Host": "127.0.0.1:9",
+                    "Content-Length": "55",
+                    "Connection": "keep-alive",
+                },
+            )
+        sent = {k.lower(): v for k, v in post.call_args.kwargs["headers"].items()}
+        assert sent["mcp-session-id"] == "sess-42"
+        assert sent["mcp-protocol-version"] == "2025-06-18"
+        assert sent["authorization"] == "Bearer tok"
+        assert sent["content-type"] == "application/json"
+        for dropped in ("host", "content-length", "connection"):
+            assert dropped not in sent
+
+    def test_www_authenticate_reaches_the_client(self, tmp_path: Path) -> None:
+        resp = _mock_response(status=401, body=b"{}")
+        resp.headers = {"content-type": "application/json", "www-authenticate": 'Bearer realm="mcp"'}
+        with patch("httpx.post", return_value=resp):
+            status, _b, _c, relayed = self._proxy(tmp_path)._handle_request_ex(
+                b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}', {}
+            )
+        assert status == 401
+        assert ("www-authenticate", 'Bearer realm="mcp"') in relayed
+
+    def test_the_three_argument_form_still_works(self, tmp_path: Path) -> None:
+        with patch("httpx.post", return_value=_mock_response(body=b"{}")):
+            status, body, ctype = self._proxy(tmp_path)._handle_request_bytes(
+                b'{"jsonrpc":"2.0","id":1,"method":"ping"}'
+            )
+        assert (status, body, ctype) == (200, b"{}", "application/json")

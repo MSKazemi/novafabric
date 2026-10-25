@@ -7,9 +7,12 @@ Two transport modes:
   Shipped in v0.5.x.
 * **HTTP** — listens on a TCP port, forwards HTTP POST + SSE between
   client and an upstream HTTP MCP server. Shipped in v0.6.3 (C-3.4).
-  SSE responses are streamed through to the client AND aggregated into
-  one ``tool-calls.jsonl`` record per ``tools/call`` (per the C-3.4
-  design call: aggregated, not per-chunk).
+  SSE responses are aggregated into one ``tool-calls.jsonl`` record per
+  ``tools/call`` (per the C-3.4 design call: aggregated, not per-chunk). In
+  HTTP mode the whole upstream response is BUFFERED before the client sees
+  it (planned: chunk relay); request and response headers (``Mcp-Session-Id``,
+  ``Authorization``, ``MCP-Protocol-Version``, ``WWW-Authenticate``) cross the
+  proxy.
 
 Every ``tools/call`` request that receives a matching response is recorded
 as one ``tool-calls.jsonl`` entry in the active capsule, regardless of
@@ -19,11 +22,10 @@ fired (``"stdio"`` or ``"http"``).
 
 Design constraints (apply to both modes):
 
-* **Byte fidelity** for stdio; chunk-stream fidelity for HTTP. The proxy
+* **Byte fidelity** for stdio; body fidelity (not chunk timing) for HTTP. The proxy
   parses for inspection only; it never re-serializes the bodies it forwards.
-* **No buffering of bodies on the forward path** — pumps stream as they
-  arrive. (HTTP mode keeps a separate buffer for record building, bounded
-  by the response size.)
+* **stdio: no buffering of bodies on the forward path** — pumps stream as
+  they arrive. **HTTP mode buffers** each upstream response whole.
 * **Stdlib + httpx only.** httpx is already a runtime dep; no new deps.
 
 Still out of scope: ``resources/read``, ``prompts/get``,
@@ -45,6 +47,7 @@ from novafabric.capture._ulid import new_ulid
 from novafabric.capture.hooks._fail_open import note_capture_failure
 from novafabric.capture.hooks._mcp import mcp_tool_error
 from novafabric.mcp.exchanges import ExchangeTracker
+from novafabric.proxy.api_proxy import _filter_forwarded_headers, _filter_response_headers
 
 
 def _new_tracker() -> ExchangeTracker:
@@ -525,6 +528,10 @@ def _count_sse_events(body: bytes) -> int:
     return count
 
 
+#: Request headers the MCP proxy sets itself (not copied from the client).
+_MCP_PROXY_SET_HEADERS = frozenset({"content-type", "accept", "accept-encoding", "content-length"})
+
+
 class MCPHttpProxy:
     """Transparent MCP HTTP proxy.
 
@@ -569,14 +576,39 @@ class MCPHttpProxy:
         return self._handle_request_bytes(request_body)
 
     def _handle_request_bytes(
-        self, request_body: bytes
+        self, request_body: bytes, request_headers: dict[str, str] | None = None
     ) -> tuple[int, bytes, str | None]:
-        """Forward ``request_body`` upstream, return (status, body, content-type).
+        """Forward ``request_body`` upstream, return (status, body, content-type)."""
+        status, body, content_type, _headers = self._handle_request_ex(
+            request_body, request_headers
+        )
+        return status, body, content_type
+
+    def _handle_request_ex(
+        self, request_body: bytes, request_headers: dict[str, str] | None = None
+    ) -> tuple[int, bytes, str | None, list[tuple[str, str]]]:
+        """:meth:`_handle_request_bytes` plus the upstream response headers to relay.
 
         Records the tools/call into ``tool-calls.jsonl`` if the request's
         method is ``tools/call`` and a matching response is received.
+
+        The client's request headers go upstream (minus hop-by-hop ones and the three the
+        proxy sets itself) and the upstream's response headers come back. Under MCP's
+        Streamable HTTP transport the server returns ``Mcp-Session-Id`` on ``initialize`` and
+        the client must echo it; the proxy dropped it both ways, so a session-requiring
+        server answered 400 to every later request, and ``Authorization`` was stripped too
+        (review capture-runners-13).
         """
         import httpx
+
+        upstream_headers = {
+            k: v for k, v in _filter_forwarded_headers(request_headers or {}).items()
+            if k.lower() not in _MCP_PROXY_SET_HEADERS
+        }
+        upstream_headers.update({
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        })
 
         request_msg = _safe_parse(request_body)
         is_tools_call = (
@@ -591,10 +623,7 @@ class MCPHttpProxy:
             response = httpx.post(
                 self._upstream_url,
                 content=request_body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/event-stream",
-                },
+                headers=upstream_headers,
                 timeout=self._upstream_timeout_s,
             )
         except httpx.HTTPError as exc:
@@ -617,9 +646,10 @@ class MCPHttpProxy:
                     streamed=False,
                     chunk_count=0,
                 )
-            return 502, error_body, "application/json"
+            return 502, error_body, "application/json", []
 
         duration_ms = int((time.monotonic() - t0) * 1000)
+        relay_headers = _filter_response_headers(response.headers)
         ct_header = response.headers.get("content-type", "application/json")
         content_type = ct_header.split(";")[0].strip()
         body_bytes = response.content
@@ -635,7 +665,7 @@ class MCPHttpProxy:
                 self._capture_initialize(resp["result"])
 
         if not is_tools_call or not isinstance(request_msg, dict):
-            return response.status_code, body_bytes, content_type
+            return response.status_code, body_bytes, content_type, relay_headers
 
         # Build the response envelope to record.
         if content_type == "text/event-stream":
@@ -661,7 +691,7 @@ class MCPHttpProxy:
             streamed=streamed,
             chunk_count=chunk_count,
         )
-        return response.status_code, body_bytes, content_type
+        return response.status_code, body_bytes, content_type, relay_headers
 
     def _record_tools_call(
         self,
@@ -724,8 +754,13 @@ class MCPHttpProxy:
             def do_POST(self) -> None:  # noqa: N802 — stdlib API
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 body = self.rfile.read(length) if length > 0 else b""
-                status, response_body, content_type = proxy_self._handle_request_bytes(body)
+                hdrs = {str(k): str(v) for k, v in self.headers.items()}
+                status, response_body, content_type, extra = proxy_self._handle_request_ex(
+                    body, hdrs
+                )
                 self.send_response(status)
+                for name, value in extra:
+                    self.send_header(name, value)
                 if content_type:
                     self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(response_body)))
