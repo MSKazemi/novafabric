@@ -392,9 +392,11 @@ export interface paths {
          *
          *     Refuses (501) unless the experimental ACS is opted in. When enabled: verify
          *     the XML-DSIG signature and parse under an XXE-hardened parser (V1/V2/V10),
-         *     apply the policy rules (V3–V9, V11), map attributes to roles, resolve the
-         *     subject, and mint a bearer token. Any failure rejects with 401 and issues no
-         *     session; error messages never carry assertion contents (the closed audit rule).
+         *     apply the policy rules (V3–V9, V11), map attributes to roles and resolve the
+         *     subject. Any failure rejects with 401. A verified assertion is answered 501
+         *     ``saml_session_unavailable``: the server has no session credential for a SAML
+         *     login yet (review server-12). Error messages never carry assertion contents
+         *     (the closed audit rule).
          */
         post: operations["assertion_consumer_service_v0_auth_saml_acs_post"];
         delete?: never;
