@@ -342,8 +342,17 @@ function emitAuthChange(): void {
 async function request<T>(path: string, query: Record<string, unknown> = {}): Promise<T> {
   const { token, base } = getCfg();
   if (!token) throw new ServeApiError(401, 'no token configured — connect first');
-  const params = new URLSearchParams({ token, ...Object.fromEntries(Object.entries(query).map(([k, v]) => [k, String(v)])) });
-  const res = await fetch(`${base}${path}?${params.toString()}`);
+  // An absent value is absent, not the string "undefined" (a default Cost view asked for run
+  // "undefined" and showed $0 — review frontend-dashboard-07).
+  const params = new URLSearchParams({
+    token,
+    ...Object.fromEntries(
+      Object.entries(query)
+        .filter(([, v]) => v !== undefined && v !== null)
+        .map(([k, v]) => [k, String(v)]),
+    ),
+  });
+  const res = await fetch(`${base}${path}${path.includes('?') ? '&' : '?'}${params.toString()}`);
   if (res.status === 401) {
     // Stale or invalid token — wipe localStorage and notify the app to drop back to the connect screen.
     clearConnection();
@@ -1167,7 +1176,9 @@ export const api = {
   },
 
   getRunFile: (run_id: string, filepath: string) =>
-    request<{ filename: string; content: string }>(`/api/runs/${encodeURIComponent(run_id)}/file/${filepath}`),
+    request<{ filename: string; content: string }>(
+      `/api/runs/${encodeURIComponent(run_id)}/file/${filepath.split('/').map(encodeURIComponent).join('/')}`,
+    ),
 
   // ---------- Accountability Spine (ADR-0093/0094/0095, read-only) ----------
   getRunEnergy: (run_id: string) =>
@@ -1190,9 +1201,7 @@ export const api = {
   costUsageBreakdown: (body: { usage_totals: Record<string, unknown> }) =>
     postJson<UsageBreakdown>('/api/cost/usage-breakdown', body),
   getRunSafetyCase: (run_id: string, template = 'clymer-generic-v0') =>
-    request<SafetyCaseResponse>(
-      `/api/runs/${encodeURIComponent(run_id)}/safety-case?template=${encodeURIComponent(template)}`,
-    ),
+    request<SafetyCaseResponse>(`/api/runs/${encodeURIComponent(run_id)}/safety-case`, { template }),
   listAssets: (q: { type?: string; status?: string; limit?: number; offset?: number } = {}) =>
     request<{ count: number; total: number; has_more: boolean; limit: number; offset: number; assets: AssetSummary[] }>('/api/assets', q as Record<string, unknown>),
   getStats: () =>

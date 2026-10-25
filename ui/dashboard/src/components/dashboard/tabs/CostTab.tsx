@@ -21,7 +21,12 @@ interface CostReport {
   clickhouse_url?: string;
   run_id: string | null;
   days: number;
-  totals: { input_tokens: number; completion_tokens: number; cost_usd: number };
+  /** A refused report withholds figures (`null`, "absent is not zero", ADR-0234), or the block. */
+  totals: {
+    input_tokens: number | null;
+    completion_tokens: number | null;
+    cost_usd: number | null;
+  } | null;
   by_model: Array<Record<string, unknown>>;
   unpriced_models?: string[];
   note: string;
@@ -65,6 +70,10 @@ function PricingPanel({ rows }: { rows: PricingRow[] }) {
   );
 }
 
+/** A withheld figure reads "n/a" — never `$0.0000`, which would say the calls were free. */
+const fmtCount = (v: number | null | undefined): string => (v == null ? 'n/a' : v.toLocaleString());
+const fmtUsd = (v: number | null | undefined): string => (v == null ? 'n/a' : `$${v.toFixed(4)}`);
+
 function ReportPanel({ report }: { report: CostReport }) {
   const backendColor = report.ok
     ? 'text-[var(--color-status-success)] border-[color-mix(in_oklab,var(--color-status-success)_35%,transparent)]'
@@ -90,15 +99,15 @@ function ReportPanel({ report }: { report: CostReport }) {
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-3 py-2">
           <p className={labelClass}>input tokens</p>
-          <p className="text-lg font-mono font-bold text-[var(--color-text)]">{report.totals.input_tokens.toLocaleString()}</p>
+          <p className="text-lg font-mono font-bold text-[var(--color-text)]">{fmtCount(report.totals?.input_tokens)}</p>
         </div>
         <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-3 py-2">
           <p className={labelClass}>completion tokens</p>
-          <p className="text-lg font-mono font-bold text-[var(--color-text)]">{report.totals.completion_tokens.toLocaleString()}</p>
+          <p className="text-lg font-mono font-bold text-[var(--color-text)]">{fmtCount(report.totals?.completion_tokens)}</p>
         </div>
         <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-3 py-2">
           <p className={labelClass}>cost (USD)</p>
-          <p className="text-lg font-mono font-bold text-[var(--color-text)]">${report.totals.cost_usd.toFixed(4)}</p>
+          <p className="text-lg font-mono font-bold text-[var(--color-text)]">{fmtUsd(report.totals?.cost_usd)}</p>
         </div>
       </div>
 
@@ -118,11 +127,11 @@ function ReportPanel({ report }: { report: CostReport }) {
         </div>
       )}
 
-      {report.by_model.length > 0 && (() => {
+      {(report.by_model?.length ?? 0) > 0 && (() => {
         // Chart only when the backend really returned per-model rows — key
         // names differ per backend, so detect them instead of assuming.
         const sample = report.by_model[0];
-        const x = ['model', 'model_name', 'name'].find(k => k in sample);
+        const x = ['model_id', 'model', 'model_name', 'name'].find(k => k in sample);
         const y = ['cost_usd', 'total_cost_usd', 'cost', 'input_tokens'].find(
           k => k in sample,
         );
