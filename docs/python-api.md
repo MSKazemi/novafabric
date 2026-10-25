@@ -861,8 +861,9 @@ Raises:
   lifecycle state machine.
 - `PromotionBlockedError` — a gate refused and `force` does not override it: the
   `promote` policy denied the promotion (any asset type), an `agent` has no
-  passing evaluation, or the opt-in significance gate found a significant
-  regression (agents only).
+  passing evaluation (its most recent eval must pass; with `significance_gate`
+  the whole recent sequence is judged instead), or the opt-in significance gate
+  found a significant regression (agents only).
 
 > **Lifecycle:** `development → validated → pending_approval → staging →
 > production → archived`. Promotion of `agent` assets is eval-gated; the OPA/Rego

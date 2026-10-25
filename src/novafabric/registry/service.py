@@ -554,7 +554,22 @@ def eval_verdict_sha256(asset_id: str, db_path: Path | None = None) -> str | Non
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _has_passing_eval(conn: sqlite3.Connection, asset_id: str) -> bool:
+def _has_passing_eval(
+    conn: sqlite3.Connection, asset_id: str, *, latest_only: bool = False
+) -> bool:
+    """Whether the agent has a passing eval for the promote gate.
+
+    ``latest_only`` requires the MOST RECENT eval to be a pass. Without it any
+    historical pass counts, so an agent that passed once and then failed its last
+    ten evals still cleared the gate (review replay-lineage-registry-13).
+    """
+    if latest_only:
+        row = conn.execute(
+            "SELECT passed FROM eval_results WHERE asset_id = ? "
+            "ORDER BY run_at DESC, rowid DESC LIMIT 1",
+            (asset_id,),
+        ).fetchone()
+        return row is not None and bool(row[0])
     row = conn.execute(
         "SELECT id FROM eval_results WHERE asset_id = ? AND passed = 1 LIMIT 1",
         (asset_id,),
@@ -821,11 +836,15 @@ def _check_promote_gates(
         row["asset_type"] == AssetType.agent.value
         and to_status in _AGENT_GATE_STATUSES
         and not force
-        and not _has_passing_eval(conn, row["id"])
+        # The opt-in significance gate (below) judges the whole recent sequence, so
+        # a single noisy failure must not block there (ADR-0080); without it, the
+        # latest eval is the evidence and it must pass.
+        and not _has_passing_eval(conn, row["id"], latest_only=not significance_gate)
     ):
         raise PromotionBlockedError(
-            f"Agent '{name}@{version}' has no passing evaluation. "
-            f"Run `nova eval agent {name}@{version}` first, or use --force to override."
+            f"Agent '{name}@{version}' has no passing evaluation"
+            + ("" if significance_gate else " (its most recent evaluation must pass)")
+            + f". Run `nova eval agent {name}@{version}` first, or use --force to override."
         )
 
     # Opt-in statistical-significance gate (ADR-0080, gap-004). Only blocks on

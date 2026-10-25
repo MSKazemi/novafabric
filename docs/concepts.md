@@ -1003,8 +1003,8 @@ All six statuses in plain language:
 | `development` | Work in progress. Default when registered. No constraints. |
 | `validated` | Passed automated checks (`nova validate`). Spec is well-formed, secrets are clean. |
 | `pending_approval` | Waiting for a human sign-off (`nova approve`). Useful in regulated environments. |
-| `staging` | Cleared for pre-production use. **Agents require a passing eval to reach here.** |
-| `production` | Live. **Agents require a passing eval to reach here.** |
+| `staging` | Cleared for pre-production use. **Agents require a passing eval to reach here:** the agent's most recent eval must have passed (an earlier pass does not clear a later failure). |
+| `production` | Live. **Agents require a passing eval to reach here** (same rule). |
 | `archived` | Retired. No further promotion possible. Capsules and lineage are still readable. |
 
 Direct skips (e.g. `development → production`) are allowed. Once archived, an
