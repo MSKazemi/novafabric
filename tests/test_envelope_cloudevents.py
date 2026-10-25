@@ -249,3 +249,15 @@ def test_no_unknown_extension_means_no_extras_block() -> None:
         "novarunglobal", "novarun",
     }
     assert set(re_emitted.keys()).issubset(known)
+
+
+@pytest.mark.parametrize("missing", ["time", "novarunglobal", "novarun"])
+def test_a_missing_required_extension_is_a_valueerror_not_a_keyerror(missing: str) -> None:
+    # review misc-2-12: the docstring promises ValueError, callers catching it crashed on KeyError.
+    event = {
+        "id": "e1", "source": "nova://agent/a1", "type": "nova.run.started",
+        "time": "2026-07-01T00:00:00Z", "novarunglobal": "g1", "novarun": "r1",
+    }
+    del event[missing]
+    with pytest.raises(ValueError, match=missing):
+        from_cloudevents(event)

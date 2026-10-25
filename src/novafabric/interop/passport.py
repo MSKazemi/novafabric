@@ -84,6 +84,10 @@ def build_passport(
     unknown = (set(present) | opaque_set) - set(PASSPORT_COMPONENTS)
     if unknown:
         raise ValueError(f"unknown passport component(s): {', '.join(sorted(unknown))}")
+    empty = sorted(name for name, ref in present.items() if not str(ref).strip())
+    if empty:
+        # "present" means carried as a ref; "" is not one (review misc-2-12).
+        raise ValueError(f"passport component(s) present with an empty ref: {', '.join(empty)}")
     both = set(present) & opaque_set
     if both:
         raise ValueError(

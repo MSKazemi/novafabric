@@ -130,7 +130,7 @@ def from_cloudevents(event: dict[str, Any]) -> EventEnvelope:
     Raises ``ValueError`` if a required attribute is missing or the ``source``
     does not match ``nova://agent/<id>``.
     """
-    for required in ("id", "source", "type"):
+    for required in ("id", "source", "type", "time", "novarunglobal", "novarun"):
         if required not in event or event[required] in (None, ""):
             raise ValueError(f"CloudEvent missing required attribute {required!r}")
 

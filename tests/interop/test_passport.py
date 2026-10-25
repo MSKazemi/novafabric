@@ -82,3 +82,18 @@ def test_component_cannot_be_both_present_and_opaque() -> None:
             present={"identity": "sha256:x"},
             opaque=("identity",),
         )
+
+
+# review misc-2-12: green is "present and resolvable (carried as a ref)"; an empty ref is
+# neither, yet six empty strings gave green.
+
+
+@pytest.mark.parametrize("empty", ["", "   ", "\n"])
+def test_a_present_component_with_an_empty_ref_is_refused(empty: str) -> None:
+    with pytest.raises(ValueError, match="empty ref"):
+        build_passport(agent_ref="agent@v1", present={"identity": empty})
+
+
+def test_six_empty_refs_cannot_make_a_green_passport() -> None:
+    with pytest.raises(ValueError, match="empty ref"):
+        build_passport(agent_ref="agent@v1", present=dict.fromkeys(PASSPORT_COMPONENTS, ""))
