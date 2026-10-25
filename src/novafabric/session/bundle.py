@@ -582,7 +582,28 @@ def _check_index(payload: Path, report: SessionBundleVerification) -> dict[str, 
         return None
     if index.get("manifest_hash") != _canonical_hash(index):
         report.problems.append("manifest_hash does not match the bundle index (index edited)")
+    # The checks below index into these lists; an entry that is not an object raised
+    # AttributeError out of verify and import (review misc-1-10). A malformed index
+    # decides nothing, so it is a problem and verification stops there.
+    shape = _index_shape_problems(index)
+    if shape:
+        report.problems.extend(shape)
+        return None
     return index
+
+
+def _index_shape_problems(index: dict[str, Any]) -> list[str]:
+    problems: list[str] = []
+    for field_name in ("artifacts", "members"):
+        value = index.get(field_name)
+        if value is None:
+            continue
+        if not isinstance(value, list) or not all(isinstance(e, dict) for e in value):
+            problems.append(f"{BUNDLE_INDEX_FILENAME} {field_name} must be a list of objects")
+    manifest = index.get("session_manifest")
+    if manifest is not None and not isinstance(manifest, dict):
+        problems.append(f"{BUNDLE_INDEX_FILENAME} session_manifest must be an object")
+    return problems
 
 
 def _check_artifacts(

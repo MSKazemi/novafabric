@@ -668,3 +668,45 @@ class TestExportOpenTimeSymlink:
             bundle_mod._open_regular_nofollow(fifo)  # must not block
         with pytest.raises(SessionBundleError, match="cannot be read"):
             bundle_mod._open_regular_nofollow(tmp_path / "gone")
+
+
+class TestMalformedIndexShapes:
+    """review misc-1-10: a non-object entry in the index's lists raised AttributeError out
+    of verify_session_bundle and import_session_bundle, against 'never raises for content
+    problems'."""
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("artifacts", ["x"]),
+            ("artifacts", "not-a-list"),
+            ("artifacts", [1, None]),
+            ("members", [1]),
+            ("members", {"run_id": "x"}),
+            ("session_manifest", ["a"]),
+        ],
+    )
+    def test_a_malformed_index_is_a_problem_not_a_traceback(
+        self, exported: tuple[str, Path, Path], tmp_path: Path, field: str, value: Any
+    ) -> None:
+        _sid, _root, out = exported
+        with zipfile.ZipFile(out) as zf:
+            index = json.loads(zf.read("session-bundle.json"))
+        index[field] = value
+        bad = tmp_path / "bad.zip"
+        _rezip(out, bad, {"session-bundle.json": json.dumps(index).encode()})
+        report = verify_session_bundle(bad)
+        assert not report.ok
+        assert any(field in p for p in report.problems), report.problems
+
+    def test_importing_a_malformed_index_raises_the_bundle_error_not_attributeerror(
+        self, exported: tuple[str, Path, Path], tmp_path: Path
+    ) -> None:
+        _sid, _root, out = exported
+        with zipfile.ZipFile(out) as zf:
+            index = json.loads(zf.read("session-bundle.json"))
+        index["members"] = [1]
+        bad = tmp_path / "bad.zip"
+        _rezip(out, bad, {"session-bundle.json": json.dumps(index).encode()})
+        with pytest.raises(SessionBundleError):
+            import_session_bundle(bad, tmp_path / "dest")
