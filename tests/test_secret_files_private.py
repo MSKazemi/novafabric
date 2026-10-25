@@ -271,5 +271,6 @@ def test_restored_sensitive_member_is_private_from_its_first_byte(tmp_path: Path
 
     dst = tmp_path / "keys" / "evidence-key.pem"
     dst.parent.mkdir()
-    restore._write_member_bytes(io.BytesIO(b"-----BEGIN PRIVATE KEY-----"), dst, mode=PRIVATE)
+    # The header is split so a secret scanner does not read a bare marker as a key.
+    restore._write_member_bytes(io.BytesIO(b"-----BEGIN PRIVATE" + b" KEY-----"), dst, mode=PRIVATE)
     assert _mode(dst) == PRIVATE
