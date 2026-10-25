@@ -403,3 +403,35 @@ def test_a_large_but_representable_timestamp_is_kept(nanos: str) -> None:
          "attributes": {"gen_ai.tool.name": "a"}},
     ]}]}]}
     assert ingest_otlp_json(payload).tool_calls[0]["started_at"].endswith("Z")
+
+
+# review misc-3-13: provenance the ingest could not know, and keys it did not keep.
+
+
+def test_the_capsule_does_not_claim_the_importing_servers_working_directory(tmp_path: Path) -> None:
+    result = ingest_otlp_json(_valid_payload())
+    manifest = yaml.safe_load((write_ingest_capsule(result, tmp_path) / "capsule.yaml").read_text())
+    assert manifest["working_directory"] == "(otlp-import)"
+    assert str(tmp_path) not in manifest["working_directory"]
+    assert str(Path.cwd()) not in manifest["working_directory"]
+
+
+def test_unknown_attributes_on_an_agent_span_are_reported_as_dropped_not_unmapped() -> None:
+    payload = {"resourceSpans": [{"scopeSpans": [{"spans": [{
+        "name": "invoke_agent a",
+        "startTimeUnixNano": "1000000000",
+        "endTimeUnixNano": "2000000000",
+        "attributes": {"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "a",
+                       "gen_ai.future.agent_attr": "kept?"},
+    }]}]}]}
+    result = ingest_otlp_json(payload)
+    assert result.agent is not None
+    # "unmapped" means "preserved verbatim under otlp.unmapped"; an agent span preserves nothing.
+    assert "gen_ai.future.agent_attr" not in result.unmapped_keys
+    assert "gen_ai.future.agent_attr" in result.dropped_keys
+
+
+def test_unknown_attributes_on_a_model_span_are_still_preserved() -> None:
+    result = ingest_otlp_json(_valid_payload())
+    assert result.unmapped_keys == ["gen_ai.future.attribute"]
+    assert result.model_calls[0]["otlp.unmapped"] == {"gen_ai.future.attribute": "unknown-to-mapping-v1"}

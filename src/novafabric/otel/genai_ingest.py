@@ -456,14 +456,20 @@ def _base_event(span: dict[str, Any], severity: str | None = None) -> dict[str, 
 
 
 def _split_unknown(
-    attrs: dict[str, Any], result: GenAIIngestResult
+    attrs: dict[str, Any], result: GenAIIngestResult, *, preserved: bool = True
 ) -> dict[str, Any]:
-    """Partition unknown attributes: gen_ai./novafabric. carried, rest enumerated."""
+    """Partition unknown attributes: gen_ai./novafabric. carried, rest enumerated.
+
+    ``preserved=False`` is for a span kind whose attributes are not written anywhere
+    (an agent span contributes only its name and provider): its unknown keys are
+    listed as dropped, because "unmapped" promises the value survives under
+    ``otlp.unmapped`` (review misc-3-13).
+    """
     unmapped: dict[str, Any] = {}
     for key, value in attrs.items():
         if key in _KNOWN_KEYS:
             continue
-        if key.startswith(("gen_ai.", "novafabric.")):
+        if preserved and key.startswith(("gen_ai.", "novafabric.")):
             unmapped[key] = value
             if key not in result.unmapped_keys:
                 result.unmapped_keys.append(key)
@@ -522,7 +528,7 @@ def ingest_otlp_json(payload: Any) -> GenAIIngestResult:
                     "agent_name": str(agent_name) if agent_name else span["name"],
                     "provider": attrs.get("gen_ai.system"),
                 }
-            _split_unknown(attrs, result)
+            _split_unknown(attrs, result, preserved=False)
             continue
 
         attr_severity = _span_attr_severity(attrs)
@@ -730,7 +736,10 @@ def write_ingest_capsule_finalized(
     if result.agent and result.agent.get("agent_name"):
         metadata["otlp.agent_name"] = str(result.agent["agent_name"])
 
-    working_dir = str(Path.cwd()).replace(str(Path.home()), "~")
+    # The spans ran elsewhere: the importing server's cwd is not where the run
+    # happened, and recording it was false provenance that also leaked the server's
+    # path (review misc-3-13; ADR-0307 treats `host` the same way).
+    working_dir = "(otlp-import)"
     manifest: dict[str, Any] = {
         "schema_version": CAPSULE_SCHEMA_VERSION,
         "run_id": run_id,
