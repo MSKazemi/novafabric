@@ -13,6 +13,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **A revoked approver can no longer approve through an old policy.** `verify_sod` loaded only the policy version the
+  proposal cites, so after the operator published a policy without an approver, a proposal citing the old version, signed
+  by that approver, still passed. The signers must now be listed by the cited policy (grants are not retroactive,
+  ADR-0059) **and** by the latest policy (revocation is immediate); a newer policy that still lists both leaves an
+  in-flight proposal valid. Exit codes are unchanged (3 proposer, 4 approver).
+- **`nova suggest-register` drafts quote every capsule-derived value.** A tool name such as `t\ndependencies: [x@1]`
+  added keys (`dependencies` writes lineage edges) to the spec `y` registered.
+- **The federation coordinator fans out only to sites the operator configured** (`create_coordinator_app(sites=...)`);
+  it POSTed to any URL in the request body. Federation remains future design.
 - **A malformed `.seal/manifest.dsse` is a failed verification, not a crash, and the trust radar shows it `critical`.**
   A list, a non-string payload or non-base64 text raised from every verifier (`nova verify` printed a traceback) and the
   radar, swallowing it, showed a tampered sealed capsule as `unsealed`.
@@ -242,6 +251,19 @@ longer forwards the submitting shell's environment (ADR-0270).
   `nova promote keygen --identity NAME`.
 - `nova validate --fail-on-schema-violation` / `--write` without `--schemas` exit `2` (they were ignored);
   `server issue-token` / `api-key create --expires-in` accept only a positive number of days (exit `2`).
+- `nova replay --mode exact` exits `1` with `status: failure` and prints the reasons for a capsule that is not eligible for
+  exact replay (it was a green tick and exit `0`); `--mode semantic` reports no `similarity_score` (and a
+  `divergence_reason`) when fewer than two responses exist, instead of `1.0`.
+- The agent promote gate needs the **most recent** eval to pass (an old pass cleared ten later failures); with
+  `significance_gate` the whole recent sequence is judged as before.
+- A promotion the gates refuse after `nova promote approve` returns the proposal to `open` and writes a
+  `promote.approve_reverted` audit entry (new event type, mapped for SIEM egress); the approval stayed recorded.
+- The lineage NATS consumer skips a malformed event (counted in `malformed_events`) instead of crashing and being
+  redelivered forever, remembers an event id only once processed, and backs off on fetch errors.
+- The hot lineage index answers as a cache miss after an eviction removed an upstream edge, instead of a truncated set
+  (`is_complete_for` says which); the lineage migration divergence check compares node identities, not only counts.
+- `nova lineage-store profile` names the published image (`ghcr.io/mskazemi/novafabric`) and marks its stacks as
+  experimental templates whose environment variables this release does not read.
 - The trust radar's log-integrity axis warns (verdict `partial`) for a log entry that could not be checked
   (`log_inclusion: not-checked`, which `nova verify` accepts); it showed `critical`, the verdict of a forged entry.
 - `nova toolschema impact` exits `2` for a new schema that does not load, and lists the runs it could not check
@@ -496,6 +518,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   reads verified.
 - `GET /api/runs/stream` (SSE) accepts tokens issued by `nova server issue-token`, as every other route does; it
   accepted only the startup token.
+- Column-facet extraction of a `SELECT` is linear in the statement length; a whitespace-heavy tool argument stalled
+  capture finalize for minutes at the length cap. `novafabric.lineage` no longer reads its edge schema at import.
 - The evidence-fabric NATS consumer acks a message only after it was ingested and nacks it for redelivery when the
   ingest failed (it acked first, so a ClickHouse/DuckDB outage lost every event); undecodable messages are still acked
   and dead-lettered, and dead-letter records that did not fit are counted in `stats["dead_letter_dropped"]`.
