@@ -177,6 +177,20 @@ STRIDE analysis in the project's internal threat model:
   captured from untrusted workloads, and treat Evidence Bundles exported before
   this release as "signed content only".**
 
+  **High, fixed in v0.108.0.** A second line-by-line code review (about 280 findings) found, among
+  others: in `nova serve` ≤ v0.107.0, `GET /api/storage/validate` called S3 on a caller-chosen
+  `endpoint_url` with the server's AWS credentials, and a capsule whose recorded command was HTML ran
+  script in the Reports tab (stored XSS); `dek.db` (the raw per-subject PII keys), the erasure queue
+  and the audit log were created at the umask mode (commonly world-readable) and the token files
+  followed a symbolic link planted at their name; a revoked approver could still approve through an old
+  policy version; the collector's `novaseal_batch_signer` forwarded every batch **unsigned**, also with
+  `fail_open: false`; and `nova pii erase` wrote an unkeyed `sha256(subject_id)` into the audit log
+  (dictionary-reversible for an email address). **Upgrade; then `chmod 0600` an existing audit log
+  (`$NOVAFABRIC_HOME`) and any `dek.db`/token file you did not let v0.108.0 narrow on open, and treat
+  erasure entries written before the upgrade as still carrying the old digest (the log is append-only).**
+  The dashboard fixes take effect in the shipped bundle of this release. Full list: CHANGELOG
+  `[0.108.0]`.
+
   **Critical, fixed in v0.107.0.** In `nova server` ≤ v0.106.1 a principal with the
   `writer` role could overwrite any file the server process could write through
   `POST /v0/evidence` (`output_path`, or an absolute/`..` `run_id`), and

@@ -755,7 +755,7 @@ info:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
   title: NovaFabric Multi-User REST API
-  version: 0.107.0
+  version: 0.108.0
 openapi: 3.1.0
 paths:
   /.well-known/mcp.json:
@@ -1518,12 +1518,15 @@ paths:
 
         the XML-DSIG signature and parse under an XXE-hardened parser (V1/V2/V10),
 
-        apply the policy rules (V3–V9, V11), map attributes to roles, resolve the
+        apply the policy rules (V3–V9, V11), map attributes to roles and resolve the
 
-        subject, and mint a bearer token. Any failure rejects with 401 and issues
-        no
+        subject. Any failure rejects with 401. A verified assertion is answered 501
 
-        session; error messages never carry assertion contents (the closed audit rule).'
+        ``saml_session_unavailable``: the server has no session credential for a SAML
+
+        login yet (review server-12). Error messages never carry assertion contents
+
+        (the closed audit rule).'
       operationId: assertion_consumer_service_v0_auth_saml_acs_post
       responses:
         '200':

@@ -617,7 +617,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "upstream-timeout",
         "label": "--upstream-timeout",
         "type": "number",
-        "hint": "Wall-clock timeout in seconds for each upstream call.",
+        "hint": "Timeout in seconds for each upstream connect/read (not the whole call).",
         "flag": "--upstream-timeout",
         "defaultValue": "60.0"
       }
@@ -1215,7 +1215,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-audit-verify",
     "name": "nova audit verify",
     "journey": "audit",
-    "description": "Verify the integrity of a signed audit report.",
+    "description": "Check that an audit report is well-formed, and say what that does not prove.",
     "fields": [
       {
         "key": "report-path",
@@ -1408,8 +1408,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "allow-pending-wal",
         "label": "--allow-pending-wal",
         "type": "toggle",
-        "hint": "Proceed with --profile manifest even when the local WAL has pending un-chained uploads (the gap is recorded in the listing).",
+        "hint": "Proceed with --profile manifest even when the local WAL has pending or dead-lettered un-chained uploads (the gap is recorded in the listing).",
         "flag": "--allow-pending-wal"
+      },
+      {
+        "key": "wal-db",
+        "label": "--wal-db",
+        "type": "text",
+        "hint": "--profile manifest: the object-store client's local WAL database. Uploads still in it (pending or dead-lettered) are in no chain yet, so the set refuses them unless --allow-pending-wal. Without it the WAL is not checked, and the command says so.",
+        "flag": "--wal-db"
       },
       {
         "key": "deep",
@@ -4790,7 +4797,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-evidence-check-admissibility",
     "name": "nova evidence check-admissibility",
     "journey": "audit",
-    "description": "Re-run the five-point FRE-902(14) gate on a custody block (ADR-0095).",
+    "description": "Re-witness the five-point FRE-902(14) gate for a custody block (ADR-0095).",
     "fields": [
       {
         "key": "block-file",
@@ -4799,6 +4806,20 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "hint": "Positional argument <block_file>.",
         "positional": true,
         "required": true
+      },
+      {
+        "key": "capsule",
+        "label": "--capsule",
+        "type": "text",
+        "hint": "Run ID or capsule directory the block describes (recomputes its hash and looks its custody events up in the audit log)",
+        "flag": "--capsule"
+      },
+      {
+        "key": "pubkey",
+        "label": "--pubkey",
+        "type": "text",
+        "hint": "PEM ed25519 public key you trust to have signed the block (the key the block itself names is never trusted)",
+        "flag": "--pubkey"
       },
       {
         "key": "timestamp-ok",
@@ -9668,7 +9689,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "source",
         "label": "--source",
         "type": "text",
-        "hint": "Path to the source SQLite database (default: ~/.novafabric/registry.db).",
+        "hint": "Path to the source SQLite database (default: the registry every command uses — $NOVAFABRIC_DB_PATH, else $NOVAFABRIC_HOME/registry.db).",
         "flag": "--source"
       },
       {
@@ -10461,7 +10482,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "slsa-ml-profile",
         "label": "--slsa-ml-profile",
         "type": "toggle",
-        "hint": "With --slsa-provenance, emit the SLSA-for-ML profile (NF-057, ADR-0105): buildType promote-ml/v1 plus an eval-verdict digest byproduct binding the promoted model to the gating eval verdict. Use for model assets.",
+        "hint": "With --slsa-provenance, emit the SLSA-for-ML profile (NF-057, ADR-0105): buildType promote-ml/v1 plus an eval-verdict byproduct: the sha256 of the asset's recorded eval results (omitted when none is recorded). Use for model assets.",
         "flag": "--slsa-ml-profile"
       },
       {
@@ -10865,6 +10886,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--write"
       },
       {
+        "key": "force-unseal",
+        "label": "--force-unseal",
+        "type": "toggle",
+        "hint": "Rewrite capsule.yaml even though the capsule is NovaSeal-sealed. The existing seal will no longer verify (nova verify reports a binding failure) and must be re-issued.",
+        "flag": "--force-unseal"
+      },
+      {
         "key": "json",
         "label": "--json",
         "type": "toggle",
@@ -10984,6 +11012,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "toggle",
         "hint": "With --bind, persist into capsule.yaml.",
         "flag": "--write"
+      },
+      {
+        "key": "force-unseal",
+        "label": "--force-unseal",
+        "type": "toggle",
+        "hint": "Rewrite capsule.yaml even though the capsule is NovaSeal-sealed. The existing seal will no longer verify (nova verify reports a binding failure) and must be re-issued.",
+        "flag": "--force-unseal"
       },
       {
         "key": "json",
@@ -11957,6 +11992,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "text",
         "hint": "Output file (default: stdout)",
         "flag": "--output"
+      },
+      {
+        "key": "replay-pubkey",
+        "label": "--replay-pubkey",
+        "type": "text",
+        "hint": "PEM ed25519 public key a re-performance attestation must be signed by to count (repeatable). Without one, a replay attestation is UNKNOWN. (repeatable — add more in your terminal)",
+        "flag": "--replay-pubkey"
       }
     ],
     "docsPath": "/docs/cli-reference/",
@@ -11999,7 +12041,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-safety-case-verify",
     "name": "nova safety-case verify",
     "journey": "govern",
-    "description": "Re-verify a safety case: artifact hashes, case_hash, and invariant I1.",
+    "description": "Re-verify a safety case against its capsule: artifacts, case_hash, I1, subject.",
     "fields": [
       {
         "key": "case-file",
@@ -12572,8 +12614,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "consistency",
         "label": "--consistency",
         "type": "number",
-        "hint": "Also emit + verify an append-only consistency proof from this older tree size to the current head (ADR-0041 v0.2)",
+        "hint": "Also emit + verify a consistency proof from this older tree size to the current head (ADR-0041 v0.2). Append-only only with --old-root.",
         "flag": "--consistency"
+      },
+      {
+        "key": "old-root",
+        "label": "--old-root",
+        "type": "text",
+        "hint": "With --consistency N: the root at size N as published or anchored earlier (hex). Without it the old root is the log's own stored head, which a rewritten log rewrites too — internal consistency only.",
+        "flag": "--old-root"
       }
     ],
     "docsPath": "/docs/cli-reference/",
@@ -14646,7 +14695,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "check-redaction",
         "label": "--check-redaction",
         "type": "text",
-        "hint": "Path to a redaction_proof_report.seal.json file. Verifies the NovaSeal DSSE envelope of the proof report independently of the capsule seal check.",
+        "hint": "Path to a redaction_proof_report.seal.json file. Verifies the NovaSeal DSSE envelope of a nova subject-proof report instead of a capsule: the positional argument is then the report JSON the seal must cover. --ca-bundle validates the signer chain.",
         "flag": "--check-redaction"
       },
       {

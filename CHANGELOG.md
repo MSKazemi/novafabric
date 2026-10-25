@@ -11,6 +11,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+## [0.108.0] - 2026-10-25
+
+**Verification that checks content, state that survives a crash, and a dashboard that tells the truth.**
+A correctness and security release from a second line-by-line review of the code (about 280 findings
+across 15 slices, 2 critical, about 50 high), each fixed with a test that fails when the fix is
+reverted; the medium and low findings followed in sixteen batches. **Many entries below change
+behaviour** — read *Changed — BREAKING* before upgrading. Full notes:
+[docs/releases/v0.108.0.md](docs/releases/v0.108.0.md).
+
 ### Security
 
 - **A revoked approver can no longer approve through an old policy.** `verify_sod` loaded only the policy version the
@@ -244,6 +253,34 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **A GPAI Art. 53 revision digest covers the whole revision and the model name** (`digest_scheme: v2`), so a
   silent edit to retention, timestamps or numbering fails verification. Revisions written before v2 (no
   `digest_scheme`) still verify, but only their `fields` are covered; an unknown scheme fails verification.
+
+### Changed — BREAKING
+
+The behaviour changes most likely to affect a script, a CI job or an integration (each is described in
+*Changed*, *Fixed* or *Security* below):
+
+- **Exit codes now say what happened.** `nova replay --mode exact` exits `1` for a capsule that is not eligible
+  (it was a green tick); `nova seal sign --backend local` exits `2` and signs nothing (it exited `0`);
+  `nova audit map` exits `1` when a required control has no evidence; `nova experiment compare` and
+  `nova eval compare` exit `2` when the runs cannot be compared, and `eval compare` fails CI only on a
+  *decrease*; `nova eval agent` fails an asset with no eval suites; `nova validate --fail-on-schema-violation` without `--schemas` and `nova mcp scan` on a
+  document with no tools exit `2`; `nova server start` exits `2` for an out-of-range `NOVAFABRIC_SERVER_*` value.
+- **Things that used to be forwarded or signed unsigned now refuse.** The collector's `novaseal_batch_signer` exits
+  at start unless `local_wal: true` or `fail_open: true` (`keystore_endpoint` is refused until its mTLS fields
+  exist); `novafabric-hpc-hub` exits `1` as not implemented; `nova annotate confirm` refuses a checker with no
+  keyring key; a fixity digest, a safety-case run id and a system-card manifest are validated instead of
+  invented (`AutonomyAttempt` needs a `verdict_source`; `nova safety-case build` needs a valid `run_id` in
+  `capsule.yaml`; `from_cloudevents` needs `time`, `novarunglobal` and `novarun`).
+- **Approvals and promotion bind what was reviewed.** A maker-checker approval signs the capsule's content digest,
+  a registry promotion and a protected-label move sign the reviewed content, and the signers must be listed by both
+  the cited and the latest policy; proposals, bypasses and label moves signed before the upgrade must be
+  re-proposed (`nova seal verify` exits `10` for them).
+- **Sigstore bundles made by `POST /api/seal/sigstore/sign` before this release cannot verify** (they signed
+  `{"capsule_id": ...}`, not the manifest).
+- **Files and config.** The audit log, `dek.db`, the erasure queue and token files are `0600`; `LLMJudge` has no
+  default endpoint (`api_base=` or `NOVA_JUDGE_ENDPOINT`); `Spool.Commit` deletes the segments it acknowledges and a
+  spooled event over 1 MiB is rejected (`ErrEventTooLarge`); `GET /api/storage/validate` accepts only the configured
+  S3 endpoint; the dashboard needs Node 22.23.4 or newer to build.
 
 ### Changed
 

@@ -83,6 +83,20 @@ Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-c
 | 0306 slice 1 | Python functions declared with `record.tool` are captured as `transport: python` tool records and served by mocked replay before the body runs, one-to-one, fail-closed (`tool_result_not_servable`), `--permissive` gated by the safety ladder; per-surface tool counters; indexed tool matcher | `novafabric.capture.record.tool`, `replay_contract.tool_calls_by_surface` / `tool_calls_refused`, `docs/architecture/replay-modes.md#support-matrix` | **experimental** (v0.105.0). Payloads kept only at `forensic`/`air_gapped`; non-JSON results not servable; nested boundaries not servable in v0.105.0 (served since slice 4, unreleased); ~~slice 2~~ shipped (row below), slice 3 (framework seams) planned, ~~slice 4~~ landed unreleased (row below) |
 | 0306 slice 2 | `replay.yaml` `tool_overrides` enforced inside the mocked replay on MCP and `record.tool` (one decision shared with `--dry-run`, pinned dry-run == replay over every override × surface × flag); a capsule's restriction holds even under `--permissive`, its permission needs the operator's ladder flag; a strict replay refuses to start when an `allow: false` cannot be enforced (`ToolOverrideUnenforceable`, exit 3); `--permissive` runs an unmatched MCP call live only with `--allow-unknown-mutation` (behaviour change) | `nova replay` (`--permissive`, `--allow-*`, `--dry-run`), `replay_contract.tool_overrides`, divergence `override_unenforceable` | **experimental** (v0.105.0). Overrides are not enforced in `--mode intervention` (no tool dispatcher); a capsule-supplied class is never used to permit; slice 3 (framework seams) planned; ~~nested coverage, echo check, redact-then-hash for MCP~~ landed unreleased as slice 4 (row below) |
 
+### Landed — v0.108.0 (2026-10-25)
+
+A second line-by-line review of the code (about 280 findings across 15 slices), fixed with a test
+that fails when each fix is reverted. Highlights: verification that checks **content** instead of
+a file name or a flag (seals in audits and safety cases, maker-checker bound to the reviewed
+content, revoked approvers, signed rejections); state and secrets that survive a crash (owner-only
+from the first byte, durable renames, crash-safe ratchet rotation); legal holds and WORM state that
+fail closed; a collector that signs or refuses to start, and a durable spool; Postgres Merkle-log
+appends that are serialised; a restore RLS proof that can fail; a dashboard that shows what the
+server said (no fabricated proofs, no "0 violations", confirmation before erasure); compliance
+exports that state only what was recorded. Full list: CHANGELOG `[0.108.0]` and
+[docs/releases/v0.108.0.md](docs/releases/v0.108.0.md). Known limits left after it: the open-items
+table under *Next*.
+
 ### Landed — v0.107.0 (2026-10-23)
 
 The code-vs-docs defect batch: about 100 defects confirmed by a line-by-line review of the
@@ -112,9 +126,9 @@ open-items table under *Next*.
 | 0315 | Promote signers must chain to a pinned CA; a seal bypass counts only from a policy approver, for its own capsule, by its signed expiry | `nova seal verify\|approve --ca-bundle` | requiring a signed policy when a trust root is pinned |
 | — | `nova verify <bundle>.zip` checks `manifest_hash`, DSSE signatures and subjects; `--public-key` pins the signer. `attest-replay --mode exact` refuses an ineligible run. Every write-permitting replay flag goes through the `replay_mutating` policy | `nova verify`, `nova evidence attest-replay`, `nova replay` | — |
 
-### Next — open items left after the v0.107.0 defect batch
+### Next — open items left after the v0.108.0 review batch
 
-These are known limits left after the defect batch in CHANGELOG `[0.107.0]`. Each is
+These are known limits left after the review batch in CHANGELOG `[0.108.0]` (and the defect batch in `[0.107.0]`). Each is
 **planned** (no implementation yet) unless marked as an owner decision.
 
 | Item | Why it is open | Status |
@@ -135,12 +149,19 @@ These are known limits left after the defect batch in CHANGELOG `[0.107.0]`. Eac
 | Per-track Alembic version table (ADR-0317, proposed) | Containers share one `alembic_version` table for the metadata and registry tracks, so `nova server start` can refuse with E-SKEW-AHEAD | owner decision |
 | Capture tamper sweep under a live child | A process the workload leaves running can re-plant a link after the sweep (refused, never followed; capture may stop with an error) | documented limit |
 | Readers verify signatures | List and query views show a re-sealed capsule's own payload; only `nova verify` and the radar reject it | planned |
-| `nova seal log verify` CLI read-only | The CLI still opens the log read-write and creates one if missing | planned |
+| ~~`nova seal log verify` CLI read-only~~ | **Resolved in v0.108.0:** it opens the log read-only and exits `3` when none exists | resolved |
 | `nova seal bypass --notify <email>` | No email transport exists; the signed status is honest (`pending`) | planned |
 | Promote-bundle `--data-dir` default | The CLI defaults to `~/.local/share/novafabric`, `nova serve` to `$NOVAFABRIC_HOME` | planned |
 | ~~`capsule_migration` edge type~~ | **Resolved:** `migration_source` is an additive lineage `edge_type` (ADR-0034 §6) | resolved |
 | Writers never write through a link | `registry/service.py` (`assets.jsonl`) and `energy/_attribution.py` open a capsule path for writing | planned |
 | ~~Collector 500 on an event without `event_type`~~ | **Resolved:** a malformed event is refused with 422 and the batch is not stored | resolved |
+| Stream relay in `nova api-proxy` and the HTTP MCP proxy | Both buffer each upstream response whole, so a streaming client sees no token until the model finishes; headers are relayed since v0.108.0 | planned |
+| `novafabric-hpc-hub` | The binary is a stub that exits `1` as not implemented (subscribe, sign, publish to Kafka are not written) | future design |
+| KMS keystore for the collector's `novaseal_batch_signer` | `keystore_endpoint` is refused: the config has no fields for the mTLS client certificate; only `local_wal` (dev) works | planned |
+| `capsule_verified` for unsealed derived exports | Annex IV and NIS2 mark values derived from an unsealed capsule `capsule_verified` (a re-performable derivation, ADR-0197); whether that should require a verifying seal changes five test files and the ADR | owner decision |
+| SAML session credential | A verified SAML assertion answers `501 saml_session_unavailable` until the session credential is decided | owner decision |
+| `deploy/hpc/epilog.sh` flush | It runs `nats stream flush`, which was not checked against a real `nats` CLI | planned (verify) |
+| Lineage JanusGraph batch checks | Need a live graph to reproduce | planned |
 
 ### Next — specified, unclaimed, ready to build
 
