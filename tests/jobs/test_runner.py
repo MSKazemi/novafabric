@@ -166,3 +166,39 @@ def test_stop_drains_and_double_start_refused(store: JobStore) -> None:
     runner.stop()
     runner.start()  # restartable after stop
     runner.stop()
+
+
+def test_a_runner_with_no_handlers_is_refused(store: JobStore) -> None:
+    # review misc-3-12: kinds=() meant "claim any kind", so the runner claimed a job
+    # it had no handler for, then leaked it as running forever.
+    with pytest.raises(ValueError, match="at least one handler"):
+        JobRunner(store, [])
+
+
+def test_a_job_of_an_unknown_kind_is_failed_not_leaked(store: JobStore) -> None:
+    runner = JobRunner(
+        store, [JobHandler(kind="known", fn=lambda job: {}, idempotent=True)], workers=1
+    )
+    stray = store.enqueue("mystery", {}, max_attempts=1)
+    claimed = store.claim(runner.worker_id, kinds=("mystery",), lease_seconds=30)
+    assert claimed is not None and claimed.job_id == stray.job_id
+    runner._inflight.add(claimed.job_id)
+    runner._run_one(claimed)
+    assert claimed.job_id not in runner._inflight
+    got = store.get(stray.job_id)
+    assert got.state is JobState.FAILED
+    assert "no handler" in (got.error or "")
+
+
+def test_the_runner_never_claims_a_kind_it_has_no_handler_for(store: JobStore) -> None:
+    runner = JobRunner(
+        store, [JobHandler(kind="known", fn=lambda job: {}, idempotent=True)],
+        workers=1, poll_interval=0.05,
+    )
+    other = store.enqueue("other", {})
+    runner.start()
+    try:
+        time.sleep(0.4)
+    finally:
+        runner.stop()
+    assert store.get(other.job_id).state is JobState.QUEUED

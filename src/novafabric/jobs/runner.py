@@ -63,6 +63,10 @@ class JobRunner:
     ) -> None:
         if workers < 1:
             raise ValueError("workers must be >= 1")
+        if not handlers:
+            # claim(kinds=()) means "any kind": a runner with no handlers claimed jobs
+            # it could not run (review misc-3-12).
+            raise ValueError("a JobRunner needs at least one handler")
         self._store = store
         self._handlers = {h.kind: h for h in handlers}
         if len(self._handlers) != len(handlers):
@@ -139,8 +143,12 @@ class JobRunner:
             self._pool.submit(self._run_one, claimed)
 
     def _run_one(self, job: Job) -> None:
-        handler = self._handlers[job.kind]
         try:
+            handler = self._handlers.get(job.kind)
+            if handler is None:
+                # Not reachable while claim() is restricted to our kinds; if it is
+                # reached, the job is failed and the slot released, not leaked.
+                raise LookupError(f"no handler registered for job kind {job.kind!r}")
             if handler.already_done is not None and handler.already_done(job):
                 self._store.finish(
                     job.job_id, self._worker_id, {"already_done": True}
