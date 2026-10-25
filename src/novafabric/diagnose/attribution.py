@@ -254,6 +254,23 @@ def _classify(error_text: str, name: str) -> AgentErrorTaxonomy:
     return AgentErrorTaxonomy.UNKNOWN
 
 
+def record_step_id(rec: dict[str, Any]) -> Any:
+    """The identifier a stream record carries, whichever stream wrote it.
+
+    Real model-call records carry ``model_call_id`` (every SDK and wire hook writes it)
+    and no ``span_id``/``id``/``call_id``; looking only for those gave every model step
+    the synthetic id ``model-<n>``, which the intervention lookup then never found
+    (review misc-2-03). Shared with :mod:`novafabric.diagnose.verify`, so the id a step is
+    given and the id it is looked up by cannot disagree.
+    """
+    return (
+        rec.get("span_id")
+        or rec.get("id")
+        or rec.get("call_id")
+        or rec.get("model_call_id")
+    )
+
+
 def _load_steps(capsule_dir: Path, manifest: dict[str, Any]) -> list[Step]:
     """Decompose the run into ordered steps from trace + tool + model streams."""
     steps: list[Step] = []
@@ -271,12 +288,14 @@ def _load_steps(capsule_dir: Path, manifest: dict[str, Any]) -> list[Step]:
             # ADR-0305: a transport record is a wire attempt, not a step.
             records = logical_model_calls(records)
         for rec in records:
-            sid = rec.get("span_id") or rec.get("id") or rec.get("call_id")
+            sid = record_step_id(rec)
             step_id = str(sid) if sid is not None else f"{kind}-{ordinal}"
             name = str(
                 rec.get("name")
                 or rec.get("tool_name")
                 or rec.get("model")
+                or rec.get("gen_ai.request.model")
+                or rec.get("gen_ai.response.model")
                 or kind
             )
             steps.append(

@@ -118,6 +118,34 @@ class TestSynthesize:
         assert payload["mutate_payload"]["status"] == "ok"
         assert payload["mutate_payload"]["error"] is None
 
+    def test_a_real_capture_record_is_located_by_its_model_call_id(self, tmp_path: Path) -> None:
+        # review misc-2-03: real model-call records carry `model_call_id` and the flat
+        # `gen_ai.request.model`, never span_id/id/call_id/model, so every model step got
+        # the synthetic id "model-<n>" and was never found.
+        from novafabric.capture.hooks._otel_genai import build_record_envelope
+
+        def record(call_id: str, status: str, **extra: object) -> dict[str, object]:
+            env = build_record_envelope(
+                model_call_id=call_id, parent_span_id="a" * 16,
+                started_at="2026-07-01T00:00:0%dZ" % (1 if call_id.endswith("1") else 0),
+                finished_at="2026-07-01T00:00:09Z", duration_ms=5, status=status,
+            )
+            env["gen_ai.request.model"] = "gpt-4o"
+            env.update(extra)
+            return env
+
+        calls = [
+            record("01CALL00000000000000000000", "ok"),
+            record("01CALL00000000000000000001", "error", error="model call rejected"),
+        ]
+        cap = _write_capsule(tmp_path, "run-real", model_calls=calls)
+        attribution = attribute_failure(cap)
+        assert attribution.responsible is not None
+        assert attribution.responsible.step_id == "01CALL00000000000000000001"
+        assert attribution.responsible.name == "gpt-4o"  # not the literal "model"
+        payload = synthesize_intervention_payload(attribution.responsible, calls)
+        assert payload["target"] == {"stream": "model-calls", "event_index": 1}
+
     def test_non_model_hypothesis_is_unmappable(self, tmp_path: Path) -> None:
         cap = _write_capsule(
             tmp_path,

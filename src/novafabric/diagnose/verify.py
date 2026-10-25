@@ -54,6 +54,7 @@ from novafabric.diagnose.attribution import (
     RunAttribution,
     StepAttribution,
     _read_jsonl,
+    record_step_id,
 )
 from novafabric.diagnose.causal_graph import causal_root_candidates
 
@@ -141,7 +142,7 @@ def synthesize_intervention_payload(
             "(ADR-0101 first slice)"
         )
     for index, record in enumerate(model_calls):
-        rid = record.get("span_id") or record.get("id") or record.get("call_id")
+        rid = record_step_id(record)
         if rid is not None and str(rid) == step.step_id:
             return {
                 "target": {"stream": "model-calls", "event_index": index},
