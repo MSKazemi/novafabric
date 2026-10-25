@@ -2030,7 +2030,7 @@ def create_app(
         run_id: str, template: str = "clymer-generic-v0"
     ) -> dict[str, Any]:
         """Compile an evidence-grounded safety case for a run (ADR-0095)."""
-        from novafabric.safetycase.compiler import SafetyCaseCompiler
+        from novafabric.safetycase.compiler import NotACapsuleError, SafetyCaseCompiler
         from novafabric.safetycase.templates import TemplateError
 
         cdir = _resolve_capsule(run_id, capsule_dir)
@@ -2038,6 +2038,9 @@ def create_app(
             case = SafetyCaseCompiler().build(cdir, template)
         except TemplateError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NotACapsuleError as exc:
+            # A capsule.yaml without a valid run_id: the case would name no run.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return case.model_dump(mode="json")
 
     @app.post("/api/runs/{run_id}/verify", dependencies=[Depends(verify_token)])

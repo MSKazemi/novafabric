@@ -85,3 +85,12 @@ def test_safety_case_endpoint_rejects_unknown_template(client, run_id):
         f"/api/runs/{run_id}/safety-case?{TOKEN_Q}&template=does-not-exist", headers=H
     )
     assert r.status_code == 400
+
+
+def test_safety_case_endpoint_is_422_for_a_capsule_without_a_valid_run_id(
+    client, run_id, tmp_path
+):
+    # review misc-1-05: the case would name no run, so it is refused, not a 500.
+    (tmp_path / "runs" / run_id / "capsule.yaml").write_text("run_id: not-a-ulid\n")
+    r = client.get(f"/api/runs/{run_id}/safety-case?{TOKEN_Q}", headers=H)
+    assert r.status_code == 422
