@@ -51,6 +51,11 @@ class RenewalDelta(BaseModel):
     defeaters_opened: list[str] = []
     defeaters_closed: list[str] = []
     clauses_revised: list[str] = []  # "<node_id>@<clause_id>" whose claim digest changed
+    # Removal is the change an assessor most needs to see (review misc-3-07).
+    nodes_removed: list[str] = []
+    clauses_added: list[str] = []
+    clauses_removed: list[str] = []
+    evidence_removed: list[str] = []  # "<node_id>@<digest>" dropped from a node that survives
 
 
 def _solution_coverage(case: AssuranceCase) -> float | None:
@@ -128,6 +133,17 @@ def compute_renewal_delta(prior: AssessorPackage, current: AssessorPackage) -> R
         key for key, dig in cur_cl.items() if key in prior_cl and prior_cl[key] != dig
     )
 
+    cur_ids = {n.id for n in current.case.nodes}
+    nodes_removed = sorted(prior_ids - cur_ids)
+    evidence_removed = sorted(
+        f"{nid}@{digest}"
+        for nid, digs in prior_ev.items()
+        if nid in cur_ev
+        for digest in digs - cur_ev[nid]
+    )
+    clauses_added = sorted(set(cur_cl) - set(prior_cl))
+    clauses_removed = sorted(set(prior_cl) - set(cur_cl))
+
     return RenewalDelta(
         prior_package_digest=package_digest(prior),
         nodes_added=nodes_added,
@@ -135,4 +151,8 @@ def compute_renewal_delta(prior: AssessorPackage, current: AssessorPackage) -> R
         defeaters_opened=defeaters_opened,
         defeaters_closed=defeaters_closed,
         clauses_revised=clauses_revised,
+        nodes_removed=nodes_removed,
+        clauses_added=clauses_added,
+        clauses_removed=clauses_removed,
+        evidence_removed=evidence_removed,
     )

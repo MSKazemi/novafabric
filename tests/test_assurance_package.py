@@ -105,3 +105,50 @@ def test_renewal_delta_reports_refreshed_evidence_and_revised_clauses():
     delta = compute_renewal_delta(prior, current)
     assert "S1" in delta.evidence_refreshed          # evidence digest changed on S1
     assert "G1@8.3" in delta.clauses_revised          # claim digest changed for the clause
+
+
+# review misc-3-07: removal is the change an assessor most needs to see, and the
+# delta could only show additions.
+
+
+def test_renewal_delta_reports_removed_nodes():
+    prior = build_assessor_package(package_id="P1", case=_case(extra_solution=True))
+    current = build_assessor_package(package_id="P2", case=_case())
+    delta = compute_renewal_delta(prior, current)
+    assert delta.nodes_removed == ["S2"]
+    assert delta.nodes_added == []
+
+
+def test_renewal_delta_reports_added_and_removed_clauses():
+    entry = lambda clause: ConformanceMapEntry(  # noqa: E731
+        node_id="G1", standard=Standard.iso_iec_42001, clause_id=clause, claim_digest="c" * 64)
+    prior = build_assessor_package(
+        package_id="P1", case=_case(), conformance_map=ConformanceMap(entries=[entry("8.3"), entry("9.1")]))
+    current = build_assessor_package(
+        package_id="P2", case=_case(), conformance_map=ConformanceMap(entries=[entry("8.3"), entry("10.2")]))
+    delta = compute_renewal_delta(prior, current)
+    assert delta.clauses_removed == ["G1@9.1"]
+    assert delta.clauses_added == ["G1@10.2"]
+    assert delta.clauses_revised == []
+
+
+def test_renewal_delta_reports_evidence_removed_from_a_surviving_node():
+    def case(*digests: str) -> AssuranceCase:
+        return AssuranceCase(case_id="C1", nodes=[
+            AssuranceNode(id="G1", type=NodeType.goal, statement="safe", supported_by=["S1"]),
+            AssuranceNode(id="S1", type=NodeType.solution, statement="e",
+                          evidence_refs=[EvidenceRef(ref=f"capsule://r{i}", digest=d)
+                                         for i, d in enumerate(digests)]),
+        ])
+
+    prior = build_assessor_package(package_id="P1", case=case("a" * 64, "b" * 64))
+    current = build_assessor_package(package_id="P2", case=case("a" * 64))
+    delta = compute_renewal_delta(prior, current)
+    assert delta.evidence_removed == ["S1@" + "b" * 64]
+    assert "S1" in delta.evidence_refreshed  # the set changed, as before
+
+
+def test_an_unchanged_renewal_has_an_empty_delta():
+    package = build_assessor_package(package_id="P", case=_case(extra_solution=True))
+    delta = compute_renewal_delta(package, package)
+    assert delta.nodes_removed == delta.clauses_removed == delta.evidence_removed == []
