@@ -126,5 +126,9 @@ def verify(
     emit_json(json.dumps(result.model_dump()))
     if result.signature_ok is None:
         err_console.print(f"[yellow]signature:[/yellow] {result.signature_status}")
-    if not result.fingerprint_matches:
+    if result.signature_block_matches is False:
+        err_console.print(
+            "[red]signature block changed:[/red] the card's signature differs from the one captured"
+        )
+    if not result.fingerprint_matches or result.signature_block_matches is False:
         raise typer.Exit(1)

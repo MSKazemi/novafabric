@@ -209,3 +209,57 @@ def test_a_capsule_without_the_facet_reads_as_none() -> None:
 def test_an_invalid_facet_is_reported_not_ignored() -> None:
     with pytest.raises(A2ACardError, match="invalid a2a_card facet"):
         facet_from_capsule({"facets": {"a2a_card": {"card": {}}}})
+
+
+# ── review misc-3-06: verify never echoes a verdict nobody produced ───────────
+
+
+def _doc_edit(facet, **update):  # type: ignore[no-untyped-def]
+    return facet.model_copy(update=update)
+
+
+def test_verify_does_not_report_a_stored_verdict_as_its_own() -> None:
+    forged = _doc_edit(build_facet(CARD), signature_ok=True, signature_status="verified")
+    result = verify_facet(forged)
+    assert result.signature_ok is None
+    assert "not re-verified" in result.signature_status
+    assert result.recorded_signature_ok is True
+    assert result.recorded_signature_status == "verified"
+
+
+def test_a_supplied_verifier_recomputes_the_verdict() -> None:
+    facet = _doc_edit(build_facet(CARD), signature_ok=True, signature_status="verified")
+    assert verify_facet(facet, verifier=lambda c: False).signature_ok is False
+    assert verify_facet(facet, verifier=lambda c: True).signature_ok is True
+
+    def boom(card: object) -> bool:
+        raise RuntimeError("down")
+
+    assert verify_facet(facet, verifier=boom).signature_ok is False
+
+
+def test_an_unsigned_card_has_no_signature_verdict_either_way() -> None:
+    unsigned = {k: v for k, v in CARD.items() if k != "signature"}
+    result = verify_facet(build_facet(unsigned), verifier=lambda c: True)
+    assert result.signature_ok is None
+
+
+def test_swapping_the_signature_block_is_detected() -> None:
+    facet = build_facet(CARD)
+    swapped_card = dict(facet.card, signature={"alg": "EdDSA", "sig": "ffff"})
+    result = verify_facet(_doc_edit(facet, card=swapped_card))
+    assert result.fingerprint_matches is True  # the claims are unchanged...
+    assert result.signature_block_matches is False  # ...but the signature block is not
+
+
+def test_removing_the_signature_block_is_detected() -> None:
+    facet = build_facet(CARD)
+    stripped = {k: v for k, v in facet.card.items() if k != "signature"}
+    assert verify_facet(_doc_edit(facet, card=stripped)).signature_block_matches is False
+
+
+def test_an_untouched_card_matches_and_an_old_facet_is_unchecked() -> None:
+    facet = build_facet(CARD)
+    assert verify_facet(facet).signature_block_matches is True
+    legacy = facet.model_copy(update={"signature_digest": None})
+    assert verify_facet(legacy).signature_block_matches is None

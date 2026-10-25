@@ -1997,7 +1997,15 @@ nova a2a-card verify --facet facet.json
 Options:
 - `--facet` (required) — a facet JSON, or a capsule carrying one in `facets.a2a_card`
 
-Exit codes: `0` (fingerprint matches), `1` (**the card changed**), `2` (bad input).
+Exit codes: `0` (fingerprint matches and the signature block is the captured one), `1` (**the card changed**, or its
+signature block did), `2` (bad input).
+
+The signature is **not verified offline** (`signature_ok` is `null`, status `not re-verified offline`): nothing
+here checks a JWS. What the facet stored at capture time is reported as `recorded_signature_ok` /
+`recorded_signature_status`, a claim anyone can edit, never as the verdict. `card_fingerprint` excludes the
+signature, so a facet also records `signature_digest` (SHA-256 of the signature block) and `signature_block_matches`
+reports whether the stored block is still that one (`null` for a facet captured before the field existed). Releases
+up to v0.107.0 echoed the stored `signature_ok` as the result.
 
 The recorded fingerprint is never rewritten to the observed one — that would
 redefine which card was presented and turn a detected alteration into a silently

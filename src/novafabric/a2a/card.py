@@ -43,6 +43,7 @@ one captured before this feature existed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -97,6 +98,11 @@ class A2ACardFacet(BaseModel):
     #: ``signature_status``. Never inferred from ``signed``.
     signature_ok: bool | None = None
     signature_status: str = UNVERIFIED
+    #: SHA-256 of the card's signature block as captured (``None`` for a facet
+    #: that predates this field or an unsigned card). ``card_fingerprint``
+    #: deliberately excludes the signature, so without this swapping or removing
+    #: the block was invisible to the only offline check (review misc-3-06).
+    signature_digest: str | None = None
     #: Fields of the expected A2A 1.0 shape that this card does not carry.
     missing_fields: list[str] = Field(default_factory=list)
     #: Sealed capsule root this facet is bound into, once known.
@@ -122,6 +128,15 @@ def is_signed(card: Mapping[str, Any]) -> bool:
     conflating the two is exactly how a fabricated verdict reaches evidence.
     """
     return any(card.get(k) for k in _SIGNATURE_KEYS)
+
+
+def signature_block_digest(card: Mapping[str, Any]) -> str | None:
+    """``sha256:`` of the card's signature block(s), or ``None`` when it has none."""
+    block = {k: card[k] for k in _SIGNATURE_KEYS if card.get(k)}
+    if not block:
+        return None
+    canonical = json.dumps(block, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_facet(
@@ -167,6 +182,7 @@ def build_facet(
         signed=signed,
         signature_ok=ok,
         signature_status=status,
+        signature_digest=signature_block_digest(card),
         missing_fields=missing,
         bound_root=bound_root,
         portable_export=portable_export,
@@ -215,11 +231,24 @@ class CardVerification(BaseModel):
     observed_fingerprint: str
     fingerprint_matches: bool
     signed: bool
+    #: The verdict of a verifier run NOW. ``None`` when none ran: the facet's own
+    #: stored verdict is reported separately and is never presented as this one.
     signature_ok: bool | None
     signature_status: str
+    #: What the facet claims was concluded at capture time (not re-checked here).
+    recorded_signature_ok: bool | None = None
+    recorded_signature_status: str = ""
+    #: Whether the stored card's signature block is the one captured: ``None`` for a
+    #: facet without a recorded ``signature_digest``.
+    signature_block_matches: bool | None = None
 
 
-def verify_facet(facet: A2ACardFacet) -> CardVerification:
+NOT_REVERIFIED = (
+    "not re-verified offline: no JWS verifier supplied (the recorded verdict is a claim)"
+)
+
+
+def verify_facet(facet: A2ACardFacet, verifier: CardVerifier | None = None) -> CardVerification:
     """Recompute the fingerprint from the stored card and report agreement.
 
     This is the offline re-verification NF-171 requires, and it answers the
@@ -229,15 +258,40 @@ def verify_facet(facet: A2ACardFacet) -> CardVerification:
     The facet is never modified, not even on a mismatch. Rewriting the recorded
     fingerprint to the observed one would redefine which card was presented and
     turn a detected alteration into a silently accepted new identity.
+
+    The signature is not verified unless a *verifier* is supplied: a stored
+    ``signature_ok`` is data anyone can edit, so it is reported as
+    ``recorded_signature_ok`` and ``signature_ok`` stays ``None`` (review
+    misc-3-06). The signature block itself is bound by ``signature_digest``.
     """
     observed = card_fingerprint(facet.card)
+    signature_ok: bool | None = None
+    if not facet.signed:
+        status = UNSIGNED
+    elif verifier is None:
+        status = NOT_REVERIFIED
+    else:
+        try:
+            signature_ok = bool(verifier(facet.card))
+            status = "verified" if signature_ok else "signature verification failed"
+        except Exception as exc:  # noqa: BLE001 - recorded, never raised
+            signature_ok = False
+            status = f"signature verification error: {exc}"
+    block_matches = (
+        None
+        if facet.signature_digest is None
+        else signature_block_digest(facet.card) == facet.signature_digest
+    )
     return CardVerification(
         recorded_fingerprint=facet.card_fingerprint,
         observed_fingerprint=observed,
         fingerprint_matches=observed == facet.card_fingerprint,
         signed=facet.signed,
-        signature_ok=facet.signature_ok,
-        signature_status=facet.signature_status,
+        signature_ok=signature_ok,
+        signature_status=status,
+        recorded_signature_ok=facet.signature_ok,
+        recorded_signature_status=facet.signature_status,
+        signature_block_matches=block_matches,
     )
 
 
