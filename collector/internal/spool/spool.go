@@ -21,6 +21,7 @@ package spool
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -33,6 +34,25 @@ import (
 // ErrBackpressure is returned by Write when the spool is full and eviction
 // cannot free enough space.
 var ErrBackpressure = fmt.Errorf("spool: backpressure — spool full, event dropped")
+
+// MaxEventBytes is the largest single event a Write accepts, and the largest line the
+// readers (spool and DLQ replay) will scan. It is explicit because bufio.Scanner's default
+// token limit is 64 KiB: a longer line made the whole segment unreadable and the checkpoint
+// then advanced past it (review go-collector-ts-packages-06). 1 MiB is far above any
+// envelope; NATS' default max_payload is also 1 MiB, so a larger event could not be
+// forwarded anyway.
+const MaxEventBytes = 1 << 20
+
+// ErrEventTooLarge is returned by Write for an event over MaxEventBytes. The event is not
+// spooled; the writer can count the rejection.
+var ErrEventTooLarge = fmt.Errorf("spool: event exceeds %d bytes, rejected", MaxEventBytes)
+
+// newEventScanner returns a line scanner that accepts lines up to MaxEventBytes.
+func newEventScanner(r io.Reader) *bufio.Scanner {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64<<10), MaxEventBytes+1)
+	return sc
+}
 
 // SpoolMetrics is the interface that spool uses to report operational metrics.
 // Implementations are expected to be goroutine-safe.
@@ -185,6 +205,9 @@ func (s *Spool) routeToDLQ(eventJSON []byte, reason string) {
 // returned so the caller knows the primary path was bypassed.  Without a DLQ
 // the event is silently dropped (legacy behaviour).
 func (s *Spool) Write(eventJSON []byte) error {
+	if len(eventJSON) > MaxEventBytes {
+		return ErrEventTooLarge
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -249,6 +272,9 @@ func (s *Spool) ReadBatch(maxEvents int) ([][]byte, error) {
 		events, newOffset, err := readSegmentEvents(segPath, s.readOffset)
 		if err != nil {
 			slog.Warn("spool: skipping unreadable segment", "path", segPath, "error", err)
+			if s.metrics != nil {
+				s.metrics.IncDroppedSegments() // events in it are never forwarded: count the loss
+			}
 			s.readIdx++
 			s.readOffset = 0
 			continue
@@ -327,8 +353,31 @@ func (s *Spool) Commit(n int) error {
 	if err := s.checkpoint.Advance(s.pendingAckSeq, s.pendingAckOffset); err != nil {
 		return err
 	}
+	s.reclaimAcknowledgedLocked()
 	s.updateMetrics()
 	return nil
+}
+
+// reclaimAcknowledgedLocked unlinks the segments the checkpoint now covers and trims them
+// from the in-memory list. It runs only after Advance has persisted the checkpoint, so a
+// crash between the two leaves an acknowledged file the next start skips. Without it every
+// acknowledged segment stayed on disk until the directory reached max-bytes, each Write
+// scanned all of them, and the list grew without bound (review go-collector-ts-packages-05).
+// Only segments already consumed (index < readIdx) and at or below the acknowledged sequence
+// are removed; the segment being read partially stays. Caller holds s.mu.
+func (s *Spool) reclaimAcknowledgedLocked() {
+	acked := s.checkpoint.LastAckSeq()
+	n := 0
+	for n < s.readIdx && seqFromPath(s.readSegments[n]) <= acked {
+		n++
+	}
+	for _, path := range s.readSegments[:n] {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			slog.Warn("spool: could not remove acknowledged segment", "path", path, "error", err)
+		}
+	}
+	s.readSegments = append([]string(nil), s.readSegments[n:]...)
+	s.readIdx -= n
 }
 
 // Stats returns a point-in-time snapshot of spool health.
@@ -416,7 +465,7 @@ func readSegmentEvents(path string, byteOffset int64) ([][]byte, int64, error) {
 	}
 
 	var events [][]byte
-	scanner := bufio.NewScanner(f)
+	scanner := newEventScanner(f)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		cp := make([]byte, len(line))

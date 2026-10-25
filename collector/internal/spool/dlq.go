@@ -163,7 +163,7 @@ func replayFile(path string, fn func([]byte) error) error {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
+	scanner := newEventScanner(f)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
