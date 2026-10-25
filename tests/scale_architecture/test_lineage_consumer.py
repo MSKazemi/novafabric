@@ -250,3 +250,53 @@ class TestRealProducerEndToEnd:
         assert len(spawned_by) == 1
         assert spawned_by[0]["src"] == parent_result.run_id
         assert spawned_by[0]["dst"] == child_result.run_id
+
+
+class TestMalformedEvents:
+    """review replay-lineage-registry-12: one event without a run_id raised KeyError
+    out of the batch (killing the NATS loop, redelivered forever), and an event id was
+    marked seen before processing, so a retry was dropped as a duplicate."""
+
+    def test_a_malformed_event_is_skipped_and_the_rest_of_the_batch_is_kept(
+        self, consumer: LineageConsumer, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        events = [
+            {"event_id": "bad", "event_type": "ArtifactProduced", "artifact_id": "a"},  # no run_id
+            {"event_id": "good", "event_type": "ArtifactProduced", "run_id": "r", "artifact_id": "a"},
+        ]
+        edges = _run(consumer.run_once(events))
+        assert [(e["src"], e["dst"]) for e in edges] == [("r", "a")]
+        assert consumer.malformed_events == 1
+        assert "bad" in caplog.text
+
+    def test_a_non_object_event_is_skipped(self, consumer: LineageConsumer) -> None:
+        assert _run(consumer.run_once([[1, 2], "x", None])) == []  # type: ignore[list-item]
+        assert consumer.malformed_events == 3
+
+    def test_an_id_is_remembered_only_after_it_was_processed(
+        self, consumer: LineageConsumer
+    ) -> None:
+        bad = {"event_id": "e1", "event_type": "ArtifactProduced", "artifact_id": "a"}
+        assert _run(consumer.run_once([bad])) == []
+        # The producer re-sends the same event id, now well-formed: not a duplicate.
+        fixed = {**bad, "run_id": "r"}
+        assert [(e["src"], e["dst"]) for e in _run(consumer.run_once([fixed]))] == [("r", "a")]
+        # A genuine redelivery of the processed event is still dropped.
+        assert _run(consumer.run_once([fixed])) == []
+
+    def test_a_handler_failure_is_not_remembered_as_seen(
+        self, consumer: LineageConsumer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = {"n": 0}
+        original = consumer._process_event
+
+        async def flaky(event: dict[str, Any]) -> list[dict[str, Any]]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient")
+            return await original(event)
+
+        monkeypatch.setattr(consumer, "_process_event", flaky)
+        event = {"event_id": "e2", "event_type": "ArtifactProduced", "run_id": "r", "artifact_id": "a"}
+        assert _run(consumer.run_once([event])) == []
+        assert len(_run(consumer.run_once([event]))) == 1

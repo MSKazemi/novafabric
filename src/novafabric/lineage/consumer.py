@@ -33,6 +33,7 @@ this module only makes the window and the dedup cache size configurable.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -64,6 +65,10 @@ _NODE_KINDS_BY_EDGE_TYPE: dict[str, tuple[str, str]] = {
 }
 
 
+#: Pause after a failed NATS fetch, so a down broker is not a busy loop.
+_FETCH_ERROR_BACKOFF_S = 1.0
+
+
 class LineageConsumer:
     """Pulls capsule events from NATS JetStream and derives lineage edges into KuzuDB.
 
@@ -84,6 +89,8 @@ class LineageConsumer:
             "NOVA_KUZU_PATH", ".nova/kg/lineage.kuzu"
         )
         self._edge_handlers: dict[str, Callable[..., Any]] = {}
+        #: Events skipped because they were not objects or lacked a required id.
+        self.malformed_events = 0
         # Persists across run_once() calls (i.e. across NATS fetch batches)
         # for the consumer's lifetime — see SCALE-ADR-001 dedup note above.
         self._dedup_cache_size = dedup_cache_size
@@ -154,16 +161,34 @@ class LineageConsumer:
         all_edges: list[dict[str, Any]] = []
 
         for event in events:
+            if not isinstance(event, dict):
+                self.malformed_events += 1
+                logger.warning("Skipping a lineage event that is not an object: %r", event)
+                continue
             event_id: str | None = event.get("event_id")
+            if event_id is not None and event_id in self._seen_event_ids:
+                logger.debug("Deduplicating event_id=%s (redelivered)", event_id)
+                continue
+
+            # One bad event must not abort the batch (and, from the NATS loop, be
+            # redelivered into the same crash forever): skip it, keep the rest.
+            try:
+                edges = await self._process_event(event)
+            except Exception as exc:  # noqa: BLE001 — derivation is pure; one event never aborts the batch
+                self.malformed_events += 1
+                logger.warning(
+                    "Skipping malformed lineage event %r (%s: %s)",
+                    event_id if event_id is not None else event.get("event_type"),
+                    type(exc).__name__,
+                    exc,
+                )
+                continue
+            # Remembered only once processed: a resend of a rejected event id, now
+            # well-formed, is not a duplicate (review replay-lineage-registry-12).
             if event_id is not None:
-                if event_id in self._seen_event_ids:
-                    logger.debug("Deduplicating event_id=%s (redelivered)", event_id)
-                    continue
                 self._seen_event_ids[event_id] = None
                 if len(self._seen_event_ids) > self._dedup_cache_size:
                     self._seen_event_ids.popitem(last=False)
-
-            edges = await self._process_event(event)
             all_edges.extend(edges)
 
         return all_edges
@@ -289,7 +314,11 @@ class LineageConsumer:
                     _flush()
                 continue
             except Exception as exc:
-                logger.warning("NATS fetch error (will retry): %s", exc)
+                logger.warning(
+                    "NATS fetch error (will retry in %.0fs): %s", _FETCH_ERROR_BACKOFF_S, exc
+                )
+                # Without a pause a down broker is a busy loop.
+                await asyncio.sleep(_FETCH_ERROR_BACKOFF_S)
                 continue
 
             events: list[dict[str, Any]] = []

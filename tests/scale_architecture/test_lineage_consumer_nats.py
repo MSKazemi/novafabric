@@ -402,3 +402,66 @@ class TestRunFromNatsFlush:
                     )
         # Reaching _StopLoop (not RuntimeError) proves the flush failure was
         # caught and logged rather than propagated.
+
+
+class TestPoisonMessageAndFetchBackoff:
+    def test_a_poison_event_does_not_kill_the_loop_and_every_message_is_acked(self) -> None:
+        import json as _json
+
+        fetch_calls = [0]
+        acked: list[str] = []
+
+        def _msg(payload: dict, name: str) -> MagicMock:
+            m = MagicMock()
+            m.data = _json.dumps(payload).encode()
+            m.ack = AsyncMock(side_effect=lambda: acked.append(name))
+            return m
+
+        async def fetch(*args, **kwargs):
+            call_no = fetch_calls[0]
+            fetch_calls[0] += 1
+            if call_no == 0:
+                return [
+                    _msg({"event_id": "p", "event_type": "ArtifactProduced"}, "poison"),
+                    _msg({"event_id": "g", "event_type": "ArtifactProduced",
+                          "run_id": "r", "artifact_id": "a"}, "good"),
+                ]
+            raise _StopLoop("done")
+
+        fake_js = MagicMock()
+        fake_js.find_stream_name_by_subject = AsyncMock(return_value="novafabric-lineage")
+        fake_nats_mod, fake_errors_mod = _build_fake_nats(fake_js)
+        consumer = LineageConsumer(nats_url="nats://mocked:4222")
+        _run_until_fetch(
+            consumer, fake_js, fake_nats_mod, fake_errors_mod, fetch_side_effect=fetch
+        )
+        assert sorted(acked) == ["good", "poison"]  # the poison one must not be redelivered forever
+        assert consumer.malformed_events == 1
+
+    def test_a_fetch_error_backs_off_instead_of_spinning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import novafabric.lineage.consumer as mod
+
+        slept: list[float] = []
+
+        async def fake_sleep(delay: float) -> None:
+            slept.append(delay)
+
+        monkeypatch.setattr(mod.asyncio, "sleep", fake_sleep)
+        fetch_calls = [0]
+
+        async def fetch(*args, **kwargs):
+            fetch_calls[0] += 1
+            if fetch_calls[0] < 3:
+                raise ConnectionError("nats down")
+            raise _StopLoop("done")
+
+        fake_js = MagicMock()
+        fake_js.find_stream_name_by_subject = AsyncMock(return_value="novafabric-lineage")
+        fake_nats_mod, fake_errors_mod = _build_fake_nats(fake_js)
+        _run_until_fetch(
+            LineageConsumer(nats_url="nats://mocked:4222"),
+            fake_js, fake_nats_mod, fake_errors_mod, fetch_side_effect=fetch,
+        )
+        assert slept and all(d > 0 for d in slept) and len(slept) == 2
