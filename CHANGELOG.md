@@ -531,6 +531,41 @@ longer forwards the submitting shell's environment (ADR-0270).
   changes (it changed the group, then answered `409`), and a `PATCH` applies all its operations or none.
 - The `examples/capsules/minimal-run` example passes `nova validate` in a fresh checkout. Its empty `inputs/`
   directory was not in git, so validation failed with `missing directory: inputs`.
+- A custom Rego decision that is not a boolean denies; an `allow` of `"false"` or `"no"` was read by Python truthiness as an allow.
+- The fetch-provenance credential guard matches credential-shaped keys by marker at any depth and covers redirect hops.
+- The MCP Server Card reports the OIDC issuer the server enforces (`config.oidc`) and advertises endpoints only when a
+  `base_url` is configured.
+- `DELETE /api/views/{id}` removes only the view with that id; it could remove another view carrying the same name.
+- An OTLP timestamp beyond year 9999 is an absent timestamp, not a `500` for the whole export; OTLP import records no
+  working directory it cannot know and reports dropped agent-span attributes.
+- An energy receipt with no `payload_hash`, or negative or non-finite joules, is no longer "consistent".
+- `nova a2a-card verify` no longer presents the facet's stored signature verdict as a verification result and detects a
+  swapped or removed signature block.
+- `nova assure` renewal deltas show removals; argument coverage normalises `sha256:` digests as `validate_case` does and
+  `check_overdue` re-derives the due time. A `JobRunner` with no handlers is refused and an unhandled job is failed
+  instead of leaking a worker slot.
+- A consent-attestation verification fails when an attested `consent_id` is recorded more than once; the memory-store
+  derivation link's `read_ref` is the stored access row's chain digest.
+- Drift detectors refuse NaN, infinite and negative input (it read as "no drift"), the fingerprint comparison flags a
+  distance at the threshold, and an output-drift window spans the earliest and latest run.
+- The risk classifier matches keywords as whole words; a keyword-only prohibited practice needs co-occurring signals.
+  `nova session` reports a malformed bundle index as a problem, and the Markdown asset inventory renders names as code
+  spans.
+- `nova settlement`: an invoice or non-repudiation record whose binding was never re-checked is not `ok` (the recorded
+  verdict is reported separately), and a facet with a named validator error is `Broken`, not a traceback.
+- `novafabric.diagnose` finds model steps on real capsules (the step id now includes the model call id).
+- A failed ClickHouse dedup query no longer inserts a run's model calls a second time.
+- `emit_ops_alert(background=True)` keeps the webhook emitter off the caller's thread, and webhook retries (5) and backoff
+  (5 s) are capped.
+- `from_cloudevents` requires `time`, `novarunglobal` and `novarun` (`ValueError`, as documented); the passport rejects
+  empty references; an in-toto statement fails when an expected subject is missing from the capsule.
+- `verify_receipt_digest` re-derives the context receipt's token budget from its entries; an `AutonomyAttempt` **must
+  name its `verdict_source`** (the outcome is quoted from an evaluator); a fixity digest must carry its algorithm's
+  prefix and length (`digest_artifact(..., alg=)` now emits sha512 and sha3-256), and every preservation append-only
+  verifier rejects dropped or edited provenance events and a changed id, algorithm or `bound_root`.
+- `nova safety-case build` takes the run id from `capsule.yaml` (it minted a random ULID for a directory not named by
+  one), exits `1` for a directory that is not a capsule, and weighs every `eval-results/*.json` with the weakest state
+  winning instead of only the first file.
 
 ## [0.107.0] - 2026-10-23
 
