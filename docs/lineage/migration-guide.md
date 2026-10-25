@@ -123,7 +123,12 @@ nova lineage-store profile --target kuzudb-vertical --node-size 16g-ram-500g-nvm
 nova lineage-store profile --target janusgraph-minimal --rf 3
 ```
 
-**works today** — profile generation (stdout only). Both the KuzuDB and JanusGraph
+**works today** — profile generation (stdout only). **The generated stack is an experimental
+template, not a working deployment:** its `nova-lineage` service is configured with
+`NOVA_LINEAGE_BACKEND` / `NOVA_KUZU_DB_PATH` / `NOVA_JANUSGRAPH_URL`, which this release does
+not read (it does not select the backend from them; `nova lineage consume` reads
+`NOVA_KUZU_PATH` and needs NATS), and the JanusGraph profile is one Cassandra node with the
+replication factor set, not a 3-node cluster. Both the KuzuDB and JanusGraph
 backends these profiles target are **experimental, testcontainers-verified**
 implementations (not stubs) — see "Corrected 2026-07-30" above — but neither is yet a
 `nova lineage-store migrate` CLI destination (that's a CLI-surface gap, not a backend gap).

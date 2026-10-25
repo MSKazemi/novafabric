@@ -150,7 +150,7 @@ class TestJanusGraphMinimalProfile:
         data = yaml.safe_load(profile)
         assert data["services"]["janusgraph"]["image"] == "janusgraph/janusgraph:1.1.0"
         assert data["services"]["cassandra"]["image"] == "cassandra:latest"
-        assert data["services"]["nova-lineage"]["image"] == "novafabric/novafabric:latest"
+        assert data["services"]["nova-lineage"]["image"] == "ghcr.io/mskazemi/novafabric:latest"
 
     def test_independent_tag_params_do_not_cross_contaminate(self) -> None:
         profile = generate_janusgraph_minimal_profile(
@@ -161,7 +161,7 @@ class TestJanusGraphMinimalProfile:
         data = yaml.safe_load(profile)
         assert data["services"]["janusgraph"]["image"] == "janusgraph/janusgraph:9.9.9"
         assert data["services"]["cassandra"]["image"] == "cassandra:4.1.11"
-        assert data["services"]["nova-lineage"]["image"] == "novafabric/novafabric:0.93.0"
+        assert data["services"]["nova-lineage"]["image"] == "ghcr.io/mskazemi/novafabric:0.93.0"
 
     def test_image_tag_alias_overrides_all_three_images(self) -> None:
         """Deprecated backward-compat alias: passing image_tag still forces
@@ -172,7 +172,7 @@ class TestJanusGraphMinimalProfile:
         data = yaml.safe_load(profile)
         assert data["services"]["janusgraph"]["image"] == "janusgraph/janusgraph:7.7.7"
         assert data["services"]["cassandra"]["image"] == "cassandra:7.7.7"
-        assert data["services"]["nova-lineage"]["image"] == "novafabric/novafabric:7.7.7"
+        assert data["services"]["nova-lineage"]["image"] == "ghcr.io/mskazemi/novafabric:7.7.7"
 
     def test_image_tag_alias_none_by_default(self) -> None:
         """The alias parameter itself defaults to None (no override) — only
@@ -192,3 +192,23 @@ class TestJanusGraphMinimalProfile:
         profile = generate_janusgraph_minimal_profile()
         data = yaml.safe_load(profile)
         assert "janusgraph-data" in data["volumes"]
+
+
+class TestProfilesAreHonest:
+    """review replay-lineage-registry-15: the generated stacks name an image the project
+    does not publish and configure the service with variables no code reads."""
+
+    def test_the_image_is_the_one_the_project_publishes(self) -> None:
+        for profile in (generate_kuzudb_vertical_profile(), generate_janusgraph_minimal_profile()):
+            image = yaml.safe_load(profile)["services"]["nova-lineage"]["image"]
+            assert image.startswith("ghcr.io/mskazemi/novafabric:")
+
+    def test_both_profiles_say_they_are_unselected_templates(self) -> None:
+        for profile in (generate_kuzudb_vertical_profile(), generate_janusgraph_minimal_profile()):
+            assert "EXPERIMENTAL TEMPLATE" in profile
+            assert "NOT read by this NovaFabric release" in profile
+
+    def test_the_janusgraph_profile_does_not_claim_three_nodes(self) -> None:
+        profile = generate_janusgraph_minimal_profile()
+        assert "3-node" not in profile
+        assert "ONE Cassandra node" in profile
