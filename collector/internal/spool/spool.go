@@ -47,8 +47,15 @@ type SpoolMetrics interface {
 	// event was written.
 	SetOldestEventAge(d time.Duration)
 	// IncDLQEvents increments nova_collector_dlq_events_total by 1.
-	// Called when an event is routed to the dead-letter queue (A-3).
+	// Called when an event was STORED in the dead-letter queue (A-3).
 	IncDLQEvents()
+}
+
+// DLQDropCounter is an optional extension of SpoolMetrics: a metrics sink that implements it
+// is told about an event the dead-letter queue failed to store (the event is lost). Optional
+// so existing SpoolMetrics implementations keep compiling.
+type DLQDropCounter interface {
+	IncDLQDropped()
 }
 
 // SpoolStats is a point-in-time snapshot of spool state.
@@ -150,6 +157,26 @@ func (s *Spool) SetDLQ(dlq *DLQ) {
 	s.dlq = dlq
 }
 
+// routeToDLQ sends an event the spool cannot hold to the dead-letter queue, if one is
+// attached. Only an event the DLQ really stored counts as a DLQ event; one it failed to
+// store is logged and counted as lost (review go-collector-ts-packages-11).
+func (s *Spool) routeToDLQ(eventJSON []byte, reason string) {
+	if s.dlq == nil {
+		return
+	}
+	if err := s.dlq.Write(eventJSON); err != nil {
+		slog.Warn("spool: event lost: the DLQ could not store it", "reason", reason, "error", err)
+		if c, ok := s.metrics.(DLQDropCounter); ok {
+			c.IncDLQDropped()
+		}
+		return
+	}
+	if s.metrics != nil {
+		s.metrics.IncDLQEvents()
+	}
+	slog.Debug("spool: event routed to DLQ", "reason", reason, "size", len(eventJSON))
+}
+
 // Write appends eventJSON (a single JSON object without embedded newlines) to
 // a new segment and commits it atomically.
 //
@@ -168,24 +195,12 @@ func (s *Spool) Write(eventJSON []byte) error {
 	} else if total >= s.maxBytes {
 		if evErr := evictOldest(s.dir, s.checkpoint, s.metrics); evErr != nil {
 			// eviction failed — route to DLQ when available.
-			if s.dlq != nil {
-				_ = s.dlq.Write(eventJSON)
-				if s.metrics != nil {
-					s.metrics.IncDLQEvents()
-				}
-				slog.Debug("spool: event routed to DLQ (backpressure)", "size", len(eventJSON))
-			}
+			s.routeToDLQ(eventJSON, "backpressure")
 			return ErrBackpressure
 		}
 		// Check again after eviction.
 		if total2, _ := totalSpoolBytes(s.dir); total2 >= s.maxBytes {
-			if s.dlq != nil {
-				_ = s.dlq.Write(eventJSON)
-				if s.metrics != nil {
-					s.metrics.IncDLQEvents()
-				}
-				slog.Debug("spool: event routed to DLQ (still full after eviction)", "size", len(eventJSON))
-			}
+			s.routeToDLQ(eventJSON, "still full after eviction")
 			return ErrBackpressure
 		}
 	}

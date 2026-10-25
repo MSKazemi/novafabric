@@ -77,9 +77,16 @@ var (
 		Help: "Total number of epilog flush operations that timed out.",
 	})
 
+	// DLQDroppedTotal counts events the dead-letter queue FAILED to store (full or
+	// read-only disk): those events are lost, and are not in DLQEventsTotal.
+	DLQDroppedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "nova_collector_dlq_dropped_total",
+		Help: "Total number of events the dead-letter queue failed to store (lost).",
+	})
+
 	// DLQEventsTotal counts events routed to the dead-letter queue (A-3).
 	// Incremented when the spool is under backpressure and an event is
-	// written to the DLQ instead of being silently dropped.
+	// STORED in the DLQ instead of being silently dropped.
 	DLQEventsTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "nova_collector_dlq_events_total",
 		Help: "Total number of events written to the dead-letter queue (A-3).",
@@ -109,6 +116,7 @@ type CollectorMetrics struct {
 	EpilogFlushTimeouts         prometheus.Counter
 	InvalidEnvelopeVersionTotal *prometheus.CounterVec
 	DLQEventsTotal              prometheus.Counter
+	DLQDroppedTotal             prometheus.Counter
 }
 
 // NewRegistry creates a fresh, isolated Prometheus registry suitable for use
@@ -166,6 +174,10 @@ func NewRegistry() (*prometheus.Registry, *CollectorMetrics) {
 		DLQEventsTotal: factory.NewCounter(prometheus.CounterOpts{
 			Name: "nova_collector_dlq_events_total",
 			Help: "Total number of events written to the dead-letter queue (A-3).",
+		}),
+		DLQDroppedTotal: factory.NewCounter(prometheus.CounterOpts{
+			Name: "nova_collector_dlq_dropped_total",
+			Help: "Total number of events the dead-letter queue failed to store (lost).",
 		}),
 	}
 

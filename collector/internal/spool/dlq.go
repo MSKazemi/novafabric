@@ -4,14 +4,15 @@ package spool
 //
 // When the spool is under backpressure and an event would be silently dropped,
 // the DLQ writes it to a JSON-lines file under NOVA_DLQ_DIR (default:
-// <spool_dir>/dlq/).  Events in the DLQ can be re-injected by the
-// nova-collector replay-dlq subcommand.
+// <spool_dir>/dlq/).  Events in the DLQ can be read back with DLQ.Replay; there is no
+// command-line subcommand that re-injects them.
 //
 // Design constraints:
 //   - No kernel locks; writes are guarded by a sync.Mutex within the process.
 //   - One DLQ file per day (rotated by UTC date) to keep replay manageable.
-//   - The DLQ never blocks the caller — if the DLQ write itself fails, the
-//     error is logged but not propagated (fail-open to protect the hot path).
+//   - The DLQ never blocks the caller, but it reports a failed write: Write returns the
+//     error so the spool counts the event as lost, not as preserved (review
+//     go-collector-ts-packages-11). The spool still treats it as non-fatal.
 //   - DLQ events are raw JSON bytes (same schema as spool events).
 
 import (
@@ -43,10 +44,10 @@ func NewDLQ(dir string) (*DLQ, error) {
 }
 
 // Write appends eventJSON (a single JSON object without embedded newlines) to
-// the current DLQ file.  The file is rotated daily (UTC).
+// the current DLQ file and fsyncs it.  The file is rotated daily (UTC).
 //
-// If the write fails, the error is logged but not returned — the DLQ is
-// fail-open to protect the caller's hot path.
+// It returns the error of a failed open, write or sync: the event is then NOT in the DLQ,
+// and the caller must not count it as preserved.
 func (d *DLQ) Write(eventJSON []byte) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -54,21 +55,25 @@ func (d *DLQ) Write(eventJSON []byte) error {
 	today := time.Now().UTC().Format("2006-01-02")
 	if err := d.ensureFile(today); err != nil {
 		slog.Warn("dlq: could not open DLQ file; dropping event", "error", err, "date", today)
-		return nil // fail-open
+		return fmt.Errorf("dlq: open: %w", err)
 	}
 
 	w := bufio.NewWriter(d.f)
 	if _, err := w.Write(eventJSON); err != nil {
 		slog.Warn("dlq: write failed", "error", err)
-		return nil // fail-open
+		return fmt.Errorf("dlq: write: %w", err)
 	}
 	if err := w.WriteByte('\n'); err != nil {
 		slog.Warn("dlq: write newline failed", "error", err)
-		return nil // fail-open
+		return fmt.Errorf("dlq: write newline: %w", err)
 	}
 	if err := w.Flush(); err != nil {
 		slog.Warn("dlq: flush failed", "error", err)
-		return nil // fail-open
+		return fmt.Errorf("dlq: flush: %w", err)
+	}
+	if err := d.f.Sync(); err != nil {
+		slog.Warn("dlq: sync failed", "error", err)
+		return fmt.Errorf("dlq: sync: %w", err)
 	}
 	return nil
 }
