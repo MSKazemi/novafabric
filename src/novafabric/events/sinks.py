@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_TIMEOUT_S = 5.0
 DEFAULT_BACKOFF_S = 0.5
+#: Hard caps on whatever NOVA_EVENTS_MAX_RETRIES asks for, and on a single backoff sleep:
+#: 0.5 * 2**attempt with a configured 10 retries blocked for minutes (review misc-2-10).
+MAX_RETRIES_CAP = 5
+MAX_BACKOFF_S = 5.0
 
 
 class EventSink(Protocol):
@@ -93,7 +97,7 @@ class WebhookSink:
         #: which for a Slack/Discord/Teams webhook is the secret (misc-2-04).
         self._shown_url = redact_url(url)
         self._timeout = timeout_s
-        self._max_retries = max(0, max_retries)
+        self._max_retries = min(max(0, max_retries), MAX_RETRIES_CAP)
         self._backoff = max(0.0, backoff_s)
 
     def send(self, record: dict[str, Any]) -> None:
@@ -144,7 +148,7 @@ class WebhookSink:
             except Exception as exc:  # noqa: BLE001 — fail-safe, never blocks
                 last_error = exc
                 if attempt < self._max_retries and self._backoff > 0:
-                    time.sleep(self._backoff * (2**attempt))
+                    time.sleep(min(self._backoff * (2**attempt), MAX_BACKOFF_S))
         error = scrub_url(str(last_error), self._url)
         logger.warning(
             "lifecycle webhook delivery failed url=%s after %d attempt(s): %s",

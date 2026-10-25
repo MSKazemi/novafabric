@@ -504,16 +504,24 @@ def emit_ops_alert(
             source=source,
             nova_version=_nova_version(),
         )
-        build_emitter_from_env().emit(event)  # durable record; no-op unconfigured
         router = _router_for(config)
-        if background:
-            threading.Thread(
-                target=router.route,
-                args=(event,),
-                daemon=True,
-                name="nova-alert-delivery",
-            ).start()
-        else:
+
+        def _deliver() -> None:
+            # The durable-record emitter can POST to NOVA_EVENTS_WEBHOOK (retries and
+            # backoff): with background=True it must not run on the caller's thread,
+            # which is the request path of a 429 (review misc-2-10).
+            build_emitter_from_env().emit(event)  # durable record; no-op unconfigured
             router.route(event)
+
+        if background:
+            def _guarded() -> None:
+                try:
+                    _deliver()
+                except Exception as exc:  # noqa: BLE001 — a daemon thread must not die loudly
+                    logger.warning("ops alert delivery failed: %s", exc)
+
+            threading.Thread(target=_guarded, daemon=True, name="nova-alert-delivery").start()
+        else:
+            _deliver()
     except Exception as exc:  # noqa: BLE001 — must never block the source op
         logger.warning("ops alert emission failed: %s", exc)
