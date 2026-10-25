@@ -32,7 +32,12 @@ __all__ = [
 _LIBPQ_SCHEMES = ("postgres://", "postgresql://")
 _SQLALCHEMY_PSYCOPG = "postgresql+psycopg://"
 _URL_LIKE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]+:/")
-_USERINFO_PASSWORD = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]+:/+[^/:@]*):[^@]*@")
+# The password runs to the LAST "@" of the authority, so one containing "@" is
+# redacted whole (review trust-evidence-16).
+_USERINFO_PASSWORD = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]+:/+[^/:@]*):[^/?#]*@")
+# A libpq keyword/value DSN ("host=db user=nova password=x"): a first token
+# "key=" with no path separator before the "=".
+_LIBPQ_KEYWORD = re.compile(r"^[A-Za-z_]+\s*=")
 
 
 class MerkleLocationError(ValueError):
@@ -59,8 +64,8 @@ def normalize_location(location: str | Path) -> str | Path:
     """Return a DSN as a libpq ``str``, a file location as an expanded ``Path``.
 
     Raises :class:`MerkleLocationError` (the message never carries a password)
-    for an empty value, a non-Postgres or unsupported-driver URL, or a DSN that
-    lost a ``/`` (``postgres:/…``).
+    for an empty value, a non-Postgres or unsupported-driver URL, a libpq
+    keyword/value string, or a DSN that lost a ``/`` (``postgres:/…``).
     """
     if isinstance(location, Path):
         return location.expanduser()
@@ -71,6 +76,15 @@ def normalize_location(location: str | Path) -> str | Path:
         return text
     if text.startswith(_SQLALCHEMY_PSYCOPG):
         return "postgresql://" + text[len(_SQLALCHEMY_PSYCOPG) :]
+    if _LIBPQ_KEYWORD.match(text):
+        # psycopg accepts this form, but as a Path it became a SQLite file named
+        # after the password, created in the current directory.
+        raise MerkleLocationError(
+            "merkle_db looks like a libpq keyword/value connection string, which is not "
+            "supported (it would be opened as a file name): use "
+            "postgresql://user:password@host/dbname, or prefix a file name that contains "
+            "'=' with ./"
+        )
     if _URL_LIKE.match(text):
         scheme = text.split(":", 1)[0]
         raise MerkleLocationError(
