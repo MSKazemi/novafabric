@@ -6,16 +6,18 @@ require (
 	github.com/cloudevents/sdk-go/v2 v2.16.2
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats-server/v2 v2.15.1
-	github.com/nats-io/nats.go v1.54.0
+	github.com/nats-io/nats.go v1.55.0
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/prometheus/client_golang v1.25.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/component v1.69.0
+	go.opentelemetry.io/collector/component/componenttest v0.163.0
 	go.opentelemetry.io/collector/consumer v1.69.0
 	go.opentelemetry.io/collector/consumer/consumertest v0.163.0
 	go.opentelemetry.io/collector/otelcol v0.163.0
 	go.opentelemetry.io/collector/pdata v1.69.0
 	go.opentelemetry.io/collector/processor v1.69.0
+	go.opentelemetry.io/collector/processor/processortest v0.163.0
 	go.opentelemetry.io/proto/otlp v1.11.1
 	google.golang.org/protobuf v1.36.12
 )
@@ -63,7 +65,6 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/collector/component/componentstatus v0.163.0 // indirect
-	go.opentelemetry.io/collector/component/componenttest v0.163.0 // indirect
 	go.opentelemetry.io/collector/config/configopaque v1.69.0 // indirect
 	go.opentelemetry.io/collector/config/configtelemetry v0.163.0 // indirect
 	go.opentelemetry.io/collector/confmap v1.69.0 // indirect
@@ -88,7 +89,6 @@ require (
 	go.opentelemetry.io/collector/pdata/xpdata v0.163.0 // indirect
 	go.opentelemetry.io/collector/pipeline v1.69.0 // indirect
 	go.opentelemetry.io/collector/pipeline/xpipeline v0.163.0 // indirect
-	go.opentelemetry.io/collector/processor/processortest v0.163.0 // indirect
 	go.opentelemetry.io/collector/processor/xprocessor v0.163.0 // indirect
 	go.opentelemetry.io/collector/receiver v1.69.0 // indirect
 	go.opentelemetry.io/collector/receiver/receivertest v0.163.0 // indirect
