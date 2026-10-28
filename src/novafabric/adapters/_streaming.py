@@ -118,11 +118,17 @@ def guard_iterator(
         error = exc
         raise
     finally:
-        if not exhausted:
-            close = getattr(inner, "close", None)
-            if callable(close):
-                close()
-        closer.close(error=error, partial=None if exhausted else ABANDONED)
+        # The inner generator's close() may itself raise (smolagents yields inside a
+        # `finally`, so closing it mid-step raises "generator ignored GeneratorExit"). That
+        # error still propagates, exactly as it would without the guard, but the capsule is
+        # closed first -- a raising close() must not leave the wire hooks claimed.
+        try:
+            if not exhausted:
+                close = getattr(inner, "close", None)
+                if callable(close):
+                    close()
+        finally:
+            closer.close(error=error, partial=None if exhausted else ABANDONED)
 
 
 async def guard_async_iterator(

@@ -33,6 +33,21 @@ patterns:
   - match: "api.replicate.com"
     gen_ai_system: "replicate"
     transport: "http"
+  # Hugging Face -- added 2026-10-28 (HF-02). Deliberately NOT a bare "huggingface.co":
+  # that would also record Hub metadata, dataset and weight-file traffic, none of which is a
+  # model call. Each entry is anchored on the https scheme and an OpenAI-compatible /v1/ path
+  # so look-alike hosts (router.huggingface.co.example) and non-chat routes do not match.
+  # Phase 1 is capture-only: the wire hook records the request (requested model, host class,
+  # status, timing), never the response, so the served provider and reported model are unknown.
+  # A custom `base_url` is not matched; add it via a registry override.
+  - match: "https://router.huggingface.co/v1/"
+    gen_ai_system: "huggingface"
+    transport: "http"
+    notes: "Hugging Face Inference Providers router, OpenAI-compatible routes (InferenceClient default)."
+  - match: ".endpoints.huggingface.cloud/v1/"
+    gen_ai_system: "huggingface.endpoint"
+    transport: "http"
+    notes: "Hugging Face dedicated Inference Endpoints, OpenAI-compatible routes."
   # AWS Bedrock — added 2026-05-09 (C-3.3a) after verifying boto3
   # transitively goes through urllib3. Match the per-region Bedrock host
   # pattern. Body parsing is sub-optimal because Bedrock's request shape

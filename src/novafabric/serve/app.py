@@ -8093,6 +8093,13 @@ def create_app(
             "framework": "Haystack",
             "extra": "haystack-ai",
         },
+        {
+            "id": "smolagents",
+            "module": "novafabric.adapters.smolagents",
+            "function": "wrap_agent",
+            "framework": "Hugging Face smolagents",
+            "extra": "smolagents",
+        },
     ]
 
     @app.get("/api/adapters", dependencies=[Depends(verify_token)])

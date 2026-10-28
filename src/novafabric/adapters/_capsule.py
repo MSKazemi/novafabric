@@ -7,7 +7,7 @@ own copy of that body: ``a2a``, ``google_adk``, ``langgraph`` and
 ``openai_agents``.
 
 New adapters use this instead (``autogen``, ``bedrock_agentcore``, ``crewai``,
-``dspy``, ``haystack``, ``llamaindex`` and ``pydantic_ai`` do). It is
+``dspy``, ``haystack``, ``llamaindex``, ``pydantic_ai`` and ``smolagents`` do). It is
 **additive**: an existing adapter moves onto it only when its own body is broken
 — ``bedrock_agentcore`` did for review eval-adapters-query-12 (no capsule for an
 abandoned stream), and ``autogen``, ``crewai`` and ``dspy`` for -19 (a changed
