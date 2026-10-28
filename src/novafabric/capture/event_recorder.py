@@ -71,6 +71,10 @@ _AI_API_HOSTS: tuple[str, ...] = (
     "api.groq.com",
     "openrouter.ai",
     "api.perplexity.ai",
+    # Hugging Face: anchored like the URL registry's entries (never a bare "huggingface.co",
+    # which would flag Hub metadata and file downloads as AI traffic).
+    "https://router.huggingface.co/v1/",
+    ".endpoints.huggingface.cloud/v1/",
     "inference.azure.com",
     "services.ai.azure.com",
     "localhost:11434",

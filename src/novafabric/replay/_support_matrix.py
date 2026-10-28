@@ -54,6 +54,8 @@ _SLICE4 = "tests/replay/test_slice4_matching_and_echo_contract.py"
 _ECHO = "tests/replay/test_echo_and_nested_coverage_e2e.py"
 _ADK = "tests/replay/test_adk_tool_replay_e2e.py"
 _OAI = "tests/replay/test_openai_agents_tool_replay_e2e.py"
+_HF = "tests/capture/test_hf_inference_capture.py"
+_SMOL = "tests/adapters/test_smolagents.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -308,6 +310,41 @@ ROWS: tuple[SurfaceRow, ...] = (
         asynchronous="—",
         status="capture only",
         evidence=("`tests/test_api_proxy.py`",),
+    ),
+    SurfaceRow(
+        surface="Hugging Face `InferenceClient` / `AsyncInferenceClient` (router, Endpoints)",
+        capture=(
+            "wire hook, OpenAI-compatible `/v1/` routes only: request, requested model and "
+            "selector, status, timing; the response is never read, so reported model, served "
+            "provider and token counts are not recorded"
+        ),
+        replay="not intercepted",
+        replay_note="runs **live**; its connections are reported (`network_connections_live`)",
+        streaming="request recorded; stream not read",
+        asynchronous="request recorded",
+        status="capture only",
+        evidence=(
+            f"{_HF}::test_a_hugging_face_record_is_never_a_replayable_model_call",
+            f"{_HF}::test_only_the_two_openai_compatible_hugging_face_routes_are_classified",
+            f"{_HF}::test_a_streamed_response_is_not_read_by_the_hook",
+            f"{_HF}::test_real_inference_client_sync_chat_is_recorded_once_with_honest_identity",
+        ),
+    ),
+    SurfaceRow(
+        surface="Hugging Face `smolagents` tool calls (`novafabric.adapters.smolagents`)",
+        capture=(
+            "observed per agent step: tool name, argument digest, step outcome; the framework "
+            "reports no per-call result, and a `CodeAgent` step is one `python_interpreter` call"
+        ),
+        replay="not intercepted",
+        replay_note="runs **live**; the record carries a surface marker replay does not intercept",
+        streaming="run stream preserved; capsule closes when it ends or is abandoned",
+        asynchronous="—",
+        status="capture only",
+        evidence=(
+            f"{_SMOL}::test_tool_records_are_observe_only_and_never_a_replay_surface",
+            f"{_SMOL}::test_a_real_code_agent_records_one_python_interpreter_call_and_never_the_code",
+        ),
     ),
     SurfaceRow(
         surface="Other providers' SDKs, raw HTTP to a model API",
