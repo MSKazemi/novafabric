@@ -372,11 +372,12 @@ Python process, wrap it instead — each invocation writes its own Run Capsule,
 and the wire-level hooks record the model calls the framework makes.
 
 ```python
-from novafabric.adapters import wrap_llamaindex, wrap_pydantic_ai, wrap_haystack
+from novafabric.adapters import wrap_llamaindex, wrap_pydantic_ai, wrap_haystack, wrap_smolagents
 
 engine = wrap_llamaindex(index.as_query_engine())   # LlamaIndex
 agent  = wrap_pydantic_ai(agent, run_name="support-bot")  # Pydantic AI
 pipe   = wrap_haystack(pipe, run_name="rag-qa")     # Haystack
+smol   = wrap_smolagents(smol, run_name="stock-bot")  # Hugging Face smolagents (experimental, unreleased)
 ```
 
 Each wrapper patches the entry point **in place** and returns the same object, so
@@ -387,11 +388,11 @@ and `streaming=True` query engines, Pydantic AI `run_stream` / `iter`. The capsu
 `status: partial` (with `metadata.partial_reason`) when a stream is abandoned or cancelled
 before it finishes — see [`cli-reference.md`](cli-reference.md) §Framework Adapters for
 exactly what each case records. Install the framework itself (`pip install
-llama-index` / `pydantic-ai` / `haystack-ai`) — these are not NovaFabric extras,
+llama-index` / `pydantic-ai` / `haystack-ai` / `smolagents`) — these are not NovaFabric extras,
 and the `wrap_*` call raises `ImportError` naming the command if the framework is
 absent.
 
-Adapters ship for eleven frameworks. Each is importable by name from
+Adapters exist for twelve frameworks (the `smolagents` one is unreleased). Each is importable by name from
 `novafabric.adapters`:
 
 | Framework | Entry point | Wraps |
@@ -403,6 +404,7 @@ Adapters ship for eleven frameworks. Each is importable by name from
 | LlamaIndex | `wrap_llamaindex(engine)` | a query/chat engine or agent |
 | Pydantic AI | `wrap_pydantic_ai(agent)` | an `Agent` |
 | Haystack | `wrap_haystack(pipeline)` | a `Pipeline` |
+| Hugging Face smolagents (experimental, unreleased) | `wrap_smolagents(agent)` | a `CodeAgent` / `ToolCallingAgent` (`run`); see [Hugging Face](integrations/huggingface.md) |
 | OpenAI Agents SDK | `register_openai_agents()` | registers a trace processor |
 | Google ADK | `make_google_adk_plugin()` | returns a plugin |
 | AWS Bedrock AgentCore | `wrap_bedrock_agentcore(client)` | a boto3 `bedrock-agent-runtime` client (returns a wrapped client) |

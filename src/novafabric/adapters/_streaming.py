@@ -157,11 +157,14 @@ async def guard_async_iterator(
         error = exc
         raise
     finally:
-        if reason is not None:
-            aclose = getattr(inner, "aclose", None)
-            if callable(aclose):
-                await aclose()
-        closer.close(error=error, partial=reason)
+        # As in the sync twin: a raising aclose() must not leave the capsule open.
+        try:
+            if reason is not None:
+                aclose = getattr(inner, "aclose", None)
+                if callable(aclose):
+                    await aclose()
+        finally:
+            closer.close(error=error, partial=reason)
 
 
 def watch_thread(thread: threading.Thread, closer: Closer, outcome: Callable[[], Any]) -> None:

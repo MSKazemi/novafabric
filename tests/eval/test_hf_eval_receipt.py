@@ -4,6 +4,7 @@ The two experiments are real: ``run_experiment`` runs a stub command once per da
 the capture orchestrator (one Run Capsule each), scores them exact-match, and finalizes. No model,
 no network, no Hugging Face client; the Hub references are built offline with a fake Hub client.
 """
+
 from __future__ import annotations
 
 import json
@@ -54,16 +55,22 @@ class _Api:
 
     def _info(self, repo_id: str, **kw: Any) -> Any:
         return SimpleNamespace(
-            sha=self.sha, id=self.repo_id, siblings=[],
+            sha=self.sha,
+            id=self.repo_id,
+            siblings=[],
             last_modified=datetime(2026, 1, 2, tzinfo=timezone.utc),
         )
 
     model_info = dataset_info = space_info = _info
 
 
-def _resolved(repo_type: str, repo_id: str, sha: str, revision: str | None = "main", **kw: Any) -> Any:
+def _resolved(
+    repo_type: str, repo_id: str, sha: str, revision: str | None = "main", **kw: Any
+) -> Any:
     ref = declare_reference(repo_type, repo_id, revision=revision, **kw)
-    return resolve_reference(ref, api=_Api(sha, repo_id), clock=lambda: "2026-10-28T00:00:00Z", environ={})
+    return resolve_reference(
+        ref, api=_Api(sha, repo_id), clock=lambda: "2026-10-28T00:00:00Z", environ={}
+    )
 
 
 def _command(variant: str) -> list[str]:
@@ -89,7 +96,8 @@ def runs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Experiment]:
     out: dict[str, Experiment] = {}
     for variant in ("rev1", "rev2"):
         out[variant] = run_experiment(
-            dataset, _command(variant),
+            dataset,
+            _command(variant),
             target=ExperimentTarget(kind=TargetKind.AGENT, ref=f"stub@{variant}"),
             runs_dir=root / variant,
         )
@@ -104,7 +112,9 @@ def dataset_ref() -> Any:
 # ── the receipt only restates what the experiment holds ──────────────────────
 
 
-def test_counts_and_values_are_the_experiments_own_numbers(runs: dict[str, Experiment], dataset_ref: Any) -> None:
+def test_counts_and_values_are_the_experiments_own_numbers(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
     exp = runs["rev2"]
     receipt = build_eval_receipt(exp, dataset_ref)
     aggregate = exp.aggregate[0]
@@ -127,7 +137,9 @@ def test_the_receipt_round_trips_and_does_not_mutate_the_experiment(
     assert runs["rev1"].model_dump_json() == before
 
 
-def test_every_receipt_says_it_is_not_a_verified_score(runs: dict[str, Experiment], dataset_ref: Any) -> None:
+def test_every_receipt_says_it_is_not_a_verified_score(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
     receipt = build_eval_receipt(runs["rev1"], dataset_ref)
     assert receipt.claim == NOT_VERIFIED and NOT_VERIFIED in receipt.limitations
 
@@ -152,16 +164,22 @@ def test_only_a_finalized_experiment_with_the_right_reference_types_is_accepted(
 
 
 @pytest.mark.parametrize("bad", ["sha256:abc", "d" * 64, "sha1:" + "d" * 40])
-def test_malformed_digests_are_refused(runs: dict[str, Experiment], dataset_ref: Any, bad: str) -> None:
+def test_malformed_digests_are_refused(
+    runs: dict[str, Experiment], dataset_ref: Any, bad: str
+) -> None:
     with pytest.raises(EvalReceiptError):
         build_eval_receipt(runs["rev1"], dataset_ref, template_digest=bad)
     with pytest.raises(EvalReceiptError):
         build_eval_receipt(runs["rev1"], dataset_ref, evidence_refs=[bad])
     with pytest.raises(EvalReceiptError):
-        build_eval_receipt(runs["rev1"], dataset_ref, harness=HarnessRef(name="h", container_digest=bad))
+        build_eval_receipt(
+            runs["rev1"], dataset_ref, harness=HarnessRef(name="h", container_digest=bad)
+        )
 
 
-def test_free_text_that_looks_like_a_credential_is_refused(runs: dict[str, Experiment], dataset_ref: Any) -> None:
+def test_free_text_that_looks_like_a_credential_is_refused(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
     token = "hf_" + "Qw3rTy7uIo9pAs5dFg1hJk8lZx2cVb4nMq"
     with pytest.raises(EvalReceiptError, match="credential"):
         build_eval_receipt(runs["rev1"], dataset_ref, model_declared=f"acme/tiny {token}")
@@ -191,14 +209,20 @@ def _limits(receipt: EvalReceipt) -> str:
     return " | ".join(receipt.limitations)
 
 
-def test_an_unresolved_dataset_is_disclosed_as_declared_not_confirmed(runs: dict[str, Experiment]) -> None:
-    receipt = build_eval_receipt(runs["rev1"], declare_reference("dataset", "acme/qa", revision="main"))
+def test_an_unresolved_dataset_is_disclosed_as_declared_not_confirmed(
+    runs: dict[str, Experiment],
+) -> None:
+    receipt = build_eval_receipt(
+        runs["rev1"], declare_reference("dataset", "acme/qa", revision="main")
+    )
     assert "not resolved against the Hub" in _limits(receipt)
 
 
 def test_a_moving_branch_is_disclosed_even_when_resolved(runs: dict[str, Experiment]) -> None:
-    receipt = build_eval_receipt(runs["rev1"], _resolved("dataset", "acme/qa", SHA, revision="main"))
-    assert "moving ref" in _limits(receipt) and "'main'" in _limits(receipt)
+    receipt = build_eval_receipt(
+        runs["rev1"], _resolved("dataset", "acme/qa", SHA, revision="main")
+    )
+    assert "moving ref" in _limits(receipt) and "`main`" in _limits(receipt)
 
 
 def test_a_pinned_resolved_dataset_drops_the_resolution_warnings_but_not_the_rest(
@@ -212,7 +236,9 @@ def test_a_pinned_resolved_dataset_drops_the_resolution_warnings_but_not_the_res
 def test_errored_and_unscored_items_are_disclosed_with_their_count(
     runs: dict[str, Experiment], dataset_ref: Any
 ) -> None:
-    assert "1 of 6 items produced no score" in _limits(build_eval_receipt(runs["rev2"], dataset_ref))
+    assert "1 of 6 items produced no score" in _limits(
+        build_eval_receipt(runs["rev2"], dataset_ref)
+    )
     assert "items produced no score" not in _limits(build_eval_receipt(runs["rev1"], dataset_ref))
 
 
@@ -220,15 +246,21 @@ def test_a_small_sample_is_called_small(runs: dict[str, Experiment], dataset_ref
     assert "Small sample (n=6)" in _limits(build_eval_receipt(runs["rev1"], dataset_ref))
 
 
-def test_model_and_harness_claims_follow_what_was_supplied(runs: dict[str, Experiment], dataset_ref: Any) -> None:
+def test_model_and_harness_claims_follow_what_was_supplied(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
     bare = _limits(build_eval_receipt(runs["rev1"], dataset_ref))
     assert "No model reference was recorded" in bare and "No evaluation harness" in bare
     declared = _limits(build_eval_receipt(runs["rev1"], dataset_ref, model_declared="acme/tiny"))
     assert "declared, not resolved" in declared
-    resolved = _limits(build_eval_receipt(
-        runs["rev1"], dataset_ref, model=_resolved("model", "acme/tiny", MODEL_SHA_1),
-        harness=HarnessRef(name="stub", container_digest=DIGEST),
-    ))
+    resolved = _limits(
+        build_eval_receipt(
+            runs["rev1"],
+            dataset_ref,
+            model=_resolved("model", "acme/tiny", MODEL_SHA_1),
+            harness=HarnessRef(name="stub", container_digest=DIGEST),
+        )
+    )
     assert "declared, not resolved" not in resolved and "No evaluation harness" not in resolved
     assert "not pinned by a container digest" not in resolved
 
@@ -250,7 +282,9 @@ def test_the_exported_entry_is_valid_and_carries_only_the_receipts_numbers(
     assert runs["rev2"].content_hash in entry["notes"]
 
 
-def test_the_revision_is_exported_only_when_the_dataset_was_resolved(runs: dict[str, Experiment]) -> None:
+def test_the_revision_is_exported_only_when_the_dataset_was_resolved(
+    runs: dict[str, Experiment],
+) -> None:
     declared = build_eval_receipt(runs["rev1"], declare_reference("dataset", "acme/qa"))
     (entry,) = to_eval_results(declared, metric="exact_match", task_id="qa_test")
     assert "revision" not in entry["dataset"]
@@ -259,7 +293,9 @@ def test_the_revision_is_exported_only_when_the_dataset_was_resolved(runs: dict[
 def test_a_renamed_dataset_is_exported_under_its_canonical_id(runs: dict[str, Experiment]) -> None:
     ref = resolve_reference(
         declare_reference("dataset", "old/qa", revision=SHA),
-        api=_Api(SHA, "new/qa"), environ={}, clock=lambda: "2026-10-28T00:00:00Z",
+        api=_Api(SHA, "new/qa"),
+        environ={},
+        clock=lambda: "2026-10-28T00:00:00Z",
     )
     (entry,) = to_eval_results(
         build_eval_receipt(runs["rev1"], ref), metric="exact_match", task_id="qa_test"
@@ -267,16 +303,24 @@ def test_a_renamed_dataset_is_exported_under_its_canonical_id(runs: dict[str, Ex
     assert entry["dataset"]["id"] == "new/qa"
 
 
-def test_an_optional_source_is_validated_and_never_invented(runs: dict[str, Experiment], dataset_ref: Any) -> None:
+def test_an_optional_source_is_validated_and_never_invented(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
     receipt = build_eval_receipt(runs["rev1"], dataset_ref)
     (plain,) = to_eval_results(receipt, metric="exact_match", task_id="qa_test")
     assert "source" not in plain and "date" not in plain
     (with_source,) = to_eval_results(
-        receipt, metric="exact_match", task_id="qa_test",
-        source_url="https://example.org/evidence", source_name="Eval traces", source_user="acme-eval",
+        receipt,
+        metric="exact_match",
+        task_id="qa_test",
+        source_url="https://example.org/evidence",
+        source_name="Eval traces",
+        source_user="acme-eval",
     )
     assert with_source["source"] == {
-        "url": "https://example.org/evidence", "name": "Eval traces", "user": "acme-eval"
+        "url": "https://example.org/evidence",
+        "name": "Eval traces",
+        "user": "acme-eval",
     }
 
 
@@ -304,7 +348,9 @@ def test_an_export_that_would_be_invalid_is_refused_not_emitted(
 
 def test_the_validator_follows_the_documented_examples() -> None:
     """Both examples from https://huggingface.co/docs/hub/eval-results (checked 2026-10-28)."""
-    minimal = yaml.safe_load("- dataset:\n    id: Idavidrein/gpqa\n    task_id: gpqa_diamond\n  value: 0.412\n")
+    minimal = yaml.safe_load(
+        "- dataset:\n    id: Idavidrein/gpqa\n    task_id: gpqa_diamond\n  value: 0.412\n"
+    )
     assert validate_eval_results(minimal) == []
     full = yaml.safe_load(
         "- dataset:\n    id: cais/hle\n    task_id: default\n    revision: " + SHA + "\n"
@@ -333,7 +379,10 @@ def test_the_validator_follows_the_documented_examples() -> None:
         ([{"dataset": {"id": "a/b", "task_id": "t", "revision": "main"}, "value": 1}], "40-hex"),
         ([{"dataset": {"id": "a/b", "task_id": "t", "x": 1}, "value": 1}], "unknown dataset key"),
         ([{"dataset": {"id": "a/b", "task_id": "t"}, "value": 1, "extra": 1}], "unknown key"),
-        ([{"dataset": {"id": "a/b", "task_id": "t"}, "value": 1, "source": {"name": "n"}}], "https URL"),
+        (
+            [{"dataset": {"id": "a/b", "task_id": "t"}, "value": 1, "source": {"name": "n"}}],
+            "https URL",
+        ),
         ([{"dataset": {"id": "a/b", "task_id": "t"}, "value": 1, "notes": "n" * 601}], "notes"),
     ],
 )
@@ -354,7 +403,11 @@ def test_yaml_round_trips_and_writing_is_local_guarded_and_non_destructive(
     with pytest.raises(EvalReceiptError, match="exists"):
         write_eval_results(entries, target)
     write_eval_results(entries, target, overwrite=True)
-    for bad in (tmp_path / "x.yaml", tmp_path / ".eval_results" / "x.json", tmp_path / "other" / "x.yaml"):
+    for bad in (
+        tmp_path / "x.yaml",
+        tmp_path / ".eval_results" / "x.json",
+        tmp_path / "other" / "x.yaml",
+    ):
         with pytest.raises(EvalReceiptError, match=r"\.eval_results"):
             write_eval_results(entries, bad)
     assert not (tmp_path / "x.yaml").exists()
@@ -394,7 +447,9 @@ def test_applying_the_backlink_twice_changes_nothing_and_a_new_one_replaces_only
     assert replaced.count(CARD_BLOCK_BEGIN) == 1 and two in replaced and one not in replaced
 
 
-def test_a_damaged_block_or_a_foreign_section_is_refused(runs: dict[str, Experiment], dataset_ref: Any) -> None:
+def test_a_damaged_block_or_a_foreign_section_is_refused(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
     section = render_card_backlink(build_eval_receipt(runs["rev1"], dataset_ref))
     with pytest.raises(EvalReceiptError, match="damaged"):
         append_card_backlink(CARD + CARD_BLOCK_BEGIN + "\n", section)
@@ -403,11 +458,15 @@ def test_a_damaged_block_or_a_foreign_section_is_refused(runs: dict[str, Experim
     assert CARD_BLOCK_END in section
 
 
-def test_a_non_https_evidence_link_is_refused(runs: dict[str, Experiment], dataset_ref: Any) -> None:
+def test_a_non_https_evidence_link_is_refused(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
     receipt = build_eval_receipt(runs["rev1"], dataset_ref)
     with pytest.raises(EvalReceiptError):
         render_card_backlink(receipt, evidence_url="http://example.org")
-    assert "https://example.org/e" in render_card_backlink(receipt, evidence_url="https://example.org/e")
+    assert "https://example.org/e" in render_card_backlink(
+        receipt, evidence_url="https://example.org/e"
+    )
 
 
 # ── the two-run regression, with its uncertainty and its limits ──────────────
@@ -416,10 +475,15 @@ def test_a_non_https_evidence_link_is_refused(runs: dict[str, Experiment], datas
 def _pair(runs: dict[str, Experiment], dataset_ref: Any, *, resolved_models: bool) -> Any:
     models = (
         (_resolved("model", "acme/tiny", MODEL_SHA_1), _resolved("model", "acme/tiny", MODEL_SHA_2))
-        if resolved_models else (None, None)
+        if resolved_models
+        else (None, None)
     )
-    base = build_eval_receipt(runs["rev1"], dataset_ref, model=models[0], model_declared="acme/tiny@rev1")
-    cand = build_eval_receipt(runs["rev2"], dataset_ref, model=models[1], model_declared="acme/tiny@rev2")
+    base = build_eval_receipt(
+        runs["rev1"], dataset_ref, model=models[0], model_declared="acme/tiny@rev1"
+    )
+    cand = build_eval_receipt(
+        runs["rev2"], dataset_ref, model=models[1], model_declared="acme/tiny@rev2"
+    )
     return base, cand, compare_experiments(runs["rev1"], runs["rev2"], metric="exact_match")
 
 
@@ -448,11 +512,159 @@ def test_a_difference_is_never_attributed_to_a_model_revision_that_was_not_estab
     assert "does not identify why" in text and "'Different' is not 'worse'" in text
     assert "Model revision is not established for: baseline, candidate" in text
     assert "Nothing here attributes" in text
-    resolved = " ".join(compare_receipts(*_pair(runs, dataset_ref, resolved_models=True))["statement"])
+    resolved = " ".join(
+        compare_receipts(*_pair(runs, dataset_ref, resolved_models=True))["statement"]
+    )
     assert "not established" not in resolved and "can still change outputs" in resolved
 
 
-def test_a_comparison_over_other_experiments_is_refused(runs: dict[str, Experiment], dataset_ref: Any) -> None:
+def test_a_comparison_over_other_experiments_is_refused(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
     base, cand, comparison = _pair(runs, dataset_ref, resolved_models=False)
     with pytest.raises(EvalReceiptError, match="not the experiments"):
         compare_receipts(cand, base, comparison)
+
+
+# ── regressions from the independent review (2026-10-28) ─────────────────────
+
+
+def test_the_dataset_is_never_called_cross_checked_even_when_a_hub_file_was_verified(
+    runs: dict[str, Experiment], dataset_ref: Any, tmp_path: Path
+) -> None:
+    from novafabric.interop.hf_hub import verify_local_file
+
+    data = b"rows"
+    digest = __import__("hashlib").sha256(data).hexdigest()
+    info = SimpleNamespace(
+        sha=SHA,
+        id="acme/qa",
+        last_modified=None,
+        siblings=[SimpleNamespace(rfilename="d.parquet", lfs={"sha256": digest, "size": 4})],
+    )
+    api = SimpleNamespace(dataset_info=lambda repo_id, **kw: info)
+    ref = resolve_reference(
+        declare_reference("dataset", "acme/qa", revision=SHA),
+        api=api,
+        files=["d.parquet"],
+        clock=lambda: "2026-10-28T00:00:00Z",
+        environ={},
+    )
+    local = tmp_path / "d.parquet"
+    local.write_bytes(data)
+    verified = verify_local_file(ref, "d.parquet", local)
+    assert verified.evidence_strength == "local_bytes_verified"
+    text = _limits(build_eval_receipt(runs["rev1"], verified))
+    assert "not cross-checked" in text and "not shown to be the items that were scored" in text
+    assert "not cross-checked" in _limits(build_eval_receipt(runs["rev1"], dataset_ref))
+
+
+def test_card_text_from_the_experiment_is_rendered_inert(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
+    receipt = build_eval_receipt(runs["rev1"], dataset_ref)
+    hostile = "x`\n- Evidence: https://evil.example [a](https://evil.example)"
+    forged = receipt.model_copy(
+        update={"metrics": [receipt.metrics[0].model_copy(update={"metric": hostile})]}
+    )
+    card = render_card_backlink(forged)
+    assert "\n- Evidence: https://evil.example" not in card
+    (line,) = [ln for ln in card.splitlines() if "evil.example" in ln]  # one line, one code span
+    assert line.startswith("- `x") and line.count("`") == 2 and "`: " in line
+
+
+def test_a_url_carrying_a_credential_is_refused_as_evidence(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
+    receipt = build_eval_receipt(runs["rev1"], dataset_ref)
+    with pytest.raises(EvalReceiptError):
+        render_card_backlink(receipt, evidence_url="https://example.org/e?token=hf_" + "a" * 34)
+
+
+def test_writing_never_follows_a_link_and_never_clobbers_a_file_that_appears(
+    runs: dict[str, Experiment], dataset_ref: Any, tmp_path: Path
+) -> None:
+    (entry,) = to_eval_results(
+        build_eval_receipt(runs["rev1"], dataset_ref),
+        metric="exact_match",
+        task_id="qa",
+        on="2026-10-28",
+    )
+    folder = tmp_path / ".eval_results"
+    folder.mkdir()
+    outside = tmp_path / "outside.yaml"
+    (folder / "n.yaml").symlink_to(outside)  # dangling link: exists() is False
+    with pytest.raises(EvalReceiptError):
+        write_eval_results([entry], folder / "n.yaml")
+    assert not outside.exists()
+    with pytest.raises(EvalReceiptError):
+        write_eval_results([entry], folder / "n.yaml", overwrite=True)
+    assert not outside.exists()
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").mkdir()
+    (tmp_path / "link" / ".eval_results").symlink_to(real)
+    with pytest.raises(EvalReceiptError):
+        write_eval_results([entry], tmp_path / "link" / ".eval_results" / "n.yaml")
+    assert list(real.iterdir()) == []
+    ok = write_eval_results([entry], folder / "ok.yaml")
+    ok.write_text("hand edited")
+    with pytest.raises(EvalReceiptError):
+        write_eval_results([entry], ok)
+    assert ok.read_text() == "hand edited"
+    write_eval_results([entry], ok, overwrite=True)
+    assert yaml.safe_load(ok.read_text())[0]["value"] == entry["value"]
+    assert [p.name for p in folder.iterdir() if p.name.endswith(".tmp")] == []
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        lambda: _resolved(
+            "dataset", "acme/other", SHA, revision=SHA, config="default", split="test"
+        ),
+        lambda: _resolved(
+            "dataset", "acme/qa", "e" * 40, revision="e" * 40, config="default", split="test"
+        ),
+        lambda: _resolved("dataset", "acme/qa", SHA, revision=SHA, config="other", split="test"),
+        lambda: _resolved("dataset", "acme/qa", SHA, revision=SHA, config="default", split="val"),
+    ],
+    ids=["repo", "commit", "config", "split"],
+)
+def test_a_comparison_over_different_datasets_says_so(
+    runs: dict[str, Experiment], dataset_ref: Any, other: Any
+) -> None:
+    base, cand, comparison = _pair(runs, dataset_ref, resolved_models=True)
+    assert compare_receipts(base, cand, comparison)["same_dataset"] is True
+    result = compare_receipts(base.model_copy(update={"dataset": other()}), cand, comparison)
+    assert result["same_dataset"] is False
+    assert any("same dataset" in line for line in result["statement"])
+
+
+def test_a_stored_interval_that_is_not_95_percent_is_refused_not_relabelled(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
+    exp = runs["rev1"]
+    agg = exp.aggregate[0].model_copy(update={"wilson": wilson_interval(3, 5, confidence=0.99)})
+    forged = exp.model_copy(update={"aggregate": [agg]})
+    with pytest.raises(EvalReceiptError):
+        build_eval_receipt(forged, dataset_ref)
+
+
+def test_a_boolean_aggregate_that_is_not_a_pass_rate_is_refused_cleanly(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
+    exp = runs["rev1"]
+    agg = exp.aggregate[0].model_copy(update={"value": 0.333, "n": 4, "wilson": None})
+    with pytest.raises(EvalReceiptError):
+        build_eval_receipt(exp.model_copy(update={"aggregate": [agg]}), dataset_ref)
+
+
+def test_limitations_cover_every_metric_not_only_the_first(
+    runs: dict[str, Experiment], dataset_ref: Any
+) -> None:
+    exp = runs["rev1"]
+    first = exp.aggregate[0]
+    second = first.model_copy(update={"metric": "z_second", "n": 1, "value": 1.0, "wilson": None})
+    receipt = build_eval_receipt(exp.model_copy(update={"aggregate": [first, second]}), dataset_ref)
+    assert "Small sample (n=1)" in _limits(receipt)

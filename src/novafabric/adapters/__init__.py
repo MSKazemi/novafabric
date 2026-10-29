@@ -12,6 +12,7 @@ from novafabric.adapters.mlflow import validate_run_id
 #   from novafabric.adapters.llamaindex import wrap_engine
 #   from novafabric.adapters.pydantic_ai import wrap_agent
 #   from novafabric.adapters.haystack import wrap_pipeline
+#   from novafabric.adapters.smolagents import wrap_agent
 
 __all__ = [
     "get_head_sha",
@@ -29,6 +30,7 @@ __all__ = [
     "wrap_llamaindex",
     "wrap_pydantic_ai",
     "wrap_haystack",
+    "wrap_smolagents",
 ]
 
 
@@ -96,3 +98,9 @@ def wrap_haystack(pipeline, **kwargs):  # type: ignore[no-untyped-def]
     """Alias: ``novafabric.adapters.haystack.wrap_pipeline``."""
     from novafabric.adapters.haystack import wrap_pipeline
     return wrap_pipeline(pipeline, **kwargs)
+
+
+def wrap_smolagents(agent, **kwargs):  # type: ignore[no-untyped-def]
+    """Alias: ``novafabric.adapters.smolagents.wrap_agent``."""
+    from novafabric.adapters.smolagents import wrap_agent
+    return wrap_agent(agent, **kwargs)

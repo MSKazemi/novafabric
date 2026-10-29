@@ -10838,7 +10838,32 @@ one call producing one capsule.
 
 Top-level alias: `from novafabric.adapters import wrap_haystack`
 
-> All three frameworks are optional and are **not** NovaFabric extras — install the
+### Hugging Face smolagents adapter
+
+**Status: experimental, not yet in a release.**
+
+```python
+# Install the framework: pip install smolagents
+from novafabric.adapters.smolagents import wrap_agent
+
+agent = wrap_agent(agent, run_name="support-bot")
+answer = agent.run("Is SKU-1042 in stock?")
+```
+
+Patches `run` in place and returns the same object; `run` keeps its arguments, return value
+(including `RunResult`), exceptions and the laziness of `stream=True`. Each user-visible `run()` writes one
+Run Capsule with a `trace.jsonl` span per agent step and one `tool-calls.jsonl` record per tool call named
+in a step. Tool calls are recorded **at step granularity** (the framework reports one outcome per step, not a
+result per call), are observed and never served by replay, and a `CodeAgent` step is one
+`python_interpreter` call — the tools its generated code calls are not individually visible. Managed
+agents record as spans inside the parent's capsule. `interrupt()` is a *cancelled* partial run; a run
+that stops at `max_steps` carries the tag `agent_state=max_steps_error`. Model calls are recorded by the
+wire hooks, not by this adapter. What is and is not recorded, the inference capture, and the opt-in Hub
+and evaluation receipts: [Hugging Face](integrations/huggingface.md).
+
+Top-level alias: `from novafabric.adapters import wrap_smolagents`
+
+> The LlamaIndex, Pydantic AI, Haystack and smolagents frameworks are optional and are **not** NovaFabric extras — install the
 > framework package itself. Each module stays importable without its framework; the
 > `wrap_*` call raises `ImportError` naming the install command.
 

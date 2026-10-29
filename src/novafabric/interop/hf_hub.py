@@ -25,6 +25,7 @@ exception message that echoes a credential cannot reach a capsule.
 
 ``nova verify`` does not use this module: offline verification never needs the Hub.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -36,7 +37,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 EXTENSION_KEY = "dev.novafabric.huggingface-hub"
 SCHEMA_VERSION = "0.1.0"
@@ -71,7 +79,8 @@ CLAIMS: dict[str, str] = {
     ),
     "local_bytes_verified": (
         "Local file bytes hash to the SHA-256 the Hub published for this revision; the claim "
-        "covers only the files marked local_verified."
+        "covers only files marked local_verified whose digest source is hub_lfs. A declared "
+        "digest is the caller's, not the Hub's."
     ),
 }
 
@@ -99,10 +108,15 @@ def _check(pattern: re.Pattern[str], value: object, field: str) -> str:
     return value
 
 
+def _invalid_from(exc: ValidationError) -> InvalidHubReferenceError:
+    """Re-raise pydantic's wrapper as the module's own error type, with no input echoed."""
+    return InvalidHubReferenceError("; ".join(sorted({e["msg"] for e in exc.errors()})))
+
+
 class HubFileDigest(BaseModel):
     """One file's digest, and where that digest came from."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     path: str
     sha256: str
@@ -127,7 +141,7 @@ class HubFileDigest(BaseModel):
 class HubReference(BaseModel):
     """A Hub repository revision, with how much of it is actually established."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     schema_version: str = SCHEMA_VERSION
     repo_type: RepoType
@@ -171,16 +185,37 @@ class HubReference(BaseModel):
     def _sha(cls, v: object) -> str | None:
         return None if v is None else _check(_COMMIT_RE, v, "resolved_sha")
 
+    @field_validator("unresolved_files", mode="before")
+    @classmethod
+    def _unresolved(cls, v: object) -> object:
+        if isinstance(v, list):
+            for item in v:
+                _check(_PATH_RE, item, "file path")
+        return v
+
     @model_validator(mode="after")
     def _consistent(self) -> HubReference:
-        # A receipt may not claim more than it holds: a resolved SHA is what separates
-        # hub_resolved from declared_only, and local verification needs a Hub digest.
-        if self.evidence_strength != "declared_only" and self.resolved_sha is None:
-            raise InvalidHubReferenceError("a resolved strength needs resolved_sha")
-        if self.evidence_strength == "local_bytes_verified" and not any(
-            f.local_verified and f.source == "hub_lfs" for f in self.files
+        # A receipt may not claim more than it holds. Everything that raises the strength is
+        # tied to a completed resolution, because ``model_copy`` and the manifest read path
+        # would otherwise let a hand-made receipt claim evidence nobody gathered.
+        resolved = self.resolution_status == "resolved"
+        if self.pinned != bool(
+            self.requested_revision and _COMMIT_RE.match(self.requested_revision)
         ):
-            raise InvalidHubReferenceError("local_bytes_verified needs a verified Hub digest")
+            raise InvalidHubReferenceError("pinned must mirror a full-commit requested_revision")
+        if self.evidence_strength != "declared_only" and (
+            not resolved or self.resolved_sha is None or self.resolved_at is None
+        ):
+            raise InvalidHubReferenceError("a resolved strength needs a completed resolution")
+        if self.pinned and self.resolved_sha not in (None, self.requested_revision):
+            raise InvalidHubReferenceError("resolved_sha differs from the pinned commit")
+        if any(f.source == "hub_lfs" for f in self.files) and not resolved:
+            raise InvalidHubReferenceError("a Hub digest needs a completed resolution")
+        if self.evidence_strength == "local_bytes_verified" and (
+            not any(f.local_verified and f.source == "hub_lfs" for f in self.files)
+            or any(f.local_verified is False for f in self.files)
+        ):
+            raise InvalidHubReferenceError("local_bytes_verified needs only verified Hub digests")
         if self.claim != CLAIMS[self.evidence_strength]:
             raise InvalidHubReferenceError("claim text does not match evidence_strength")
         return self
@@ -197,18 +232,32 @@ def declare_reference(
     """Record what the caller says it used. No network, no validation against the Hub."""
     if repo_type not in ("model", "dataset", "space"):
         raise InvalidHubReferenceError("invalid repo_type")
-    return HubReference(
-        repo_type=repo_type,  # type: ignore[arg-type]  # narrowed by the check above
-        repo_id=repo_id,
-        requested_revision=revision,
-        config=config,
-        split=split,
-        pinned=bool(revision and _COMMIT_RE.match(revision)),
-    )
+    try:
+        return HubReference(
+            repo_type=repo_type,  # type: ignore[arg-type]  # narrowed by the check above
+            repo_id=repo_id,
+            requested_revision=revision,
+            config=config,
+            split=split,
+            pinned=bool(revision and _COMMIT_RE.match(revision)),
+        )
+    except ValidationError as exc:
+        raise _invalid_from(exc) from None
 
 
 def _offline(env: dict[str, str] | os._Environ[str]) -> bool:
-    return env.get("HF_HUB_OFFLINE", "").upper() in _TRUTHY
+    # huggingface_hub itself treats TRANSFORMERS_OFFLINE as an alias of HF_HUB_OFFLINE.
+    return any(
+        env.get(k, "").upper() in _TRUTHY for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    )
+
+
+def _with(ref: HubReference, **update: Any) -> HubReference:
+    """``model_copy`` that re-runs the validators, so a derived receipt is checked too."""
+    try:
+        return HubReference.model_validate({**ref.model_dump(), **update})
+    except ValidationError as exc:
+        raise _invalid_from(exc) from None
 
 
 def _utc(dt: object) -> str | None:
@@ -240,7 +289,8 @@ def _classify(exc: BaseException) -> tuple[ResolutionStatus, Reason]:
         return "unavailable", "offline"
     if isinstance(status, int) and status >= 500:
         return "unavailable", "hub_error"
-    if isinstance(exc, (OSError, TimeoutError)) and status is None:
+    transport = {"TransportError", "RequestError", "TimeoutException", "NetworkError"}
+    if status is None and (isinstance(exc, (OSError, TimeoutError)) or names & transport):
         return "unavailable", "hub_unreachable"
     return "error", "hub_error"
 
@@ -278,16 +328,33 @@ def resolve_reference(
     checked_files = [_check(_PATH_RE, f, "file path") for f in files]
 
     def _fail(status: ResolutionStatus, reason: Reason) -> HubReference:
-        return ref.model_copy(update={"resolution_status": status, "reason": reason})
+        # A failed attempt carries no evidence: it must not inherit the previous receipt's
+        # SHA or strength, or drift would read a dead Hub as "same".
+        return _with(
+            ref,
+            resolution_status=status,
+            reason=reason,
+            resolved_sha=None,
+            canonical_repo_id=None,
+            resolved_at=None,
+            hub_last_modified=None,
+            files=[],
+            unresolved_files=[],
+            evidence_strength="declared_only",
+            claim=CLAIMS["declared_only"],
+        )
 
     if _offline(env):
         return _fail("unavailable", "offline")
     if api is None:
         try:
             from huggingface_hub import HfApi  # type: ignore[import-not-found,unused-ignore]
+
+            api = HfApi()
         except ImportError:
             return _fail("unavailable", "dependency_missing")
-        api = HfApi()
+        except Exception:  # noqa: BLE001 - a broken install must not break the workload
+            return _fail("error", "invalid_metadata")
     fetch = getattr(api, f"{ref.repo_type}_info", None)
     if not callable(fetch):
         return _fail("error", "invalid_metadata")
@@ -326,34 +393,44 @@ def resolve_reference(
                 HubFileDigest(path=path, sha256=found[0], source="hub_lfs", size_bytes=found[1])
             )
 
-    return ref.model_copy(
-        update={
-            "resolution_status": "resolved",
-            "reason": None,
-            "resolved_sha": sha,
-            "canonical_repo_id": canonical,
-            "resolved_at": clock(),
-            "hub_last_modified": _utc(getattr(info, "last_modified", None)),
-            "files": digests,
-            "unresolved_files": unresolved,
-            "evidence_strength": "hub_resolved",
-            "claim": CLAIMS["hub_resolved"],
-        }
+    return _with(
+        ref,
+        resolution_status="resolved",
+        reason=None,
+        resolved_sha=sha,
+        canonical_repo_id=canonical,
+        resolved_at=clock(),
+        hub_last_modified=_utc(getattr(info, "last_modified", None)),
+        files=digests,
+        unresolved_files=unresolved,
+        evidence_strength="hub_resolved",
+        claim=CLAIMS["hub_resolved"],
     )
 
 
 def _hash_regular_file(path: Path) -> str | None:
-    """SHA-256 of a regular file, or ``None``. A link, FIFO or device is refused, not opened."""
+    """SHA-256 of a regular file, or ``None``. A link, FIFO or device is refused, not opened.
+
+    The type check is made on the opened descriptor (``O_NOFOLLOW`` + ``O_NONBLOCK`` + ``fstat``),
+    so swapping the file for a link or FIFO between check and open cannot be followed or hang.
+    Only the final path component is checked: a symlinked *parent* directory is still followed.
+    """
+    fd = -1
     try:
-        if not stat.S_ISREG(os.lstat(path).st_mode):
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
             return None
         digest = hashlib.sha256()
-        with open(path, "rb") as fh:
+        with os.fdopen(fd, "rb") as fh:
+            fd = -1  # now owned by the file object
             for chunk in iter(lambda: fh.read(_CHUNK), b""):
                 digest.update(chunk)
         return digest.hexdigest()
     except OSError:
         return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def verify_local_file(
@@ -385,13 +462,13 @@ def verify_local_file(
         reason = "local_digest_mismatch"
     checked = known.model_copy(update={"local_verified": ok})
     files = sorted([f for f in ref.files if f.path != path] + [checked], key=lambda f: f.path)
-    return _rescore(ref.model_copy(update={"files": files}), reason)
+    return _rescore(ref, reason, files)
 
 
 _LOCAL_REASONS = ("local_digest_mismatch", "local_file_unreadable")
 
 
-def _rescore(ref: HubReference, reason: Reason | None) -> HubReference:
+def _rescore(ref: HubReference, reason: Reason | None, files: list[HubFileDigest]) -> HubReference:
     """Raise to ``local_bytes_verified`` only on a Hub-published digest that matched, and fall
     back to the resolution-only strength if any recorded file failed to match.
 
@@ -399,8 +476,8 @@ def _rescore(ref: HubReference, reason: Reason | None) -> HubReference:
     cleared once no file is failing, and a non-local reason (e.g. ``offline``) is left alone.
     """
     base: EvidenceStrength = "hub_resolved" if ref.resolved_sha else "declared_only"
-    verified = any(f.local_verified and f.source == "hub_lfs" for f in ref.files)
-    failed = any(f.local_verified is False for f in ref.files)
+    verified = any(f.local_verified and f.source == "hub_lfs" for f in files)
+    failed = any(f.local_verified is False for f in files)
     strength: EvidenceStrength = "local_bytes_verified" if verified and not failed else base
     if reason is not None:
         new_reason: Reason | None = reason
@@ -408,8 +485,8 @@ def _rescore(ref: HubReference, reason: Reason | None) -> HubReference:
         new_reason = ref.reason
     else:
         new_reason = None if ref.reason in _LOCAL_REASONS else ref.reason
-    return ref.model_copy(
-        update={"evidence_strength": strength, "claim": CLAIMS[strength], "reason": new_reason}
+    return _with(
+        ref, files=files, evidence_strength=strength, claim=CLAIMS[strength], reason=new_reason
     )
 
 
@@ -460,4 +537,7 @@ def references_from_manifest(manifest: dict[str, Any]) -> list[HubReference]:
         return []
     if not isinstance(block, dict) or not isinstance(block.get("references"), list):
         raise InvalidHubReferenceError("malformed huggingface-hub extension")
-    return [HubReference.model_validate(item) for item in block["references"]]
+    try:
+        return [HubReference.model_validate(item) for item in block["references"]]
+    except ValidationError as exc:
+        raise _invalid_from(exc) from None

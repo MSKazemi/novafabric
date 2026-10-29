@@ -102,6 +102,15 @@ class _RunState:
             self.cap = cap if isinstance(cap, AdapterCapture) else None
             self.steps = 0
 
+    def release(self, cap: Any) -> bool:
+        """Clear the state only if *cap* is still the active run: a late close of an earlier
+        stream must not wipe the recording of the run that replaced it."""
+        with self.lock:
+            if self.cap is not cap:
+                return False
+            self.cap, self.steps = None, 0
+            return True
+
 
 class _Handle:
     """Adapts one in-flight run to the ``fail / mark_partial / finish`` contract of
@@ -117,6 +126,12 @@ class _Handle:
             self._cap.mark_partial(CANCELLED)
         else:
             self._cap.fail(exc)
+            error = getattr(self._cap, "error", None)
+            if isinstance(error, dict) and not _payloads_enabled():
+                # Provider errors often quote the prompt; like the step spans, keep the class only.
+                error["message"] = (
+                    f"{type(exc).__name__} (message withheld; NOVA_CAPTURE_LEVEL=forensic keeps it)"
+                )
 
     def mark_partial(self, reason: str) -> None:
         self._cap.mark_partial(reason)
@@ -125,13 +140,14 @@ class _Handle:
         try:
             self._tag()
         finally:
-            self._state.reset(None)
+            self._state.release(self._cap)
             self._cap.finish()
 
     def _tag(self) -> None:
         tags = self._cap.tags
         tags["agent_class"] = type(self._agent).__name__
-        tags["step_count"] = str(self._state.steps)
+        if self._state.cap is self._cap:  # a stale close must not report a newer run's steps
+            tags["step_count"] = str(self._state.steps)
         if self._managed:
             tags["managed_agents"] = ",".join(self._managed)
         # A smolagents run that hit max_steps *returns* a final answer; saying so keeps the
@@ -295,7 +311,7 @@ def _record_step(
         with state.lock:
             state.steps += 1
     managed_names = set(getattr(owner, "managed_agents", None) or {})
-    for call in tool_calls:
+    for call in tool_calls if kind == "action" else ():  # only an action step runs tools
         _record_tool_call(cap, span_id, call, step, error, managed_names, requested_only)
 
 

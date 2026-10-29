@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from novafabric import _paths as _nf_paths
 
@@ -40,12 +41,34 @@ _VENDORED_DEFAULT_PATH = Path(__file__).with_name("url_registry.yaml")
 class UrlRegistryEntry(BaseModel):
     """One row in the URL registry."""
 
-    match: str = Field(min_length=1, description="Substring matched against the full URL.")
+    match: str = Field(
+        min_length=1,
+        description="Substring matched against the full URL, or a regex when match_kind=regex.",
+    )
+    #: ``substring`` (default, every pre-existing entry) matches anywhere in the URL, including
+    #: its query string and path. ``regex`` is ``re.match`` (anchored at the start, case-
+    #: insensitive) and is how an entry pins scheme and host, so a look-alike URL that merely
+    #: *contains* the host cannot be classified.
+    match_kind: Literal["substring", "regex"] = "substring"
     gen_ai_system: str = Field(
         min_length=1, description="Value for the record's gen_ai.system field."
     )
     transport: Literal["http", "grpc", "ws"] = "http"
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def _regex_compiles(self) -> UrlRegistryEntry:
+        if self.match_kind == "regex":
+            try:
+                re.compile(self.match)
+            except re.error as exc:
+                raise ValueError(f"match is not a valid regex: {exc}") from None
+        return self
+
+    def matches(self, url: str) -> bool:
+        if self.match_kind == "regex":
+            return re.match(self.match, url, re.IGNORECASE) is not None
+        return self.match in url
 
 
 class UrlRegistry(BaseModel):
@@ -56,7 +79,7 @@ class UrlRegistry(BaseModel):
 
     def lookup(self, url: str) -> UrlRegistryEntry | None:
         for entry in self.patterns:
-            if entry.match in url:
+            if entry.matches(url):
                 return entry
         return None
 

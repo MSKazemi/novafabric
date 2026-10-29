@@ -23,6 +23,7 @@ scale for ``value``, so the scale is stated in ``notes`` and ``verifyToken`` is 
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections.abc import Sequence
 from datetime import date, datetime
@@ -33,6 +34,7 @@ from urllib.parse import urlparse
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from novafabric._safe_path import atomic_write_bytes, fsync_dir
 from novafabric.capture.secrets import scan_text_rule_ids
 from novafabric.eval.experiment import Experiment, ItemRunStatus, MetricAggregate
 from novafabric.eval.experiment_compare import ExperimentComparison
@@ -135,6 +137,12 @@ def _plain_text(value: str | None, field: str, limit: int = 200) -> str | None:
     return value
 
 
+def _code(value: object) -> str:
+    """Render untrusted text as an inert Markdown code span (no backticks, controls or newlines)."""
+    cleaned = "".join(ch for ch in str(value) if ch.isprintable() and ch != "`")
+    return f"`{cleaned[:120]}`"
+
+
 def _digest(value: str | None, field: str) -> str | None:
     if value is not None and not _SHA256_RE.match(value):
         raise EvalReceiptError(f"{field} must be 'sha256:<64 hex>'")
@@ -148,6 +156,8 @@ def _counts(experiment: Experiment, metric: MetricAggregate | None) -> ItemCount
     passed = failed = None
     if metric is not None and metric.value_type == "boolean":
         passed = round(metric.value * metric.n)
+        if abs(metric.value * metric.n - passed) > 1e-6:
+            raise EvalReceiptError(f"metric {metric.metric!r} is not a pass rate over n items")
         failed = metric.n - passed
     return ItemCounts(
         attempted=attempted,
@@ -164,9 +174,12 @@ def _counts(experiment: Experiment, metric: MetricAggregate | None) -> ItemCount
 def _report(aggregate: MetricAggregate) -> MetricReport:
     interval = aggregate.wilson
     method: Literal["wilson_95"] | None = "wilson_95" if interval is not None else None
-    if interval is None and aggregate.value_type == "boolean":
-        interval = wilson_interval(round(aggregate.value * aggregate.n), aggregate.n)
-        method = "wilson_95"
+    if aggregate.value_type == "boolean":
+        expected = wilson_interval(round(aggregate.value * aggregate.n), aggregate.n)
+        if interval is not None and any(abs(a - b) > 1e-6 for a, b in zip(interval, expected)):
+            # The label says 95%: refuse to relabel an interval computed another way.
+            raise EvalReceiptError(f"metric {aggregate.metric!r} holds a non-95% Wilson interval")
+        interval, method = expected if interval is None else interval, "wilson_95"
     return MetricReport(
         metric=aggregate.metric,
         reducer=aggregate.reducer,
@@ -184,6 +197,7 @@ def _limitations(
     model_declared: str | None,
     harness: HarnessRef | None,
     counts: ItemCounts,
+    scored: Sequence[int],
 ) -> list[str]:
     out: list[str] = []
     if dataset.resolved_sha is None:
@@ -193,22 +207,28 @@ def _limitations(
         )
     elif not dataset.pinned:
         out.append(
-            f"The dataset was requested as '{dataset.requested_revision or 'default branch'}', "
+            "The dataset was requested as "
+            f"{_code(dataset.requested_revision or 'default branch')}, "
             "a moving ref; it resolved to the recorded commit at resolved_at and may differ later."
         )
-    if dataset.evidence_strength != "local_bytes_verified":
-        out.append(
-            "The Hub revision and the local dataset content hash were not cross-checked: no "
-            "local file was hashed against a digest the Hub published."
+    out.append(
+        "The Hub revision and the local dataset content hash were not cross-checked."
+        + (
+            " Files hashed against Hub digests are not shown to be the items that were scored."
+            if dataset.evidence_strength == "local_bytes_verified"
+            else " No local file was hashed against a digest the Hub published."
         )
-    if counts.unscored:
+    )
+    unscored = counts.attempted - min(scored, default=counts.scored)
+    if unscored:
         out.append(
-            f"{counts.unscored} of {counts.attempted} items produced no score (errored, skipped "
+            f"{unscored} of {counts.attempted} items produced no score (errored, skipped "
             "or unlabelled) and are excluded from the aggregate; the interval covers scored "
             "items only."
         )
-    if 0 < counts.scored < SMALL_SAMPLE:
-        out.append(f"Small sample (n={counts.scored}): the confidence interval is wide.")
+    smallest = min((n for n in scored if n > 0), default=0)
+    if 0 < smallest < SMALL_SAMPLE:
+        out.append(f"Small sample (n={smallest}): the confidence interval is wide.")
     if model is None and model_declared is None:
         out.append(
             "No model reference was recorded; the receipt cannot say which model was scored."
@@ -274,7 +294,9 @@ def build_eval_receipt(
         evidence_refs=[_digest(ref, "evidence_ref") or "" for ref in evidence_refs],
         counts=counts,
         metrics=[_report(a) for a in aggregates],
-        limitations=_limitations(dataset, model, model_declared, harness, counts),
+        limitations=_limitations(
+            dataset, model, model_declared, harness, counts, [a.n for a in aggregates]
+        ),
     )
 
 
@@ -300,6 +322,13 @@ def compare_receipts(
         candidate.experiment_id != comparison.comparison_of.candidate_experiment_id
     ):
         raise EvalReceiptError("the receipts are not the experiments the comparison is over")
+    same_dataset = (
+        baseline.dataset.repo_id == candidate.dataset.repo_id
+        and baseline.dataset.resolved_sha == candidate.dataset.resolved_sha
+        and baseline.dataset.config == candidate.dataset.config
+        and baseline.dataset.split == candidate.dataset.split
+        and baseline.local_dataset == candidate.local_dataset
+    )
     unattributed = [
         label
         for label, receipt in (("baseline", baseline), ("candidate", candidate))
@@ -310,6 +339,11 @@ def compare_receipts(
         "outputs changed.",
         "'Different' is not 'worse': read the interval, the item counts and the changed items.",
     ]
+    if not same_dataset:
+        statement.append(
+            "The two receipts do not describe the same dataset revision, config, split and local "
+            "dataset: the difference may reflect the data, not the model."
+        )
     if unattributed:
         statement.append(
             "Model revision is not established for: "
@@ -325,6 +359,7 @@ def compare_receipts(
         "metric": metric,
         "baseline": base.model_dump(),
         "candidate": cand.model_dump(),
+        "same_dataset": same_dataset,
         "difference": cand.value - base.value,
         "regression_significant": comparison.is_regression(),
         "verdict": comparison.significance.get("sprt", {}).get("verdict"),
@@ -352,6 +387,7 @@ def _is_https_url(value: object) -> bool:
         and parsed.username is None
         and parsed.password is None
         and not any(ch.isspace() or ord(ch) < 32 for ch in value)
+        and not scan_text_rule_ids(value)
     )
 
 
@@ -510,11 +546,28 @@ def write_eval_results(
     if target.parent.name != ".eval_results" or target.suffix != ".yaml":
         raise EvalReceiptError("path must be <dir>/.eval_results/<name>.yaml")
     text = render_eval_results_yaml(entries)
+    if target.parent.is_symlink():
+        raise EvalReceiptError("the .eval_results folder must not be a symlink")
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and not overwrite:
-        raise EvalReceiptError(f"{target} exists; pass overwrite=True to replace it")
-    target.write_text(text, encoding="utf-8")
-    return target
+    data = text.encode("utf-8")
+    if not overwrite:
+        # O_EXCL|O_NOFOLLOW: a dangling link or a file that appears now is refused, never followed.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        try:
+            fd = os.open(target, flags, 0o644)
+        except FileExistsError:
+            raise EvalReceiptError(f"{target} exists; pass overwrite=True to replace it") from None
+        except OSError:
+            raise EvalReceiptError(f"cannot create {target}") from None
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        fsync_dir(target.parent)
+        return target
+    if target.is_symlink():
+        raise EvalReceiptError(f"{target} is a symlink; refusing to write through it")
+    return atomic_write_bytes(target, data)
 
 
 # ── Model / Dataset Card backlink (append-only, pure text) -------------------
@@ -530,13 +583,13 @@ def render_card_backlink(receipt: EvalReceipt, *, evidence_url: str | None = Non
         "",
         NOT_VERIFIED,
         "",
-        f"- Dataset: `{receipt.dataset.repo_id}` "
+        f"- Dataset: {_code(receipt.dataset.repo_id)} "
         f"({receipt.dataset.evidence_strength.replace('_', ' ')})",
         f"- Experiment: `{receipt.experiment_content_hash}`",
     ]
     for m in receipt.metrics:
         band = f", 95% interval [{m.interval[0]:.3f}, {m.interval[1]:.3f}]" if m.interval else ""
-        lines.append(f"- {m.metric}: {m.value:.4f} (n={m.n}{band})")
+        lines.append(f"- {_code(m.metric)}: {m.value:.4f} (n={m.n}{band})")
     if evidence_url:
         lines.append(f"- Evidence: {evidence_url}")
     lines += ["", "Limitations:", *(f"- {text}" for text in receipt.limitations), CARD_BLOCK_END]
