@@ -711,3 +711,15 @@ def test_a_file_swapped_for_a_link_or_fifo_after_the_type_check_is_not_followed(
     assert hf_hub._hash_regular_file(fifo) is None  # must return, not block
     target.write_bytes(WEIGHTS)
     assert hf_hub._hash_regular_file(target) == WEIGHTS_SHA
+
+
+@pytest.mark.parametrize("extensions", [[None], "x", 3, [], {"other": 1}, {EXTENSION_KEY: "x"}, {EXTENSION_KEY: {"references": 3}}])
+def test_a_malformed_manifest_extensions_block_is_the_modules_own_error_or_no_references(
+    extensions: Any,
+) -> None:
+    """Found by a property test: a non-dict ``extensions`` used to raise a bare AttributeError."""
+    try:
+        refs = references_from_manifest({"extensions": extensions})
+    except InvalidHubReferenceError:
+        return
+    assert refs == []
