@@ -364,8 +364,9 @@ class DuckDBAccumulator:
                 f"Unknown table {table!r}; must be one of {sorted(allowed)}"
             )
         with self._lock:
-            # .arrow() returns a RecordBatchReader; call .read_all() for a pa.Table.
-            return self._conn.execute(f"SELECT * FROM {table}").arrow().read_all()  # noqa: S608
+            # DuckDB 2.0 removed DuckDBPyConnection.arrow(); a relation's
+            # to_arrow_table() exists on 1.5.x and 2.x and returns a pa.Table.
+            return self._conn.sql(f"SELECT * FROM {table}").to_arrow_table()  # noqa: S608
 
     # ------------------------------------------------------------------
     # Lifecycle
