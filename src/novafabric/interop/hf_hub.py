@@ -532,7 +532,10 @@ def attach_hub_references(manifest: dict[str, Any], refs: Iterable[HubReference]
 
 def references_from_manifest(manifest: dict[str, Any]) -> list[HubReference]:
     """Read the receipts back. Absent key -> ``[]``; a malformed entry raises (fail closed)."""
-    block = (manifest.get("extensions") or {}).get(EXTENSION_KEY)
+    extensions = manifest.get("extensions") if isinstance(manifest, dict) else None
+    if extensions is not None and not isinstance(extensions, dict):
+        raise InvalidHubReferenceError("malformed manifest extensions")
+    block = (extensions or {}).get(EXTENSION_KEY)
     if block is None:
         return []
     if not isinstance(block, dict) or not isinstance(block.get("references"), list):

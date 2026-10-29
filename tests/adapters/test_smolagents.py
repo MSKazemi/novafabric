@@ -831,3 +831,48 @@ def _all_capsules(tmp_path: Path) -> list[tuple[dict[str, Any], list[dict[str, A
         )
         for c in _capsules(tmp_path)
     ]
+
+
+def test_hub_receipts_travel_in_a_real_adapter_manifest_and_the_schema_still_accepts_it(
+    sm: Any, tmp_path: Path
+) -> None:
+    """The #28 receipts are meant to ride in a capsule manifest; prove it on one a run wrote."""
+    from types import SimpleNamespace
+
+    from novafabric._jsonschema_offline import offline_validator
+    from novafabric.interop.hf_hub import (
+        attach_hub_references,
+        declare_reference,
+        references_from_manifest,
+        resolve_reference,
+    )
+
+    _wrap(sm.agent([("final", "x")]), tmp_path).run("q")
+    manifest, _, _ = _sole(tmp_path)
+    schema = json.loads(
+        (Path(__file__).resolve().parents[2] / "schemas" / "run-capsule.schema.json").read_text()
+    )
+    validator = offline_validator(schema)
+    before = sorted(e.json_path + e.message for e in validator.iter_errors(manifest))
+
+    api = SimpleNamespace(
+        model_info=lambda repo_id, **kw: SimpleNamespace(
+            sha="a" * 40, id=repo_id, last_modified=None, siblings=[]
+        )
+    )
+    refs = [
+        resolve_reference(declare_reference("model", "acme/tiny", revision="main"), api=api, environ={}),
+        declare_reference("dataset", "acme/qa", revision="b" * 40, config="default", split="test"),
+    ]
+    with_receipts = attach_hub_references(manifest, refs)
+
+    after = sorted(e.json_path + e.message for e in validator.iter_errors(with_receipts))
+    assert after == before  # the extension adds no schema error to a manifest the adapter wrote
+    assert "extensions" not in manifest or "dev.novafabric.huggingface-hub" not in manifest["extensions"]
+    assert references_from_manifest(with_receipts) == sorted(
+        refs, key=lambda r: (r.repo_type, r.repo_id)
+    )
+    # Nothing else in the manifest moved: the receipts are purely additive.
+    assert {k: v for k, v in with_receipts.items() if k != "extensions"} == {
+        k: v for k, v in manifest.items() if k != "extensions"
+    }
