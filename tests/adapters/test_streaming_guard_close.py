@@ -7,13 +7,14 @@ capsule open and the wire hooks claimed until garbage collection.
 """
 from __future__ import annotations
 
+import asyncio
 import contextvars
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
-from novafabric.adapters._streaming import Closer, guard_iterator
+from novafabric.adapters._streaming import Closer, guard_async_iterator, guard_iterator
 
 
 class _Cap:
@@ -53,3 +54,25 @@ def test_a_well_behaved_generator_is_unchanged_by_the_fix() -> None:
     flag: contextvars.ContextVar[bool] = contextvars.ContextVar("flag2", default=False)
     seen: list[Any] = list(guard_iterator(iter([1, 2]), Closer(cap), flag))
     assert seen == [1, 2] and cap.events == ["finish"]
+
+
+async def _async_yields_in_finally() -> Any:
+    try:
+        yield 1
+        yield 2
+    finally:
+        yield 99
+
+
+def test_the_async_guard_closes_the_capsule_even_when_aclose_raises() -> None:
+    cap = _Cap()
+    flag: contextvars.ContextVar[bool] = contextvars.ContextVar("aflag", default=False)
+
+    async def go() -> None:
+        guarded = guard_async_iterator(_async_yields_in_finally(), Closer(cap), flag)
+        assert await guarded.__anext__() == 1
+        with pytest.raises(RuntimeError, match="ignored GeneratorExit|async generator"):
+            await guarded.aclose()
+
+    asyncio.run(go())
+    assert cap.events == ["partial:abandoned", "finish"]

@@ -112,15 +112,25 @@ def _post(client: Any, url: str = ROUTER, body: dict[str, Any] | None = None) ->
         ("https://huggingface.co/datasets/acme/qa/resolve/main/data.parquet", "unknown"),
         ("https://cdn-lfs.huggingface.co/repos/ab/cd/blob", "unknown"),
         ("https://hf.co/acme/tiny", "unknown"),
-        ("https://router.huggingface.co/hf-inference/models/acme/tiny", "unknown"),
-        ("https://router.huggingface.co/v2/chat/completions", "unknown"),
-        # Look-alikes and the wrong scheme:
+        # An explicit provider posts under /<provider>/..., not /v1/ -- still the router host:
+        ("https://router.huggingface.co/together/v1/chat/completions", "huggingface"),
+        ("https://router.huggingface.co/groq/openai/v1/chat/completions", "huggingface"),
+        ("https://router.huggingface.co/hf-inference/models/acme/tiny/v1/chat/completions", "huggingface"),
+        ("https://router.huggingface.co:443/v1/chat/completions", "huggingface"),
+        # Look-alikes and the wrong scheme. The registry match is a *prefix* regex, so a URL that
+        # merely contains the real one in a path, query or fragment must not be classified:
         ("https://router.huggingface.co.attacker.example/v1/chat/completions", "unknown"),
+        ("https://router.huggingface.co@attacker.example/v1/chat/completions", "unknown"),
         ("https://xendpoints.huggingface.cloud/v1/chat/completions", "unknown"),
         ("http://router.huggingface.co/v1/chat/completions", "unknown"),
+        ("http://my-llm.endpoints.huggingface.cloud/v1/chat/completions", "unknown"),
+        ("https://attacker.example/?next=https://router.huggingface.co/v1/chat/completions", "unknown"),
+        ("https://attacker.example/#https://router.huggingface.co/v1/chat/completions", "unknown"),
+        ("https://huggingface.co/api/models?search=https://router.huggingface.co/v1/", "unknown"),
+        ("https://attacker.example/r/a.endpoints.huggingface.cloud/v1/x", "unknown"),
     ],
 )
-def test_only_the_two_openai_compatible_hugging_face_routes_are_classified(
+def test_only_the_two_hugging_face_inference_hosts_are_classified(
     url: str, system: str
 ) -> None:
     registry = load_url_registry()
@@ -133,8 +143,9 @@ def test_unrelated_hub_traffic_leaves_no_model_call_and_no_ai_egress_event(capsu
     for url in (
         "https://huggingface.co/api/models/acme/tiny",
         "https://cdn-lfs.huggingface.co/x",
-        "https://router.huggingface.co/hf-inference/models/acme/tiny",
         "https://router.huggingface.co.attacker.example/v1/chat/completions",
+        "https://attacker.example/?next=https://router.huggingface.co/v1/chat/completions",
+        "https://huggingface.co/api/models?search=https://router.huggingface.co/v1/",
     ):
         client.post(url, json=BODY) if "chat" in url else client.get(url)
     assert _calls(capsule) == []
@@ -153,6 +164,10 @@ def test_unrelated_hub_traffic_leaves_no_model_call_and_no_ai_egress_event(capsu
         ("acme/tiny:preferred", "acme/tiny", "preferred", "policy"),
         ("acme/tiny:groq", "acme/tiny", "groq", "explicit_provider"),
         ("acme/tiny:Not A Provider!", "acme/tiny:Not A Provider!", None, None),
+        # An ordinary tag is part of the model string, not a provider choice:
+        ("acme/tiny:latest", "acme/tiny:latest", None, None),
+        ("llama3:8b", "llama3:8b", None, None),
+        ("org/m:fp8", "org/m:fp8", None, None),
         ("https://x.example/m:y", "https://x.example/m:y", None, None),
     ],
 )
@@ -437,3 +452,43 @@ def test_a_custom_base_url_is_not_captured_unless_the_registry_names_it(
         messages=BODY["messages"], max_tokens=4
     )
     assert _calls(capsule) == []
+
+
+# ── the real client's explicit-provider routes (review finding: they were all missed) ─────────
+
+
+PROVIDERS = ("hf-inference", "together", "groq", "novita", "cerebras", "fireworks-ai", "cohere", "zai-org")
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_every_explicit_provider_route_of_the_real_client_is_captured(
+    capsule: Path, hub: Any, provider: str
+) -> None:
+    # The client caches this lookup per model for the process, so every provider is served at once.
+    mapping = {
+        name: {"status": "live", "providerId": f"acme/tiny-{name}", "task": "conversational"}
+        for name in PROVIDERS
+    }
+
+    def handler(request: Any) -> Any:
+        if "/api/models/" in str(request.url):  # the client's own provider lookup
+            return httpx2.Response(200, json={
+                "id": "acme/tiny", "sha": "a" * 40, "pipeline_tag": "text-generation",
+                "tags": ["conversational"], "inferenceProviderMapping": mapping,
+            })
+        return _ok(request)
+
+    hub.set_client_factory(lambda: httpx2.Client(transport=httpx2.MockTransport(handler)))
+    hub.InferenceClient(provider=provider, api_key=TOKEN).chat_completion(
+        model="acme/tiny", messages=[{"role": "user", "content": "hi"}], max_tokens=4
+    )
+    (record,) = _calls(capsule)  # exactly one model call; the Hub lookup is not one
+    assert record["gen_ai.system"] == "huggingface"
+    assert "/api/models/" not in record["endpoint"] and "router.huggingface.co/" in record["endpoint"]
+
+
+def test_a_dedicated_endpoint_has_no_selector_even_when_the_model_string_looks_like_one() -> None:
+    identity = identity_extension("huggingface.endpoint", "acme/tiny:groq")
+    assert identity is not None
+    assert identity["requested_model"] == "acme/tiny:groq"
+    assert identity["requested_selector"] is None and identity["selector_kind"] is None

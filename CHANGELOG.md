@@ -13,6 +13,19 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Hugging Face evidence (experimental, opt-in).** Nothing here changes a capture that does not use it.
+  `novafabric.adapters.smolagents.wrap_agent` (alias `novafabric.adapters.wrap_smolagents`) writes one
+  Run Capsule per `smolagents` `run()`, with a span per step and a tool-call record per call at step
+  granularity; a `CodeAgent` step is one `python_interpreter` call, and the tools its generated code calls
+  are not individually visible. Requests to the Inference Providers router and to dedicated Endpoints
+  (`/v1/` routes only) are recorded as model calls whose reported model and served provider are `null`
+  (not observed), never guessed. `novafabric.interop.hf_hub` records Hub revision references with an
+  explicit evidence strength (`declared_only`, `hub_resolved`, `local_bytes_verified`), and
+  `novafabric.eval.hf_receipt` binds a finalized experiment to them and can write a validated local
+  `.eval_results` file (it never writes `verifyToken`; the Hub format is a work in progress). Mocked replay
+  never serves Hugging Face model calls or `smolagents` tools (capture only); prompts are stored by
+  default for every provider, as before. No new dependency: `smolagents` and `huggingface_hub` are
+  optional. See [docs/integrations/huggingface.md](docs/integrations/huggingface.md).
 - **Audit profiles: `tool_calls` evidence type.** A requirement with `evidence_type: tool_calls` is met
   when the capsule recorded at least one tool call (a non-empty `tool-calls.jsonl`; every capture creates
   the file empty, so its presence alone does not count). Links and FIFOs are never followed or opened.

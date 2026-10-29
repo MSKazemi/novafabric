@@ -23,6 +23,13 @@ from typing import Any
 IDENTITY_EXT = "io.novafabric.model_identity"
 HF_SYSTEM_PREFIX = "huggingface"
 _POLICIES = frozenset({"fastest", "cheapest", "preferred"})
+#: Provider names the router accepts after ``:``. Any other tail (``:latest``, ``:8b``, ``:fp8``)
+#: is part of the model string as sent, not a provider choice, and is left unsplit.
+_PROVIDERS = frozenset({
+    "auto", "black-forest-labs", "cerebras", "cohere", "fal-ai", "featherless-ai", "fireworks-ai",
+    "groq", "hf-inference", "hyperbolic", "nebius", "novita", "nscale", "ovhcloud", "publicai",
+    "replicate", "sambanova", "scaleway", "together", "wavespeed", "zai-org",
+})
 _SELECTOR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}\Z")
 _MAX_MODEL_LEN = 256
 
@@ -31,6 +38,8 @@ def split_selector(model: str) -> tuple[str, str | None, str | None]:
     """``(model, selector, kind)`` where kind is ``policy``, ``explicit_provider`` or ``None``."""
     base, sep, tail = model.rpartition(":")
     if not sep or not base or "/" in tail or "://" in model or not _SELECTOR_RE.match(tail):
+        return model, None, None
+    if tail not in _POLICIES and tail not in _PROVIDERS:
         return model, None, None
     return base, tail, "policy" if tail in _POLICIES else "explicit_provider"
 
@@ -42,7 +51,12 @@ def identity_extension(gen_ai_system: str, model: Any) -> dict[str, Any] | None:
     text = model if isinstance(model, str) and model != "unknown" else None
     if text is not None:
         text = text[:_MAX_MODEL_LEN]
-    base, selector, kind = split_selector(text) if text else (None, None, None)
+    # Only the router has ``:policy`` / ``:provider`` selectors; a dedicated endpoint does not.
+    base: str | None = text
+    selector: str | None = None
+    kind: str | None = None
+    if text and gen_ai_system == "huggingface":
+        base, selector, kind = split_selector(text)
     return {
         "requested_model": base,
         "requested_selector": selector,

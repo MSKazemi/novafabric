@@ -139,8 +139,8 @@ content anywhere else: `--emit-otel-genai` exports spans without content unless 
 also pass `--capture-content`.
 
 **Which frameworks does it support?** Capture is framework-agnostic — it wraps a
-command. Eleven experimental adapters add richer detail: LangGraph, CrewAI, AutoGen,
-DSPy, LlamaIndex, Haystack, Pydantic AI, the OpenAI Agents SDK, Google ADK, Bedrock
+command. Twelve experimental adapters add richer detail (the smolagents one is not yet in a release): LangGraph, CrewAI, AutoGen,
+DSPy, LlamaIndex, Haystack, Pydantic AI, Hugging Face smolagents, the OpenAI Agents SDK, Google ADK, Bedrock
 AgentCore and A2A. MCP tool calls are captured by a hook and by the experimental
 `nova mcp-proxy`. See [the architecture map](architecture.md).
 

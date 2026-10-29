@@ -314,9 +314,9 @@ ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
         surface="Hugging Face `InferenceClient` / `AsyncInferenceClient` (router, Endpoints)",
         capture=(
-            "wire hook, OpenAI-compatible `/v1/` routes only: request, requested model and "
-            "selector, status, timing; the response is never read, so reported model, served "
-            "provider and token counts are not recorded"
+            "wire hook, the router and Endpoints hosts (any provider route): request, requested "
+            "model and selector, status, timing; the response is never read, so reported model, "
+            "served provider and token counts are not recorded"
         ),
         replay="not intercepted",
         replay_note="runs **live**; its connections are reported (`network_connections_live`)",
@@ -325,7 +325,7 @@ ROWS: tuple[SurfaceRow, ...] = (
         status="capture only",
         evidence=(
             f"{_HF}::test_a_hugging_face_record_is_never_a_replayable_model_call",
-            f"{_HF}::test_only_the_two_openai_compatible_hugging_face_routes_are_classified",
+            f"{_HF}::test_only_the_two_hugging_face_inference_hosts_are_classified",
             f"{_HF}::test_a_streamed_response_is_not_read_by_the_hook",
             f"{_HF}::test_real_inference_client_sync_chat_is_recorded_once_with_honest_identity",
         ),

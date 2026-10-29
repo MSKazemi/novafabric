@@ -759,6 +759,13 @@ covers the providers below out of the box:
 | `bedrock.` | `aws.bedrock` (control plane) |
 | `localhost:11434` | `ollama` |
 | `127.0.0.1:11434` | `ollama` |
+| `^https://router\.huggingface\.co(:443)?/` (regex) | `huggingface` (experimental, unreleased) |
+| `^https://[a-z0-9][a-z0-9.-]*\.endpoints\.huggingface\.cloud(:443)?/` (regex) | `huggingface.endpoint` (experimental, unreleased) |
+
+Every entry is a substring match unless it sets the optional `match_kind: regex`, which is matched
+from the start of the URL (`re.match`, case-insensitive). Use it when a substring would also match a
+URL that only *contains* your host in its path or query string. An invalid regex makes an explicitly
+chosen registry file fail to load, like any other malformed entry.
 
 Ollama at its default port (11434) is captured with no configuration. AWS
 Bedrock is captured across all regions (the match string covers any hostname

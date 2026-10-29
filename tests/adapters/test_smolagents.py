@@ -356,8 +356,10 @@ def test_interrupt_is_a_cancelled_partial_run_and_the_error_still_propagates(
 
 def test_keyboard_interrupt_is_partial_not_failure(sm: Any, tmp_path: Path) -> None:
     agent = _wrap(sm.agent([("raise", KeyboardInterrupt())]), tmp_path)
-    with pytest.raises((KeyboardInterrupt, BaseException)):
+    with pytest.raises(BaseException) as caught:  # noqa: B017 - the real library may wrap it
         agent.run("q")
+    if sm.name == "fake":  # nothing wraps it: the interrupt itself must reach the caller
+        assert isinstance(caught.value, KeyboardInterrupt)
     manifest, _, _ = _sole(tmp_path)
     assert manifest["status"] in ("partial", "failure")  # real wraps generation errors; fake does not
     if sm.name == "fake":
@@ -375,7 +377,7 @@ def test_streaming_returns_a_lazy_generator_of_the_same_steps_and_one_success_ca
     agent = _wrap(sm.agent([("call", "lookup", {"sku": "S"}), ("final", "done")], tools=LOOKUP), tmp_path)
     stream = agent.run("q", stream=True)
     assert inspect.isgenerator(stream)
-    assert _capsules(tmp_path) == [] or True  # opened at run(); nothing finalised until the stream ends
+    assert _capsules(tmp_path) == []  # opened at run(); nothing is written until the stream ends
     seen = [type(item).__name__ for item in stream]
     assert seen[-1] == "FinalAnswerStep"
     manifest, trace, _ = _sole(tmp_path)
@@ -520,7 +522,7 @@ def test_an_unusable_capsule_store_leaves_the_agent_running(sm: Any, tmp_path: P
     assert agent.run("q") == "still works"
 
 
-def test_user_step_callbacks_still_run_and_a_failing_one_is_the_users_problem_not_ours(
+def test_user_step_callbacks_still_run_alongside_ours(
     sm: Any, tmp_path: Path
 ) -> None:
     seen: list[str] = []
@@ -753,3 +755,79 @@ def _wrap_real(agent: Any, out_dir: Path) -> Any:
     from novafabric.adapters.smolagents import wrap_agent
 
     return wrap_agent(agent, data_dir=out_dir)
+
+
+# ── regressions from the independent review (2026-10-28) ─────────────────────
+
+
+SECRET_TEXT = "patient John Doe SSN 078-05-1120"
+
+
+def test_a_run_failure_keeps_the_error_class_but_not_its_message_by_default(
+    sm: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("NOVA_CAPTURE_LEVEL", raising=False)
+    agent = _wrap(sm.agent([("raise", RuntimeError(SECRET_TEXT))]), tmp_path)
+    with pytest.raises(Exception):  # noqa: B017 - the escaping type differs between real and fake
+        agent.run("q")
+    manifest, _, _ = _sole(tmp_path)
+    assert manifest["status"] == "failure" and manifest["error"]["type"]
+    assert SECRET_TEXT not in json.dumps(manifest)
+
+    other = tmp_path / "forensic"
+    monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "forensic")
+    with pytest.raises(Exception):  # noqa: B017
+        _wrap(sm.agent([("raise", RuntimeError(SECRET_TEXT))]), other).run("q")
+    assert SECRET_TEXT in json.dumps(_sole(other)[0])
+
+
+def test_a_late_close_of_an_earlier_stream_does_not_wipe_the_newer_runs_recording(
+    sm: Any, tmp_path: Path
+) -> None:
+    agent = _wrap(
+        sm.agent([("call", "lookup", {"sku": "S"}), ("final", "done")], tools=LOOKUP), tmp_path
+    )
+    first = agent.run("one", stream=True)
+    next(first)  # started, so closing it really finalises its capsule
+    second = agent.run("two", stream=True)
+    try:
+        first.close()
+    except RuntimeError:  # the real library raises when closed mid-step (see the test above)
+        assert sm.name == "real"
+    list(second)
+    by_status = {m["status"]: (m, t) for m, t, _ in _all_capsules(tmp_path)}
+    assert set(by_status) == {"partial", "success"}
+    manifest, trace = by_status["success"]
+    assert len(_steps(trace)) >= 1 and manifest["metadata"].get("step_count") not in (None, "0")
+
+
+def test_a_tool_call_on_a_planning_step_is_not_recorded_as_a_call(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from novafabric.adapters import smolagents as adapter
+    from novafabric.adapters._capsule import begin_capture
+
+    class PlanningStep:  # the adapter classifies by type name, as it does for the real class
+        step_number = 1
+        timing = None
+        error = None
+        tool_calls = [SimpleNamespace(name="web_search", arguments={"q": "x"}, id="c1")]
+
+    cap = begin_capture(framework="smolagents", run_name="plan", data_dir=tmp_path)
+    adapter._record_step(
+        cap, adapter._RunState(), PlanningStep(), agent_label="a", managed=False, owner=None
+    )
+    cap.finish()
+    _, _, tools = _sole(tmp_path)
+    assert tools == []
+
+
+def _all_capsules(tmp_path: Path) -> list[tuple[dict[str, Any], list[dict[str, Any]], list[Any]]]:
+    return [
+        (
+            yaml.safe_load((c / "capsule.yaml").read_text()),
+            _jsonl(c / "trace.jsonl"),
+            _jsonl(c / "tool-calls.jsonl"),
+        )
+        for c in _capsules(tmp_path)
+    ]
