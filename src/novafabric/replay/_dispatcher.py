@@ -11,6 +11,8 @@ engine writes (see :func:`install_from_env`):
   same SDK exception class at its position (``_model_errors``, issue #16) --
   after the delivered chunks when it was raised mid-stream; a Responses API
   response the SDK *returned* with ``status: failed`` is returned as recorded;
+  it also answers Ollama ``/api/chat`` / ``/api/generate`` requests at the
+  ``httpx``/``httpx2`` transport (``_ollama_serve``, ADR-0320, experimental);
 * :class:`MockToolDispatcher` serves recorded tool results on the intercepted
   tool surfaces: MCP ``tools/call`` through ``mcp.ClientSession.call_tool``
   (ADR-0300), functions the workload declared with
@@ -95,6 +97,14 @@ from novafabric.replay._model_errors import (
     raised_mid_stream,
     rebuild_sdk_error,
     recorded_error_type,
+)
+from novafabric.replay._ollama_serve import (
+    SERVED_TRANSPORT_SURFACES,
+    encode_objects,
+    ollama_response_objects,
+    recorded_ollama_hosts,
+    request_json,
+    request_queue,
 )
 from novafabric.replay._policy import (
     INSTALL_REQUIRED_ENV,
@@ -763,6 +773,32 @@ def build_served_response(
     return _ReplayStream(items, error)
 
 
+def _transport_response(
+    module_name: str, served: tuple[list[bytes], bool], request: Any
+) -> Any:
+    """The ``Response`` a patched httpx/httpx2 transport returns for a served
+    Ollama call (ADR-0320): status 200, the recorded body as NDJSON lines (one
+    stream chunk per line) or one JSON body."""
+    chunks, ndjson = served
+    module = importlib.import_module(module_name)
+
+    class _ServedBody(module.SyncByteStream, module.AsyncByteStream):  # type: ignore[misc, name-defined]
+        def __iter__(self) -> Iterator[bytes]:
+            yield from chunks
+
+        async def __aiter__(self) -> Any:
+            for chunk in chunks:
+                yield chunk
+
+    headers = {
+        "content-type": "application/x-ndjson" if ndjson
+        else "application/json; charset=utf-8",
+    }
+    if not ndjson:
+        headers["content-length"] = str(sum(len(c) for c in chunks))
+    return module.Response(200, headers=headers, stream=_ServedBody(), request=request)
+
+
 #: Pre-ADR-0304 name: the non-streaming builder per provider queue.
 _BUILDERS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "openai": _mock_openai_response,
@@ -861,6 +897,12 @@ class MockModelDispatcher:
         self._events = events or ReplayEventLog(None)
         self._patcher = _Patcher()
         self.installed_surfaces: list[str] = []
+        #: ADR-0320: hosts the capsule recorded Ollama calls to, and the URL
+        #: registry (loaded at install) that classifies a transport request.
+        self._ollama_hosts = recorded_ollama_hosts(
+            [r for r in model_calls if isinstance(r, dict)]
+        )
+        self._registry: Any = None
 
     # Kept for introspection by existing callers/tests.
     @property
@@ -892,6 +934,86 @@ class MockModelDispatcher:
                 module_name, class_name, attr,
                 functools.partial(self._make_guard, provider, surface),
             )
+        self._install_transports()
+
+    def _install_transports(self) -> None:
+        """ADR-0320: serve Ollama ``/api/chat`` / ``/api/generate`` at the httpx
+        transport. A malformed explicit URL registry raises (install fails, and a
+        strict replay stops before the workload runs)."""
+        from novafabric.capture.hooks._url_registry import load_url_registry
+
+        if self._registry is None:
+            self._registry = load_url_registry()
+        installed: set[str] = set()
+        for module_name, class_name, attr, is_async in SERVED_TRANSPORT_SURFACES:
+            if self._patcher.patch(
+                module_name, class_name, attr,
+                functools.partial(self._make_transport, module_name, is_async),
+            ):
+                installed.add(module_name)
+        for module_name in sorted(installed):
+            for queue in ("ollama.chat", "ollama.generate"):
+                self.installed_surfaces.append(
+                    f"{MODEL_SURFACES[queue]} ({module_name} transport)"
+                )
+
+    def _transport_queue(self, request: Any) -> str | None:
+        """The Ollama queue a transport request is served from; ``None`` = live."""
+        url = str(request.url)
+        method = str(getattr(request, "method", "") or "")
+        return request_queue(
+            method, url, self._registry.gen_ai_system(url), self._ollama_hosts
+        )
+
+    def _make_transport(self, module_name: str, is_async: bool, original: Any) -> Any:
+        dispatcher = self
+
+        if is_async:
+
+            @functools.wraps(original)
+            async def handle_async_request(transport: Any, request: Any) -> Any:
+                queue = dispatcher._transport_queue(request)
+                if queue is None:
+                    return await original(transport, request)
+                body = request_json(await request.aread())
+                served = dispatcher._serve_transport(queue, body, asynchronous=True)
+                if served is None:
+                    return await original(transport, request)
+                return _transport_response(module_name, served, request)
+
+            return handle_async_request
+
+        @functools.wraps(original)
+        def handle_request(transport: Any, request: Any) -> Any:
+            queue = dispatcher._transport_queue(request)
+            if queue is None:
+                return original(transport, request)
+            body = request_json(request.read())
+            served = dispatcher._serve_transport(queue, body, asynchronous=False)
+            if served is None:
+                return original(transport, request)
+            return _transport_response(module_name, served, request)
+
+        return handle_request
+
+    def _serve_transport(
+        self, queue: str, body: dict[str, Any], *, asynchronous: bool
+    ) -> tuple[list[bytes], bool] | None:
+        """The served body chunks and whether they are NDJSON, or ``None`` when a
+        tolerated divergence (``warn``) lets the request go live."""
+        stream = body.get("stream") is not False
+        record, error = self._take(
+            queue, stream=stream, asynchronous=asynchronous, request=body
+        )
+        if error is not None:  # a recorded failure is never served as a success
+            raise error
+        if not record:
+            self._events.emit(
+                "model_live", provider=QUEUE_PROVIDER[queue], surface=MODEL_SURFACES[queue]
+            )
+            return None
+        objects = ollama_response_objects(queue, record, stream=stream)
+        return encode_objects(objects, stream=stream), stream
 
     def uninstall(self) -> None:
         self._patcher.restore()

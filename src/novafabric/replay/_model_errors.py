@@ -211,6 +211,13 @@ def rebuild_sdk_error(record: dict[str, Any]) -> BaseException:
     done faithfully. Never imports a name taken from the record: the SDK is one
     of :data:`ALLOWED_SDK_ERRORS`' keys and the class one of its values.
     """
+    if record.get("gen_ai.system") == "ollama":
+        # ADR-0320: an Ollama call is recorded at the wire, with no SDK exception
+        # to rebuild; it holds its position and is refused, in order.
+        raise UnreconstructableError(
+            "recorded Ollama failures are not replayed (ADR-0320); the call failed "
+            "at capture, so it is refused rather than answered"
+        )
     detail = _detail(record)
     sdk = record.get("gen_ai.system")
     allowed = ALLOWED_SDK_ERRORS.get(str(sdk))

@@ -25,6 +25,10 @@ from typing import Any, Literal
 
 from novafabric.capture import _tool_codec
 from novafabric.capture._tool_codec import normalized_arg_hash as normalized_arg_hash
+from novafabric.capture.hooks._ollama import (
+    OLLAMA_CHAT_SURFACE,
+    OLLAMA_GENERATE_SURFACE,
+)
 from novafabric.capture.hooks._sdk_streams import (
     ANTHROPIC_MESSAGES_SURFACE,
     API_SURFACE_EXT,
@@ -46,6 +50,9 @@ MODEL_SURFACES: dict[str, str] = {
     "openai": "openai.chat.completions.create",
     "openai.responses": "openai.responses.create",
     "anthropic": "anthropic.messages.create",
+    # ADR-0320 (experimental): served at the httpx transport, not an SDK method.
+    OLLAMA_CHAT_SURFACE: "ollama /api/chat",
+    OLLAMA_GENERATE_SURFACE: "ollama /api/generate",
 }
 
 #: The provider (``gen_ai.system``) behind each replay queue.
@@ -53,10 +60,15 @@ QUEUE_PROVIDER: dict[str, str] = {
     "openai": "openai",
     "openai.responses": "openai",
     "anthropic": "anthropic",
+    OLLAMA_CHAT_SURFACE: "ollama",
+    OLLAMA_GENERATE_SURFACE: "ollama",
 }
 
 #: How each served model surface may be called during a mocked replay.
 MODEL_CALL_MODES = "sync and async; stream=True and non-streaming"
+#: The same for the surfaces served at the httpx transport (ADR-0320).
+HTTP_MODEL_CALL_MODES = "httpx/httpx2 transport, sync and async; NDJSON-streamed and JSON"
+_HTTP_QUEUES = frozenset({OLLAMA_CHAT_SURFACE, OLLAMA_GENERATE_SURFACE})
 
 #: The tool surfaces mocked replay intercepts (ADR-0300, ADR-0306).
 TOOL_SURFACE_MCP = "mcp.ClientSession.call_tool"
@@ -112,11 +124,13 @@ def model_queue_key(record: dict[str, Any]) -> str | None:
     marked with any other surface is not servable.
     """
     system = record.get("gen_ai.system")
-    if system not in ("openai", "anthropic"):
+    if system not in ("openai", "anthropic", "ollama"):
         return None
     surface = _surface_marker(record)
     if surface is None:
-        return str(system)
+        # An unmarked Ollama record is a wire record from before ADR-0320 (or a
+        # non-model endpoint such as /api/tags): no response was recorded.
+        return None if system == "ollama" else str(system)
     return _MARKER_QUEUE.get((str(system), surface))
 
 
@@ -125,6 +139,8 @@ _MARKER_QUEUE: dict[tuple[str, str], str] = {
     ("openai", OPENAI_CHAT_SURFACE): "openai",
     ("openai", OPENAI_RESPONSES_SURFACE): "openai.responses",
     ("anthropic", ANTHROPIC_MESSAGES_SURFACE): "anthropic",
+    ("ollama", OLLAMA_CHAT_SURFACE): OLLAMA_CHAT_SURFACE,
+    ("ollama", OLLAMA_GENERATE_SURFACE): OLLAMA_GENERATE_SURFACE,
 }
 
 
@@ -145,7 +161,12 @@ def records_async_and_streamed_calls(model_calls: list[dict[str, Any]]) -> bool:
     exactly as before ADR-0304. A capsule with no servable record is not legacy:
     any call simply finds its queue empty.
     """
-    servable = served_model_records(model_calls)
+    # Only the SDK surfaces ever had unrecorded async/streamed calls; an Ollama
+    # record (ADR-0320) is always marked and says nothing about them.
+    servable = [
+        r for r in served_model_records(model_calls)
+        if model_queue_key(r) not in _HTTP_QUEUES
+    ]
     return not servable or any(_surface_marker(r) is not None for r in servable)
 
 
@@ -840,7 +861,10 @@ class ReplayContractReport:
 
 
 def surfaces_for(substitute_tools: bool) -> list[str]:
-    surfaces = [f"{name} ({MODEL_CALL_MODES})" for name in MODEL_SURFACES.values()]
+    surfaces = [
+        f"{name} ({HTTP_MODEL_CALL_MODES if queue in _HTTP_QUEUES else MODEL_CALL_MODES})"
+        for queue, name in MODEL_SURFACES.items()
+    ]
     if substitute_tools:
         surfaces.extend(TOOL_SURFACES)
     return surfaces
