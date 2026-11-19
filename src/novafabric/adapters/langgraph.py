@@ -467,7 +467,7 @@ def wrap(
         result = graph.invoke({"input": "hello"})
     """
     try:
-        import langgraph  # type: ignore[import-not-found]  # noqa: F401
+        import langgraph  # type: ignore[import-not-found,unused-ignore]  # noqa: F401
     except ImportError:
         raise ImportError(
             "langgraph is not installed. "
