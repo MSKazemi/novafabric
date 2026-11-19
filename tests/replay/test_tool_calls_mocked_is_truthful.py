@@ -67,8 +67,9 @@ def test_capsule_tool_call_count_is_still_reported() -> None:
     """The information was preserved, not deleted, on every replay path."""
     src = inspect.getsource(_engine)
     # forensic, dry-run, intervention, the mocked CapsuleNotReplayable refusal,
-    # and the mocked ToolOverrideUnenforceable refusal (ADR-0306 Q5)
-    assert src.count("tool_calls_recorded=len(") == 5
+    # the mocked ModelSurfaceNotServable refusal (ADR-0319) and the mocked
+    # ToolOverrideUnenforceable refusal (ADR-0306 Q5)
+    assert src.count("tool_calls_recorded=len(") == 6
     assert '"tool_calls_recorded": report.tool_calls_recorded' in src  # mocked
 
 

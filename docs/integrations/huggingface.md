@@ -18,17 +18,19 @@ required: a run that never touches these entry points is captured exactly as bef
 | Surface | Recorded | Replay | Status |
 |---|---|---|---|
 | `smolagents` agent run (`wrap_agent`) | one capsule per `run()`; a span per step; one tool-call record per tool call named in a step (name, argument digest, step outcome) | **not intercepted** — tools run live | experimental |
-| `InferenceClient.chat_completion` through the Inference Providers router (`https://router.huggingface.co/…`, auto-routed or an explicit provider) | the request, requested model and selector, status, timing | **not intercepted** — runs live | experimental |
-| the same with `stream=True`, and `AsyncInferenceClient` | the request at send time; the stream is never read | not intercepted | experimental |
-| Dedicated Inference Endpoint (`https://*.endpoints.huggingface.cloud/…`) | as above, with system `huggingface.endpoint` | not intercepted | experimental |
+| `InferenceClient.chat_completion` through the Inference Providers router (`https://router.huggingface.co/…`, auto-routed or an explicit provider) | the request, requested model and selector, status, timing | **not intercepted** — a strict mocked replay refuses the capsule; `--permissive` runs it live (ADR-0319) | experimental |
+| the same with `stream=True`, and `AsyncInferenceClient` | the request at send time; the stream is never read | not intercepted (refused, as above) | experimental |
+| Dedicated Inference Endpoint (`https://*.endpoints.huggingface.cloud/…`) | as above, with system `huggingface.endpoint` | not intercepted (refused, as above) | experimental |
 | A custom `base_url` | **not captured** unless you add it through a URL-registry override | — | — |
 | Hub metadata, dataset and weight downloads | **never** recorded | — | — |
 | Hub model, dataset or space revision references | an opt-in receipt you create yourself (below) | — | experimental |
 | Evaluation receipts and `.eval_results` export | an opt-in receipt over an existing experiment (below) | — | experimental |
 
-Mocked replay never serves Hugging Face model calls or `smolagents` tools. Both are listed in the
-[replay support matrix](../architecture/replay-modes.md) as *capture only*; a replay runs them live
-and reports their connections.
+Mocked replay never serves Hugging Face model calls or `smolagents` tools (see the
+[replay support matrix](../architecture/replay-modes.md)). A model call is recorded without its
+response, so a strict mocked replay **refuses** a capsule that holds one
+(`ModelSurfaceNotServable`, ADR-0319); `--permissive` runs it live and reports it. `smolagents` tools
+are *capture only*: a replay runs them live.
 
 ## smolagents
 
@@ -285,7 +287,8 @@ show that the benchmark is uncontaminated.
 
 ## Known limits
 
-- **Replay:** Hugging Face model calls and `smolagents` tools are never served by mocked replay.
+- **Replay:** Hugging Face model calls and `smolagents` tools are never served by mocked replay; a
+  strict replay refuses a capsule holding a Hugging Face model call (ADR-0319).
 - **`CodeAgent`:** tools called from generated code are not individually visible.
 - **Identity:** the reported model and served provider of an Inference Providers call are recorded as
   unknown (`null`), not guessed.

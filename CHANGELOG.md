@@ -11,7 +11,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Changed — BREAKING
+
+- **Mocked replay refuses a capsule whose recorded model calls it cannot serve** (works today, ADR-0319). Before,
+  a model call recorded by the wire hook on a surface replay does not serve (Ollama, Hugging Face `InferenceClient`,
+  other providers' raw HTTP; or a served surface with no recorded response) was ignored: the replay said
+  "model calls: 0 of 0 served" and `status: success` while the call ran live. A strict `nova replay` now stops
+  before anything runs: `status: aborted`, `error.type: ModelSurfaceNotServable` (count and endpoint hosts per
+  `gen_ai.system`), exit 1, also under `--dry-run`, which lists each as `[LIVE] model call (<system>, <host>)`.
+  `--permissive` runs it and reports `model_calls_not_servable`,
+  `replay_contract.model_calls_not_servable_by_system` and a `model_surface_not_servable` divergence (a warning).
+  Capsules whose calls are all served, and ADR-0305 transport records, are unaffected.
+
 ### Added
+
 
 - **Hugging Face evidence (experimental, opt-in).** Nothing here changes a capture that does not use it.
   `novafabric.adapters.smolagents.wrap_agent` (alias `novafabric.adapters.wrap_smolagents`) writes one
@@ -24,7 +37,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   explicit evidence strength (`declared_only`, `hub_resolved`, `local_bytes_verified`), and
   `novafabric.eval.hf_receipt` binds a finalized experiment to them and can write a validated local
   `.eval_results` file (it never writes `verifyToken`; the Hub format is a work in progress). Mocked replay
-  never serves Hugging Face model calls or `smolagents` tools (capture only); prompts are stored by
+  never serves Hugging Face model calls or `smolagents` tools (capture only; a strict replay refuses a capsule
+  holding a Hugging Face model call, ADR-0319); prompts are stored by
   default for every provider, as before. No new dependency: `smolagents` and `huggingface_hub` are
   optional. See [docs/integrations/huggingface.md](docs/integrations/huggingface.md).
 - **URL registry: optional `match_kind: regex`.** A `url_registry.yaml` entry may set
@@ -34,6 +48,12 @@ longer forwards the submitting shell's environment (ADR-0270).
   operator guide.
 - **Example:** [`examples/smolagents-capture/`](examples/smolagents-capture/), a credential-free,
   model-free `smolagents` capture (it skips cleanly when `smolagents` is not installed).
+- **Mocked replay says what its network observation covers and counts child processes** (works today, ADR-0319).
+  `replay_contract.network_observation_scope: python-process`; `child_processes_spawned` and
+  `child_processes_argv0` (program basenames only, never arguments) from a CPython audit hook on
+  `subprocess.Popen`, `os.system`, `os.posix_spawn`, `os.fork`/`os.forkpty` and `os.exec`. When a replayed
+  workload started any, `nova replay` warns that their network and file activity is not observed. Report-only:
+  the replay outcome is unchanged. All new result fields are additive and optional.
 
 ## [0.108.0] - 2026-10-25
 

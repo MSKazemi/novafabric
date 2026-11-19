@@ -102,6 +102,7 @@ from novafabric.replay._policy import (
     decide_intercepted,
     gating_mutation_class,
 )
+from novafabric.replay._process_observer import ProcessObserver
 
 #: Exit status of a strict replay whose dispatcher could not be installed: the
 #: process is stopped before the workload runs, because running it would send
@@ -1763,7 +1764,9 @@ class NetworkObserver:
     host and port -- never a payload. A mocked replay can therefore say whether
     anything outside the intercepted surfaces reached the network (ADR-0304).
     Connections made by C extensions that bypass the Python ``socket`` methods,
-    and by non-Python child processes, are not seen.
+    and by non-Python child processes, are not seen: the result says so
+    (``network_observation_scope: python-process``) and counts the children
+    (``_process_observer.ProcessObserver``, ADR-0319).
     """
 
     def __init__(self, events: ReplayEventLog, *, cap: int = NETWORK_EVENT_CAP) -> None:
@@ -1847,6 +1850,10 @@ def install_from_env() -> None:
             surfaces.extend(tool_dispatcher.installed_surfaces)
         if NetworkObserver(events).install():
             events.emit("network_observer_installed")
+        # ADR-0319: the network observer sees this process only; say which
+        # child processes it started, whose activity it cannot see.
+        if ProcessObserver(events).install():
+            events.emit("process_observer_installed")
         events.emit("installed", policy=policy, surfaces=surfaces)
     except Exception as exc:  # noqa: BLE001 -- reported, then fail-closed below
         events.emit("install_failed", error=f"{type(exc).__name__}: {exc}")
