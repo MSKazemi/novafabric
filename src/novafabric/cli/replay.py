@@ -140,8 +140,8 @@ def replay_cmd(
                 "call with no recorded response gets an empty reply, unsupported "
                 "model surfaces run LIVE, an unmatched intercepted tool call runs "
                 "live only if an --allow-* flag permits its mutation class (MCP: "
-                "--allow-unknown-mutation; record.tool, Google ADK and OpenAI Agents "
-                "tools: their declared class), never "
+                "--allow-unknown-mutation; record.tool, Google ADK, OpenAI Agents "
+                "and LangChain tools: their declared class), never "
                 "if replay.yaml says `allow: false`, and unconsumed recordings are "
                 "only reported. Default is fail-closed."
             ),
@@ -157,9 +157,9 @@ def replay_cmd(
                      and recorded results for MCP ClientSession.call_tool,
                      for functions declared with
                      novafabric.capture.record.tool, for Google ADK tools
-                     run with the NovaFabric tool plugin and for OpenAI
-                     Agents function tools passed through wrap_tools
-                     (experimental).
+                     run with the NovaFabric tool plugin, for OpenAI
+                     Agents function tools and for LangChain tools passed
+                     through their wrap_tools (experimental).
                      Fail-closed: an extra, unmatched or unsupported call, or an
                      unconsumed recording, fails the replay (--permissive to
                      only report). replay.yaml tool_overrides are enforced
@@ -322,7 +322,7 @@ def replay_cmd(
             result.tool_calls_available or 0
         )
         console.print(
-            "  tool calls (MCP call_tool, record.tool, ADK, Agents SDK): "
+            "  tool calls (MCP call_tool, record.tool, ADK, Agents SDK, LangChain): "
             f"{result.tool_calls_mocked} of "
             f"{result.tool_calls_available or 0} served, "
             f"{result.tool_calls_live or 0} live, "

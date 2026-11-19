@@ -8093,6 +8093,14 @@ def create_app(
             "framework": "Haystack",
             "extra": "haystack-ai",
         },
+        {
+            # ADR-0306 slice 3 (experimental): the tool seam, not a run adapter.
+            "id": "langchain_tools",
+            "module": "novafabric.adapters.langchain_tools",
+            "function": "wrap_tools",
+            "framework": "LangChain / LangGraph tools",
+            "extra": "langchain-core",
+        },
     ]
 
     @app.get("/api/adapters", dependencies=[Depends(verify_token)])

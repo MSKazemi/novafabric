@@ -260,6 +260,9 @@ _BUILT_IN_HOOKS: tuple[tuple[str, str, str], ...] = (
     # ADR-0306 slice 3: the capture sink of `wrap_tools` (OpenAI Agents SDK).
     # Installed when `agents` is importable; it imports nothing from it.
     ("agents", "novafabric.adapters._oai_tool_seam", "OaiToolHook"),
+    # ADR-0306 slice 3: the capture sink of `langchain_tools.wrap_tools`.
+    # Installed when langchain_core is importable; it imports nothing from it.
+    ("langchain_core", "novafabric.adapters._langchain_tool_seam", "LangChainToolHook"),
     ("requests",   "novafabric.capture.hooks._requests",   "RequestsHook"),
     ("httpx",      "novafabric.capture.hooks._httpx",      "HttpxHook"),
     # openai 3.x builds its default client on httpx2, not httpx; without this

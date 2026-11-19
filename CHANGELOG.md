@@ -11,6 +11,34 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Added
+
+- **LangChain / LangGraph tool calls are captured and served by mocked replay
+  (experimental, ADR-0306 slice 3).** `novafabric.adapters.langchain_tools.wrap_tools([...],
+  {"tool": "read-only"})` returns a copy of each LangChain `BaseTool` (`@tool` functions,
+  `StructuredTool`, `BaseTool` subclasses); pass the copies to `bind_tools` and LangGraph's
+  `ToolNode`. Under `nova capture python …` each call is one `tool-calls.jsonl` record
+  (`transport: "python"`, `io.novafabric.tool_surface: "langchain.tool"`, the model's
+  `io.novafabric.langchain_tool_call_id`; arguments are the ones the model sent, with
+  injected state, store, runtime and call id listed in `io.novafabric.ignored_arguments`;
+  no schema change, `record.tool` codec), and in a mocked `nova replay` the recorded body
+  result is returned before the tool body runs, so LangChain still builds the
+  `ToolMessage` and fires its callbacks. Matching, fail-closed refusals
+  (`tool_call_unmatched` / `tool_result_not_servable`), `--permissive` gated by the class
+  declared in `wrap_tools` (default `unknown`) and `replay.yaml` `tool_overrides` are the
+  same as for the ADK and Agents SDK surfaces (shared code). New intercepted surface
+  `langchain_core.tools.BaseTool`. A call that raised, made nested model/tool calls, or
+  returned a non-JSON value (a LangGraph `Command`, a `ToolMessage`, a
+  `content_and_artifact` tuple) is recorded but not served. **Caveat:** LangChain documents
+  no hook that can answer a call for every caller (callbacks only observe; `ToolNode`'s
+  `wrap_tool_call` covers `ToolNode` only), so the copy's class is a generated subclass
+  overriding `run`/`arun` and the body hooks `_run`/`_arun` — NovaFabric's construction,
+  checked against `langchain-core` 1.8.3 and `langgraph` 1.2.23 (`langgraph-prebuilt`
+  1.1.3) only; another release can bypass it. Tools from `langchain_mcp_adapters` stay on
+  the MCP surface; tools not passed through `wrap_tools`, and capsules written by the
+  LangGraph adapter (pseudo-command, open question 7), are unchanged. LangChain is not a
+  NovaFabric dependency.
+
 ## [0.108.0] - 2026-10-25
 
 **Verification that checks content, state that survives a crash, and a dashboard that tells the truth.**
