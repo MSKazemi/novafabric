@@ -162,23 +162,6 @@ def _environment(created_at: str, replay_id: str) -> dict[str, Any] | None:
         return None
 
 
-def _scan(result_dir: Path, replay_id: str) -> bool:
-    """Redact the replay capsule with the built-in secret scanner (ADR-0009)
-    and write its proof. On failure the stored output streams are removed,
-    so a replayed secret never stays on disk unscanned."""
-    from novafabric.capture.secrets import SecretScannerV0
-
-    try:
-        proof = SecretScannerV0(capsule_dir=result_dir, run_id=replay_id).scan_and_redact()
-        (result_dir / "redaction-proof.json").write_text(json.dumps(proof, indent=2))
-        return True
-    except Exception:  # noqa: BLE001 -- never leave raw output behind on a scanner failure
-        logger.warning("novafabric: replay capsule secret scan failed", exc_info=True)
-        for name in ("stdout.txt", "stderr.txt"):
-            (result_dir / "outputs" / name).unlink(missing_ok=True)
-        return False
-
-
 def write_mocked_replay_capsule(
     *,
     result_dir: Path,
@@ -200,18 +183,23 @@ def write_mocked_replay_capsule(
     Returns whether the output streams were stored after a successful secret
     scan (``False``: the fidelity check falls back to the raw digests).
     """
-    result_dir.mkdir(parents=True, exist_ok=True)
-    outputs = result_dir / "outputs"
+    from novafabric.capture.capsule import CapsuleWriter
+    from novafabric.capture.finalize import finalize_in_process_capsule
+
+    # The same finalization as every in-process capsule (main secret scan, manifest
+    # redaction, lineage, residual pass, evidence digests, manifest gate, opt-in seal):
+    # a replay capsule holds replayed output, so it gets no weaker treatment.
+    writer = CapsuleWriter(run_id=result_dir.name, base_dir=result_dir.parent)
+    writer.open()
     for name, data in (("stdout.txt", stdout), ("stderr.txt", stderr)):
         if data:
-            outputs.mkdir(exist_ok=True)
-            (outputs / name).write_bytes(data)
+            writer.write_bytes(f"outputs/{name}", data)
     served_models, served_tools = replayed_streams(model_calls, tool_calls, events)
-    _write_streams(result_dir, served_models, served_tools)
+    writer.write_text("model-calls.jsonl", _jsonl(served_models))
+    writer.write_text("tool-calls.jsonl", _jsonl(served_tools))
     env_lock = _environment(created_at, replay_id)
     if env_lock is not None:
-        (result_dir / "env.lock").write_text(yaml.dump(env_lock, allow_unicode=True))
-    scanned = _scan(result_dir, replay_id)
+        writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
     manifest: dict[str, Any] = {
         "run_id": replay_id,
         "replay_mode": "mocked",
@@ -223,12 +211,16 @@ def write_mocked_replay_capsule(
         "environment_ref": "env.lock" if env_lock is not None else None,
         "model_calls_ref": "model-calls.jsonl",
         "tool_calls_ref": "tool-calls.jsonl",
-        "redaction_proof_ref": "redaction-proof.json" if scanned else None,
+        "redaction_proof_ref": "redaction-proof.json",
         "replay_result_ref": "replay_result.yaml",
         "model_call_count": len(served_models),
         "tool_call_count": len(served_tools),
         "exit_code": exit_code,
     }
-    # Written after the scan, which redacts the streams in place.
-    _write_manifest(result_dir, manifest)
+    finalize_in_process_capsule(result_dir, manifest, run_id=replay_id, writer=writer)
+    scanned = (result_dir / "redaction-proof.json").is_file()
+    if not scanned:  # never leave replayed output on disk unscanned
+        logger.warning("novafabric: replay capsule secret scan failed; output streams removed")
+        for name in ("stdout.txt", "stderr.txt"):
+            (result_dir / "outputs" / name).unlink(missing_ok=True)
     return scanned

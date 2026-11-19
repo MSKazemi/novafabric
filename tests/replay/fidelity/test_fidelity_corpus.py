@@ -60,7 +60,7 @@ def test_every_capture_ran_and_reached_its_own_oracles(corpus: Corpus, sid: str)
         assert cap.model_hits == cap.connections == 1
 
 
-@pytest.mark.parametrize("sid", ["S1", "S3", "S8"])
+@pytest.mark.parametrize("sid", ["S1", "S3", "S7", "S8"])
 def test_served_scenarios_make_no_live_call_and_reproduce_the_outcome(
     corpus: Corpus, sid: str
 ) -> None:
@@ -100,13 +100,13 @@ def test_s6_oracle_sees_the_side_effect_repeated(corpus: Corpus) -> None:
     assert score.capture.outside_writes == score.replay.outside_writes == ["ledger.txt"]
 
 
-def test_s7_unserved_ollama_call_is_refused_before_anything_runs(corpus: Corpus) -> None:
-    """#49 (ADR-0319): the recorded Ollama call has no response, so strict replay refuses.
+def test_s9_unserved_ollama_call_is_refused_before_anything_runs(corpus: Corpus) -> None:
+    """#49 (ADR-0319): a recorded model call replay cannot serve makes strict replay refuse.
 
-    Before the fix the oracle saw one live hit with the canary in the output while the
-    report said 0 live model calls (baseline 2026-11-19).
+    Baseline 2026-11-19 (then S7, Ollama /api/chat before ADR-0320 served it): the oracle
+    saw one live hit with the canary in the output while the report said 0 live model calls.
     """
-    score = corpus.score("S7")
+    score = corpus.score("S9")
     assert score.capture.model_hits == 1  # the capture really called the fake Ollama
     assert not score.replay.started
     assert score.replay.model_hits == 0
@@ -120,7 +120,7 @@ def test_report_does_not_claim_zero_live_model_calls_when_the_oracle_saw_one(
     corpus: Corpus,
 ) -> None:
     """#49: either nothing ran live (refused), or the report admits the live call."""
-    score = corpus.score("S7")
+    score = corpus.score("S9")
     assert score.replay.live["model"] == 0 or score.acknowledged["model"], score.report
     assert score.verdict in ("refused", "live-reported")
 
@@ -138,7 +138,6 @@ def test_report_does_not_call_a_repeated_side_effect_faithful(corpus: Corpus) ->
     assert score.acknowledged["side_effects"], score.report
 
 
-@pytest.mark.xfail(strict=True, reason="#53: a faithful replay of a failed run reports failure")
 def test_faithful_replay_of_a_failed_run_is_reported_faithful(corpus: Corpus) -> None:
     score = corpus.score("S8")
     assert score.verdict == "faithful"  # the harness's verdict, holds today

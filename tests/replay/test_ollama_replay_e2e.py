@@ -240,13 +240,12 @@ def test_a_record_without_a_response_is_never_served_empty(
     record["extensions"].pop("io.novafabric.ollama.final", None)
     path.write_text(json.dumps(record) + "\n")
     result, replay, replayed = _replay(env, monkeypatch, capsule)
-    assert replay["model_calls_available"] == 0
-    assert replay["model_calls_mocked"] == 0
-    # Not served from the capsule (never as an empty answer): either replay refused
-    # it up front (#49's not-servable check) or the call reached the live server.
-    if replayed is not None:
-        assert replayed[0]["content"] == "REPLAY-LIVE-ANSWER #1"
-        assert env["side"].read_text().splitlines() == ["hit /api/chat"]
+    # Never served as an empty answer: a strict replay refuses it before anything runs
+    # (ADR-0319), so the workload never starts and the live server is never hit.
+    assert replay["status"] == "aborted"
+    assert replay["error"]["type"] == "ModelSurfaceNotServable"
+    assert replayed is None
+    assert not env["side"].exists() or env["side"].read_text().splitlines() == []
 
 
 # ── real SDK paths (test extras; skipped when not installed) ─────────────────

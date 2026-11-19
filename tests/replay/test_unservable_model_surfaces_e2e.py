@@ -12,6 +12,9 @@ Each test here captures a real workload with ``nova capture`` (an in-process fak
 Ollama server; the real ``openai`` SDK over an ``httpx.MockTransport``) and replays
 it with ``nova replay``. At replay the fake servers answer something else, so the
 workload's output shows who answered. No network beyond loopback.
+
+Since ADR-0320 Ollama ``/api/chat`` is recorded with its response and served, so the
+workload here calls ``/api/embed`` -- a model call replay still cannot serve.
 """
 
 from __future__ import annotations
@@ -93,7 +96,9 @@ if "ollama" in STEPS:
     port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     os.environ["OLLAMA_BASE_URL"] = f"http://127.0.0.1:{port}"
-    r = httpx.post(f"http://127.0.0.1:{port}/api/chat", timeout=10,
+    # /api/embed runs a model but is not a surface replay serves (ADR-0320 serves only
+    # /api/chat and /api/generate), so it stays an unservable recorded model call.
+    r = httpx.post(f"http://127.0.0.1:{port}/api/embed", timeout=10,
                    json={"model": "probe-model", "stream": False,
                          "messages": [{"role": "user", "content": "hi"}]})
     out["ollama"] = r.json()["message"]["content"]

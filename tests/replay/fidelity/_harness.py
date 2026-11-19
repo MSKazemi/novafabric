@@ -546,13 +546,17 @@ SCENARIOS: dict[str, Scenario] = {
             ("model", "file"),
             expected=frozenset({"live-reported", "refused"}),
         ),
+        # S7 was pre-registered on 2026-11-19 as live-reported/refused, when replay had
+        # no Ollama surface; ADR-0320 (#51) records and serves /api/chat, so a correct
+        # system now replays it faithfully. S9 keeps the unservable-model case (#49).
+        Scenario("S7", "Ollama /api/chat to a loopback fake (served, ADR-0320)", ("ollama",)),
+        Scenario("S8", "original run exits 1", ("model", "exit1")),
         Scenario(
-            "S7",
-            "Ollama-shaped /api/chat to a loopback fake",
-            ("ollama",),
+            "S9",
+            "Ollama /api/embed to a loopback fake (a model call replay cannot serve)",
+            ("ollama_embed",),
             expected=frozenset({"live-reported", "refused"}),
         ),
-        Scenario("S8", "original run exits 1", ("model", "exit1")),
     )
 }
 

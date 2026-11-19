@@ -125,10 +125,10 @@ def _file(out: dict) -> None:
     out["file"] = "written"
 
 
-def _ollama(out: dict) -> None:
+def _ollama(out: dict, path: str = "/api/chat") -> None:
     base = os.environ["OLLAMA_BASE_URL"]
     resp = httpx.post(
-        f"{base}/api/chat",
+        f"{base}{path}",
         json={
             "model": "fidelity-model",
             "messages": [{"role": "user", "content": "q1"}],
@@ -154,6 +154,8 @@ def main() -> int:
             _file(out)
         elif step == "ollama":
             _ollama(out)
+        elif step == "ollama_embed":  # runs a model; not a surface replay serves
+            _ollama(out, "/api/embed")
         elif step != "exit1":
             raise SystemExit(f"unknown step {step!r}")
     if os.environ.get("FIDELITY_MUTATE_OUTPUT") == "1":

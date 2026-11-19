@@ -358,7 +358,10 @@ def test_a_hugging_face_record_is_never_a_replayable_model_call(capsule: Path) -
 
 def test_the_replay_support_matrix_states_hugging_face_is_capture_only() -> None:
     row = next(r for r in ROWS if "Hugging Face" in r.surface and "InferenceClient" in r.surface)
-    assert row.replay == "not intercepted" and row.status == "capture only"
+    # Capture only: never served. Since ADR-0319 a strict replay refuses a capsule that
+    # holds one (it was recorded without a response) instead of running it live unreported.
+    assert row.replay == "refused" and row.status == "capture only"
+    assert "ModelSurfaceNotServable" in row.replay_note
     assert not row.patches and not row.servers
     assert "request" in row.capture.lower() and "response" in row.capture.lower()
 
