@@ -25,17 +25,9 @@ from replay.fidelity._harness import SCENARIOS, Corpus  # noqa: E402
 pytestmark = [pytest.mark.timeout(300), pytest.mark.xdist_group("replay-fidelity")]
 
 _XFAIL = {
-    "S5": pytest.mark.xfail(
-        strict=True,
-        reason="#52: a non-Python child's connection is reported as 0 live connections",
-    ),
     "S6": pytest.mark.xfail(
         strict=True,
         reason="#53: a repeated file side effect is reported as success with no check",
-    ),
-    "S7": pytest.mark.xfail(
-        strict=True,
-        reason="#49: an unserved Ollama call answered live is reported as 0 live model calls",
     ),
 }
 
@@ -108,26 +100,31 @@ def test_s6_oracle_sees_the_side_effect_repeated(corpus: Corpus) -> None:
     assert score.capture.outside_writes == score.replay.outside_writes == ["ledger.txt"]
 
 
-def test_s7_oracle_sees_the_live_ollama_hit(corpus: Corpus) -> None:
+def test_s7_unserved_ollama_call_is_refused_before_anything_runs(corpus: Corpus) -> None:
+    """#49 (ADR-0319): the recorded Ollama call has no response, so strict replay refuses.
+
+    Before the fix the oracle saw one live hit with the canary in the output while the
+    report said 0 live model calls (baseline 2026-11-19).
+    """
     score = corpus.score("S7")
-    assert score.replay.model_hits == 1
-    assert score.replay.canary_in_output
-    assert not score.outcome_equal
+    assert score.capture.model_hits == 1  # the capture really called the fake Ollama
+    assert not score.replay.started
+    assert score.replay.model_hits == 0
+    assert score.verdict == "refused"
 
 
 # ── E7 report truthfulness: the true behaviour, xfail until fixed ────────────
 
 
-@pytest.mark.xfail(strict=True, reason="#49: report claims 0 live model calls for S7")
 def test_report_does_not_claim_zero_live_model_calls_when_the_oracle_saw_one(
     corpus: Corpus,
 ) -> None:
+    """#49: either nothing ran live (refused), or the report admits the live call."""
     score = corpus.score("S7")
-    assert score.replay.live["model"] >= 1  # precondition, holds today
-    assert score.acknowledged["model"], score.report
+    assert score.replay.live["model"] == 0 or score.acknowledged["model"], score.report
+    assert score.verdict in ("refused", "live-reported")
 
 
-@pytest.mark.xfail(strict=True, reason="#52: child-process connections are not reported")
 def test_report_acknowledges_a_child_process_connection(corpus: Corpus) -> None:
     score = corpus.score("S5")
     assert score.replay.live["network"] >= 1

@@ -88,13 +88,14 @@ def test_a_mutated_output_fails_the_outcome_check(corpus: Corpus) -> None:
     assert score.verdict == "diverged"
 
 
-@pytest.mark.parametrize("sid", ["S5", "S7"])
+@pytest.mark.parametrize("sid", ["S6"])
 def test_replacing_the_oracles_with_the_report_flips_the_verdict(corpus: Corpus, sid: str) -> None:
-    """Harness mutation: scored from the report's own counters, S5 and S7 change verdict.
+    """Harness mutation: scored from the report's own counters, the verdict changes.
 
-    Tied to today's defects on purpose (#52 for S5, #49 for S7): when a fix lands, the
-    strict xfails in the corpus XPASS and this control must move to a case the report
-    still misses -- a harness whose oracles never disagree with the report proves nothing.
+    Tied to a defect the report still has, on purpose: S6 (a repeated file side effect
+    has no counter or check). S5 (#52) and S7 (#49) served here until their fixes landed
+    (2026-11-19). When S6 is fixed, move this control to a case the report still misses
+    -- a harness whose oracles never disagree with the report proves nothing.
     """
     score = corpus.score(sid)
     mutated = score_from_report_only(score)
