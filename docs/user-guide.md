@@ -473,6 +473,22 @@ replaces `FunctionTool.on_invoke_tool` — an undocumented seam, checked against
 capsules from `register()` stay non-replayable (pseudo-command). Details:
 [`cli-reference.md`](cli-reference.md) §Agents SDK tool seam.
 
+**LangChain / LangGraph tools in a mocked replay (experimental, unreleased).**
+For a LangChain or LangGraph workload captured with `nova capture -- python agent.py`,
+pass the tools through `novafabric.adapters.langchain_tools.wrap_tools([...], {"tool": "read-only"})`
+and give the result to both `bind_tools` and `ToolNode`. Under capture each tool call is
+recorded (payloads at `NOVA_CAPTURE_LEVEL=forensic`); under `nova replay` the recorded
+body result is returned — LangChain still builds the `ToolMessage` — and the tool body
+never runs. Unmatched or unservable calls are refused (fail closed), and the mutation class
+that gates `--permissive` and `replay.yaml` `allow: true` is declared in `wrap_tools`.
+**Limits:** LangChain has no hook that can answer a call for every caller, so each copy's
+class is a generated subclass of the tool's class — NovaFabric's construction, checked
+against `langchain-core` 1.8.3 and `langgraph` 1.2.23 only; a tool that returns a LangGraph
+`Command` (state update) is recorded but not served; tools you do not pass through
+`wrap_tools` still run live; and capsules from `wrap_langgraph()` stay non-replayable
+(pseudo-command). Details: [`cli-reference.md`](cli-reference.md) §LangChain / LangGraph
+tool seam.
+
 **`local` (default).** Runs the workload as a local subprocess. Equivalent to
 the pre-v0.6 behavior. No additional setup required.
 
@@ -802,7 +818,7 @@ The safety-ladder flags classify the capsule's recorded tool calls for the
 `--allow-external-side-effects` or `--allow-unknown-mutation`) adds an audited
 `replay_mutating` policy gate before the replay starts; a deny refuses the replay. Inside the replayed process they gate only the intercepted tool
 surfaces (MCP, `record.tool` and, experimental, Google ADK tools through the tool
-plugin and OpenAI Agents tools through `wrap_tools`) — an unmatched call under `--permissive`, and a `replay.yaml`
+plugin, and OpenAI Agents and LangChain tools through their `wrap_tools`) — an unmatched call under `--permissive`, and a `replay.yaml`
 `allow: true` override — and never stop a tool replay does not intercept:
 
 ```bash

@@ -628,6 +628,14 @@ Inside the re-spawned process:
   `novafabric.adapters.openai_agents.wrap_tools()`, by replacing the tool's
   `on_invoke_tool` — an **undocumented SDK seam**, checked against
   `openai-agents` 0.17.x — again for `nova capture python …` workloads only.
+- **Experimental (ADR-0306 slice 3, unreleased):** it also serves
+  **LangChain / LangGraph** tools (`@tool`, `StructuredTool`, `BaseTool`
+  subclasses, including through LangGraph's `ToolNode`) passed through
+  `novafabric.adapters.langchain_tools.wrap_tools()`, by returning each tool's
+  recorded body result from a generated subclass of the tool — NovaFabric's
+  construction, not a LangChain extension point, checked against
+  `langchain-core` 1.8.3 and `langgraph` 1.2.23 — for `nova capture python …`
+  workloads only.
 - **Every other tool runs live**: HTTP requests, shell commands, file writes,
   other framework-native tools, undeclared functions and other providers' SDKs are not
   intercepted. The
@@ -659,7 +667,7 @@ level. It drives the `--dry-run` report, and every write-permitting rung
 (`--allow-mutating`, `--allow-external-side-effects`, `--allow-unknown-mutation`)
 triggers a policy-engine gate (an audited allow/deny) before the replay starts. In
 `mocked` mode the run-time rule is fixed by ADR-0300: an intercepted call (MCP
-`call_tool`, a `record.tool` function, an ADK tool through the tool plugin, or an Agents SDK tool through `wrap_tools`) is served from the capsule or refused,
+`call_tool`, a `record.tool` function, an ADK tool through the tool plugin, or an Agents SDK or LangChain tool through its `wrap_tools`) is served from the capsule or refused,
 and every other tool runs live (the `--dry-run` report marks those `[LIVE]`). The
 rungs gate the intercepted surfaces in two places only (ADR-0306, experimental):
 under `--permissive` an unmatched call runs live only if a rung permits its class,

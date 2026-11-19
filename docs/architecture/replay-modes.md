@@ -26,7 +26,9 @@ Every flag of these commands: [CLI reference — nova replay, diff and diagnose]
 > nested records consumed as covered, and the report-only tool-result echo check.
 > Likewise **Google ADK tool serving** through the NovaFabric tool plugin (ADR-0306
 > slice 3, **experimental**) is new in v0.106.0, as is **OpenAI Agents
-> function-tool serving** through `wrap_tools`.
+> function-tool serving** through `wrap_tools`. **LangChain / LangGraph tool serving**
+> through `novafabric.adapters.langchain_tools.wrap_tools` (ADR-0306 slice 3,
+> **experimental**) is unreleased.
 
 ![The five replay modes](../assets/architecture/replay-modes.svg)
 
@@ -283,15 +285,45 @@ that string; an exception that escapes is recorded as a failure and never served
 steps aside for functions already declared with `record.tool`. The mutation class is
 declared in `wrap_tools({"lookup": "read-only"})` (default `unknown`), never read from the
 capsule. Only `nova capture python …` capsules can be replayed, and only tools passed
-through `wrap_tools` are covered. The other framework seams (LangChain/LangGraph, Pydantic
-AI, LlamaIndex, CrewAI) are **planned**.
+through `wrap_tools` are covered.
+
+**LangChain / LangGraph tools** (ADR-0306 slice 3, **experimental**, unreleased). A
+workload that passes its tools through `novafabric.adapters.langchain_tools.wrap_tools()`
+gets a fifth intercepted surface, `langchain_core.tools.BaseTool`. LangChain documents no
+hook that can *answer* a tool call for every caller: callbacks such as `on_tool_start`
+only observe, and LangGraph's `ToolNode(wrap_tool_call=...)` short-circuit covers
+`ToolNode` only, has to build the `ToolMessage` itself and is a single slot the workload
+may already use. `wrap_tools` therefore returns a copy of each `BaseTool` whose class is a
+generated subclass of the tool's own class. Its `run` / `arun` overrides note the input the
+model sent and the `ToolCall` id in a context variable and delegate unchanged; its
+`_run` / `_arun` overrides (the body hooks LangChain documents for implementing a tool,
+given the parent's signature so LangChain's `run_manager`, `RunnableConfig` and
+injected-argument introspection is unchanged) ask the registered handler before the
+parent's body runs. A served value is returned *as the body's result*, so input
+validation, callbacks, `response_format` handling and the `ToolMessage` are LangChain's
+own. The construction is NovaFabric's, not a LangChain extension point; it was checked
+against `langchain-core` 1.8.3 and `langgraph` 1.2.23 (`langgraph-prebuilt` 1.1.3), and
+the end-to-end tests are in `tests/replay/test_langchain_tool_replay_e2e.py` (a real
+`StateGraph` with `ToolNode`, sync and async, including one whose model calls go through
+the real `openai` SDK and are served too). Capture writes one `transport: "python"` record
+per call with `io.novafabric.tool_surface: "langchain.tool"` and the model's
+`io.novafabric.langchain_tool_call_id`; arguments are filtered to the tool's
+`tool_call_schema`, so values `ToolNode` injects (state, store, runtime, call id) are not
+part of matching and are named in `io.novafabric.ignored_arguments`. The ADK server logic
+serves it (shared code). A call is **not served** when its body raised (including a
+`ToolException` that `handle_tool_error` turned into a message), made nested model/tool
+calls, or returned a non-JSON value — a LangGraph `Command`, a `ToolMessage`, a
+`content_and_artifact` tuple. A refusal is raised from the body; `ToolNode` re-raises it by
+default, and the divergence is in the event log first either way. The seam steps aside for
+`langchain_mcp_adapters` tools (served on the MCP surface) and `record.tool` functions. The
+other framework seams (Pydantic AI, LlamaIndex, CrewAI) are **planned**.
 
 **How tool calls are matched** (`ToolCallMatcher`, one matcher per tool
 surface — a `record.tool` record never answers an MCP call of the same name, nor
 the reverse), one-to-one: by an exact
 `tool_call_id` when the surface carries one (MCP `call_tool` and `record.tool` do
 not; for an ADK tool it is the model's `function_call_id`, for an Agents SDK tool its
-`call_id`, used only when the recorded call with that id has the same name and arguments); else by
+`call_id`, for a LangChain tool the `ToolCall` id, used only when the recorded call with that id has the same name and arguments); else by
 tool name plus an order-insensitive hash of the arguments, earliest unconsumed
 record first — so repeated identical calls get distinct recorded results in
 recorded order. A record is never served twice. Anything else is **unmatched**.
@@ -343,8 +375,8 @@ under `--permissive` **only** when the operator's ladder flag permits its
 `--allow-external-side-effects`, `--allow-unknown-mutation` for the others,
 ADR-0012); otherwise it is refused (`tool_calls_refused`). For `record.tool`
 the class comes from the decorator in the workload's code, for an ADK tool from
-the tool plugin's declaration, for an Agents SDK tool from the `wrap_tools` declaration
-(also the workload's code); an MCP call is
+the tool plugin's declaration, for an Agents SDK or LangChain tool from its `wrap_tools`
+declaration (also the workload's code); an MCP call is
 always `unknown`, so it needs `--allow-unknown-mutation`. The class a capsule
 records is never used to permit anything. *(Changed in v0.105.0, ADR-0306 Q3:
 before, `--permissive` alone ran every unmatched MCP call live.)* `intervention`
@@ -560,9 +592,10 @@ and is counted in `replay_contract.model_calls_live`.
 | Python function declared with `novafabric.capture.record.tool` (ADR-0306) | one `transport: python` record per call; arguments and result kept only at the `forensic`/`air_gapped` capture level, digests otherwise | **Served** — before the function body runs; one-to-one by name and canonical arguments; JSON-native results up to 1 MiB; an unmatched or unservable call is refused (`--permissive` runs it live only if a ladder flag permits its declared mutation class); `replay.yaml` `tool_overrides` enforced in-process; a boundary that called a model or tool is served too, and the records it wrote are consumed as covered (`*_calls_covered`, slice 4) | refused at decoration (generator functions) | served (`async def`) | experimental | `test_python_tool_replay_e2e.py::test_decorated_calls_are_served_and_their_bodies_never_run`; `test_python_tool_replay_e2e.py::test_positional_keyword_and_default_calls_match_and_consume_in_order`; `test_python_tool_replay_e2e.py::test_an_unmatched_call_fails_closed_before_the_body_runs`; `test_python_tool_replay_e2e.py::test_an_unservable_record_fails_closed_naming_the_cause`; `test_python_tool_replay_e2e.py::test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag`; `test_tool_overrides_enforced_e2e.py::test_an_unmatched_intercepted_call_follows_the_owner_rules`; `test_python_tool_replay_e2e.py::test_a_nested_boundary_is_served_and_its_inner_records_are_covered`; `test_echo_and_nested_coverage_e2e.py::test_a_nested_boundary_is_served_and_its_nested_model_call_is_covered`; `test_echo_and_nested_coverage_e2e.py::test_an_unmarked_nested_call_fails_closed` |
 | Google ADK tool, through the NovaFabric tool plugin (`novafabric.adapters.google_adk.make_tool_plugin`, ADR-0306 slice 3) | one `transport: python` record per ADK tool call (`google.adk.tool` marker, `function_call_id`); arguments and result kept only at the `forensic`/`air_gapped` capture level, digests otherwise | **Served** — through ADK's documented `before_tool_callback` short-circuit, before the tool body runs; one-to-one by the model's `function_call_id` (same name and arguments) or by name and canonical arguments; JSON-native results up to 1 MiB; a call that failed, changed `tool_context.actions`, is long-running or made nested model/tool calls is not served; an unmatched or unservable call is refused (`--permissive` runs it live only if a ladder flag permits the class the plugin declares); `replay.yaml` `tool_overrides` enforced; `nova capture python …` capsules only (adapter capsules are refused by replay) | not served (long-running tools) | served (ADK runs every tool on its event loop) | experimental | `test_adk_tool_replay_e2e.py::test_adk_tool_calls_are_served_and_their_bodies_never_run`; `test_adk_tool_replay_e2e.py::test_an_unmatched_adk_call_fails_closed_before_the_tool_runs`; `test_adk_tool_replay_e2e.py::test_the_function_call_id_pairs_identical_calls_by_id`; `test_adk_tool_replay_e2e.py::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder`; `test_adk_tool_replay_e2e.py::test_a_replay_yaml_allow_false_override_holds_under_permissive`; `test_adk_tool_replay_e2e.py::test_a_nested_record_makes_the_adk_call_unservable` |
 | OpenAI Agents SDK function tool, through the NovaFabric tool seam (`novafabric.adapters.openai_agents.wrap_tools`, ADR-0306 slice 3) | one `transport: python` record per function-tool call (`openai.agents.tool` marker, the model's `call_id`); arguments and result kept only at the `forensic`/`air_gapped` capture level, digests otherwise | **Served** — by replacing `FunctionTool.on_invoke_tool` on a copy of each tool -- an **undocumented SDK seam**, checked against `openai-agents` 0.17.x only -- so the recorded result is returned before the tool body runs; one-to-one by the model's `call_id` (same name and arguments) or by name and canonical arguments; JSON-native results up to 1 MiB; a call that raised, or made nested model/tool calls (including `Agent.as_tool`), is not served; an unmatched or unservable call is refused (`--permissive` runs it live only if a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` `tool_overrides` enforced; only tools passed through `wrap_tools` are covered, and `nova capture python …` capsules only (adapter capsules are refused by replay) | served (`Runner.run_streamed` reaches the same seam) | served (the SDK awaits every tool on its event loop) | experimental | `test_openai_agents_tool_replay_e2e.py::test_agents_tool_calls_are_served_and_their_bodies_never_run`; `test_openai_agents_tool_replay_e2e.py::test_an_unmatched_agents_call_fails_closed_before_the_tool_runs`; `test_openai_agents_tool_replay_e2e.py::test_the_call_id_pairs_identical_calls_by_id`; `test_openai_agents_tool_replay_e2e.py::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder`; `test_openai_agents_tool_replay_e2e.py::test_a_replay_yaml_allow_false_override_holds_under_permissive`; `test_openai_agents_tool_replay_e2e.py::test_a_nested_record_makes_the_agents_call_unservable` |
+| LangChain / LangGraph tool (`BaseTool`: `@tool`, `StructuredTool`, subclasses), through the NovaFabric tool seam (`novafabric.adapters.langchain_tools.wrap_tools`, ADR-0306 slice 3) | one `transport: python` record per tool call (`langchain.tool` marker, the model's `tool_call_id`); arguments the model sent (injected state, store, runtime and call id left out) and the tool body's result kept only at the `forensic`/`air_gapped` capture level, digests otherwise | **Served** — by a generated subclass of each tool's class, on a copy, that overrides `run`/`arun` and the body hooks `_run`/`_arun` -- **not a LangChain extension point**, checked against `langchain-core` 1.8.3 and `langgraph` 1.2.23 only -- so the recorded body result is returned before the body runs and LangChain still builds the `ToolMessage`; direct `invoke`/`ainvoke` and LangGraph `ToolNode`; one-to-one by the model's `tool_call_id` (same name and arguments) or by name and canonical arguments; JSON-native results up to 1 MiB (a `Command`, a `ToolMessage` or a `content_and_artifact` tuple is not); a call that raised or made nested model/tool calls is not served; an unmatched or unservable call is refused (`--permissive` runs it live only if a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` `tool_overrides` enforced; only tools passed through `wrap_tools` are covered (`langchain_mcp_adapters` tools are left to the MCP surface), and `nova capture python …` capsules only (adapter capsules are refused by replay) | — (tools are not streamed) | served (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph) | experimental | `test_langchain_tool_replay_e2e.py::test_langchain_tool_calls_are_served_and_their_bodies_never_run`; `test_langchain_tool_replay_e2e.py::test_a_langgraph_agent_with_a_served_openai_model_replays_faithfully`; `test_langchain_tool_replay_e2e.py::test_an_unmatched_langchain_call_fails_closed_before_the_tool_runs`; `test_langchain_tool_replay_e2e.py::test_the_tool_call_id_pairs_identical_calls_by_id`; `test_langchain_tool_replay_e2e.py::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder`; `test_langchain_tool_replay_e2e.py::test_a_replay_yaml_allow_false_override_holds_under_permissive`; `test_langchain_tool_replay_e2e.py::test_a_nested_record_makes_the_langchain_call_unservable` |
 | MCP session set-up (server start, `initialize`, `list_tools`) | not recorded as tool calls | Not intercepted — runs **live** | — | — | not controlled | e2e tests start a real in-memory MCP server during replay |
 | Undeclared functions the workload runs for a model (the result goes back as a tool message) | the model's tool choice, and the result as the next request sent it back (`role: tool` message / Anthropic `tool_result` block) | Not intercepted — runs **live**; the result it sends back is compared with the recorded one (redacted digests, by `tool_call_id`): a difference is reported in `replay_contract.tool_result_echo` and never fails the replay (report-only, experimental, ADR-0306 D10); not checked for the Responses API, whose request input is not recorded | — | — | not controlled | `test_echo_and_nested_coverage_e2e.py::test_a_changed_tool_result_is_reported_but_never_fails_the_replay`; `test_echo_and_nested_coverage_e2e.py::test_a_capsule_without_request_messages_reports_not_checked_never_matched`; `test_slice4_matching_and_echo_contract.py::test_the_echo_check_compares_anthropic_tool_results` |
-| HTTP, shell, filesystem, framework-native tools (other than Google ADK tools through the tool plugin and OpenAI Agents function tools through `wrap_tools`) | network/file events, not tool records | Not intercepted — runs **live**; outbound connections of the replayed Python process are reported (`network_connections_live`, `network_observation_scope: python-process`), files are not; child processes it starts are counted and named (`child_processes_spawned`, `child_processes_argv0`), their network and file activity is not observed (ADR-0319); a `replay.yaml` `allow: false` override on one makes a strict replay refuse to start (`ToolOverrideUnenforceable`, exit 3) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked`; `test_tool_overrides_enforced_e2e.py::test_strict_replay_refuses_to_start_on_an_unenforceable_override`; `test_unservable_model_surfaces_e2e.py::test_a_child_process_is_counted_and_named_with_a_warning` |
+| HTTP, shell, filesystem, framework-native tools (other than Google ADK tools through the tool plugin, and OpenAI Agents function tools and LangChain tools through their `wrap_tools`) | network/file events, not tool records | Not intercepted — runs **live**; outbound connections of the replayed Python process are reported (`network_connections_live`, `network_observation_scope: python-process`), files are not; child processes it starts are counted and named (`child_processes_spawned`, `child_processes_argv0`), their network and file activity is not observed (ADR-0319); a `replay.yaml` `allow: false` override on one makes a strict replay refuse to start (`ToolOverrideUnenforceable`, exit 3) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked`; `test_tool_overrides_enforced_e2e.py::test_strict_replay_refuses_to_start_on_an_unenforceable_override`; `test_unservable_model_surfaces_e2e.py::test_a_child_process_is_counted_and_named_with_a_warning` |
 
 <!-- END GENERATED: replay-support-matrix -->
 
@@ -594,8 +627,8 @@ These limits are stated so you can rely on the parts that do work:
   ADR-0320 hold no Ollama responses: re-capture to replay them.
 - **`record.tool` serves declared functions only** (experimental). Undeclared
   functions a model asks the workload to run, framework-native tools (other than
-  Google ADK tools through the tool plugin and Agents SDK tools through `wrap_tools`), and
-  anything a served function would have done (files, caches, globals) are not
+  Google ADK tools through the tool plugin, and Agents SDK and LangChain tools through
+  their `wrap_tools`), and anything a served function would have done (files, caches, globals) are not
   replayed; an undeclared function's result is only *compared* with the recorded
   one (the echo check, report-only). With the default capture level the records hold digests only and a
   strict replay refuses them with a re-capture hint. Concurrent identical calls
@@ -605,6 +638,17 @@ These limits are stated so you can rely on the parts that do work:
   an SDK release that changes how tools are invoked, rebound or approved can bypass it
   silently — the tool would then run live instead of being served. Re-run the e2e tests
   when upgrading `openai-agents`. After `wrap_tools`, the SDK's `tool.__wrapped__` raises `AttributeError`.
+- **The LangChain seam is a generated subclass, not a LangChain API** (experimental).
+  It relies on `BaseTool.run` / `arun` reaching the body through `_run` / `_arun` and on
+  the `tool_call_id` keyword LangChain passes to `run`; a release that changes either
+  can bypass it silently (the tool then runs live). Re-run the e2e tests when upgrading
+  `langchain-core` or `langgraph`. `type(tool)` of a wrapped tool is the generated class
+  (same name and module; `isinstance` checks still hold). Matching ignores injected
+  arguments, so a call with the same model arguments but different graph state is
+  served the recorded result. `create_react_agent` is covered by a unit test only.
+  Untested: `langchain.agents.create_agent` and its middleware, LangGraph
+  `Send`-based tool dispatch, streaming (`astream_events`), concurrent identical calls
+  without ids.
 - **The ADK tool plugin serves only what it saw, in the order it was placed**
   (experimental). It must be the first plugin: ADK stops at the first plugin that
   answers, so a plugin before it can answer a call this one never records. When it

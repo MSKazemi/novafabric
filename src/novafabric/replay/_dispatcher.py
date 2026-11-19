@@ -59,6 +59,7 @@ from novafabric.replay._contract import (
     MODEL_SURFACES,
     QUEUE_PROVIDER,
     TOOL_SURFACE_ADK,
+    TOOL_SURFACE_LANGCHAIN,
     TOOL_SURFACE_MCP,
     TOOL_SURFACE_OPENAI_AGENTS,
     TOOL_SURFACE_PYTHON,
@@ -1723,8 +1724,18 @@ class MockToolDispatcher:
             permitted=permitted_mutation_classes,
             overrides=self._overrides,
         )
+        from novafabric.replay._langchain_tool_server import LangChainToolServer
+
+        self._langchain = LangChainToolServer(
+            [r for r in intercepted if tool_surface(r) == TOOL_SURFACE_LANGCHAIN],
+            divergence_policy=divergence_policy,
+            events=self._events,
+            permitted=permitted_mutation_classes,
+            overrides=self._overrides,
+        )
         self._previous_adk_handler: Any = None
         self._previous_oai_handler: Any = None
+        self._previous_langchain_handler: Any = None
         self._previous_handler: Any = None
         self._handler_registered = False
         self._patcher = _Patcher()
@@ -1769,21 +1780,23 @@ class MockToolDispatcher:
             "mcp.client.session", "ClientSession", "call_tool", self._make_call_tool
         ):
             self.installed_surfaces.append(TOOL_SURFACE_MCP)
-        from novafabric.adapters import _adk_tool_seam, _oai_tool_seam
+        from novafabric.adapters import _adk_tool_seam, _langchain_tool_seam, _oai_tool_seam
         from novafabric.capture import record
 
         self._previous_handler = record._set_tool_handler(self._python)
         self._previous_adk_handler = _adk_tool_seam._set_handler(self._adk)
         self._previous_oai_handler = _oai_tool_seam._set_handler(self._oai)
+        self._previous_langchain_handler = _langchain_tool_seam._set_handler(self._langchain)
         self._handler_registered = True
         self.installed_surfaces.append(TOOL_SURFACE_PYTHON)
         self.installed_surfaces.append(TOOL_SURFACE_ADK)
         self.installed_surfaces.append(TOOL_SURFACE_OPENAI_AGENTS)
+        self.installed_surfaces.append(TOOL_SURFACE_LANGCHAIN)
 
     def uninstall(self) -> None:
         self._patcher.restore()
         if self._handler_registered:
-            from novafabric.adapters import _adk_tool_seam, _oai_tool_seam
+            from novafabric.adapters import _adk_tool_seam, _langchain_tool_seam, _oai_tool_seam
             from novafabric.capture import record
 
             if record._get_tool_handler() is self._python:
@@ -1792,9 +1805,12 @@ class MockToolDispatcher:
                 _adk_tool_seam._set_handler(self._previous_adk_handler)
             if _oai_tool_seam._get_handler() is self._oai:
                 _oai_tool_seam._set_handler(self._previous_oai_handler)
+            if _langchain_tool_seam._get_handler() is self._langchain:
+                _langchain_tool_seam._set_handler(self._previous_langchain_handler)
             self._previous_handler = None
             self._previous_adk_handler = None
             self._previous_oai_handler = None
+            self._previous_langchain_handler = None
             self._handler_registered = False
         self.installed_surfaces = []
 

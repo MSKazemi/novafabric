@@ -79,12 +79,16 @@ TOOL_SURFACE_ADK = "google.adk.tools.BaseTool"
 #: OpenAI Agents SDK function tools, through ``wrap_tools``' replacement of the
 #: tool's ``on_invoke_tool`` (ADR-0306 slice 3, experimental; an undocumented seam).
 TOOL_SURFACE_OPENAI_AGENTS = "agents.FunctionTool"
+#: LangChain / LangGraph tools, through ``langchain_tools.wrap_tools``' generated
+#: subclass of each tool (ADR-0306 slice 3, experimental; not a LangChain API).
+TOOL_SURFACE_LANGCHAIN = "langchain_core.tools.BaseTool"
 TOOL_SURFACES: tuple[str, ...] = (
     TOOL_SURFACE_MCP, TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS,
+    TOOL_SURFACE_LANGCHAIN,
 )
 #: Surfaces recorded with the ``record.tool`` codec (JSON results, digests).
 CODEC_TOOL_SURFACES: tuple[str, ...] = (
-    TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS,
+    TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS, TOOL_SURFACE_LANGCHAIN,
 )
 
 #: ``transport: "python"`` surface marker -> intercepted surface. Both use the
@@ -93,6 +97,7 @@ _PYTHON_TRANSPORT_SURFACES: dict[str, str] = {
     _tool_codec.TOOL_SURFACE_PYTHON_FUNCTION: TOOL_SURFACE_PYTHON,
     _tool_codec.TOOL_SURFACE_ADK_TOOL: TOOL_SURFACE_ADK,
     _tool_codec.TOOL_SURFACE_OPENAI_AGENTS_TOOL: TOOL_SURFACE_OPENAI_AGENTS,
+    _tool_codec.TOOL_SURFACE_LANGCHAIN_TOOL: TOOL_SURFACE_LANGCHAIN,
 }
 
 DivergencePolicy = Literal["fail", "warn"]
@@ -272,6 +277,9 @@ def tool_surface(record: dict[str, Any]) -> str | None:
     * ``TOOL_SURFACE_OPENAI_AGENTS``: an OpenAI Agents SDK function-tool call
       recorded through ``wrap_tools`` -- ``transport: "python"`` and the
       ``"openai.agents.tool"`` marker (ADR-0306 slice 3).
+    * ``TOOL_SURFACE_LANGCHAIN``: a LangChain ``BaseTool`` call recorded through
+      ``langchain_tools.wrap_tools`` -- ``transport: "python"`` and the
+      ``"langchain.tool"`` marker (ADR-0306 slice 3).
 
     A record is matchable only on the surface it was recorded on.
     """

@@ -58,6 +58,7 @@ _HF = "tests/capture/test_hf_inference_capture.py"
 _SMOL = "tests/adapters/test_smolagents.py"
 _UNSERVED = "tests/replay/test_unservable_model_surfaces_e2e.py"
 _OLLAMA = "tests/replay/test_ollama_replay_e2e.py"
+_LC = "tests/replay/test_langchain_tool_replay_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -548,6 +549,50 @@ ROWS: tuple[SurfaceRow, ...] = (
         servers=("agents.FunctionTool",),
     ),
     SurfaceRow(
+        surface=(
+            "LangChain / LangGraph tool (`BaseTool`: `@tool`, `StructuredTool`, "
+            "subclasses), through the NovaFabric tool seam "
+            "(`novafabric.adapters.langchain_tools.wrap_tools`, ADR-0306 slice 3)"
+        ),
+        capture=(
+            "one `transport: python` record per tool call (`langchain.tool` marker, the "
+            "model's `tool_call_id`); arguments the model sent (injected state, store, "
+            "runtime and call id left out) and the tool body's result kept only at the "
+            "`forensic`/`air_gapped` capture level, digests otherwise"
+        ),
+        replay="served",
+        replay_note=(
+            "by a generated subclass of each tool's class, on a copy, that overrides "
+            "`run`/`arun` and the body hooks `_run`/`_arun` -- **not a LangChain "
+            "extension point**, checked against `langchain-core` 1.8.3 and `langgraph` "
+            "1.2.23 only -- so the recorded body result is returned before the body runs "
+            "and LangChain still builds the `ToolMessage`; direct `invoke`/`ainvoke` and "
+            "LangGraph `ToolNode`; one-to-one by the model's `tool_call_id` (same name "
+            "and arguments) or by name and canonical arguments; JSON-native results up "
+            "to 1 MiB (a `Command`, a `ToolMessage` or a `content_and_artifact` tuple is "
+            "not); a call that raised or made nested model/tool calls is not served; an "
+            "unmatched or unservable call is refused (`--permissive` runs it live only "
+            "if a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
+            "`tool_overrides` enforced; only tools passed through `wrap_tools` are "
+            "covered (`langchain_mcp_adapters` tools are left to the MCP surface), and "
+            "`nova capture python …` capsules only (adapter capsules are refused by "
+            "replay)"
+        ),
+        streaming="— (tools are not streamed)",
+        asynchronous="served (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph)",
+        status="experimental",
+        evidence=(
+            f"{_LC}::test_langchain_tool_calls_are_served_and_their_bodies_never_run",
+            f"{_LC}::test_a_langgraph_agent_with_a_served_openai_model_replays_faithfully",
+            f"{_LC}::test_an_unmatched_langchain_call_fails_closed_before_the_tool_runs",
+            f"{_LC}::test_the_tool_call_id_pairs_identical_calls_by_id",
+            f"{_LC}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
+            f"{_LC}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
+            f"{_LC}::test_a_nested_record_makes_the_langchain_call_unservable",
+        ),
+        servers=("langchain_core.tools.BaseTool",),
+    ),
+    SurfaceRow(
         surface="MCP session set-up (server start, `initialize`, `list_tools`)",
         capture="not recorded as tool calls",
         replay="not intercepted",
@@ -586,8 +631,8 @@ ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
         surface=(
             "HTTP, shell, filesystem, framework-native tools "
-            "(other than Google ADK tools through the tool plugin and OpenAI Agents "
-            "function tools through `wrap_tools`)"
+            "(other than Google ADK tools through the tool plugin, and OpenAI Agents "
+            "function tools and LangChain tools through their `wrap_tools`)"
         ),
         capture="network/file events, not tool records",
         replay="not intercepted",
