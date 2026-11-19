@@ -54,6 +54,7 @@ _SLICE4 = "tests/replay/test_slice4_matching_and_echo_contract.py"
 _ECHO = "tests/replay/test_echo_and_nested_coverage_e2e.py"
 _ADK = "tests/replay/test_adk_tool_replay_e2e.py"
 _OAI = "tests/replay/test_openai_agents_tool_replay_e2e.py"
+_UNSERVED = "tests/replay/test_unservable_model_surfaces_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -310,15 +311,28 @@ ROWS: tuple[SurfaceRow, ...] = (
         evidence=("`tests/test_api_proxy.py`",),
     ),
     SurfaceRow(
-        surface="Other providers' SDKs, raw HTTP to a model API",
+        surface=(
+            "Other providers' SDKs, raw HTTP to a model API (Ollama, Hugging Face "
+            "`InferenceClient`, any registry host), or a served surface whose response "
+            "was not recorded"
+        ),
         capture="wire hook: request only",
-        replay="not intercepted",
-        replay_note="runs **live**; its connections are reported (`network_connections_live`)",
+        replay="refused",
+        replay_note=(
+            "not intercepted, so a strict replay **refuses to start** "
+            "(`ModelSurfaceNotServable`, exit 1, also under `--dry-run`, which lists "
+            "each as `[LIVE] model call (<system>, <host>)`); `--permissive` runs it "
+            "**live** and reports `model_calls_not_servable` per `gen_ai.system` "
+            "(ADR-0319)"
+        ),
         streaming="—",
         asynchronous="—",
-        status="not controlled",
+        status="not controlled; refused by default",
         evidence=(
-            f"{_CONTRACT}::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked",
+            f"{_UNSERVED}::test_p7_strict_replay_refuses_before_spawning",
+            f"{_UNSERVED}::test_p7_permissive_runs_live_and_reports_it",
+            f"{_UNSERVED}::test_p7_dry_run_lists_the_live_model_call",
+            f"{_UNSERVED}::test_mixed_capsule_names_only_the_unserved_system",
         ),
     ),
     SurfaceRow(
@@ -495,8 +509,11 @@ ROWS: tuple[SurfaceRow, ...] = (
         capture="network/file events, not tool records",
         replay="not intercepted",
         replay_note=(
-            "runs **live**; outbound connections are reported "
-            "(`network_connections_live`), files and processes are not; a "
+            "runs **live**; outbound connections of the replayed Python process are "
+            "reported (`network_connections_live`, `network_observation_scope: "
+            "python-process`), files are not; child processes it starts are counted "
+            "and named (`child_processes_spawned`, `child_processes_argv0`), their "
+            "network and file activity is not observed (ADR-0319); a "
             "`replay.yaml` `allow: false` override on one makes a strict replay refuse "
             "to start (`ToolOverrideUnenforceable`, exit 3)"
         ),
@@ -507,6 +524,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_CONTRACT}::test_s13_network_tool_refused_and_uncontrolled_transports_reported",
             f"{_CONTRACT}::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked",
             f"{_OVERRIDES}::test_strict_replay_refuses_to_start_on_an_unenforceable_override",
+            f"{_UNSERVED}::test_a_child_process_is_counted_and_named_with_a_warning",
         ),
     ),
 )

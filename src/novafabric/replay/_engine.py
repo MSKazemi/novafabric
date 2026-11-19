@@ -38,6 +38,7 @@ from novafabric.replay._dispatcher import REPLAY_DISPATCHER_UNAVAILABLE_EXIT, TO
 from novafabric.replay._env_check import EnvironmentResolver
 from novafabric.replay._errors import (
     CapsuleNotReplayableError,
+    ModelSurfaceNotServableError,
     ReplayOverrideUnenforceableError,
 )
 from novafabric.replay._flags import ReplayFlags
@@ -48,6 +49,13 @@ from novafabric.replay._replayability import (
     require_reexecutable_command,
 )
 from novafabric.replay._result import ReplayResult, write_replay_result
+from novafabric.replay._servability import (
+    describe_by_system,
+    endpoint_host,
+    not_servable_by_system,
+    not_servable_records,
+    system_of,
+)
 
 #: Written as ``sitecustomize.py`` into the replayed process (ADR-0300). If the
 #: replayed interpreter cannot even import novafabric (e.g. a different venv),
@@ -117,6 +125,7 @@ def _contract_fields(report: ReplayContractReport) -> dict[str, Any]:
         "model_calls_mocked": report.model_calls_mocked,
         "model_calls_available": report.model_calls_available,
         "model_calls_unmatched": report.model_calls_unmatched,
+        "model_calls_not_servable": report.model_calls_not_servable,
         "tool_calls_mocked": report.tool_calls_mocked,
         "tool_calls_available": report.tool_calls_available,
         "tool_calls_recorded": report.tool_calls_recorded,
@@ -176,9 +185,11 @@ class ReplayEngine:
         env_lock = _load_env_lock(self._capsule_dir)
         # ADR-0305: replay sees logical calls only -- the wire hook's transport
         # records are neither served nor counted (model_calls_recorded).
-        model_calls = logical_model_calls(
-            _read_jsonl(self._capsule_dir / "model-calls.jsonl")
-        )
+        # ADR-0319 classifies servability over the whole stream: a record's
+        # role depends on the records around it.
+        recorded_model_records = _read_jsonl(self._capsule_dir / "model-calls.jsonl")
+        model_calls = logical_model_calls(recorded_model_records)
+        not_servable = not_servable_by_system(recorded_model_records)
         tool_calls = _read_jsonl(self._capsule_dir / "tool-calls.jsonl")
 
         env_warnings = EnvironmentResolver().check(env_lock)
@@ -229,7 +240,11 @@ class ReplayEngine:
                 raise PolicyDeniedError(decision.reason, decision.decision_id)
 
         if self._flags.dry_run:
-            return self._dry_run(run_id, manifest, evaluator, tool_calls, env_warnings)
+            return self._dry_run(
+                run_id, manifest, evaluator, tool_calls, env_warnings,
+                recorded_model_records=recorded_model_records,
+                not_servable=not_servable,
+            )
 
         if self._flags.mode == "forensic":
             return self._forensic(
@@ -258,6 +273,7 @@ class ReplayEngine:
             evaluator,
             env_warnings,
             schema_drift,
+            not_servable=not_servable,
         )
 
     def _intervention(
@@ -440,11 +456,15 @@ class ReplayEngine:
         evaluator: PolicyEvaluator,
         tool_calls: list[dict[str, Any]],
         env_warnings: list[Any],
+        *,
+        recorded_model_records: list[Any] | None = None,
+        not_servable: dict[str, dict[str, Any]] | None = None,
     ) -> ReplayResult:
         start = _now()
         t0 = time.monotonic()
         replay_id = new_ulid()
         result_dir = self._base_dir / replay_id
+        not_servable = not_servable or {}
 
         report = evaluator.dry_run_report(tool_calls)
         # Say what the real run would do with a capsule that records no
@@ -452,6 +472,14 @@ class ReplayEngine:
         # `intervention` emits the counterfactual streams without re-running.
         refusal: dict[str, Any] | None = None
         if self._flags.mode == "mocked":
+            # ADR-0319: each recorded model call replay cannot serve would run live.
+            unserved = not_servable_records(recorded_model_records or [])
+            if unserved:
+                report += "Model calls mocked replay cannot serve (ADR-0319):\n" + "".join(
+                    f"  [LIVE] model call ({system_of(r)}, "
+                    f"{endpoint_host(r) or 'host not recorded'})\n"
+                    for r in unserved
+                )
             # ADR-0306 D8: what the replayed process will do with each
             # replay.yaml override -- the same table the real run reports.
             overrides = evaluator.override_report(tool_calls)
@@ -463,9 +491,13 @@ class ReplayEngine:
                 )
             message = refusal_message(manifest, "mocked")
             unenforceable = evaluator.unenforceable_overrides(tool_calls)
+            surface_error = ModelSurfaceNotServableError(not_servable) if not_servable else None
             if message is not None:
                 refusal = {"type": CapsuleNotReplayableError.error_type, "message": message}
                 report = f"REFUSED: {message}\n\n{report}"
+            elif surface_error is not None and not self._flags.permissive:
+                refusal = surface_error.as_error()
+                report = f"REFUSED: {surface_error}\n\n{report}"
             elif unenforceable:
                 not_enforced = ReplayOverrideUnenforceableError(unenforceable)
                 if self._flags.permissive:
@@ -475,6 +507,10 @@ class ReplayEngine:
                 else:
                     refusal = not_enforced.as_error()
                     report = f"REFUSED: {not_enforced}\n\n{report}"
+            if surface_error is not None and self._flags.permissive and message is None:
+                report = (
+                    f"WARNING ({surface_error.kind}, --permissive): {surface_error}\n\n{report}"
+                )
         elif self._flags.mode == "intervention":
             reason = not_reexecutable_reason(manifest)
             if reason is not None:
@@ -494,6 +530,10 @@ class ReplayEngine:
             policy_flags_used=self._flags.active_flag_names(),
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=0,
+            model_calls_not_servable=(
+                sum(int(v.get("count", 0)) for v in not_servable.values())
+                if self._flags.mode == "mocked" else None
+            ),
             tool_calls_mocked=0,  # ADR-0261: a dry run executes nothing
             tool_calls_available=_servable_tool_count(tool_calls),
             tool_calls_recorded=len(tool_calls),
@@ -649,11 +689,14 @@ class ReplayEngine:
         evaluator: PolicyEvaluator,
         env_warnings: list[Any],
         schema_drift: list[dict[str, Any]] | None = None,
+        *,
+        not_servable: dict[str, dict[str, Any]] | None = None,
     ) -> ReplayResult:
         start = _now()
         t0 = time.monotonic()
         replay_id = new_ulid()
         result_dir = self._base_dir / replay_id
+        not_servable = not_servable or {}
 
         try:
             command = require_reexecutable_command(manifest, "mocked")
@@ -673,6 +716,29 @@ class ReplayEngine:
                 tool_calls_recorded=len(tool_calls),
                 schema_drift=schema_drift or None,
                 error=exc.as_error(),
+            )
+            write_replay_result(refused, result_dir)
+            return refused
+
+        # ADR-0319: a recorded model call replay cannot serve would run live
+        # under a "mocked" label -- a strict replay refuses to start; under
+        # --permissive it runs and is reported (below).
+        if not_servable and not self._flags.permissive:
+            surface_error = ModelSurfaceNotServableError(not_servable)
+            refused = ReplayResult(
+                replay_id=replay_id,
+                replay_of_run_id=run_id,
+                mode="mocked",
+                status="aborted",
+                start_time=start,
+                end_time=_now(),
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                policy_flags_used=self._flags.active_flag_names(),
+                env_warnings=[w.as_dict() for w in env_warnings],
+                model_calls_not_servable=surface_error.count,
+                tool_calls_recorded=len(tool_calls),
+                schema_drift=schema_drift or None,
+                error=surface_error.as_error(),
             )
             write_replay_result(refused, result_dir)
             return refused
@@ -722,6 +788,16 @@ class ReplayEngine:
                 }
                 for u in unenforceable
             ]
+        report.model_calls_not_servable_by_system = not_servable
+        if not_servable:  # --permissive: a warning on the result, not a failure
+            report.divergences[:0] = [{
+                "kind": ModelSurfaceNotServableError.kind,
+                "message": (
+                    "recorded model calls mocked replay cannot serve ran live if the "
+                    f"workload made them ({describe_by_system(not_servable)})"
+                ),
+                "by_system": {k: dict(v) for k, v in not_servable.items()},
+            }]
         report.tool_overrides = evaluator.override_report(tool_calls)
         status = "success" if exit_code == 0 else "failure"
         # ADR-0300: under the default fail-closed policy a divergence fails the

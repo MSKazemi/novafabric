@@ -109,6 +109,57 @@ class CapsuleNotReplayableError(Exception):
         return {"type": self.error_type, "message": str(self)}
 
 
+class ModelSurfaceNotServableError(Exception):
+    """A strict mocked replay refused to start: the capsule records model calls
+    mocked replay cannot serve (ADR-0319) -- an unserved surface (Ollama, Hugging
+    Face, other providers' raw HTTP) or a served surface whose response was never
+    recorded. Run anyway, each would reach the network under a "mocked" label.
+
+    Not a divergence: nothing was re-run. Raised *before* anything is spawned;
+    the engine records it as ``status: aborted`` with ``error.type:
+    ModelSurfaceNotServable``; ``nova replay`` exits 1 (also under
+    ``--dry-run``). Under ``--permissive`` the replay starts instead and reports
+    a ``model_surface_not_servable`` divergence (a warning) and the counters
+    ``model_calls_not_servable`` / ``replay_contract.model_calls_not_servable_by_system``.
+    """
+
+    #: Stable ``error.type`` written to ``replay_result.yaml``.
+    error_type = "ModelSurfaceNotServable"
+    #: Divergence kind reported instead under ``--permissive``.
+    kind = "model_surface_not_servable"
+
+    def __init__(self, by_system: dict[str, dict[str, Any]]) -> None:
+        self.by_system = {k: dict(v) for k, v in by_system.items()}
+        super().__init__(self.describe(self.by_system))
+
+    @property
+    def count(self) -> int:
+        return sum(int(v.get("count", 0)) for v in self.by_system.values())
+
+    @staticmethod
+    def describe(by_system: dict[str, dict[str, Any]]) -> str:
+        from novafabric.replay._servability import describe_by_system
+
+        total = sum(int(v.get("count", 0)) for v in by_system.values())
+        return (
+            f"the capsule records {total} model call{'s' if total != 1 else ''} "
+            f"mocked replay cannot serve -- {describe_by_system(by_system)} -- "
+            "(no recorded response on a surface replay serves); replayed, "
+            f"{'they' if total != 1 else 'it'} would run live. A strict replay "
+            "refuses to start; pass --permissive to run it anyway and report "
+            f"{'them' if total != 1 else 'it'} (ADR-0319)"
+        )
+
+    def as_error(self) -> dict[str, Any]:
+        return {
+            "type": self.error_type,
+            "message": str(self),
+            "model_calls_not_servable_by_system": {
+                k: dict(v) for k, v in self.by_system.items()
+            },
+        }
+
+
 class ReplayRecordedErrorUnreconstructableError(ReplayDivergenceError):
     """A recorded model call failed, and mocked replay cannot raise that failure
     faithfully: the exception class is not on the per-SDK allow-list, its HTTP

@@ -155,8 +155,19 @@
         "network_observed": {"type": "boolean", "description": "ADR-0304: the replayed process reported its outbound connections (socket connect observer installed)."},
         "network_connections_live": {"type": "integer", "minimum": 0, "description": "ADR-0304: IPv4/IPv6 connection attempts the replayed Python process made (observed, never blocked). A lower bound when network_connections_capped is true."},
         "network_connections_capped": {"type": "boolean", "description": "ADR-0304: more connections were made than the observer logs per process."},
-        "network_destinations": {"type": "array", "items": {"type": "string"}, "description": "ADR-0304: distinct host:port destinations, first 20."}
+        "network_destinations": {"type": "array", "items": {"type": "string"}, "description": "ADR-0304: distinct host:port destinations, first 20."},
+        "network_observation_scope": {"type": "string", "enum": ["python-process"], "description": "ADR-0319: what network_connections_live counts -- sockets of the replayed Python process (and of Python children that load the replay dispatcher), never those of a non-Python child process."},
+        "model_calls_not_servable_by_system": {"type": "object", "additionalProperties": {"type": "object", "properties": {"count": {"type": "integer", "minimum": 0}, "hosts": {"type": "array", "items": {"type": "string"}}}}, "description": "ADR-0319: recorded model calls mocked replay cannot serve, by gen_ai.system: their count and up to 10 endpoint host[:port]. Non-empty only under --permissive (a strict replay refuses to start); they ran live if the workload made them."},
+        "child_processes_observed": {"type": "boolean", "description": "ADR-0319: the replayed process reported the child processes it started (audit hook installed)."},
+        "child_processes_spawned": {"type": "integer", "minimum": 0, "description": "ADR-0319: processes the replayed Python process started (subprocess, os.system, posix_spawn, fork, exec); their network and file activity is not observed. A lower bound when child_processes_capped is true."},
+        "child_processes_argv0": {"type": "array", "items": {"type": "string"}, "description": "ADR-0319: distinct basenames of the programs started, first 10 (never arguments)."},
+        "child_processes_capped": {"type": "boolean", "description": "ADR-0319: more child processes were started than the observer logs per process."}
       }
+    },
+    "model_calls_not_servable": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mocked mode (ADR-0319): recorded model calls on a surface mocked replay cannot serve (an unserved provider, or a served surface with no recorded response). A strict replay refuses to start when this is non-zero (error.type ModelSurfaceNotServable). Additive and optional."
     },
     "exit_code": {
       "type": ["integer", "null"],
@@ -166,7 +177,8 @@
       "type": "object",
       "properties": {
         "type": {"type": "string"},
-        "message": {"type": "string"}
+        "message": {"type": "string"},
+        "model_calls_not_servable_by_system": {"type": "object", "additionalProperties": {"type": "object", "properties": {"count": {"type": "integer", "minimum": 0}, "hosts": {"type": "array", "items": {"type": "string"}}}}, "description": "ADR-0319, on error.type ModelSurfaceNotServable: the unservable recorded model calls by gen_ai.system."}
       },
       "description": "Error details if status is failure or aborted."
     },

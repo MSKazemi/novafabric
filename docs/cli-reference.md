@@ -1249,7 +1249,7 @@ nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --output-dir /mnt/repla
 Options:
 - `--mode {mocked,forensic,semantic,exact,intervention}` — replay mode (default: `mocked`). Tab-completion available via `nova --install-completion`.
   `exact` re-executes nothing: it checks whether the recorded run meets the exact-replay preconditions and exits `0` with `eligible for exact replay` when it does. An ineligible capsule (`env.lock` not `deterministic`, an unseeded model call, a non-re-runnable command, schema drift) exits `1` with `status: failure` in `replay_result.yaml` and each reason printed; it was a green tick and exit `0`. `semantic` prints the mean pairwise similarity of the recorded responses; with fewer than two responses there is nothing to compare, so `similarity_score` is absent (it read `1.0`) and `divergence_reason` says why.
-- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below), or exits 3 with `ToolOverrideUnenforceable` when a strict mocked replay would refuse to start (see *Per-tool overrides* below). In `mocked` mode each recorded tool call is labelled with exactly what the replay will do (`[MOCK]`, `[MOCK (never live)]`, `[MOCK (override not honoured: needs --allow-…)]`, `[LIVE]`, `[LIVE (override honoured)]`, `[DENY]`), followed by a `Tool overrides (replay.yaml)` table
+- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below) or records a model call mocked replay cannot serve (`error.type: ModelSurfaceNotServable`; each listed as `[LIVE] model call (<system>, <host>)`, see below), or exits 3 with `ToolOverrideUnenforceable` when a strict mocked replay would refuse to start (see *Per-tool overrides* below). In `mocked` mode each recorded tool call is labelled with exactly what the replay will do (`[MOCK]`, `[MOCK (never live)]`, `[MOCK (override not honoured: needs --allow-…)]`, `[LIVE]`, `[LIVE (override honoured)]`, `[DENY]`), followed by a `Tool overrides (replay.yaml)` table
 - `--allow-readonly` — safety-ladder rung: permit `read-only` tools
 - `--allow-mutating` — rung for `idempotent-write` and `non-idempotent-write` tools
 - `--allow-external-side-effects` — rung for `external-side-effect` tools (implies `--allow-mutating`)
@@ -1266,7 +1266,7 @@ Options:
 | Mode | Re-executes command? | Re-executes models? | Re-executes tools? | Output |
 |---|---|---|---|---|
 | `forensic` | No | No | No | Inspection report |
-| `mocked` | Yes (Python workloads) | OpenAI `chat.completions` and Responses API, Anthropic `messages` — sync or async, streamed or not: from the capsule. `parse`, legacy completions, Anthropic `messages.stream()`, `with_raw_response`: refused (live with `--permissive`). Other providers: live, connections reported | MCP `ClientSession.call_tool`: from the capsule, unmatched calls refused (live with `--permissive` only with `--allow-unknown-mutation`). Functions declared with `novafabric.capture.record.tool` (experimental, ADR-0306): from the capsule before the body runs, unmatched or unservable calls refused (live with `--permissive` only if an `--allow-*` flag permits the declared mutation class). Every other tool: **live** | Replay result with served/unmatched counters and any divergence |
+| `mocked` | Yes (Python workloads) | OpenAI `chat.completions` and Responses API, Anthropic `messages` — sync or async, streamed or not: from the capsule. `parse`, legacy completions, Anthropic `messages.stream()`, `with_raw_response`: refused (live with `--permissive`). A capsule recording a model call no served surface can serve (Ollama, Hugging Face, other providers): refused before spawning (`ModelSurfaceNotServable`; live and reported with `--permissive`) | MCP `ClientSession.call_tool`: from the capsule, unmatched calls refused (live with `--permissive` only with `--allow-unknown-mutation`). Functions declared with `novafabric.capture.record.tool` (experimental, ADR-0306): from the capsule before the body runs, unmatched or unservable calls refused (live with `--permissive` only if an `--allow-*` flag permits the declared mutation class). Every other tool: **live** | Replay result with served/unmatched counters and any divergence |
 | `semantic` | No | No | No | Similarity score (0–1.0) across model call responses |
 | `exact` | No | No | No | Eligibility check: deterministic env + seeded calls |
 | `intervention` | Yes | Substituted + recorded (warn on divergence) | **Live** (no tool dispatcher) | Counterfactual capsule marked `replay_mode: intervention` (experimental, ADR-0086) |
@@ -1288,6 +1288,24 @@ records `intervention.downstream_reexecuted: false`. `exact` reports it not elig
 `forensic` and `semantic` work as for any capsule. See
 [which capsules each mode accepts](architecture/replay-modes.md#which-capsules-each-mode-accepts).
 
+**Model calls replay cannot serve** (works today, unreleased after v0.108.0; ADR-0319). A capsule that records a
+model call on a surface `mocked` does not serve — an Ollama, Hugging Face `InferenceClient`
+or other provider's HTTP call, which the wire hook records without a response — or a
+served-surface call whose response was not recorded, is refused before anything is
+spawned: `status: aborted`, `error.type: ModelSurfaceNotServable` (count and endpoint
+host per `gen_ai.system`), exit 1, also under `--dry-run`. `--permissive` runs it — the
+call goes live — and reports `model_calls_not_servable` and
+`replay_contract.model_calls_not_servable_by_system`; the summary line then reads
+`model calls: 0 of 1 recorded served from the capsule, 0 unmatched; 1 NOT servable
+(ollama: 1 (127.0.0.1:11434)) …`. Up to v0.108.0 such a call was ignored and the replay
+reported `0 of 0 served` and success.
+
+**Network scope and child processes** (works today, unreleased after v0.108.0; ADR-0319). The live-connection
+count covers the replayed Python process (`network_observation_scope: python-process`).
+Processes it starts (`ssh`, `curl`, `git`, …) are counted in
+`replay_contract.child_processes_spawned` and named in `child_processes_argv0`; `nova
+replay` warns that their network and file activity is not observed. Report-only.
+
 **Per-tool overrides** (experimental, since v0.105.0, ADR-0306). A capsule's `replay.yaml`
 `tool_overrides` (`{tool_name, allow}`, or the legacy `action: replay|refuse`) are
 enforced inside the replayed `mocked` process on both intercepted surfaces. A restriction
@@ -1303,7 +1321,7 @@ exit 3, also under `--dry-run`); `--permissive` starts and reports an
 
 **Exit codes:** `0` — replay succeeded, or a `--dry-run` the real run would not refuse ·
 `1` — replay failed or was aborted (a divergence under the fail-closed default,
-`CapsuleNotReplayable`, a replayed command that could not be launched —
+`CapsuleNotReplayable`, `ModelSurfaceNotServable`, a replayed command that could not be launched —
 `error.type: ReplayLaunchError` — a fatal intervention check) or a usage
 error · `2` — `--environment` did not match the capsule's recorded environment · `3` —
 `mocked` refused to start because a `replay.yaml` `allow: false` override cannot be
@@ -1320,7 +1338,7 @@ Output is written to `$NOVAFABRIC_HOME/replays/<replay-ulid>/replay_result.yaml`
 ✓ Replay written: /home/you/.novafabric/replays/01HXBM1Y3K2NGH9V0RD9P0ZDC4  (replay_id=01HXBM1Y3K2NGH9V0RD9P0ZDC4  mode=mocked)
   model calls: 2 of 2 served from the capsule, 0 unmatched
   tool calls (MCP call_tool, record.tool, ADK, Agents SDK): 2 of 2 served, 0 live, 0 unmatched; 0 recorded on surfaces replay does not intercept
-  network: 0 live connections from the replayed process — observed, not blocked
+  network: 0 live connections from the replayed Python process — observed, not blocked
 ```
 
 ---

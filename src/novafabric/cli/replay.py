@@ -14,6 +14,7 @@ from novafabric.replay._engine import ReplayEngine
 from novafabric.replay._errors import ReplayOverrideUnenforceableError
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._intervention import InterventionError
+from novafabric.replay._servability import describe_by_system
 from novafabric.replay.environment_gate import (
     EXIT_ENVIRONMENT_MISMATCH,
     ReplayEnvironmentMismatchError,
@@ -186,10 +187,20 @@ def replay_cmd(
     emits the counterfactual streams without re-running; exact reports them
     not eligible; forensic and semantic work as usual.
 
+    A capsule that records model calls mocked replay cannot serve (Ollama,
+    Hugging Face, other providers' raw HTTP, or a served surface whose response
+    was never recorded) is refused up front too (error.type
+    ModelSurfaceNotServable, exit 1, also under --dry-run, which lists each as
+    [LIVE] model call); --permissive runs it and reports model_calls_not_servable.
+    Network observation covers the replayed Python process only; child
+    processes it starts are counted (replay_contract.child_processes_spawned),
+    not observed.
+
     \b
     Exit codes:
       0  replay succeeded, or a --dry-run the real run would not refuse
-      1  replay failed or was aborted (incl. CapsuleNotReplayable, a
+      1  replay failed or was aborted (incl. CapsuleNotReplayable,
+         ModelSurfaceNotServable, a
          divergence under the fail-closed default, a replayed command that
          could not be launched: error.type ReplayLaunchError)
       2  --environment did not match the capsule's recorded environment, or
@@ -311,13 +322,32 @@ def replay_cmd(
     if result.model_calls_available is not None:
         # ADR-0300: what was actually served, so "✓" never reads as more.
         errors = int((result.replay_contract or {}).get("model_errors_replayed") or 0)
-        console.print(
+        served_line = (
             f"  model calls: {result.model_calls_mocked} of "
             f"{result.model_calls_available} served from the capsule"
             + (f" ({errors} raised as the recorded error{'s' if errors != 1 else ''})"
                if errors else "")
             + f", {result.model_calls_unmatched or 0} unmatched"
         )
+        unserved = int(result.model_calls_not_servable or 0)
+        if unserved:
+            # ADR-0319: never "0 of 0" while a recorded call could not be served.
+            by_system = (result.replay_contract or {}).get(
+                "model_calls_not_servable_by_system"
+            ) or {}
+            recorded = int(result.model_calls_available or 0) + unserved
+            served_line = (
+                f"  model calls: {result.model_calls_mocked} of {recorded} recorded "
+                "served from the capsule"
+                + (f" ({errors} raised as the recorded error{'s' if errors != 1 else ''})"
+                   if errors else "")
+                + f", {result.model_calls_unmatched or 0} unmatched; {unserved} NOT "
+                f"servable ({describe_by_system(by_system)}) — not intercepted, live "
+                "if the workload made it"
+            )
+            console.print(served_line, style="yellow", markup=False, highlight=False)
+        else:
+            console.print(served_line)
         not_intercepted = (result.tool_calls_recorded or 0) - (
             result.tool_calls_available or 0
         )
@@ -347,9 +377,22 @@ def replay_cmd(
             where = ", ".join(contract.get("network_destinations") or [])
             console.print(
                 f"  network: {live}{'+' if contract.get('network_connections_capped') else ''}"
-                f" live connection{'s' if live != 1 else ''} from the replayed process"
+                f" live connection{'s' if live != 1 else ''} from the replayed Python process"
                 + (f" ({where})" if where else "")
                 + " — observed, not blocked"
+            )
+        children = int(contract.get("child_processes_spawned") or 0)
+        if children:
+            # ADR-0319: the network observer's scope is the Python process.
+            names = ", ".join(contract.get("child_processes_argv0") or []) or "unnamed"
+            console.print(
+                f"  ⚠ {children}{'+' if contract.get('child_processes_capped') else ''} "
+                f"child process{'es' if children != 1 else ''} started during the "
+                f"replay ({names}): {'their' if children != 1 else 'its'} network and "
+                "file activity is not observed (network_observation_scope: python-process)",
+                style="yellow",
+                markup=False,
+                highlight=False,
             )
     if result.error and (
         result.status == "aborted"

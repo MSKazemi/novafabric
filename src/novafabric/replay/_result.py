@@ -36,6 +36,9 @@ class ReplayResult:
     # ADR-0300, additive and optional, `mocked` mode only.
     model_calls_available: int | None = None  # servable recorded responses
     model_calls_unmatched: int | None = None  # calls with no recorded answer
+    # ADR-0319, additive and optional, `mocked` mode only: recorded model calls
+    # on a surface mocked replay cannot serve (they would run live).
+    model_calls_not_servable: int | None = None
     tool_calls_live: int | None = None  # intercepted-surface calls run live
     tool_calls_unmatched: int | None = None  # intercepted-surface calls refused
     queues_fully_consumed: bool | None = None
@@ -75,6 +78,7 @@ class ReplayResult:
             "tool_calls_recorded",
             "model_calls_available",
             "model_calls_unmatched",
+            "model_calls_not_servable",
             "tool_calls_live",
             "tool_calls_unmatched",
             "queues_fully_consumed",

@@ -91,6 +91,14 @@ MAX_LISTED_DIVERGENCES = 50
 #: Most distinct ``host:port`` network destinations listed in a result.
 MAX_LISTED_NETWORK_DESTINATIONS = 20
 
+#: What ``NetworkObserver`` sees (ADR-0319): sockets of the replayed Python
+#: process -- and of Python children that load the replay dispatcher -- never
+#: those of a non-Python child process.
+NETWORK_OBSERVATION_SCOPE = "python-process"
+
+#: Most distinct child-process program names listed in a result.
+MAX_LISTED_CHILD_PROCESSES = 10
+
 
 # ── model calls ──────────────────────────────────────────────────────────────
 
@@ -735,6 +743,23 @@ class ReplayContractReport:
     echo_matched: int = 0
     echo_not_checked: dict[str, int] = field(default_factory=dict)
     echo_mismatches: list[dict[str, Any]] = field(default_factory=list)
+    #: ADR-0319: recorded model calls mocked replay cannot serve, by
+    #: ``gen_ai.system`` (``{"count", "hosts"}``); they run live if made.
+    model_calls_not_servable_by_system: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
+    #: ADR-0319: child processes the replayed process started (audit hook);
+    #: their network and file activity is not observed.
+    child_processes_observed: bool = False
+    child_processes_spawned: int = 0
+    child_processes_capped: bool = False
+    child_processes_argv0: list[str] = field(default_factory=list)
+
+    @property
+    def model_calls_not_servable(self) -> int:
+        return sum(
+            int(v.get("count", 0)) for v in self.model_calls_not_servable_by_system.values()
+        )
 
     @property
     def queues_fully_consumed(self) -> bool:
@@ -793,10 +818,20 @@ class ReplayContractReport:
             "network_observed": self.network_observed,
             "network_connections_live": self.network_connections_live,
             "network_destinations": self.network_destinations[:MAX_LISTED_NETWORK_DESTINATIONS],
+            "network_observation_scope": NETWORK_OBSERVATION_SCOPE,
+            "model_calls_not_servable_by_system": {
+                k: {"count": int(v.get("count", 0)), "hosts": list(v.get("hosts") or [])}
+                for k, v in self.model_calls_not_servable_by_system.items()
+            },
+            "child_processes_observed": self.child_processes_observed,
+            "child_processes_spawned": self.child_processes_spawned,
+            "child_processes_argv0": self.child_processes_argv0[:MAX_LISTED_CHILD_PROCESSES],
             "divergences": listed,
         }
         if self.network_connections_capped:
             out["network_connections_capped"] = True
+        if self.child_processes_capped:
+            out["child_processes_capped"] = True
         if self.tool_overrides:
             out["tool_overrides"] = [dict(o) for o in self.tool_overrides]
         if len(self.divergences) > len(listed):
@@ -922,6 +957,16 @@ def summarize(
                 report.network_destinations.append(destination)
         elif kind == "network_live_capped":
             report.network_connections_capped = True
+        elif kind == "process_observer_installed":
+            report.child_processes_observed = True
+        elif kind in ("child_process", "child_process_exec"):
+            if kind == "child_process":
+                report.child_processes_spawned += 1
+            name = ev.get("argv0")
+            if isinstance(name, str) and name and name not in report.child_processes_argv0:
+                report.child_processes_argv0.append(name)
+        elif kind == "child_process_capped":
+            report.child_processes_capped = True
         elif kind == "tool_mocked":
             report.tool_calls_mocked += 1
             _surface_of(ev)["mocked"] += 1

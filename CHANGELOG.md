@@ -11,6 +11,27 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Changed — BREAKING
+
+- **Mocked replay refuses a capsule whose recorded model calls it cannot serve** (works today, ADR-0319). Before,
+  a model call recorded by the wire hook on a surface replay does not serve (Ollama, Hugging Face `InferenceClient`,
+  other providers' raw HTTP; or a served surface with no recorded response) was ignored: the replay said
+  "model calls: 0 of 0 served" and `status: success` while the call ran live. A strict `nova replay` now stops
+  before anything runs: `status: aborted`, `error.type: ModelSurfaceNotServable` (count and endpoint hosts per
+  `gen_ai.system`), exit 1, also under `--dry-run`, which lists each as `[LIVE] model call (<system>, <host>)`.
+  `--permissive` runs it and reports `model_calls_not_servable`,
+  `replay_contract.model_calls_not_servable_by_system` and a `model_surface_not_servable` divergence (a warning).
+  Capsules whose calls are all served, and ADR-0305 transport records, are unaffected.
+
+### Added
+
+- **Mocked replay says what its network observation covers and counts child processes** (works today, ADR-0319).
+  `replay_contract.network_observation_scope: python-process`; `child_processes_spawned` and
+  `child_processes_argv0` (program basenames only, never arguments) from a CPython audit hook on
+  `subprocess.Popen`, `os.system`, `os.posix_spawn`, `os.fork`/`os.forkpty` and `os.exec`. When a replayed
+  workload started any, `nova replay` warns that their network and file activity is not observed. Report-only:
+  the replay outcome is unchanged. All new result fields are additive and optional.
+
 ## [0.108.0] - 2026-10-25
 
 **Verification that checks content, state that survives a crash, and a dashboard that tells the truth.**
