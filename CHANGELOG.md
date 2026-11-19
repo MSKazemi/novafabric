@@ -11,6 +11,25 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Added
+
+- **Mocked replay reports whether it reproduced the recorded run** (experimental, ADR-0321). A new, additive
+  `fidelity` block in `replay_result.yaml` compares the replay with the capsule: the exit code, the stdout and
+  stderr SHA-256 digests, the model and tool call sequence, the divergence state and any live or unintercepted
+  call. `verdict` is `faithful`, `diverged` (the differing checks are named), `failed` (refused, timed out, not
+  launched, dispatcher not installed) or `not_compared` (the capsule did not record the exit code or the output
+  streams, as in a capsule from before ADR-0251 evidence digests) — never `faithful` by default. Nothing is
+  normalised; a declared normalisation rule set is future design. `status` keeps its meaning (how the replayed
+  process ended), so a faithful replay of a run that failed is `status: failure` with `verdict: faithful`, and a
+  replay that exited 0 but printed something else is `status: success` with `verdict: diverged`. `nova replay`
+  prints the verdict and the checks that differ.
+- **A mocked replay writes a replay capsule** beside its result (`capsule.yaml` with `replay_mode: mocked` and
+  `replay_of_run_id`, the served call streams with a placeholder for each call not served from the capsule,
+  `outputs/stdout.txt` / `stderr.txt` after the built-in secret scanner, `env.lock`), so
+  `nova diff <capsule> <replay-dir>` compares the two runs. The result names it in `replay_capsule_ref`.
+- **`nova replay --require-faithful`** (mocked mode only, experimental): exit `4` unless the verdict is
+  `faithful`, `0` when it is, also for a faithful replay of a run that failed.
+
 ## [0.108.0] - 2026-10-25
 
 **Verification that checks content, state that survives a crash, and a dashboard that tells the truth.**

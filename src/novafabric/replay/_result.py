@@ -54,6 +54,13 @@ class ReplayResult:
     exact_reasons: list[str] | None = None
     # tool-call schema drift findings (ADR-0128; additive, optional)
     schema_drift: list[dict[str, Any]] | None = None
+    # ADR-0321, additive and optional, `mocked` mode: outcome equivalence with
+    # the recorded run (`verdict` + `checks`). `status` keeps its meaning (how
+    # the replayed process ended): a faithful replay of a run that failed is
+    # `status: failure` with `fidelity.verdict: faithful`.
+    fidelity: dict[str, Any] | None = None
+    # ADR-0321: the replay capsule beside this result (`nova diff` input).
+    replay_capsule_ref: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -102,6 +109,10 @@ class ReplayResult:
             d["exact_reasons"] = self.exact_reasons
         if self.schema_drift is not None:
             d["schema_drift"] = self.schema_drift
+        if self.fidelity is not None:
+            d["fidelity"] = self.fidelity
+        if self.replay_capsule_ref is not None:
+            d["replay_capsule_ref"] = self.replay_capsule_ref
         return d
 
 

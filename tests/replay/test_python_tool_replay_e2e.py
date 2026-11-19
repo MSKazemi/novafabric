@@ -19,6 +19,7 @@ from typing import Any
 import jsonschema
 import pytest
 import yaml
+from _mocked_replay_agent import assert_replay_outputs_hold_no_value
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -537,9 +538,7 @@ def test_no_argument_or_result_value_reaches_the_event_log_or_result(env: Env) -
         capsule, plan=[_call("sentinel", SENTINEL), _call("sentinel", SENTINEL)]
     )
     assert result["status"] == "failure"
-    for path in replay_dir.rglob("*"):
-        if path.is_file():
-            assert SENTINEL not in path.read_text(errors="replace"), path
+    assert_replay_outputs_hold_no_value(replay_dir, capsule, SENTINEL)
 
 
 def test_a_secret_in_a_tool_result_is_stored_and_served_redacted(env: Env) -> None:

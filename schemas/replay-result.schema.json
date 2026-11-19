@@ -183,6 +183,42 @@
         }
       },
       "description": "Tool calls whose stored arguments/result no longer conform to their declared *_schema_ref (ADR-0128). Additive, optional; recorded in every mode, gating only in exact."
+    },
+    "fidelity": {
+      "type": "object",
+      "description": "Mocked mode, experimental (ADR-0321): outcome equivalence of the replay with the recorded run. `status` keeps its meaning (how the replayed process ended), so a faithful replay of a run that failed has status failure and verdict faithful. Additive and optional.",
+      "required": ["verdict", "checks"],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["faithful", "diverged", "failed", "not_compared"],
+          "description": "faithful: every computed check equal, no divergence, no live or unintercepted call. diverged: a computed check is unequal. failed: the replayed command did not run to completion (refused, timed out, not launched, dispatcher not installed). not_compared: the capsule lacks the recorded exit code or output streams. Never faithful by default."
+        },
+        "normalization": {
+          "type": "string",
+          "enum": ["none"],
+          "description": "No value is normalised before comparison. A declared normalisation rule set is future design."
+        },
+        "reason": {"type": "string", "description": "Why the verdict is failed."},
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "equal"],
+            "properties": {
+              "name": {"type": "string", "description": "exit_code, stdout_sha256, stderr_sha256, model_call_sequence, tool_call_sequence, divergence, live_calls, tool_result_echo; more may be added."},
+              "equal": {"type": ["boolean", "null"], "description": "null when the check could not be computed."},
+              "recorded": {"description": "The recorded value (an exit code, a sha256:<hex> digest, a call sequence, a count)."},
+              "replayed": {"description": "The replayed value, in the same form."},
+              "note": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "replay_capsule_ref": {
+      "type": "string",
+      "description": "Mocked mode (ADR-0321): the replay capsule's manifest, relative to the replay result directory; `nova diff <capsule> <replay-dir>` compares the two runs. Additive and optional."
     }
   }
 }

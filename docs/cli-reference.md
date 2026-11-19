@@ -1257,6 +1257,7 @@ Options:
 - **Policy gate.** Any of the three write-permitting rungs (`--allow-mutating`, `--allow-external-side-effects`, `--allow-unknown-mutation`), alone or combined, triggers the audited `replay_mutating` policy check before the replay starts, in every mode and with `--dry-run`. A deny, or a policy-engine error, refuses the replay before anything runs. `--allow-readonly` and no flag are not gated. *Unreleased (after v0.105.0):* up to v0.105.0 only `--allow-mutating` triggered the check.
 - The four rungs drive the `--dry-run` report. In a `mocked` replay they gate the intercepted tool surfaces (MCP `call_tool`, `record.tool`, Google ADK tools through the tool plugin, and OpenAI Agents function tools through `wrap_tools`) in two places only — ADR-0306, experimental: under `--permissive` an unmatched call runs live only if its class is permitted (`none` always is; a `record.tool` call uses its declared class, an ADK tool the class `make_tool_plugin` declares, an Agents SDK tool the class `wrap_tools` declares), and a `replay.yaml` `allow: true` override re-executes a tool only if its class is permitted. They never stop a tool replay does not intercept.
 - `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces run **live**, an unmatched MCP, `record.tool`, ADK or Agents SDK tool call runs live only if a ladder flag permits its mutation class — `--allow-unknown-mutation` for MCP, the declared class for `record.tool`, ADK and Agents SDK tools — and never when `replay.yaml` says `allow: false` (otherwise it is refused and counted in `replay_contract.tool_calls_refused`), and unconsumed recordings are only reported. *Changed in v0.105.0 (ADR-0306 Q3):* `--permissive` alone used to run every unmatched MCP call live. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
+- `--require-faithful` — `mocked` mode only, **experimental** (ADR-0321): exit `4` unless the replay's `fidelity.verdict` is `faithful` (it replays the recorded exit code, stdout, stderr and call sequence, with no divergence and no live call), and exit `0` when it is — also for a faithful replay of a run that failed at capture. It replaces the replay's own exit code; a replay refused before it ran keeps its refusal code. Exit 1 with any other mode.
 - `--output-dir, -o PATH` — base directory for replay output (default: `$NOVAFABRIC_HOME/replays/`, the directory `nova init` creates; up to v0.106.0 it was `./.novafabric/replays/` under the current directory)
 - `--environment ENV` — experimental (ADR-0126): only replay a capsule that recorded `ENV` as its `deployment_environment` (exact match, case-sensitive). Otherwise exit 2 before anything runs; a capsule with no recorded environment is refused. Usable as a CI gate, e.g. `nova replay --environment staging --dry-run <run-id>`. The `replay_mutating` policy input also carries the recorded value as `input.resource.deployment_environment` (`null` when absent).
 - `--intervention-file PATH` — InterventionSpec YAML for `--mode intervention` (experimental, ADR-0086): one target selector (`event_index` or `span_id`) + exactly one substitution (`replace_model_response` / `replace_tool_result` / `mutate_payload`) + optional named check-functions (`fatal: true` aborts). The output capsule is diffable against the baseline with `nova diff`. Only a `model-calls` substitution reaches the re-executed workload; a `tool-calls` one changes the output capsule and the checks only (tools run live), which the result records as `intervention.substitution_delivered_to_workload: false` and the CLI reports as a warning. `replace_model_response` is the response text (`"DENY"`), a message (`{content: …, tool_calls: …, finish_reason: …}`) or a list of choices; it replaces the record's `gen_ai.response.choices`, which is what replay serves (any other shape is refused). A check's `field` is a dotted path into the record, where a number indexes a list: `gen_ai.response.choices.0.message.content`. Releases up to v0.107.0 wrote the value to a `response` field replay never read, so the re-run was served the recorded answer although the result said the substitution was delivered.
@@ -1301,13 +1302,28 @@ exit 3, also under `--dry-run`); `--permissive` starts and reports an
 `override_unenforceable` divergence. Each override's outcome is written to
 `replay_contract.tool_overrides`.
 
+**Fidelity verdict** (`mocked`, experimental, ADR-0321). `status` keeps its meaning — how
+the replayed process ended. `fidelity.verdict` says whether the replay reproduced the
+recorded run: `faithful` (exit code, stdout/stderr digests, model and tool call sequence all
+equal; no divergence; no live or unintercepted call), `diverged` (the differing checks are
+named), `failed` (refused, timed out, not launched, dispatcher not installed) or
+`not_compared` (the capsule did not record the exit code or output streams — never
+`faithful` by default). A faithful replay of a run that failed is `status: failure`,
+`fidelity.verdict: faithful`. Nothing is normalised: a timestamp or a log line printed by
+code that does not run under mocked replay makes the replay `diverged`. The replay directory
+also holds a replay capsule (`capsule.yaml` with `replay_mode: mocked` and
+`replay_of_run_id`, the served call streams, `outputs/`), so
+`nova diff --assert-no-regressions <capsule> <replay-dir>` compares the two runs. See
+[Fidelity verdict](architecture/replay-modes.md#fidelity-verdict-adr-0321-experimental).
+
 **Exit codes:** `0` — replay succeeded, or a `--dry-run` the real run would not refuse ·
 `1` — replay failed or was aborted (a divergence under the fail-closed default,
 `CapsuleNotReplayable`, a replayed command that could not be launched —
 `error.type: ReplayLaunchError` — a fatal intervention check) or a usage
 error · `2` — `--environment` did not match the capsule's recorded environment · `3` —
 `mocked` refused to start because a `replay.yaml` `allow: false` override cannot be
-enforced (`ToolOverrideUnenforceable`, also under `--dry-run`) · `124` —
+enforced (`ToolOverrideUnenforceable`, also under `--dry-run`) · `4` — `--require-faithful`
+and the fidelity verdict is not `faithful` (experimental) · `124` —
 `mocked`/`intervention`: the replayed command did not finish within 600 s and was killed
 (`error.type: ReplayTimeout`, printed and recorded in the replay result) · any
 other non-zero value — `mocked`/`intervention` pass through the replayed command's own
@@ -1321,6 +1337,7 @@ Output is written to `$NOVAFABRIC_HOME/replays/<replay-ulid>/replay_result.yaml`
   model calls: 2 of 2 served from the capsule, 0 unmatched
   tool calls (MCP call_tool, record.tool, ADK, Agents SDK): 2 of 2 served, 0 live, 0 unmatched; 0 recorded on surfaces replay does not intercept
   network: 0 live connections from the replayed process — observed, not blocked
+  fidelity: faithful
 ```
 
 ---
