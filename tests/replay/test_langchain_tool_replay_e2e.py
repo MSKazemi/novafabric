@@ -24,6 +24,7 @@ from typing import Any
 import jsonschema
 import pytest
 import yaml
+from _mocked_replay_agent import assert_replay_outputs_hold_no_value
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -351,10 +352,10 @@ def test_langchain_tool_calls_are_served_and_their_bodies_never_run(
     contract = result["replay_contract"]
     assert contract["tool_calls_by_surface"][LC]["mocked"] == len(plan)
     assert LC in contract["interception_surfaces"]
-    # No argument or result value reaches the replay's own outputs.
-    for path in replay_dir.rglob("*"):
-        if path.is_file():
-            assert SENTINEL not in path.read_text(errors="replace"), path
+    # No argument or result value reaches the replay's own outputs; the replay
+    # capsule's call streams may only hold copies of the capsule's own records
+    # (ADR-0321) -- the same rule as the ADK and Agents SDK e2e tests.
+    assert_replay_outputs_hold_no_value(replay_dir, capsule, SENTINEL)
 
 
 def test_a_langgraph_agent_with_a_served_openai_model_replays_faithfully(

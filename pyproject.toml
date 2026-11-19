@@ -443,6 +443,12 @@ dev = [
     # hypothesis (MPL-2.0) — property-based tests for chain invariants (FR-03).
     # MPL-2.0 is Tier A under ADR-0024 for dev dependencies.
     "hypothesis>=6.115",
+    # langchain-core / langgraph (MIT) — e2e tests of the LangChain/LangGraph tool seam
+    # (ADR-0306 slice 3, issue #54). Dev group only, not a user extra: langsmith (a
+    # langchain-core dependency) pulls orjson, MPL-2.0 AND (Apache-2.0 OR MIT) — Tier B,
+    # declared in .license-policy.toml as a test-only dependency (ADR-0024).
+    "langchain-core>=1.8.3",
+    "langgraph>=1.2.23",
     # prometheus-client (Apache-2.0) — optional metrics instrumentation.
     "prometheus-client>=0.26.0",
     # Phase 5 — MetadataStore (ADR-0040) dev tooling
