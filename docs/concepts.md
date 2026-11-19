@@ -17,7 +17,9 @@ signed evidence is produced.
 - How **zero-code-change capture** works via a `sitecustomize.py` loader and
   per-SDK plus wire-level hooks.
 - The **five replay modes** — `forensic`, `mocked`, `semantic`, `exact`, and experimental
-  `intervention` — and what each one honestly promises.
+  `intervention` — and what each one honestly promises. Only `mocked` and `intervention`
+  re-execute the workload; `forensic`, `semantic` and `exact` are checks over the capsule
+  that execute nothing.
 - How **structural diff** becomes a CI regression gate, and how **lineage**
   answers provenance and blast-radius questions.
 - How the **Asset Registry lifecycle** works and why promotion is governance

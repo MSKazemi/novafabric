@@ -468,13 +468,17 @@ The replayed process raises a `ReplayDivergenceError` subclass
 `ReplayUnsupportedSurfaceError`, `ReplayRecordMalformedError`,
 `ReplayToolUnmatchedError`) at the call that diverged.
 
-**Example — semantic replay against a drifting remote LLM**
+**Example — how alike a capsule's recorded responses are (`semantic`)**
+
+`semantic` executes nothing and calls no model: it scores the recorded responses
+within the capsule against one another (mean pairwise `difflib` ratio), a text
+similarity, not a comparison with a live model.
 
 ```python
 flags = ReplayFlags(mode="semantic")
 result = ReplayEngine(capsule_dir=cap, flags=flags).run()
 if result.similarity_score is not None and result.similarity_score < 0.9:
-    print(f"semantic drift detected: {result.similarity_score:.3f}")
+    print(f"recorded responses differ from one another: {result.similarity_score:.3f}")
 ```
 
 **Example — exact-replay eligibility gate for a compliance run**
