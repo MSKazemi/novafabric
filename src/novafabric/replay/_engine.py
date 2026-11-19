@@ -41,8 +41,14 @@ from novafabric.replay._errors import (
     ModelSurfaceNotServableError,
     ReplayOverrideUnenforceableError,
 )
+from novafabric.replay._fidelity import compute_fidelity
+from novafabric.replay._fidelity import not_run as fidelity_not_run
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._policy import INSTALL_REQUIRED_ENV, TOOL_POLICY_ENV, PolicyEvaluator
+from novafabric.replay._replay_capsule import (
+    REPLAY_CAPSULE_FILE,
+    write_mocked_replay_capsule,
+)
 from novafabric.replay._replayability import (
     not_reexecutable_reason,
     refusal_message,
@@ -716,6 +722,9 @@ class ReplayEngine:
                 tool_calls_recorded=len(tool_calls),
                 schema_drift=schema_drift or None,
                 error=exc.as_error(),
+                fidelity=fidelity_not_run(
+                    "the replay was refused before the command ran"
+                ).as_dict(),
             )
             write_replay_result(refused, result_dir)
             return refused
@@ -763,12 +772,15 @@ class ReplayEngine:
                 tool_calls_recorded=len(tool_calls),
                 schema_drift=schema_drift or None,
                 error=unenforceable_error.as_error(),
+                fidelity=fidelity_not_run(
+                    "the replay was refused before the command ran"
+                ).as_dict(),
             )
             write_replay_result(refused, result_dir)
             return refused
 
         policy = self._flags.divergence_policy
-        exit_code, run_error, events = self._run_replay_subprocess(
+        exit_code, run_error, events, outputs = self._run_replay_subprocess(
             command, model_calls, tool_calls, divergence_policy=policy,
             tool_policy=evaluator.tool_policy_table(),
             install_required=evaluator.has_deny_override(),
@@ -811,18 +823,53 @@ class ReplayEngine:
                     "message": report.divergence_reason or "replay diverged",
                 }
 
+        # ADR-0321: the replay capsule `nova diff` compares with the original,
+        # then the outcome-equivalence verdict over it.
+        end = _now()
+        stdout, stderr = outputs if outputs is not None else (None, None)
+        stored = write_mocked_replay_capsule(
+            result_dir=result_dir,
+            replay_id=replay_id,
+            source_run_id=run_id,
+            source_manifest=manifest,
+            model_calls=model_calls,
+            tool_calls=tool_calls,
+            events=events,
+            exit_code=exit_code,
+            status=status,
+            stdout=stdout,
+            stderr=stderr,
+            created_at=start,
+            finished_at=end,
+        )
+        fidelity = compute_fidelity(
+            capsule_dir=self._capsule_dir,
+            manifest=manifest,
+            model_calls=model_calls,
+            tool_calls=tool_calls,
+            events=events,
+            report=report,
+            exit_code=exit_code,
+            run_error=run_error,
+            stdout=stdout,
+            stderr=stderr,
+            replay_capsule=result_dir if stored else None,
+        )
+
         result = ReplayResult(
             replay_id=replay_id,
             replay_of_run_id=run_id,
             mode="mocked",
             status=status,
             start_time=start,
-            end_time=_now(),
+            end_time=end,
             duration_ms=int((time.monotonic() - t0) * 1000),
             policy_flags_used=self._flags.active_flag_names(),
             env_warnings=[w.as_dict() for w in env_warnings],
             exit_code=exit_code,
             schema_drift=schema_drift or None,
+            fidelity=fidelity.as_dict(),
+            replay_capsule_ref=REPLAY_CAPSULE_FILE,
             **_contract_fields(report),
         )
         if status == "failure":
@@ -848,7 +895,7 @@ class ReplayEngine:
         exit code alone would misdescribe what happened. The dispatchers' event
         log is discarded; ``_run_replay_subprocess`` returns it.
         """
-        code, error, _events = self._run_replay_subprocess(
+        code, error, _events, _outputs = self._run_replay_subprocess(
             command, model_calls, tool_calls, divergence_policy=divergence_policy
         )
         return code, error
@@ -862,8 +909,11 @@ class ReplayEngine:
         divergence_policy: str = "warn",
         tool_policy: dict[str, Any] | None = None,
         install_required: bool = False,
-    ) -> tuple[int, dict[str, Any] | None, list[dict[str, Any]]]:
-        """As ``_run_mocked_subprocess``, plus the dispatchers' event log.
+    ) -> tuple[
+        int, dict[str, Any] | None, list[dict[str, Any]], tuple[bytes, bytes] | None
+    ]:
+        """As ``_run_mocked_subprocess``, plus the dispatchers' event log and the
+        process's captured ``(stdout, stderr)`` (``None`` if it did not finish).
 
         ``tool_calls=None`` installs no tool dispatcher (tools run live);
         a list -- even an empty one -- installs ``MockToolDispatcher`` on
@@ -910,19 +960,30 @@ class ReplayEngine:
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = f"{site_dir}:{existing}" if existing else str(site_dir)
 
-            code, error = self._spawn(command, env)
-            return code, error, read_events(events_path)
+            code, error, outputs = self._spawn(command, env)
+            return code, error, read_events(events_path), outputs
 
     @staticmethod
     def _spawn(
         command: list[str], env: dict[str, str]
-    ) -> tuple[int, dict[str, Any] | None]:
+    ) -> tuple[int, dict[str, Any] | None, tuple[bytes, bytes] | None]:
+        """Run *command*; return its exit code, why it stopped, and its output.
+
+        The output -- ``(stdout, stderr)`` -- is captured as it always was (the
+        replayed process never wrote to the terminal) and is ``None`` when the
+        process did not run to completion (ADR-0321 compares it).
+        """
         try:
             proc = subprocess.run(
                 command, env=env, capture_output=True,
                 timeout=REPLAY_SUBPROCESS_TIMEOUT_S,
             )
-            return proc.returncode, None
+            stdout = getattr(proc, "stdout", None)
+            stderr = getattr(proc, "stderr", None)
+            return proc.returncode, None, (
+                stdout if isinstance(stdout, bytes) else b"",
+                stderr if isinstance(stderr, bytes) else b"",
+            )
         except subprocess.TimeoutExpired:
             # 124 is the conventional shell timeout code, but a command may
             # legitimately exit 124 itself — so the code alone cannot say
@@ -936,11 +997,11 @@ class ReplayEngine:
                     f"{REPLAY_SUBPROCESS_TIMEOUT_S}s and was terminated; it "
                     "did not exit on its own"
                 ),
-            }
+            }, None
         except Exception as exc:
             # The command may never have launched. "exited with code 1" would
             # assert an exit that never happened.
             return 1, {
                 "type": "ReplayLaunchError",
                 "message": f"the replayed command could not be run: {exc}",
-            }
+            }, None

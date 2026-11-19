@@ -23,6 +23,7 @@ from _mocked_replay_agent import openai_body, write_agent, write_fake_anthropic
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
+from novafabric.diff._engine import DiffEngine
 
 pytest.importorskip("openai")
 pytest.importorskip("mcp")
@@ -110,6 +111,17 @@ def test_openai_tool_calls_round_trip_through_capture_and_mocked_replay(
     assert replay["tool_calls_mocked"] == replay["tool_calls_available"] == 2
     assert replay["queues_fully_consumed"] is True
     assert "divergence_reason" not in replay
+    # ADR-0321: the model and MCP tool sequences match the recording. The
+    # capture's stderr holds the log lines of the httpx transport and the MCP
+    # server, which never run under mocked replay; nothing is normalised, so the
+    # verdict is `diverged` on stderr alone -- and `nova diff` says the same.
+    fidelity = replay["fidelity"]
+    assert fidelity["verdict"] == "diverged"
+    assert [c["name"] for c in fidelity["checks"] if c["equal"] is False] == ["stderr_sha256"]
+    (replay_dir,) = list(env["replays"].iterdir())
+    report = DiffEngine().compare(capsule, replay_dir)
+    assert [c["path"] for c in report.output_changes] == ["outputs/stderr.txt"]
+    assert report.changed_count == 1 and report.added_count == report.removed_count == 0
 
 
 def test_anthropic_tool_use_round_trips_through_capture_and_mocked_replay(

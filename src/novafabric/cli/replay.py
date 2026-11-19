@@ -12,6 +12,9 @@ from novafabric._paths import default_replays_dir
 from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.replay._engine import ReplayEngine
 from novafabric.replay._errors import ReplayOverrideUnenforceableError
+from novafabric.replay._fidelity import REQUIRED_CHECKS
+from novafabric.replay._fidelity import VERDICT_FAILED as FIDELITY_FAILED
+from novafabric.replay._fidelity import VERDICT_FAITHFUL as FIDELITY_FAITHFUL
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._intervention import InterventionError
 from novafabric.replay._servability import describe_by_system
@@ -148,6 +151,19 @@ def replay_cmd(
             ),
         ),
     ] = False,
+    require_faithful: Annotated[
+        bool,
+        typer.Option(
+            "--require-faithful",
+            help=(
+                "mocked mode only, experimental (ADR-0321): exit 4 unless the replay's "
+                "fidelity verdict is `faithful` -- the replay reproduced the recorded "
+                "exit code, stdout, stderr and call sequence, with no divergence and no "
+                "live call -- and exit 0 when it is, even for a faithful replay of a run "
+                "that failed. A replay refused before it ran keeps its refusal code."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Re-run a captured run against recorded or mocked LLM responses.
 
@@ -195,6 +211,12 @@ def replay_cmd(
     Network observation covers the replayed Python process only; child
     processes it starts are counted (replay_contract.child_processes_spawned),
     not observed.
+    A mocked replay also reports a fidelity verdict (experimental, ADR-0321):
+    faithful, diverged, failed or not_compared, against the recorded exit
+    code, stdout/stderr digests and call sequence. The status (and the exit
+    code) still says how the replayed process ended; --require-faithful gates
+    on the verdict instead. The replay directory holds a replay capsule:
+    `nova diff <capsule> <replay-dir>` compares the two runs.
 
     \b
     Exit codes:
@@ -210,6 +232,8 @@ def replay_cmd(
          `allow: false` override names a tool recorded on a transport replay
          cannot intercept (error.type ToolOverrideUnenforceable); --permissive
          starts anyway and reports override_unenforceable
+      4  --require-faithful: the fidelity verdict is not `faithful` (it
+         replaces the code the replay would otherwise exit with)
       124 mocked/intervention: the replayed command did not finish within 600s
           and was killed (error.type ReplayTimeout, printed and recorded in the
           replay result); a command that itself exits 124 has no error.type
@@ -233,6 +257,9 @@ def replay_cmd(
 
       # Mocked, but only report divergences instead of failing
       nova replay --permissive 01HXAY7M5JZ8R7K4P9DPBYK2WX
+
+      # CI gate: exit 0 only if the replay reproduced the recorded run
+      nova replay --require-faithful 01HXAY7M5JZ8R7K4P9DPBYK2WX
 
       # CI gate: only replay capsules recorded in staging (exit 2 otherwise)
       nova replay --environment staging --dry-run 01HXAY7M5JZ8R7K4P9DPBYK2WX
@@ -262,6 +289,9 @@ def replay_cmd(
         raise typer.Exit(code=1)
     if permissive and mode is not ReplayMode.mocked:
         console.print("[red]--permissive only applies to --mode mocked[/red]")
+        raise typer.Exit(code=1)
+    if require_faithful and mode is not ReplayMode.mocked:
+        console.print("[red]--require-faithful only applies to --mode mocked[/red]")
         raise typer.Exit(code=1)
 
     flags = ReplayFlags(
@@ -411,6 +441,9 @@ def replay_cmd(
         for w in result.env_warnings:
             console.print(f"  [yellow]⚠ {w.get('message', '')}[/yellow]")
 
+    if result.fidelity is not None:
+        _print_fidelity(result.fidelity)
+
     if result.intervention is not None and not result.intervention.get(
         "substitution_delivered_to_workload", True
     ):
@@ -420,10 +453,45 @@ def replay_cmd(
             highlight=False,
         )
 
+    if result.status == "aborted" and result.error:
+        raise typer.Exit(code=_refusal_exit_code(result.error))
+    if require_faithful:
+        verdict = (result.fidelity or {}).get("verdict")
+        if verdict != FIDELITY_FAITHFUL:
+            console.print(
+                f"  --require-faithful: fidelity verdict is {verdict or 'absent'} (exit "
+                f"{EXIT_NOT_FAITHFUL})",
+                style="red",
+                markup=False,
+            )
+            raise typer.Exit(code=EXIT_NOT_FAITHFUL)
+        return
     if result.status not in ("success", "dry_run"):
-        if result.status == "aborted" and result.error:
-            raise typer.Exit(code=_refusal_exit_code(result.error))
         raise typer.Exit(code=result.exit_code or 1)
+
+
+#: Exit code of ``--require-faithful`` when the verdict is not ``faithful`` (ADR-0321).
+EXIT_NOT_FAITHFUL = 4
+
+
+def _print_fidelity(fidelity: dict[str, Any]) -> None:
+    """One line: the verdict, the checks that differ and those not compared."""
+    verdict = str(fidelity.get("verdict"))
+    checks = [c for c in fidelity.get("checks") or [] if isinstance(c, dict)]
+    differs = [str(c.get("name")) for c in checks if c.get("equal") is False]
+    uncompared = [
+        str(c.get("name")) for c in checks
+        if c.get("equal") is None and c.get("name") in REQUIRED_CHECKS
+    ]
+    line = f"  fidelity: {verdict}"
+    if differs:
+        line += f" — differs: {', '.join(differs)}"
+    if uncompared:
+        line += f" — not compared: {', '.join(uncompared)}"
+    if verdict == FIDELITY_FAILED and fidelity.get("reason"):
+        line += f" — {fidelity['reason']}"
+    colour = "green" if verdict == FIDELITY_FAITHFUL else "yellow"
+    console.print(line, style=colour, markup=False, highlight=False)
 
 
 #: A replay that stopped for one of these exits with a code the replayed command could

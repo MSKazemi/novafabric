@@ -19,6 +19,7 @@ from typing import Any
 import jsonschema
 import pytest
 import yaml
+from _mocked_replay_agent import assert_replay_outputs_hold_no_value
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -274,9 +275,7 @@ def test_adk_tool_calls_are_served_and_their_bodies_never_run(env: Env) -> None:
     assert contract["tool_calls_by_surface"][ADK]["mocked"] == 3
     assert ADK in contract["interception_surfaces"]
     # No argument or result value reaches the replay's own outputs.
-    for path in replay_dir.rglob("*"):
-        if path.is_file():
-            assert SENTINEL not in path.read_text(errors="replace"), path
+    assert_replay_outputs_hold_no_value(replay_dir, capsule, SENTINEL)
 
 
 # ── fail closed ──────────────────────────────────────────────────────────────
