@@ -495,8 +495,8 @@ The verdict, in this order:
 | Verdict | When |
 |---|---|
 | `failed` | the replayed command did not run to completion: refused before it ran (`status: aborted`, no checks), timed out, could not be launched, or the replay dispatcher could not be installed |
-| `diverged` | any computed check is unequal (the failing ones are named) |
-| `not_compared` | a required check — `exit_code`, `stdout_sha256`, `stderr_sha256` — could not be computed because the capsule did not record it |
+| `diverged` | any computed check is unequal (the failing ones are named), except `stderr_sha256`, which is advisory: reported with `advisory: true`, never in the verdict |
+| `not_compared` | a required check — `exit_code`, `stdout_sha256` — could not be computed because the capsule did not record it |
 | `faithful` | every computed check is equal: no divergence, no live or unintercepted call |
 
 So a faithful replay of a run that failed is `status: failure` with

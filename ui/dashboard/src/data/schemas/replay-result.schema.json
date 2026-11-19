@@ -435,6 +435,10 @@
               },
               "note": {
                 "type": "string"
+              },
+              "advisory": {
+                "type": "boolean",
+                "description": "true: reported but never decides the verdict (stderr, ADR-0321)."
               }
             }
           }

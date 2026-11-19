@@ -222,7 +222,8 @@
               "equal": {"type": ["boolean", "null"], "description": "null when the check could not be computed."},
               "recorded": {"description": "The recorded value (an exit code, a sha256:<hex> digest, a call sequence, a count)."},
               "replayed": {"description": "The replayed value, in the same form."},
-              "note": {"type": "string"}
+              "note": {"type": "string"},
+              "advisory": {"type": "boolean", "description": "true: reported but never decides the verdict (stderr, ADR-0321)."}
             }
           }
         }

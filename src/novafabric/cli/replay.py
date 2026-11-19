@@ -478,7 +478,10 @@ def _print_fidelity(fidelity: dict[str, Any]) -> None:
     """One line: the verdict, the checks that differ and those not compared."""
     verdict = str(fidelity.get("verdict"))
     checks = [c for c in fidelity.get("checks") or [] if isinstance(c, dict)]
-    differs = [str(c.get("name")) for c in checks if c.get("equal") is False]
+    differs = [
+        str(c.get("name")) for c in checks if c.get("equal") is False and not c.get("advisory")
+    ]
+    advisory = [str(c.get("name")) for c in checks if c.get("equal") is False and c.get("advisory")]
     uncompared = [
         str(c.get("name")) for c in checks
         if c.get("equal") is None and c.get("name") in REQUIRED_CHECKS
@@ -488,6 +491,8 @@ def _print_fidelity(fidelity: dict[str, Any]) -> None:
         line += f" — differs: {', '.join(differs)}"
     if uncompared:
         line += f" — not compared: {', '.join(uncompared)}"
+    if advisory:
+        line += f" — also differs (advisory, not in the verdict): {', '.join(advisory)}"
     if verdict == FIDELITY_FAILED and fidelity.get("reason"):
         line += f" — {fidelity['reason']}"
     colour = "green" if verdict == FIDELITY_FAITHFUL else "yellow"

@@ -8,7 +8,10 @@ comparing the replay with what the capsule recorded:
 
 * ``exit_code`` -- the replayed exit code against ``capsule.yaml: exit_code``;
 * ``stdout_sha256`` / ``stderr_sha256`` -- the replayed output streams against
-  ``outputs/stdout.txt`` / ``outputs/stderr.txt``, byte for byte;
+  ``outputs/stdout.txt`` / ``outputs/stderr.txt``, byte for byte. ``stderr`` is
+  **advisory**: compared and reported (``advisory: true``) but it never decides the
+  verdict, because workloads write timestamped logs there by convention (owner
+  decision 2026-11-19, ADR-0321);
 * ``model_call_sequence`` / ``tool_call_sequence`` -- the calls the replay
   served, in the order it served them, against the recorded order;
 * ``divergence`` -- the replay contract's divergence state (ADR-0300);
@@ -62,7 +65,10 @@ NORMALIZATION_NONE = "none"
 
 #: Checks a verdict needs: without them nothing establishes the outcome, so a
 #: verdict is ``not_compared`` (never ``faithful``) when any is ``null``.
-REQUIRED_CHECKS: tuple[str, ...] = ("exit_code", "stdout_sha256", "stderr_sha256")
+REQUIRED_CHECKS: tuple[str, ...] = ("exit_code", "stdout_sha256")
+
+#: Checks that are computed and reported but never decide the verdict.
+ADVISORY_CHECKS: frozenset[str] = frozenset({"stderr_sha256"})
 
 #: Counters of calls the replay did not serve from the capsule. Any non-zero
 #: value makes ``faithful`` impossible. ``model_calls_not_servable`` and
@@ -112,6 +118,8 @@ class FidelityCheck:
         }
         if self.note:
             out["note"] = self.note
+        if self.name in ADVISORY_CHECKS:
+            out["advisory"] = True
         return out
 
 
@@ -125,7 +133,13 @@ class Fidelity:
 
     @property
     def failing_checks(self) -> list[str]:
-        return [c.name for c in self.checks if c.equal is False]
+        return [
+            c.name for c in self.checks if c.equal is False and c.name not in ADVISORY_CHECKS
+        ]
+
+    @property
+    def advisory_differences(self) -> list[str]:
+        return [c.name for c in self.checks if c.equal is False and c.name in ADVISORY_CHECKS]
 
     @property
     def uncompared_checks(self) -> list[str]:

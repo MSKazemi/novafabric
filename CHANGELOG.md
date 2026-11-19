@@ -58,7 +58,8 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **Mocked replay reports whether it reproduced the recorded run** (experimental, ADR-0321). A new, additive
   `fidelity` block in `replay_result.yaml` compares the replay with the capsule: the exit code, the stdout and
   stderr SHA-256 digests, the model and tool call sequence, the divergence state and any live or unintercepted
-  call. `verdict` is `faithful`, `diverged` (the differing checks are named), `failed` (refused, timed out, not
+  call. stderr is **advisory** (reported with `advisory: true`, never in the verdict), because workloads write
+  timestamped logs there. `verdict` is `faithful`, `diverged` (the differing checks are named), `failed` (refused, timed out, not
   launched, dispatcher not installed) or `not_compared` (the capsule did not record the exit code or the output
   streams, as in a capsule from before ADR-0251 evidence digests) — never `faithful` by default. Nothing is
   normalised; a declared normalisation rule set is future design. `status` keeps its meaning (how the replayed

@@ -113,11 +113,13 @@ def test_openai_tool_calls_round_trip_through_capture_and_mocked_replay(
     assert "divergence_reason" not in replay
     # ADR-0321: the model and MCP tool sequences match the recording. The
     # capture's stderr holds the log lines of the httpx transport and the MCP
-    # server, which never run under mocked replay; nothing is normalised, so the
-    # verdict is `diverged` on stderr alone -- and `nova diff` says the same.
+    # server, which never run under mocked replay, so stderr differs -- but stderr
+    # is advisory (reported, never in the verdict), so the replay is `faithful`;
+    # `nova diff` still shows the stderr change.
     fidelity = replay["fidelity"]
-    assert fidelity["verdict"] == "diverged"
-    assert [c["name"] for c in fidelity["checks"] if c["equal"] is False] == ["stderr_sha256"]
+    assert fidelity["verdict"] == "faithful"
+    differing = [c for c in fidelity["checks"] if c["equal"] is False]
+    assert [(c["name"], c.get("advisory")) for c in differing] == [("stderr_sha256", True)]
     (replay_dir,) = list(env["replays"].iterdir())
     report = DiffEngine().compare(capsule, replay_dir)
     assert [c["path"] for c in report.output_changes] == ["outputs/stderr.txt"]

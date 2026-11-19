@@ -49,6 +49,12 @@ _SCHEMAS = [
 
 runner = CliRunner()
 
+
+def _flat(text: str) -> str:
+    """CLI output with line wrapping undone: Rich wraps at the terminal width, and the
+    width a phrase lands on depends on the port number printed before it."""
+    return " ".join(text.split())
+
 AGENT = r'''
 import json, os, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -214,9 +220,10 @@ def test_p7_permissive_runs_live_and_reports_it(work: Workload) -> None:
     assert contract["model_calls_not_servable_by_system"]["ollama"]["count"] == 1
     assert contract["divergences"][0]["kind"] == "model_surface_not_servable"
     assert "model_surface_not_servable" in doc["divergence_reason"]
-    assert "model calls: 0 of 0" not in result.output
-    assert "model calls: 0 of 1 recorded served" in result.output
-    assert "1 NOT servable (ollama: 1" in result.output
+    flat = _flat(result.output)  # the console wraps at the terminal width
+    assert "model calls: 0 of 0" not in flat
+    assert "model calls: 0 of 1 recorded served" in flat
+    assert "1 NOT servable (ollama: 1" in flat
 
 
 def test_p7_dry_run_lists_the_live_model_call(work: Workload) -> None:
@@ -291,7 +298,7 @@ def test_a_served_capsule_with_transport_records_is_unchanged(work: Workload) ->
     assert contract["network_observation_scope"] == "python-process"
     assert contract["child_processes_observed"] is True
     assert contract["child_processes_spawned"] == 0
-    assert "NOT servable" not in result.output
+    assert "NOT servable" not in _flat(result.output)
     assert "child process" not in result.output
 
 

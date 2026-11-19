@@ -147,8 +147,15 @@ def test_tool_calls_served_out_of_recorded_order_are_diverged(tmp_path: Path) ->
 
 def test_stderr_and_exit_code_are_compared(tmp_path: Path) -> None:
     capsule = _capsule(tmp_path)
-    assert _verdict(capsule, stderr=b"warning\n").failing_checks == ["stderr_sha256"]
+    stderr_only = _verdict(capsule, stderr=b"warning\n")
+    # stderr is advisory (owner decision 2026-11-19): reported, never in the verdict.
+    assert stderr_only.failing_checks == []
+    assert stderr_only.advisory_differences == ["stderr_sha256"]
+    assert stderr_only.verdict == "faithful"
+    check = next(c for c in stderr_only.as_dict()["checks"] if c["name"] == "stderr_sha256")
+    assert check["equal"] is False and check["advisory"] is True
     assert _verdict(capsule, exit_code=2).failing_checks == ["exit_code"]
+    assert _verdict(capsule, stdout=b"other\n").failing_checks == ["stdout_sha256"]
 
 
 @pytest.mark.parametrize("error_type", ["ReplayTimeout", "ReplayLaunchError"])
@@ -216,4 +223,4 @@ def test_a_stream_that_no_longer_matches_its_evidence_digest_is_not_compared(
 
 def test_a_divergence_outranks_missing_recorded_data(tmp_path: Path) -> None:
     capsule = _capsule(tmp_path, exit_code=None)
-    assert _verdict(capsule, stderr=b"boom").verdict == "diverged"
+    assert _verdict(capsule, stdout=b"boom").verdict == "diverged"
