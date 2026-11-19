@@ -21,7 +21,9 @@ longer forwards the submitting shell's environment (ADR-0270).
   `gen_ai.system`), exit 1, also under `--dry-run`, which lists each as `[LIVE] model call (<system>, <host>)`.
   `--permissive` runs it and reports `model_calls_not_servable`,
   `replay_contract.model_calls_not_servable_by_system` and a `model_surface_not_servable` divergence (a warning).
-  Capsules whose calls are all served, and ADR-0305 transport records, are unaffected.
+  Capsules whose calls are all served, and ADR-0305 transport records, are unaffected; Ollama requests that run no
+  model (`/api/tags`, `/api/show`, `/api/version`, `/api/ps`) are not refused either (they run live and their
+  connections are reported).
 
 ### Added
 

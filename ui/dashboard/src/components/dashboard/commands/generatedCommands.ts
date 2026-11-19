@@ -11325,6 +11325,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "toggle",
         "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces run LIVE, an unmatched intercepted tool call runs live only if an --allow-* flag permits its mutation class (MCP: --allow-unknown-mutation; record.tool, Google ADK, OpenAI Agents and LangChain tools: their declared class), never if replay.yaml says `allow: false`, and unconsumed recordings are only reported. Default is fail-closed.",
         "flag": "--permissive"
+      },
+      {
+        "key": "require-faithful",
+        "label": "--require-faithful",
+        "type": "toggle",
+        "hint": "mocked mode only, experimental (ADR-0321): exit 4 unless the replay's fidelity verdict is `faithful` -- the replay reproduced the recorded exit code, stdout, stderr and call sequence, with no divergence and no live call -- and exit 0 when it is, even for a faithful replay of a run that failed. A replay refused before it ran keeps its refusal code.",
+        "flag": "--require-faithful"
       }
     ],
     "docsPath": "/docs/cli-reference/",

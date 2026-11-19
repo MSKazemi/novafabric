@@ -370,7 +370,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "`OLLAMA_BASE_URL`/`OLLAMA_HOST` at call time) and hosts the capsule "
             "recorded; one queue per endpoint, in order; exhaustion and endpoint "
             "mismatch fail closed; records captured before ADR-0320 (no response) are "
-            "never served; other Ollama endpoints (`/api/embed`, `/api/tags`, …) are not served"
+            "never served; `/api/embed` is refused like any unserved model call; "
+            "`/api/tags`, `/api/show`, `/api/version` and `/api/ps` run no model, so they "
+            "are not refused: they run live and their connections are reported (ADR-0319)"
         ),
         streaming=(
             "served as NDJSON in the recorded chunks, ending with the `done` object; "

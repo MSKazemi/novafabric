@@ -13,6 +13,12 @@ live. Every recorded model call now falls in exactly one class:
 ``not_servable``
     a logical model call replay cannot serve: an unserved surface, or a served
     surface whose response was never recorded;
+``metadata``
+    a non-inference call that capture classifies by host only -- an Ollama
+    ``/api/tags``, ``/api/show``, ``/api/version`` or ``/api/ps`` request. It
+    runs no model, so it is not refused; it runs live like any uncontrolled
+    HTTP call and its connection is reported (``network_connections_live``).
+    ``/api/embed`` and ``/api/embeddings`` do run a model and stay ``not_servable``;
 ``transport``
     an ADR-0305 transport record (an HTTP attempt beneath an SDK call,
     including an orphaned one a count promotes): never a call to serve, so it
@@ -33,10 +39,16 @@ from urllib.parse import urlsplit
 from novafabric.capture.record_roles import ROLE_TRANSPORT, classify_model_calls
 from novafabric.replay._contract import is_replayable_model_call, is_replayable_model_error
 
-Servability = Literal["servable", "not_servable", "transport"]
+Servability = Literal["servable", "not_servable", "metadata", "transport"]
 SERVABLE: Servability = "servable"
 NOT_SERVABLE: Servability = "not_servable"
+METADATA: Servability = "metadata"
 TRANSPORT: Servability = "transport"
+
+#: Ollama endpoints that run no model (listing, model info, version, running models).
+OLLAMA_METADATA_PATHS: frozenset[str] = frozenset(
+    {"/api/tags", "/api/show", "/api/version", "/api/ps"}
+)
 
 #: ``gen_ai.system`` reported for a record that carries none (or is not a dict).
 UNKNOWN_SYSTEM = "unknown"
@@ -80,6 +92,20 @@ def is_servable(record: Any) -> bool:
     return isinstance(record, dict) and any(s.serves(record) for s in SERVED_SURFACES)
 
 
+def is_metadata_call(record: Any) -> bool:
+    """An Ollama request to an endpoint that runs no model (:data:`OLLAMA_METADATA_PATHS`)."""
+    if system_of(record) != "ollama":
+        return False
+    endpoint = record.get("endpoint")
+    if not isinstance(endpoint, str):
+        return False
+    try:
+        path = urlsplit(endpoint).path.rstrip("/")
+    except ValueError:
+        return False
+    return path in OLLAMA_METADATA_PATHS
+
+
 def classify(records: Sequence[Any]) -> list[Servability]:
     """The servability of every record of a ``model-calls.jsonl``, in order.
 
@@ -90,8 +116,12 @@ def classify(records: Sequence[Any]) -> list[Servability]:
     for record, role in zip(records, classify_model_calls(list(records))):
         if role.role == ROLE_TRANSPORT:
             out.append(TRANSPORT)
+        elif is_servable(record):
+            out.append(SERVABLE)
+        elif is_metadata_call(record):
+            out.append(METADATA)
         else:
-            out.append(SERVABLE if is_servable(record) else NOT_SERVABLE)
+            out.append(NOT_SERVABLE)
     return out
 
 
