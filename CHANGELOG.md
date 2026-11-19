@@ -11,6 +11,21 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Added
+
+- **Ollama calls are recorded with their response and served by mocked replay** (experimental, ADR-0320,
+  issue #51). The `httpx` wire hook recorded `/api/chat` and `/api/generate` calls with `gen_ai.response.choices:
+  []`, and mocked replay had no Ollama surface, so every Ollama call ran live while the replay reported none.
+  Capture now records the text, `tool_calls` (canonical `{id, name, arguments}`), finish reason (from
+  `done`/`done_reason`), `prompt_eval_count`/`eval_count` usage and the response model, marked
+  `io.novafabric.api_surface: ollama.chat` / `ollama.generate`, for JSON and streamed NDJSON bodies; a streamed body
+  is copied as the workload reads it, never read ahead. Mocked replay answers those requests at the `httpx`/`httpx2`
+  transport for registry-matched Ollama hosts (including `OLLAMA_BASE_URL`/`OLLAMA_HOST` at call time) and hosts the
+  capsule recorded, one queue per endpoint in recorded order, streamed requests as NDJSON in the recorded chunks;
+  exhaustion and endpoint mismatch fail closed, and records without a response (every capsule captured before this)
+  are never served. Covered for raw `httpx` (sync, async), the `ollama` SDK and `langchain_ollama`. See
+  [docs/architecture/replay-modes.md](docs/architecture/replay-modes.md).
+
 ## [0.108.0] - 2026-10-25
 
 **Verification that checks content, state that survives a crash, and a dashboard that tells the truth.**

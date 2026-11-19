@@ -17,6 +17,7 @@ from pathlib import Path
 
 from novafabric.replay._contract import TOOL_SURFACE_MCP
 from novafabric.replay._dispatcher import SERVED_MODEL_SURFACES, UNSUPPORTED_MODEL_SURFACES
+from novafabric.replay._ollama_serve import SERVED_TRANSPORT_SURFACES
 from novafabric.replay._support_matrix import BEGIN_MARKER, END_MARKER, ROWS, render_block
 
 REPO = Path(__file__).resolve().parents[2]
@@ -46,6 +47,8 @@ def test_the_docs_page_carries_the_generated_matrix() -> None:
 def test_rows_match_the_dispatcher_patch_tables() -> None:
     served = {(m, c, a) for _, m, c, a, _ in SERVED_MODEL_SURFACES}
     served.add(("mcp.client.session", "ClientSession", "call_tool"))
+    # ADR-0320: Ollama calls are served at the httpx/httpx2 transport.
+    served |= {(m, c, a) for m, c, a, _ in SERVED_TRANSPORT_SURFACES}
     refused = {(m, c, a) for _, m, c, a, _ in UNSUPPORTED_MODEL_SURFACES}
     claimed_served = {p for r in ROWS if r.replay == "served" for p in r.patches}
     claimed_refused = {p for r in ROWS if r.replay == "refused" for p in r.patches}

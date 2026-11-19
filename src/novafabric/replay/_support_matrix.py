@@ -54,6 +54,7 @@ _SLICE4 = "tests/replay/test_slice4_matching_and_echo_contract.py"
 _ECHO = "tests/replay/test_echo_and_nested_coverage_e2e.py"
 _ADK = "tests/replay/test_adk_tool_replay_e2e.py"
 _OAI = "tests/replay/test_openai_agents_tool_replay_e2e.py"
+_OLLAMA = "tests/replay/test_ollama_replay_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -308,6 +309,48 @@ ROWS: tuple[SurfaceRow, ...] = (
         asynchronous="—",
         status="capture only",
         evidence=("`tests/test_api_proxy.py`",),
+    ),
+    SurfaceRow(
+        surface=(
+            "Ollama `/api/chat`, `/api/generate` over `httpx`/`httpx2` (raw HTTP, the "
+            "`ollama` SDK, `langchain_ollama`; ADR-0320)"
+        ),
+        capture=(
+            "wire hook: the response too -- text, `tool_calls`, `done_reason`, "
+            "`prompt_eval_count`/`eval_count`, marked `io.novafabric.api_surface: "
+            "ollama.chat` / `ollama.generate`; a streamed (NDJSON) body is copied as "
+            "the workload reads it and recorded when the read ends"
+        ),
+        replay="served",
+        replay_note=(
+            "at the httpx transport, for registry-matched Ollama hosts (incl. "
+            "`OLLAMA_BASE_URL`/`OLLAMA_HOST` at call time) and hosts the capsule "
+            "recorded; one queue per endpoint, in order; exhaustion and endpoint "
+            "mismatch fail closed; records captured before ADR-0320 (no response) are "
+            "never served; `/api/embed`, `/api/tags` and other endpoints run live"
+        ),
+        streaming=(
+            "served as NDJSON in the recorded chunks, ending with the `done` object; "
+            "without it when the capture never received one"
+        ),
+        asynchronous="served",
+        status="experimental",
+        evidence=(
+            f"{_OLLAMA}::test_ollama_chat_and_generate_round_trip_streamed_and_not",
+            f"{_OLLAMA}::test_a_tool_calling_ollama_response_round_trips",
+            f"{_OLLAMA}::test_an_abandoned_stream_is_recorded_as_such_and_replayed_as_delivered",
+            f"{_OLLAMA}::test_ollama_queue_exhaustion_fails_closed",
+            f"{_OLLAMA}::test_a_surface_mismatch_fails_closed",
+            f"{_OLLAMA}::test_a_record_without_a_response_is_never_served_empty",
+            f"{_OLLAMA}::test_the_ollama_sdk_round_trips",
+            f"{_OLLAMA}::test_langchain_ollama_round_trips",
+        ),
+        patches=(
+            ("httpx", "HTTPTransport", "handle_request"),
+            ("httpx", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx2", "HTTPTransport", "handle_request"),
+            ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
+        ),
     ),
     SurfaceRow(
         surface="Other providers' SDKs, raw HTTP to a model API",
