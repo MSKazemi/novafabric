@@ -20,9 +20,11 @@ its input (a capsule directory or a JSON file) and writes a report JSON.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from novafabric.cli.export_compliance import export_compliance_app
@@ -155,6 +157,50 @@ def test_iso42001_entry_without_control_id_is_an_error_not_a_traceback(tmp_path:
     assert result.exit_code == 2
     assert isinstance(result.exception, SystemExit)
     assert not out.exists()
+
+
+@pytest.mark.parametrize("manifest", ["run_id: [unclosed\n", "- just\n- a list\n"])
+def test_iso42001_malformed_manifest_exit_2(tmp_path: Path, manifest: str) -> None:
+    cap = tmp_path / "bad"
+    cap.mkdir()
+    (cap / "capsule.yaml").write_text(manifest, encoding="utf-8")
+    result, out = _iso(
+        tmp_path, "--catalog", str(_catalog(tmp_path, "C-1")),
+        "--evidence", "eval_gate", "--capsule", str(cap),
+    )
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert not out.exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs FIFOs")
+def test_iso42001_fifo_manifest_exit_2(tmp_path: Path) -> None:
+    cap = tmp_path / "fifo"
+    cap.mkdir()
+    os.mkfifo(cap / "capsule.yaml")
+    result, out = _iso(
+        tmp_path, "--catalog", str(_catalog(tmp_path, "C-1")),
+        "--evidence", "eval_gate", "--capsule", str(cap),
+    )
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert not out.exists()
+
+
+def test_iso42001_non_object_entry_names_its_index(tmp_path: Path) -> None:
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps([{"control_id": "C-1"}, "C-2"]), encoding="utf-8")
+    result, out = _iso(tmp_path, "--catalog", str(catalog))
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "[1]" in result.output
+    assert not out.exists()
+
+
+def test_iso42001_standard_label_with_markup_characters(tmp_path: Path) -> None:
+    result, out = _iso(tmp_path, "--catalog", str(_catalog(tmp_path, "C-1")), "--standard", "[/x] A")
+    assert result.exit_code == 0, result.output
+    assert json.loads(out.read_text())["standard"] == "[/x] A"
 
 
 def test_iso42001_standard_label(tmp_path: Path) -> None:

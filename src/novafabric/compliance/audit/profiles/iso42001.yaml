@@ -8,8 +8,7 @@ controls:
   - id: ISO42-4.1-CONTEXT
     title: Organisational context (§4.1)
     description: >
-      Run records that document the environment and configuration each AI system
-      operated in.
+      Per-run records of the model calls each AI system made.
     evidence_requirements:
       - evidence_type: model_calls
         required: true
@@ -79,8 +78,8 @@ controls:
   - id: ISO42-9.1-MONITORING-EVAL
     title: Monitoring and evaluating performance (§9.1)
     description: >
-      Run records and, optionally, lineage that show how AI system performance was
-      measured over time.
+      Per-run records of model calls and, optionally, lineage that can feed the
+      monitoring of AI system performance.
     evidence_requirements:
       - evidence_type: model_calls
         required: true

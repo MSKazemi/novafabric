@@ -910,14 +910,17 @@ controls:
 requirement. A missing field or wrong type raises `ProfileValidationError` naming the file
 and field. `evidence_type` must be one of the tokens the engine has a checker for
 (`_EVIDENCE_CHECKERS` in `compliance/audit/engine.py`): `model_calls`, `tool_permissions`,
-`pii_scan`, `policy_events`, `seal_signature`, `lineage`, `tool_calls` (exported as
-`KNOWN_EVIDENCE_TYPES`). An unknown token is refused when the profile loads, with a
-`ProfileValidationError` that lists the known ones, so a typo cannot leave a control
-silently uncovered. `tool_calls` needs a non-empty `tool-calls.jsonl`: every capture creates
+`pii_scan`, `policy_events`, `seal_signature`, `lineage`, `tool_calls` (the set is
+`KNOWN_EVIDENCE_TYPES` in `compliance/audit/engine.py`). An unknown token is refused when the
+profile loads, with a `ProfileValidationError` that lists the known ones, so a typo cannot leave
+a control silently uncovered. A control must list at least one requirement: the engine scores a
+control with nothing to check as covered, so the loader refuses one. `tool_calls` needs a non-empty `tool-calls.jsonl`: every capture creates
 that file, empty, so its existence alone is not evidence. Note that `tool_permissions` and
 `policy_events` read `tool-permission-events.jsonl`, which `nova capture` does not write
-today; when no capsule carries it, the audit report gives those requirements the status
-`not_applicable` with the note "not captured by this version", rather than failing them.
+today. When no scanned capsule carries that file, those requirements are listed under
+`evidence_not_captured` instead of `evidence_missing`: a control made only of them is reported
+`not_applicable` and excluded from the score, and a control that also has captured evidence is at
+most `partial`.
 
 To ship the profile as a built-in ID, add it to `_PROFILE_FILENAMES` in
 `compliance/audit/loader.py`. That map is what `--profile <id>`, `list_profiles()` and
@@ -942,7 +945,10 @@ lightly edited. Users who need the full text load their own licensed catalog by 
 government works (NIST) are not restricted this way. The built-in SOC 2 and ISO/IEC 42001
 profiles are held to this rule by
 `tests/compliance/audit/test_profiles_no_copied_standard_text.py` (no publisher sentence
-openers, descriptions of at most 160 characters).
+openers, descriptions of at most 160 characters). Wherever the docs name a proprietary
+framework, they carry this disclaimer: *"NovaFabric is not affiliated with, endorsed by, or
+certified by the publishers of these frameworks. A mapping shows which recorded evidence exists;
+it does not certify that a control is met."*
 
 ## Compliance exporters — adding a new format
 

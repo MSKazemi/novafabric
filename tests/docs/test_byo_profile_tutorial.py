@@ -88,3 +88,11 @@ def test_the_tutorial_never_calls_a_mapping_compliant() -> None:
 def test_the_tutorial_is_listed_in_the_index() -> None:
     index = _DOC.parent / "README.md"
     assert "map-evidence-to-your-control-framework.md" in index.read_text(encoding="utf-8")
+
+
+def test_the_tutorial_does_not_promise_unmapped_controls_show_as_gaps() -> None:
+    # A control with no evidence requirements cannot be loaded (it would score as
+    # covered), so the page must tell readers to leave such controls out.
+    text = " ".join(_text().split())
+    assert "unmapped control is an honest gap" not in text
+    assert "out of the catalog" in text

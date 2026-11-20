@@ -58,9 +58,9 @@ controls:
         description: a NovaSeal seal over the capsule that verifies
 ```
 
-Save it as `example-ai-1.yaml`. Each control needs `id`, `title` and `description`; each
-requirement needs `evidence_type` and `description`, and may set `required: false` (the default
-is `true`). The [developer guide](../developer-guide.md#adding-a-compliance-audit-profile) lists
+Save it as `example-ai-1.yaml`. Each control needs `id`, `title`, `description` and at least one
+evidence requirement; each requirement needs `evidence_type` and `description`, and may set
+`required: false` (the default is `true`). The [developer guide](../developer-guide.md#adding-a-compliance-audit-profile) lists
 every field.
 
 ### What each evidence type checks
@@ -119,8 +119,10 @@ licensed copy**:
 - copy the control **identifiers** exactly, so your report lines up with the auditor's checklist;
 - write each `title` and `description` in your own words — do not paste the publisher's text into a
   file you will share or commit;
-- map each control only to evidence types whose check (the table above) genuinely bears on it, and
-  leave the rest unmapped: an unmapped control is an honest gap for a person to assess.
+- map each control only to evidence types whose check (the table above) genuinely bears on it;
+- leave controls that no evidence type fits **out of the catalog** and assess them separately. A
+  control with no evidence requirements is refused when the catalog loads, because with nothing to
+  check it would otherwise be scored as covered.
 
 If you need a JSON report that carries a digest of the capsule for each evidenced control, the
 same catalog idea works with `nova export-compliance iso42001 --catalog controls.json --capsule
@@ -133,6 +135,7 @@ same catalog idea works with `nova export-compliance iso42001 --catalog controls
 - **It does not say a control is met.** It says which NovaFabric records exist for a run. Whether
   those records satisfy a control is a judgement for you and your auditor.
 - **It only sees what was captured.** A control about people, process or policy documents will
-  usually have no capsule evidence at all; that is expected.
+  usually have no capsule evidence at all; that is expected, and such controls stay outside the
+  catalog.
 - **Presence is not quality.** `model_calls` is met by one recorded call; it does not check that
   every call was recorded or that the records are complete.

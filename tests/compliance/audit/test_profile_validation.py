@@ -132,3 +132,18 @@ def test_cli_unknown_evidence_type_exits_2(tmp_path: Path) -> None:
     assert result.exit_code == 2, result.output
     assert isinstance(result.exception, SystemExit), result.exception
     assert "model_cals" in result.output
+
+
+def test_a_control_with_no_evidence_requirements_is_refused(tmp_path: Path) -> None:
+    # The engine scores a control with nothing to check as covered; a catalog
+    # must not be able to claim coverage that way.
+    text = _GOOD.replace(
+        "    evidence_requirements:\n      - evidence_type: model_calls\n"
+        "        description: model-calls.jsonl present\n",
+        "",
+    )
+    path = _write(tmp_path, text)
+    with pytest.raises(ProfileValidationError) as info:
+        load_profile(str(path))
+    assert "C-1" in str(info.value)
+    assert "evidence_requirements" in str(info.value)

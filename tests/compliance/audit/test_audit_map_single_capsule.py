@@ -111,11 +111,11 @@ def test_a_capsule_with_every_control_covered_passes(tmp_path: Path) -> None:
 def test_an_unknown_capsule_id_is_an_error_not_an_empty_pass(tmp_path: Path) -> None:
     data, profile = _setup(tmp_path)
     code, _, out = _run(data, profile, "no-such-capsule")
-    assert code != 0
+    assert code == 2
     assert "no-such-capsule" in out
 
 
 def test_a_capsule_id_cannot_escape_the_capsules_directory(tmp_path: Path) -> None:
     data, profile = _setup(tmp_path)
     code, _, _ = _run(data, profile, "../capsules/only-calls")
-    assert code != 0
+    assert code == 2

@@ -27,7 +27,8 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **Custom audit profiles: an unknown `evidence_type` is refused at load (breaking for broken files).**
   A typo such as `model_cals` used to load and leave its control permanently uncovered, with only a log
   warning. Loading now fails with `ProfileValidationError` naming the token and listing the known ones
-  (`nova audit map` exits 2).
+  (`nova audit map` exits 2). A control with no evidence requirements is refused the same way: the
+  engine scored such a control as covered, so a catalog could claim coverage with nothing checked.
 
 ### Fixed
 
@@ -36,11 +37,13 @@ longer forwards the submitting shell's environment (ADR-0270).
   `ISO42-7.5-DOCUMENTED-INFORMATION`, with the same evidence. `ISO42-10.2-CONTINUAL-IMPROVEMENT` is now
   `ISO42-10.1-CONTINUAL-IMPROVEMENT` (10.2 is nonconformity and corrective action). Reports and scripts
   keyed on the old IDs must use the new ones.
-- **`nova audit map --capsule ID` hid the controls that capsule failed.** The report was computed over
-  every capsule and then filtered to controls the named capsule had evidence for, so a control with no
-  evidence disappeared from the table and the JSON, the documented exit 1 never fired, and the summary
-  counts described every capsule. It now scans only that capsule: its gaps are reported `missing` and
-  exit 1. An ID that names no capsule directory, or is not a single path segment, exits 2.
+- **`nova audit map --capsule ID` hid the controls that capsule failed (behaviour change: a CI job that
+  passed may now fail).** The report was computed over every capsule and then filtered to controls the
+  named capsule had evidence for, so a control with no evidence from it disappeared from the table and
+  the JSON; the documented exit 1 fired only when a missing control still listed that capsule through an
+  optional requirement, and the summary counts described every capsule. It now scans only that capsule:
+  its gaps are reported `missing` and exit 1. An ID that names no capsule directory, or is not a single
+  path segment, exits 2.
 - **`nova export-compliance iso42001` reported evidence it had not read (breaking).** With `--capsule-id`,
   every `evidenced` control carried an all-zero placeholder digest and a fresh `verified_at` time, and
   no capsule was opened — an id that names no capsule was accepted. The command now takes
@@ -48,12 +51,13 @@ longer forwards the submitting shell's environment (ADR-0270).
   `capsule.yaml` and its model-call, tool-call and tool-permission streams, and the seal path when the
   NovaSeal seal verifies. `--capsule-id` alone is refused (exit 2); with `--capsule` it must match the
   capsule's id. A repeated `control_id` is refused, and a
-  catalog entry without `control_id` is reported as an error instead of a traceback. New
+  catalog entry that is not an object with a `control_id`, or a `capsule.yaml` that is not valid YAML or
+  not a mapping, is reported as an error (exit 2) instead of a traceback. New
   `--standard LABEL` names the catalog's framework in the report (default `ISO/IEC 42001:2023`).
   `--evidence` is still operator-declared, so evidenced controls remain `operator_asserted`.
-- **`soc2-type2` audit profile: `CC6.6` was titled as the malicious-software criterion**, which is CC6.8.
-  It is now titled for CC6.6's topic, protection against threats from outside the system boundary; the
-  control ID and its evidence are unchanged.
+- **`soc2-type2` audit profile: `CC6.6` was described with the malicious-software criterion**, which is
+  CC6.8. It is now titled and described for CC6.6's topic, protection against threats from outside the
+  system boundary; the control ID and its evidence are unchanged.
 
 ## [0.108.0] - 2026-10-25
 

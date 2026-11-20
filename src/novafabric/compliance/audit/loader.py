@@ -159,6 +159,12 @@ def _build_profile(raw: object) -> ControlProfile:
                     description=_required(req_data, "description", req_where),
                 )
             )
+        if not requirements:
+            raise _ProfileShapeError(
+                f"{where} ({ctrl_data.get('id')!r}) has no evidence_requirements: a control "
+                "with nothing to check would be scored covered. Leave it out of the profile, "
+                "or map it to evidence that bears on it"
+            )
         controls.append(
             Control(
                 id=_required(ctrl_data, "id", where),

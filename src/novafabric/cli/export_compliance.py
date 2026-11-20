@@ -37,6 +37,7 @@ from typing import Annotated, Any, Optional
 import typer
 from pydantic import BaseModel
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric._capsule_fs import CapsuleEntryError
 from novafabric.cli._output import emit_json
@@ -48,7 +49,7 @@ from novafabric.compliance.export.iso42001 import (
 )
 from novafabric.compliance.export.nist_rmf import NISTAIRMFReporter
 from novafabric.compliance.export.pmm import PmmFinding, build_pmm_report
-from novafabric.compliance.export.provenance import build_capsule_ref
+from novafabric.compliance.export.provenance import CapsuleManifestError, build_capsule_ref
 
 console = Console()
 
@@ -145,6 +146,11 @@ def iso42001_cmd(
     entries = _load_json(catalog)
     if not isinstance(entries, list):
         raise typer.BadParameter("catalog JSON must be a list of {control_id, evidence_kind?}")
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict) or "control_id" not in entry:
+            raise typer.BadParameter(
+                f"catalog entry [{index}] must be an object with a control_id"
+            )
     if capsule_id is not None and capsule is None:
         # Before this check the id alone produced an all-zero digest for a capsule
         # nobody read (BL-064); an evidence reference now always comes from a capsule.
@@ -162,7 +168,7 @@ def iso42001_cmd(
             ref = build_capsule_ref(
                 capsule, _now_iso(), seal_envelope_path=".seal/manifest.dsse" if sealed else None
             )
-        except CapsuleEntryError as exc:
+        except (CapsuleEntryError, CapsuleManifestError) as exc:
             raise typer.BadParameter(f"{capsule}: {exc}") from exc
         if ref is None:
             raise typer.BadParameter(f"{capsule} is not a capsule directory (no capsule.yaml)")
@@ -174,9 +180,9 @@ def iso42001_cmd(
         report = build_iso42001_mapping(
             entries, _split_evidence(evidence), capsule_ref=ref, standard=standard
         )
-    except (DuplicateControlIdError, KeyError) as exc:
+    except DuplicateControlIdError as exc:
         raise typer.BadParameter(f"invalid catalog: {exc}") from exc
-    _emit(report, out, label=f"{standard} mapping")
+    _emit(report, out, label=f"{escape(standard)} mapping")
 
 
 @export_compliance_app.command("gpai53")

@@ -5571,7 +5571,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-export-compliance-iso42001",
     "name": "nova export-compliance iso42001",
     "journey": "audit",
-    "description": "ISO/IEC 42001 control-evidence mapping from a declared catalog (NF-095).",
+    "description": "Control-evidence mapping from a declared catalog (ISO/IEC 42001 or your own; NF-095).",
     "fields": [
       {
         "key": "catalog",
@@ -5589,11 +5589,26 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--evidence"
       },
       {
+        "key": "capsule",
+        "label": "--capsule",
+        "type": "text",
+        "hint": "Capsule directory; evidenced controls carry a digest computed from it",
+        "flag": "--capsule"
+      },
+      {
         "key": "capsule-id",
         "label": "--capsule-id",
         "type": "text",
-        "hint": "Capsule id to attribute evidenced controls to",
+        "hint": "Expected capsule id (checked against --capsule's manifest)",
         "flag": "--capsule-id"
+      },
+      {
+        "key": "standard",
+        "label": "--standard",
+        "type": "text",
+        "hint": "Label for the catalog's framework in the report",
+        "flag": "--standard",
+        "defaultValue": "ISO/IEC 42001:2023"
       },
       {
         "key": "out",
