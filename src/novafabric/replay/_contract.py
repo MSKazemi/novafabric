@@ -892,6 +892,10 @@ class ReplayContractReport:
         ):
             return COVERAGE_PARTIAL
         return COVERAGE_COMPLETE
+    #: ADR-0306 Q7: framework-adapter runs the re-run process made, against the
+    #: runs the adapter capsule recorded (``None``: not an adapter capsule).
+    adapter_runs_expected: int | None = None
+    adapter_runs_observed: int = 0
 
     @property
     def model_calls_not_servable(self) -> int:
@@ -991,6 +995,9 @@ class ReplayContractReport:
             }
         if self.tool_overrides:
             out["tool_overrides"] = [dict(o) for o in self.tool_overrides]
+        if self.adapter_runs_expected is not None:
+            out["adapter_runs_expected"] = self.adapter_runs_expected
+            out["adapter_runs_observed"] = self.adapter_runs_observed
         if len(self.divergences) > len(listed):
             out["divergences_not_listed"] = len(self.divergences) - len(listed)
         return out
@@ -1007,6 +1014,9 @@ def surfaces_for(substitute_tools: bool) -> list[str]:
         surfaces.extend(TOOL_SURFACES)
     return surfaces
 
+
+#: ADR-0306 Q7: the re-run process made more or fewer adapter runs than recorded.
+ADAPTER_RUN_COUNT_MISMATCH = "adapter_run_count_mismatch"
 
 #: Divergence kinds counted as a refused/unmatched *tool* call.
 _TOOL_DIVERGENCE_KINDS = frozenset({"tool_call_unmatched", "tool_result_not_servable"})
@@ -1053,8 +1063,14 @@ def summarize(
     *,
     divergence_policy: str,
     substitute_tools: bool,
+    adapter_runs_expected: int | None = None,
 ) -> ReplayContractReport:
-    """Fold the dispatchers' event log into a :class:`ReplayContractReport`."""
+    """Fold the dispatchers' event log into a :class:`ReplayContractReport`.
+
+    *adapter_runs_expected* (an adapter capsule re-run from its recorded
+    process invocation, ADR-0306 Q7): a process that made a different number
+    of adapter runs diverged (``adapter_run_count_mismatch``).
+    """
     queues = model_queues(model_calls)
     tools = interceptable_tool_calls(tool_calls)
     by_surface: dict[str, dict[str, int]] = {
@@ -1169,6 +1185,8 @@ def summarize(
                 report.child_processes_argv0.append(name)
         elif kind == "child_process_capped":
             report.child_processes_capped = True
+        elif kind == "adapter_run":
+            report.adapter_runs_observed += 1
         elif kind == "tool_mocked":
             report.tool_calls_mocked += 1
             _surface_of(ev)["mocked"] += 1
@@ -1257,6 +1275,22 @@ def summarize(
                 "message": message,
                 "unconsumed": {s: n for s, n, _ in leftover},
             })
+    report.adapter_runs_expected = adapter_runs_expected
+    if (
+        adapter_runs_expected is not None
+        and report.adapter_runs_observed != adapter_runs_expected
+        and not any(d.get("kind") == ADAPTER_RUN_COUNT_MISMATCH for d in report.divergences)
+    ):
+        report.divergences.append({
+            "kind": ADAPTER_RUN_COUNT_MISMATCH,
+            "message": (
+                f"the replayed process made {report.adapter_runs_observed} framework-"
+                f"adapter run(s); the capsule recorded adapter run #{adapter_runs_expected} "
+                "of its process, so the replay did not re-run the recorded call"
+            ),
+            "recorded": adapter_runs_expected,
+            "observed": report.adapter_runs_observed,
+        })
     if len({p for p in serving_pids if p is not None}) > 1:
         report.divergences.append({
             "kind": "multiple_interpreters",

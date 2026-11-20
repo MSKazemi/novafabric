@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import textwrap
@@ -19,6 +20,7 @@ from novafabric._paths import default_replays_dir
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._tool_codec import MUTATION_CLASSES
 from novafabric.capture._ulid import new_ulid
+from novafabric.capture.process_invocation import ADAPTER_RUNS_ENV
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.policy import (
     PolicyDeniedError,
@@ -63,9 +65,10 @@ from novafabric.replay._replay_capsule import (
     write_mocked_replay_capsule,
 )
 from novafabric.replay._replayability import (
+    ReexecutionPlan,
     not_reexecutable_reason,
     refusal_message,
-    require_reexecutable_command,
+    require_reexecution_plan,
 )
 from novafabric.replay._result import ReplayResult, write_replay_result
 from novafabric.replay._servability import (
@@ -135,6 +138,19 @@ REPLAY_SUBPROCESS_TIMEOUT_S = 600
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _invocation_report(plan: ReexecutionPlan) -> str:
+    """What a re-executing replay will run, when it is not ``capsule.yaml:command``
+    (ADR-0306 Q7, owner decision O6: shown in the dry run, never prompted)."""
+    if plan.source != "process_invocation":
+        return ""
+    return (
+        "Command (the recorded process invocation of an adapter capsule, ADR-0306 Q7):\n"
+        f"  {shlex.join(plan.command)}\n"
+        f"  cwd: {plan.cwd}\n"
+        "  stdin: closed (/dev/null)\n\n"
+    )
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -387,9 +403,9 @@ class ReplayEngine:
         exit_code: int | None = None
         not_reexecuted = not_reexecutable_reason(manifest)
         if not_reexecuted is None:
-            command: list[str] = manifest.get("command", [])
+            plan = require_reexecution_plan(manifest, "intervention")
             exit_code, run_error = self._run_mocked_subprocess(
-                command, mutated_model_calls
+                plan.command, mutated_model_calls, plan=plan
             )
             status = "success" if exit_code == 0 else "failure"
         else:
@@ -541,6 +557,8 @@ class ReplayEngine:
                     for o in overrides
                 )
             message = refusal_message(manifest, "mocked")
+            if message is None:
+                report = _invocation_report(require_reexecution_plan(manifest, "mocked")) + report
             unenforceable = evaluator.unenforceable_overrides(tool_calls)
             surface_error = ModelSurfaceNotServableError(not_servable) if not_servable else None
             tool_error = ToolSurfaceNotServedError(not_served) if not_served else None
@@ -775,7 +793,7 @@ class ReplayEngine:
         not_servable = not_servable or {}
 
         try:
-            command = require_reexecutable_command(manifest, "mocked")
+            plan = require_reexecution_plan(manifest, "mocked")
         except CapsuleNotReplayableError as exc:
             # Refused before anything is spawned, and recorded: an adapter
             # capsule's `@framework:name` label is not a program.
@@ -879,7 +897,9 @@ class ReplayEngine:
         # ADR-0322: --hermetic runs only inside a sandbox that the preflight
         # proved can be built here; otherwise it is refused, never run un-isolated.
         sandbox: HermeticSandbox | None = None
-        writable = self._hermetic_writable(result_dir)
+        writable = self._hermetic_writable(
+            result_dir, plan.cwd if plan.source == "process_invocation" else None
+        )
         if self._flags.hermetic:
             try:
                 sandbox = hermetic_preflight()
@@ -910,15 +930,17 @@ class ReplayEngine:
 
         policy = self._flags.divergence_policy
         exit_code, run_error, events, outputs = self._run_replay_subprocess(
-            command, model_calls, tool_calls, divergence_policy=policy,
+            plan.command, model_calls, tool_calls, divergence_policy=policy,
             tool_policy=evaluator.tool_policy_table(),
             install_required=evaluator.has_deny_override(),
             sandbox=sandbox,
             writable=[path for _role, path in writable],
+            plan=plan,
         )
         report = summarize(
             model_calls, tool_calls, events,
             divergence_policy=policy, substitute_tools=True,
+            adapter_runs_expected=plan.adapter_runs_expected,
         )
         if unenforceable:  # --permissive: a warning on the result, not a failure
             message = ReplayOverrideUnenforceableError.describe(unenforceable)
@@ -1033,6 +1055,7 @@ class ReplayEngine:
         tool_calls: list[dict[str, Any]] | None = None,
         *,
         divergence_policy: str = "warn",
+        plan: ReexecutionPlan | None = None,
     ) -> tuple[int, dict[str, Any] | None]:
         """Run the replayed command; return its exit code and why it stopped.
 
@@ -1042,7 +1065,8 @@ class ReplayEngine:
         log is discarded; ``_run_replay_subprocess`` returns it.
         """
         code, error, _events, _outputs = self._run_replay_subprocess(
-            command, model_calls, tool_calls, divergence_policy=divergence_policy
+            command, model_calls, tool_calls, divergence_policy=divergence_policy,
+            plan=plan,
         )
         return code, error
 
@@ -1057,6 +1081,7 @@ class ReplayEngine:
         install_required: bool = False,
         sandbox: HermeticSandbox | None = None,
         writable: list[Path] | None = None,
+        plan: ReexecutionPlan | None = None,
     ) -> tuple[
         int, dict[str, Any] | None, list[dict[str, Any]], tuple[bytes, bytes] | None
     ]:
@@ -1073,6 +1098,10 @@ class ReplayEngine:
         ``writable`` (the working directory and the replay result directory) can be
         written; the temp dir holding the queues and the event log is then created
         inside the last of them, so it needs no bind of its own.
+        A *plan*
+        from an adapter capsule's recorded process invocation (ADR-0306 Q7) runs
+        in the recorded working directory with stdin closed, and tells the
+        process how many adapter runs the capsule recorded.
         """
         writable = list(writable or [])
         temp_parent = writable[-1] if sandbox is not None and writable else None
@@ -1108,6 +1137,9 @@ class ReplayEngine:
             env.pop("NOVAFABRIC_REPLAY_TOOL_QUEUE_PATH", None)
             env.pop(TOOL_POLICY_ENV, None)
             env.pop(INSTALL_REQUIRED_ENV, None)
+            env.pop(ADAPTER_RUNS_ENV, None)
+            if plan is not None and plan.adapter_runs_expected is not None:
+                env[ADAPTER_RUNS_ENV] = str(plan.adapter_runs_expected)
             if tool_calls is not None:
                 tool_queue_path = Path(tmp) / "tool_queue.json"
                 tool_queue_path.write_text(json.dumps(tool_calls))
@@ -1121,38 +1153,60 @@ class ReplayEngine:
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = f"{site_dir}:{existing}" if existing else str(site_dir)
 
+            spawn_cwd = (
+                plan.cwd if plan is not None and plan.source == "process_invocation" else None
+            )
             if sandbox is not None:
                 env = sandbox_env(env)
                 command = sandbox.wrap(
-                    command, writable=writable or [Path(tmp)], cwd=Path.cwd()
+                    command, writable=writable or [Path(tmp)], cwd=spawn_cwd or Path.cwd()
                 )
-            code, error, outputs = self._spawn(command, env)
+            if spawn_cwd is not None:
+                code, error, outputs = self._spawn(
+                    command, env, cwd=spawn_cwd, stdin_devnull=True
+                )
+            else:
+                code, error, outputs = self._spawn(command, env)
             return code, error, read_events(events_path), outputs
 
     @staticmethod
-    def _hermetic_writable(result_dir: Path) -> list[tuple[str, Path]]:
+    def _hermetic_writable(
+        result_dir: Path, cwd: Path | None = None
+    ) -> list[tuple[str, Path]]:
         """ADR-0322 (owner, 2026-11-20): the directories ``--hermetic`` makes
-        writable -- the replayed process's working directory (its outputs) and the
-        replay result directory; the rest of the host stays read-only."""
+        writable -- the replayed process's working directory (its outputs; an
+        adapter capsule's recorded one, ADR-0306 Q7) and the replay result
+        directory; the rest of the host stays read-only."""
         return [
-            ("working_directory", Path.cwd().resolve()),
+            ("working_directory", (cwd or Path.cwd()).resolve()),
             ("replay_result_dir", result_dir.resolve()),
         ]
 
     @staticmethod
     def _spawn(
-        command: list[str], env: dict[str, str]
+        command: list[str],
+        env: dict[str, str],
+        *,
+        cwd: Path | None = None,
+        stdin_devnull: bool = False,
     ) -> tuple[int, dict[str, Any] | None, tuple[bytes, bytes] | None]:
         """Run *command*; return its exit code, why it stopped, and its output.
 
         The output -- ``(stdout, stderr)`` -- is captured as it always was (the
         replayed process never wrote to the terminal) and is ``None`` when the
-        process did not run to completion (ADR-0321 compares it).
+        process did not run to completion (ADR-0321 compares it). *cwd* and
+        *stdin_devnull* are passed only when set (an adapter capsule's recorded
+        invocation, ADR-0306 Q7); a ``nova capture`` capsule's spawn is unchanged.
         """
+        extra: dict[str, Any] = {}
+        if cwd is not None:
+            extra["cwd"] = cwd
+        if stdin_devnull:
+            extra["stdin"] = subprocess.DEVNULL
         try:
             proc = subprocess.run(
                 command, env=env, capture_output=True,
-                timeout=REPLAY_SUBPROCESS_TIMEOUT_S,
+                timeout=REPLAY_SUBPROCESS_TIMEOUT_S, **extra,
             )
             stdout = getattr(proc, "stdout", None)
             stderr = getattr(proc, "stderr", None)

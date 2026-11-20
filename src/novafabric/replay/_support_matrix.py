@@ -65,6 +65,7 @@ _LC = "tests/replay/test_langchain_tool_replay_e2e.py"
 _LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
 _CHILDNET = "tests/replay/test_child_process_network.py"
 _HERMETIC = "tests/replay/test_hermetic_replay.py"
+_LG_ADAPTER = "tests/replay/test_langgraph_adapter_replay_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -549,8 +550,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             "long-running or made nested model/tool calls is not served; an unmatched "
             "or unservable call is refused (`--permissive` runs it live only if a "
             "ladder flag permits the class the plugin declares); `replay.yaml` "
-            "`tool_overrides` enforced; `nova capture python …` capsules only "
-            "(adapter capsules are refused by replay)"
+            "`tool_overrides` enforced; `nova capture python …` capsules (a "
+            "`make_google_adk_plugin()` capsule is re-run only from a recorded process "
+            "invocation that passes every guard, ADR-0306 Q7, experimental -- not tested "
+            "end to end for ADK)"
         ),
         streaming="not served (long-running tools)",
         asynchronous="served (ADK runs every tool on its event loop)",
@@ -586,8 +589,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "unmatched or unservable call is refused (`--permissive` runs it live only if "
             "a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
             "`tool_overrides` enforced; only tools passed through `wrap_tools` are "
-            "covered, and `nova capture python …` capsules only (adapter capsules are "
-            "refused by replay)"
+            "covered; `nova capture python …` capsules (a `register()` capsule is re-run "
+            "only from a recorded process invocation that passes every guard, ADR-0306 Q7, "
+            "experimental -- not tested end to end for the Agents SDK)"
         ),
         streaming="served (`Runner.run_streamed` reaches the same seam)",
         asynchronous="served (the SDK awaits every tool on its event loop)",
@@ -629,8 +633,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "if a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
             "`tool_overrides` enforced; only tools passed through `wrap_tools` are "
             "served (other `BaseTool`s: next row; `langchain_mcp_adapters` tools are "
-            "left to the MCP surface), and `nova capture python …` capsules only "
-            "(adapter capsules are refused by replay)"
+            "left to the MCP surface); `nova capture python …` capsules, and LangGraph "
+            "`wrap()` capsules re-run from their recorded process invocation when every "
+            "guard passes (ADR-0306 Q7, experimental)"
         ),
         streaming="— (tools are not streamed)",
         asynchronous="served (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph)",
@@ -643,6 +648,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_LC}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
             f"{_LC}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
             f"{_LC}::test_a_nested_record_makes_the_langchain_call_unservable",
+            f"{_LG_ADAPTER}::test_wrapped_langchain_tools_are_recorded_and_served_in_an_adapter_capsule",
         ),
         servers=("langchain_core.tools.BaseTool",),
     ),

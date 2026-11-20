@@ -72,6 +72,19 @@ class ReplayToolUnmatchedError(ReplayDivergenceError):
     kind = "tool_call_unmatched"
 
 
+class AdapterRunCountMismatchError(ReplayDivergenceError):
+    """A re-run adapter process started more framework-adapter runs than the
+    capsule recorded (ADR-0306 Q7): the extra run's calls were never recorded.
+
+    Raised in the replayed process by
+    :func:`novafabric.capture.process_invocation.begin_adapter_run` under the
+    default fail-closed policy; the engine also reports it when the process
+    made fewer runs than recorded.
+    """
+
+    kind = "adapter_run_count_mismatch"
+
+
 class ReplayRecordedToolError(Exception):
     """The recorded tool call itself failed; replay re-raises that failure.
 
@@ -99,14 +112,25 @@ class CapsuleNotReplayableError(Exception):
     error_type = "CapsuleNotReplayable"
 
     def __init__(
-        self, message: str, *, capture_mode: str | None, command: list[str]
+        self,
+        message: str,
+        *,
+        capture_mode: str | None,
+        command: list[str],
+        guard: str | None = None,
     ) -> None:
         super().__init__(message)
         self.capture_mode = capture_mode
         self.command = command
+        #: ADR-0306 Q7: the process-invocation guard that refused an adapter
+        #: capsule that records one; ``None`` when it records none at all.
+        self.guard = guard
 
     def as_error(self) -> dict[str, str]:
-        return {"type": self.error_type, "message": str(self)}
+        error = {"type": self.error_type, "message": str(self)}
+        if self.guard is not None:
+            error["guard"] = self.guard
+        return error
 
 
 class ModelSurfaceNotServableError(Exception):
