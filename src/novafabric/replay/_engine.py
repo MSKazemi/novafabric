@@ -29,8 +29,11 @@ from novafabric.policy import (
 )
 from novafabric.replay._contract import (
     ReplayContractReport,
+    describe_not_served,
     interceptable_tool_calls,
+    is_not_served_tool_record,
     is_servable_tool_record,
+    not_served_tool_calls,
     read_events,
     summarize,
 )
@@ -40,6 +43,7 @@ from novafabric.replay._errors import (
     CapsuleNotReplayableError,
     ModelSurfaceNotServableError,
     ReplayOverrideUnenforceableError,
+    ToolSurfaceNotServedError,
 )
 from novafabric.replay._fidelity import compute_fidelity
 from novafabric.replay._fidelity import not_run as fidelity_not_run
@@ -486,6 +490,16 @@ class ReplayEngine:
                     f"{endpoint_host(r) or 'host not recorded'})\n"
                     for r in unserved
                 )
+            # ADR-0306 D1: each recorded tool call replay does not serve by
+            # policy (a LangChain tool not passed through wrap_tools) runs live.
+            not_served = not_served_tool_calls(tool_calls)
+            if not_served:
+                report += "Tool calls mocked replay does not serve (ADR-0306 D1):\n" + "".join(
+                    f"  [LIVE] LangChain tool call ({r.get('tool_name')}) -- not passed "
+                    "through wrap_tools\n"
+                    for r in tool_calls
+                    if isinstance(r, dict) and is_not_served_tool_record(r)
+                )
             # ADR-0306 D8: what the replayed process will do with each
             # replay.yaml override -- the same table the real run reports.
             overrides = evaluator.override_report(tool_calls)
@@ -498,12 +512,16 @@ class ReplayEngine:
             message = refusal_message(manifest, "mocked")
             unenforceable = evaluator.unenforceable_overrides(tool_calls)
             surface_error = ModelSurfaceNotServableError(not_servable) if not_servable else None
+            tool_error = ToolSurfaceNotServedError(not_served) if not_served else None
             if message is not None:
                 refusal = {"type": CapsuleNotReplayableError.error_type, "message": message}
                 report = f"REFUSED: {message}\n\n{report}"
             elif surface_error is not None and not self._flags.permissive:
                 refusal = surface_error.as_error()
                 report = f"REFUSED: {surface_error}\n\n{report}"
+            elif tool_error is not None and not self._flags.permissive:
+                refusal = tool_error.as_error()
+                report = f"REFUSED: {tool_error}\n\n{report}"
             elif unenforceable:
                 not_enforced = ReplayOverrideUnenforceableError(unenforceable)
                 if self._flags.permissive:
@@ -517,6 +535,8 @@ class ReplayEngine:
                 report = (
                     f"WARNING ({surface_error.kind}, --permissive): {surface_error}\n\n{report}"
                 )
+            if tool_error is not None and self._flags.permissive and message is None:
+                report = f"WARNING ({tool_error.kind}, --permissive): {tool_error}\n\n{report}"
         elif self._flags.mode == "intervention":
             reason = not_reexecutable_reason(manifest)
             if reason is not None:
@@ -752,6 +772,33 @@ class ReplayEngine:
             write_replay_result(refused, result_dir)
             return refused
 
+        # ADR-0306 D1: recorded tool calls replay does not serve by policy
+        # (LangChain tools not passed through wrap_tools) would re-execute
+        # live -- a strict replay refuses to start, as for an unservable model
+        # surface (ADR-0319); under --permissive it runs and counts them.
+        not_served = not_served_tool_calls(tool_calls)
+        if not_served and not self._flags.permissive:
+            tool_error = ToolSurfaceNotServedError(not_served)
+            refused = ReplayResult(
+                replay_id=replay_id,
+                replay_of_run_id=run_id,
+                mode="mocked",
+                status="aborted",
+                start_time=start,
+                end_time=_now(),
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                policy_flags_used=self._flags.active_flag_names(),
+                env_warnings=[w.as_dict() for w in env_warnings],
+                tool_calls_recorded=len(tool_calls),
+                schema_drift=schema_drift or None,
+                error=tool_error.as_error(),
+                fidelity=fidelity_not_run(
+                    "the replay was refused before the command ran"
+                ).as_dict(),
+            )
+            write_replay_result(refused, result_dir)
+            return refused
+
         # ADR-0306 D8 / owner Q5: an `allow: false` override on a transport
         # replay cannot intercept could not be enforced -- a strict replay
         # refuses to start rather than break that promise; --permissive starts
@@ -809,6 +856,17 @@ class ReplayEngine:
                     f"workload made them ({describe_by_system(not_servable)})"
                 ),
                 "by_system": {k: dict(v) for k, v in not_servable.items()},
+            }]
+        report.tool_calls_not_served_by_surface = not_served
+        if not_served:  # --permissive: a warning on the result, not a failure
+            report.divergences[:0] = [{
+                "kind": ToolSurfaceNotServedError.kind,
+                "message": (
+                    "recorded tool calls mocked replay does not serve re-executed live if "
+                    f"the workload made them ({describe_not_served(not_served)}); each is "
+                    "counted in tool_calls_live"
+                ),
+                "by_surface": {k: dict(v) for k, v in not_served.items()},
             }]
         report.tool_overrides = evaluator.override_report(tool_calls)
         status = "success" if exit_code == 0 else "failure"

@@ -296,6 +296,49 @@
         "child_processes_capped": {
           "type": "boolean",
           "description": "ADR-0319: more child processes were started than the observer logs per process."
+        },
+        "tool_calls_live_by_tool": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "surface": {
+                "type": "string"
+              },
+              "tool_name": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "description": "Intercepted or observed tool calls that ran live, by surface and tool name (first 50 pairs); the CLI names each as a [LIVE] tool call line."
+        },
+        "tool_calls_live_by_tool_not_listed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Distinct (surface, tool name) pairs left out of tool_calls_live_by_tool."
+        },
+        "tool_calls_not_served_by_surface": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "description": "ADR-0306 D1, under --permissive: recorded tool calls mocked replay does not serve by policy (LangChain tools not passed through wrap_tools), by surface; each one made ran live and is counted in tool_calls_live."
         }
       }
     },
@@ -338,6 +381,25 @@
             }
           },
           "description": "ADR-0319, on error.type ModelSurfaceNotServable: the unservable recorded model calls by gen_ai.system."
+        },
+        "tool_calls_not_served_by_surface": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "description": "On error.type ToolSurfaceNotServed: the recorded tool calls mocked replay does not serve by policy (LangChain tools not passed through wrap_tools), by surface."
         }
       },
       "description": "Error details if status is failure or aborted."

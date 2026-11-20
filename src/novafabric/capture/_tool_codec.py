@@ -29,8 +29,14 @@ TOOL_SURFACE_ADK_TOOL = "google.adk.tool"
 #: ``wrap_tools`` (ADR-0306 slice 3, ``adapters/_oai_tool_seam``).
 TOOL_SURFACE_OPENAI_AGENTS_TOOL = "openai.agents.tool"
 #: Surface marker of a LangChain ``BaseTool`` call recorded through
-#: ``langchain_tools.wrap_tools`` (ADR-0306 slice 3, ``adapters/_langchain_tool_seam``).
+#: ``langchain_tools.wrap_tools`` (ADR-0306 slice 3, ``adapters/_langchain_tool_seam``)
+#: -- or by the seam's observer, for a tool that was not wrapped.
 TOOL_SURFACE_LANGCHAIN_TOOL = "langchain.tool"
+#: How a LangChain record was captured: ``"wrap_tools"`` (a declared tool) or
+#: ``"observed"`` (not wrapped: recorded, never served). Absent on older records.
+LANGCHAIN_SEAM_EXT = "io.novafabric.langchain_tool_seam"
+LANGCHAIN_SEAM_WRAPPED = "wrap_tools"
+LANGCHAIN_SEAM_OBSERVED = "observed"
 QUALNAME_EXT = "io.novafabric.tool_qualname"
 RESULT_CODEC_EXT = "io.novafabric.result_codec"
 NOT_SERVABLE_REASON_EXT = "io.novafabric.not_servable_reason"

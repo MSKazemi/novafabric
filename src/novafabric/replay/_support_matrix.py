@@ -62,6 +62,7 @@ _BEDROCK = "tests/replay/test_bedrock_replay_e2e.py"
 _BEDROCK_WIRE = "tests/capture/test_bedrock_wire_capture.py"
 _BEDROCK_SERVE = "tests/replay/test_bedrock_serving.py"
 _LC = "tests/replay/test_langchain_tool_replay_e2e.py"
+_LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -625,9 +626,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "unmatched or unservable call is refused (`--permissive` runs it live only "
             "if a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
             "`tool_overrides` enforced; only tools passed through `wrap_tools` are "
-            "covered (`langchain_mcp_adapters` tools are left to the MCP surface), and "
-            "`nova capture python …` capsules only (adapter capsules are refused by "
-            "replay)"
+            "served (other `BaseTool`s: next row; `langchain_mcp_adapters` tools are "
+            "left to the MCP surface), and `nova capture python …` capsules only "
+            "(adapter capsules are refused by replay)"
         ),
         streaming="— (tools are not streamed)",
         asynchronous="served (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph)",
@@ -642,6 +643,46 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_LC}::test_a_nested_record_makes_the_langchain_call_unservable",
         ),
         servers=("langchain_core.tools.BaseTool",),
+    ),
+    SurfaceRow(
+        surface=(
+            "LangChain / LangGraph tool **not** passed through `wrap_tools` (`@tool`, "
+            "`StructuredTool`, `BaseTool` subclasses run by `invoke`/`ainvoke`/`run`/"
+            "`arun` or LangGraph `ToolNode`)"
+        ),
+        capture=(
+            "recorded automatically when `langchain_core` is imported (no code "
+            "change): one `transport: python` record per tool body execution "
+            "(`langchain.tool` marker, `io.novafabric.langchain_tool_seam: observed`, "
+            "`mutation_class: unknown`), same payload rules as `wrap_tools` (values at "
+            "`forensic`/`air_gapped` only, digests otherwise), always marked "
+            "not-servable"
+        ),
+        replay="refused",
+        replay_note=(
+            "**never served** (ADR-0306 D1 serves declared tools only): a capsule that "
+            "records such calls makes a strict replay **refuse to start** "
+            "(`ToolSurfaceNotServed`, exit 1, also under `--dry-run`, which lists each "
+            "as `[LIVE] LangChain tool call`); under `--permissive`, and for a capsule "
+            "that recorded none, each tool body that runs is **live** and counted in "
+            "`tool_calls_live` and `replay_contract.tool_calls_live_by_tool` (the CLI "
+            "prints a `[LIVE] tool call` line per tool), so the fidelity verdict is "
+            "never `faithful`; a `replay.yaml` `allow: false` override refuses the call "
+            "before its body runs; the seam patches `BaseTool.run`/`arun` and the class "
+            "defining `_run`/`_arun` -- **not a LangChain extension point**, checked "
+            "against `langchain-core` 1.8.3 and `langgraph` 1.2.23 only"
+        ),
+        streaming="— (tools are not streamed)",
+        asynchronous="counted (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph)",
+        status="experimental",
+        evidence=(
+            f"{_LC_OBSERVED}::test_capture_records_langchain_tools_that_were_not_wrapped",
+            f"{_LC_OBSERVED}::test_strict_replay_refuses_to_start_when_unwrapped_tool_calls_were_recorded",
+            f"{_LC_OBSERVED}::test_permissive_runs_unwrapped_tools_live_and_counts_and_names_them",
+            f"{_LC_OBSERVED}::test_a_capsule_without_tool_records_still_counts_every_live_tool_body",
+            f"{_LC_OBSERVED}::test_wrapped_tools_are_served_while_unwrapped_ones_run_live_and_are_counted",
+            f"{_LC_OBSERVED}::test_an_allow_false_override_stops_an_unwrapped_tool_before_its_body_runs",
+        ),
     ),
     SurfaceRow(
         surface="MCP session set-up (server start, `initialize`, `list_tools`)",
@@ -682,8 +723,8 @@ ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
         surface=(
             "HTTP, shell, filesystem, framework-native tools "
-            "(other than Google ADK tools through the tool plugin, and OpenAI Agents "
-            "function tools and LangChain tools through their `wrap_tools`)"
+            "(other than Google ADK tools through the tool plugin, OpenAI Agents "
+            "function tools through their `wrap_tools`, and LangChain tools)"
         ),
         capture="network/file events, not tool records",
         replay="not intercepted",

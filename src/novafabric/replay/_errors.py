@@ -160,6 +160,57 @@ class ModelSurfaceNotServableError(Exception):
         }
 
 
+class ToolSurfaceNotServedError(Exception):
+    """A strict mocked replay refused to start: the capsule records tool calls
+    mocked replay does not serve by policy -- LangChain tools the workload did
+    not pass through ``wrap_tools`` (ADR-0306 D1 serves declared tools only).
+    Run anyway, each would re-execute live under a "mocked" label.
+
+    The tool-side twin of :class:`ModelSurfaceNotServableError`: raised *before*
+    anything is spawned, recorded as ``status: aborted`` with ``error.type:
+    ToolSurfaceNotServed``; ``nova replay`` exits 1 (also under ``--dry-run``).
+    Under ``--permissive`` the replay starts instead and reports a
+    ``tool_surface_not_served`` divergence (a warning); each call it makes is
+    counted in ``tool_calls_live``.
+    """
+
+    error_type = "ToolSurfaceNotServed"
+    kind = "tool_surface_not_served"
+
+    def __init__(self, by_surface: dict[str, dict[str, Any]]) -> None:
+        self.by_surface = {k: dict(v) for k, v in by_surface.items()}
+        super().__init__(self.describe(self.by_surface))
+
+    @property
+    def count(self) -> int:
+        return sum(int(v.get("count", 0)) for v in self.by_surface.values())
+
+    @staticmethod
+    def describe(by_surface: dict[str, dict[str, Any]]) -> str:
+        from novafabric.replay._contract import describe_not_served
+
+        total = sum(int(v.get("count", 0)) for v in by_surface.values())
+        many = total != 1
+        return (
+            f"the capsule records {total} tool call{'s' if many else ''} mocked replay "
+            f"does not serve -- {describe_not_served(by_surface)} -- replayed, "
+            f"{'they' if many else 'it'} would re-execute live. A strict replay refuses "
+            "to start; pass the tools through "
+            "novafabric.adapters.langchain_tools.wrap_tools and capture again to have "
+            f"them served, or pass --permissive to run {'them' if many else 'it'} live "
+            "and count each in tool_calls_live (ADR-0306 D1)"
+        )
+
+    def as_error(self) -> dict[str, Any]:
+        return {
+            "type": self.error_type,
+            "message": str(self),
+            "tool_calls_not_served_by_surface": {
+                k: dict(v) for k, v in self.by_surface.items()
+            },
+        }
+
+
 class ReplayRecordedErrorUnreconstructableError(ReplayDivergenceError):
     """A recorded model call failed, and mocked replay cannot raise that failure
     faithfully: the exception class is not on the per-SDK allow-list, its HTTP

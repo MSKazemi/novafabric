@@ -637,7 +637,11 @@ Inside the re-spawned process:
   recorded body result from a generated subclass of the tool — NovaFabric's
   construction, not a LangChain extension point, checked against
   `langchain-core` 1.8.3 and `langgraph` 1.2.23 — for `nova capture python …`
-  workloads only.
+  workloads only. LangChain tools **not** passed through `wrap_tools` are
+  recorded too but never served: a strict replay of a capsule that records them
+  refuses to start (`ToolSurfaceNotServed`), and under `--permissive` — or for a
+  capsule without such records — every one whose body runs is counted in
+  `tool_calls_live` and named in a `[LIVE] tool call` line (experimental).
 - **Every other tool runs live**: HTTP requests, shell commands, file writes,
   other framework-native tools, undeclared functions and other providers' SDKs are not
   intercepted. The
