@@ -9412,7 +9412,13 @@ nova audit map --profile eu-ai-act-high-risk --capsule 01HXAY7M5JZ8R7K4P9DPBYK2W
 nova audit map --profile gdpr --json
 ```
 
-**Options:** `--capsule ID` — audit a single capsule; `--json` — machine-readable output instead of a table.
+**Options:** `--capsule ID` — audit that one capsule only: the counts, the score and every
+control's status describe it alone, a control it has no evidence for is `missing` and exits 1,
+and an ID that names no capsule directory (or is not a single path segment) exits 2. Releases up
+to v0.108.0 scanned every capsule and then hid the controls the named capsule had no evidence
+for, so they never failed the gate; `--json` — machine-readable output instead of a table.
+`--profile PATH` loads your own catalog — see
+[Map evidence to your own control framework](tutorials/map-evidence-to-your-control-framework.md).
 
 ### nova audit report
 

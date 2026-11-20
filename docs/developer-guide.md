@@ -923,7 +923,8 @@ To ship the profile as a built-in ID, add it to `_PROFILE_FILENAMES` in
 `compliance/audit/loader.py`. That map is what `--profile <id>`, `list_profiles()` and
 `nova serve` resolve, and the `--profile` help text in `src/novafabric/cli/audit.py` is built
 from it (`BUILT_IN_PROFILES`), so there is no second list to edit. Without the map entry the file is still usable by path:
-`nova audit map --profile path/to/my-standard.yaml`. Run
+`nova audit map --profile path/to/my-standard.yaml` (walk-through:
+[Map evidence to your own control framework](tutorials/map-evidence-to-your-control-framework.md)). Run
 `nova audit map --profile my-standard` (or the path) to confirm it loads.
 
 > **Compliance-honesty reminder.** Audit profiles and exporters produce *evidence that
