@@ -153,13 +153,17 @@
         },
         "divergences_not_listed": {"type": "integer", "minimum": 0},
         "network_observed": {"type": "boolean", "description": "ADR-0304: the replayed process reported its outbound connections (socket connect observer installed)."},
-        "network_connections_live": {"type": "integer", "minimum": 0, "description": "ADR-0304: IPv4/IPv6 connection attempts the replayed Python process made (observed, never blocked). A lower bound when network_connections_capped is true."},
+        "network_connections_live": {"type": "integer", "minimum": 0, "description": "ADR-0304: IPv4/IPv6 connection attempts the observed Python processes of the replayed tree made (the replayed process and the children that reported in; observed, never blocked). A lower bound when network_connections_capped is true or network_observation_coverage is partial."},
         "network_connections_capped": {"type": "boolean", "description": "ADR-0304: more connections were made than the observer logs per process."},
         "network_destinations": {"type": "array", "items": {"type": "string"}, "description": "ADR-0304: distinct host:port destinations, first 20."},
-        "network_observation_scope": {"type": "string", "enum": ["python-process"], "description": "ADR-0319: what network_connections_live counts -- sockets of the replayed Python process (and of Python children that load the replay dispatcher), never those of a non-Python child process."},
+        "network_observation_scope": {"type": "string", "enum": ["python-process"], "description": "ADR-0319: what network_connections_live counts -- sockets of the replayed Python process (and of Python children that load the replay dispatcher or the child observer), never those of a non-Python child process."},
+        "network_observation_coverage": {"type": "string", "enum": ["complete", "partial", "none"], "description": "ADR-0319 (#52 part 2): complete -- every child process started through the audited calls reported its own connections (within network_observation_scope); partial -- at least one did not (child_processes_unobserved), the child count was capped, or children were not counted, so network_connections_live is a lower bound; none -- no network observer was installed."},
+        "network_connections_live_children": {"type": "integer", "minimum": 0, "description": "ADR-0319 (#52 part 2): the part of network_connections_live made by observed child processes."},
         "model_calls_not_servable_by_system": {"type": "object", "additionalProperties": {"type": "object", "properties": {"count": {"type": "integer", "minimum": 0}, "hosts": {"type": "array", "items": {"type": "string"}}}}, "description": "ADR-0319: recorded model calls mocked replay cannot serve, by gen_ai.system: their count and up to 10 endpoint host[:port]. Non-empty only under --permissive (a strict replay refuses to start); they ran live if the workload made them."},
         "child_processes_observed": {"type": "boolean", "description": "ADR-0319: the replayed process reported the child processes it started (audit hook installed)."},
-        "child_processes_spawned": {"type": "integer", "minimum": 0, "description": "ADR-0319: processes the replayed Python process started (subprocess, os.system, posix_spawn, fork, exec); their network and file activity is not observed. A lower bound when child_processes_capped is true."},
+        "child_processes_spawned": {"type": "integer", "minimum": 0, "description": "ADR-0319: processes the observed Python processes started (subprocess, os.system, posix_spawn, fork, exec); see child_processes_network_observed / child_processes_unobserved for which reported their network activity. File activity is never observed. A lower bound when child_processes_capped is true."},
+        "child_processes_network_observed": {"type": "integer", "minimum": 0, "description": "ADR-0319 (#52 part 2): started children that reported their own connections (Python children, including those whose environment dropped the replay variables, such as MCP stdio servers)."},
+        "child_processes_unobserved": {"type": "integer", "minimum": 0, "description": "ADR-0319 (#52 part 2): child_processes_spawned minus child_processes_network_observed -- children whose network activity is unknown (non-Python programs, Python started with -I/-E or without the replay environment)."},
         "child_processes_argv0": {"type": "array", "items": {"type": "string"}, "description": "ADR-0319: distinct basenames of the programs started, first 10 (never arguments)."},
         "child_processes_capped": {"type": "boolean", "description": "ADR-0319: more child processes were started than the observer logs per process."},
         "tool_calls_live_by_tool": {"type": "array", "items": {"type": "object", "properties": {"surface": {"type": "string"}, "tool_name": {"type": "string"}, "count": {"type": "integer", "minimum": 1}}}, "description": "Intercepted or observed tool calls that ran live, by surface and tool name (first 50 pairs); the CLI names each as a [LIVE] tool call line."},
@@ -182,7 +186,9 @@
         "type": {"type": "string"},
         "message": {"type": "string"},
         "model_calls_not_servable_by_system": {"type": "object", "additionalProperties": {"type": "object", "properties": {"count": {"type": "integer", "minimum": 0}, "hosts": {"type": "array", "items": {"type": "string"}}}}, "description": "ADR-0319, on error.type ModelSurfaceNotServable: the unservable recorded model calls by gen_ai.system."},
-        "tool_calls_not_served_by_surface": {"type": "object", "additionalProperties": {"type": "object", "properties": {"count": {"type": "integer", "minimum": 0}, "tools": {"type": "array", "items": {"type": "string"}}}}, "description": "On error.type ToolSurfaceNotServed: the recorded tool calls mocked replay does not serve by policy (LangChain tools not passed through wrap_tools), by surface."}
+        "tool_calls_not_served_by_surface": {"type": "object", "additionalProperties": {"type": "object", "properties": {"count": {"type": "integer", "minimum": 0}, "tools": {"type": "array", "items": {"type": "string"}}}}, "description": "On error.type ToolSurfaceNotServed: the recorded tool calls mocked replay does not serve by policy (LangChain tools not passed through wrap_tools), by surface."},
+        "check": {"type": "string", "enum": ["platform", "bwrap-missing", "preflight", "writable-path"], "description": "ADR-0322, on error.type HermeticUnavailable: the precondition that failed (writable-path: the working directory or the result directory would make the host root, a masked directory or a socket directory writable)."},
+        "stderr": {"type": "string", "description": "ADR-0322, on error.type HermeticUnavailable with check preflight: the preflight's stderr (first 2000 characters)."}
       },
       "description": "Error details if status is failure or aborted."
     },
@@ -239,6 +245,23 @@
     "replay_capsule_ref": {
       "type": "string",
       "description": "Mocked mode (ADR-0321): the replay capsule's manifest, relative to the replay result directory; `nova diff <capsule> <replay-dir>` compares the two runs. Additive and optional."
+    },
+    "hermetic": {
+      "type": "object",
+      "description": "Mocked mode with --hermetic, experimental (ADR-0322): how the replayed process tree was isolated. Absent without the flag. Additive and optional.",
+      "required": ["enabled", "mechanism", "network", "filesystem", "counting"],
+      "properties": {
+        "enabled": {"type": "boolean", "const": true},
+        "mechanism": {"type": "string", "enum": ["bwrap"]},
+        "bwrap_version": {"type": ["string", "null"]},
+        "network": {"type": "string", "enum": ["none"], "description": "A private network namespace with only its own loopback: host services, host loopback included, are unreachable."},
+        "filesystem": {"type": "string", "enum": ["read-only"], "description": "Host tree read-only except writable_paths; /run, /tmp, /var/tmp and XDG_RUNTIME_DIR masked."},
+        "writable_paths": {"type": "array", "description": "The directories bound read-write: the replayed process's working directory and the replay result directory (which also holds the replay's temp dir during the run). Writes anywhere else fail.", "items": {"type": "object", "required": ["role", "path"], "properties": {"role": {"type": "string", "enum": ["working_directory", "replay_result_dir"]}, "path": {"type": "string"}}}},
+        "counting": {"type": "string", "enum": ["none"], "description": "Blocked attempts counted from outside the process: not implemented, so the counts below are null (not measured), never 0."},
+        "connections_blocked": {"type": ["integer", "null"], "minimum": 0},
+        "unix_connects_outside": {"type": ["integer", "null"], "minimum": 0},
+        "writes_blocked": {"type": ["integer", "null"], "minimum": 0}
+      }
     }
   }
 }

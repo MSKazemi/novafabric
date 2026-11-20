@@ -113,13 +113,16 @@ MAX_LISTED_FILE_DIFFERENCES = 50
 
 #: Counters of calls the replay did not serve from the capsule. Any non-zero
 #: value makes ``faithful`` impossible. ``model_calls_not_servable`` and
-#: ``child_processes_spawned`` are read when the replay contract carries them.
+#: ``child_processes_unobserved`` are read when the replay contract carries them.
+#: A child that reported in is not live by itself: its connections are in
+#: ``network_connections_live`` (ADR-0319, #52 part 2); one that did not could
+#: have reached anything.
 LIVE_COUNTERS: tuple[str, ...] = (
     "model_calls_live",
     "tool_calls_live",
     "network_connections_live",
     "model_calls_not_servable",
-    "child_processes_spawned",
+    "child_processes_unobserved",
 )
 
 #: Divergence kinds meaning the workload never ran under the dispatchers.

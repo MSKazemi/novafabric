@@ -505,8 +505,9 @@ used to permit anything.
 | `replay_contract` | policy, intercepted surfaces, `dispatcher_installed`, `model_calls_live`, `model_errors_replayed` (recorded SDK errors raised again; they are also counted in `model_calls_mocked`), unconsumed counts, `tool_calls_not_interceptable`, `tool_calls_refused` (intercepted calls `--permissive` did not run: no ladder flag permitted their class, or an `allow: false` override), `tool_calls_by_surface` (`recorded`, `available`, `mocked`, `live`, `refused`, `unmatched`, `covered`, `unconsumed` per tool surface), `model_calls_covered` / `tool_calls_covered` (records consumed by a served nested `record.tool` boundary, slice 4), the network observation below, and the divergence list |
 | `replay_contract.tool_result_echo` | the D10 echo check (slice 4, experimental, since v0.106.0): `policy: report-only`, `matched`, `mismatched`, `not_checked` with `not_checked_reasons`, and up to 50 `mismatches` (`kind: tool_result_echo_mismatch`, `tool_call_id`, `surface`, `call_index`, `reason`) — never a divergence |
 | `replay_contract.tool_overrides` | only when `replay.yaml` has overrides: one `{tool_name, decision, honoured, reason, rationale?}` per override; `reason` starts with `override_unused`, `override_unenforceable` or `override_not_honoured` when it is not honoured (experimental, ADR-0306) |
-| `replay_contract.network_connections_live` / `network_destinations` | IPv4/IPv6 connections the replayed Python process opened (`socket.connect` / `connect_ex`, `replay/_dispatcher.py:NetworkObserver`), with the distinct `host:port` destinations (first 20). **Observed, never blocked** (ADR-0304); `network_observed: false` means nothing was observed, not that nothing happened. After 10,000 connections the count stops and `network_connections_capped: true` marks it as a lower bound. `network_observation_scope: python-process` (ADR-0319) says what this covers: the replayed Python process, and Python children that load the replay dispatcher through the generated `sitecustomize.py`; never a non-Python child |
-| `replay_contract.child_processes_spawned` / `child_processes_argv0` | processes the replayed Python process started (ADR-0319, `replay/_process_observer.py:ProcessObserver`, a CPython audit hook on `subprocess.Popen`, `os.system`, `os.posix_spawn`, `os.fork`/`os.forkpty` and `os.exec`), with the distinct program basenames (first 10; never arguments or environment). Their network and file activity is **not observed**; `nova replay` prints a warning when any was started. Report-only: never a divergence. `child_processes_observed: false` means the hook was not installed (e.g. a non-Python command); `child_processes_capped: true` marks a lower bound after 10,000. A process started from C code that bypasses these calls is not seen |
+| `replay_contract.network_connections_live` / `network_destinations` | IPv4/IPv6 connections the replayed Python process opened (`socket.connect` / `connect_ex`, `replay/_dispatcher.py:NetworkObserver`), with the distinct `host:port` destinations (first 20). **Observed, never blocked** (ADR-0304); `network_observed: false` means nothing was observed, not that nothing happened. After 10,000 connections the count stops and `network_connections_capped: true` marks it as a lower bound. `network_observation_scope: python-process` (ADR-0319) says what this covers: the replayed Python process and its Python children -- those that inherit the replay environment load the replay dispatcher through the generated `sitecustomize.py`; those whose environment drops it (an MCP stdio client starts its server with an allowlisted environment) get a standard-library-only observer that reports their sockets and children and serves nothing (`replay/_child_observer.py`, works today, unreleased); never a non-Python child. `network_connections_live_children` is the part made by child processes |
+| `replay_contract.network_observation_coverage` / `child_processes_network_observed` / `child_processes_unobserved` | whether the count above covers the whole process tree (ADR-0319, #52 part 2, works today, unreleased): `child_processes_network_observed` children reported their own connections; `child_processes_unobserved` (= spawned − observed) did not -- non-Python programs (`bash`, `curl`, `ssh`, `git`), Python started with `-I`/`-E`, or a child started through `os.posix_spawn`/`os.execve` with an explicit environment. `network_observation_coverage` is `complete` when none is unobserved, `partial` when one is (then `network_connections_live` is a **lower bound** and `nova replay` says so), `none` when no observer was installed. An unobserved child makes the fidelity verdict `diverged` (`live_calls`); an observed one does not by itself |
+| `replay_contract.child_processes_spawned` / `child_processes_argv0` | processes the replayed Python process started (ADR-0319, `replay/_process_observer.py:ProcessObserver`, a CPython audit hook on `subprocess.Popen`, `os.system`, `os.posix_spawn`, `os.fork`/`os.forkpty` and `os.exec`), with the distinct program basenames (first 10; never arguments or environment). Their file activity is **not observed**; their network activity is observed when they report in (row below), and `nova replay` warns about those that did not. Report-only: never a divergence. `child_processes_observed: false` means the hook was not installed (e.g. a non-Python command); `child_processes_capped: true` marks a lower bound after 10,000. A process started from C code that bypasses these calls is not seen |
 | `intervention` | for `--mode intervention`: the spec, `matched_event_index`, the check outcomes, `downstream_reexecuted` (and `downstream_not_reexecuted_reason`), and `substitution_delivered_to_workload` with a `substitution_note` when it is `false` |
 | `fidelity` | `mocked` only, **experimental** (ADR-0321): outcome equivalence with the recorded run — `verdict` (`faithful`, `diverged`, `failed`, `not_compared`), `normalization` (the volatile-token rule set the normalised checks used: `volatile-ids/1`; `none` when nothing was compared), and one `{name, equal, recorded, replayed, note?, normalizer?, differences?, advisory?}` per check; see [Fidelity verdict](#fidelity-verdict-adr-0321-experimental) |
 | `replay_capsule_ref` | `mocked` only (ADR-0321): `capsule.yaml`, the replay capsule beside the result, for `nova diff` |
@@ -515,7 +516,7 @@ used to permit anything.
 errors — or, under `--permissive`, `N of M recorded served … K NOT servable
 (<system>: n (<hosts>))` when some recorded calls could not be served), the
 tool-result echo counts when any tool result was checked, the live
-network connections, a warning naming any child processes started, and the
+network connections (and, when a child process was not observed, that the count is a lower bound), the child processes started and how many were not observed, the `hermetic:` line under `--hermetic`, and the
 divergence reason under the
 "Replay written" line, a warning when an intervention's substitution did not
 reach the re-executed workload, and, for `mocked`, the fidelity verdict with the
@@ -724,7 +725,7 @@ and is counted in `replay_contract.model_calls_live`.
 | LangChain / LangGraph tool **not** passed through `wrap_tools` (`@tool`, `StructuredTool`, `BaseTool` subclasses run by `invoke`/`ainvoke`/`run`/`arun` or LangGraph `ToolNode`) | recorded automatically when `langchain_core` is imported (no code change): one `transport: python` record per tool body execution (`langchain.tool` marker, `io.novafabric.langchain_tool_seam: observed`, `mutation_class: unknown`), same payload rules as `wrap_tools` (values at `forensic`/`air_gapped` only, digests otherwise), always marked not-servable | Refused — **never served** (ADR-0306 D1 serves declared tools only): a capsule that records such calls makes a strict replay **refuse to start** (`ToolSurfaceNotServed`, exit 1, also under `--dry-run`, which lists each as `[LIVE] LangChain tool call`); under `--permissive`, and for a capsule that recorded none, each tool body that runs is **live** and counted in `tool_calls_live` and `replay_contract.tool_calls_live_by_tool` (the CLI prints a `[LIVE] tool call` line per tool), so the fidelity verdict is never `faithful`; a `replay.yaml` `allow: false` override refuses the call before its body runs; the seam patches `BaseTool.run`/`arun` and the class defining `_run`/`_arun` -- **not a LangChain extension point**, checked against `langchain-core` 1.8.3 and `langgraph` 1.2.23 only | — (tools are not streamed) | counted (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph) | experimental | `test_langchain_unwrapped_tool_accounting_e2e.py::test_capture_records_langchain_tools_that_were_not_wrapped`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_strict_replay_refuses_to_start_when_unwrapped_tool_calls_were_recorded`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_permissive_runs_unwrapped_tools_live_and_counts_and_names_them`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_a_capsule_without_tool_records_still_counts_every_live_tool_body`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_wrapped_tools_are_served_while_unwrapped_ones_run_live_and_are_counted`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_an_allow_false_override_stops_an_unwrapped_tool_before_its_body_runs` |
 | MCP session set-up (server start, `initialize`, `list_tools`) | not recorded as tool calls | Not intercepted — runs **live** | — | — | not controlled | e2e tests start a real in-memory MCP server during replay |
 | Undeclared functions the workload runs for a model (the result goes back as a tool message) | the model's tool choice, and the result as the next request sent it back (`role: tool` message / Anthropic `tool_result` block) | Not intercepted — runs **live**; the result it sends back is compared with the recorded one (redacted digests, by `tool_call_id`): a difference is reported in `replay_contract.tool_result_echo` and never fails the replay (report-only, experimental, ADR-0306 D10); not checked for the Responses API, whose request input is not recorded | — | — | not controlled | `test_echo_and_nested_coverage_e2e.py::test_a_changed_tool_result_is_reported_but_never_fails_the_replay`; `test_echo_and_nested_coverage_e2e.py::test_a_capsule_without_request_messages_reports_not_checked_never_matched`; `test_slice4_matching_and_echo_contract.py::test_the_echo_check_compares_anthropic_tool_results` |
-| HTTP, shell, filesystem, framework-native tools (other than Google ADK tools through the tool plugin, OpenAI Agents function tools through their `wrap_tools`, and LangChain tools) | network/file events, not tool records | Not intercepted — runs **live**; outbound connections of the replayed Python process are reported (`network_connections_live`, `network_observation_scope: python-process`), files are not; child processes it starts are counted and named (`child_processes_spawned`, `child_processes_argv0`), their network and file activity is not observed (ADR-0319); a `replay.yaml` `allow: false` override on one makes a strict replay refuse to start (`ToolOverrideUnenforceable`, exit 3) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked`; `test_tool_overrides_enforced_e2e.py::test_strict_replay_refuses_to_start_on_an_unenforceable_override`; `test_unservable_model_surfaces_e2e.py::test_a_child_process_is_counted_and_named_with_a_warning` |
+| HTTP, shell, filesystem, framework-native tools (other than Google ADK tools through the tool plugin, OpenAI Agents function tools through their `wrap_tools`, and LangChain tools) | network/file events, not tool records | Not intercepted — runs **live**; outbound connections of the replayed Python process and of its Python children -- also those whose environment drops the replay's variables, such as MCP stdio servers -- are reported (`network_connections_live`, `network_observation_scope: python-process`), files are not; child processes are counted and named (`child_processes_spawned`, `child_processes_argv0`), and one that is not observed (a non-Python program) is counted in `child_processes_unobserved` with `network_observation_coverage: partial` (ADR-0319); `--hermetic` (experimental, Linux, ADR-0322) blocks the network of the whole process tree instead; a `replay.yaml` `allow: false` override on one makes a strict replay refuse to start (`ToolOverrideUnenforceable`, exit 3) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked`; `test_tool_overrides_enforced_e2e.py::test_strict_replay_refuses_to_start_on_an_unenforceable_override`; `test_unservable_model_surfaces_e2e.py::test_a_child_process_is_counted_and_named_with_a_warning`; `test_child_process_network.py::test_an_mcp_stdio_server_child_is_observed`; `test_child_process_network.py::test_a_non_python_child_is_counted_unobserved_and_the_count_is_a_lower_bound`; `test_hermetic_replay.py::test_hermetic_replay_reaches_no_host_service_from_any_process` |
 
 <!-- END GENERATED: replay-support-matrix -->
 
@@ -734,7 +735,8 @@ These limits are stated so you can rely on the parts that do work:
 
 - **Only the surfaces above are controlled.** If a workload's other tools have
   side effects (files, HTTP, databases, shell), a mocked replay repeats them.
-  Run replays in a sandbox or against test credentials. The `--allow-readonly`,
+  Run replays in a sandbox (`--hermetic`, below, blocks the network and makes the
+  host filesystem read-only; experimental, Linux) or against test credentials. The `--allow-readonly`,
   `--allow-mutating`, `--allow-external-side-effects` and
   `--allow-unknown-mutation` flags are evaluated by
   `replay/_policy.py:PolicyEvaluator`. Their per-call decisions are shown by
@@ -830,10 +832,54 @@ These limits are stated so you can rely on the parts that do work:
   `extensions["io.novafabric.stream_complete"]: false`; two streams consumed
   interleaved are recorded in the order they ended, which can differ from the
   order they started.
-- **Network is reported, not refused.** A replay that reaches a database or an
-  HTTP API through a tool replay does not intercept succeeds; the result names
-  the destinations. Connections made by C extensions that bypass Python's
-  `socket` methods, and by non-Python child processes, are not seen.
+- **Network is reported, not refused -- unless `--hermetic`.** A replay that
+  reaches a database or an HTTP API through a tool replay does not intercept
+  succeeds; the result names the destinations. Connections made by C extensions
+  that bypass Python's `socket` methods, and by non-Python child processes, are
+  not seen; the latter are counted (`child_processes_unobserved`,
+  `network_observation_coverage: partial`).
+
+### Hermetic replay (`--hermetic`, experimental, ADR-0322)
+
+*Experimental, Linux only, unreleased.* `nova replay --hermetic` (mocked mode only) runs
+the replayed command and every process it starts inside a bubblewrap (`bwrap`)
+sandbox:
+
+- **Network:** a private network namespace with only its own loopback. Nothing outside
+  the sandbox is reachable -- host loopback services included (a host Ollama, Postgres
+  or MCP-over-HTTP server); a server the workload starts inside is. DNS fails fast.
+  Served model and tool calls keep working: they are answered in-process, with no socket.
+- **Filesystem:** the host tree is read-only; `/run`, `/tmp`, `/var/tmp` and
+  `$XDG_RUNTIME_DIR` are empty (host Unix sockets such as Docker's and D-Bus's live
+  there). Two directories are writable: the working directory `nova replay` runs in
+  (the workload's outputs, such as `output/*.json`, are written there **for real** --
+  they reach the host) and the replay result directory. A write anywhere else fails
+  with `EROFS` (or `ENOENT` under a masked directory). There is no flag to make more
+  writable. A working directory that would undo the protection -- `/`, a masked
+  directory or one of its ancestors, anything under `/run` -- is refused
+  (`check: writable-path`): run the replay from the workload's own directory.
+  `stdout` and `stderr` are captured as usual.
+- **Processes and environment:** new pid/ipc/uts/user namespaces, no nested user
+  namespace, killed with the replay; `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS` and
+  `DOCKER_HOST` are not passed in.
+
+The result carries `hermetic: {enabled: true, mechanism: bwrap, bwrap_version, network:
+none, filesystem: read-only, writable_paths: [{role: working_directory, path}, {role:
+replay_result_dir, path}], counting: none, …}` and `nova replay` prints a `hermetic:`
+line. If `bwrap` is missing, the platform is not Linux, or a preflight
+`bwrap … -- true` fails (an AppArmor user-namespace restriction, a disabled
+`kernel.unprivileged_userns_clone`, a container seccomp profile), the replay is refused
+before anything runs: `status: aborted`, `error.type: HermeticUnavailable` with the
+failed `check` and the preflight's `stderr`, exit **5**, also under `--dry-run`. It never
+runs un-isolated under `--hermetic`.
+
+Not yet (planned, ADR-0322): counting blocked attempts from outside the process
+(`counting: none`; `connections_blocked`, `unix_connects_outside` and `writes_blocked`
+are `null` -- not measured, never 0; the in-process observers still report the
+attempts they see), a copy-on-write overlay of the working directory (so a replay's
+writes there do not touch the real files), a fidelity `isolation` check, and a second
+backend for hosts where bwrap cannot create namespaces. A Unix socket under a path that
+stays visible (for example in `$HOME` or the working directory) remains connectable.
 - **Model requests are not compared**, except for the tool results they send
   back (the echo check, since v0.106.0, report-only). Responses are served by
   position per API surface; a changed prompt with the same call count and order

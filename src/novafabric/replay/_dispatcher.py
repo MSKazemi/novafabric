@@ -64,6 +64,7 @@ from novafabric.replay._bedrock_serve import (
 )
 from novafabric.replay._bedrock_serve import request_json as bedrock_request_json
 from novafabric.replay._bedrock_serve import request_queue as bedrock_request_queue
+from novafabric.replay._child_observer import start_tree_observation
 from novafabric.replay._contract import (
     ECHO_DIFFERS,
     ECHO_NO_COUNTERPART,
@@ -2045,7 +2046,9 @@ class NetworkObserver:
     Connections made by C extensions that bypass the Python ``socket`` methods,
     and by non-Python child processes, are not seen: the result says so
     (``network_observation_scope: python-process``) and counts the children
-    (``_process_observer.ProcessObserver``, ADR-0319).
+    (``_process_observer.ProcessObserver``, ADR-0319); Python children report
+    their own connections (``_child_observer``, #52 part 2), and those that do
+    not are counted as ``child_processes_unobserved``.
     """
 
     def __init__(self, events: ReplayEventLog, *, cap: int = NETWORK_EVENT_CAP) -> None:
@@ -2140,6 +2143,10 @@ def install_from_env() -> None:
             events.emit,
             skip_roots=[Path(events_path).parent] if events_path else [],
         )
+        # ADR-0319 (#52 part 2): say this process is observed, and make the
+        # Python children it starts report in -- even those whose environment
+        # drops the replay's variables (an MCP stdio client does).
+        start_tree_observation(events, observer="dispatcher")
         events.emit("installed", policy=policy, surfaces=surfaces)
     except Exception as exc:  # noqa: BLE001 -- reported, then fail-closed below
         events.emit("install_failed", error=f"{type(exc).__name__}: {exc}")

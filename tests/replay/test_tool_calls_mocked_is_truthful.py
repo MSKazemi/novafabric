@@ -68,9 +68,10 @@ def test_capsule_tool_call_count_is_still_reported() -> None:
     src = inspect.getsource(_engine)
     # forensic, dry-run, intervention, the mocked CapsuleNotReplayable refusal,
     # the mocked ModelSurfaceNotServable refusal (ADR-0319), the mocked
-    # ToolSurfaceNotServed refusal (ADR-0306 D1, unwrapped LangChain tools) and
-    # the mocked ToolOverrideUnenforceable refusal (ADR-0306 Q5)
-    assert src.count("tool_calls_recorded=len(") == 7
+    # ToolSurfaceNotServed refusal (ADR-0306 D1, unwrapped LangChain tools), the mocked
+    # ToolOverrideUnenforceable refusal (ADR-0306 Q5) and the mocked
+    # HermeticUnavailable refusal (ADR-0322)
+    assert src.count("tool_calls_recorded=len(") == 8
     assert '"tool_calls_recorded": report.tool_calls_recorded' in src  # mocked
 
 

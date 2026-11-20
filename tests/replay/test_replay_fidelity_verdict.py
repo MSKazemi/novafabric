@@ -95,7 +95,7 @@ def test_matching_outcome_and_calls_are_faithful(tmp_path: Path) -> None:
 @pytest.mark.parametrize("counter", [
     "model_calls_live", "network_connections_live",
     # Added by the replay-accounting work; honoured whenever the contract has them.
-    "model_calls_not_servable", "child_processes_spawned",
+    "model_calls_not_servable", "child_processes_unobserved",
 ])
 def test_any_live_or_unintercepted_call_makes_faithful_impossible(
     tmp_path: Path, counter: str
@@ -103,6 +103,16 @@ def test_any_live_or_unintercepted_call_makes_faithful_impossible(
     fidelity = _verdict(_capsule(tmp_path), extra_contract={counter: 1})
     assert fidelity.verdict == "diverged"
     assert fidelity.failing_checks == ["live_calls"]
+
+
+def test_a_child_that_reported_its_connections_is_not_live_by_itself(tmp_path: Path) -> None:
+    """ADR-0319 (#52 part 2): an observed child's connections are already in
+    ``network_connections_live``; only an unobserved child blocks ``faithful``."""
+    fidelity = _verdict(
+        _capsule(tmp_path),
+        extra_contract={"child_processes_spawned": 1, "child_processes_unobserved": 0},
+    )
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
 
 
 def test_a_live_model_call_event_is_never_faithful(tmp_path: Path) -> None:

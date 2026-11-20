@@ -63,6 +63,8 @@ _BEDROCK_WIRE = "tests/capture/test_bedrock_wire_capture.py"
 _BEDROCK_SERVE = "tests/replay/test_bedrock_serving.py"
 _LC = "tests/replay/test_langchain_tool_replay_e2e.py"
 _LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
+_CHILDNET = "tests/replay/test_child_process_network.py"
+_HERMETIC = "tests/replay/test_hermetic_replay.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -729,13 +731,17 @@ ROWS: tuple[SurfaceRow, ...] = (
         capture="network/file events, not tool records",
         replay="not intercepted",
         replay_note=(
-            "runs **live**; outbound connections of the replayed Python process are "
-            "reported (`network_connections_live`, `network_observation_scope: "
-            "python-process`), files are not; child processes it starts are counted "
-            "and named (`child_processes_spawned`, `child_processes_argv0`), their "
-            "network and file activity is not observed (ADR-0319); a "
-            "`replay.yaml` `allow: false` override on one makes a strict replay refuse "
-            "to start (`ToolOverrideUnenforceable`, exit 3)"
+            "runs **live**; outbound connections of the replayed Python process and "
+            "of its Python children -- also those whose environment drops the replay's "
+            "variables, such as MCP stdio servers -- are reported "
+            "(`network_connections_live`, `network_observation_scope: python-process`), "
+            "files are not; child processes are counted and named "
+            "(`child_processes_spawned`, `child_processes_argv0`), and one that is not "
+            "observed (a non-Python program) is counted in `child_processes_unobserved` "
+            "with `network_observation_coverage: partial` (ADR-0319); `--hermetic` "
+            "(experimental, Linux, ADR-0322) blocks the network of the whole process "
+            "tree instead; a `replay.yaml` `allow: false` override on one makes a strict "
+            "replay refuse to start (`ToolOverrideUnenforceable`, exit 3)"
         ),
         streaming="—",
         asynchronous="—",
@@ -745,6 +751,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_CONTRACT}::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked",
             f"{_OVERRIDES}::test_strict_replay_refuses_to_start_on_an_unenforceable_override",
             f"{_UNSERVED}::test_a_child_process_is_counted_and_named_with_a_warning",
+            f"{_CHILDNET}::test_an_mcp_stdio_server_child_is_observed",
+            f"{_CHILDNET}::"
+            "test_a_non_python_child_is_counted_unobserved_and_the_count_is_a_lower_bound",
+            f"{_HERMETIC}::test_hermetic_replay_reaches_no_host_service_from_any_process",
         ),
     ),
 )

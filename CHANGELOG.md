@@ -71,6 +71,29 @@ longer forwards the submitting shell's environment (ADR-0270).
   `subprocess.Popen`, `os.system`, `os.posix_spawn`, `os.fork`/`os.forkpty` and `os.exec`. When a replayed
   workload started any, `nova replay` warns that their network and file activity is not observed. Report-only:
   the replay outcome is unchanged. All new result fields are additive and optional.
+- **Mocked replay observes the network of its Python child processes, and says when a child was not observed**
+  (works today, ADR-0319, #52 part 2). Found on a real workload: an agent whose MCP stdio server child made 9
+  connections replayed with `child_processes_spawned: 8, network_connections_live: 0` — `mcp`'s `stdio_client`
+  starts the server with an allowlisted environment, so the child lost the replay's `PYTHONPATH` and variables.
+  `subprocess.Popen` in an observed process now hands such a child (a copy of) its environment with the replay's
+  site directory prepended to `PYTHONPATH` (the child's own entries and `sitecustomize` keep working); the child
+  runs a standard-library-only observer that reports its connections and children to the replay's event log and
+  serves nothing. New, additive `replay_contract` fields: `child_processes_network_observed`,
+  `child_processes_unobserved` (non-Python programs, Python with `-I`/`-E`, `os.posix_spawn`/`os.execve` with an
+  explicit environment), `network_connections_live_children` and `network_observation_coverage`
+  (`complete`/`partial`/`none`). With an unobserved child, `nova replay` says the network count is a lower bound,
+  and the fidelity verdict cannot be `faithful` (it now reads `child_processes_unobserved`, not
+  `child_processes_spawned`: an observed child's connections are already counted).
+- **`nova replay --hermetic`** (experimental, Linux, ADR-0322). Mocked replay of the whole process tree inside a
+  bubblewrap sandbox: no network beyond its own loopback (host loopback services included), the host filesystem
+  read-only with `/run`, `/tmp`, `/var/tmp` and `$XDG_RUNTIME_DIR` masked, writable only in the working directory
+  (the workload's outputs reach the host) and the replay result directory, host-socket variables not passed in;
+  served model/tool calls keep working. The result gains an additive `hermetic` block listing the writable
+  paths. When `bwrap` is missing, the platform is not Linux, the preflight cannot create namespaces, or the
+  working directory would expose the host (`/`, a masked directory, `/run`), the replay is refused before
+  anything runs (`error.type: HermeticUnavailable`, exit 5, also under `--dry-run`) — never run un-isolated.
+  Not yet: counting blocked attempts from outside the process (the counts are `null`), a copy-on-write overlay
+  of the working directory.
 - **Mocked replay reports whether it reproduced the recorded run** (experimental, ADR-0321). A new, additive
   `fidelity` block in `replay_result.yaml` compares the replay with the capsule: the exit code, the stdout
   digest after a declared volatile-token rule set, the end state of every file the recorded workload wrote, the
