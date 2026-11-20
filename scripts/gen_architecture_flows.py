@@ -659,7 +659,7 @@ REPLAY = Flow(
         Node("cmd", 22, 78, 150, 104, "nova replay",
              ("--mode mocked", "(the default)", "capsule or run ID"), "cap"),
         Node("chk", 192, 78, 170, 104, "Replayable?",
-             ("needs a real argv;", "sdk-decorator, otel-", "import, @label: no"), "rep"),
+             ("a real argv, or an", "adapter's guarded", "invocation; else no"), "rep"),
         Node("pre", 382, 78, 190, 104, "Pre-checks",
              ("env.lock vs this host", "tool-schema drift", "(ADR-0128)"), "rep"),
         Node("spawn", 592, 78, 180, 104, "Re-run the command",
@@ -699,9 +699,13 @@ REPLAY = Flow(
     ),
     steps=(
         Step(("cmd", "chk", "refuse"), ("m1", "mref"),
-             "A capsule with no command to re-run (framework adapter, OTLP import, an @label) "
-             "is refused before anything is spawned.",
-             "<p><code>not_reexecutable_reason</code> is the one check. A refused replay "
+             "A capsule with nothing to re-run (OTLP import, @label, an unguarded adapter "
+             "capsule) is refused before anything is spawned.",
+             "<p><code>not_reexecutable_reason</code> is the one check. An adapter capsule "
+             "whose recorded process invocation passes every guard is re-run from it "
+             "(experimental (LangGraph end-to-end tested; other adapters record the "
+             "facet), ADR-0306 Q7); a refusal names the failed guard in "
+             "<code>error.guard</code>. A refused replay "
              "still writes <code>replay_result.yaml</code> with <code>status: aborted</code> "
              "and exits 1; the message names the modes that do work on that capsule "
              "(<code>forensic</code>, <code>semantic</code>). <code>--dry-run</code> says "
@@ -981,7 +985,7 @@ STORY = Flow(
         Node("server", 598, 560, 170, 116, "nova server /v0",
              ("team REST API", "API keys · quotas", "SQLite or Postgres"), "seal"),
         Node("next", 790, 560, 170, 116, "Not built yet",
-             ("non-MCP tool replay", "→ planned (ADR-0306)", "adapter-capsule re-run",
+             ("non-MCP tool replay", "→ planned (ADR-0306)", "capsule federation",
               "→ future design"), "amb", style="planned"),
     ),
     edges=(
@@ -1148,6 +1152,24 @@ STORY = Flow(
             "replay/_engine.py:ReplayEngine.run · replay/_dispatcher.py:MockModelDispatcher · "
             "replay/_contract.py",
             "experimental", "replay", "rep", "$ nova replay 01J9Z…"),
+        _ss("replay", "Replay an adapter capsule", ("capsule", "replay", "wl"),
+            ("cap_replay", "replay_wl"), ("process_invocation",),
+            "Adapter capsules re-run from their recorded invocation when guards pass "
+            "(LangGraph end-to-end tested; other adapters record the facet).",
+            "<p>experimental (LangGraph end-to-end tested; other adapters record the "
+            "facet). Every framework adapter and the "
+            "<code>@agent</code> decorator also record how their process was started "
+            "(<code>facets.process_invocation</code>: argv, entry file and its SHA-256, "
+            "working directory, run ordinal). Mocked replay re-runs that invocation in the "
+            "recorded directory, with stdin closed, only when every guard passes: not a "
+            "REPL, notebook, test runner or known server; no redacted argument; the "
+            "process's first adapter run; the entry file unchanged. A refusal names the "
+            "guard in <code>error.guard</code>. A capsule written before this records no "
+            "invocation and is still refused (ADR-0306, open question 7).</p>",
+            "capture/process_invocation.py:begin_adapter_run · "
+            "replay/_replayability.py:require_reexecution_plan",
+            "experimental", "replay", "rep", "$ python agent.py && nova replay <run-id>",
+            unreleased=True),
         _ss("replay", "Replay a recorded failure", ("replay", "wl"), ("replay_wl",),
             ("RateLimitError 429",),
             "A recorded rate limit or 5xx is raised again as the SDK's own exception class; "
@@ -1263,12 +1285,12 @@ STORY = Flow(
             "replay/_dispatcher.py:MockToolDispatcher",
             "planned", "next", "amb"),
         _ss("next", "Future design", ("next",), (), (),
-            "Future design: re-running a framework-adapter capsule, and multi-cluster "
-            "federation of capsules and lineage. Not implemented.",
-            "<p>An adapter capsule records a label, not a command, so it cannot be re-run "
-            "(ADR-0306, open question 7). Federation is documented intent with no "
-            "implementation and no target.</p>",
-            "replay/_replayability.py:not_reexecutable_reason",
+            "Future design: multi-cluster federation of capsules and lineage. Not "
+            "implemented.",
+            "<p>Federation is documented intent with no implementation and no target. "
+            "(Re-running a framework-adapter capsule, once listed here, is now experimental: "
+            "see <a href=\"#story-12\">step 12</a>.)</p>",
+            "—",
             "future design", "next", "amb"),
     ),
 )

@@ -854,7 +854,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "lines": [
     "non-MCP tool replay",
     "→ planned (ADR-0306)",
-    "adapter-capsule re-run",
+    "capsule federation",
     "→ future design"
    ],
    "mono": false,
@@ -1206,6 +1206,33 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     46,
     398
    ],
+   "caption": "Adapter capsules re-run from their recorded invocation when guards pass (LangGraph end-to-end tested; other adapters record the facet).",
+   "color": "rep",
+   "detail": "<p>experimental (LangGraph end-to-end tested; other adapters record the facet). Every framework adapter and the <code>@agent</code> decorator also record how their process was started (<code>facets.process_invocation</code>: argv, entry file and its SHA-256, working directory, run ordinal). Mocked replay re-runs that invocation in the recorded directory, with stdin closed, only when every guard passes: not a REPL, notebook, test runner or known server; no redacted argument; the process's first adapter run; the entry file unchanged. A refusal names the guard in <code>error.guard</code>. A capsule written before this records no invocation and is still refused (ADR-0306, open question 7).</p>",
+   "edges": [
+    "cap_replay",
+    "replay_wl"
+   ],
+   "mat": "experimental",
+   "nodes": [
+    "capsule",
+    "replay",
+    "wl"
+   ],
+   "ref": "capture/process_invocation.py:begin_adapter_run · replay/_replayability.py:require_reexecution_plan",
+   "stage": "replay",
+   "term": "$ python agent.py && nova replay <run-id>",
+   "title": "Replay an adapter capsule",
+   "tokens": [
+    "process_invocation"
+   ],
+   "unreleased": true
+  },
+  {
+   "badge": [
+    68,
+    398
+   ],
    "caption": "A recorded rate limit or 5xx is raised again as the SDK's own exception class; transport attempts are never served.",
    "color": "amb",
    "detail": "<p>The error record keeps its queue position, so the workload's error handling runs against the same failure. Classes come from an allow-list looked up on the SDK package (for example <code>openai.RateLimitError</code> with <code>status_code == 429</code>, the body and the request id), never from a name read out of the capsule. A stream that raised part-way is served as its delivered chunks, then the same exception. A Responses API response with <code>status: failed</code> is returned as recorded, because the SDK returns it rather than raising.</p>",
@@ -1228,7 +1255,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
   },
   {
    "badge": [
-    68,
+    90,
     398
    ],
    "caption": "intervention substitutes one event and writes a counterfactual capsule; it records whether the substitute reached the workload.",
@@ -1451,15 +1478,15 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     814,
     562
    ],
-   "caption": "Future design: re-running a framework-adapter capsule, and multi-cluster federation of capsules and lineage. Not implemented.",
+   "caption": "Future design: multi-cluster federation of capsules and lineage. Not implemented.",
    "color": "amb",
-   "detail": "<p>An adapter capsule records a label, not a command, so it cannot be re-run (ADR-0306, open question 7). Federation is documented intent with no implementation and no target.</p>",
+   "detail": "<p>Federation is documented intent with no implementation and no target. (Re-running a framework-adapter capsule, once listed here, is now experimental: see <a href=\"#story-12\">step 12</a>.)</p>",
    "edges": [],
    "mat": "future design",
    "nodes": [
     "next"
    ],
-   "ref": "replay/_replayability.py:not_reexecutable_reason",
+   "ref": "—",
    "stage": "next",
    "term": "",
    "title": "Future design",
@@ -2155,9 +2182,9 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "h": 104,
     "id": "chk",
     "lines": [
-     "needs a real argv;",
-     "sdk-decorator, otel-",
-     "import, @label: no"
+     "a real argv, or an",
+     "adapter's guarded",
+     "invocation; else no"
     ],
     "mono": false,
     "style": "card",
@@ -2320,9 +2347,9 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      194,
      80
     ],
-    "caption": "A capsule with no command to re-run (framework adapter, OTLP import, an @label) is refused before anything is spawned.",
+    "caption": "A capsule with nothing to re-run (OTLP import, @label, an unguarded adapter capsule) is refused before anything is spawned.",
     "color": "warn",
-    "detail": "<p><code>not_reexecutable_reason</code> is the one check. A refused replay still writes <code>replay_result.yaml</code> with <code>status: aborted</code> and exits 1; the message names the modes that do work on that capsule (<code>forensic</code>, <code>semantic</code>). <code>--dry-run</code> says the same and also exits 1.</p>",
+    "detail": "<p><code>not_reexecutable_reason</code> is the one check. An adapter capsule whose recorded process invocation passes every guard is re-run from it (experimental (LangGraph end-to-end tested; other adapters record the facet), ADR-0306 Q7); a refusal names the failed guard in <code>error.guard</code>. A refused replay still writes <code>replay_result.yaml</code> with <code>status: aborted</code> and exits 1; the message names the modes that do work on that capsule (<code>forensic</code>, <code>semantic</code>). <code>--dry-run</code> says the same and also exits 1.</p>",
     "edges": [
      "m1",
      "mref"

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 711" width="980" height="711" role="img" aria-labelledby="t d">
 <title id="t">Mocked replay: what is served, what runs live, what is refused</title>
-<desc id="d">How the default replay mode re-runs a capsule. A capsule with no command is refused before anything is spawned. The re-run gets in-process dispatchers that serve recorded model calls and MCP tool results, raise recorded model errors as the SDK's own exception class, and report live network connections without blocking them. Step 1: A capsule with no command to re-run (framework adapter, OTLP import, an @label) is refused before anything is spawned. Step 2: Every mode first compares env.lock with this host and re-validates each recorded tool call against its current schema. Step 3: The command re-runs in a subprocess; MockModelDispatcher serves each surface's recorded calls in order, sync, async or streamed. Step 4: A recorded rate limit, 4xx, 5xx or timeout keeps its queue position and is raised again as the SDK's own exception class. Step 5: MCP call_tool results are served one-to-one and an unmatched call fails closed. Other tools still run live. Step 6: NetworkObserver counts every IPv4/IPv6 connection the replayed process opens: observed and reported, never blocked. Step 7: replay_result.yaml records status, exit code and the replay_contract counters (served, unmatched, unconsumed, live network).</desc>
+<desc id="d">How the default replay mode re-runs a capsule. A capsule with no command is refused before anything is spawned. The re-run gets in-process dispatchers that serve recorded model calls and MCP tool results, raise recorded model errors as the SDK's own exception class, and report live network connections without blocking them. Step 1: A capsule with nothing to re-run (OTLP import, @label, an unguarded adapter capsule) is refused before anything is spawned. Step 2: Every mode first compares env.lock with this host and re-validates each recorded tool call against its current schema. Step 3: The command re-runs in a subprocess; MockModelDispatcher serves each surface's recorded calls in order, sync, async or streamed. Step 4: A recorded rate limit, 4xx, 5xx or timeout keeps its queue position and is raised again as the SDK's own exception class. Step 5: MCP call_tool results are served one-to-one and an unmatched call fails closed. Other tools still run live. Step 6: NetworkObserver counts every IPv4/IPv6 connection the replayed process opens: observed and reported, never blocked. Step 7: replay_result.yaml records status, exit code and the replay_contract counters (served, unmatched, unconsumed, live network).</desc>
 <style>
 svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--ver:#c4f0a8;--amb:#fcd34d;--warn:#fda4af}
 @media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--ver:#3f6212;--amb:#a16207;--warn:#be123c}}
@@ -62,9 +62,9 @@ text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvet
 <rect class="card" x="192" y="78" width="170" height="104" rx="10"/>
 <rect class="f-rep" x="192" y="78" width="170" height="4" rx="2"/>
 <text class="h" x="204" y="102" text-anchor="start">Replayable?</text>
-<text class="t" x="204" y="124" text-anchor="start">needs a real argv;</text>
-<text class="t" x="204" y="141" text-anchor="start">sdk-decorator, otel-</text>
-<text class="t" x="204" y="158" text-anchor="start">import, @label: no</text>
+<text class="t" x="204" y="124" text-anchor="start">a real argv, or an</text>
+<text class="t" x="204" y="141" text-anchor="start">adapter's guarded</text>
+<text class="t" x="204" y="158" text-anchor="start">invocation; else no</text>
 <rect class="card" x="382" y="78" width="190" height="104" rx="10"/>
 <rect class="f-rep" x="382" y="78" width="190" height="4" rx="2"/>
 <text class="h" x="394" y="102" text-anchor="start">Pre-checks</text>
@@ -181,7 +181,7 @@ text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvet
 <rect class="k lit f-warn" x="30" y="538" width="920" height="20" rx="5" style="animation-delay:0s"/>
 <circle class="f-warn" cx="48" cy="548" r="8"/>
 <text class="num" x="48" y="552" style="fill:var(--bg)">1</text>
-<text class="t" x="64" y="552" text-anchor="start">A capsule with no command to re-run (framework adapter, OTLP import, an @label) is refused before anything is spawned.</text>
+<text class="t" x="64" y="552" text-anchor="start">A capsule with nothing to re-run (OTLP import, @label, an unguarded adapter capsule) is refused before anything is spawned.</text>
 <rect class="k lit f-rep" x="30" y="559" width="920" height="20" rx="5" style="animation-delay:3.4s"/>
 <circle class="f-rep" cx="48" cy="569" r="8"/>
 <text class="num" x="48" y="573" style="fill:var(--bg)">2</text>
