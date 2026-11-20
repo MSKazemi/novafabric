@@ -594,7 +594,9 @@ streamed and Responses API calls, the fail-closed contract — is listed under
 [Release scope](architecture/replay-modes.md)). A capsule that records **no command to re-run** — written
 by a framework adapter or the `@agent` decorator (`novafabric.sdk.agent`; `capture_mode: sdk-decorator`, a
 `@framework:name` label) or imported from OpenTelemetry spans — is refused
-before anything is spawned (`CapsuleNotReplayable`, exit 1; since v0.105.0).
+before anything is spawned (`CapsuleNotReplayable`, exit 1; since v0.105.0). An
+adapter capsule that also records its process invocation is re-run from it when
+every replay guard passes (experimental, unreleased, ADR-0306 Q7).
 Inside the re-spawned process:
 
 - `MockModelDispatcher` serves the recorded responses, in order, for OpenAI

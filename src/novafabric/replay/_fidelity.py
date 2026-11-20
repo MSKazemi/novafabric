@@ -98,6 +98,10 @@ _EMPTY_SHA256 = "sha256:" + hashlib.sha256(b"").hexdigest()
 #: The only capture mode whose capsule records the process's output streams.
 _OUTPUT_CAPTURE_MODE = "cli-wrapper"
 
+#: Adapter capsules record the framework call's outcome, not the process's
+#: (ADR-0306 Q7); the re-run adapter reports its own in ``adapter_run_end``.
+_ADAPTER_CAPTURE_MODE = "sdk-decorator"
+
 
 @dataclass
 class FidelityCheck:
@@ -466,6 +470,31 @@ def _echo_check(report: ReplayContractReport) -> FidelityCheck:
     )
 
 
+def _adapter_outcome_check(
+    recorded_exit: int, events: list[dict[str, Any]], process_exit: int | None
+) -> FidelityCheck:
+    """The ``exit_code`` check of an adapter capsule re-run from its recorded
+    process invocation: the first adapter run's outcome against the one the
+    capsule recorded -- never the process's exit code, which it did not record."""
+    ends = [
+        ev for ev in events
+        if ev.get("event") == "adapter_run_end" and ev.get("ordinal") == 1
+    ]
+    replayed = ends[0].get("exit_code") if ends else None
+    if isinstance(replayed, bool) or not isinstance(replayed, int):
+        return FidelityCheck(
+            "exit_code", None, recorded_exit, None,
+            "an adapter capsule records the outcome of its framework call, not the "
+            "process exit code, and the replayed process reported no finished framework "
+            f"call (the process exited {process_exit})",
+        )
+    return FidelityCheck(
+        "exit_code", recorded_exit == replayed, recorded_exit, replayed,
+        "the framework call's outcome: an adapter capsule records it, not the process "
+        f"exit code (the replayed process exited {process_exit})",
+    )
+
+
 def compute_fidelity(
     *,
     capsule_dir: Path,
@@ -499,6 +528,8 @@ def compute_fidelity(
             "exit_code", None, recorded_exit, None,
             f"the replayed command did not exit on its own ({(run_error or {}).get('type')})",
         )
+    elif manifest.get("capture_mode") == _ADAPTER_CAPTURE_MODE:
+        exit_check = _adapter_outcome_check(recorded_exit, events, exit_code)
     else:
         exit_check = FidelityCheck(
             "exit_code", recorded_exit == exit_code, recorded_exit, exit_code

@@ -1282,7 +1282,10 @@ response that is never requested makes the replay `failure` (exit 1) with a
 **Capsules with no command to re-run.** A capsule written by a framework adapter or
 the `@agent` decorator (`novafabric.sdk.agent`; `capture_mode: sdk-decorator`, `command` is a label
 such as `@langgraph:demo`), one imported from OpenTelemetry spans (`otel-import`), or
-one with an empty `command` cannot be re-run. `mocked` refuses it before anything is
+one with an empty `command` cannot be re-run — except an adapter capsule that records
+its process invocation and passes every guard (experimental, ADR-0306 Q7; the refusal
+then names the failed guard in `error.guard`, see *Replaying an adapter capsule* under
+Framework Adapters). `mocked` refuses it before anything is
 spawned: `status: aborted`, `error.type: CapsuleNotReplayable`, exit 1 (also under
 `--dry-run`). `intervention` emits the counterfactual streams without re-running and
 records `intervention.downstream_reexecuted: false`. `exact` reports it not eligible.
@@ -10492,6 +10495,52 @@ them is an error listing every path — pass the capsule path to choose. A comma
 `--capsule-dir` option, where it has one, restricts the lookup to that directory.
 v0.104.0 and earlier resolve a bare id in the capture store only, so there use the path.
 
+### Replaying an adapter capsule (experimental, unreleased — ADR-0306 open question 7)
+
+Every adapter in this section, and the `@agent` decorator, records how its **process**
+was started in the capsule's `process_invocation` facet
+(`novafabric.capture.process_invocation`). `command` keeps the `@framework:name` label
+and `capture_mode` stays `sdk-decorator`.
+
+| Field | Recorded |
+|---|---|
+| `argv` | `sys.executable`, then `sys.orig_argv[1:]` as given; the home directory as `~`; the manifest redaction pass applies |
+| `entry_kind`, `entry` | `script` (path as typed), `module` (`-m` name), `code` (`-c` source), or `interactive` / `stdin` / `unknown` |
+| `entry_file`, `entry_sha256` | the `__main__` file and its SHA-256 (script and module) |
+| `cwd`, `stdin_isatty` | working directory at the adapter run; whether stdin was a terminal |
+| `adapter_run_ordinal` | 1 for the process's first adapter run, 2 for the second, … |
+| `host_modules` | loaded modules that mark a harness host (`ipykernel`, `_pytest`, `execnet`, `streamlit`) |
+
+No environment-variable names or values are added. `nova replay --mode mocked` (and
+`--mode intervention`) re-run `argv` in the recorded `cwd`, with stdin closed and the
+same model/tool serving as a `nova capture` capsule, only when every guard passes;
+otherwise the replay is refused before anything runs (`status: aborted`,
+`error.type: CapsuleNotReplayable`, exit 1) and `error.guard` names the guard:
+`facet_malformed`, `entry_not_reproducible` (REPL, stdin program, rewritten `sys.argv`,
+frozen app, directory changed before the run), `long_lived_host` (a notebook kernel,
+`pytest`, `uvicorn`, `gunicorn`, `hypercorn`, `streamlit`, `celery`, `jupyter`,
+`ipython` entry, or a harness module loaded), `argv_redacted`, `not_first_adapter_run`,
+`entry_file_missing`, `entry_changed`, `entry_not_verifiable`. `--dry-run` prints the
+command, working directory and stdin it would use.
+
+```bash
+python agent.py fixtures/snippet_a.py          # LangGraph wrap() writes the capsule
+nova replay .novafabric/runs/<run-id>/ --dry-run   # shows: Command (the recorded process invocation …)
+nova replay .novafabric/runs/<run-id>/             # re-runs it, model calls served
+```
+
+In the re-run process the adapters write no capsule and report each adapter run to the
+replay; a process that makes more or fewer runs than recorded diverges
+(`adapter_run_count_mismatch`, `replay_contract.adapter_runs_expected` /
+`adapter_runs_observed`). The verdict's `exit_code` check compares the framework call's
+recorded outcome, not the process exit code; `stdout_sha256` is not compared (an adapter
+records no process output), so the verdict is at best `not_compared`. Not covered:
+model calls the process makes outside the adapter run (they diverge, fail closed);
+modules the entry file imports (only the entry file is digested); a script that starts
+a server in-process (stopped by the 600 s timeout); a low-entropy secret in an argument
+(not detected by the redaction pass). A capsule written before this change has no facet
+and is refused with the same message as before. Tested end to end with LangGraph only.
+
 ### OpenAI Agents SDK adapter (E-5)
 
 ```python
@@ -10507,7 +10556,7 @@ result = await Runner.run(agent, "hello")
 
 The adapter registers a `NovaCapsuleTracingProcessor` via `add_trace_processor()`.
 Each trace produces one capsule in the adapter default directory (`$NOVAFABRIC_HOME/runs/`, or `./.novafabric/runs/` when `NOVAFABRIC_HOME` is unset). `capture_mode` is
-`sdk-decorator` and `command` is a `@openai-agents:<workflow>` label (the trace's `RunConfig.workflow_name`), so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
+`sdk-decorator` and `command` is a `@openai-agents:<workflow>` label (the trace's `RunConfig.workflow_name`), so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`) unless it is re-run only from the process invocation the adapter also records, when every replay guard passes (experimental, ADR-0306 Q7; see *Replaying an adapter capsule* below).
 The capsule's `status` follows the SDK's own span errors. An error on an **agent** span — where the SDK records
 `Max turns exceeded`, `Guardrail tripwire triggered` and an exception escaping the agent — makes it `failure` with
 `exit_code: 1` and `error: {type: AgentRunError, message}` (the SDK's span message, never its `data`). An error on any
@@ -10585,7 +10634,7 @@ runner = Runner(
 ```
 
 The adapter implements `before_run_callback` and `after_run_callback` on a
-`NovaAdkPlugin` instance. `capture_mode` is `sdk-decorator` and `command` is an `@google-adk:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
+`NovaAdkPlugin` instance. `capture_mode` is `sdk-decorator` and `command` is an `@google-adk:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`) unless it is re-run only from the process invocation the adapter also records, when every replay guard passes (experimental, ADR-0306 Q7; see *Replaying an adapter capsule* below).
 
 Top-level alias: `from novafabric.adapters import make_google_adk_plugin`
 
@@ -10630,9 +10679,11 @@ nova replay <run-id>                 # ADK tool bodies do not run; results come 
 - **Outside capture and replay** every callback returns `None`.
 - The plugin steps aside for ADK `McpTool`s (the MCP surface already serves them) and
   for functions declared with `novafabric.capture.record.tool`.
-- **Only `nova capture python …` capsules can be replayed.** A capsule written by
-  `make_plugin()` is still refused by mocked replay (`CapsuleNotReplayable`): adapters
-  record a pseudo-command, not a re-runnable one (ADR-0306 open question 7). Use one
+- **A `make_plugin()` capsule is replayed only from its recorded process invocation.**
+  Its `command` is a pseudo-command; mocked replay re-runs the process invocation the
+  adapter also records when every guard passes, and refuses it otherwise
+  (`CapsuleNotReplayable`; ADR-0306 open question 7, experimental, not tested end to end
+  for ADK). Use one
   plugin or the other per run, not both: under `nova capture`, `make_plugin()` files
   the run into its own adapter capsule.
 
@@ -10666,7 +10717,7 @@ one was written, and it never copies `inputText`. The capsule closes when the st
 `success` when exhausted, `failure` when it raises (e.g. throttling; the exception still
 reaches you) or when `invoke_agent` itself fails, and `partial` (`metadata.partial_reason:
 abandoned`) when you stop reading, close it, or drop it unread.
-`capture_mode` is `sdk-decorator` and `command` is an `@bedrock-agentcore:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
+`capture_mode` is `sdk-decorator` and `command` is an `@bedrock-agentcore:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`) unless it is re-run only from the process invocation the adapter also records, when every replay guard passes (experimental, ADR-0306 Q7; see *Replaying an adapter capsule* below).
 
 All non-`invoke_agent` methods are delegated transparently to the underlying client
 (`__getattr__` passthrough).
@@ -10689,7 +10740,7 @@ result = await client.send_message(agent_card=card, message=msg)
 
 The adapter implements `before()` and `after()` on a `NovaA2AInterceptor` instance.
 Only `send_message` and `send_message_streaming` calls are captured; other methods
-pass through unchanged. `capture_mode` is `sdk-decorator` and `command` is an `@a2a:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`). Task envelopes are written
+pass through unchanged. `capture_mode` is `sdk-decorator` and `command` is an `@a2a:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`) unless it is re-run only from the process invocation the adapter also records, when every replay guard passes (experimental, ADR-0306 Q7; see *Replaying an adapter capsule* below). Task envelopes are written
 to `a2a-tasks.jsonl` inside the capsule.
 
 This implements RFC-0002 §Q4 (full A2A protocol-aware capture), deferred until A2A SDK
@@ -10825,8 +10876,12 @@ nova replay <run-id>                 # tool bodies do not run; results come from
   already served on the MCP surface. A function declared with
   `novafabric.capture.record.tool` is a boundary of its own and is also left alone.
   Plain functions passed to `ToolNode` are not wrapped (wrap them with `@tool` first).
-- **Only `nova capture python …` capsules can be replayed** (ADR-0306 open question 7):
-  capsules from `wrap()` carry the pseudo-command `@langgraph:<run_name>`.
+- **`nova capture python …` capsules, and `wrap()` capsules re-run from their recorded
+  process invocation** (ADR-0306 open question 7, experimental): a `wrap()` capsule's
+  `command` is the pseudo-command `@langgraph:<run_name>`; mocked replay re-runs the
+  recorded `python agent.py …` invocation in its working directory when every guard
+  passes, and a tool passed through `wrap_tools` is served there too
+  (`test_langgraph_adapter_replay_e2e.py`). See *Replaying an adapter capsule* below.
 
 ### LlamaIndex adapter
 

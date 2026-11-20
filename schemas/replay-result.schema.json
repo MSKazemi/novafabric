@@ -161,7 +161,9 @@
         "child_processes_observed": {"type": "boolean", "description": "ADR-0319: the replayed process reported the child processes it started (audit hook installed)."},
         "child_processes_spawned": {"type": "integer", "minimum": 0, "description": "ADR-0319: processes the replayed Python process started (subprocess, os.system, posix_spawn, fork, exec); their network and file activity is not observed. A lower bound when child_processes_capped is true."},
         "child_processes_argv0": {"type": "array", "items": {"type": "string"}, "description": "ADR-0319: distinct basenames of the programs started, first 10 (never arguments)."},
-        "child_processes_capped": {"type": "boolean", "description": "ADR-0319: more child processes were started than the observer logs per process."}
+        "child_processes_capped": {"type": "boolean", "description": "ADR-0319: more child processes were started than the observer logs per process."},
+        "adapter_runs_expected": {"type": "integer", "minimum": 1, "description": "ADR-0306 Q7: an adapter capsule re-run from its recorded process invocation -- the adapter runs the capsule recorded for its process (the replay re-runs run #1, so 1). Present only for such a replay. Additive and optional."},
+        "adapter_runs_observed": {"type": "integer", "minimum": 0, "description": "ADR-0306 Q7: framework-adapter runs the re-run process made. Any difference from adapter_runs_expected is an adapter_run_count_mismatch divergence. Additive and optional."}
       }
     },
     "model_calls_not_servable": {
@@ -178,6 +180,7 @@
       "properties": {
         "type": {"type": "string"},
         "message": {"type": "string"},
+        "guard": {"type": "string", "enum": ["facet_malformed", "entry_not_reproducible", "long_lived_host", "argv_redacted", "not_first_adapter_run", "entry_file_missing", "entry_changed", "entry_not_verifiable"], "description": "ADR-0306 Q7, on error.type CapsuleNotReplayable: the guard that refused an adapter capsule's recorded process invocation. Absent when the capsule records no invocation at all. Additive and optional."},
         "model_calls_not_servable_by_system": {"type": "object", "additionalProperties": {"type": "object", "properties": {"count": {"type": "integer", "minimum": 0}, "hosts": {"type": "array", "items": {"type": "string"}}}}, "description": "ADR-0319, on error.type ModelSurfaceNotServable: the unservable recorded model calls by gen_ai.system."}
       },
       "description": "Error details if status is failure or aborted."

@@ -21,6 +21,7 @@ import yaml
 from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
 from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
+from novafabric.capture.process_invocation import attach_facet, begin_adapter_run
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
 
@@ -57,16 +58,24 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
         # trace_id -> span type -> errored spans; trace_id -> first run-ending error
         self._span_errors: dict[str, dict[str, int]] = {}
         self._run_error: dict[str, str] = {}
+        # run_id -> the process_invocation facet (ADR-0306 Q7)
+        self._invocations: dict[str, dict[str, Any] | None] = {}
 
     def on_trace_start(self, trace: Any) -> None:
         from novafabric.capture._ulid import new_span_id, new_ulid
         from novafabric.capture.hooks import install_all_or_discard
 
+        # ADR-0306 Q7: counted before the store is opened; under mocked replay
+        # the trace is not captured (the replay's dispatchers serve its calls).
+        adapter_run = begin_adapter_run("openai-agents")
+        if adapter_run.replaying:
+            return
         run_id = new_ulid()
         span_id = new_span_id()
         writer = open_capsule_writer(self._data_dir, run_id, hook="adapter-openai_agents")
         if writer is None:  # an unusable capsule store: this trace runs uncaptured
             return
+        self._invocations[run_id] = adapter_run.facet
         created_at = _now()
         t0 = time.monotonic()
         hook_token = install_all_or_discard(writer=writer, parent_span_id=span_id)
@@ -163,6 +172,7 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
                 "message": run_error,
                 "traceback_ref": None,
             }
+        attach_facet(manifest, self._invocations.pop(run_id, None))
         # Main scan (after replay.yaml), manifest redaction, lineage, residual
         # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
         # uses. Never raises; a failure — or a failed step above — leaves the capsule

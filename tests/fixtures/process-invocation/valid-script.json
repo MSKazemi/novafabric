@@ -1,0 +1,12 @@
+{
+  "schema_version": "0.1.0",
+  "argv": ["~/project/.venv/bin/python", "agent.py", "fixtures/snippet_a.py"],
+  "entry_kind": "script",
+  "entry": "agent.py",
+  "entry_file": "~/project/agent.py",
+  "entry_sha256": "sha256:3f1d5b9a2c8e7f6d4b0a1e2c3d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f",
+  "cwd": "~/project",
+  "stdin_isatty": false,
+  "adapter_run_ordinal": 1,
+  "host_modules": []
+}

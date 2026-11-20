@@ -357,6 +357,10 @@
           "type": "object",
           "description": "See ADR-0165."
         },
+        "process_invocation": {
+          "type": "object",
+          "description": "See ADR-0306 (open question 7 amendment): how the process that ran a framework adapter was started (argv, entry, entry digest, cwd, run ordinal). Lets nova replay re-run an sdk-decorator capsule when every guard passes."
+        },
         "regression_alarm": {
           "type": "object",
           "description": "See ADR-0147 D4 (NF-156)."

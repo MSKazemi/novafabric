@@ -133,8 +133,9 @@ wrote every call into `capsule_dir` itself, so a second call overwrote
 > `nova capture` — you can `nova validate`, `nova diff`, and `nova replay
 > --mode forensic|semantic` it the same way. It records `capture_mode:
 > sdk-decorator` and an `@agent:<name>@<version>` label instead of a command,
-> so `nova replay --mode mocked` refuses it (`CapsuleNotReplayable`): there is
-> no command to re-run.
+> so `nova replay --mode mocked` re-runs it only from the process invocation it
+> also records (`facets.process_invocation`), when every replay guard passes
+> (experimental, ADR-0306 Q7); otherwise it refuses it (`CapsuleNotReplayable`).
 
 ---
 

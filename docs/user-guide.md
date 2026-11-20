@@ -258,7 +258,10 @@ run()
 The capsule structure is the same as `nova capture`'s, with one difference: the
 decorator runs inside your process, so the capsule records `capture_mode:
 sdk-decorator` and a label (`@agent:<name>@<version>`) instead of a command.
-`nova replay --mode mocked` therefore refuses it (`CapsuleNotReplayable`, exit 1);
+`nova replay --mode mocked` re-runs it only from the process invocation it also
+records, when every replay guard passes (experimental, ADR-0306 Q7 — see [Which
+capsules each mode accepts](architecture/replay-modes.md#which-capsules-each-mode-accepts)); otherwise it is refused
+(`CapsuleNotReplayable`, exit 1);
 `forensic` and `semantic` replay, `nova diff` and `nova validate` work as usual.
 `capsule_dir` is a capsule store, like `nova capture --output-dir`: every call
 writes its own capsule to `capsules/<run_id>/`. Without `capsule_dir`,
@@ -437,15 +440,27 @@ naming the directory the capsule was found in, and fail with an error listing bo
 paths if the same id exists in two of them. Passing `--capsule-dir` to a command
 that has it searches only that directory.
 
-**Replaying an adapter capsule.** An adapter capsule is captured inside a framework
-call, so it records `capture_mode: sdk-decorator` and a `@framework:name` label, not a
-command. `nova replay --mode forensic` and `--mode semantic` work on it; `--mode mocked`
-refuses it up front (`CapsuleNotReplayable`, exit 1) because there is nothing to
-re-run; `--mode exact` reports it not eligible. Re-running a framework agent from its
-capsule is **future design** (ADR-0306, open question 7). To get a mocked-replayable
-capsule, capture the script that runs the agent with `nova capture -- python agent.py`. Full reference, including each
-adapter's entry-point and capture-mode details, is in
-[`cli-reference.md`](cli-reference.md) §Framework Adapters.
+**Replaying an adapter capsule** (experimental, unreleased — ADR-0306 open question 7).
+An adapter capsule is captured inside a framework call, so it records `capture_mode:
+sdk-decorator` and a `@framework:name` label, not a command. Every adapter (and
+`@agent`) now also records how its process was started — the `process_invocation`
+facet: the interpreter and arguments, the entry script or `-m` module and its SHA-256,
+the working directory and the run's ordinal in its process. `nova replay --mode mocked`
+re-runs that invocation in the recorded working directory, serving the recorded model
+and tool calls as for a `nova capture` capsule, **when every guard passes**: the
+process was started as `python script.py`, `python -m module` or `python -c …` (not a
+REPL, a notebook kernel, a test runner or a known server); no argument was redacted as
+a secret; it is the first adapter run of its process; and the entry file is unchanged
+since capture. Otherwise the replay is refused up front (`CapsuleNotReplayable`, exit
+1) and `error.guard` names the guard that failed; `nova replay --dry-run` prints the
+command it would run. During the replay the adapters write no new capsule. The verdict
+compares the framework call's recorded outcome and the served call sequence; an
+adapter capsule records no process output, so the verdict is at best `not_compared`.
+Tested end to end with LangGraph only. An adapter capsule written before this change
+records no invocation and is refused exactly as before — re-capture it, or capture the
+script with `nova capture -- python agent.py`. Full reference: [Which capsules each
+mode accepts](architecture/replay-modes.md#which-capsules-each-mode-accepts) and [`cli-reference.md`](cli-reference.md) §Framework
+Adapters.
 
 **Google ADK tools in a mocked replay (experimental, since v0.106.0).**
 For an ADK agent captured with `nova capture -- python agent.py`, add
@@ -455,9 +470,10 @@ For an ADK agent captured with `nova capture -- python agent.py`, add
 through ADK's documented `before_tool_callback` short-circuit and the tool body never
 runs. Unmatched or unservable calls are refused (fail closed), `--permissive` and
 `replay.yaml` `tool_overrides` work as for MCP and `record.tool`, and the mutation
-class that gates them is declared in `make_tool_plugin({...})`. It does not make
-capsules from `make_google_adk_plugin()` replayable — those keep a pseudo-command
-(ADR-0306 open question 7). Details: [`cli-reference.md`](cli-reference.md) §Google
+class that gates them is declared in `make_tool_plugin({...})`. A capsule from
+`make_google_adk_plugin()` is re-run only from its recorded process invocation when
+every guard passes (ADR-0306 open question 7, experimental, not tested end to end for
+ADK). Details: [`cli-reference.md`](cli-reference.md) §Google
 ADK adapter and [`architecture/replay-modes.md`](architecture/replay-modes.md).
 
 **OpenAI Agents SDK tools in a mocked replay (experimental, since v0.106.0).**
@@ -745,7 +761,8 @@ nova replay ~/.novafabric/capsules/01HX.../ --mode exact
 Checks whether the capsule meets the requirements for byte-exact replay:
 `env.lock` `mode: deterministic` (the legacy `lock_mode` key is still read), a
 `gen_ai.request.seed` on every model call, no tool-schema drift, and a command
-to re-run (a framework-adapter capsule is never eligible).
+to re-run (a framework-adapter capsule is eligible only when its recorded process
+invocation passes every replay guard, ADR-0306 Q7).
 Returns `exact_eligible` (bool) and a list of `exact_reasons` if not eligible.
 No subprocess, no network. Remote LLMs are almost never exact-eligible; this
 mode is for local / on-prem / compliance runs where determinism is controllable.
@@ -761,7 +778,9 @@ v0.104.0 served versus v0.105.0 is listed under
 [Release scope](architecture/replay-modes.md)). A capsule
 that records no command — written by a framework adapter or `@agent`
 (`capture_mode: sdk-decorator`), or imported from OpenTelemetry spans — is refused
-before anything is spawned (`CapsuleNotReplayable`, exit 1, also under `--dry-run`).
+before anything is spawned (`CapsuleNotReplayable`, exit 1, also under `--dry-run`),
+unless it is an adapter capsule whose recorded process invocation passes every guard
+(experimental, ADR-0306 Q7; see [Which capsules each mode accepts](architecture/replay-modes.md#which-capsules-each-mode-accepts)).
 Recorded
 responses are served, in recorded order, for OpenAI `chat.completions.create`,
 OpenAI `responses.create` and Anthropic `messages.create` calls — sync or async,

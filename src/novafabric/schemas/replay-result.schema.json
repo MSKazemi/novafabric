@@ -296,6 +296,16 @@
         "child_processes_capped": {
           "type": "boolean",
           "description": "ADR-0319: more child processes were started than the observer logs per process."
+        },
+        "adapter_runs_expected": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "ADR-0306 Q7: an adapter capsule re-run from its recorded process invocation -- the adapter runs the capsule recorded for its process (the replay re-runs run #1, so 1). Present only for such a replay. Additive and optional."
+        },
+        "adapter_runs_observed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "ADR-0306 Q7: framework-adapter runs the re-run process made. Any difference from adapter_runs_expected is an adapter_run_count_mismatch divergence. Additive and optional."
         }
       }
     },
@@ -319,6 +329,11 @@
         },
         "message": {
           "type": "string"
+        },
+        "guard": {
+          "type": "string",
+          "enum": ["facet_malformed", "entry_not_reproducible", "long_lived_host", "argv_redacted", "not_first_adapter_run", "entry_file_missing", "entry_changed", "entry_not_verifiable"],
+          "description": "ADR-0306 Q7, on error.type CapsuleNotReplayable: the guard that refused an adapter capsule's recorded process invocation. Absent when the capsule records no invocation at all. Additive and optional."
         },
         "model_calls_not_servable_by_system": {
           "type": "object",

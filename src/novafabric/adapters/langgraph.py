@@ -47,6 +47,7 @@ from novafabric.adapters._streaming import (
 from novafabric.capture import record as _record
 from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
+from novafabric.capture.process_invocation import attach_facet, begin_adapter_run
 from novafabric.capture.record import _payloads_enabled
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
@@ -97,6 +98,7 @@ def _run_capture(
     cap_dir: Path,
     partial_reason: str | None = None,
     steps: TeardownSteps | None = None,
+    process_invocation: dict[str, Any] | None = None,
 ) -> None:
     """Write capsule artifacts after a graph invocation finishes. Never raises.
 
@@ -175,6 +177,8 @@ def _run_capture(
     }
     if error:
         manifest["error"] = error
+    # ADR-0306 Q7: how the process was started, so replay can re-run it.
+    attach_facet(manifest, process_invocation)
 
     # Main scan (after replay.yaml), manifest redaction, lineage, residual
     # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
@@ -199,8 +203,12 @@ class _GraphRun:
         from novafabric.capture.hooks import install_all_or_discard
 
         self._graph = graph
-        made = graph._make_writer()
-        #: False when the capsule store was unusable: the graph runs uncaptured.
+        # ADR-0306 Q7: counted before the store is opened, so a re-run process
+        # numbers its runs the same way; under mocked replay nothing is written.
+        self._run = begin_adapter_run("langgraph")
+        made = None if self._run.replaying else graph._make_writer()
+        #: False when the capsule store was unusable or the process is being
+        #: re-run by mocked replay: the graph runs uncaptured.
         self.captured = made is not None
         self.writer: Any = None
         self.hook_token = ""
@@ -227,6 +235,10 @@ class _GraphRun:
         from novafabric.capture.hooks import uninstall_all, wire_capture_state
 
         if not self.captured:
+            status = (
+                "failure" if self.exit_code else "partial" if self.partial_reason else "success"
+            )
+            self._run.replay_finished(self.exit_code, status)
             return
         # eval-adapters-query-04: teardown never replaces the graph call's outcome.
         steps = TeardownSteps("adapter-langgraph")
@@ -249,6 +261,7 @@ class _GraphRun:
             cap_dir=self.cap_dir,
             partial_reason=self.partial_reason,
             steps=steps,
+            process_invocation=self._run.facet,
         )
 
 

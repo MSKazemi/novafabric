@@ -25,8 +25,38 @@ longer forwards the submitting shell's environment (ADR-0270).
   model (`/api/tags`, `/api/show`, `/api/version`, `/api/ps`) are not refused either (they run live and their
   connections are reported).
 
+### Changed
+
+- **Adapters write no capsule inside a mocked replay** (ADR-0306 open question 7). A framework adapter or the
+  `@agent` decorator running in a process that `nova replay --mode mocked` (or `intervention`) re-runs — including
+  a `nova capture` workload that also uses an adapter — used to open a new capsule in the live capsule home on
+  every replay. It now writes nothing and reports its runs to the replay's event log instead (the replay writes its
+  own replay capsule, ADR-0321).
+
 ### Added
 
+- **Framework-adapter capsules can be replayed (experimental, ADR-0306 open question 7, issue #56).** Every
+  framework adapter (LangGraph, Google ADK, OpenAI Agents SDK, A2A and the shared core used by CrewAI, AutoGen,
+  DSPy, LlamaIndex, smolagents, Haystack, Pydantic AI and Bedrock AgentCore) and the `@agent` decorator now record
+  how their process was started in a new, additive capsule facet `process_invocation`: the interpreter and
+  arguments (home as `~`, through the existing manifest redaction), the entry script / `-m` module / `-c` code,
+  the entry file's SHA-256, the working directory, whether stdin was a terminal, the run's ordinal in its process,
+  and loaded harness-host modules. No environment-variable names or values are added. `command` keeps the
+  `@framework:name` label and `capture_mode` stays `sdk-decorator`. `nova replay --mode mocked` (and
+  `intervention`) re-run that invocation in the recorded working directory, with stdin closed and the same
+  model/tool serving as a `nova capture` capsule, **only when every guard passes**; otherwise the capsule is
+  refused up front (`CapsuleNotReplayable`, exit 1) and the new `error.guard` names the guard
+  (`facet_malformed`, `entry_not_reproducible`, `long_lived_host`, `argv_redacted`, `not_first_adapter_run`,
+  `entry_file_missing`, `entry_changed`, `entry_not_verifiable`). `--dry-run` prints the command it would run.
+  In the re-run process adapters write no capsule; a process making more or fewer adapter runs than recorded
+  diverges (`adapter_run_count_mismatch`; new `replay_contract.adapter_runs_expected` / `adapter_runs_observed`).
+  The fidelity verdict's `exit_code` check compares the framework call's recorded outcome, not the process exit
+  code; an adapter capsule records no process output, so its verdict is at best `not_compared`. Tested end to end
+  with real LangGraph (including `langchain_tools.wrap_tools` tools served inside the adapter capsule); the other
+  adapters record the facet but are not replayed end to end in the tests. An adapter capsule written before this
+  change has no facet and is refused with the unchanged message. Limits: model calls outside the adapter run
+  diverge (fail closed); only the entry file is digested; a script that starts a server in-process is not
+  recognised (600 s timeout); a low-entropy secret in an argument is not detected by redaction.
 - **Hugging Face evidence (experimental, opt-in).** Nothing here changes a capture that does not use it.
   `novafabric.adapters.smolagents.wrap_agent` (alias `novafabric.adapters.wrap_smolagents`) writes one
   Run Capsule per `smolagents` `run()`, with a span per step and a tool-call record per call at step
