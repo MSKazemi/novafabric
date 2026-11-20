@@ -38,13 +38,17 @@ import typer
 from pydantic import BaseModel
 from rich.console import Console
 
+from novafabric._capsule_fs import CapsuleEntryError
 from novafabric.cli._output import emit_json
 from novafabric.compliance.export.genai_csa_profile import build_genai_csa_profile
 from novafabric.compliance.export.gpai53 import build_gpai53_form
-from novafabric.compliance.export.iso42001 import build_iso42001_mapping
+from novafabric.compliance.export.iso42001 import (
+    DuplicateControlIdError,
+    build_iso42001_mapping,
+)
 from novafabric.compliance.export.nist_rmf import NISTAIRMFReporter
 from novafabric.compliance.export.pmm import PmmFinding, build_pmm_report
-from novafabric.compliance.export.provenance import EvidenceSourceRef
+from novafabric.compliance.export.provenance import build_capsule_ref
 
 console = Console()
 
@@ -118,27 +122,61 @@ def iso42001_cmd(
         typer.Option("--catalog", help="JSON control catalog: [{control_id, evidence_kind?}]"),
     ],
     evidence: _EvidenceOpt = None,
+    capsule: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--capsule",
+            help="Capsule directory; evidenced controls carry a digest computed from it",
+        ),
+    ] = None,
     capsule_id: Annotated[
         Optional[str],
-        typer.Option("--capsule-id", help="Capsule id to attribute evidenced controls to"),
+        typer.Option(
+            "--capsule-id", help="Expected capsule id (checked against --capsule's manifest)"
+        ),
     ] = None,
+    standard: Annotated[
+        str,
+        typer.Option("--standard", help="Label for the catalog's framework in the report"),
+    ] = "ISO/IEC 42001:2023",
     out: _OutOpt = None,
 ) -> None:
-    """ISO/IEC 42001 control-evidence mapping from a declared catalog (NF-095)."""
+    """Control-evidence mapping from a declared catalog (ISO/IEC 42001 or your own; NF-095)."""
     entries = _load_json(catalog)
     if not isinstance(entries, list):
         raise typer.BadParameter("catalog JSON must be a list of {control_id, evidence_kind?}")
-    ref = (
-        EvidenceSourceRef(
-            capsule_id=capsule_id,
-            content_digest="sha256:" + "0" * 64,
-            verified_at=_now_iso(),
+    if capsule_id is not None and capsule is None:
+        # Before this check the id alone produced an all-zero digest for a capsule
+        # nobody read (BL-064); an evidence reference now always comes from a capsule.
+        raise typer.BadParameter(
+            "--capsule-id needs --capsule DIR: an evidence reference is computed from the capsule"
         )
-        if capsule_id
-        else None
-    )
-    report = build_iso42001_mapping(entries, _split_evidence(evidence), capsule_ref=ref)
-    _emit(report, out, label="ISO/IEC 42001 mapping")
+    ref = None
+    if capsule is not None:
+        from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415 — seal path only
+            capsule_seal_verifies,
+        )
+
+        try:
+            sealed = capsule_seal_verifies(capsule)
+            ref = build_capsule_ref(
+                capsule, _now_iso(), seal_envelope_path=".seal/manifest.dsse" if sealed else None
+            )
+        except CapsuleEntryError as exc:
+            raise typer.BadParameter(f"{capsule}: {exc}") from exc
+        if ref is None:
+            raise typer.BadParameter(f"{capsule} is not a capsule directory (no capsule.yaml)")
+        if capsule_id is not None and capsule_id != ref.capsule_id:
+            raise typer.BadParameter(
+                f"--capsule-id {capsule_id!r} does not match the capsule's id {ref.capsule_id!r}"
+            )
+    try:
+        report = build_iso42001_mapping(
+            entries, _split_evidence(evidence), capsule_ref=ref, standard=standard
+        )
+    except (DuplicateControlIdError, KeyError) as exc:
+        raise typer.BadParameter(f"invalid catalog: {exc}") from exc
+    _emit(report, out, label=f"{standard} mapping")
 
 
 @export_compliance_app.command("gpai53")

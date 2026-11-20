@@ -26,6 +26,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   `ISO42-7.5-DOCUMENTED-INFORMATION`, with the same evidence. `ISO42-10.2-CONTINUAL-IMPROVEMENT` is now
   `ISO42-10.1-CONTINUAL-IMPROVEMENT` (10.2 is nonconformity and corrective action). Reports and scripts
   keyed on the old IDs must use the new ones.
+- **`nova export-compliance iso42001` reported evidence it had not read (breaking).** With `--capsule-id`,
+  every `evidenced` control carried an all-zero placeholder digest and a fresh `verified_at` time, and
+  no capsule was opened — an id that names no capsule was accepted. The command now takes
+  `--capsule DIR` and computes the reference from it: the capsule id, a SHA-256 digest over
+  `capsule.yaml` and its model-call, tool-call and tool-permission streams, and the seal path when the
+  NovaSeal seal verifies. `--capsule-id` alone is refused (exit 2); with `--capsule` it must match the
+  capsule's id. A repeated `control_id` is refused, and a
+  catalog entry without `control_id` is reported as an error instead of a traceback. New
+  `--standard LABEL` names the catalog's framework in the report (default `ISO/IEC 42001:2023`).
+  `--evidence` is still operator-declared, so evidenced controls remain `operator_asserted`.
 - **`soc2-type2` audit profile: `CC6.6` was titled as the malicious-software criterion**, which is CC6.8.
   It is now titled for CC6.6's topic, protection against threats from outside the system boundary; the
   control ID and its evidence are unchanged.

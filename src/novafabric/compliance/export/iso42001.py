@@ -34,6 +34,7 @@ exporters (NF-091/093/094/097) remain future design; this ships NF-095.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from enum import Enum
@@ -59,6 +60,10 @@ _ISO_42005_SECTIONS: tuple[tuple[str, str], ...] = (
     ("mitigation_measures", "Risk mitigation and control measures"),
     ("residual_risk", "Residual risk and accountability sign-off"),
 )
+
+
+class DuplicateControlIdError(ValueError):
+    """A catalog lists the same ``control_id`` more than once."""
 
 
 class Iso42001ControlStatus(str, Enum):
@@ -122,6 +127,7 @@ def build_iso42001_mapping(
     *,
     capsule_ref: EvidenceSourceRef | None = None,
     declared_controls: Iterable[str] | None = None,
+    standard: str = _ISO_42001_STANDARD,
 ) -> Iso42001ControlReport:
     """Map a declared ISO/IEC 42001 control catalog to present capsule evidence.
 
@@ -133,8 +139,15 @@ def build_iso42001_mapping(
       re-performed here) with the ref attached;
     * else → ``not_evidenced`` (``unverifiable`` — an honest gap).
 
+    ``standard`` labels the report; it defaults to ISO/IEC 42001 and may name the
+    user's own catalog. A repeated ``control_id`` raises :class:`DuplicateControlIdError`.
+
     The report certifies presence of evidence, never that a control is adequate.
     """
+    counts = Counter(str(item["control_id"]) for item in catalog)
+    duplicates = sorted(i for i, n in counts.items() if n > 1)
+    if duplicates:
+        raise DuplicateControlIdError(f"duplicate control_id in catalog: {', '.join(duplicates)}")
     present = set(present_evidence)
     declared = set(declared_controls or ())
     controls: list[Iso42001ControlMapping] = []
@@ -173,6 +186,7 @@ def build_iso42001_mapping(
             )
         )
     return Iso42001ControlReport(
+        standard=standard,
         controls=controls,
         evidenced_count=evidenced,
         generated_at=_now(),
