@@ -33,10 +33,13 @@ fail-open towards the workload (ADR-0021) and fail-closed towards the verdict:
   replay wrote again.
 
 Known limits (documented, not hidden): only Python processes that load the
-loader are observed -- a non-Python child process (``bash -c 'echo > f'``) or C
-code that bypasses the audit events is not; an ``os.open(..., dir_fd=...)`` is
-resolved against the working directory (NovaFabric's own capsule writes, which
-use ``dir_fd``, are recognised by their caller and skipped); a ``fork()`` child that never execs
+loader are observed (at replay also Python children whose environment dropped the
+replay's variables: ``replay/_child_observer.py`` duplicates this observer, stdlib
+only, and a test pins its constants to these) -- a non-Python child process
+(``bash -c 'echo > f'``) or C code that bypasses the audit events is not; an
+``os.open(..., dir_fd=...)`` is resolved against the working directory
+(NovaFabric's own capsule writes, which use ``dir_fd``, are recognised by their
+caller and skipped); a ``fork()`` child that never execs
 inherits the hook but not the hand-off; renames and deletes are not events, but
 the end-of-run state of every written path is recorded, so a deleted output is
 recorded as ``absent``. Digests are only computed for the local runner: under a

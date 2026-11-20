@@ -34,6 +34,14 @@ Pieces:
   IPv4/IPv6 addresses (host and port only), for the child bootstrap; the replayed
   process itself uses the dispatcher's ``NetworkObserver``.
 
+* :class:`WriteObserver` -- the child's copy of ``capture/file_effects.py``'s
+  replay write observer (ADR-0321 amendment): every open for writing, kept by
+  absolute path with the same skip rules and cap, reported as
+  ``file_observer_installed`` at start and ``files_written`` at interpreter exit,
+  so ``replay_written_paths`` judges a child's writes like the dispatcher's -- and
+  a child that dies without reporting makes them unknown. Its constants are
+  duplicated (this module must not import novafabric); a test pins them equal.
+
 * :func:`start_tree_observation` -- one ``observer_started`` event per observed
   process (``role``: ``root`` / ``child`` / ``fork``, with ``ppid``), the
   ``subprocess.Popen`` environment propagation (:func:`child_env`) and a fork
@@ -43,6 +51,7 @@ Pieces:
 
 from __future__ import annotations
 
+import atexit
 import functools
 import json
 import os
@@ -73,6 +82,25 @@ _SPAWN_EVENTS = frozenset({
 
 #: A program name safe to log: anything else is reported as ``?``.
 _SAFE_NAME = re.compile(r"[A-Za-z0-9._+-]{1,64}")
+
+# ── file writes: duplicated from capture/file_effects.py (pinned by a test) ──
+
+#: Replay event-log events (``file_effects.REPLAY_OBSERVER_EVENT`` / ``_WRITES_EVENT``).
+REPLAY_OBSERVER_EVENT = "file_observer_installed"
+REPLAY_WRITES_EVENT = "files_written"
+#: Distinct written paths one process keeps (``file_effects.MAX_PATHS_PER_PROCESS``).
+MAX_WRITTEN_PATHS = 1024
+#: Longest path kept, in characters (``file_effects.MAX_PATH_CHARS``).
+MAX_PATH_CHARS = 4096
+_WRITE_MODE_CHARS = frozenset("wax+")
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+#: Pseudo filesystems: an open there is a device or kernel interface, not a file effect.
+_PSEUDO_ROOTS = ("/dev", "/proc", "/sys")
+#: Frames looked through for the code that asked for the open.
+_MAX_CALLER_FRAMES = 8
+#: Replay event log, as the dispatcher reads it; the child is told it under
+#: OBSERVE_ENV when its environment lost this one.
+EVENTS_ENV = "NOVAFABRIC_REPLAY_EVENTS_PATH"
 
 #: ``depth > 0`` while this thread is inside ``subprocess.Popen.__init__``: a fork
 #: there (``preexec_fn``) is Popen's own, already counted, and execs at once.
@@ -241,6 +269,150 @@ class SocketObserver:
             pass
 
 
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def write_intent(mode: Any, flags: Any) -> bool:
+    """Does an ``open`` audit event's ``(mode, flags)`` open the file for writing?"""
+    if isinstance(mode, str) and _WRITE_MODE_CHARS.intersection(mode):
+        return True
+    return isinstance(flags, int) and not isinstance(flags, bool) and bool(flags & _WRITE_FLAGS)
+
+
+def _stdlib_prefixes() -> tuple[str, ...]:
+    import sysconfig
+
+    paths = sysconfig.get_paths()
+    return tuple(
+        os.path.abspath(paths[k]).rstrip(os.sep) + os.sep
+        for k in ("stdlib", "platstdlib") if paths.get(k)
+    )
+
+
+def _own_code_prefixes() -> tuple[str, ...]:
+    """Where NovaFabric's own code lives: this module's directory (the replay site
+    dir in a child) and the ``novafabric`` package, located without importing it."""
+    prefixes = [os.path.dirname(os.path.abspath(__file__)) + os.sep]
+    try:
+        import importlib.machinery
+
+        spec = importlib.machinery.PathFinder.find_spec("novafabric")
+        for location in (spec.submodule_search_locations or []) if spec else []:
+            prefixes.append(os.path.abspath(location).rstrip(os.sep) + os.sep)
+    except Exception:  # noqa: BLE001 -- not installed here: only this module's own opens
+        pass
+    return tuple(prefixes)
+
+
+class WriteObserver:
+    """Keep the absolute path of every file this process opens for writing
+    (``file_effects.FileWriteObserver``'s rules: opens under *skip_roots*, under
+    ``/dev``, ``/proc``, ``/sys`` and from NovaFabric's own code are not kept; past
+    the cap the report is ``capped``)."""
+
+    def __init__(self, skip_roots: list[str], *, cap: int = MAX_WRITTEN_PATHS) -> None:
+        self._skip = tuple(os.path.abspath(r) for r in skip_roots)
+        self._stdlib = _stdlib_prefixes()
+        self._own = _own_code_prefixes()
+        self._cap = cap
+        self._paths: set[str] = set()
+        self._handled: set[str] = set()
+        self.capped = False
+        self._pid = os.getpid()
+        self._active = False
+        self._lock = threading.Lock()
+        self._busy = threading.local()
+
+    @property
+    def paths(self) -> list[str]:
+        with self._lock:
+            return sorted(self._paths)
+
+    def install(self) -> bool:
+        try:
+            sys.addaudithook(self._hook)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            return False
+        self._pid = os.getpid()
+        self._active = True
+        return True
+
+    def stop(self) -> None:
+        self._active = False
+
+    def _called_from_own_code(self, frame: Any) -> bool:
+        for _ in range(_MAX_CALLER_FRAMES):
+            if frame is None:
+                return False
+            name = frame.f_code.co_filename
+            if name.startswith(self._own):
+                return True
+            if not (name.startswith(self._stdlib) or name.startswith("<")):
+                return False  # the workload's own code
+            frame = frame.f_back
+        return False
+
+    def _hook(self, event: str, args: tuple[Any, ...]) -> None:
+        if event != "open" or not self._active or getattr(self._busy, "on", False):
+            return
+        self._busy.on = True
+        try:
+            if len(args) < 3 or not write_intent(args[1], args[2]):
+                return
+            raw = args[0]
+            if isinstance(raw, os.PathLike):
+                raw = os.fspath(raw)
+            if raw in self._handled:
+                return
+            if not self._called_from_own_code(sys._getframe(1)):
+                self._seen(args)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            pass
+        finally:
+            self._busy.on = False
+
+    def _seen(self, args: tuple[Any, ...]) -> None:
+        if os.getpid() != self._pid:
+            return
+        path = args[0]
+        if isinstance(path, int):
+            return
+        decoded = os.fsdecode(path)
+        text = os.path.abspath(decoded)
+        if decoded == text and len(self._handled) < 4 * self._cap:
+            self._handled.add(decoded)
+        if any(_under(text, r) for r in self._skip) or any(
+            _under(text, r) for r in _PSEUDO_ROOTS
+        ):
+            return
+        with self._lock:
+            if text in self._paths:
+                return
+            if len(self._paths) >= self._cap or len(text) > MAX_PATH_CHARS:
+                self.capped = True
+                return
+            self._paths.add(text)
+
+
+def _report_writes_at_exit(observer: WriteObserver, events: Any, pid: int) -> None:
+    if os.getpid() != pid:
+        return  # a fork child inherited the handler; its parent reports
+    observer.stop()
+    events.emit(REPLAY_WRITES_EVENT, paths=observer.paths, capped=observer.capped)
+
+
+def install_write_observer(events: Any, events_path: str | None) -> WriteObserver | None:
+    """Observe this process's writes; ``file_observer_installed`` now,
+    ``files_written`` at interpreter exit. The event log's directory is skipped."""
+    observer = WriteObserver([os.path.dirname(events_path)] if events_path else [])
+    if not observer.install():
+        return None
+    events.emit(REPLAY_OBSERVER_EVENT)
+    atexit.register(_report_writes_at_exit, observer, events, os.getpid())
+    return observer
+
+
 # ── environment propagation ──────────────────────────────────────────────────
 
 
@@ -364,11 +536,14 @@ def _chain_shadowed_sitecustomize(own_dir: str) -> None:
 def bootstrap_child(site_file: str) -> None:
     """Entry point of a child whose environment lost the replay dispatcher.
 
-    Observes only -- sockets and child processes -- and serves nothing: the
+    Observes only -- file writes, sockets and child processes -- and serves nothing: the
     capsule's recorded answers belong to the processes that recorded them.
     Writes nothing to stdout (an MCP stdio server speaks its protocol there).
     """
-    events = EventLog(os.environ.get(OBSERVE_ENV))
+    events_path = os.environ.get(EVENTS_ENV) or os.environ.get(OBSERVE_ENV)
+    events = EventLog(events_path)
+    # First, so every write the workload makes is seen (ADR-0321 amendment).
+    install_write_observer(events, events_path)
     if SocketObserver(events).install():
         events.emit("network_observer_installed")
     if ProcessObserver(events).install():

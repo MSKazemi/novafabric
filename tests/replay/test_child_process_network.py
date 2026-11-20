@@ -32,6 +32,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from novafabric.capture import file_effects
 from novafabric.cli.main import app
 from novafabric.replay import _child_observer
 from novafabric.replay._contract import summarize
@@ -62,6 +63,15 @@ if "stripped" in STEPS:
     out["stripped"] = subprocess.run(CHILD, env=env).returncode
 if "inherited" in STEPS:
     out["inherited"] = subprocess.run(CHILD).returncode
+if "log-root" in STEPS:
+    with open(os.environ["LOG_PATH"], "a") as f:
+        f.write("entry\n")
+for step in ("log-child", "log-child-dies"):
+    if step in STEPS:  # the appender runs with an MCP-style allowlisted environment
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "appender.py"), os.environ["LOG_PATH"],
+             "die" if step == "log-child-dies" else "exit"],
+            env={"PATH": os.environ.get("PATH", "")}, check=True)
 if "bash" in STEPS:
     out["bash"] = subprocess.run(
         ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/" + PORT]).returncode
@@ -72,7 +82,8 @@ if "mcp" in STEPS:
 
     async def main():
         params = StdioServerParameters(
-            command=sys.executable, args=[os.path.join(HERE, "server.py"), PORT])
+            command=sys.executable,
+            args=[os.path.join(HERE, "server.py"), os.environ.get("SERVER_PORT", PORT)])
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -99,13 +110,22 @@ with open(out, "a") as f:
     }) + "\n")
 '''
 
+APPENDER = r'''
+import os, sys
+with open(sys.argv[1], "a") as f:
+    f.write("entry\n")
+if sys.argv[2] == "die":
+    os._exit(0)  # no interpreter exit: the child never reports its writes
+'''
+
 SERVER = r'''
 import socket, sys
 from mcp.server.fastmcp import FastMCP
-try:  # what fastmcp's update check does at start: a connection of its own
-    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=5).close()
-except OSError:
-    pass
+if int(sys.argv[1]):
+    try:  # what fastmcp's update check does at start: a connection of its own
+        socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=5).close()
+    except OSError:
+        pass
 server = FastMCP("probe")
 
 @server.tool()
@@ -154,6 +174,9 @@ class Workload:
         (root / "agent.py").write_text(AGENT)
         (root / "child.py").write_text(CHILD)
         (root / "server.py").write_text(SERVER)
+        (root / "appender.py").write_text(APPENDER)
+        self.log = root / "log.txt"
+        monkeypatch.setenv("LOG_PATH", str(self.log))
         self.out = root / "out.json"
         self.child_out = root / "child.jsonl"
         self.runs = root / "runs"
@@ -291,6 +314,8 @@ def test_an_mcp_stdio_server_child_is_observed(work: Workload) -> None:
     assert contract["network_connections_live_children"] == 1
     assert contract["child_processes_unobserved"] == 0
     assert contract["network_observation_coverage"] == "complete"
+    # Its connection keeps the verdict from faithful (live_calls); its writes do not.
+    assert _file_check(doc)["equal"] is True, _file_check(doc)
 
 
 # ── non-Python children ──────────────────────────────────────────────────────
@@ -447,3 +472,85 @@ def test_the_site_is_inert_outside_a_replay(tmp_path: Path) -> None:
     # Nothing imported, socket.connect still the C method (not patched).
     assert proc.stdout.splitlines() == ["[]", "method_descriptor"], proc.stdout + proc.stderr
     assert sorted(p.name for p in tmp_path.iterdir()) == ["site"]
+
+
+# ── file writes of a child with a stripped environment ───────────────────────
+
+
+def _file_check(doc: dict[str, Any]) -> dict[str, Any]:
+    (check,) = [c for c in doc["fidelity"]["checks"] if c["name"] == "file_effects"]
+    return check
+
+
+def test_a_stripped_env_child_that_rewrites_a_recorded_file_makes_the_replay_diverge(
+    work: Workload, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The recorded file is written by the parent at capture and, at replay, only by
+    an MCP-style child: before the child observed its writes, the file was never
+    judged and the replay read as faithful."""
+    capsule = work.capture("log-root")
+    assert work.log.read_text() == "entry\n"
+    monkeypatch.setenv("STEPS", "log-child")
+    result, doc = work.replay(capsule)
+    assert work.log.read_text() == "entry\nentry\n"  # the side effect was repeated
+    assert doc["fidelity"]["verdict"] == "diverged", doc["fidelity"]
+    check = _file_check(doc)
+    assert check["equal"] is False
+    assert [d["path"] for d in check["differences"]] == [str(work.log)]
+    assert str(work.log) in check["note"]
+    assert "file_effects" in " ".join(result.output.split())
+
+
+def test_a_stripped_env_child_that_dies_without_reporting_leaves_writes_unknown(
+    work: Workload, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    capsule = work.capture("log-root")
+    monkeypatch.setenv("STEPS", "log-child-dies")
+    _result, doc = work.replay(capsule)
+    check = _file_check(doc)
+    assert check["equal"] is None
+    assert "without reporting its file writes" in check["note"]
+    assert doc["fidelity"]["verdict"] == "not_compared", doc["fidelity"]
+
+
+def test_the_child_write_observer_constants_match_file_effects() -> None:
+    """Duplicated, not imported: the child bootstrap must never import novafabric."""
+    pairs = {
+        "REPLAY_OBSERVER_EVENT": "REPLAY_OBSERVER_EVENT",
+        "REPLAY_WRITES_EVENT": "REPLAY_WRITES_EVENT",
+        "MAX_WRITTEN_PATHS": "MAX_PATHS_PER_PROCESS",
+        "MAX_PATH_CHARS": "MAX_PATH_CHARS",
+        "_WRITE_MODE_CHARS": "_WRITE_MODE_CHARS",
+        "_WRITE_FLAGS": "_WRITE_FLAGS",
+        "_PSEUDO_ROOTS": "_PSEUDO_ROOTS",
+        "_MAX_CALLER_FRAMES": "_MAX_CALLER_FRAMES",
+    }
+    for mine, theirs in pairs.items():
+        assert getattr(_child_observer, mine) == getattr(file_effects, theirs), mine
+
+
+@pytest.mark.parametrize(
+    ("mode", "flags"),
+    [("r", 0), ("rb", 0), ("w", 0), ("a", 0), ("x", 0), ("r+", 0), ("ab", 0),
+     (None, os.O_RDONLY), (None, os.O_WRONLY), (None, os.O_RDWR), (None, os.O_CREAT),
+     (None, os.O_APPEND), (None, os.O_TRUNC), (None, True), ("r", "w"), (5, None)],
+)
+def test_write_intent_matches_file_effects(mode: Any, flags: Any) -> None:
+    assert _child_observer.write_intent(mode, flags) == file_effects.write_intent(mode, flags)
+
+
+def test_an_mcp_stdio_server_child_that_writes_nothing_stays_faithful(
+    work: Workload, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """log_mcp without the update check: the observed child reports no writes and no
+    connections, so observing it costs the verdict nothing."""
+    pytest.importorskip("mcp.server.fastmcp")
+    monkeypatch.setenv("SERVER_PORT", "0")
+    capsule = work.capture("mcp")
+    result, doc = work.replay(capsule)
+    assert result.exit_code == 0, result.output
+    assert work.listener.take() == 0
+    contract = doc["replay_contract"]
+    assert contract["child_processes_unobserved"] == 0
+    assert _file_check(doc)["equal"] is True
+    assert doc["fidelity"]["verdict"] == "faithful", doc["fidelity"]
