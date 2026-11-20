@@ -158,8 +158,9 @@ def replay_cmd(
             help=(
                 "mocked mode only, experimental (ADR-0321): exit 4 unless the replay's "
                 "fidelity verdict is `faithful` -- the replay reproduced the recorded "
-                "exit code, stdout, stderr and call sequence, with no divergence and no "
-                "live call -- and exit 0 when it is, even for a faithful replay of a run "
+                "exit code, stdout (UUIDs masked), the files it wrote and the call "
+                "sequence, with no divergence and no live call -- and exit 0 when it "
+                "is, even for a faithful replay of a run "
                 "that failed. A replay refused before it ran keeps its refusal code."
             ),
         ),
@@ -213,7 +214,9 @@ def replay_cmd(
     not observed.
     A mocked replay also reports a fidelity verdict (experimental, ADR-0321):
     faithful, diverged, failed or not_compared, against the recorded exit
-    code, stdout/stderr digests and call sequence. The status (and the exit
+    code, stdout digest (RFC 4122 UUIDs masked, rule set volatile-ids/1; raw
+    stdout/stderr digests advisory), the files the recorded run wrote and
+    the call sequence. The status (and the exit
     code) still says how the replayed process ended; --require-faithful gates
     on the verdict instead. The replay directory holds a replay capsule:
     `nova diff <capsule> <replay-dir>` compares the two runs.
@@ -482,9 +485,11 @@ def _print_fidelity(fidelity: dict[str, Any]) -> None:
         str(c.get("name")) for c in checks if c.get("equal") is False and not c.get("advisory")
     ]
     advisory = [str(c.get("name")) for c in checks if c.get("equal") is False and c.get("advisory")]
+    unchecked = [str(n) for n in fidelity.get("unchecked") or []]
     uncompared = [
         str(c.get("name")) for c in checks
         if c.get("equal") is None and c.get("name") in REQUIRED_CHECKS
+        and c.get("name") not in unchecked
     ]
     line = f"  fidelity: {verdict}"
     if differs:
@@ -497,6 +502,26 @@ def _print_fidelity(fidelity: dict[str, Any]) -> None:
         line += f" — {fidelity['reason']}"
     colour = "green" if verdict == FIDELITY_FAITHFUL else "yellow"
     console.print(line, style=colour, markup=False, highlight=False)
+    if "file_effects" in unchecked:
+        console.print(
+            "    file effects were not recorded for this capsule, so the verdict does not "
+            "cover files the run wrote",
+            style="yellow", markup=False, highlight=False,
+        )
+    for name in (n for n in unchecked if n != "file_effects"):
+        console.print(
+            f"    {name} was not recorded for this capsule; the verdict does not cover it",
+            style="yellow", markup=False, highlight=False,
+        )
+    for check in checks:  # a file the replay changed: name it (first 5)
+        diffs = check.get("differences") if check.get("equal") is False else None
+        if isinstance(diffs, list) and diffs:
+            paths = [str(d.get("path")) for d in diffs[:5] if isinstance(d, dict)]
+            more = f" (+{len(diffs) - len(paths)} more)" if len(diffs) > len(paths) else ""
+            console.print(
+                f"    {check.get('name')}: {', '.join(paths)}{more} differ from the recording",
+                style=colour, markup=False, highlight=False,
+            )
 
 
 #: A replay that stopped for one of these exits with a code the replayed command could

@@ -445,7 +445,7 @@ used to permit anything.
 | `replay_contract.network_connections_live` / `network_destinations` | IPv4/IPv6 connections the replayed Python process opened (`socket.connect` / `connect_ex`, `replay/_dispatcher.py:NetworkObserver`), with the distinct `host:port` destinations (first 20). **Observed, never blocked** (ADR-0304); `network_observed: false` means nothing was observed, not that nothing happened. After 10,000 connections the count stops and `network_connections_capped: true` marks it as a lower bound. `network_observation_scope: python-process` (ADR-0319) says what this covers: the replayed Python process, and Python children that load the replay dispatcher through the generated `sitecustomize.py`; never a non-Python child |
 | `replay_contract.child_processes_spawned` / `child_processes_argv0` | processes the replayed Python process started (ADR-0319, `replay/_process_observer.py:ProcessObserver`, a CPython audit hook on `subprocess.Popen`, `os.system`, `os.posix_spawn`, `os.fork`/`os.forkpty` and `os.exec`), with the distinct program basenames (first 10; never arguments or environment). Their network and file activity is **not observed**; `nova replay` prints a warning when any was started. Report-only: never a divergence. `child_processes_observed: false` means the hook was not installed (e.g. a non-Python command); `child_processes_capped: true` marks a lower bound after 10,000. A process started from C code that bypasses these calls is not seen |
 | `intervention` | for `--mode intervention`: the spec, `matched_event_index`, the check outcomes, `downstream_reexecuted` (and `downstream_not_reexecuted_reason`), and `substitution_delivered_to_workload` with a `substitution_note` when it is `false` |
-| `fidelity` | `mocked` only, **experimental** (ADR-0321): outcome equivalence with the recorded run — `verdict` (`faithful`, `diverged`, `failed`, `not_compared`), `normalization: none`, and one `{name, equal, recorded, replayed, note?}` per check; see [Fidelity verdict](#fidelity-verdict-adr-0321-experimental) |
+| `fidelity` | `mocked` only, **experimental** (ADR-0321): outcome equivalence with the recorded run — `verdict` (`faithful`, `diverged`, `failed`, `not_compared`), `normalization` (the volatile-token rule set the normalised checks used: `volatile-ids/1`; `none` when nothing was compared), and one `{name, equal, recorded, replayed, note?, normalizer?, differences?, advisory?}` per check; see [Fidelity verdict](#fidelity-verdict-adr-0321-experimental) |
 | `replay_capsule_ref` | `mocked` only (ADR-0321): `capsule.yaml`, the replay capsule beside the result, for `nova diff` |
 
 `nova replay` prints the served counts (and how many were raised as recorded
@@ -457,7 +457,8 @@ divergence reason under the
 "Replay written" line, a warning when an intervention's substitution did not
 reach the re-executed workload, and, for `mocked`, the fidelity verdict with the
 checks that differ and the required checks that could not be compared
-(`fidelity: diverged — differs: stdout_sha256`).
+(`fidelity: diverged — differs: stdout_normalized_sha256`), and the files that
+differ from the recording.
 
 **Exit codes** (`cli/replay.py:replay_cmd`):
 
@@ -483,7 +484,9 @@ what the capsule recorded:
 | Check | Recorded | Replayed |
 |---|---|---|
 | `exit_code` | `capsule.yaml: exit_code` | the replayed command's exit code |
-| `stdout_sha256` / `stderr_sha256` | `sha256:` of `outputs/stdout.txt` / `outputs/stderr.txt` | the replayed process's stream, as the replay capsule stores it |
+| `stdout_normalized_sha256` | `sha256:` of `outputs/stdout.txt` after the volatile-token rule set (below) | the replayed stdout, as the replay capsule stores it, after the same rule set |
+| `stdout_sha256` / `stderr_sha256` | `sha256:` of `outputs/stdout.txt` / `outputs/stderr.txt`, byte for byte | the replayed process's stream, as the replay capsule stores it — both **advisory** |
+| `file_effects` | the files the workload's Python process(es) opened for writing and their `sha256` when the run ended (`file-effects.json`); `recorded` is their number | each of those files **the replayed process wrote again**, digested after it ended (`replayed` is their number); `differences` lists every one whose state differs (first 50), as `{path, recorded, replayed}`; the note counts the recorded files the replay did not touch and the files only the replay wrote — neither is judged |
 | `model_call_sequence` | every servable recorded model call, in order (`surface#n:model_call_id`), less records a served nested `record.tool` boundary covered | the records the dispatcher served, in the order served; `live:<surface>` for a call that ran live |
 | `tool_call_sequence` | every recorded call on an intercepted tool surface, in order (`surface:tool_name:tool_call_id`), less covered records | the records served, in order; `…:live`, `…:refused`, `…:unmatched` for a call that was not |
 | `divergence` | `0` | the number of divergences (`note`: `divergence_reason`) |
@@ -495,9 +498,17 @@ The verdict, in this order:
 | Verdict | When |
 |---|---|
 | `failed` | the replayed command did not run to completion: refused before it ran (`status: aborted`, no checks), timed out, could not be launched, or the replay dispatcher could not be installed |
-| `diverged` | any computed check is unequal (the failing ones are named), except `stderr_sha256`, which is advisory: reported with `advisory: true`, never in the verdict |
-| `not_compared` | a required check — `exit_code`, `stdout_sha256` — could not be computed because the capsule did not record it |
+| `diverged` | any computed check is unequal (the failing ones are named), except the advisory `stdout_sha256` and `stderr_sha256`: reported with `advisory: true`, never in the verdict |
+| `not_compared` | a required check — `exit_code`, `stdout_normalized_sha256`, `file_effects` — could not be computed: the capsule did not record the exit code or stdout, or its `file-effects.json` is present but unusable (incomplete, redacted, not matching its evidence digest) or names a file too large or unreadable to compare |
 | `faithful` | every computed check is equal: no divergence, no live or unintercepted call |
+
+A capsule with **no** `file-effects.json` at all — captured before file effects
+were recorded, a non-Python workload, a container or batch runner — is not made
+`not_compared` by that: `file_effects` is `null`, the result lists it in
+`fidelity.unchecked: [file_effects]`, the verdict is decided by the other checks,
+and `nova replay` says that file effects were not recorded for this capsule, so
+the verdict does not cover files the run wrote. A record that exists but cannot
+be used is an inconsistency, and stays `not_compared`.
 
 So a faithful replay of a run that failed is `status: failure` with
 `fidelity.verdict: faithful` (and exits with the replayed code, or `0` under
@@ -515,20 +526,68 @@ under a different rule pack than the replay's is not compared either. The
 replayed streams go through the same built-in secret scanner before they are
 stored, so a secret the scanner redacted at capture compares equal.
 
-**No normalisation** (`normalization: none`). A timestamp, a pid, a temporary
-path or a log line the workload prints makes its replay `diverged`; so does a
-log line written by code that never runs under mocked replay — the httpx
-transport's `HTTP Request:` line, an in-process MCP server's request log
-(`tests/replay/test_tool_choice_round_trip_e2e.py` shows a replay whose call
-sequences match and whose stderr does not). A declared normalisation rule set
-is **future design**; nothing is normalised implicitly.
+**Declared volatile-token rule set** (`normalization: volatile-ids/1`, works
+today, `replay/_normalize.py`). A workload prints ids it generates itself —
+LangChain prints `lc_<uuid4>` message content-block ids — so a replay whose
+every model and tool call was served printed different stdout bytes (a real
+LangChain + MCP workload: identical after masking UUIDs, `diverged` before). The
+required stdout check therefore compares the stream after one rule: every RFC
+4122 UUID in canonical 8-4-4-4-12 form (version 1–5, variant `10xx`) becomes
+`<uuid:N>`, N its order of first appearance — so an id printed twice in the
+recording must be printed twice in the replay. Nothing else is masked:
+timestamps, pids, temporary paths, `uuid.hex` (no hyphens), RFC 9562 versions
+6–8, and stderr are compared as they are. The raw byte comparison stays in the
+result as the advisory `stdout_sha256`, so a difference the rule hides is still
+visible. A new rule is a new version; the result names the version that produced
+its verdict. A log line written by code that never runs under mocked replay —
+the httpx transport's `HTTP Request:` line, an in-process MCP server's request
+log — still differs, on stderr, which is advisory
+(`tests/replay/test_tool_choice_round_trip_e2e.py`).
 
-What the verdict does **not** see: a side effect that leaves no trace in the
-exit code, the output streams or the recorded calls — a file written twice
-(probe P6) is caught only if the workload prints something that depends on it.
-Declared output files are not compared yet (**planned**). The intervention mode
-has no fidelity block: a counterfactual is expected to differ; compare its
-capsule with `nova diff`.
+**File effects** (works today for the local runner, `capture/file_effects.py`).
+`nova capture` records which files the workload's Python process opened for
+writing — a CPython audit hook on the `open` event (`open`, `io.open`, `FileIO`,
+`os.open` with a write mode or `O_WRONLY`/`O_RDWR`/`O_CREAT`/`O_APPEND`/
+`O_TRUNC`), in every Python process that loads the capture loader — and, after
+the workload ended, each file's `sha256` (or `absent`, `not_regular`,
+`too_large` above 1 GiB, `unreadable`) in `file-effects.json`: paths and
+digests, never contents. A path is stored relative to the working directory,
+`~/…` under the home directory, or absolute; replay resolves it the same way
+against its own directories. Files NovaFabric itself writes (the capsule, its
+home, the audit log), the bytecode cache and `/dev`, `/proc`, `/sys` are left
+out. The replay dispatcher installs the same hook in the replayed process(es)
+(reported through the replay event log). After the replayed process ends, replay
+digests each recorded path **the replay opened for writing again**: one it
+appended to again (corpus S6), truncated, or wrote something else into
+**diverges**, with the path named; an output the replay rewrote to the same
+content does not. A recorded file the replay never opened for writing is not
+judged: a tool served from the capsule rightly does not repeat its write, and
+the file may have changed since the recording for reasons that are not the
+replay's (another run appended to it; it was deleted). If the replay's writes
+were not observed — the hook was not installed, a replayed process ended through
+`os._exit` without reporting, or it wrote more than 1,024 files — and the record
+lists files, the check is `null` and the verdict `not_compared`. `file_effects` is `null` and **unchecked** (above) when the
+capsule has no `file-effects.json` — captured before it existed, a non-Python
+workload, or a container or batch runner, whose paths name another filesystem
+and for which none is written. It is `null` and the verdict `not_compared`
+(never a pass) when the record is incomplete (a process ended through
+`os._exit` or a signal without handing off its writes; more than 1,024 paths in
+one process or 4,096 in the run), when redaction changed it, when it does not
+match its evidence digest, or when a recorded file is too large or unreadable.
+
+What the verdict does **not** see: a file written at a path the recording never
+wrote (a report named after the run, say) — it is counted in the note, never
+judged, because such names are often volatile; a recorded file the replay
+deleted without opening it; writes by a non-Python child
+process, by C code that bypasses the audit events, or by a `fork()` child that
+never execs; an `os.open(…, dir_fd=…)` from workload code, which is resolved
+against the working directory; a side effect outside the filesystem that leaves
+no trace in the exit code, the streams or the recorded calls. A replay that
+starts a child process is not `faithful` anyway (`live_calls` counts
+`child_processes_spawned`). A digest of a small file that holds a guessable
+secret can be brute-forced: the record holds digests of whatever the workload
+wrote. The intervention mode has no fidelity block: a counterfactual is expected
+to differ; compare its capsule with `nova diff`.
 
 **The replay capsule.** A mocked replay that ran writes a minimal Run Capsule
 into its replay directory, beside `replay_result.yaml`
@@ -710,9 +769,10 @@ These limits are stated so you can rely on the parts that do work:
   `mocked` write a capsule into the replay directory; its `replay_of_run_id`
   becomes a `replayed_from` edge only if that capsule is indexed.
 - **The record-versus-replay comparison is the fidelity verdict** (mocked only,
-  experimental, ADR-0321): exit code, output stream digests and call sequences,
-  with no normalisation. Declared output files and side effects outside those are
-  not compared. For `intervention`, the signals are its own checks and `nova diff`
+  experimental, ADR-0321): exit code, output stream digests (stdout after the
+  declared `volatile-ids/1` rule set), the end state of every file the recorded
+  workload wrote, and call sequences. Files written only by the replay and side
+  effects outside the filesystem are not compared. For `intervention`, the signals are its own checks and `nova diff`
   on its capsule.
 
 ## Related commands

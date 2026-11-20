@@ -247,6 +247,10 @@ def report_counters(result: dict[str, Any]) -> dict[str, Any]:
         "child_processes_spawned": contract.get("child_processes_spawned"),
         "divergences": [d.get("kind") for d in contract.get("divergences") or []],
         "fidelity_verdict": (result.get("fidelity") or {}).get("verdict"),
+        "fidelity_failing": [
+            c.get("name") for c in (result.get("fidelity") or {}).get("checks") or []
+            if c.get("equal") is False and not c.get("advisory")
+        ],
     }
 
 

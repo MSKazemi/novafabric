@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric.capture import _tool_codec
+from novafabric.capture.file_effects import install_replay_write_observer
 from novafabric.capture.hooks._mcp import MCP_TOOL_ERROR
 from novafabric.capture.hooks._sdk_streams import (
     RESPONSE_STATUS_EXT,
@@ -1992,6 +1993,13 @@ def install_from_env() -> None:
         # child processes it started, whose activity it cannot see.
         if ProcessObserver(events).install():
             events.emit("process_observer_installed")
+        # ADR-0321 amendment: which files this process writes, so the fidelity
+        # verdict compares the recorded files the replay wrote again.
+        events_path = os.environ.get("NOVAFABRIC_REPLAY_EVENTS_PATH")
+        install_replay_write_observer(
+            events.emit,
+            skip_roots=[Path(events_path).parent] if events_path else [],
+        )
         events.emit("installed", policy=policy, surfaces=surfaces)
     except Exception as exc:  # noqa: BLE001 -- reported, then fail-closed below
         events.emit("install_failed", error=f"{type(exc).__name__}: {exc}")

@@ -47,6 +47,10 @@ HOOK_LOADER: str = textwrap.dedent("""\
             # which merges them into capture-health.json. Fail-open.
             from novafabric.capture.workload_health import register_workload_flush as _rwf
             _rwf(_P(_capsule_dir))
+            # ADR-0321 amendment: the files this process writes, digested by the
+            # orchestrator after the run, so replay can compare file effects.
+            from novafabric.capture.file_effects import install_file_write_observer as _ifw
+            _ifw(_P(_capsule_dir))
         except Exception as _e:
             print(f"[novafabric] hook install failed: {_e}", file=_sys.stderr)
 

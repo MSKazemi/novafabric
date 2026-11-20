@@ -51,6 +51,8 @@ EXPECTED_MANIFEST_KEYS = {
 EXPECTED_BOUND_FILES = {
     "assets.jsonl",
     "env.lock",
+    # ADR-0321 amendment (2026-11-20): the files the Python workload wrote, by digest.
+    "file-effects.json",
     "lineage.jsonl",
     "model-calls.jsonl",
     "outputs/stdout.txt",

@@ -56,16 +56,34 @@ longer forwards the submitting shell's environment (ADR-0270).
   workload started any, `nova replay` warns that their network and file activity is not observed. Report-only:
   the replay outcome is unchanged. All new result fields are additive and optional.
 - **Mocked replay reports whether it reproduced the recorded run** (experimental, ADR-0321). A new, additive
-  `fidelity` block in `replay_result.yaml` compares the replay with the capsule: the exit code, the stdout and
-  stderr SHA-256 digests, the model and tool call sequence, the divergence state and any live or unintercepted
-  call. stderr is **advisory** (reported with `advisory: true`, never in the verdict), because workloads write
-  timestamped logs there. `verdict` is `faithful`, `diverged` (the differing checks are named), `failed` (refused, timed out, not
-  launched, dispatcher not installed) or `not_compared` (the capsule did not record the exit code or the output
-  streams, as in a capsule from before ADR-0251 evidence digests) — never `faithful` by default. Nothing is
-  normalised; a declared normalisation rule set is future design. `status` keeps its meaning (how the replayed
+  `fidelity` block in `replay_result.yaml` compares the replay with the capsule: the exit code, the stdout
+  digest after a declared volatile-token rule set, the end state of every file the recorded workload wrote, the
+  model and tool call sequence, the divergence state and any live or unintercepted call. The raw stdout and
+  stderr SHA-256 digests are **advisory** (reported with `advisory: true`, never in the verdict): workloads
+  print ids they generate and write timestamped logs to stderr. `verdict` is `faithful`, `diverged` (the
+  differing checks are named), `failed` (refused, timed out, not launched, dispatcher not installed) or
+  `not_compared` (the capsule did not record the exit code or the output streams, as in a capsule from before
+  ADR-0251 evidence digests, or its file-effects record is present but unusable) — never `faithful` by
+  default. `status` keeps its meaning (how the replayed
   process ended), so a faithful replay of a run that failed is `status: failure` with `verdict: faithful`, and a
   replay that exited 0 but printed something else is `status: success` with `verdict: diverged`. `nova replay`
-  prints the verdict and the checks that differ.
+  prints the verdict, the checks that differ and the files that differ.
+  - **stdout is compared after the rule set `volatile-ids/1`** (works today): every RFC 4122 UUID becomes
+    `<uuid:N>` by order of first appearance, and nothing else is masked. A LangChain + MCP workload whose every
+    call was served read `diverged` because LangChain prints `lc_<uuid4>` ids; it is now `faithful`, with the
+    raw byte difference still reported. The result's `fidelity.normalization` names the rule set (additive enum
+    value), and the check carries `normalizer`.
+  - **File effects** (works today for the local runner): `nova capture` records in `file-effects.json` the
+    paths the workload's Python processes opened for writing (a CPython audit hook on `open`) and each file's
+    SHA-256 after the run — paths and digests, never contents; NovaFabric's own files are left out. The replay
+    dispatcher observes the replayed process's writes the same way, and replay digests each recorded file the
+    replay wrote again, so a replay that appends to a file again or writes something else into it is
+    `diverged` with the paths listed (`differences`); a recorded file the replay did not touch is not judged. A capsule without the
+    record (older capsules, non-Python workloads, container and batch runners) keeps the verdict of its other
+    checks and lists `file_effects` in the additive `fidelity.unchecked`; `nova replay` says the verdict does not
+    cover files the run wrote. A record that is present but incomplete (a process that ended through
+    `os._exit`), redacted or not matching its evidence digest makes the verdict `not_compared`. A file written
+    only at a path the recording never wrote is counted, not judged.
 - **A mocked replay writes a replay capsule** beside its result (`capsule.yaml` with `replay_mode: mocked` and
   `replay_of_run_id`, the served call streams with a placeholder for each call not served from the capsule,
   `outputs/stdout.txt` / `stderr.txt` after the built-in secret scanner, `env.lock`), so

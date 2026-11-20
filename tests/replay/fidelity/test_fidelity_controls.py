@@ -16,7 +16,13 @@ import pytest
 pytest.importorskip("openai")
 pytest.importorskip("httpx")
 
-from replay.fidelity._harness import CANARY, Corpus, Score, score_from_report_only  # noqa: E402
+from replay.fidelity._harness import (  # noqa: E402
+    CANARY,
+    Corpus,
+    Scenario,
+    Score,
+    score_from_report_only,
+)
 
 #: One xdist group: the session-scoped corpus (conftest.py) is then built once per
 #: worker instead of once per worker that happens to receive a fidelity test.
@@ -88,18 +94,29 @@ def test_a_mutated_output_fails_the_outcome_check(corpus: Corpus) -> None:
     assert score.verdict == "diverged"
 
 
-@pytest.mark.parametrize("sid", ["S6"])
-def test_replacing_the_oracles_with_the_report_flips_the_verdict(corpus: Corpus, sid: str) -> None:
+#: A file side effect at a path the recording never wrote (a per-run report file).
+_NEW_FILE_EACH_RUN = Scenario(
+    "S6b", "file side effect at a new path each run", ("model", "file_per_phase")
+)
+
+
+def test_replacing_the_oracles_with_the_report_flips_the_verdict(corpus: Corpus) -> None:
     """Harness mutation: scored from the report's own counters, the verdict changes.
 
-    Tied to a defect the report still has, on purpose: S6 (a repeated file side effect
-    has no counter or check). S5 (#52) and S7 (#49) served here until their fixes landed
-    (2026-11-19). When S6 is fixed, move this control to a case the report still misses
-    -- a harness whose oracles never disagree with the report proves nothing.
+    Tied to a defect the report still has, on purpose: a replay that writes a file at a
+    path the recording never wrote. ``file_effects`` judges recorded paths only (a file
+    only the replay wrote is counted in its note, not judged), so the report says
+    faithful while the side-effect oracle sees the write. S5 (#52), S7 (#49) and S6 (file_effects) served
+    here until their fixes landed. When this is fixed, move the control to a case the
+    report still misses -- a harness whose oracles never disagree with the report
+    proves nothing.
     """
-    score = corpus.score(sid)
+    captured = corpus.harness.capture(_NEW_FILE_EACH_RUN, name="S6b-new-file")
+    score = corpus.harness.replay(captured, name="new-file")
     mutated = score_from_report_only(score)
-    corpus.controls[f"report-only:{sid}"] = {"oracle": score.verdict, "report_only": mutated}
+    corpus.controls["report-only:S6b"] = {"oracle": score.verdict, "report_only": mutated}
+    assert score.replay.outside_writes == ["ledger.replay-new-file.txt"]
+    assert score.report["fidelity_verdict"] == "faithful", score.report
     assert score.verdict == "live-unreported", "fixed? pick a case the report still misses"
     assert mutated != score.verdict
 

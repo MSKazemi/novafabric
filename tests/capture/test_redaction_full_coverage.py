@@ -83,6 +83,8 @@ def test_artifact_targets_pinned() -> None:
         ("env.lock", "env-lock"),
         ("assets.jsonl", "assets"),
         ("lineage.jsonl", "lineage"),
+        # ADR-0321 amendment: written paths and digests (generic kind, closed enum).
+        ("file-effects.json", "capsule-file"),
     ]
     assert secrets_mod.ARTIFACT_SCAN_DIRS == [
         ("inputs", "input-artifact"),
@@ -103,6 +105,7 @@ def test_artifact_targets_pinned() -> None:
         ("env.lock", "env-lock"),
         ("assets.jsonl", "assets"),
         ("lineage.jsonl", "lineage"),
+        ("file-effects.json", "capsule-file"),
     ],
 )
 def test_secret_redacted_in_every_adr0009_location(
