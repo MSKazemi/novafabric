@@ -145,10 +145,12 @@ longer forwards the submitting shell's environment (ADR-0270).
   - **File effects** (works today for the local runner): `nova capture` records in `file-effects.json` the
     paths the workload's Python processes opened for writing (a CPython audit hook on `open`) and each file's
     SHA-256 after the run — paths and digests, never contents; NovaFabric's own files are left out. The replay
-    dispatcher observes the replayed process's writes the same way — and so does the observe-only bootstrap of a
-    Python child whose environment dropped the replay's variables (an MCP stdio server), so its re-append to a
-    recorded file is judged too, and a child that dies without reporting makes the writes unknown
-    (`not_compared`) — and replay digests each recorded file the
+    dispatcher observes the replayed process's writes the same way — and, on both sides, so does a stdlib-only,
+    observe-only bootstrap in a Python child whose environment dropped NovaFabric's variables (an MCP stdio
+    server): `nova capture` (local runner) records the child's writes in `file-effects.json` through the same
+    hand-off files, and replay judges its re-append to a recorded file; a child that dies without handing off makes
+    the record incomplete at capture and the writes unknown at replay (`not_compared`). The child's stdout and its
+    own `sitecustomize` are untouched; no model, tool or network records are made for it — and replay digests each recorded file the
     replay wrote again, so a replay that appends to a file again or writes something else into it is
     `diverged` with the paths listed (`differences`); a recorded file the replay did not touch is not judged. A capsule without the
     record (older capsules, non-Python workloads, container and batch runners) keeps the verdict of its other

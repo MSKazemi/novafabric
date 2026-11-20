@@ -33,9 +33,10 @@ fail-open towards the workload (ADR-0021) and fail-closed towards the verdict:
   replay wrote again.
 
 Known limits (documented, not hidden): only Python processes that load the
-loader are observed (at replay also Python children whose environment dropped the
-replay's variables: ``replay/_child_observer.py`` duplicates this observer, stdlib
-only, and a test pins its constants to these) -- a non-Python child process
+loader are observed (also Python children whose environment dropped NovaFabric's
+variables -- at capture under the local runner, through the same hand-off files, and
+at replay: ``replay/_child_observer.py`` duplicates this observer, stdlib only, and
+a test pins its constants to these) -- a non-Python child process
 (``bash -c 'echo > f'``) or C code that bypasses the audit events is not; an
 ``os.open(..., dir_fd=...)`` is resolved against the working directory
 (NovaFabric's own capsule writes, which use ``dir_fd``, are recognised by their

@@ -15,6 +15,12 @@ module imported by the runner, because it needs to execute inside the
 *captured* workload's Python — which is a separate process whose
 ``sys.path`` we control via ``PYTHONPATH``.
 
+When the runner also wrote ``_nf_child_observer.py`` beside it (the local runner),
+a Python child whose environment drops ``NOVAFABRIC_CAPSULE_DIR`` (an MCP stdio
+server) is given that directory back on ``PYTHONPATH`` and takes the observe-only
+branch: stdlib only, it records the child's file writes through the file-effects
+hand-off (``replay/_child_observer.py:bootstrap_capture_child``) and nothing else.
+
 Because it is the first ``sitecustomize`` on ``sys.path``, it shadows any other;
 after installing the hooks it runs the next one, so a user's own site setup still
 applies under capture.
@@ -53,6 +59,29 @@ HOOK_LOADER: str = textwrap.dedent("""\
             _ifw(_P(_capsule_dir))
         except Exception as _e:
             print(f"[novafabric] hook install failed: {_e}", file=_sys.stderr)
+        # #52 (capture side): a Python child whose environment drops the capture
+        # variables (an MCP stdio server) loads the observe-only bootstrap and
+        # records its file writes. Only where the runner wrote the bootstrap
+        # beside this loader (the local runner); inert elsewhere.
+        try:
+            import _nf_child_observer as _nfo
+        except ImportError:
+            _nfo = None
+        if _nfo is not None:
+            try:
+                _nfo.start_capture_propagation(
+                    _capsule_dir, _os.path.dirname(_os.path.abspath(__file__))
+                )
+            except Exception as _e:
+                print(f"[novafabric] child observation not started: {_e}", file=_sys.stderr)
+    elif _os.environ.get("NOVAFABRIC_CAPTURE_OBSERVE_CAPSULE_DIR", ""):
+        # Observe-only (stdlib, no novafabric import): file writes, handed off to
+        # the capsule like the full hooks' (capture/file_effects.py).
+        try:
+            import _nf_child_observer as _nfo
+            _nfo.bootstrap_capture_child(__file__)
+        except Exception as _e:
+            print(f"[novafabric] child file observer failed: {_e}", file=_sys.stderr)
 
     # Python imports exactly one ``sitecustomize``: this one, because the runner put
     # its directory first. Run the one it shadows — the user's, the venv's or the

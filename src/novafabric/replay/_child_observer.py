@@ -42,6 +42,10 @@ Pieces:
   a child that dies without reporting makes them unknown. Its constants are
   duplicated (this module must not import novafabric); a test pins them equal.
 
+* :func:`start_capture_propagation` / :func:`bootstrap_capture_child` -- the same
+  for ``nova capture`` (local runner): a stripped-environment Python child records
+  its opens-for-write through the capture's file-effects hand-off files.
+
 * :func:`start_tree_observation` -- one ``observer_started`` event per observed
   process (``role``: ``root`` / ``child`` / ``fork``, with ``ppid``), the
   ``subprocess.Popen`` environment propagation (:func:`child_env`) and a fork
@@ -455,8 +459,27 @@ def child_env(env: Any) -> dict[str, str] | None:
 _POPEN_ENV_POSITION = 10
 
 
-def install_env_propagation() -> bool:
-    """Wrap ``subprocess.Popen.__init__`` so children get :func:`child_env`."""
+#: Environment transforms applied, in order, to every child ``Popen`` starts:
+#: :func:`child_env` (replay) and :func:`capture_child_env` (capture). Each takes
+#: the child's env (``None`` = inherited) and returns a new dict or ``None``.
+_PROPAGATORS: list[Any] = []
+
+
+def _propagated_env(env: Any) -> Any:
+    current, changed = env, False
+    for propagate in list(_PROPAGATORS):
+        new = propagate(current)
+        if new is not None:
+            current, changed = new, True
+    return current if changed else None
+
+
+def install_env_propagation(propagator: Any = None) -> bool:
+    """Wrap ``subprocess.Popen.__init__`` once, so children get each registered
+    propagator's environment (:func:`child_env` unless another is given)."""
+    propagator = child_env if propagator is None else propagator
+    if propagator not in _PROPAGATORS:
+        _PROPAGATORS.append(propagator)
     try:
         import subprocess
 
@@ -468,13 +491,13 @@ def install_env_propagation() -> bool:
         def __init__(self: Any, *args: Any, **kwargs: Any) -> None:  # noqa: N807
             try:
                 if len(args) > _POPEN_ENV_POSITION:
-                    new = child_env(args[_POPEN_ENV_POSITION])
+                    new = _propagated_env(args[_POPEN_ENV_POSITION])
                     if new is not None:
                         args = (
                             *args[:_POPEN_ENV_POSITION], new, *args[_POPEN_ENV_POSITION + 1:]
                         )
                 else:
-                    new = child_env(kwargs.get("env"))
+                    new = _propagated_env(kwargs.get("env"))
                     if new is not None:
                         kwargs["env"] = new
             except Exception:  # noqa: BLE001 -- never break the workload's spawn
@@ -492,6 +515,137 @@ def install_env_propagation() -> bool:
     return True
 
 
+# ── capture side (``nova capture``, local runner) ────────────────────────────
+
+#: Set by the capture main process for a child whose environment lost
+#: ``NOVAFABRIC_CAPSULE_DIR``: the capsule its observe-only bootstrap hands off to.
+CAPTURE_OBSERVE_ENV = "NOVAFABRIC_CAPTURE_OBSERVE_CAPSULE_DIR"
+#: The capture site directory (the hook loader + this module's copy).
+CAPTURE_SITE_ENV = "NOVAFABRIC_CAPTURE_SITE_DIR"
+#: What makes the full capture hooks activate (``runners/_sitecustomize.py``).
+CAPSULE_ENV = "NOVAFABRIC_CAPSULE_DIR"
+#: The workload-side hand-off ``collect_file_effects`` merges (duplicated from
+#: ``capture/file_effects.py``: ``HANDOFF_PREFIX``, ``_STARTED_SUFFIX``, ``_DONE_SUFFIX``).
+HANDOFF_PREFIX = ".file-effects.workload."
+_STARTED_SUFFIX = ".started"
+_DONE_SUFFIX = ".json"
+
+#: The capture targets of this process: ``(capsule dir, site dir)``.
+_CAPTURE: dict[str, str] = {}
+
+
+def capture_child_env(env: Any) -> dict[str, str] | None:
+    """As :func:`child_env`, for ``nova capture``: a child whose environment lacks
+    ``NOVAFABRIC_CAPSULE_DIR`` (the full hooks would not load) gets the capsule to
+    hand its writes off to and the capture site dir first on ``PYTHONPATH``. A
+    child that inherits the capture environment is left alone (``None``)."""
+    capsule, site = _CAPTURE.get("capsule"), _CAPTURE.get("site")
+    if not capsule or not site:
+        return None
+    base = os.environ if env is None else env
+    try:
+        items = list(base.items())
+    except Exception:  # noqa: BLE001 -- not a mapping: leave it to Popen
+        return None
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in items):
+        return None
+    new = dict(items)
+    if new.get(CAPSULE_ENV):
+        return None
+    new[CAPTURE_OBSERVE_ENV] = capsule
+    new[CAPTURE_SITE_ENV] = site
+    entries = [p for p in new.get("PYTHONPATH", "").split(os.pathsep) if p]
+    if site not in entries:
+        new["PYTHONPATH"] = os.pathsep.join([site, *entries])
+    if new == dict(items):
+        return None
+    return new
+
+
+def start_capture_propagation(capsule_dir: str, site_dir: str) -> bool:
+    """In the captured main process: make stripped-environment Python children
+    load the observe-only bootstrap (:func:`bootstrap_capture_child`)."""
+    _CAPTURE["capsule"], _CAPTURE["site"] = capsule_dir, site_dir
+    return install_env_propagation(capture_child_env)
+
+
+def _dir_identity(path: str) -> tuple[int, int] | None:
+    import stat
+
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino) if stat.S_ISDIR(st.st_mode) else None
+
+
+def _write_handoff(capsule_dir: str, identity: tuple[int, int], name: str, data: bytes) -> bool:
+    """Create *name* in the capsule dir, following no link: the directory is
+    opened ``O_NOFOLLOW`` and must still be the one first seen; the file is
+    created exclusively (``O_EXCL | O_NOFOLLOW``). Fail-open: ``False``."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    try:
+        dfd = os.open(capsule_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow | cloexec)
+    except OSError:
+        return False
+    try:
+        st = os.fstat(dfd)
+        if (st.st_dev, st.st_ino) != identity:
+            return False
+        fd = os.open(
+            name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow | cloexec, 0o666, dir_fd=dfd
+        )
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(dfd)
+
+
+def _hand_off_at_exit(
+    observer: WriteObserver, capsule_dir: str, identity: tuple[int, int], pid: int
+) -> None:
+    if os.getpid() != pid:
+        return  # a fork child inherited the handler; its parent hands off
+    observer.stop()
+    payload = json.dumps({"pid": pid, "paths": observer.paths, "capped": observer.capped})
+    _write_handoff(
+        capsule_dir, identity, f"{HANDOFF_PREFIX}{pid}{_DONE_SUFFIX}",
+        payload.encode("utf-8") + b"\n",
+    )
+
+
+def bootstrap_capture_child(site_file: str) -> None:
+    """Entry point of a captured child whose environment lost the capture hooks.
+
+    Records only its opens-for-write, through the same hand-off files the full
+    hooks write (``.started`` now, ``.json`` with the paths at interpreter exit),
+    so ``collect_file_effects`` merges them like any other process's -- and a
+    child that dies without handing off makes the record incomplete. No model,
+    tool or network records: those need the full hooks. Writes nothing to stdout;
+    the loader runs the shadowed ``sitecustomize`` afterwards.
+    """
+    capsule_dir = os.environ.get(CAPTURE_OBSERVE_ENV, "")
+    identity = _dir_identity(capsule_dir) if capsule_dir else None
+    if identity is None:
+        return  # a link or not a directory: write nothing through it
+    pid = os.getpid()
+    if not _write_handoff(capsule_dir, identity, f"{HANDOFF_PREFIX}{pid}{_STARTED_SUFFIX}", b""):
+        return
+    observer = WriteObserver([capsule_dir])
+    if not observer.install():
+        return
+    atexit.register(_hand_off_at_exit, observer, capsule_dir, identity, pid)
+    _CAPTURE["capsule"] = capsule_dir
+    _CAPTURE["site"] = os.environ.get(CAPTURE_SITE_ENV) or os.path.dirname(
+        os.path.abspath(site_file)
+    )
+    install_env_propagation(capture_child_env)
+
+
 def start_tree_observation(events: Any, *, observer: str) -> None:
     """Record this process as observed and make its children report in too.
 
@@ -505,7 +659,7 @@ def start_tree_observation(events: Any, *, observer: str) -> None:
     role = "root" if os.environ.get(ROLE_ENV) == "root" else "child"
     events.emit("observer_started", role=role, ppid=os.getppid(), observer=observer)
     os.environ[ROLE_ENV] = "child"
-    install_env_propagation()
+    install_env_propagation(child_env)
 
     def _after_fork_in_child() -> None:
         if getattr(_IN_POPEN, "depth", 0):

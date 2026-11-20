@@ -68,10 +68,15 @@ if "log-root" in STEPS:
         f.write("entry\n")
 for step in ("log-child", "log-child-dies"):
     if step in STEPS:  # the appender runs with an MCP-style allowlisted environment
-        subprocess.run(
+        child_env = {"PATH": os.environ.get("PATH", "")}
+        if os.environ.get("CHILD_PYTHONPATH"):
+            child_env["PYTHONPATH"] = os.environ["CHILD_PYTHONPATH"]
+        done = subprocess.run(
             [sys.executable, os.path.join(HERE, "appender.py"), os.environ["LOG_PATH"],
              "die" if step == "log-child-dies" else "exit"],
-            env={"PATH": os.environ.get("PATH", "")}, check=True)
+            env=child_env, check=True, capture_output=True, text=True)
+        if "show-child-stdout" in STEPS:
+            out["child_stdout"] = done.stdout
 if "bash" in STEPS:
     out["bash"] = subprocess.run(
         ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/" + PORT]).returncode
@@ -114,6 +119,7 @@ APPENDER = r'''
 import os, sys
 with open(sys.argv[1], "a") as f:
     f.write("entry\n")
+print("appender-stdout", flush=True)  # the observer must leave the child's stdout alone
 if sys.argv[2] == "die":
     os._exit(0)  # no interpreter exit: the child never reports its writes
 '''
@@ -524,6 +530,10 @@ def test_the_child_write_observer_constants_match_file_effects() -> None:
         "_WRITE_FLAGS": "_WRITE_FLAGS",
         "_PSEUDO_ROOTS": "_PSEUDO_ROOTS",
         "_MAX_CALLER_FRAMES": "_MAX_CALLER_FRAMES",
+        # the capture-side hand-off collect_file_effects merges
+        "HANDOFF_PREFIX": "HANDOFF_PREFIX",
+        "_STARTED_SUFFIX": "_STARTED_SUFFIX",
+        "_DONE_SUFFIX": "_DONE_SUFFIX",
     }
     for mine, theirs in pairs.items():
         assert getattr(_child_observer, mine) == getattr(file_effects, theirs), mine
@@ -554,3 +564,77 @@ def test_an_mcp_stdio_server_child_that_writes_nothing_stays_faithful(
     assert contract["child_processes_unobserved"] == 0
     assert _file_check(doc)["equal"] is True
     assert doc["fidelity"]["verdict"] == "faithful", doc["fidelity"]
+
+
+# ── capture side: the same child observed by `nova capture` ──────────────────
+
+
+def test_capture_records_the_writes_of_a_stripped_env_child(work: Workload) -> None:
+    capsule = work.capture("log-child")
+    record = json.loads((capsule / file_effects.FILE_EFFECTS_REF).read_text())
+    assert record["complete"] is True, record
+    assert [f["path"] for f in record["files"] if f["path"].endswith("log.txt")] == [
+        str(work.log)
+    ]
+    # No hand-off file is left behind in the capsule.
+    assert not [p for p in capsule.iterdir() if p.name.startswith(file_effects.HANDOFF_PREFIX)]
+
+
+def test_capture_leaves_the_childs_stdout_and_own_sitecustomize_alone(work: Workload) -> None:
+    own = work.root / "own-site"
+    own.mkdir()
+    marker = work.root / "own-sitecustomize-ran"
+    (own / "sitecustomize.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+    work._mp.setenv("CHILD_PYTHONPATH", str(own))
+    out = work.root / "out.json"
+    work._mp.setenv("STEPS", "log-child,show-child-stdout")
+    result = runner.invoke(
+        app, ["capture", "--output-dir", str(work.runs), sys.executable,
+              str(work.root / "agent.py")],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(out.read_text())["child_stdout"] == "appender-stdout\n"
+    assert marker.exists()  # the child's own sitecustomize still ran
+    (capsule,) = [p for p in work.runs.iterdir() if (p / "capsule.yaml").exists()]
+    record = json.loads((capsule / file_effects.FILE_EFFECTS_REF).read_text())
+    assert any(f["path"] == str(work.log) for f in record["files"]), record
+
+
+def test_capture_marks_the_record_incomplete_when_the_child_dies_without_handing_off(
+    work: Workload,
+) -> None:
+    capsule = work.capture("log-child-dies")
+    record = json.loads((capsule / file_effects.FILE_EFFECTS_REF).read_text())
+    assert record["complete"] is False
+    assert "without handing off" in record["reason"]
+
+
+def test_a_child_recorded_at_capture_that_re_appends_at_replay_diverges(work: Workload) -> None:
+    """Symmetric: the file is recorded from the child at capture, and the child's
+    re-append at replay is judged."""
+    capsule = work.capture("log-child")
+    assert work.log.read_text() == "entry\n"
+    _result, doc = work.replay(capsule)
+    assert work.log.read_text() == "entry\nentry\n"
+    assert doc["fidelity"]["verdict"] == "diverged", doc["fidelity"]
+    check = _file_check(doc)
+    assert [d["path"] for d in check["differences"]] == [str(work.log)]
+
+
+def test_the_capture_site_is_inert_outside_a_capture(tmp_path: Path) -> None:
+    from novafabric.runners._local import write_capture_site
+
+    site = tmp_path / "site"
+    site.mkdir()
+    write_capture_site(site)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("NOVAFABRIC_")}
+    env["PYTHONPATH"] = str(site)
+    proc = subprocess.run(
+        [sys.executable, "-c",
+         "import subprocess, sys; print(sorted(m for m in sys.modules if 'novafabric' in m"
+         " or m == '_nf_child_observer')); "
+         "print(hasattr(subprocess.Popen.__init__, '_nf_propagates_env'))"],
+        env=env, capture_output=True, text=True, timeout=60, check=True,
+    )
+    assert proc.stdout.splitlines() == ["[]", "False"], proc.stdout + proc.stderr
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["site"]
