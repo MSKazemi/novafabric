@@ -11,6 +11,25 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Changed
+
+- **Built-in SOC 2 and ISO/IEC 42001 audit profiles cite control identifiers, not standard text.**
+  The control descriptions in `soc2-type2` and `iso42001` reproduced or closely paraphrased AICPA and
+  ISO wording; they are now short summaries of the NovaFabric records each control looks at.
+  Evidence requirements are unchanged. To audit against the publisher's wording, load your own licensed
+  catalog with `nova audit map --profile path/to/catalog.yaml`. A guard test keeps the built-ins this way.
+
+### Fixed
+
+- **`iso42001` audit profile: two control IDs named the wrong clause.** `ISO42-8.5-RESPONSIBLE-AI`
+  pointed at a clause ISO/IEC 42001:2023 does not have (clause 8 ends at 8.4); it is replaced by
+  `ISO42-7.5-DOCUMENTED-INFORMATION`, with the same evidence. `ISO42-10.2-CONTINUAL-IMPROVEMENT` is now
+  `ISO42-10.1-CONTINUAL-IMPROVEMENT` (10.2 is nonconformity and corrective action). Reports and scripts
+  keyed on the old IDs must use the new ones.
+- **`soc2-type2` audit profile: `CC6.6` was titled as the malicious-software criterion**, which is CC6.8.
+  It is now titled for CC6.6's topic, protection against threats from outside the system boundary; the
+  control ID and its evidence are unchanged.
+
 ## [0.108.0] - 2026-10-25
 
 **Verification that checks content, state that survives a crash, and a dashboard that tells the truth.**
