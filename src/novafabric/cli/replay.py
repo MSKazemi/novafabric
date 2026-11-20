@@ -16,6 +16,7 @@ from novafabric.replay._fidelity import REQUIRED_CHECKS
 from novafabric.replay._fidelity import VERDICT_FAILED as FIDELITY_FAILED
 from novafabric.replay._fidelity import VERDICT_FAITHFUL as FIDELITY_FAITHFUL
 from novafabric.replay._flags import ReplayFlags
+from novafabric.replay._hermetic import HermeticUnavailableError
 from novafabric.replay._intervention import InterventionError
 from novafabric.replay._servability import describe_by_system
 from novafabric.replay.environment_gate import (
@@ -164,6 +165,22 @@ def replay_cmd(
             ),
         ),
     ] = False,
+    hermetic: Annotated[
+        bool,
+        typer.Option(
+            "--hermetic",
+            help=(
+                "mocked mode only, experimental, Linux (ADR-0322): run the replayed "
+                "process tree in a bubblewrap sandbox -- no network beyond its own "
+                "loopback (host services included), host filesystem read-only except "
+                "the working directory and the replay result directory, host socket "
+                "dirs masked; served model/tool calls still work. Refused with "
+                "exit 5 (error.type HermeticUnavailable), before anything runs, if "
+                "bwrap is missing or cannot create namespaces here; never run "
+                "un-isolated."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Re-run a captured run against recorded or mocked LLM responses.
 
@@ -208,9 +225,12 @@ def replay_cmd(
     was never recorded) is refused up front too (error.type
     ModelSurfaceNotServable, exit 1, also under --dry-run, which lists each as
     [LIVE] model call); --permissive runs it and reports model_calls_not_servable.
-    Network observation covers the replayed Python process only; child
-    processes it starts are counted (replay_contract.child_processes_spawned),
-    not observed.
+    Network is observed, not blocked, in every Python process of the replayed
+    tree (children that drop the replay's environment, such as MCP stdio
+    servers, are observed too); a child that is not Python is counted
+    unobserved (replay_contract.child_processes_unobserved) and the network
+    count is then a lower bound (network_observation_coverage: partial).
+    --hermetic blocks the network instead (experimental, Linux).
     A mocked replay also reports a fidelity verdict (experimental, ADR-0321):
     faithful, diverged, failed or not_compared, against the recorded exit
     code, stdout/stderr digests and call sequence. The status (and the exit
@@ -234,6 +254,8 @@ def replay_cmd(
          starts anyway and reports override_unenforceable
       4  --require-faithful: the fidelity verdict is not `faithful` (it
          replaces the code the replay would otherwise exit with)
+      5  --hermetic: the sandbox cannot be set up here (error.type
+         HermeticUnavailable, also under --dry-run); nothing ran
       124 mocked/intervention: the replayed command did not finish within 600s
           and was killed (error.type ReplayTimeout, printed and recorded in the
           replay result); a command that itself exits 124 has no error.type
@@ -257,6 +279,9 @@ def replay_cmd(
 
       # Mocked, but only report divergences instead of failing
       nova replay --permissive 01HXAY7M5JZ8R7K4P9DPBYK2WX
+
+      # No network for the whole replayed process tree (Linux, bubblewrap)
+      nova replay --hermetic 01HXAY7M5JZ8R7K4P9DPBYK2WX
 
       # CI gate: exit 0 only if the replay reproduced the recorded run
       nova replay --require-faithful 01HXAY7M5JZ8R7K4P9DPBYK2WX
@@ -293,6 +318,9 @@ def replay_cmd(
     if require_faithful and mode is not ReplayMode.mocked:
         console.print("[red]--require-faithful only applies to --mode mocked[/red]")
         raise typer.Exit(code=1)
+    if hermetic and mode is not ReplayMode.mocked:
+        console.print("[red]--hermetic only applies to --mode mocked[/red]")
+        raise typer.Exit(code=1)
 
     flags = ReplayFlags(
         mode=mode.value,
@@ -305,6 +333,7 @@ def replay_cmd(
         intervention_file=intervention_file,
         required_environment=environment,
         permissive=permissive,
+        hermetic=hermetic,
     )
 
     base = output_dir or default_replays_dir()
@@ -401,29 +430,9 @@ def replay_cmd(
                 f"{echo.get('not_checked', 0)} not checked",
                 markup=False,
             )
-        if contract.get("network_observed"):
-            # ADR-0304: observed, never blocked -- say whether anything went live.
-            live = int(contract.get("network_connections_live") or 0)
-            where = ", ".join(contract.get("network_destinations") or [])
-            console.print(
-                f"  network: {live}{'+' if contract.get('network_connections_capped') else ''}"
-                f" live connection{'s' if live != 1 else ''} from the replayed Python process"
-                + (f" ({where})" if where else "")
-                + " — observed, not blocked"
-            )
-        children = int(contract.get("child_processes_spawned") or 0)
-        if children:
-            # ADR-0319: the network observer's scope is the Python process.
-            names = ", ".join(contract.get("child_processes_argv0") or []) or "unnamed"
-            console.print(
-                f"  ⚠ {children}{'+' if contract.get('child_processes_capped') else ''} "
-                f"child process{'es' if children != 1 else ''} started during the "
-                f"replay ({names}): {'their' if children != 1 else 'its'} network and "
-                "file activity is not observed (network_observation_scope: python-process)",
-                style="yellow",
-                markup=False,
-                highlight=False,
-            )
+        _print_network(contract)
+        if result.hermetic is not None:
+            _print_hermetic(result.hermetic)
     if result.error and (
         result.status == "aborted"
         or result.error.get("type") in _STOP_REASONS_THE_EXIT_CODE_CANNOT_SHOW
@@ -474,6 +483,71 @@ def replay_cmd(
 EXIT_NOT_FAITHFUL = 4
 
 
+def _plural(n: int, word: str, plural: str | None = None) -> str:
+    return f"{n} {word if n == 1 else (plural or word + 's')}"
+
+
+def _print_network(contract: dict[str, Any]) -> None:
+    """The network line and, when children were started, what was observed of them.
+
+    ADR-0304: observed, never blocked. ADR-0319 (#52): the count covers the
+    processes that reported in; a child that did not is named as unobserved and the
+    count is then a lower bound -- never a bare "0".
+    """
+    children = int(contract.get("child_processes_spawned") or 0)
+    observed = int(contract.get("child_processes_network_observed") or 0)
+    unobserved = int(contract.get("child_processes_unobserved", children) or 0)
+    if contract.get("network_observed"):
+        live = int(contract.get("network_connections_live") or 0)
+        where = ", ".join(contract.get("network_destinations") or [])
+        line = (
+            f"  network: {live}{'+' if contract.get('network_connections_capped') else ''}"
+            f" live connection{'s' if live != 1 else ''} from the replayed Python process"
+            + (f" and {_plural(observed, 'observed child process', 'observed child processes')}"
+               if observed else "")
+            + (f" ({where})" if where else "")
+            + " — observed, not blocked"
+        )
+        if unobserved or contract.get("child_processes_capped"):
+            line += "; a lower bound (network_observation_coverage: partial)"
+        console.print(line, markup=False, highlight=False)
+    if not children:
+        return
+    names = ", ".join(contract.get("child_processes_argv0") or []) or "unnamed"
+    started = (
+        f"{children}{'+' if contract.get('child_processes_capped') else ''} child "
+        f"process{'es' if children != 1 else ''} started during the replay ({names})"
+    )
+    if unobserved:
+        console.print(
+            f"  ⚠ {started}; {unobserved} not observed: "
+            f"{'their' if unobserved != 1 else 'its'} network activity is unknown, so the "
+            "network count above is a lower bound (non-Python programs, or Python started "
+            "without the replay's environment); file activity is not observed "
+            "(network_observation_coverage: partial)",
+            style="yellow", markup=False, highlight=False,
+        )
+    else:
+        console.print(
+            f"  {started}; {'all reported their' if children != 1 else 'it reported its'} "
+            "connections (counted above); file activity is not observed",
+            markup=False, highlight=False,
+        )
+
+
+def _print_hermetic(hermetic: dict[str, Any]) -> None:
+    """ADR-0322: one line saying the run was sandboxed, and what was not measured."""
+    version = hermetic.get("bwrap_version")
+    console.print(
+        f"  hermetic: network {hermetic.get('network')} beyond the sandbox's own loopback, "
+        f"filesystem {hermetic.get('filesystem')} ({hermetic.get('mechanism')}"
+        + (f" {version}" if version else "")
+        + "); blocked attempts are not counted from outside the process "
+        f"(counting: {hermetic.get('counting')})",
+        markup=False, highlight=False,
+    )
+
+
 def _print_fidelity(fidelity: dict[str, Any]) -> None:
     """One line: the verdict, the checks that differ and those not compared."""
     verdict = str(fidelity.get("verdict"))
@@ -508,4 +582,6 @@ def _refusal_exit_code(error: dict[str, Any]) -> int:
     """Exit status of a replay refused before anything ran."""
     if error.get("type") == ReplayOverrideUnenforceableError.error_type:
         return ReplayOverrideUnenforceableError.exit_code
+    if error.get("type") == HermeticUnavailableError.error_type:
+        return HermeticUnavailableError.exit_code
     return 1

@@ -109,9 +109,16 @@ MAX_LISTED_DIVERGENCES = 50
 MAX_LISTED_NETWORK_DESTINATIONS = 20
 
 #: What ``NetworkObserver`` sees (ADR-0319): sockets of the replayed Python
-#: process -- and of Python children that load the replay dispatcher -- never
-#: those of a non-Python child process.
+#: process -- and of Python children that load the replay dispatcher or the
+#: child observer -- never those of a non-Python child process.
 NETWORK_OBSERVATION_SCOPE = "python-process"
+
+#: ``network_observation_coverage`` (ADR-0319, #52 part 2): whether every process
+#: of the replayed tree was observed. ``partial`` makes ``network_connections_live``
+#: a lower bound; ``none`` means no network observer was installed at all.
+COVERAGE_COMPLETE = "complete"
+COVERAGE_PARTIAL = "partial"
+COVERAGE_NONE = "none"
 
 #: Most distinct child-process program names listed in a result.
 MAX_LISTED_CHILD_PROCESSES = 10
@@ -777,12 +784,34 @@ class ReplayContractReport:
     model_calls_not_servable_by_system: dict[str, dict[str, Any]] = field(
         default_factory=dict
     )
-    #: ADR-0319: child processes the replayed process started (audit hook);
-    #: their network and file activity is not observed.
+    #: ADR-0319: child processes the observed processes started (audit hook);
+    #: their file activity is not observed, their network only when they report in.
     child_processes_observed: bool = False
     child_processes_spawned: int = 0
     child_processes_capped: bool = False
     child_processes_argv0: list[str] = field(default_factory=list)
+    #: #52 part 2: started children that reported their own connections
+    #: (``observer_started`` from a process whose parent was observed), and the
+    #: connections made by observed processes other than the root.
+    child_processes_network_observed: int = 0
+    network_connections_live_children: int = 0
+
+    @property
+    def child_processes_unobserved(self) -> int:
+        """Started children whose network activity is unknown."""
+        return max(0, self.child_processes_spawned - self.child_processes_network_observed)
+
+    @property
+    def network_observation_coverage(self) -> str:
+        if not self.network_observed:
+            return COVERAGE_NONE
+        if (
+            self.child_processes_unobserved
+            or self.child_processes_capped
+            or not self.child_processes_observed
+        ):
+            return COVERAGE_PARTIAL
+        return COVERAGE_COMPLETE
 
     @property
     def model_calls_not_servable(self) -> int:
@@ -855,6 +884,10 @@ class ReplayContractReport:
             "child_processes_observed": self.child_processes_observed,
             "child_processes_spawned": self.child_processes_spawned,
             "child_processes_argv0": self.child_processes_argv0[:MAX_LISTED_CHILD_PROCESSES],
+            "child_processes_network_observed": self.child_processes_network_observed,
+            "child_processes_unobserved": self.child_processes_unobserved,
+            "network_connections_live_children": self.network_connections_live_children,
+            "network_observation_coverage": self.network_observation_coverage,
             "divergences": listed,
         }
         if self.network_connections_capped:
@@ -885,6 +918,35 @@ _SURFACE_COUNTERS = (
     "recorded", "available", "mocked", "live", "refused", "unmatched", "covered",
     "unconsumed",
 )
+
+
+def _fold_observer_started(
+    ev: dict[str, Any],
+    observed_pids: set[Any],
+    fork_instances: set[Any],
+    report: ReplayContractReport,
+    root_pid: Any,
+) -> Any:
+    """Count one observed process; return the root's pid.
+
+    A child counts as observed when its parent was observed (it is then one of the
+    ``child_processes_spawned`` its parent counted), or when it is an observed
+    process that exec'd a Python program which reported in again. A Python
+    grandchild behind an unobserved program (``sh -c python ...``) is observed
+    itself -- its connections are counted -- but leaves that program unobserved.
+    """
+    pid, role = ev.get("pid"), ev.get("role")
+    if role == "root":
+        observed_pids.add(pid)
+        return pid if root_pid is None else root_pid
+    if ev.get("ppid") in observed_pids or pid in observed_pids:
+        report.child_processes_network_observed += 1
+        if role == "fork":
+            fork_instances.add(pid)
+        else:
+            fork_instances.discard(pid)
+    observed_pids.add(pid)
+    return root_pid
 
 
 def summarize(
@@ -925,6 +987,9 @@ def summarize(
     served: dict[str, int] = dict.fromkeys(queues, 0)
     covered: dict[str, int] = dict.fromkeys(queues, 0)
     serving_pids: set[Any] = set()
+    root_pid: Any = None
+    observed_pids: set[Any] = set()
+    fork_instances: set[Any] = set()
     for ev in events:
         kind = ev.get("event")
         if kind == "installed":
@@ -984,6 +1049,8 @@ def summarize(
             report.network_observed = True
         elif kind == "network_live":
             report.network_connections_live += 1
+            if root_pid is not None and ev.get("pid") != root_pid:
+                report.network_connections_live_children += 1
             destination = f"{ev.get('host')}:{ev.get('port')}"
             if destination not in report.network_destinations:
                 report.network_destinations.append(destination)
@@ -991,9 +1058,15 @@ def summarize(
             report.network_connections_capped = True
         elif kind == "process_observer_installed":
             report.child_processes_observed = True
+        elif kind == "observer_started":
+            root_pid = _fold_observer_started(ev, observed_pids, fork_instances, report, root_pid)
         elif kind in ("child_process", "child_process_exec"):
             if kind == "child_process":
                 report.child_processes_spawned += 1
+            elif ev.get("pid") in fork_instances:
+                # A fork child became another program: no longer observed.
+                fork_instances.discard(ev.get("pid"))
+                report.child_processes_network_observed -= 1
             name = ev.get("argv0")
             if isinstance(name, str) and name and name not in report.child_processes_argv0:
                 report.child_processes_argv0.append(name)

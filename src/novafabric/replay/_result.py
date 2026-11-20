@@ -64,6 +64,9 @@ class ReplayResult:
     fidelity: dict[str, Any] | None = None
     # ADR-0321: the replay capsule beside this result (`nova diff` input).
     replay_capsule_ref: str | None = None
+    # ADR-0322, additive and optional, `mocked --hermetic` only: how the replayed
+    # process tree was isolated. Absent (never `enabled: false`) without the flag.
+    hermetic: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -117,6 +120,8 @@ class ReplayResult:
             d["fidelity"] = self.fidelity
         if self.replay_capsule_ref is not None:
             d["replay_capsule_ref"] = self.replay_capsule_ref
+        if self.hermetic is not None:
+            d["hermetic"] = self.hermetic
         return d
 
 

@@ -51,6 +51,7 @@ from novafabric.capture.hooks._sdk_streams import (
     STREAM_ERROR_EVENT_EXT,
     is_raw_response_call,
 )
+from novafabric.replay._child_observer import start_tree_observation
 from novafabric.replay._contract import (
     ECHO_DIFFERS,
     ECHO_NO_COUNTERPART,
@@ -1904,7 +1905,9 @@ class NetworkObserver:
     Connections made by C extensions that bypass the Python ``socket`` methods,
     and by non-Python child processes, are not seen: the result says so
     (``network_observation_scope: python-process``) and counts the children
-    (``_process_observer.ProcessObserver``, ADR-0319).
+    (``_process_observer.ProcessObserver``, ADR-0319); Python children report
+    their own connections (``_child_observer``, #52 part 2), and those that do
+    not are counted as ``child_processes_unobserved``.
     """
 
     def __init__(self, events: ReplayEventLog, *, cap: int = NETWORK_EVENT_CAP) -> None:
@@ -1992,6 +1995,10 @@ def install_from_env() -> None:
         # child processes it started, whose activity it cannot see.
         if ProcessObserver(events).install():
             events.emit("process_observer_installed")
+        # ADR-0319 (#52 part 2): say this process is observed, and make the
+        # Python children it starts report in -- even those whose environment
+        # drops the replay's variables (an MCP stdio client does).
+        start_tree_observation(events, observer="dispatcher")
         events.emit("installed", policy=policy, surfaces=surfaces)
     except Exception as exc:  # noqa: BLE001 -- reported, then fail-closed below
         events.emit("install_failed", error=f"{type(exc).__name__}: {exc}")

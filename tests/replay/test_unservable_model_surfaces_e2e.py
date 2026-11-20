@@ -314,9 +314,12 @@ def test_a_child_process_is_counted_and_named_with_a_warning(work: Workload) -> 
     assert contract["network_observation_scope"] == "python-process"
     assert contract["child_processes_spawned"] == 1
     assert contract["child_processes_argv0"] == ["true"]
+    # #52 part 2: not Python, so not observed -- and the result says so.
+    assert contract["child_processes_unobserved"] == 1
+    assert contract["network_observation_coverage"] == "partial"
     assert doc["status"] == "success"  # reported, never a failure
     assert "1 child process started during the replay (true)" in result.output
-    assert "not observed" in result.output
+    assert "1 not observed" in _flat(result.output)
 
 
 # ── the classification, record by record ─────────────────────────────────────

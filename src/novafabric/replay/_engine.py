@@ -8,6 +8,7 @@ import tempfile
 import textwrap
 import time
 from datetime import datetime, timezone
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from novafabric.policy import (
     deployment_environment_from_capsule,
     get_policy_engine,
 )
+from novafabric.replay._child_observer import OBSERVE_ENV, ROLE_ENV, SITE_ENV
 from novafabric.replay._contract import (
     ReplayContractReport,
     interceptable_tool_calls,
@@ -44,6 +46,13 @@ from novafabric.replay._errors import (
 from novafabric.replay._fidelity import compute_fidelity
 from novafabric.replay._fidelity import not_run as fidelity_not_run
 from novafabric.replay._flags import ReplayFlags
+from novafabric.replay._hermetic import (
+    HermeticSandbox,
+    HermeticUnavailableError,
+    check_writable,
+    sandbox_env,
+)
+from novafabric.replay._hermetic import preflight as hermetic_preflight
 from novafabric.replay._policy import INSTALL_REQUIRED_ENV, TOOL_POLICY_ENV, PolicyEvaluator
 from novafabric.replay._replay_capsule import (
     REPLAY_CAPSULE_FILE,
@@ -89,7 +98,29 @@ _MOCK_HOOK_LOADER = textwrap.dedent(f"""\
                 _os._exit({REPLAY_DISPATCHER_UNAVAILABLE_EXIT})
         else:
             _nf_install()
+    elif _os.environ.get("{OBSERVE_ENV}", ""):
+        # A child whose environment lost the dispatcher's variables (ADR-0319,
+        # #52 part 2): observe it with the stdlib-only bootstrap; serve nothing.
+        try:
+            import _nf_child_observer as _nf_obs
+            _nf_obs.bootstrap_child(__file__)
+        except Exception as _e:
+            print(f"[novafabric] child process observer failed: {{_e}}", file=_sys.stderr)
 """)
+
+#: Name of the stdlib-only observer's copy in the replay site directory.
+_CHILD_OBSERVER_MODULE = "_nf_child_observer"
+
+
+def write_replay_site(site_dir: Path) -> None:
+    """Write the replayed interpreters' ``sitecustomize.py`` and the child
+    observer it loads (``_child_observer``'s own source, stdlib only) into
+    *site_dir*. Inert in a process without the replay's environment variables."""
+    (site_dir / "sitecustomize.py").write_text(_MOCK_HOOK_LOADER)
+    source = resources.files("novafabric.replay").joinpath("_child_observer.py").read_text(
+        encoding="utf-8"
+    )
+    (site_dir / f"{_CHILD_OBSERVER_MODULE}.py").write_text(source, encoding="utf-8")
 
 #: How long a mocked/intervention replay subprocess may run before it is killed.
 #: Named because the timeout is now reported as a distinct outcome rather than
@@ -517,6 +548,25 @@ class ReplayEngine:
                 report = (
                     f"WARNING ({surface_error.kind}, --permissive): {surface_error}\n\n{report}"
                 )
+            if self._flags.hermetic:
+                # ADR-0322 D7: the dry run runs the same preflight as the real run.
+                try:
+                    sandbox = hermetic_preflight()
+                    check_writable(
+                        [path for _role, path in self._hermetic_writable(result_dir)],
+                        runtime_dir=os.environ.get("XDG_RUNTIME_DIR"),
+                    )
+                except HermeticUnavailableError as exc:
+                    if refusal is None:
+                        refusal = exc.as_error()
+                        report = f"REFUSED: {exc}\n\n{report}"
+                else:
+                    report += (
+                        f"Hermetic (ADR-0322): bwrap {sandbox.version or '(version unknown)'} "
+                        "preflight passed; the replayed process tree would run with no network "
+                        "beyond its own loopback and a read-only filesystem except the working "
+                        f"directory ({Path.cwd()}) and the replay result directory.\n"
+                    )
         elif self._flags.mode == "intervention":
             reason = not_reexecutable_reason(manifest)
             if reason is not None:
@@ -779,11 +829,45 @@ class ReplayEngine:
             write_replay_result(refused, result_dir)
             return refused
 
+        # ADR-0322: --hermetic runs only inside a sandbox that the preflight
+        # proved can be built here; otherwise it is refused, never run un-isolated.
+        sandbox: HermeticSandbox | None = None
+        writable = self._hermetic_writable(result_dir)
+        if self._flags.hermetic:
+            try:
+                sandbox = hermetic_preflight()
+                check_writable(
+                    [path for _role, path in writable],
+                    runtime_dir=os.environ.get("XDG_RUNTIME_DIR"),
+                )
+            except HermeticUnavailableError as exc:
+                refused = ReplayResult(
+                    replay_id=replay_id,
+                    replay_of_run_id=run_id,
+                    mode="mocked",
+                    status="aborted",
+                    start_time=start,
+                    end_time=_now(),
+                    duration_ms=int((time.monotonic() - t0) * 1000),
+                    policy_flags_used=self._flags.active_flag_names(),
+                    env_warnings=[w.as_dict() for w in env_warnings],
+                    tool_calls_recorded=len(tool_calls),
+                    schema_drift=schema_drift or None,
+                    error=exc.as_error(),
+                    fidelity=fidelity_not_run(
+                        "the replay was refused before the command ran"
+                    ).as_dict(),
+                )
+                write_replay_result(refused, result_dir)
+                return refused
+
         policy = self._flags.divergence_policy
         exit_code, run_error, events, outputs = self._run_replay_subprocess(
             command, model_calls, tool_calls, divergence_policy=policy,
             tool_policy=evaluator.tool_policy_table(),
             install_required=evaluator.has_deny_override(),
+            sandbox=sandbox,
+            writable=[path for _role, path in writable],
         )
         report = summarize(
             model_calls, tool_calls, events,
@@ -870,6 +954,7 @@ class ReplayEngine:
             schema_drift=schema_drift or None,
             fidelity=fidelity.as_dict(),
             replay_capsule_ref=REPLAY_CAPSULE_FILE,
+            hermetic=sandbox.describe(writable) if sandbox is not None else None,
             **_contract_fields(report),
         )
         if status == "failure":
@@ -909,6 +994,8 @@ class ReplayEngine:
         divergence_policy: str = "warn",
         tool_policy: dict[str, Any] | None = None,
         install_required: bool = False,
+        sandbox: HermeticSandbox | None = None,
+        writable: list[Path] | None = None,
     ) -> tuple[
         int, dict[str, Any] | None, list[dict[str, Any]], tuple[bytes, bytes] | None
     ]:
@@ -921,11 +1008,19 @@ class ReplayEngine:
         resolved ``replay.yaml`` override table the dispatcher enforces
         (ADR-0306 D8); ``install_required`` stops the process if the
         dispatchers cannot be installed even under ``--permissive``.
+        ``sandbox`` (ADR-0322) runs the command inside bubblewrap, where only
+        ``writable`` (the working directory and the replay result directory) can be
+        written; the temp dir holding the queues and the event log is then created
+        inside the last of them, so it needs no bind of its own.
         """
-        with tempfile.TemporaryDirectory(prefix="nf_replay_") as tmp:
+        writable = list(writable or [])
+        temp_parent = writable[-1] if sandbox is not None and writable else None
+        if temp_parent is not None:
+            temp_parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="nf_replay_", dir=temp_parent) as tmp:
             site_dir = Path(tmp) / "site"
             site_dir.mkdir()
-            (site_dir / "sitecustomize.py").write_text(_MOCK_HOOK_LOADER)
+            write_replay_site(site_dir)
 
             # The full model-call stream, as before ADR-0300: the dispatcher
             # selects the servable records itself (one implementation, in
@@ -939,6 +1034,11 @@ class ReplayEngine:
             env["NOVAFABRIC_REPLAY_EVENTS_PATH"] = str(events_path)
             env["NOVAFABRIC_REPLAY_DIVERGENCE_POLICY"] = divergence_policy
             env["NOVAFABRIC_REPLAY_MODE"] = "mocked"
+            # ADR-0319 (#52 part 2): every Python process of the replayed tree
+            # reports in to the same event log; the one started here is `root`.
+            env[OBSERVE_ENV] = str(events_path)
+            env[SITE_ENV] = str(site_dir)
+            env[ROLE_ENV] = "root"
             # ADR-0306 D7: the mutation classes the operator's ladder flags
             # permit -- an unmatched `record.tool` call may run live under
             # --permissive only for these. From the command line, never the capsule.
@@ -960,8 +1060,23 @@ class ReplayEngine:
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = f"{site_dir}:{existing}" if existing else str(site_dir)
 
+            if sandbox is not None:
+                env = sandbox_env(env)
+                command = sandbox.wrap(
+                    command, writable=writable or [Path(tmp)], cwd=Path.cwd()
+                )
             code, error, outputs = self._spawn(command, env)
             return code, error, read_events(events_path), outputs
+
+    @staticmethod
+    def _hermetic_writable(result_dir: Path) -> list[tuple[str, Path]]:
+        """ADR-0322 (owner, 2026-11-20): the directories ``--hermetic`` makes
+        writable -- the replayed process's working directory (its outputs) and the
+        replay result directory; the rest of the host stays read-only."""
+        return [
+            ("working_directory", Path.cwd().resolve()),
+            ("replay_result_dir", result_dir.resolve()),
+        ]
 
     @staticmethod
     def _spawn(
