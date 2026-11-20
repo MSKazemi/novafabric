@@ -12,7 +12,9 @@ engine writes (see :func:`install_from_env`):
   after the delivered chunks when it was raised mid-stream; a Responses API
   response the SDK *returned* with ``status: failed`` is returned as recorded;
   it also answers Ollama ``/api/chat`` / ``/api/generate`` requests at the
-  ``httpx``/``httpx2`` transport (``_ollama_serve``, ADR-0320, experimental);
+  ``httpx``/``httpx2`` transport (``_ollama_serve``, ADR-0320, experimental) and
+  AWS Bedrock ``Converse`` / ``ConverseStream`` requests at ``urllib3``'s
+  ``HTTPConnectionPool.urlopen`` (``_bedrock_serve``, experimental);
 * :class:`MockToolDispatcher` serves recorded tool results on the intercepted
   tool surfaces: MCP ``tools/call`` through ``mcp.ClientSession.call_tool``
   (ADR-0300), functions the workload declared with
@@ -51,6 +53,16 @@ from novafabric.capture.hooks._sdk_streams import (
     STREAM_ERROR_EVENT_EXT,
     is_raw_response_call,
 )
+from novafabric.replay._bedrock_serve import (
+    BEDROCK_QUEUES,
+    SERVED_URLLIB3_SURFACE,
+    ServedHttp,
+    recorded_bedrock_hosts,
+    served_response,
+    unservable_reason,
+)
+from novafabric.replay._bedrock_serve import request_json as bedrock_request_json
+from novafabric.replay._bedrock_serve import request_queue as bedrock_request_queue
 from novafabric.replay._contract import (
     ECHO_DIFFERS,
     ECHO_NO_COUNTERPART,
@@ -800,6 +812,55 @@ def _transport_response(
     return module.Response(200, headers=headers, stream=_ServedBody(), request=request)
 
 
+def _urllib3_url(pool: Any, url: str) -> str:
+    """The full URL of a ``HTTPConnectionPool.urlopen`` request (as capture builds it)."""
+    from novafabric.capture.hooks._urllib3 import _build_url
+
+    return _build_url(pool, url)
+
+
+def _urlopen_arguments(
+    original: Any, pool: Any, method: Any, url: Any, args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """``urlopen``'s arguments by name (urllib3 calls itself back positionally)."""
+    try:
+        bound = inspect.signature(original).bind(pool, method, url, *args, **kwargs)
+    except (TypeError, ValueError):
+        return dict(kwargs)
+    named = dict(bound.arguments)
+    named.update(named.pop("response_kw", None) or {})
+    return named
+
+
+def _urllib3_response(
+    served: ServedHttp, named: dict[str, Any], method: str, url: str
+) -> Any:
+    """A real ``urllib3.HTTPResponse`` over the served bytes, built the way the
+    caller asked for it (``preload_content`` / ``decode_content``), so botocore's
+    ``stream()`` / ``read()`` and its parsers run exactly as on a network body."""
+    import io
+
+    from urllib3 import HTTPResponse
+    from urllib3._collections import HTTPHeaderDict
+
+    headers = HTTPHeaderDict()
+    for name, value in served.headers:
+        headers.add(name, value)
+    return HTTPResponse(
+        body=io.BytesIO(served.body),
+        headers=headers,
+        status=served.status,
+        version=11,
+        reason=served.reason,
+        preload_content=bool(named.get("preload_content", True)),
+        decode_content=bool(named.get("decode_content", True)),
+        enforce_content_length=bool(named.get("enforce_content_length", True)),
+        request_method=method,
+        request_url=url,
+    )
+
+
 #: Pre-ADR-0304 name: the non-streaming builder per provider queue.
 _BUILDERS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "openai": _mock_openai_response,
@@ -903,6 +964,10 @@ class MockModelDispatcher:
         self._ollama_hosts = recorded_ollama_hosts(
             [r for r in model_calls if isinstance(r, dict)]
         )
+        #: Hosts the capsule recorded AWS Bedrock calls to (served at urllib3).
+        self._bedrock_hosts = recorded_bedrock_hosts(
+            [r for r in model_calls if isinstance(r, dict)]
+        )
         self._registry: Any = None
 
     # Kept for introspection by existing callers/tests.
@@ -957,6 +1022,10 @@ class MockModelDispatcher:
                 self.installed_surfaces.append(
                     f"{MODEL_SURFACES[queue]} ({module_name} transport)"
                 )
+        module_name, class_name, attr = SERVED_URLLIB3_SURFACE
+        if self._patcher.patch(module_name, class_name, attr, self._make_urlopen):
+            for queue in BEDROCK_QUEUES:
+                self.installed_surfaces.append(f"{MODEL_SURFACES[queue]} (urllib3 transport)")
 
     def _transport_queue(self, request: Any) -> str | None:
         """The Ollama queue a transport request is served from; ``None`` = live."""
@@ -1015,6 +1084,53 @@ class MockModelDispatcher:
             return None
         objects = ollama_response_objects(queue, record, stream=stream)
         return encode_objects(objects, stream=stream), stream
+
+    def _bedrock_queue(self, pool: Any, method: Any, url: Any) -> tuple[str, str] | None:
+        """``(queue, full URL)`` of a urllib3 request served from the capsule, or
+        ``None`` (pass through). Never raises: an unclassifiable request goes live
+        exactly as it would without the dispatcher."""
+        try:
+            full_url = _urllib3_url(pool, str(url))
+            queue = bedrock_request_queue(
+                str(method or ""), full_url, self._registry.gen_ai_system(full_url),
+                self._bedrock_hosts,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        return (queue, full_url) if queue is not None else None
+
+    def _make_urlopen(self, original: Any) -> Any:
+        dispatcher = self
+
+        @functools.wraps(original)
+        def urlopen(pool: Any, method: Any, url: Any, *args: Any, **kwargs: Any) -> Any:
+            target = dispatcher._bedrock_queue(pool, method, url)
+            if target is None:
+                return original(pool, method, url, *args, **kwargs)
+            queue, full_url = target
+            named = _urlopen_arguments(original, pool, method, url, args, kwargs)
+            served = dispatcher._serve_bedrock(queue, bedrock_request_json(named.get("body")))
+            if served is None:
+                return original(pool, method, url, *args, **kwargs)
+            return _urllib3_response(served, named, str(method), full_url)
+
+        return urlopen
+
+    def _serve_bedrock(self, queue: str, body: dict[str, Any]) -> ServedHttp | None:
+        """The served HTTP response, or ``None`` when a tolerated divergence
+        (``warn``) lets the request go live."""
+        record, error = self._take(
+            queue, stream=queue == BEDROCK_QUEUES[1], asynchronous=False, request=body,
+            unservable=unservable_reason,
+        )
+        if error is not None:  # a recorded failure is never served as a success
+            raise error
+        if not record:
+            self._events.emit(
+                "model_live", provider=QUEUE_PROVIDER[queue], surface=MODEL_SURFACES[queue]
+            )
+            return None
+        return served_response(queue, record)
 
     def uninstall(self) -> None:
         self._patcher.restore()
@@ -1213,6 +1329,7 @@ class MockModelDispatcher:
     def _take(
         self, queue: str, *, stream: bool = False, asynchronous: bool = False,
         request: dict[str, Any] | None = None,
+        unservable: Callable[[dict[str, Any]], str | None] | None = None,
     ) -> tuple[dict[str, Any], BaseException | None]:
         """The next recorded response on ``queue``; ``{}`` once a divergence is
         tolerated (``warn``). Raises under ``fail``.
@@ -1224,7 +1341,13 @@ class MockModelDispatcher:
         exception, to be raised after its delivered chunks. A Responses API
         response the SDK returned with ``status: failed``, or a Responses
         stream that delivered an ``error`` event, is served as recorded, never
-        raised (issue #16; ADR-0304 follow-on)."""
+        raised (issue #16; ADR-0304 follow-on).
+
+        ``unservable(record)``: why the surface cannot serve this record back (a
+        reason, or ``None``), checked before the record is consumed. Under ``fail``
+        the call is refused (``malformed_recorded_response``) and the record stays
+        queued; under ``warn`` its position is consumed and ``{}`` is returned, so
+        the caller runs the call live."""
         provider = QUEUE_PROVIDER[queue]
         surface = MODEL_SURFACES[queue]
         records = self._queues[queue]
@@ -1285,6 +1408,18 @@ class MockModelDispatcher:
                 call_index=idx,
                 model_call_id=record.get("model_call_id"),
             ))
+        reason = unservable(record) if unservable is not None else None
+        if reason is not None:
+            _report_divergence(self._events, self._policy, ReplayRecordMalformedError(
+                f"recorded {surface} response #{idx + 1} cannot be served: {reason}; "
+                + ("running the call live" if self._policy == "warn" else "refusing to serve it"),
+                provider=provider,
+                call_index=idx,
+                model_call_id=record.get("model_call_id"),
+            ))
+            self._index[queue] += 1
+            self._global_index += 1
+            return {}, None
         self._index[queue] += 1
         self._global_index += 1
         self._events.emit(

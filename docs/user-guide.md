@@ -549,7 +549,9 @@ nova capture --runner slurm \
 The wire-level hooks (`httpx`, `requests`, `aiohttp`, `urllib3`) classify
 outbound URLs against a vendored YAML registry. Default coverage includes
 OpenAI, Anthropic, Cohere, Together, Mistral, Replicate, AWS Bedrock, and
-Ollama on `localhost:11434`.
+Ollama on `localhost:11434`. Ollama on another host or port (`OLLAMA_BASE_URL` /
+`OLLAMA_HOST`) and a Bedrock endpoint set with `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` /
+`AWS_ENDPOINT_URL_BEDROCK` are detected at call time, without an override.
 
 To add a private endpoint or a provider not in the default list, create
 `~/.novafabric/url_registry.yaml`. A user-override file replaces the

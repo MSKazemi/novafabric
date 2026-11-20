@@ -18,7 +18,11 @@ live. Every recorded model call now falls in exactly one class:
     ``/api/tags``, ``/api/show``, ``/api/version`` or ``/api/ps`` request. It
     runs no model, so it is not refused; it runs live like any uncontrolled
     HTTP call and its connection is reported (``network_connections_live``).
-    ``/api/embed`` and ``/api/embeddings`` do run a model and stay ``not_servable``;
+    ``/api/embed`` and ``/api/embeddings`` do run a model and stay ``not_servable``.
+    Also an AWS Bedrock (``aws.bedrock``) request whose path is not a runtime
+    model path (``/model/...``, ``/async-invoke``, ``/guardrail/...``,
+    ``/guardrail-checks/...``) -- the ``bedrock`` control plane
+    (``ListFoundationModels`` and friends);
 ``transport``
     an ADR-0305 transport record (an HTTP attempt beneath an SDK call,
     including an orphaned one a count promotes): never a call to serve, so it
@@ -48,6 +52,13 @@ TRANSPORT: Servability = "transport"
 #: Ollama endpoints that run no model (listing, model info, version, running models).
 OLLAMA_METADATA_PATHS: frozenset[str] = frozenset(
     {"/api/tags", "/api/show", "/api/version", "/api/ps"}
+)
+
+#: AWS Bedrock runtime paths that run a model (InvokeModel, Converse, CountTokens,
+#: StartAsyncInvoke, ApplyGuardrail, InvokeGuardrailChecks). Any other
+#: ``aws.bedrock`` path is the control plane, which runs no model in this process.
+BEDROCK_MODEL_PATH_PREFIXES: tuple[str, ...] = (
+    "/model/", "/async-invoke", "/guardrail/", "/guardrail-checks/",
 )
 
 #: ``gen_ai.system`` reported for a record that carries none (or is not a dict).
@@ -80,7 +91,9 @@ SERVED_SURFACES: tuple[ServedSurface, ...] = (
     ServedSurface(
         name=(
             "OpenAI Chat Completions / Responses API, Anthropic Messages "
-            "(SDK hooks; ADR-0300, ADR-0304)"
+            "(SDK hooks; ADR-0300, ADR-0304); Ollama /api/chat, /api/generate "
+            "(httpx transport; ADR-0320); AWS Bedrock Converse / ConverseStream "
+            "(urllib3) -- every queue of _contract.model_queues"
         ),
         serves=_sdk_queue_position,
     ),
@@ -93,17 +106,22 @@ def is_servable(record: Any) -> bool:
 
 
 def is_metadata_call(record: Any) -> bool:
-    """An Ollama request to an endpoint that runs no model (:data:`OLLAMA_METADATA_PATHS`)."""
-    if system_of(record) != "ollama":
+    """A request to an endpoint that runs no model: an Ollama
+    :data:`OLLAMA_METADATA_PATHS` path, or an AWS Bedrock control-plane path (not
+    one of :data:`BEDROCK_MODEL_PATH_PREFIXES`)."""
+    system = system_of(record)
+    if system not in ("ollama", "aws.bedrock"):
         return False
     endpoint = record.get("endpoint")
     if not isinstance(endpoint, str):
         return False
     try:
-        path = urlsplit(endpoint).path.rstrip("/")
+        path = urlsplit(endpoint).path
     except ValueError:
         return False
-    return path in OLLAMA_METADATA_PATHS
+    if system == "aws.bedrock":
+        return bool(path) and not path.startswith(BEDROCK_MODEL_PATH_PREFIXES)
+    return path.rstrip("/") in OLLAMA_METADATA_PATHS
 
 
 def classify(records: Sequence[Any]) -> list[Servability]:

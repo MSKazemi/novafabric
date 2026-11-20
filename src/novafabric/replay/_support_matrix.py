@@ -58,6 +58,9 @@ _HF = "tests/capture/test_hf_inference_capture.py"
 _SMOL = "tests/adapters/test_smolagents.py"
 _UNSERVED = "tests/replay/test_unservable_model_surfaces_e2e.py"
 _OLLAMA = "tests/replay/test_ollama_replay_e2e.py"
+_BEDROCK = "tests/replay/test_bedrock_replay_e2e.py"
+_BEDROCK_WIRE = "tests/capture/test_bedrock_wire_capture.py"
+_BEDROCK_SERVE = "tests/replay/test_bedrock_serving.py"
 _LC = "tests/replay/test_langchain_tool_replay_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
@@ -396,6 +399,52 @@ ROWS: tuple[SurfaceRow, ...] = (
             ("httpx2", "HTTPTransport", "handle_request"),
             ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
         ),
+    ),
+    SurfaceRow(
+        surface=(
+            "AWS Bedrock `Converse` / `ConverseStream` through `boto3`/botocore "
+            "(`bedrock-runtime` client, `langchain_aws.ChatBedrockConverse`)"
+        ),
+        capture=(
+            "urllib3 wire hook: the response too -- text and `toolUse` blocks (canonical "
+            "`tool_calls`), `stopReason`, `usage`, the block layout and the rest of the "
+            "body; `modelId` from the URL, `inferenceConfig`, `system`/`toolConfig`; marked "
+            "`io.novafabric.api_surface: aws.bedrock.converse` / `.converse_stream`; the body "
+            "is copied as botocore reads it and recorded when the read ends; SigV4 headers "
+            "are never recorded"
+        ),
+        replay="served",
+        replay_note=(
+            "at urllib3 `HTTPConnectionPool.urlopen`, for `bedrock-runtime.*` hosts, "
+            "`AWS_ENDPOINT_URL_BEDROCK_RUNTIME`/`AWS_ENDPOINT_URL_BEDROCK` at call time and "
+            "hosts the capsule recorded; botocore parses the served bytes; one queue per "
+            "API, in order, signatures ignored; a recorded HTTP error (e.g. a throttle "
+            "botocore retried) is served back as recorded; exhaustion and Converse/"
+            "ConverseStream mismatch fail closed; `InvokeModel` is recorded without a "
+            "response and refused; control-plane (`bedrock`) calls run no model: not "
+            "refused, they run live"
+        ),
+        streaming=(
+            "`ConverseStream`: the recorded events re-encoded as an AWS event stream; an "
+            "abandoned stream is flagged `stream_complete: false` and served as delivered"
+        ),
+        asynchronous="— (boto3 is sync; aiobotocore over aiohttp is not served)",
+        status="experimental",
+        evidence=(
+            f"{_BEDROCK}::test_converse_and_converse_stream_round_trip",
+            f"{_BEDROCK}::test_a_tool_use_turn_and_its_tool_result_round_trip",
+            f"{_BEDROCK}::test_a_different_tool_result_is_reported_by_the_echo_check",
+            f"{_BEDROCK}::test_an_abandoned_stream_is_recorded_as_such_and_replayed_as_delivered",
+            f"{_BEDROCK}::test_a_recorded_http_error_and_a_throttled_retry_are_served_as_recorded",
+            f"{_BEDROCK}::test_bedrock_queue_exhaustion_fails_closed",
+            f"{_BEDROCK}::test_converse_stream_where_converse_was_recorded_fails_closed",
+            f"{_BEDROCK}::test_invoke_model_is_recorded_without_a_response_and_refused",
+            f"{_BEDROCK}::test_a_control_plane_call_runs_no_model_and_is_not_refused",
+            f"{_BEDROCK}::test_langchain_chat_bedrock_converse_with_tools_round_trips",
+            f"{_BEDROCK_WIRE}::test_an_unread_body_is_not_read_ahead_and_is_recorded_when_read",
+            f"{_BEDROCK_SERVE}::test_a_converse_stream_record_is_served_back_event_for_event",
+        ),
+        patches=(("urllib3.connectionpool", "HTTPConnectionPool", "urlopen"),),
     ),
     SurfaceRow(
         surface=(

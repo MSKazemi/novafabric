@@ -18,6 +18,12 @@ Dynamic Ollama detection: ``OLLAMA_BASE_URL`` (langchain_ollama) and
 ``OLLAMA_HOST`` (ollama SDK) are read at *call time* (not hook-install time)
 so that workloads that load these variables via ``python-dotenv`` are captured
 even when the env var is not yet set when the hook installs via sitecustomize.
+
+Dynamic AWS Bedrock detection, the same way: ``AWS_ENDPOINT_URL_BEDROCK_RUNTIME``
+and ``AWS_ENDPOINT_URL_BEDROCK`` -- botocore's service-specific endpoint variables
+-- are read at call time, and a request to exactly that scheme-less ``host:port``
+is classified ``aws.bedrock`` (a VPC or local Bedrock-compatible endpoint). The
+generic ``AWS_ENDPOINT_URL`` is not used: it applies to every AWS service.
 """
 from __future__ import annotations
 
@@ -84,7 +90,11 @@ class UrlRegistry(BaseModel):
         return None
 
     def is_known(self, url: str) -> bool:
-        return self.lookup(url) is not None or self._env_ollama_match(url)
+        return (
+            self.lookup(url) is not None
+            or self._env_ollama_match(url)
+            or _env_bedrock_match(url)
+        )
 
     def gen_ai_system(self, url: str) -> str:
         entry = self.lookup(url)
@@ -92,6 +102,8 @@ class UrlRegistry(BaseModel):
             return entry.gen_ai_system
         if self._env_ollama_match(url):
             return "ollama"
+        if _env_bedrock_match(url):
+            return "aws.bedrock"
         return "unknown"
 
     @staticmethod
@@ -117,6 +129,41 @@ class UrlRegistry(BaseModel):
             except Exception:
                 pass
         return False
+
+
+#: botocore's service-specific endpoint variables for the Bedrock runtime and
+#: control plane, read at call time.
+BEDROCK_ENDPOINT_ENV_VARS: tuple[str, ...] = (
+    "AWS_ENDPOINT_URL_BEDROCK_RUNTIME",
+    "AWS_ENDPOINT_URL_BEDROCK",
+)
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _netloc(url: str) -> tuple[str, int | None] | None:
+    try:
+        parsed = urlparse(url if "://" in url else f"http://{url}")
+        host = (parsed.hostname or "").lower()
+        port = parsed.port or _DEFAULT_PORTS.get(parsed.scheme)
+    except ValueError:
+        return None
+    return (host, port) if host else None
+
+
+def _env_bedrock_match(url: str) -> bool:
+    """The request goes to the host:port an AWS Bedrock endpoint variable names."""
+    target = None
+    for env_var in BEDROCK_ENDPOINT_ENV_VARS:
+        raw = os.environ.get(env_var, "").strip()
+        if not raw:
+            continue
+        if target is None:
+            target = _netloc(url)
+            if target is None:
+                return False
+        if _netloc(raw) == target:
+            return True
+    return False
 
 
 class UrlRegistryError(RuntimeError):
