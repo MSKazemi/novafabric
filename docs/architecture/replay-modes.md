@@ -487,6 +487,7 @@ what the capsule recorded:
 | `stdout_normalized_sha256` | `sha256:` of `outputs/stdout.txt` after the volatile-token rule set (below) | the replayed stdout, as the replay capsule stores it, after the same rule set |
 | `stdout_sha256` / `stderr_sha256` | `sha256:` of `outputs/stdout.txt` / `outputs/stderr.txt`, byte for byte | the replayed process's stream, as the replay capsule stores it — both **advisory** |
 | `file_effects` | the files the workload's Python process(es) opened for writing and their `sha256` when the run ended (`file-effects.json`); `recorded` is their number | each of those files **the replayed process wrote again**, digested after it ended (`replayed` is their number); `differences` lists every one whose state differs (first 50), as `{path, recorded, replayed}`; the note counts the recorded files the replay did not touch and the files only the replay wrote — neither is judged |
+| `file_writes_not_recorded` (advisory) | — the recording never wrote these files | files the replayed process wrote that the recording did not (a report named after the run, corpus control S6b): `differences` lists them with their state now (first 50), `recorded: not written`; `null` when the replay's writes are unknown or the capsule has no usable record |
 | `model_call_sequence` | every servable recorded model call, in order (`surface#n:model_call_id`), less records a served nested `record.tool` boundary covered | the records the dispatcher served, in the order served; `live:<surface>` for a call that ran live |
 | `tool_call_sequence` | every recorded call on an intercepted tool surface, in order (`surface:tool_name:tool_call_id`), less covered records | the records served, in order; `…:live`, `…:refused`, `…:unmatched` for a call that was not |
 | `divergence` | `0` | the number of divergences (`note`: `divergence_reason`) |
@@ -498,7 +499,7 @@ The verdict, in this order:
 | Verdict | When |
 |---|---|
 | `failed` | the replayed command did not run to completion: refused before it ran (`status: aborted`, no checks), timed out, could not be launched, or the replay dispatcher could not be installed |
-| `diverged` | any computed check is unequal (the failing ones are named), except the advisory `stdout_sha256` and `stderr_sha256`: reported with `advisory: true`, never in the verdict |
+| `diverged` | any computed check is unequal (the failing ones are named), except the advisory `stdout_sha256`, `stderr_sha256` and `file_writes_not_recorded`: reported with `advisory: true`, never in the verdict |
 | `not_compared` | a required check — `exit_code`, `stdout_normalized_sha256`, `file_effects` — could not be computed: the capsule did not record the exit code or stdout, or its `file-effects.json` is present but unusable (incomplete, redacted, not matching its evidence digest) or names a file too large or unreadable to compare |
 | `faithful` | every computed check is equal: no divergence, no live or unintercepted call |
 
@@ -575,10 +576,14 @@ and for which none is written. It is `null` and the verdict `not_compared`
 one process or 4,096 in the run), when redaction changed it, when it does not
 match its evidence digest, or when a recorded file is too large or unreadable.
 
-What the verdict does **not** see: a file written at a path the recording never
-wrote (a report named after the run, say) — it is counted in the note, never
-judged, because such names are often volatile; a recorded file the replay
-deleted without opening it; writes by a non-Python child
+What the verdict does **not** judge: a file written at a path the recording
+never wrote (a report named after the run, say) — it is listed in the advisory
+`file_writes_not_recorded`, never in the verdict, because such names are often
+volatile; a recorded write the replay did **not** repeat — a file the replay
+never opened for writing is not judged, because it cannot be told apart from
+the effect of a tool served from the capsule, so a replay that skipped writing
+an output shows only through its other checks (stdout, exit code); a recorded
+file the replay deleted without opening it; writes by a non-Python child
 process, by C code that bypasses the audit events, or by a `fork()` child that
 never execs; an `os.open(…, dir_fd=…)` from workload code, which is resolved
 against the working directory; a side effect outside the filesystem that leaves

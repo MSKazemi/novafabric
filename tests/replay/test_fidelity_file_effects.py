@@ -309,6 +309,52 @@ def test_files_only_the_replay_wrote_are_counted_not_judged(tmp_path: Path) -> N
     assert "1 file(s) written only by the replay (not judged)" in check["note"]
 
 
+def _advisory(fidelity: Any) -> dict[str, Any]:
+    (check,) = [c for c in fidelity.as_dict()["checks"]
+                if c["name"] == "file_writes_not_recorded"]
+    return check
+
+
+def test_files_only_the_replay_wrote_are_listed_as_an_advisory_difference(
+    tmp_path: Path,
+) -> None:
+    """S6b: reported with their paths, never in the verdict."""
+    cwd, home = _dirs(tmp_path)
+    (cwd / "out.json").write_bytes(b"x")
+    (cwd / "report-2.txt").write_bytes(b"r")
+    capsule, manifest = _capsule(tmp_path, [_entry("out.json", b"x")])
+    events = _events({str(cwd / "out.json"), str(cwd / "report-2.txt"),
+                      str(cwd / "__pycache__" / "m.pyc")})
+    fidelity = _verdict(capsule, manifest, cwd, home, events)
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+    assert fidelity.advisory_differences == ["file_writes_not_recorded"]
+    check = _advisory(fidelity)
+    assert check["advisory"] is True and check["equal"] is False
+    assert check["differences"] == [
+        {"path": "report-2.txt", "recorded": "not written", "replayed": _sha(b"r")}
+    ]
+    assert "report-2.txt" in check["note"]
+
+
+def test_replay_only_writes_are_bounded(tmp_path: Path) -> None:
+    cwd, home = _dirs(tmp_path)
+    capsule, manifest = _capsule(tmp_path, [])
+    events = _events({str(cwd / f"r{i:03}") for i in range(60)})
+    check = _advisory(_verdict(capsule, manifest, cwd, home, events))
+    assert check["replayed"] == 60 and len(check["differences"]) == 50
+    assert "(+10 more)" in check["note"]
+
+
+@pytest.mark.parametrize("record", [True, False])
+def test_replay_only_writes_unknown_is_null(tmp_path: Path, record: bool) -> None:
+    """Unobserved replay writes, or no record to tell new paths from recorded ones."""
+    cwd, home = _dirs(tmp_path)
+    capsule, manifest = _capsule(tmp_path, [] if record else None)
+    events = _events(None) if record else _events({str(cwd / "x")})
+    check = _advisory(_verdict(capsule, manifest, cwd, home, events))
+    assert check["equal"] is None and check["note"]
+
+
 @pytest.mark.parametrize("events,needle", [
     (_events(None), "not observed"),
     ([{"event": "installed"}, {"event": "file_observer_installed", "pid": 7}],

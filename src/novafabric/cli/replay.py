@@ -518,10 +518,13 @@ def _print_fidelity(fidelity: dict[str, Any]) -> None:
         if isinstance(diffs, list) and diffs:
             paths = [str(d.get("path")) for d in diffs[:5] if isinstance(d, dict)]
             more = f" (+{len(diffs) - len(paths)} more)" if len(diffs) > len(paths) else ""
-            console.print(
-                f"    {check.get('name')}: {', '.join(paths)}{more} differ from the recording",
-                style=colour, markup=False, highlight=False,
+            text = (
+                f"written only by the replay (advisory, not in the verdict): {', '.join(paths)}"
+                if check.get("advisory")
+                else f"{check.get('name')}: {', '.join(paths)}"
+                + " differ from the recording"
             )
+            console.print(f"    {text}{more}", style=colour, markup=False, highlight=False)
 
 
 #: A replay that stopped for one of these exits with a code the replayed command could
