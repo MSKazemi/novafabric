@@ -11,6 +11,12 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Added
+
+- **Audit profiles: `tool_calls` evidence type.** A requirement with `evidence_type: tool_calls` is met
+  when the capsule recorded at least one tool call (a non-empty `tool-calls.jsonl`; every capture creates
+  the file empty, so its presence alone does not count). Links and FIFOs are never followed or opened.
+
 ### Changed
 
 - **Built-in SOC 2 and ISO/IEC 42001 audit profiles cite control identifiers, not standard text.**
@@ -18,6 +24,10 @@ longer forwards the submitting shell's environment (ADR-0270).
   ISO wording; they are now short summaries of the NovaFabric records each control looks at.
   Evidence requirements are unchanged. To audit against the publisher's wording, load your own licensed
   catalog with `nova audit map --profile path/to/catalog.yaml`. A guard test keeps the built-ins this way.
+- **Custom audit profiles: an unknown `evidence_type` is refused at load (breaking for broken files).**
+  A typo such as `model_cals` used to load and leave its control permanently uncovered, with only a log
+  warning. Loading now fails with `ProfileValidationError` naming the token and listing the known ones
+  (`nova audit map` exits 2).
 
 ### Fixed
 

@@ -910,8 +910,14 @@ controls:
 requirement. A missing field or wrong type raises `ProfileValidationError` naming the file
 and field. `evidence_type` must be one of the tokens the engine has a checker for
 (`_EVIDENCE_CHECKERS` in `compliance/audit/engine.py`): `model_calls`, `tool_permissions`,
-`pii_scan`, `policy_events`, `seal_signature`, `lineage`. An unknown token is logged as a
-warning and treated as **absent**, so the control can never be covered.
+`pii_scan`, `policy_events`, `seal_signature`, `lineage`, `tool_calls` (exported as
+`KNOWN_EVIDENCE_TYPES`). An unknown token is refused when the profile loads, with a
+`ProfileValidationError` that lists the known ones, so a typo cannot leave a control
+silently uncovered. `tool_calls` needs a non-empty `tool-calls.jsonl`: every capture creates
+that file, empty, so its existence alone is not evidence. Note that `tool_permissions` and
+`policy_events` read `tool-permission-events.jsonl`, which `nova capture` does not write
+today; when no capsule carries it, the audit report gives those requirements the status
+`not_applicable` with the note "not captured by this version", rather than failing them.
 
 To ship the profile as a built-in ID, add it to `_PROFILE_FILENAMES` in
 `compliance/audit/loader.py`. That map is what `--profile <id>`, `list_profiles()` and
