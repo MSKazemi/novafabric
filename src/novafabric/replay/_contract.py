@@ -25,6 +25,11 @@ from typing import Any, Literal
 
 from novafabric.capture import _tool_codec
 from novafabric.capture._tool_codec import normalized_arg_hash as normalized_arg_hash
+from novafabric.capture.hooks._bedrock import (
+    BEDROCK_CONVERSE_STREAM_SURFACE,
+    BEDROCK_CONVERSE_SURFACE,
+    BEDROCK_SYSTEM,
+)
 from novafabric.capture.hooks._ollama import (
     OLLAMA_CHAT_SURFACE,
     OLLAMA_GENERATE_SURFACE,
@@ -53,6 +58,9 @@ MODEL_SURFACES: dict[str, str] = {
     # ADR-0320 (experimental): served at the httpx transport, not an SDK method.
     OLLAMA_CHAT_SURFACE: "ollama /api/chat",
     OLLAMA_GENERATE_SURFACE: "ollama /api/generate",
+    # Experimental: served at urllib3 (botocore's transport), not an SDK method.
+    BEDROCK_CONVERSE_SURFACE: "aws.bedrock converse",
+    BEDROCK_CONVERSE_STREAM_SURFACE: "aws.bedrock converse-stream",
 }
 
 #: The provider (``gen_ai.system``) behind each replay queue.
@@ -62,6 +70,8 @@ QUEUE_PROVIDER: dict[str, str] = {
     "anthropic": "anthropic",
     OLLAMA_CHAT_SURFACE: "ollama",
     OLLAMA_GENERATE_SURFACE: "ollama",
+    BEDROCK_CONVERSE_SURFACE: BEDROCK_SYSTEM,
+    BEDROCK_CONVERSE_STREAM_SURFACE: BEDROCK_SYSTEM,
 }
 
 #: How each served model surface may be called during a mocked replay.
@@ -69,6 +79,9 @@ MODEL_CALL_MODES = "sync and async; stream=True and non-streaming"
 #: The same for the surfaces served at the httpx transport (ADR-0320).
 HTTP_MODEL_CALL_MODES = "httpx/httpx2 transport, sync and async; NDJSON-streamed and JSON"
 _HTTP_QUEUES = frozenset({OLLAMA_CHAT_SURFACE, OLLAMA_GENERATE_SURFACE})
+#: The same for the AWS Bedrock surfaces served at urllib3 (boto3 is sync only).
+URLLIB3_MODEL_CALL_MODES = "urllib3 transport (boto3/botocore), sync; JSON and AWS event stream"
+_URLLIB3_QUEUES = frozenset({BEDROCK_CONVERSE_SURFACE, BEDROCK_CONVERSE_STREAM_SURFACE})
 
 #: The tool surfaces mocked replay intercepts (ADR-0300, ADR-0306).
 TOOL_SURFACE_MCP = "mcp.ClientSession.call_tool"
@@ -129,13 +142,13 @@ def model_queue_key(record: dict[str, Any]) -> str | None:
     marked with any other surface is not servable.
     """
     system = record.get("gen_ai.system")
-    if system not in ("openai", "anthropic", "ollama"):
+    if system not in ("openai", "anthropic", "ollama", BEDROCK_SYSTEM):
         return None
     surface = _surface_marker(record)
     if surface is None:
-        # An unmarked Ollama record is a wire record from before ADR-0320 (or a
-        # non-model endpoint such as /api/tags): no response was recorded.
-        return None if system == "ollama" else str(system)
+        # An unmarked Ollama or Bedrock record is a wire record captured before its
+        # response was recorded (or a non-model endpoint such as /api/tags).
+        return None if system in ("ollama", BEDROCK_SYSTEM) else str(system)
     return _MARKER_QUEUE.get((str(system), surface))
 
 
@@ -146,6 +159,8 @@ _MARKER_QUEUE: dict[tuple[str, str], str] = {
     ("anthropic", ANTHROPIC_MESSAGES_SURFACE): "anthropic",
     ("ollama", OLLAMA_CHAT_SURFACE): OLLAMA_CHAT_SURFACE,
     ("ollama", OLLAMA_GENERATE_SURFACE): OLLAMA_GENERATE_SURFACE,
+    (BEDROCK_SYSTEM, BEDROCK_CONVERSE_SURFACE): BEDROCK_CONVERSE_SURFACE,
+    (BEDROCK_SYSTEM, BEDROCK_CONVERSE_STREAM_SURFACE): BEDROCK_CONVERSE_STREAM_SURFACE,
 }
 
 
@@ -167,10 +182,10 @@ def records_async_and_streamed_calls(model_calls: list[dict[str, Any]]) -> bool:
     any call simply finds its queue empty.
     """
     # Only the SDK surfaces ever had unrecorded async/streamed calls; an Ollama
-    # record (ADR-0320) is always marked and says nothing about them.
+    # (ADR-0320) or Bedrock record is always marked and says nothing about them.
     servable = [
         r for r in served_model_records(model_calls)
-        if model_queue_key(r) not in _HTTP_QUEUES
+        if model_queue_key(r) not in _HTTP_QUEUES | _URLLIB3_QUEUES
     ]
     return not servable or any(_surface_marker(r) is not None for r in servable)
 
@@ -652,7 +667,9 @@ def tool_result_messages(messages: Any) -> dict[str, Any] | None:
     * Chat Completions: a ``role: "tool"`` message -> its ``content``;
     * Anthropic Messages: a ``tool_result`` block in a ``user`` message ->
       ``{"content", "is_error"}``, keyed by ``tool_use_id``;
-    * Responses API: a ``function_call_output`` input item -> its ``output``.
+    * Responses API: a ``function_call_output`` input item -> its ``output``;
+    * AWS Bedrock Converse: a ``toolResult`` block in a ``user`` message ->
+      ``{"content", "status"}``, keyed by ``toolUseId``.
 
     ``None`` when *messages* is not a non-empty list: a request with no message
     list (or a record that kept none) has nothing to compare, which is never
@@ -679,6 +696,12 @@ def tool_result_messages(messages: Any) -> dict[str, Any] | None:
                         put(_field(block, "tool_use_id"), {
                             "content": _field(block, "content"),
                             "is_error": bool(_field(block, "is_error")),
+                        })
+                    elif isinstance(_field(block, "toolResult"), dict):
+                        result = _field(block, "toolResult")
+                        put(result.get("toolUseId"), {
+                            "content": result.get("content"),
+                            "status": result.get("status"),
                         })
     return out
 
@@ -869,10 +892,12 @@ class ReplayContractReport:
 
 
 def surfaces_for(substitute_tools: bool) -> list[str]:
-    surfaces = [
-        f"{name} ({HTTP_MODEL_CALL_MODES if queue in _HTTP_QUEUES else MODEL_CALL_MODES})"
-        for queue, name in MODEL_SURFACES.items()
-    ]
+    def modes(queue: str) -> str:
+        if queue in _HTTP_QUEUES:
+            return HTTP_MODEL_CALL_MODES
+        return URLLIB3_MODEL_CALL_MODES if queue in _URLLIB3_QUEUES else MODEL_CALL_MODES
+
+    surfaces = [f"{name} ({modes(queue)})" for queue, name in MODEL_SURFACES.items()]
     if substitute_tools:
         surfaces.extend(TOOL_SURFACES)
     return surfaces

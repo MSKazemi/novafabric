@@ -72,6 +72,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   `nova diff <capsule> <replay-dir>` compares the two runs. The result names it in `replay_capsule_ref`.
 - **`nova replay --require-faithful`** (mocked mode only, experimental): exit `4` unless the verdict is
   `faithful`, `0` when it is, also for a faithful replay of a run that failed.
+- **AWS Bedrock `Converse` / `ConverseStream` calls are recorded with their response and served by mocked
+  replay** (experimental). The `urllib3` wire hook classified `bedrock-runtime.*` calls from `boto3` as model calls
+  but recorded `gen_ai.request.model: "unknown"` and no response, so a strict replay refused them and a permissive
+  one ran them live. Capture now records the model id from the URL, `inferenceConfig`, `system`/`toolConfig`, the
+  text and `toolUse` blocks (canonical `tool_calls`), `stopReason` and `usage`, marked
+  `io.novafabric.api_surface: aws.bedrock.converse` / `aws.bedrock.converse_stream`; the body is copied as botocore
+  reads it, never read ahead, and SigV4 headers are never recorded. `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` /
+  `AWS_ENDPOINT_URL_BEDROCK` classify their host at call time. Mocked replay answers those requests at
+  `urllib3`'s `HTTPConnectionPool.urlopen` (botocore parses the served bytes, so the workload gets botocore's own
+  objects; `ConverseStream` as a re-encoded AWS event stream); recorded HTTP errors are served back, so a
+  throttled call botocore retried replays the same way; exhaustion and a `Converse`/`ConverseStream` mismatch fail
+  closed; the echo check reads Bedrock `toolResult` blocks. `InvokeModel` is recorded without a response and
+  refused; control-plane (`bedrock`) calls are not refused. Tested with real `boto3` against a fake local server
+  only. See [docs/architecture/replay-modes.md](docs/architecture/replay-modes.md).
 - **Ollama calls are recorded with their response and served by mocked replay** (experimental, ADR-0320,
   issue #51). The `httpx` wire hook recorded `/api/chat` and `/api/generate` calls with `gen_ai.response.choices:
   []`, and mocked replay had no Ollama surface, so every Ollama call ran live while the replay reported none.

@@ -196,6 +196,51 @@ OpenAI-compatible `/v1/...` reached without the `openai` SDK) are not served and
 live. Not served back: the `context` token array of `/api/generate`, `logprobs`,
 and fields Ollama sends inside a tool call beyond its name and arguments.
 
+**AWS Bedrock `Converse` and `ConverseStream`** (**experimental**). `boto3` sends
+every Bedrock runtime call through `urllib3`, so the `urllib3` wire hook records it
+(`gen_ai.system: aws.bedrock`), and it now records the response too: the text
+blocks (concatenated), `toolUse` blocks as canonical `{id, name, arguments}` refs
+(`id` = `toolUseId`), the finish reason from `stopReason` (`end_turn` and
+`stop_sequence` → `stop`, `tool_use` → `tool_calls`, `max_tokens` → `length`,
+guardrail and content-filter stops → `content_filter`; the raw value is kept),
+`usage`, and the marker `io.novafabric.api_surface: "aws.bedrock.converse"` /
+`"aws.bedrock.converse_stream"`. The request side gets `gen_ai.request.model`
+from the URL (`/model/<modelId>/converse`, URL-decoded, e.g.
+`qwen.qwen3-32b-v1:0`), `inferenceConfig` as the sampling attributes, the
+`messages` verbatim (Bedrock content blocks), and `system` / `toolConfig` /
+`additionalModelRequestFields` verbatim under `io.novafabric.bedrock.request`.
+botocore reads the body itself, so the hook never does: it copies the bytes as
+botocore reads them (at once for `Converse`, as the workload iterates for
+`ConverseStream`) and writes the record when that read ends; a stream closed
+early is flagged `io.novafabric.stream_complete: false`. The SigV4
+`Authorization` and `X-Amz-*` request headers are never recorded. A host is
+classified as Bedrock by the URL registry (`bedrock-runtime.*`) or, at call time,
+by `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` / `AWS_ENDPOINT_URL_BEDROCK` (botocore's
+service-specific endpoint variables); a custom `endpoint_url` passed in code to
+another host needs a registry override. In a mocked replay the dispatcher patches
+`urllib3.connectionpool.HTTPConnectionPool.urlopen`: a `POST` to
+`/model/<id>/converse` or `/converse-stream` on such a host, or on a host the
+capsule recorded a Bedrock call to, is answered from that API's queue, in
+recorded order, and never reaches the network; botocore parses the served bytes
+with its own parser (an event stream for `ConverseStream`, re-encoded from the
+recorded events). Serving is positional, so a request signed with other
+credentials or at another time is served the same. A recorded HTTP error is
+served back with its status and body: botocore raises the same `ClientError`, and
+a throttle botocore retried at capture is retried the same way at replay,
+reaching the recorded success. An exhausted queue, a `ConverseStream` call where
+`Converse` was recorded (or the reverse) and a call that failed without a
+response (the request raised, or the body failed part-way) fail closed; botocore
+hands such a refusal to the workload wrapped in its own `HTTPClientError`, and
+the divergence is in the replay result. The echo check reads Bedrock `toolResult`
+blocks, so a tool result the replayed workload sends back that differs from the
+recorded one is reported (report-only). `InvokeModel` (provider-specific bodies)
+is recorded without a response and refused; control-plane calls (the `bedrock`
+client, e.g. `ListFoundationModels`) run no model, so they are not refused and run
+live. Replay still needs AWS credentials of some kind in the environment, because
+botocore signs every request before it is sent (dummy values are enough); with
+none, botocore's credential chain may contact the instance-metadata endpoint,
+which runs live and is reported.
+
 A recorded tool call is
 servable when it is an MCP `tools/call` with a tool name; a call captured both by
 the in-process MCP hook and by `nova mcp-proxy` counts once.
@@ -587,6 +632,7 @@ and is counted in `replay_contract.model_calls_live`.
 | Hugging Face `InferenceClient` / `AsyncInferenceClient` (router, Endpoints) | wire hook, the router and Endpoints hosts (any provider route): request, requested model and selector, status, timing; the response is never read, so reported model, served provider and token counts are not recorded | Refused — not intercepted and recorded without a response, so a strict replay **refuses to start** (`ModelSurfaceNotServable`, ADR-0319); `--permissive` runs it **live** and reports it in `model_calls_not_servable` and `network_connections_live` | request recorded; stream not read | request recorded | capture only | `test_hf_inference_capture.py::test_a_hugging_face_record_is_never_a_replayable_model_call`; `test_hf_inference_capture.py::test_only_the_two_hugging_face_inference_hosts_are_classified`; `test_hf_inference_capture.py::test_a_streamed_response_is_not_read_by_the_hook`; `test_hf_inference_capture.py::test_real_inference_client_sync_chat_is_recorded_once_with_honest_identity` |
 | Hugging Face `smolagents` tool calls (`novafabric.adapters.smolagents`) | observed per agent step: tool name, argument digest, step outcome; the framework reports no per-call result, and a `CodeAgent` step is one `python_interpreter` call | Not intercepted — runs **live**; the record carries a surface marker replay does not intercept | run stream preserved; capsule closes when it ends or is abandoned | — | capture only | `test_smolagents.py::test_tool_records_are_observe_only_and_never_a_replay_surface`; `test_smolagents.py::test_a_real_code_agent_records_one_python_interpreter_call_and_never_the_code` |
 | Ollama `/api/chat`, `/api/generate` over `httpx`/`httpx2` (raw HTTP, the `ollama` SDK, `langchain_ollama`; ADR-0320) | wire hook: the response too -- text, `tool_calls`, `done_reason`, `prompt_eval_count`/`eval_count`, marked `io.novafabric.api_surface: ollama.chat` / `ollama.generate`; a streamed (NDJSON) body is copied as the workload reads it and recorded when the read ends | **Served** — at the httpx transport, for registry-matched Ollama hosts (incl. `OLLAMA_BASE_URL`/`OLLAMA_HOST` at call time) and hosts the capsule recorded; one queue per endpoint, in order; exhaustion and endpoint mismatch fail closed; records captured before ADR-0320 (no response) are never served; `/api/embed` is refused like any unserved model call; `/api/tags`, `/api/show`, `/api/version` and `/api/ps` run no model, so they are not refused: they run live and their connections are reported (ADR-0319) | served as NDJSON in the recorded chunks, ending with the `done` object; without it when the capture never received one | served | experimental | `test_ollama_replay_e2e.py::test_ollama_chat_and_generate_round_trip_streamed_and_not`; `test_ollama_replay_e2e.py::test_a_tool_calling_ollama_response_round_trips`; `test_ollama_replay_e2e.py::test_an_abandoned_stream_is_recorded_as_such_and_replayed_as_delivered`; `test_ollama_replay_e2e.py::test_ollama_queue_exhaustion_fails_closed`; `test_ollama_replay_e2e.py::test_a_surface_mismatch_fails_closed`; `test_ollama_replay_e2e.py::test_a_record_without_a_response_is_never_served_empty`; `test_ollama_replay_e2e.py::test_the_ollama_sdk_round_trips`; `test_ollama_replay_e2e.py::test_langchain_ollama_round_trips` |
+| AWS Bedrock `Converse` / `ConverseStream` through `boto3`/botocore (`bedrock-runtime` client, `langchain_aws.ChatBedrockConverse`) | urllib3 wire hook: the response too -- text and `toolUse` blocks (canonical `tool_calls`), `stopReason`, `usage`, the block layout and the rest of the body; `modelId` from the URL, `inferenceConfig`, `system`/`toolConfig`; marked `io.novafabric.api_surface: aws.bedrock.converse` / `.converse_stream`; the body is copied as botocore reads it and recorded when the read ends; SigV4 headers are never recorded | **Served** — at urllib3 `HTTPConnectionPool.urlopen`, for `bedrock-runtime.*` hosts, `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`/`AWS_ENDPOINT_URL_BEDROCK` at call time and hosts the capsule recorded; botocore parses the served bytes; one queue per API, in order, signatures ignored; a recorded HTTP error (e.g. a throttle botocore retried) is served back as recorded; exhaustion and Converse/ConverseStream mismatch fail closed; `InvokeModel` is recorded without a response and refused; control-plane (`bedrock`) calls run no model: not refused, they run live | `ConverseStream`: the recorded events re-encoded as an AWS event stream; an abandoned stream is flagged `stream_complete: false` and served as delivered | — (boto3 is sync; aiobotocore over aiohttp is not served) | experimental | `test_bedrock_replay_e2e.py::test_converse_and_converse_stream_round_trip`; `test_bedrock_replay_e2e.py::test_a_tool_use_turn_and_its_tool_result_round_trip`; `test_bedrock_replay_e2e.py::test_a_different_tool_result_is_reported_by_the_echo_check`; `test_bedrock_replay_e2e.py::test_an_abandoned_stream_is_recorded_as_such_and_replayed_as_delivered`; `test_bedrock_replay_e2e.py::test_a_recorded_http_error_and_a_throttled_retry_are_served_as_recorded`; `test_bedrock_replay_e2e.py::test_bedrock_queue_exhaustion_fails_closed`; `test_bedrock_replay_e2e.py::test_converse_stream_where_converse_was_recorded_fails_closed`; `test_bedrock_replay_e2e.py::test_invoke_model_is_recorded_without_a_response_and_refused`; `test_bedrock_replay_e2e.py::test_a_control_plane_call_runs_no_model_and_is_not_refused`; `test_bedrock_replay_e2e.py::test_langchain_chat_bedrock_converse_with_tools_round_trips`; `test_bedrock_wire_capture.py::test_an_unread_body_is_not_read_ahead_and_is_recorded_when_read`; `test_bedrock_serving.py::test_a_converse_stream_record_is_served_back_event_for_event` |
 | Other providers' SDKs, raw HTTP to a model API (any registry host), or a served surface whose response was not recorded | wire hook: request only | Refused — not intercepted, so a strict replay **refuses to start** (`ModelSurfaceNotServable`, exit 1, also under `--dry-run`, which lists each as `[LIVE] model call (<system>, <host>)`); `--permissive` runs it **live** and reports `model_calls_not_servable` per `gen_ai.system` (ADR-0319) | — | — | not controlled; refused by default | `test_unservable_model_surfaces_e2e.py::test_p7_strict_replay_refuses_before_spawning`; `test_unservable_model_surfaces_e2e.py::test_p7_permissive_runs_live_and_reports_it`; `test_unservable_model_surfaces_e2e.py::test_p7_dry_run_lists_the_live_model_call`; `test_unservable_model_surfaces_e2e.py::test_mixed_capsule_names_only_the_unserved_system` |
 | MCP `ClientSession.call_tool` (in-process hook or `nova mcp-proxy`) | full result (proxy: verbatim JSON-RPC envelope) | **Served** — one-to-one; an unmatched call is refused (`--permissive` runs it live only with `--allow-unknown-mutation`: MCP calls count as `unknown`); `replay.yaml` `tool_overrides` enforced in-process (experimental, ADR-0306); arguments matched after secret redaction, raw-equal records first, so an argument the capsule scanner redacted still matches (experimental, ADR-0306 slice 4) | — | (async by nature) | works today | `test_mocked_replay_contract.py::test_s2_model_tool_model`; `test_mocked_replay_contract.py::test_s4_repeated_identical_calls_consume_distinct_records`; `test_mocked_replay_contract.py::test_s8_missing_tool_record_fails_closed_even_if_the_workload_swallows_it`; `test_mocked_replay_contract.py::test_s13_permissive_refuses_an_unmatched_mcp_call_without_the_ladder_flag`; `test_tool_overrides_enforced_e2e.py::test_dry_run_report_equals_replayed_behaviour`; `test_slice4_matching_and_echo_contract.py::test_an_mcp_call_whose_argument_the_scanner_redacted_is_served`; `test_slice4_matching_and_echo_contract.py::test_an_unsealed_capsule_matches_exactly_as_before_redact_then_hash` |
 | Python function declared with `novafabric.capture.record.tool` (ADR-0306) | one `transport: python` record per call; arguments and result kept only at the `forensic`/`air_gapped` capture level, digests otherwise | **Served** — before the function body runs; one-to-one by name and canonical arguments; JSON-native results up to 1 MiB; an unmatched or unservable call is refused (`--permissive` runs it live only if a ladder flag permits its declared mutation class); `replay.yaml` `tool_overrides` enforced in-process; a boundary that called a model or tool is served too, and the records it wrote are consumed as covered (`*_calls_covered`, slice 4) | refused at decoration (generator functions) | served (`async def`) | experimental | `test_python_tool_replay_e2e.py::test_decorated_calls_are_served_and_their_bodies_never_run`; `test_python_tool_replay_e2e.py::test_positional_keyword_and_default_calls_match_and_consume_in_order`; `test_python_tool_replay_e2e.py::test_an_unmatched_call_fails_closed_before_the_body_runs`; `test_python_tool_replay_e2e.py::test_an_unservable_record_fails_closed_naming_the_cause`; `test_python_tool_replay_e2e.py::test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag`; `test_tool_overrides_enforced_e2e.py::test_an_unmatched_intercepted_call_follows_the_owner_rules`; `test_python_tool_replay_e2e.py::test_a_nested_boundary_is_served_and_its_inner_records_are_covered`; `test_echo_and_nested_coverage_e2e.py::test_a_nested_boundary_is_served_and_its_nested_model_call_is_covered`; `test_echo_and_nested_coverage_e2e.py::test_an_unmarked_nested_call_fails_closed` |
@@ -618,6 +664,20 @@ These limits are stated so you can rely on the parts that do work:
   `allow: false` cannot be enforced, which is why a strict replay refuses to
   start. `--mode intervention` installs no tool dispatcher and enforces no
   override.
+- **Bedrock is served for `Converse` / `ConverseStream` through `urllib3` only**
+  (experimental). `InvokeModel` and `InvokeModelWithResponseStream`, `aiobotocore`
+  (over `aiohttp`), and Bedrock agents (`bedrock-agent-runtime`) are not served.
+  Not served back byte for byte: the response body is re-serialized (so
+  `ResponseMetadata.HTTPHeaders["content-length"]` may differ), Bedrock's random
+  `p` padding field on stream events is dropped, and only `date`, `content-type`,
+  `content-length`, `connection`, `x-amzn-RequestId` and `x-amzn-ErrorType`
+  response headers are recorded. Request `messages` are kept as Bedrock-native
+  content blocks, which the model-call schema's `ContentPart` does not describe
+  (as for Anthropic's native blocks). Capsules captured before this change hold no
+  Bedrock responses: re-capture to replay them. LangChain's `ChatBedrockConverse`
+  (with tools, invoke and stream) is tested against the fake server only when
+  `langchain-aws` is installed (not a NovaFabric dependency); no capture or replay
+  against real AWS has been run yet.
 - **Ollama is served at the `httpx` transport only** (experimental, ADR-0320). A
   client with its own transport class that does not derive from
   `httpx.HTTPTransport` (e.g. `httpx.MockTransport`), and Ollama reached through
