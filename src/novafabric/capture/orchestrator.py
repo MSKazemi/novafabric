@@ -544,6 +544,7 @@ class CaptureOrchestrator:
             writer.write_bytes("outputs/stdout.txt", stdout_bytes)
         if stderr_bytes:
             writer.write_bytes("outputs/stderr.txt", stderr_bytes)
+        _write_file_effects(writer, capsule_dir, getattr(self._runner, "name", None))
 
         writer.append_trace_span({
             "span_id": root_span_id,
@@ -886,6 +887,47 @@ class CaptureOrchestrator:
             sealed=finalized.sealed,
             unsealed_reason=finalized.unsealed_reason,
         )
+
+
+def _write_file_effects(writer: CapsuleWriter, capsule_dir: Path, runner_name: Any) -> None:
+    """Fold the workload's file-write hand-offs into ``file-effects.json``.
+
+    ADR-0321 amendment: replay compares these end-of-run digests with its own, so
+    a repeated file side effect is a divergence. Digests are computed only for
+    the local runner, whose paths name this filesystem. No record when no Python
+    process was observed or the runner is not local. Fail-open: a failure here
+    never fails the capture, and leaves no record (replay then lists file effects
+    as unchecked: the verdict does not cover them).
+    """
+    try:
+        from novafabric._paths import nova_home
+        from novafabric.audit._paths import resolve_audit_log_path
+        from novafabric.capture.file_effects import (
+            FILE_EFFECTS_REF,
+            collect_file_effects,
+            render_record,
+        )
+
+        local = runner_name == LocalRunner.name
+        record = collect_file_effects(
+            capsule_dir,
+            cwd=Path.cwd(),
+            home=Path.home(),
+            exclude=[nova_home(), resolve_audit_log_path()],
+            # Another runner's paths name another filesystem: no record.
+            digest=local,
+        )
+        if record is not None:
+            writer.write_text(FILE_EFFECTS_REF, render_record(record))
+        else:
+            # Nothing was observed: a file the workload itself left at this name is
+            # not a record (it would make replay compare against a forgery).
+            try:
+                os.unlink(capsule_dir / FILE_EFFECTS_REF)  # a link itself, never its target
+            except FileNotFoundError:
+                pass
+    except Exception:  # noqa: BLE001 -- fail-open: never block capture
+        logger.exception("novafabric: file effects were not recorded")
 
 
 # ---------------------------------------------------------------------------

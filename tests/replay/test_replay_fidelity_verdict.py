@@ -7,6 +7,7 @@ call went live or past the interceptors; never by default.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -24,9 +25,15 @@ from novafabric.replay._fidelity import (
 
 
 def _capsule(tmp_path: Path, *, stdout: bytes = b"hi\n", exit_code: Any = 0,
-             digests: bool = True, capture_mode: str = "cli-wrapper") -> Path:
+             digests: bool = True, capture_mode: str = "cli-wrapper",
+             file_effects: bool = True) -> Path:
     capsule = tmp_path / "capsule"
     (capsule / "outputs").mkdir(parents=True)
+    if file_effects:  # a complete record of a workload that wrote no file
+        (capsule / "file-effects.json").write_text(json.dumps({
+            "schema": "novafabric.file-effects/1", "observer": "python-open-audit-hook",
+            "complete": True, "files": [],
+        }))
     manifest: dict[str, Any] = {"run_id": "R1", "capture_mode": capture_mode}
     if exit_code is not None:
         manifest["exit_code"] = exit_code
@@ -81,7 +88,7 @@ def test_matching_outcome_and_calls_are_faithful(tmp_path: Path) -> None:
                  "model_call_id": "m1"}],
     )
     assert fidelity.verdict == "faithful", fidelity.as_dict()
-    assert fidelity.as_dict()["normalization"] == "none"
+    assert fidelity.as_dict()["normalization"] == "volatile-ids/1"
     assert fidelity.verdict in VERDICTS
 
 
@@ -155,7 +162,9 @@ def test_stderr_and_exit_code_are_compared(tmp_path: Path) -> None:
     check = next(c for c in stderr_only.as_dict()["checks"] if c["name"] == "stderr_sha256")
     assert check["equal"] is False and check["advisory"] is True
     assert _verdict(capsule, exit_code=2).failing_checks == ["exit_code"]
-    assert _verdict(capsule, stdout=b"other\n").failing_checks == ["stdout_sha256"]
+    other = _verdict(capsule, stdout=b"other\n")
+    assert other.failing_checks == ["stdout_normalized_sha256"]
+    assert other.advisory_differences == ["stdout_sha256"]
 
 
 @pytest.mark.parametrize("error_type", ["ReplayTimeout", "ReplayLaunchError"])
@@ -203,12 +212,37 @@ def test_missing_recorded_data_is_not_compared_never_faithful(
     assert set(fidelity.uncompared_checks) <= set(REQUIRED_CHECKS)
 
 
+def test_a_capsule_with_no_file_effects_record_is_judged_on_the_other_checks(
+    tmp_path: Path,
+) -> None:
+    """An older capsule never had file-effects.json: not an inconsistency. The verdict
+    comes from exit code + normalised stdout, and says it does not cover file effects."""
+    capsule = _capsule(tmp_path, file_effects=False)
+    fidelity = _verdict(capsule)
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+    assert fidelity.uncompared_checks == []
+    assert fidelity.unchecked == ["file_effects"]
+    out = fidelity.as_dict()
+    assert out["unchecked"] == ["file_effects"]
+    files = next(c for c in out["checks"] if c["name"] == "file_effects")
+    assert files["equal"] is None and "not recorded" in files["note"]
+    # The other required checks still decide: a stdout difference still diverges.
+    assert _verdict(capsule, stdout=b"other\n").verdict == "diverged"
+    # And a capsule that also lacks stdout is still not_compared.
+    bare = _capsule(tmp_path / "bare", stdout=b"", digests=False, file_effects=False)
+    assert _verdict(bare, stdout=b"").verdict == "not_compared"
+
+
+def test_unchecked_is_absent_when_every_check_has_its_record(tmp_path: Path) -> None:
+    assert "unchecked" not in _verdict(_capsule(tmp_path)).as_dict()
+
+
 def test_an_empty_stream_absent_from_a_digest_bound_capsule_is_empty(tmp_path: Path) -> None:
     """``nova capture`` writes a stream only when not empty; ADR-0251 digests
     bind every file, so there an absent stream was empty."""
     capsule = _capsule(tmp_path, stdout=b"")
     assert _verdict(capsule, stdout=b"").verdict == "faithful"
-    assert _verdict(capsule, stdout=b"x").failing_checks == ["stdout_sha256"]
+    assert _verdict(capsule, stdout=b"x").failing_checks == ["stdout_normalized_sha256"]
 
 
 def test_a_stream_that_no_longer_matches_its_evidence_digest_is_not_compared(
@@ -218,9 +252,68 @@ def test_a_stream_that_no_longer_matches_its_evidence_digest_is_not_compared(
     (capsule / "outputs" / "stdout.txt").write_bytes(b"edited\n")
     fidelity = _verdict(capsule, stdout=b"edited\n")
     assert fidelity.verdict == "not_compared"
-    assert fidelity.uncompared_checks == ["stdout_sha256"]
+    assert fidelity.uncompared_checks == ["stdout_normalized_sha256"]
 
 
 def test_a_divergence_outranks_missing_recorded_data(tmp_path: Path) -> None:
     capsule = _capsule(tmp_path, exit_code=None)
     assert _verdict(capsule, stdout=b"boom").verdict == "diverged"
+
+
+# ── volatile-token normalisation of stdout (ADR-0321 amendment, rule set volatile-ids/1) ──
+
+_U1 = "3f2b8c1e-9d4a-4f6b-8a2c-1e5d7f9b0c3a"
+_U2 = "a1b2c3d4-e5f6-4a7b-9c8d-0e1f2a3b4c5d"
+_U3 = "0c9d8e7f-6a5b-4c3d-b2e1-f0a9b8c7d6e5"
+
+
+def _check(fidelity: Any, name: str) -> dict[str, Any]:
+    (check,) = [c for c in fidelity.as_dict()["checks"] if c["name"] == name]
+    return check
+
+
+def test_stdout_that_differs_only_in_generated_uuids_is_faithful(tmp_path: Path) -> None:
+    """The AWS log_mcp case: LangChain prints ``lc_<uuid4>`` ids it generates."""
+    recorded = f"content=[{{'id': 'lc_{_U1}'}}] tool_call_id={_U2}\n".encode()
+    replayed = f"content=[{{'id': 'lc_{_U3}'}}] tool_call_id={_U1.upper()}\n".encode()
+    fidelity = _verdict(_capsule(tmp_path, stdout=recorded), stdout=replayed)
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+    normalized = _check(fidelity, "stdout_normalized_sha256")
+    assert normalized["equal"] is True
+    assert normalized["normalizer"] == "volatile-ids/1"
+    assert "advisory" not in normalized
+    raw = _check(fidelity, "stdout_sha256")
+    # The raw byte comparison stays visible: advisory, and false here.
+    assert raw["equal"] is False and raw["advisory"] is True
+    assert fidelity.advisory_differences == ["stdout_sha256"]
+
+
+def test_an_id_printed_twice_must_be_printed_twice(tmp_path: Path) -> None:
+    """The rule keeps structure: one id twice is not two different ids."""
+    recorded = f"call {_U1} -> result for {_U1}\n".encode()
+    replayed = f"call {_U2} -> result for {_U3}\n".encode()
+    fidelity = _verdict(_capsule(tmp_path, stdout=recorded), stdout=replayed)
+    assert fidelity.verdict == "diverged"
+    assert fidelity.failing_checks == ["stdout_normalized_sha256"]
+
+
+@pytest.mark.parametrize("recorded,replayed", [
+    # Anything but an RFC 4122 UUID still diverges: no evidence asked to mask it.
+    (b"at 2026-11-20T10:00:00Z\n", b"at 2026-11-20T10:00:01Z\n"),
+    (f"id {_U1.replace('-', '')}\n".encode(), f"id {_U2.replace('-', '')}\n".encode()),
+    (f"answer 1 {_U1}\n".encode(), f"answer 2 {_U2}\n".encode()),
+])
+def test_differences_outside_the_rule_set_still_diverge(
+    tmp_path: Path, recorded: bytes, replayed: bytes
+) -> None:
+    fidelity = _verdict(_capsule(tmp_path, stdout=recorded), stdout=replayed)
+    assert fidelity.verdict == "diverged"
+    assert "stdout_normalized_sha256" in fidelity.failing_checks
+
+
+def test_stderr_is_not_normalised(tmp_path: Path) -> None:
+    capsule = _capsule(tmp_path)
+    names = [c["name"] for c in _verdict(capsule).as_dict()["checks"]]
+    assert "stderr_normalized_sha256" not in names
+    assert names[:4] == ["exit_code", "stdout_normalized_sha256", "stdout_sha256",
+                         "stderr_sha256"]

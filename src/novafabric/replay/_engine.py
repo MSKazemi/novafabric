@@ -854,6 +854,9 @@ class ReplayEngine:
             stdout=stdout,
             stderr=stderr,
             replay_capsule=result_dir if stored else None,
+            # The replayed command ran in this process's working directory.
+            cwd=Path.cwd(),
+            home=Path.home(),
         )
 
         result = ReplayResult(

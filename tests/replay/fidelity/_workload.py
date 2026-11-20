@@ -118,8 +118,11 @@ def _child_net(out: dict) -> None:
     out["child_net_rc"] = proc.returncode
 
 
-def _file(out: dict) -> None:
-    path = os.path.join(os.environ["FIDELITY_OUTSIDE"], "ledger.txt")
+def _file(out: dict, per_phase: bool = False) -> None:
+    # per_phase: a new file each run (a timestamped report, say) -- not a repeat of
+    # a recorded write, so the replay's file_effects check does not see it.
+    name = f"ledger.{PHASE}.txt" if per_phase else "ledger.txt"
+    path = os.path.join(os.environ["FIDELITY_OUTSIDE"], name)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write("row\n")
     out["file"] = "written"
@@ -152,6 +155,8 @@ def main() -> int:
             _child_net(out)
         elif step == "file":
             _file(out)
+        elif step == "file_per_phase":
+            _file(out, per_phase=True)
         elif step == "ollama":
             _ollama(out)
         elif step == "ollama_embed":  # runs a model; not a surface replay serves

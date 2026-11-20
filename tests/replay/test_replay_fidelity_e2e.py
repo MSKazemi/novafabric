@@ -10,6 +10,7 @@ divergence state, live calls -- and never reads ``faithful`` by default.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -50,6 +51,15 @@ print("answer:", resp.choices[0].message.content)
 extra = os.environ.get("FID_EXTRA")
 if extra:
     print(extra)
+if os.environ.get("FID_UUID"):
+    # An id the workload generates itself, as LangChain prints lc_<uuid4> ids.
+    import uuid
+    print("message id:", f"lc_{uuid.uuid4()}")
+output = os.environ.get("FID_OUTPUT")
+if output:
+    # An output file the program (re)writes: the same content each run.
+    with open(output, "w") as fh:
+        fh.write(resp.choices[0].message.content + os.environ.get("FID_OUTPUT_EXTRA", ""))
 counter = os.environ.get("FID_COUNTER")
 if counter:
     # A file side effect that a replay repeats (probe P6), made visible on stdout.
@@ -66,7 +76,8 @@ sys.exit(int(os.environ.get("FID_EXIT", "0")))
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     agent = tmp_path / "agent.py"
     agent.write_text(AGENT)
-    for var in ("FORCE_COLOR", "COLORTERM", "FID_CANNED", "FID_EXTRA", "FID_COUNTER", "FID_EXIT"):
+    for var in ("FORCE_COLOR", "COLORTERM", "FID_CANNED", "FID_EXTRA", "FID_COUNTER", "FID_EXIT",
+                "FID_UUID", "FID_OUTPUT", "FID_OUTPUT_EXTRA"):
         monkeypatch.delenv(var, raising=False)
     return {"agent": agent, "runs": tmp_path / "runs", "replays": tmp_path / "replays"}
 
@@ -111,10 +122,11 @@ def test_a_faithful_replay_is_faithful_and_its_capsule_diffs_clean(
     assert replay["status"] == "success"
     fidelity = replay["fidelity"]
     assert fidelity["verdict"] == "faithful", fidelity
-    assert fidelity["normalization"] == "none"
+    assert fidelity["normalization"] == "volatile-ids/1"
     names = [c["name"] for c in fidelity["checks"]]
-    for name in ("exit_code", "stdout_sha256", "stderr_sha256", "model_call_sequence",
-                 "tool_call_sequence", "divergence", "live_calls"):
+    for name in ("exit_code", "stdout_normalized_sha256", "stdout_sha256", "stderr_sha256",
+                 "file_effects", "model_call_sequence", "tool_call_sequence", "divergence",
+                 "live_calls"):
         assert name in names
     assert all(c["equal"] is True for c in fidelity["checks"] if c["name"] != "tool_result_echo")
     assert _check(replay, "exit_code")["recorded"] == 0
@@ -154,9 +166,10 @@ def test_changed_stdout_is_diverged_and_names_the_stdout_check(
     assert result.exit_code == 0, (result.output, replay)
     assert replay["status"] == "success"
     assert replay["fidelity"]["verdict"] == "diverged"
-    assert _failing(replay) == ["stdout_sha256"]
+    assert _failing(replay) == ["stdout_normalized_sha256", "stdout_sha256"]
+    assert _check(replay, "stdout_sha256")["advisory"] is True
     assert "fidelity: diverged" in result.output
-    assert "stdout_sha256" in result.output
+    assert "stdout_normalized_sha256" in result.output
 
     report = DiffEngine().compare(capsule, replay_dir)
     assert report.has_changes
@@ -171,18 +184,71 @@ def test_changed_stdout_is_diverged_and_names_the_stdout_check(
     assert "--require-faithful" in gate.output
 
 
-def test_a_repeated_file_side_effect_that_shows_on_stdout_is_diverged(
+def test_a_repeated_file_side_effect_is_diverged_and_names_the_file(
     env: dict[str, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Probe P6: the replay appends to the same file again. Mocked replay does not
-    intercept file writes; the verdict sees it only because the workload prints."""
-    monkeypatch.setenv("FID_COUNTER", str(tmp_path / "counter.txt"))
+    """Probe P6 / corpus S6: the replay appends to the same file again. The
+    ``file_effects`` check sees it whether or not the workload prints about it."""
+    counter = tmp_path / "counter.txt"
+    monkeypatch.setenv("FID_COUNTER", str(counter))
     capsule = _capture(env, monkeypatch)
-    _result, replay, _dir = _replay(env, capsule)
+    result, replay, _dir = _replay(env, capsule)
 
     assert replay["status"] == "success"
     assert replay["fidelity"]["verdict"] == "diverged"
-    assert _failing(replay) == ["stdout_sha256"]
+    assert _failing(replay) == ["stdout_normalized_sha256", "stdout_sha256", "file_effects"]
+    files = _check(replay, "file_effects")
+    assert files["differences"] == [{
+        "path": str(counter),
+        "recorded": "sha256:" + hashlib.sha256(b"x\n").hexdigest(),
+        "replayed": "sha256:" + hashlib.sha256(b"x\nx\n").hexdigest(),
+    }]
+    printed = " ".join(result.output.split())
+    assert "differs: stdout_normalized_sha256, file_effects" in printed
+    assert "differ from the recording" in printed  # the path is named (may wrap)
+
+
+def test_a_file_written_to_the_same_content_again_is_faithful(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Re-writing an output to what the recording left is no divergence; writing
+    something else is, even when stdout does not show it."""
+    output = tmp_path / "answer.txt"
+    monkeypatch.setenv("FID_OUTPUT", str(output))
+    capsule = _capture(env, monkeypatch)
+    output.unlink()  # the replay must produce it again
+    _result, replay, _dir = _replay(env, capsule)
+    assert replay["fidelity"]["verdict"] == "faithful", replay["fidelity"]
+    files = _check(replay, "file_effects")
+    assert (files["equal"], files["recorded"], files["replayed"]) == (True, 1, 1)
+
+    monkeypatch.setenv("FID_OUTPUT_EXTRA", " (edited)")
+    _result, replay, _dir = _replay(env, capsule)
+    assert replay["fidelity"]["verdict"] == "diverged"
+    assert _failing(replay) == ["file_effects"]
+
+
+def test_stdout_that_differs_only_in_a_generated_uuid_is_faithful(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gap A (AWS log_mcp): the bytes differ, the normalised stream does not."""
+    monkeypatch.setenv("FID_UUID", "1")
+    capsule = _capture(env, monkeypatch)
+    result, replay, replay_dir = _replay(env, capsule)
+
+    assert (replay_dir / "outputs" / "stdout.txt").read_bytes() != (
+        capsule / "outputs" / "stdout.txt"
+    ).read_bytes()
+    fidelity = replay["fidelity"]
+    assert fidelity["verdict"] == "faithful", fidelity
+    assert fidelity["normalization"] == "volatile-ids/1"
+    assert _check(replay, "stdout_normalized_sha256")["equal"] is True
+    raw = _check(replay, "stdout_sha256")
+    assert (raw["equal"], raw["advisory"]) == (False, True)
+    printed = " ".join(result.output.split())  # independent of console wrapping
+    assert "fidelity: faithful — also differs (advisory, not in the verdict): stdout_sha256" in (
+        printed
+    )
 
 
 def test_a_faithful_replay_of_a_failed_run_is_failure_and_faithful(
@@ -242,6 +308,7 @@ def test_a_capsule_without_recorded_outputs_is_not_compared(
     assert result.exit_code == 0, (result.output, replay)
     assert replay["status"] == "success"
     assert replay["fidelity"]["verdict"] == "not_compared", replay["fidelity"]
+    assert _check(replay, "stdout_normalized_sha256")["equal"] is None
     assert _check(replay, "stdout_sha256")["equal"] is None
     assert _check(replay, "stderr_sha256")["equal"] is None
     assert _check(replay, "stdout_sha256")["note"]
@@ -251,6 +318,51 @@ def test_a_capsule_without_recorded_outputs_is_not_compared(
         app, ["replay", str(capsule), "-o", str(env["replays"]), "--require-faithful"]
     )
     assert gate.exit_code == 4, gate.output
+
+
+def test_a_capsule_without_recorded_file_effects_is_judged_without_them(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A capsule captured before file effects were recorded keeps its verdict from the
+    other checks; the result and the CLI say file effects are not covered."""
+    capsule = _capture(env, monkeypatch)
+    (capsule / "file-effects.json").unlink()
+    manifest = yaml.safe_load((capsule / "capsule.yaml").read_text())
+    del manifest["evidence_digests"]["file-effects.json"]
+    (capsule / "capsule.yaml").write_text(yaml.safe_dump(manifest))
+    result, replay, _dir = _replay(env, capsule)
+
+    assert replay["fidelity"]["verdict"] == "faithful", replay["fidelity"]
+    assert replay["fidelity"]["unchecked"] == ["file_effects"]
+    check = _check(replay, "file_effects")
+    assert check["equal"] is None and "file-effects.json" in check["note"]
+    printed = " ".join(result.output.split())
+    assert "file effects were not recorded for this capsule, so the verdict does not cover" in (
+        printed
+    )
+    assert "not compared: file_effects" not in printed
+    gate = runner.invoke(
+        app, ["replay", str(capsule), "-o", str(env["replays"]), "--require-faithful"]
+    )
+    assert gate.exit_code == 0, gate.output
+
+
+def test_an_incomplete_file_effects_record_is_not_compared(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record that is present but unusable is an inconsistency: fail closed."""
+    capsule = _capture(env, monkeypatch)
+    doc = json.loads((capsule / "file-effects.json").read_text())
+    doc["complete"], doc["reason"] = False, "1 observed process(es) ended without handing off"
+    (capsule / "file-effects.json").write_text(json.dumps(doc))
+    manifest = yaml.safe_load((capsule / "capsule.yaml").read_text())
+    del manifest["evidence_digests"]["file-effects.json"]
+    (capsule / "capsule.yaml").write_text(yaml.safe_dump(manifest))
+    result, replay, _dir = _replay(env, capsule)
+
+    assert replay["fidelity"]["verdict"] == "not_compared", replay["fidelity"]
+    assert "unchecked" not in replay["fidelity"]
+    assert "not compared: file_effects" in " ".join(result.output.split())
 
 
 def test_a_capsule_that_recorded_no_exit_code_is_not_compared(

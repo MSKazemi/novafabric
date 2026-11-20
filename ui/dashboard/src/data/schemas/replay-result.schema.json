@@ -394,18 +394,26 @@
             "failed",
             "not_compared"
           ],
-          "description": "faithful: every computed check equal, no divergence, no live or unintercepted call. diverged: a computed check is unequal. failed: the replayed command did not run to completion (refused, timed out, not launched, dispatcher not installed). not_compared: the capsule lacks the recorded exit code or output streams. Never faithful by default."
+          "description": "faithful: every computed check equal, no divergence, no live or unintercepted call. diverged: a computed check is unequal. failed: the replayed command did not run to completion (refused, timed out, not launched, dispatcher not installed). not_compared: the capsule lacks the recorded exit code or output streams, or its file-effects record is present but unusable (incomplete, redacted, not matching its evidence digest) or names a file that could not be compared. A capsule with no file-effects record at all (captured before it existed, a non-Python workload, a container or batch runner) is not not_compared on that account: file_effects is listed in unchecked and the verdict does not cover it. Never faithful by default."
         },
         "normalization": {
           "type": "string",
           "enum": [
-            "none"
+            "none",
+            "volatile-ids/1"
           ],
-          "description": "No value is normalised before comparison. A declared normalisation rule set is future design."
+          "description": "The declared, versioned volatile-token rule set the normalised checks used (ADR-0321 amendment): volatile-ids/1 masks RFC 4122 UUIDs in stdout_normalized_sha256 and nothing else. none: no check normalised anything (a replay refused before it ran)."
         },
         "reason": {
           "type": "string",
           "description": "Why the verdict is failed."
+        },
+        "unchecked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Required checks the capsule holds no record for at all (today only file_effects): each is equal null, the verdict is decided by the other checks and does not cover it. Additive (ADR-0321 amendment)."
         },
         "checks": {
           "type": "array",
@@ -418,7 +426,7 @@
             "properties": {
               "name": {
                 "type": "string",
-                "description": "exit_code, stdout_sha256, stderr_sha256, model_call_sequence, tool_call_sequence, divergence, live_calls, tool_result_echo; more may be added."
+                "description": "exit_code, stdout_normalized_sha256, stdout_sha256, stderr_sha256, file_effects, model_call_sequence, tool_call_sequence, divergence, live_calls, tool_result_echo; more may be added."
               },
               "equal": {
                 "type": [
@@ -428,17 +436,45 @@
                 "description": "null when the check could not be computed."
               },
               "recorded": {
-                "description": "The recorded value (an exit code, a sha256:<hex> digest, a call sequence, a count)."
+                "description": "The recorded value (an exit code, a sha256:<hex> digest, a call sequence, a count; for file_effects the number of recorded written files)."
               },
               "replayed": {
-                "description": "The replayed value, in the same form."
+                "description": "The replayed value, in the same form (for file_effects the number of those files the replay wrote again, and so compared)."
               },
               "note": {
                 "type": "string"
               },
+              "normalizer": {
+                "type": "string",
+                "description": "The rule set this check's values went through (stdout_normalized_sha256 only)."
+              },
+              "differences": {
+                "type": "array",
+                "description": "file_effects: the recorded written files the replay wrote again whose state after the replay differs, first 50. A state is a sha256:<hex> digest or absent, not_regular, too_large(<n> bytes), unreadable.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "recorded",
+                    "replayed"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "Relative to the working directory, ~/... under the home directory, else absolute."
+                    },
+                    "recorded": {
+                      "type": "string"
+                    },
+                    "replayed": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
               "advisory": {
                 "type": "boolean",
-                "description": "true: reported but never decides the verdict (stderr, ADR-0321)."
+                "description": "true: reported but never decides the verdict (stdout_sha256 and stderr_sha256, the raw byte comparisons, ADR-0321)."
               }
             }
           }

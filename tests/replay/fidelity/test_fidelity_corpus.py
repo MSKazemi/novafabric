@@ -24,12 +24,9 @@ from replay.fidelity._harness import SCENARIOS, Corpus  # noqa: E402
 #: worker instead of once per worker that happens to receive a fidelity test.
 pytestmark = [pytest.mark.timeout(300), pytest.mark.xdist_group("replay-fidelity")]
 
-_XFAIL = {
-    "S6": pytest.mark.xfail(
-        strict=True,
-        reason="#53: a repeated file side effect is reported as success with no check",
-    ),
-}
+#: Scenarios whose pre-registered expectation current code does not meet (none today;
+#: S6 was here until the ``file_effects`` check, ADR-0321 amendment).
+_XFAIL: dict[str, pytest.MarkDecorator] = {}
 
 
 @pytest.mark.parametrize("sid", [pytest.param(sid, marks=_XFAIL.get(sid, ())) for sid in SCENARIOS])
@@ -100,6 +97,13 @@ def test_s6_oracle_sees_the_side_effect_repeated(corpus: Corpus) -> None:
     assert score.capture.outside_writes == score.replay.outside_writes == ["ledger.txt"]
 
 
+def test_s6_report_names_the_repeated_file(corpus: Corpus) -> None:
+    """The verdict is diverged *because of* the file: the ``file_effects`` check."""
+    score = corpus.score("S6")
+    assert score.report["fidelity_verdict"] == "diverged", score.report
+    assert score.report["fidelity_failing"] == ["file_effects"], score.report
+
+
 def test_s9_unserved_ollama_call_is_refused_before_anything_runs(corpus: Corpus) -> None:
     """#49 (ADR-0319): a recorded model call replay cannot serve makes strict replay refuse.
 
@@ -131,7 +135,6 @@ def test_report_acknowledges_a_child_process_connection(corpus: Corpus) -> None:
     assert score.acknowledged["network"], score.report
 
 
-@pytest.mark.xfail(strict=True, reason="#53: no outcome verdict; a repeated side effect is success")
 def test_report_does_not_call_a_repeated_side_effect_faithful(corpus: Corpus) -> None:
     score = corpus.score("S6")
     assert score.replay.live["side_effects"] >= 1
