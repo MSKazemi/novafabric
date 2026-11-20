@@ -36,6 +36,11 @@ longer forwards the submitting shell's environment (ADR-0270).
   `ISO42-7.5-DOCUMENTED-INFORMATION`, with the same evidence. `ISO42-10.2-CONTINUAL-IMPROVEMENT` is now
   `ISO42-10.1-CONTINUAL-IMPROVEMENT` (10.2 is nonconformity and corrective action). Reports and scripts
   keyed on the old IDs must use the new ones.
+- **`nova audit map --capsule ID` hid the controls that capsule failed.** The report was computed over
+  every capsule and then filtered to controls the named capsule had evidence for, so a control with no
+  evidence disappeared from the table and the JSON, the documented exit 1 never fired, and the summary
+  counts described every capsule. It now scans only that capsule: its gaps are reported `missing` and
+  exit 1. An ID that names no capsule directory, or is not a single path segment, exits 2.
 - **`nova export-compliance iso42001` reported evidence it had not read (breaking).** With `--capsule-id`,
   every `evidenced` control carried an all-zero placeholder digest and a fresh `verified_at` time, and
   no capsule was opened — an id that names no capsule was accepted. The command now takes
