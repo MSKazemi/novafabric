@@ -416,3 +416,196 @@ def test_the_capture_sink_is_a_built_in_hook() -> None:
     assert (
         "langchain_core", "novafabric.adapters._langchain_tool_seam", "LangChainToolHook"
     ) in _BUILT_IN_HOOKS
+
+
+# ── the observer: tools that were NOT passed through wrap_tools ──────────────
+
+
+@pytest.fixture
+def observer() -> Iterator[None]:
+    seam.install_observer()
+    try:
+        yield
+    finally:
+        seam.uninstall_observer()
+
+
+def _patched_attrs() -> dict[tuple[type, str], Any]:
+    return {
+        (cls, attr): cls.__dict__[attr]
+        for cls in (BaseTool, StructuredTool, Echo)
+        for attr in ("run", "arun", "_run", "_arun")
+        if attr in cls.__dict__
+    }
+
+
+def test_the_observer_sees_an_unwrapped_tool_before_its_body_runs(observer: None) -> None:
+    handler = Recorder()
+    seam._set_handler(handler)
+    out = add.invoke(_tool_call("add", a=1, b=2))
+    assert isinstance(out, ToolMessage) and out.content == "3"
+    assert CALLS == [("add", 1, 2)]
+    (call,) = handler.calls
+    assert call.wrapped is False
+    assert call.tool_name == "add" and call.arguments == {"a": 1, "b": 2}
+    assert call.function_call_id == "call-1"
+    assert call.mutation_class == "unknown"
+    assert handler.after_results == [3]
+
+
+@pytest.mark.parametrize("target", ["sync", "async-tool", "sync-via-ainvoke", "subclass"])
+def test_the_observer_asks_once_per_call_on_every_entry_point(
+    observer: None, target: str
+) -> None:
+    handler = Recorder()
+    seam._set_handler(handler)
+    if target == "sync":
+        add.run({"a": 1, "b": 2})
+    elif target == "async-tool":
+        asyncio.run(aadd.ainvoke({"a": 1, "b": 2}))
+    elif target == "sync-via-ainvoke":
+        asyncio.run(add.arun({"a": 1, "b": 2}))
+    else:
+        Echo().invoke({"q": "z"})
+    assert len(CALLS) == 1, "the body runs once, live"
+    assert len(handler.calls) == 1, "one call must reach the handler exactly once"
+    assert handler.calls[0].wrapped is False
+
+
+def test_a_refusal_from_the_handler_stops_an_unwrapped_tool_before_its_body(
+    observer: None,
+) -> None:
+    seam._set_handler(Recorder(refuse=RuntimeError("refused")))
+    with pytest.raises(RuntimeError, match="refused"):
+        add.invoke({"a": 1, "b": 2})
+    assert CALLS == []
+
+
+def test_a_wrapped_tool_is_asked_once_by_its_seam_not_by_the_observer(
+    observer: None,
+) -> None:
+    handler = Recorder(serve=9)
+    seam._set_handler(handler)
+    (wrapped,) = wrap_tools([add])
+    assert wrapped.invoke({"a": 1, "b": 2}) == 9
+    assert CALLS == []
+    (call,) = handler.calls
+    assert call.wrapped is True
+
+
+def test_the_observer_sees_tool_node_calls_in_a_graph(observer: None) -> None:
+    handler = Recorder()
+    seam._set_handler(handler)
+    app = _graph([add, Echo()])
+    app.invoke({"messages": [AIMessage("", tool_calls=[
+        _tool_call("add", "c-1", a=2, b=3), _tool_call("echo", "c-2", q="g"),
+    ])]})
+    assert sorted(c.function_call_id for c in handler.calls) == ["c-1", "c-2"]
+    assert all(c.wrapped is False for c in handler.calls)
+
+
+def test_the_observer_steps_aside_for_mcp_adapter_tools_and_record_tool(
+    observer: None,
+) -> None:
+    from novafabric.capture import record
+
+    @record.tool(mutation_class="none")
+    def inner(a: int, b: int) -> int:
+        """Declared with record.tool."""
+        return a + b
+
+    async def call_tool(**kwargs: Any) -> tuple[str, None]:
+        return "x", None
+
+    call_tool.__module__ = "langchain_mcp_adapters.tools"
+    mcp_tool = StructuredTool(
+        name="remote", description="An MCP tool.", args_schema={"type": "object"},
+        coroutine=call_tool, response_format="content_and_artifact",
+    )
+    handler = Recorder()
+    seam._set_handler(handler)
+    asyncio.run(mcp_tool.ainvoke({}))
+    tool(inner).invoke({"a": 1, "b": 2})
+    assert handler.calls == []
+
+
+def test_without_a_handler_the_observer_only_forwards(observer: None) -> None:
+    assert add.invoke({"a": 4, "b": 5}) == 9
+    assert CALLS == [("add", 4, 5)]
+
+
+def test_the_observer_keeps_the_signatures_langchain_inspects(observer: None) -> None:
+    import inspect
+
+    seam._set_handler(Recorder())
+    with_config.invoke({"x": 1}, {"tags": ["t"]})
+    Echo().invoke({"q": "a"})
+    assert CALLS == [("with_config", 1, True), ("echo", "a", True)]
+    assert "run_manager" in inspect.signature(StructuredTool._run).parameters
+
+
+def test_uninstalling_the_observer_restores_every_patched_attribute() -> None:
+    before = _patched_attrs()
+    seam.install_observer()
+    seam.install_observer()  # reference-counted: capture and replay may both ask
+    seam._set_handler(Recorder())
+    add.invoke({"a": 1, "b": 1})
+    Echo().invoke({"q": "r"})
+    assert _patched_attrs() != before
+    seam.uninstall_observer()
+    assert _patched_attrs() != before, "one user still holds the observer"
+    seam.uninstall_observer()
+    assert _patched_attrs() == before
+    seam.uninstall_observer()  # an extra uninstall is harmless
+    assert _patched_attrs() == before
+
+
+def test_the_observer_waits_for_the_workload_to_import_langchain() -> None:
+    """Installed before ``langchain_core.tools.base`` is loaded, it never imports
+    it: a post-import hook patches it when the workload does."""
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent('''
+        import sys
+        from novafabric.adapters import _langchain_tool_seam as seam
+        seam.install_observer()
+        assert "langchain_core.tools.base" not in sys.modules
+        from langchain_core.tools import BaseTool, tool
+        assert "run" in BaseTool.__dict__ and hasattr(BaseTool.run, "__wrapped__")
+        seen = []
+        class H:
+            def before(self, call): seen.append(call.wrapped)
+            def after(self, ctx, result): pass
+            def on_error(self, ctx, error): pass
+        seam._set_handler(H())
+        @tool
+        def f(x: int) -> int:
+            """d"""
+            return x
+        assert f.invoke({"x": 1}) == 1
+        assert seen == [False], seen
+        print("ok")
+    ''')
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "ok"
+
+
+def test_a_body_that_cannot_be_hooked_is_still_observed_around_run(
+    observer: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(cls: type, base_tool: type) -> None:
+        raise TypeError("cannot patch this class")
+
+    monkeypatch.setattr(seam, "_hook_bodies", broken)
+    handler = Recorder()
+    seam._set_handler(handler)
+    assert add.invoke({"a": 2, "b": 2}) == 4
+    assert asyncio.run(aadd.ainvoke({"a": 1, "b": 1})) == 2
+    assert [c.tool_name for c in handler.calls] == ["add", "aadd"]
+    assert all(c.wrapped is False for c in handler.calls)
+    assert len(handler.after_results) == 2

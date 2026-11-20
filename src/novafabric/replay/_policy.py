@@ -22,7 +22,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from novafabric.replay._contract import TOOL_SURFACE_MCP, not_servable_reason, tool_surface
+from novafabric.replay._contract import (
+    TOOL_SURFACE_MCP,
+    is_not_served_tool_record,
+    not_servable_reason,
+    tool_surface,
+)
 from novafabric.replay._flags import ReplayFlags, ladder_flag
 
 #: Env var naming the JSON override table the replayed process enforces.
@@ -286,6 +291,25 @@ class PolicyEvaluator:
                     "live", f"{base}; the tool runs live ({override.label} changes nothing)"
                 )
             return decided("live", f"{base}; the tool runs live")
+
+        if is_not_served_tool_record(tool_call):
+            # ADR-0306 D1: a LangChain tool not passed through wrap_tools is
+            # never served; the replayed process observes it (the same
+            # decisions as ``_langchain_tool_server.LangChainToolServer._observe``).
+            base = f"mocked mode: observed via {surface}, not passed through wrap_tools"
+            if override is not None and not override.allow:
+                return decided("deny", (
+                    f"{base}; {override.label}: refused before the tool body runs, even "
+                    "under --permissive"
+                ), "never live")
+            if not self._flags.permissive:
+                return decided("deny", (
+                    f"{base}: a strict replay refuses to start (ToolSurfaceNotServed)"
+                ), "replay refuses to start")
+            return decided("live", (
+                f"{base}: never served; under --permissive it re-executes live and is "
+                "counted in tool_calls_live"
+            ), "not wrapped")
 
         mutation_class = str(tool_call.get("mutation_class") or "unknown")
         gating = gating_mutation_class(surface, mutation_class)

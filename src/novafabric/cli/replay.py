@@ -208,6 +208,12 @@ def replay_cmd(
     was never recorded) is refused up front too (error.type
     ModelSurfaceNotServable, exit 1, also under --dry-run, which lists each as
     [LIVE] model call); --permissive runs it and reports model_calls_not_servable.
+    LangChain tools NOT passed through wrap_tools are recorded by nova capture
+    but never served: a capsule that records them is refused up front
+    (error.type ToolSurfaceNotServed, exit 1, also under --dry-run, which lists
+    each as [LIVE] LangChain tool call); --permissive runs them live, and every
+    tool body that runs live is counted in tool_calls_live and named in a
+    [LIVE] tool call line (experimental).
     Network observation covers the replayed Python process only; child
     processes it starts are counted (replay_contract.child_processes_spawned),
     not observed.
@@ -222,7 +228,7 @@ def replay_cmd(
     Exit codes:
       0  replay succeeded, or a --dry-run the real run would not refuse
       1  replay failed or was aborted (incl. CapsuleNotReplayable,
-         ModelSurfaceNotServable, a
+         ModelSurfaceNotServable, ToolSurfaceNotServed, a
          divergence under the fail-closed default, a replayed command that
          could not be launched: error.type ReplayLaunchError)
       2  --environment did not match the capsule's recorded environment, or
@@ -390,6 +396,25 @@ def replay_cmd(
             f"{not_intercepted} recorded on surfaces replay does not intercept"
         )
         contract = result.replay_contract or {}
+        # Name every tool call that ran live, as the dry run names each [LIVE] call.
+        for entry in contract.get("tool_calls_live_by_tool") or []:
+            if not isinstance(entry, dict):
+                continue
+            count = int(entry.get("count") or 0)
+            console.print(
+                f"  [LIVE] tool call ({entry.get('surface')}: {entry.get('tool_name')})"
+                + (f" x{count}" if count > 1 else "")
+                + " — not served from the capsule",
+                style="yellow",
+                markup=False,
+                highlight=False,
+            )
+        not_listed = int(contract.get("tool_calls_live_by_tool_not_listed") or 0)
+        if not_listed:
+            console.print(
+                f"  [LIVE] … and {not_listed} more tool(s) not listed",
+                style="yellow", markup=False, highlight=False,
+            )
         echo = contract.get("tool_result_echo")
         if isinstance(echo, dict) and any(
             echo.get(k) for k in ("matched", "mismatched", "not_checked")

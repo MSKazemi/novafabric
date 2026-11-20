@@ -105,6 +105,9 @@ DivergencePolicy = Literal["fail", "warn"]
 #: Most divergences listed individually in a result; the rest are counted.
 MAX_LISTED_DIVERGENCES = 50
 
+#: Most distinct (surface, tool name) pairs listed in ``tool_calls_live_by_tool``.
+MAX_LISTED_LIVE_TOOLS = 50
+
 #: Most distinct ``host:port`` network destinations listed in a result.
 MAX_LISTED_NETWORK_DESTINATIONS = 20
 
@@ -376,6 +379,53 @@ def nested_boundary_ids(boundary_id: str, tool_calls: list[dict[str, Any]]) -> s
                 ids.add(child)
                 frontier.append(child)
     return ids
+
+
+def is_not_served_tool_record(record: dict[str, Any]) -> bool:
+    """A recorded call mocked replay does not serve **by policy**: a LangChain
+    tool the workload did not pass through ``wrap_tools`` (recorded by the
+    seam's observer). Replayed, it runs live."""
+    if tool_surface(record) != TOOL_SURFACE_LANGCHAIN:
+        return False
+    ext = record.get("extensions")
+    return isinstance(ext, dict) and (
+        ext.get(_tool_codec.LANGCHAIN_SEAM_EXT) == _tool_codec.LANGCHAIN_SEAM_OBSERVED
+    )
+
+
+#: Most tool names listed per surface in ``tool_calls_not_served_by_surface``.
+MAX_LISTED_NOT_SERVED_TOOLS = 10
+
+
+def not_served_tool_calls(tool_calls: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Recorded calls replay does not serve by policy, as ``{surface: {"count",
+    "tools"}}`` (distinct tool names, sorted, at most
+    :data:`MAX_LISTED_NOT_SERVED_TOOLS`); empty when there are none."""
+    counts: dict[str, int] = {}
+    names: dict[str, set[str]] = {}
+    for record in tool_calls:
+        if not isinstance(record, dict) or not is_not_served_tool_record(record):
+            continue
+        surface = TOOL_SURFACE_LANGCHAIN
+        counts[surface] = counts.get(surface, 0) + 1
+        names.setdefault(surface, set()).add(str(record.get("tool_name")))
+    return {
+        surface: {"count": n, "tools": sorted(names[surface])[:MAX_LISTED_NOT_SERVED_TOOLS]}
+        for surface, n in counts.items()
+    }
+
+
+def describe_not_served(by_surface: dict[str, dict[str, Any]]) -> str:
+    """``LangChain tools not passed through wrap_tools: 2 (read_log, write_diagnosis)``."""
+    parts = []
+    for surface, entry in sorted(by_surface.items()):
+        what = (
+            "LangChain tools not passed through wrap_tools"
+            if surface == TOOL_SURFACE_LANGCHAIN else surface
+        )
+        tools = ", ".join(entry.get("tools") or [])
+        parts.append(f"{what}: {int(entry.get('count', 0))}" + (f" ({tools})" if tools else ""))
+    return "; ".join(parts)
 
 
 def is_servable_tool_record(record: dict[str, Any]) -> bool:
@@ -756,6 +806,13 @@ class ReplayContractReport:
     tool_calls_unconsumed: int = 0
     tool_calls_refused: int = 0
     tool_calls_by_surface: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: Live tool calls by (surface, tool name), in first-seen order: what the
+    #: ``[LIVE] tool call`` lines name.
+    tool_calls_live_by_tool: dict[tuple[str, str], int] = field(default_factory=dict)
+    #: Recorded tool calls replay does not serve by policy (LangChain tools
+    #: that were not passed through ``wrap_tools``), by surface
+    #: (``{"count", "tools"}``); they run live if made (``--permissive``).
+    tool_calls_not_served_by_surface: dict[str, dict[str, Any]] = field(default_factory=dict)
     network_observed: bool = False
     network_connections_live: int = 0
     network_connections_capped: bool = False
@@ -841,6 +898,12 @@ class ReplayContractReport:
             "tool_calls_unconsumed": self.tool_calls_unconsumed,
             "tool_calls_refused": self.tool_calls_refused,
             "tool_calls_by_surface": {k: dict(v) for k, v in self.tool_calls_by_surface.items()},
+            "tool_calls_live_by_tool": [
+                {"surface": surface, "tool_name": name, "count": count}
+                for (surface, name), count in list(self.tool_calls_live_by_tool.items())[
+                    :MAX_LISTED_LIVE_TOOLS
+                ]
+            ],
             "model_calls_covered": self.model_calls_covered,
             "tool_calls_covered": self.tool_calls_covered,
             "tool_result_echo": self.tool_result_echo(),
@@ -861,6 +924,15 @@ class ReplayContractReport:
             out["network_connections_capped"] = True
         if self.child_processes_capped:
             out["child_processes_capped"] = True
+        if len(self.tool_calls_live_by_tool) > MAX_LISTED_LIVE_TOOLS:
+            out["tool_calls_live_by_tool_not_listed"] = (
+                len(self.tool_calls_live_by_tool) - MAX_LISTED_LIVE_TOOLS
+            )
+        if self.tool_calls_not_served_by_surface:
+            out["tool_calls_not_served_by_surface"] = {
+                k: {"count": int(v.get("count", 0)), "tools": list(v.get("tools") or [])}
+                for k, v in self.tool_calls_not_served_by_surface.items()
+            }
         if self.tool_overrides:
             out["tool_overrides"] = [dict(o) for o in self.tool_overrides]
         if len(self.divergences) > len(listed):
@@ -1005,6 +1077,8 @@ def summarize(
         elif kind == "tool_live":
             report.tool_calls_live += 1
             _surface_of(ev)["live"] += 1
+            key = (str(ev.get("surface") or TOOL_SURFACE_MCP), str(ev.get("tool_name") or "?"))
+            report.tool_calls_live_by_tool[key] = report.tool_calls_live_by_tool.get(key, 0) + 1
             if ev.get("consumed"):
                 # ADR-0306 D8: an honoured `allow: true` re-executes a call
                 # whose record it consumed -- requested, so not left over.

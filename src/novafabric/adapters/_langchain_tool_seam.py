@@ -28,6 +28,17 @@ The generated class and the ``__class__`` swap are NovaFabric's construction,
 not a LangChain API; a release that changes how ``run`` reaches the body can
 bypass the seam (the tool then runs live in a replay).
 
+**Tools that were not wrapped** are observed, never served (ADR-0306 D1 serves
+declared tools only). While capture or a mocked replay is active,
+:func:`install_observer` patches ``BaseTool.run`` / ``arun`` and, on first use
+of a tool class, the class that defines its ``_run`` / ``_arun`` (restored by
+:func:`uninstall_observer`). The same handler sees the call with
+``wrapped=False`` and mutation class ``unknown``: capture records it (marked
+``observed``, never servable), and replay counts it as a live call -- or
+refuses it before the body runs when a ``replay.yaml`` ``allow: false``
+override names it. ``langchain_core`` is never imported for this: the patch is
+applied when the workload itself imports ``langchain_core.tools.base``.
+
 Outside capture and replay no handler is registered and the copy behaves like
 the original. Nothing here imports ``langchain_core`` at module level: the
 module is importable, and the capture hook installable, without it.
@@ -39,8 +50,9 @@ import copy
 import functools
 import importlib
 import logging
+import sys
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -50,7 +62,11 @@ from novafabric.adapters._adk_tool_seam import AdkToolCall, AdkToolHandler, AdkT
 from novafabric.adapters._oai_tool_seam import Served
 from novafabric.capture import _tool_codec as codec
 
-__all__ = ["CALL_ID_EXT", "LangChainToolCall", "LangChainToolHook", "Served", "wrap_tools"]
+__all__ = [
+    "CALL_ID_EXT", "NOT_WRAPPED_REASON", "SEAM_EXT", "SEAM_OBSERVED", "SEAM_WRAPPED",
+    "LangChainToolCall", "LangChainToolHook", "Served", "install_observer",
+    "uninstall_observer", "wrap_tools",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -59,6 +75,20 @@ _log = logging.getLogger(__name__)
 CALL_ID_EXT = "io.novafabric.langchain_tool_call_id"
 #: ``module.qualname`` of the tool class, informational.
 TOOL_CLASS_EXT = "io.novafabric.langchain_tool_class"
+#: How a LangChain record was captured: :data:`SEAM_WRAPPED` (the tool was
+#: passed through :func:`wrap_tools`) or :data:`SEAM_OBSERVED` (it was not).
+SEAM_EXT = codec.LANGCHAIN_SEAM_EXT
+SEAM_WRAPPED = codec.LANGCHAIN_SEAM_WRAPPED
+SEAM_OBSERVED = codec.LANGCHAIN_SEAM_OBSERVED
+#: The mutation class of a tool that was not wrapped: nothing declared one.
+OBSERVED_MUTATION_CLASS = "unknown"
+
+NOT_WRAPPED_REASON = (
+    "the LangChain tool was not passed through "
+    "novafabric.adapters.langchain_tools.wrap_tools: mocked replay serves only "
+    "declared tools (ADR-0306 D1) and re-executes this one live, counted in "
+    "tool_calls_live"
+)
 
 FAILURE_REASON = (
     "the tool raised: a recorded LangChain tool failure is not served -- LangChain "
@@ -78,6 +108,9 @@ class LangChainToolCall(AdkToolCall):
     #: Input keys left out of ``arguments`` (injected state, store, runtime,
     #: ``InjectedToolCallId``, ...): the model never sent them.
     ignored: tuple[str, ...] = ()
+    #: ``False`` for a tool that was not passed through :func:`wrap_tools`
+    #: (seen by the observer): it is recorded and counted, never served.
+    wrapped: bool = True
 
 
 #: The one global the seam reads. ``None`` outside capture and replay.
@@ -103,12 +136,17 @@ class _Current:
     shared sink never reports a changed ``tool_context.actions``.
     """
 
-    __slots__ = ("tool", "tool_input", "tool_call_id", "claimed")
+    __slots__ = ("tool", "tool_input", "tool_call_id", "claimed", "mutation_class", "wrapped")
 
-    def __init__(self, tool: Any, tool_input: Any, tool_call_id: Any) -> None:
+    def __init__(
+        self, tool: Any, tool_input: Any, tool_call_id: Any, *,
+        mutation_class: str = OBSERVED_MUTATION_CLASS, wrapped: bool = True,
+    ) -> None:
         self.tool = tool
         self.tool_input = tool_input
         self.tool_call_id = tool_call_id
+        self.mutation_class = mutation_class
+        self.wrapped = wrapped
         #: Set by the first body hook that takes the call; a body that delegates
         #: to another hooked body (``StructuredTool._arun`` -> ``BaseTool._arun``
         #: -> ``_run`` in an executor) must not ask the handler twice.
@@ -195,6 +233,7 @@ def describe_call(current: _Current, mutation_class: str) -> LangChainToolCall:
         long_running=False,
         tool_context=current,
         ignored=ignored,
+        wrapped=current.wrapped,
     )
 
 
@@ -226,6 +265,64 @@ def _take(tool: Any) -> _Current | None:
     return current
 
 
+def _ask(handler: AdkToolHandler, current: _Current, body: Callable[[], Any]) -> Any:
+    """Ask *handler* about the noted call, then run *body* unless it was served."""
+    answer = handler.before(describe_call(current, current.mutation_class))
+    if isinstance(answer, Served):
+        return answer.value
+    try:
+        result = body()
+    except BaseException as exc:
+        handler.on_error(current, exc)
+        raise
+    handler.after(current, result)
+    return result
+
+
+async def _aask(handler: AdkToolHandler, current: _Current, body: Callable[[], Any]) -> Any:
+    answer = handler.before(describe_call(current, current.mutation_class))
+    if isinstance(answer, Served):
+        return answer.value
+    try:
+        result = await body()
+    except BaseException as exc:
+        handler.on_error(current, exc)
+        raise
+    handler.after(current, result)
+    return result
+
+
+def _hooked_run(parent_run: Any) -> Any:
+    """``_run`` that asks the handler about a noted call before *parent_run*.
+
+    ``functools.wraps``: LangChain inspects ``_run`` for ``run_manager``, a
+    ``RunnableConfig`` parameter and injected arguments, and ``inspect``
+    follows ``__wrapped__`` to the parent's signature.
+    """
+
+    @functools.wraps(parent_run)
+    def _run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        handler = _handler
+        current = _take(self) if handler is not None else None
+        if handler is None or current is None:
+            return parent_run(self, *args, **kwargs)
+        return _ask(handler, current, lambda: parent_run(self, *args, **kwargs))
+
+    return _run
+
+
+def _hooked_arun(parent_arun: Any) -> Any:
+    @functools.wraps(parent_arun)
+    async def _arun(self: Any, *args: Any, **kwargs: Any) -> Any:
+        handler = _handler
+        current = _take(self) if handler is not None else None
+        if handler is None or current is None:
+            return await parent_arun(self, *args, **kwargs)
+        return await _aask(handler, current, lambda: parent_arun(self, *args, **kwargs))
+
+    return _arun
+
+
 def _seam_class(cls: Any, mutation_class: str, base_tool: Any) -> type:
     """The generated subclass of *cls* declaring *mutation_class* (cached per pair).
 
@@ -242,37 +339,22 @@ def _seam_class(cls: Any, mutation_class: str, base_tool: Any) -> type:
     parent_public_arun = cls.arun
 
     def run(self: Any, tool_input: Any, *args: Any, **kwargs: Any) -> Any:
-        token = _current.set(_Current(self, tool_input, kwargs.get("tool_call_id")))
+        token = _current.set(_Current(
+            self, tool_input, kwargs.get("tool_call_id"), mutation_class=mutation_class,
+        ))
         try:
             return parent_public_run(self, tool_input, *args, **kwargs)
         finally:
             _current.reset(token)
 
     async def arun(self: Any, tool_input: Any, *args: Any, **kwargs: Any) -> Any:
-        token = _current.set(_Current(self, tool_input, kwargs.get("tool_call_id")))
+        token = _current.set(_Current(
+            self, tool_input, kwargs.get("tool_call_id"), mutation_class=mutation_class,
+        ))
         try:
             return await parent_public_arun(self, tool_input, *args, **kwargs)
         finally:
             _current.reset(token)
-
-    parent_run = cls._run
-
-    @functools.wraps(parent_run)
-    def _run(self: Any, *args: Any, **kwargs: Any) -> Any:
-        handler = _handler
-        current = _take(self) if handler is not None else None
-        if handler is None or current is None:
-            return parent_run(self, *args, **kwargs)
-        answer = handler.before(describe_call(current, mutation_class))
-        if isinstance(answer, Served):
-            return answer.value
-        try:
-            result = parent_run(self, *args, **kwargs)
-        except BaseException as exc:
-            handler.on_error(current, exc)
-            raise
-        handler.after(current, result)
-        return result
 
     namespace: dict[str, Any] = {
         "__module__": cls.__module__,
@@ -280,32 +362,13 @@ def _seam_class(cls: Any, mutation_class: str, base_tool: Any) -> type:
         _ORIGINAL: cls,
         "run": run,
         "arun": arun,
-        "_run": _run,
+        "_run": _hooked_run(cls._run),
     }
     # LangChain checks `cls._arun is BaseTool._arun` to decide whose signature to
     # inspect; keep that answer unchanged by overriding `_arun` only when the
     # tool class does.
     if cls._arun is not base_tool._arun:
-        parent_arun = cls._arun
-
-        @functools.wraps(parent_arun)
-        async def _arun(self: Any, *args: Any, **kwargs: Any) -> Any:
-            handler = _handler
-            current = _take(self) if handler is not None else None
-            if handler is None or current is None:
-                return await parent_arun(self, *args, **kwargs)
-            answer = handler.before(describe_call(current, mutation_class))
-            if isinstance(answer, Served):
-                return answer.value
-            try:
-                result = await parent_arun(self, *args, **kwargs)
-            except BaseException as exc:
-                handler.on_error(current, exc)
-                raise
-            handler.after(current, result)
-            return result
-
-        namespace["_arun"] = _arun
+        namespace["_arun"] = _hooked_arun(cls._arun)
     seam = type(cls.__name__, (cls,), namespace)
     with _CLASSES_LOCK:
         return _CLASSES.setdefault(key, seam)
@@ -390,6 +453,165 @@ def wrap_tools(
     return out
 
 
+# ── observer: tools that were not wrapped ────────────────────────────────────
+
+#: The module defining ``BaseTool``; patched when the workload imports it.
+_BASE_MODULE = "langchain_core.tools.base"
+
+_OBSERVER_LOCK = threading.RLock()
+#: Active capture sinks and replay dispatchers that asked for the observer.
+_observer_users = 0
+#: ``(class, attribute) -> the function in that class's own __dict__`` that the
+#: observer replaced; restored by :func:`uninstall_observer`.
+_observer_originals: dict[tuple[type, str], Any] = {}
+
+
+def _defining_class(cls: type, attr: str) -> type | None:
+    for klass in cls.__mro__:
+        if attr in klass.__dict__:
+            return klass
+    return None
+
+
+def _hook_bodies(cls: type, base_tool: type) -> None:
+    """Hook ``_run`` (and an overridden ``_arun``) where *cls* resolves them.
+
+    The class that *defines* the body is patched, so its subclasses share the
+    hook; ``BaseTool`` itself only for neither (its ``_run`` is abstract, and
+    LangChain's ``cls._arun is BaseTool._arun`` check must keep its answer). A
+    generated seam class is never patched: it hooks its own bodies.
+    """
+    for attr, factory in (("_run", _hooked_run), ("_arun", _hooked_arun)):
+        owner = _defining_class(cls, attr)
+        if owner is None or owner is base_tool or _ORIGINAL in owner.__dict__:
+            continue
+        with _OBSERVER_LOCK:
+            if (owner, attr) in _observer_originals:
+                continue
+            original = owner.__dict__[attr]
+            setattr(owner, attr, factory(original))
+            _observer_originals[(owner, attr)] = original
+
+
+def _try_hook_bodies(cls: type, base_tool: type) -> bool:
+    """:func:`_hook_bodies`, reporting failure instead of raising into the workload."""
+    try:
+        _hook_bodies(cls, base_tool)
+    except Exception:  # noqa: BLE001 -- the caller falls back to asking around run
+        _log.warning(
+            "novafabric: could not hook the body of LangChain tool class %r; its calls "
+            "are observed around BaseTool.run instead", cls, exc_info=True,
+        )
+        return False
+    return True
+
+
+def _observed(tool: Any) -> bool:
+    """Whether the observer notes this call: a handler is registered, and the
+    tool is neither wrapped (its seam class asks) nor one the seam steps aside
+    for (MCP adapter tools, ``record.tool`` functions)."""
+    return (
+        _handler is not None
+        and _ORIGINAL not in type(tool).__dict__
+        and skip_reason(tool) is None
+    )
+
+
+def _patch_base(module: Any) -> None:
+    """Patch ``BaseTool.run`` / ``arun`` to note every unwrapped tool call."""
+    base_tool = getattr(module, "BaseTool", None)
+    if not isinstance(base_tool, type):
+        return
+    with _OBSERVER_LOCK:
+        if _observer_users <= 0 or (base_tool, "run") in _observer_originals:
+            return
+        original_run = base_tool.__dict__["run"]
+        original_arun = base_tool.__dict__["arun"]
+
+        @functools.wraps(original_run)
+        def run(self: Any, tool_input: Any, *args: Any, **kwargs: Any) -> Any:
+            if not _observed(self):
+                return original_run(self, tool_input, *args, **kwargs)
+            current = _Current(self, tool_input, kwargs.get("tool_call_id"), wrapped=False)
+            fallback = not _try_hook_bodies(type(self), base_tool)
+            token = _current.set(current)
+            try:
+                if fallback and _handler is not None:
+                    # The body could not be hooked: ask around the whole call
+                    # instead, so it is still recorded or counted (never silent).
+                    current.claimed = True
+                    return _ask(
+                        _handler, current,
+                        lambda: original_run(self, tool_input, *args, **kwargs),
+                    )
+                return original_run(self, tool_input, *args, **kwargs)
+            finally:
+                _current.reset(token)
+
+        @functools.wraps(original_arun)
+        async def arun(self: Any, tool_input: Any, *args: Any, **kwargs: Any) -> Any:
+            if not _observed(self):
+                return await original_arun(self, tool_input, *args, **kwargs)
+            current = _Current(self, tool_input, kwargs.get("tool_call_id"), wrapped=False)
+            fallback = not _try_hook_bodies(type(self), base_tool)
+            token = _current.set(current)
+            try:
+                if fallback and _handler is not None:
+                    current.claimed = True
+                    return await _aask(
+                        _handler, current,
+                        lambda: original_arun(self, tool_input, *args, **kwargs),
+                    )
+                return await original_arun(self, tool_input, *args, **kwargs)
+            finally:
+                _current.reset(token)
+
+        base_tool.run = run  # type: ignore[attr-defined]
+        base_tool.arun = arun  # type: ignore[attr-defined]
+        _observer_originals[(base_tool, "run")] = original_run
+        _observer_originals[(base_tool, "arun")] = original_arun
+
+
+def _on_base_import(module: Any) -> None:
+    _patch_base(module)
+
+
+def install_observer() -> None:
+    """Observe every LangChain tool call that does not pass through a seam copy.
+
+    Reference-counted (capture and replay may both ask). Never imports
+    ``langchain_core``: if ``langchain_core.tools.base`` is loaded it is
+    patched now, otherwise when the workload imports it (a one-shot
+    post-import hook).
+    """
+    global _observer_users
+    with _OBSERVER_LOCK:
+        _observer_users += 1
+        if _observer_users > 1:
+            return
+    module = sys.modules.get(_BASE_MODULE)
+    if module is not None:
+        _patch_base(module)
+        return
+    from novafabric.capture.hooks._deferred import register_post_import_hook
+
+    register_post_import_hook(_BASE_MODULE, _on_base_import)
+
+
+def uninstall_observer() -> None:
+    """Drop one :func:`install_observer`; the last one restores every patch."""
+    global _observer_users
+    with _OBSERVER_LOCK:
+        if _observer_users <= 0:
+            return
+        _observer_users -= 1
+        if _observer_users:
+            return
+        for (owner, attr), original in _observer_originals.items():
+            setattr(owner, attr, original)
+        _observer_originals.clear()
+
+
 # ── capture ──────────────────────────────────────────────────────────────────
 
 #: The call in flight in this context; separate from the ADK and Agents SDK
@@ -418,12 +640,34 @@ class LangChainToolHook(AdkToolHook):
     _set_handler = staticmethod(lambda handler: _set_handler(handler))
     _pending_var = staticmethod(lambda: _pending)
 
+    def install(self) -> None:
+        super().install()
+        if self._installed:
+            # Tools the workload never passed through wrap_tools are recorded too.
+            install_observer()
+
+    def uninstall(self) -> None:
+        if self._installed:
+            uninstall_observer()
+        super().uninstall()
+
     def build_record(
         self, pending: _base._Pending, nested: int, *,
         value: Any = None, error: BaseException | None = None,
     ) -> dict[str, Any]:
         record = super().build_record(pending, nested, value=value, error=error)
+        ext = record["extensions"]
         ignored = getattr(pending.call, "ignored", ())
         if ignored:
-            record["extensions"][codec.IGNORED_ARGUMENTS_EXT] = list(ignored)
+            ext[codec.IGNORED_ARGUMENTS_EXT] = list(ignored)
+        if getattr(pending.call, "wrapped", True):
+            ext[SEAM_EXT] = SEAM_WRAPPED
+        else:
+            # Recorded for comparison and accounting, never served (ADR-0306 D1).
+            ext[SEAM_EXT] = SEAM_OBSERVED
+            previous = ext.get(codec.NOT_SERVABLE_REASON_EXT)
+            ext[codec.RESULT_CODEC_EXT] = codec.CODEC_NOT_SERVABLE
+            ext[codec.NOT_SERVABLE_REASON_EXT] = (
+                NOT_WRAPPED_REASON if not previous else f"{NOT_WRAPPED_REASON}; {previous}"
+            )
         return record

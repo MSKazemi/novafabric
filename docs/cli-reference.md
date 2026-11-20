@@ -1249,7 +1249,7 @@ nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --output-dir /mnt/repla
 Options:
 - `--mode {mocked,forensic,semantic,exact,intervention}` — replay mode (default: `mocked`). Tab-completion available via `nova --install-completion`.
   `exact` re-executes nothing: it checks whether the recorded run meets the exact-replay preconditions and exits `0` with `eligible for exact replay` when it does. An ineligible capsule (`env.lock` not `deterministic`, an unseeded model call, a non-re-runnable command, schema drift) exits `1` with `status: failure` in `replay_result.yaml` and each reason printed; it was a green tick and exit `0`. `semantic` prints the mean pairwise similarity of the recorded responses; with fewer than two responses there is nothing to compare, so `similarity_score` is absent (it read `1.0`) and `divergence_reason` says why.
-- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below) or records a model call mocked replay cannot serve (`error.type: ModelSurfaceNotServable`; each listed as `[LIVE] model call (<system>, <host>)`, see below), or exits 3 with `ToolOverrideUnenforceable` when a strict mocked replay would refuse to start (see *Per-tool overrides* below). In `mocked` mode each recorded tool call is labelled with exactly what the replay will do (`[MOCK]`, `[MOCK (never live)]`, `[MOCK (override not honoured: needs --allow-…)]`, `[LIVE]`, `[LIVE (override honoured)]`, `[DENY]`), followed by a `Tool overrides (replay.yaml)` table
+- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below) or records a model call mocked replay cannot serve (`error.type: ModelSurfaceNotServable`; each listed as `[LIVE] model call (<system>, <host>)`, see below), or records a LangChain tool call mocked replay does not serve (`error.type: ToolSurfaceNotServed`; each listed as `[LIVE] LangChain tool call (<name>)`), or exits 3 with `ToolOverrideUnenforceable` when a strict mocked replay would refuse to start (see *Per-tool overrides* below). In `mocked` mode each recorded tool call is labelled with exactly what the replay will do (`[MOCK]`, `[MOCK (never live)]`, `[MOCK (override not honoured: needs --allow-…)]`, `[LIVE]`, `[LIVE (override honoured)]`, `[DENY]`), followed by a `Tool overrides (replay.yaml)` table
 - `--allow-readonly` — safety-ladder rung: permit `read-only` tools
 - `--allow-mutating` — rung for `idempotent-write` and `non-idempotent-write` tools
 - `--allow-external-side-effects` — rung for `external-side-effect` tools (implies `--allow-mutating`)
@@ -1300,6 +1300,17 @@ call goes live — and reports `model_calls_not_servable` and
 `model calls: 0 of 1 recorded served from the capsule, 0 unmatched; 1 NOT servable
 (ollama: 1 (127.0.0.1:11434)) …`. Up to v0.108.0 such a call was ignored and the replay
 reported `0 of 0 served` and success.
+
+**LangChain tools not passed through `wrap_tools`** (experimental, unreleased; ADR-0306
+D1). `nova capture` records them (see
+[the LangChain tool seam](#langchain--langgraph-tool-seam--record-and-serve-tool-calls-experimental)),
+but mocked replay never serves them: a capsule that records one is refused before
+anything is spawned (`status: aborted`, `error.type: ToolSurfaceNotServed`, count and
+tool names per surface in `error.tool_calls_not_served_by_surface`), exit 1, also under
+`--dry-run`. `--permissive` runs them live; each is counted in `tool_calls_live` and named
+in a `[LIVE] tool call (…)` summary line. A tool body that runs live is counted even when
+the capsule recorded no tool call at all. Before this, such a replay reported
+`tool_calls_live: 0` and a `faithful` verdict while the tool bodies ran.
 
 **Network scope and child processes** (works today, unreleased after v0.108.0; ADR-0319). The live-connection
 count covers the replayed Python process (`network_observation_scope: python-process`).
@@ -10800,7 +10811,32 @@ nova replay <run-id>                 # tool bodies do not run; results come from
   (`langgraph-prebuilt` 1.1.3) for `invoke` / `ainvoke` with a dict or a `ToolCall`,
   sync and async `@tool` functions, a `BaseTool` subclass, and `ToolNode` in sync and
   async graphs (parallel calls, `InjectedState`, `InjectedToolCallId`). Another release
-  may bypass it, and only tools passed through `wrap_tools` are covered.
+  may bypass it, and only tools passed through `wrap_tools` are served.
+- **Tools you did not wrap are recorded and counted, never served** (experimental,
+  unreleased). While `nova capture` or a mocked `nova replay` runs, NovaFabric also
+  patches `BaseTool.run` / `arun` and the class that defines a tool's `_run` / `_arun`
+  (restored afterwards; applied when the workload imports `langchain_core`, which it
+  never imports itself). Capture then writes one record per tool body execution for
+  every other `BaseTool`, with `io.novafabric.langchain_tool_seam: observed`,
+  `mutation_class: unknown` and the same payload rules, always marked not-servable
+  (wrapped tools' records say `wrap_tools`). Mocked replay never serves them — the
+  default stays "declared tools only" (ADR-0306 D1):
+  - a capsule that records such calls makes a strict replay **refuse to start**
+    (`status: aborted`, `error.type: ToolSurfaceNotServed`, with
+    `error.tool_calls_not_served_by_surface`; exit 1, also under `--dry-run`, which lists
+    each as `[LIVE] LangChain tool call (<name>)`);
+  - under `--permissive`, each such tool body runs **live** and is counted in
+    `tool_calls_live`, `replay_contract.tool_calls_by_surface` and
+    `replay_contract.tool_calls_live_by_tool`; the CLI prints one
+    `[LIVE] tool call (langchain_core.tools.BaseTool: <name>)` line per tool, a
+    `tool_surface_not_served` warning heads the divergences, and the fidelity verdict is
+    never `faithful`;
+  - a capsule that recorded no LangChain tool calls (captured before this, or by
+    another path) cannot be refused up front: every tool body that runs is still
+    counted live and named the same way;
+  - a `replay.yaml` `allow: false` override naming the tool refuses it before its body
+    runs, under `--permissive` too.
+  To have the calls served, pass the tools through `wrap_tools` and capture again.
 - **Under `nova capture`** each call writes one `tool-calls.jsonl` record
   (`transport: python`, `io.novafabric.tool_surface: langchain.tool`, the model's
   `io.novafabric.langchain_tool_call_id`). Arguments are the ones the model sent:
