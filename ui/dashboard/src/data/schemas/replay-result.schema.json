@@ -426,7 +426,7 @@
             "properties": {
               "name": {
                 "type": "string",
-                "description": "exit_code, stdout_normalized_sha256, stdout_sha256, stderr_sha256, file_effects, model_call_sequence, tool_call_sequence, divergence, live_calls, tool_result_echo; more may be added."
+                "description": "exit_code, stdout_normalized_sha256, stdout_sha256, stderr_sha256, file_effects, file_writes_not_recorded, model_call_sequence, tool_call_sequence, divergence, live_calls, tool_result_echo; more may be added."
               },
               "equal": {
                 "type": [
@@ -450,7 +450,7 @@
               },
               "differences": {
                 "type": "array",
-                "description": "file_effects: the recorded written files the replay wrote again whose state after the replay differs, first 50. A state is a sha256:<hex> digest or absent, not_regular, too_large(<n> bytes), unreadable.",
+                "description": "file_effects: the recorded written files the replay wrote again whose state after the replay differs; file_writes_not_recorded: files only the replay wrote (recorded: not written). First 50. A state is a sha256:<hex> digest or absent, not_regular, too_large(<n> bytes), unreadable.",
                 "items": {
                   "type": "object",
                   "required": [
@@ -474,7 +474,7 @@
               },
               "advisory": {
                 "type": "boolean",
-                "description": "true: reported but never decides the verdict (stdout_sha256 and stderr_sha256, the raw byte comparisons, ADR-0321)."
+                "description": "true: reported but never decides the verdict (stdout_sha256 and stderr_sha256, the raw byte comparisons, and file_writes_not_recorded, ADR-0321)."
               }
             }
           }

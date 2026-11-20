@@ -251,6 +251,12 @@ def report_counters(result: dict[str, Any]) -> dict[str, Any]:
             c.get("name") for c in (result.get("fidelity") or {}).get("checks") or []
             if c.get("equal") is False and not c.get("advisory")
         ],
+        "fidelity_replay_only_writes": [
+            d.get("path")
+            for c in (result.get("fidelity") or {}).get("checks") or []
+            if c.get("name") == "file_writes_not_recorded"
+            for d in c.get("differences") or []
+        ],
     }
 
 

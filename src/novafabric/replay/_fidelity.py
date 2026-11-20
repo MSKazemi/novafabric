@@ -21,6 +21,9 @@ comparing the replay with what the capsule recorded:
   again must hold, after the replay, the content it held after the recording: a
   replay that appends to the file again or writes something else diverges.
   Required; a capsule with no record lists it in ``unchecked``;
+* ``file_writes_not_recorded`` -- files only the replay wrote, listed by path;
+  advisory (such names are often volatile). A recorded write the replay did not
+  repeat is not judged: it cannot be told from a served tool's effect;
 * ``model_call_sequence`` / ``tool_call_sequence`` -- the calls the replay
   served, in the order it served them, against the recorded order;
 * ``divergence`` -- the replay contract's divergence state (ADR-0300);
@@ -55,6 +58,7 @@ from novafabric.capture.file_effects import (
     UNCOMPARABLE_STATES,
     FileState,
     InvalidFileEffectsError,
+    display_path,
     file_state,
     parse_record,
     replay_written_paths,
@@ -97,7 +101,9 @@ REQUIRED_CHECKS: tuple[str, ...] = ("exit_code", "stdout_normalized_sha256", "fi
 UNCHECKED_WHEN_UNRECORDED: frozenset[str] = frozenset({"file_effects"})
 
 #: Checks that are computed and reported but never decide the verdict.
-ADVISORY_CHECKS: frozenset[str] = frozenset({"stdout_sha256", "stderr_sha256"})
+ADVISORY_CHECKS: frozenset[str] = frozenset(
+    {"stdout_sha256", "stderr_sha256", "file_writes_not_recorded"}
+)
 
 #: Largest stored stream read to normalise (capture keeps at most 64 MiB).
 MAX_STREAM_BYTES = 128 * 1024 * 1024
@@ -531,6 +537,57 @@ def file_effects_check(
     return FidelityCheck("file_effects", True, total, rewritten, summary)
 
 
+def replay_only_writes_check(
+    capsule_dir: Path,
+    manifest: dict[str, Any],
+    proof: dict[str, Any] | None,
+    *,
+    cwd: Path,
+    home: Path,
+    replay_writes: tuple[set[str] | None, str | None],
+) -> FidelityCheck:
+    """Advisory: files the replayed process wrote that the recording never wrote
+    (fidelity control S6b -- a report named after the run, say). Listed with their
+    state now (first 50), never in the verdict: such paths are often volatile.
+    ``null`` when the replay's writes or the recorded ones are unknown."""
+    name = "file_writes_not_recorded"
+    written, unknown = replay_writes
+    if written is None:
+        return FidelityCheck(name, None, 0, None, unknown)
+    try:
+        recorded, problem = _recorded_file_effects(capsule_dir, manifest, proof)
+    except _NoFileEffectsRecord:
+        recorded, problem = None, "file effects were not recorded for this capsule"
+    if recorded is None:
+        return FidelityCheck(
+            name, None, 0, len(written), (problem or "no usable record")
+            + "; the files the replay wrote cannot be told apart from recorded ones",
+        )
+    known = {
+        os.path.abspath(resolve_recorded_path(r.path, cwd=cwd, home=home)) for r in recorded
+    }
+    new = sorted(
+        p for p in written - known
+        if "__pycache__" not in Path(p).parts and not p.endswith((".pyc", ".pyo"))
+    )
+    if not new:
+        return FidelityCheck(name, True, 0, 0)
+    listed = [
+        {"path": shown, "recorded": "not written",
+         "replayed": file_state(Path(p), shown).describe()}
+        for p in new[:MAX_LISTED_FILE_DIFFERENCES]
+        for shown in (display_path(p, cwd=cwd, home=home),)
+    ]
+    more = len(new) - len(listed)
+    note = (
+        f"{len(new)} file(s) written by the replay that the recording never wrote "
+        "(advisory, not in the verdict): "
+        + ", ".join(d["path"] for d in listed)
+        + (f" (+{more} more)" if more else "")
+    )
+    return FidelityCheck(name, False, 0, len(new), note, differences=listed)
+
+
 # ── call sequences ───────────────────────────────────────────────────────────
 
 
@@ -743,12 +800,14 @@ def compute_fidelity(
                 normalized=normalized,
             ))
     if completed:
-        checks.append(file_effects_check(
-            capsule_dir, manifest, recorded_proof,
-            cwd=cwd if cwd is not None else Path.cwd(),
-            home=home if home is not None else Path.home(),
-            replay_writes=replay_written_paths(events),
-        ))
+        run_cwd = cwd if cwd is not None else Path.cwd()
+        run_home = home if home is not None else Path.home()
+        writes = replay_written_paths(events)
+        for check_fn in (file_effects_check, replay_only_writes_check):
+            checks.append(check_fn(
+                capsule_dir, manifest, recorded_proof,
+                cwd=run_cwd, home=run_home, replay_writes=writes,
+            ))
     else:
         checks.append(_uncompared_files("the replayed command did not run to completion"))
 

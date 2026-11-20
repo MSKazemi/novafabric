@@ -83,7 +83,9 @@ longer forwards the submitting shell's environment (ADR-0270).
     checks and lists `file_effects` in the additive `fidelity.unchecked`; `nova replay` says the verdict does not
     cover files the run wrote. A record that is present but incomplete (a process that ended through
     `os._exit`), redacted or not matching its evidence digest makes the verdict `not_compared`. A file written
-    only at a path the recording never wrote is counted, not judged.
+    only at a path the recording never wrote is listed in the advisory `file_writes_not_recorded` (with its path),
+    never in the verdict; a recorded write the replay did not repeat is not judged (it cannot be told apart from a
+    tool served from the capsule).
 - **A mocked replay writes a replay capsule** beside its result (`capsule.yaml` with `replay_mode: mocked` and
   `replay_of_run_id`, the served call streams with a placeholder for each call not served from the capsule,
   `outputs/stdout.txt` / `stderr.txt` after the built-in secret scanner, `env.lock`), so

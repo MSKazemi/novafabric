@@ -117,6 +117,9 @@ def test_replacing_the_oracles_with_the_report_flips_the_verdict(corpus: Corpus)
     corpus.controls["report-only:S6b"] = {"oracle": score.verdict, "report_only": mutated}
     assert score.replay.outside_writes == ["ledger.replay-new-file.txt"]
     assert score.report["fidelity_verdict"] == "faithful", score.report
+    # Reported, advisory: a reader sees the new file even though the verdict does not.
+    written = score.report["fidelity_replay_only_writes"]
+    assert any(p.endswith("outside/ledger.replay-new-file.txt") for p in written), written
     assert score.verdict == "live-unreported", "fixed? pick a case the report still misses"
     assert mutated != score.verdict
 
