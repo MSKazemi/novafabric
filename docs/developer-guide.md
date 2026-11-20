@@ -925,6 +925,18 @@ from it (`BUILT_IN_PROFILES`), so there is no second list to edit. Without the m
 > since signing; it does not certify or guarantee compliance with any regulation
 > (EU AI Act, NIST AI RMF, ISO/IEC 42001, GDPR, HIPAA, FDA 21 CFR Part 11, SOC 2, etc.).
 
+**Standards text: identifiers and our own words only.** Many frameworks are copyrighted by
+their publishers — ISO/IEC standards, the AICPA Trust Services Criteria (SOC 2), CIS
+Benchmarks, the CSA control matrices and AIUC-1 among them. A profile or exporter in this
+repository may cite their control identifiers, but every `title` and `description` must be
+a short summary written for NovaFabric — never the publisher's wording, verbatim or
+lightly edited. Users who need the full text load their own licensed catalog by path
+(`--profile path/to/catalog.yaml`). Public-law texts (the EU AI Act, GDPR) and US
+government works (NIST) are not restricted this way. The built-in SOC 2 and ISO/IEC 42001
+profiles are held to this rule by
+`tests/compliance/audit/test_profiles_no_copied_standard_text.py` (no publisher sentence
+openers, descriptions of at most 160 characters).
+
 ## Compliance exporters — adding a new format
 
 Compliance exporters live in `src/novafabric/compliance/export/`. There is no shared base
