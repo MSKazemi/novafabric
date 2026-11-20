@@ -242,7 +242,12 @@ def test_a_langgraph_adapter_capsule_records_its_process_invocation(bench: Bench
     assert manifest["model_call_count"] == 2
 
 
-def test_mocked_replay_reruns_the_script_and_serves_its_model_calls(bench: Bench) -> None:
+def test_mocked_replay_reruns_the_script_and_serves_its_model_calls(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The tool goes through wrap_tools: an unwrapped one is refused by a strict
+    # replay (ADR-0306 D1, see the unwrapped-tool test below).
+    monkeypatch.setenv("AGENT_WRAP_TOOLS", "1")
     (capsule,) = bench.capture()
     captured = bench.answers()
     assert captured == [f"verdict: {SENTINEL}"]
@@ -329,7 +334,10 @@ def test_an_entry_script_edited_after_capture_is_refused(bench: Bench) -> None:
     assert replayed is None
 
 
-def test_a_second_adapter_run_in_the_replayed_process_diverges(bench: Bench) -> None:
+def test_a_second_adapter_run_in_the_replayed_process_diverges(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_WRAP_TOOLS", "1")
     first, second = bench.capture(runs=2)
     bench.answers()
     # The second run's capsule is refused up front: v1 re-runs ordinal 1 only.
@@ -346,3 +354,29 @@ def test_a_second_adapter_run_in_the_replayed_process_diverges(bench: Bench) -> 
     assert "adapter_run_count_mismatch" in kinds
     assert result["fidelity"]["verdict"] in ("diverged", "failed")
     assert bench.capsule_count() == 2  # no capsule written during the replay
+
+
+def test_an_unwrapped_tool_in_an_adapter_capsule_is_refused_strict_and_counted_permissive(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0306 Q7 meets ADR-0306 D1: the adapter capsule records the unwrapped
+    ``read_snippet`` call as observed; a strict replay refuses before re-running the
+    script, and ``--permissive`` re-runs it with the tool body live and counted, so the
+    verdict is not faithful."""
+    side = tmp_path / "side.log"
+    monkeypatch.setenv("AGENT_SIDE", str(side))
+    (capsule,) = bench.capture()
+    captured = bench.answers()
+    side.unlink()
+
+    result, replayed = bench.replay(capsule)
+    assert result["status"] == "aborted"
+    assert result["error"]["type"] == "ToolSurfaceNotServed"
+    assert replayed is None
+    assert not side.exists(), "the strict refusal let the script run"
+
+    result, replayed = bench.replay(capsule, "--permissive")
+    assert replayed == captured
+    assert side.read_text().splitlines() == ["read snippet_a.py"]
+    assert result["tool_calls_live"] == 1
+    assert result["fidelity"]["verdict"] != "faithful"
