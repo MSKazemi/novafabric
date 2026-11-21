@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 from novafabric.replay._bedrock_serve import SERVED_URLLIB3_SURFACE
+from novafabric.replay._client_transport import SERVED_CLIENT_SURFACES, TRANSPORT_FOR_URL
 from novafabric.replay._contract import TOOL_SURFACE_MCP
 from novafabric.replay._dispatcher import SERVED_MODEL_SURFACES, UNSUPPORTED_MODEL_SURFACES
 from novafabric.replay._ollama_serve import SERVED_TRANSPORT_SURFACES
@@ -50,6 +51,8 @@ def test_rows_match_the_dispatcher_patch_tables() -> None:
     served.add(("mcp.client.session", "ClientSession", "call_tool"))
     # ADR-0320: Ollama calls are served at the httpx/httpx2 transport.
     served |= {(m, c, a) for m, c, a, _ in SERVED_TRANSPORT_SURFACES}
+    # ADR-0324 amendment: and through a client's own transport, at the client.
+    served |= {(m, c, TRANSPORT_FOR_URL) for m, c, _ in SERVED_CLIENT_SURFACES}
     # AWS Bedrock Converse calls are served at urllib3 (botocore's transport).
     served.add(SERVED_URLLIB3_SURFACE)
     refused = {(m, c, a) for _, m, c, a, _ in UNSUPPORTED_MODEL_SURFACES}

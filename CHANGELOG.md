@@ -34,10 +34,25 @@ longer forwards the submitting shell's environment (ADR-0270).
   https only), so these calls are recorded with their response and served by the generic wire layer below
   (experimental). With `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` the record is request only and a strict
   `nova replay` stops before anything runs (`ModelSurfaceNotServable`); `--permissive` counts them in
-  `model_calls_not_servable`. A workload that sends through its own `httpx` transport (not `httpx.HTTPTransport`)
-  is not served: the recorded call stays unconsumed and a strict replay fails. The whole host is matched, so Vertex control-plane
+  `model_calls_not_servable`. A workload that sends through its own `httpx` transport is served too (entry
+  below). The whole host is matched, so Vertex control-plane
   requests are recorded as model calls too. A gRPC transport is not recorded; a strict replay fails on its
   connection (`unserved_network`).
+- **Mocked replay serves a model call whichever `httpx` transport the client uses** (experimental, ADR-0324
+  amendment). Before, Ollama and generic-wire calls were served only at `httpx.HTTPTransport` /
+  `AsyncHTTPTransport` (and `httpx2`), while capture records at `Client.send`: a client built with
+  `httpx.MockTransport`, a `BaseTransport` that delegates to `HTTPTransport` (proxy, retry and caching
+  libraries) or an `HTTPTransport` subclass overriding `handle_request` was recorded with its response but never
+  served. Its record stayed unconsumed (strict failed with `model_calls_unconsumed`) and `--permissive` reported
+  success with `model_calls_live: 0` for a call that ran live. Replay now wraps the transport the client picks
+  for each request (`Client._transport_for_url`), so these calls are served from the capsule or refused before
+  the workload's transport runs; under `--permissive` a call that runs live is counted once in
+  `model_calls_live` and named with its `gen_ai.system` in the replay capsule. A request is served or counted
+  once, at the outermost seam: a delegating transport's inner `HTTPTransport` does not claim it again. Fixed on
+  the way: an SDK call replay refuses and `--permissive` runs live (e.g. `openai.completions.create`) was counted
+  at the SDK method **and again** by the generic wire engine, which also consumed another call's recorded
+  answer (`wire_request_mismatch`); it is now counted once. Not covered: a `requests` adapter that does not send
+  through `urllib3` (e.g. `requests-mock`).
 - **Model calls to any registry host are now recorded with their response and served by mocked replay —
   generic wire** (experimental, ADR-0324). Storage change: a call made through `httpx`/`httpx2` or `requests`
   to a host the URL registry classifies as a model provider (Mistral, Cohere, Together, Replicate, Hugging Face

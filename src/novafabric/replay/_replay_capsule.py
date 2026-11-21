@@ -98,7 +98,8 @@ def _model_placeholder(ev: dict[str, Any]) -> dict[str, Any]:
         "schema_version": RECORD_SCHEMA_VERSION,
         "model_call_id": new_ulid(),
     }
-    provider = _text(ev.get("provider"))
+    # The registry system when the seam knows it (generic wire), else the provider.
+    provider = _text(ev.get("system")) or _text(ev.get("provider"))
     if provider is not None:
         record["gen_ai.system"] = provider
     record["extensions"] = extensions

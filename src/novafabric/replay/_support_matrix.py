@@ -76,6 +76,8 @@ _GEMINI = "tests/replay/test_gemini_vertex_not_servable_e2e.py"
 _UNSERVED_NET = "tests/replay/test_unserved_network.py"
 _WIRE = "tests/replay/test_generic_wire_replay_e2e.py"
 _WIRE_UNIT = "tests/replay/test_wire_serving.py"
+_WIRE_CLIENT = "tests/replay/test_wire_custom_transport_e2e.py"
+_CLIENT_UNIT = "tests/replay/test_client_transport_serving.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -361,6 +363,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             ("httpx", "AsyncHTTPTransport", "handle_async_request"),
             ("httpx2", "HTTPTransport", "handle_request"),
             ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx", "Client", "_transport_for_url"),
+            ("httpx", "AsyncClient", "_transport_for_url"),
+            ("httpx2", "Client", "_transport_for_url"),
+            ("httpx2", "AsyncClient", "_transport_for_url"),
         ),
     ),
     SurfaceRow(
@@ -378,9 +384,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             "served by the generic wire layer at the `httpx` transport (row below); with "
             "responses off a strict replay **refuses to start** (`ModelSurfaceNotServable`, "
             "ADR-0319) and `--permissive` runs it **live**, reported in "
-            "`model_calls_not_servable`; a client using its own `httpx` transport is not "
-            "served (the record stays unconsumed, a strict replay fails); a gRPC transport is "
-            "not recorded and a strict replay fails on its connection (`unserved_network`)"
+            "`model_calls_not_servable`; a client using its own `httpx` transport "
+            "(`MockTransport`, a delegating `BaseTransport`) is served the same way "
+            "(ADR-0324 amendment); a gRPC transport is not recorded and a strict replay fails "
+            "on its connection (`unserved_network`)"
         ),
         streaming="as the generic wire row",
         asynchronous="as the generic wire row",
@@ -389,7 +396,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_GEMINI}::test_by_default_the_response_is_recorded_and_the_record_is_servable",
             f"{_GEMINI}::test_without_wire_responses_strict_replay_refuses_it_up_front",
             f"{_GEMINI}::test_without_wire_responses_permissive_runs_it_and_counts_it_not_servable",
-            f"{_GEMINI}::test_a_custom_transport_that_bypasses_serving_fails_strict_never_success",
+            f"{_GEMINI}::test_a_call_through_a_custom_transport_is_served_from_the_capsule",
             f"{_WIRE}::"
             "test_gemini_generate_content_and_an_openai_compatible_local_server_are_served",
             f"{_GEMINI}::test_look_alikes_and_other_google_apis_are_not_gemini_or_vertex",
@@ -424,7 +431,9 @@ ROWS: tuple[SurfaceRow, ...] = (
         ),
         replay="served",
         replay_note=(
-            "at the httpx transport, for registry-matched Ollama hosts (incl. "
+            "at the httpx transport -- also for a client with its own transport "
+            "(`MockTransport`, a delegating `BaseTransport`; ADR-0324 amendment) -- for "
+            "registry-matched Ollama hosts (incl. "
             "`OLLAMA_BASE_URL`/`OLLAMA_HOST` at call time) and hosts the capsule "
             "recorded; one queue per endpoint, in order; exhaustion and endpoint "
             "mismatch fail closed; records captured before ADR-0320 (no response) are "
@@ -449,12 +458,17 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_OLLAMA}::test_a_record_without_a_response_is_never_served_empty",
             f"{_OLLAMA}::test_the_ollama_sdk_round_trips",
             f"{_OLLAMA}::test_langchain_ollama_round_trips",
+            f"{_CLIENT_UNIT}::test_an_ollama_call_through_a_mock_transport_is_served",
         ),
         patches=(
             ("httpx", "HTTPTransport", "handle_request"),
             ("httpx", "AsyncHTTPTransport", "handle_async_request"),
             ("httpx2", "HTTPTransport", "handle_request"),
             ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx", "Client", "_transport_for_url"),
+            ("httpx", "AsyncClient", "_transport_for_url"),
+            ("httpx2", "Client", "_transport_for_url"),
+            ("httpx2", "AsyncClient", "_transport_for_url"),
         ),
     ),
     SurfaceRow(
@@ -520,7 +534,10 @@ ROWS: tuple[SurfaceRow, ...] = (
         replay="served",
         replay_note=(
             "at the httpx/httpx2 transport and urllib3 `HTTPConnectionPool.urlopen` (how "
-            "`requests` sends), only when the capsule holds such a record; one ordered "
+            "`requests` sends), only when the capsule holds such a record; an httpx client "
+            "with its own transport (`MockTransport`, a delegating `BaseTransport`, an "
+            "`HTTPTransport` subclass overriding `handle_request`) is served before that "
+            "transport runs, each request served or counted once; one ordered "
             "queue; a request that differs in method, `gen_ai.system`, path or canonical "
             "query/body is the `wire_request_mismatch` divergence (strict: refused, never "
             "live; `--permissive`: runs live, counted); headers are ignored; a recorded HTTP "
@@ -544,12 +561,23 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_WIRE_UNIT}::test_a_served_record_never_carries_a_header_outside_the_allowlist",
             f"{_WIRE_UNIT}::"
             "test_capture_stores_a_body_only_for_a_logical_call_no_dedicated_server_claims",
+            f"{_WIRE_CLIENT}::test_a_call_through_a_custom_transport_is_served_from_the_capsule",
+            f"{_WIRE_CLIENT}::"
+            "test_a_changed_request_through_a_custom_transport_is_refused_before_it_runs",
+            f"{_WIRE_CLIENT}::"
+            "test_permissive_counts_a_live_call_through_a_custom_transport_once_and_names_it",
+            f"{_CLIENT_UNIT}::"
+            "test_a_refused_sdk_call_run_live_is_counted_once_and_never_served_on_the_wire",
         ),
         patches=(
             ("httpx", "HTTPTransport", "handle_request"),
             ("httpx", "AsyncHTTPTransport", "handle_async_request"),
             ("httpx2", "HTTPTransport", "handle_request"),
             ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx", "Client", "_transport_for_url"),
+            ("httpx", "AsyncClient", "_transport_for_url"),
+            ("httpx2", "Client", "_transport_for_url"),
+            ("httpx2", "AsyncClient", "_transport_for_url"),
             ("urllib3.connectionpool", "HTTPConnectionPool", "urlopen"),
         ),
     ),
