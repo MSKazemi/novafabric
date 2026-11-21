@@ -331,6 +331,10 @@ class AdkToolHook:
     SUBJECT = "ADK tool"
     FAILURE_REASON = ERROR_NOT_SERVED_REASON
     LONG_RUNNING = LONG_RUNNING_REASON
+    #: Whether replay serves a call of this seam whose body made nested
+    #: model/tool records (covering them, ADR-0306 slice 4). ``False``: such a
+    #: record is marked not servable with ``codec.seam_nested_reason``.
+    SERVES_NESTED = False
 
     # The handler registry and in-flight variable of this hook's seam.
     _get_handler = staticmethod(lambda: _get_handler())
@@ -421,12 +425,8 @@ class AdkToolHook:
             ext[codec.ARGUMENTS_DIGEST_EXT] = call.digest
         if not payloads:
             reasons.append(PAYLOADS_OFF_REASON)
-        if nested:
-            reasons.append(
-                f"{nested} model/tool record(s) were written inside this {self.SUBJECT} call; "
-                "serving it would leave them unrequested (nested-call coverage is not "
-                "implemented)"
-            )
+        if nested and not self.SERVES_NESTED:
+            reasons.append(codec.seam_nested_reason(self.SUBJECT, nested))
         if call.long_running:
             reasons.append(self.LONG_RUNNING)
         changed = _changed_actions(call.tool_context, pending.actions)

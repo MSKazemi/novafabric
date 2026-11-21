@@ -10950,16 +10950,24 @@ nova replay <run-id>                 # tool bodies do not run; results come from
   are kept and replay refuses the call with a re-capture hint.
 - **Under a mocked `nova replay`** the recorded result is returned and the tool body
   never runs. An unmatched call, or one whose record is not servable (the body raised —
-  including a `ToolException` LangChain turned into an error message —, made nested
-  model/tool calls, or returned a non-JSON value such as a LangGraph `Command` or a
-  `content_and_artifact` tuple; a `ToolMessage` the tool returned itself is served when
-  every field is JSON — unreleased), is refused before the tool runs and
+  including a `ToolException` LangChain turned into an error message —, or returned a
+  non-JSON value such as a LangGraph `Command` or a `content_and_artifact` tuple; a
+  `ToolMessage` the tool returned itself is served when every field is JSON — unreleased),
+  is refused before the tool runs and
   the replay fails (`tool_call_unmatched` / `tool_result_not_servable`) even if the
   workload catches the error. `ToolNode` re-raises the refusal by default; with
   `handle_tool_errors` it becomes an error message to the model, and the replay still
   fails. `--permissive` runs an unmatched call live only when an `--allow-*` flag permits
   the class declared in `wrap_tools` (default `unknown`), and `replay.yaml`
   `tool_overrides` hold as on the other tool surfaces.
+- **A tool whose body made model or tool calls** (a sub-agent tool, such as deepagents'
+  `task`; experimental, unreleased, ADR-0306 r3b) is served like a nested `record.tool`
+  boundary: its body — and so the sub-agent — never runs, and the model and tool calls
+  recorded inside it are consumed as covered (`replay_contract.model_calls_covered` /
+  `tool_calls_covered`, `covered` in `tool_calls_by_surface`), never left over. A
+  nested call capture could not mark (one made from a raw thread) stays unconsumed and
+  the strict replay fails. An unservable record written inside such a tool still makes
+  a strict replay refuse up front, even when the outer call is servable.
 - **Outside capture and replay** a wrapped tool behaves like the original.
 - Tools built by `langchain_mcp_adapters` are returned unchanged: their MCP calls are
   already served on the MCP surface. A function declared with

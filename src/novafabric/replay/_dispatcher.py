@@ -1999,6 +1999,8 @@ class MockToolDispatcher:
             events=self._events,
             permitted=permitted_mutation_classes,
             overrides=self._overrides,
+            # ADR-0306 r3b: a served sub-agent tool covers what its body did.
+            on_served=self._cover_nested,
         )
         self._previous_adk_handler: Any = None
         self._previous_oai_handler: Any = None
@@ -2012,8 +2014,10 @@ class MockToolDispatcher:
         """Consume as covered every record written inside a served boundary.
 
         ADR-0306 slice 4 (D3's nested coverage): a served ``record.tool``
-        boundary never runs its body, so the model calls, MCP calls and inner
-        boundaries it made at capture are never requested. Records marked
+        boundary -- or, since r3b, a served LangChain tool whose body made calls
+        (a sub-agent tool) -- never runs its body, so the model calls, MCP calls,
+        framework tool calls and inner boundaries it made at capture are never
+        requested. Records marked
         ``within_tool_call_id`` (transitively) are consumed as ``covered``
         instead of being reported unconsumed. A nested call capture could not
         mark (made from a raw thread) stays unconsumed: the replay fails closed.
@@ -2024,10 +2028,15 @@ class MockToolDispatcher:
         if type(nested) is not int or nested <= 0 or not isinstance(boundary, str):
             return
         ids = nested_boundary_ids(boundary, self._all_tool_calls)
-        for surface, matcher in (
-            (TOOL_SURFACE_MCP, self._matcher), (TOOL_SURFACE_PYTHON, self._python._matcher),
-        ):
-            for rec in matcher.cover(ids):
+        covers: tuple[tuple[str, Callable[[set[str]], list[dict[str, Any]]]], ...] = (
+            (TOOL_SURFACE_MCP, self._matcher.cover),
+            (TOOL_SURFACE_PYTHON, self._python._matcher.cover),
+            (TOOL_SURFACE_ADK, self._adk.cover),
+            (TOOL_SURFACE_OPENAI_AGENTS, self._oai.cover),
+            (TOOL_SURFACE_LANGCHAIN, self._langchain.cover),
+        )
+        for surface, cover in covers:
+            for rec in cover(ids):
                 self._events.emit(
                     "tool_covered", tool_name=rec.get("tool_name"),
                     record_id=rec.get("tool_call_id"), surface=surface,

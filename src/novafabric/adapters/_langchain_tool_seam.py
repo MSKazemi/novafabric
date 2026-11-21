@@ -630,6 +630,11 @@ class LangChainToolHook(AdkToolHook):
     CLASS_EXT = TOOL_CLASS_EXT
     SUBJECT = "LangChain tool"
     FAILURE_REASON = FAILURE_REASON
+    #: A tool whose body made model/tool calls (a sub-agent tool such as
+    #: deepagents' ``task``) keeps ``nested_records`` but is not marked
+    #: unservable for it: replay serves it and covers the nested records
+    #: (ADR-0306 r3b, the slice-4 rule for ``record.tool``).
+    SERVES_NESTED = True
 
     _get_handler = staticmethod(lambda: _get_handler())
     _set_handler = staticmethod(lambda handler: _set_handler(handler))

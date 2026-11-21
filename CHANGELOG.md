@@ -93,6 +93,19 @@ longer forwards the submitting shell's environment (ADR-0270).
   `io.novafabric.langchain_result_kind: tool_message`) and mocked replay rebuilds a real `ToolMessage` answering
   the replayed call's `tool_call_id`. A field that is not a JSON value (an object `artifact`) keeps the record not
   servable, with a reason naming the field.
+- **A LangChain tool whose body made model or tool calls is served** (experimental; ADR-0306 r3b). Before, a
+  sub-agent tool (the shape of `deepagents`' `task`: a `@tool` whose body runs a chat model and more tools) was
+  recorded with `io.novafabric.nested_records` and marked "nested-call coverage is not implemented", so a strict
+  replay refused it — up front for a tool not passed through `wrap_tools`. Capture no longer marks it, and mocked
+  replay serves it like a nested `record.tool` boundary (ADR-0306 slice 4): its body never runs, and the model and
+  tool calls recorded inside it are consumed as covered (`replay_contract.model_calls_covered` /
+  `tool_calls_covered`, `covered` in `tool_calls_by_surface`, also for ADK, Agents SDK and LangChain records inside
+  any served boundary), never counted unconsumed; the fidelity verdict stays `faithful`. A record captured earlier
+  with that text and its value kept is served without a re-capture (replay strips the text, as it does for
+  slice 1); a payloads-off one is served from the model-request echo when its digest matches. A nested call capture
+  could not mark stays unconsumed and the strict replay fails. Not changed: an unservable record written *inside*
+  such a tool still refuses a strict replay up front, and the ADK and Agents SDK seams still mark nested calls
+  unservable.
 - **Tool results captured below `forensic` are served from the next recorded model request** (experimental; ADR-0306
   r3 amendment). A default-level tool record keeps only a digest of its result, but the result also went back to the
   model in the next request, which the capsule keeps. Mocked replay now serves that echo (Chat Completions, Responses,

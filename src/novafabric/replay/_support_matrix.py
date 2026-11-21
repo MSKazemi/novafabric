@@ -65,6 +65,7 @@ _LC = "tests/replay/test_langchain_tool_replay_e2e.py"
 _LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
 _OAI_OBSERVED = "tests/replay/test_openai_agents_unwrapped_tool_e2e.py"
 _LC_MESSAGE = "tests/replay/test_langchain_tool_message_results_e2e.py"
+_LC_NESTED = "tests/replay/test_langchain_nested_tool_serving_e2e.py"
 _ECHO_RECOVERY = "tests/replay/test_tool_result_echo_recovery.py"
 _CHILDNET = "tests/replay/test_child_process_network.py"
 _HERMETIC = "tests/replay/test_hermetic_replay.py"
@@ -772,8 +773,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             "and arguments) or by name and canonical arguments; JSON-native results up "
             "to 1 MiB, and a `ToolMessage` the tool returned itself when every field is "
             "JSON (rebuilt with the replayed call's `tool_call_id`, ADR-0306 r3; a "
-            "`Command` or a `content_and_artifact` tuple is not); a call that raised or "
-            "made nested model/tool calls is not served; an "
+            "`Command` or a `content_and_artifact` tuple is not); a call that raised is not "
+            "served; a call whose body made model/tool calls (a sub-agent tool, e.g. "
+            "deepagents' `task`) is served and the records it wrote are consumed as "
+            "covered (`*_calls_covered`, ADR-0306 r3b, the slice-4 rule); an "
             "unmatched or unservable call is refused (`--permissive` runs it live only "
             "if a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
             "`tool_overrides` enforced; tools not passed through `wrap_tools`: next "
@@ -792,7 +795,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_LC}::test_the_tool_call_id_pairs_identical_calls_by_id",
             f"{_LC}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
             f"{_LC}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
-            f"{_LC}::test_a_nested_record_makes_the_langchain_call_unservable",
+            f"{_LC}::test_a_langchain_call_with_a_nested_record_is_served_and_covers_it",
             f"{_LG_ADAPTER}::test_wrapped_langchain_tools_are_recorded_and_served_in_an_adapter_capsule",
         ),
         servers=("langchain_core.tools.BaseTool",),
@@ -829,7 +832,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "refuses an unservable call before its body runs; a record captured "
             "without its result is served from the next recorded model request's echo "
             "when it has exactly the recorded `result_digest` (`model-request-echo`); "
-            "the seam patches "
+            "a tool whose body made model/tool calls (a sub-agent tool) is served "
+            "like a nested `record.tool` boundary and what it did is covered, never "
+            "requested (ADR-0306 r3b); the seam patches "
             "`BaseTool.run`/`arun` and the class defining `_run`/`_arun` -- **not a "
             "LangChain extension point**, checked against `langchain-core` 1.8.3 and "
             "`langgraph` 1.2.23 only"
@@ -854,6 +859,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_LC_OBSERVED}::test_a_default_level_capsule_is_served_from_the_model_request_echo",
             f"{_LC_OBSERVED}::test_an_echo_that_does_not_match_the_recorded_digest_is_never_served",
             f"{_ECHO_RECOVERY}::test_a_digest_mismatch_leaves_the_record_unservable",
+            f"{_LC_NESTED}::test_strict_replay_serves_the_outer_tool_and_covers_the_sub_agent_calls",
+            f"{_LC_NESTED}::test_a_default_level_capsule_serves_the_outer_tool_from_the_echo",
+            f"{_LC_NESTED}::test_a_record_captured_before_nested_serving_is_served_without_a_recapture",
+            f"{_LC_NESTED}::test_an_unmarked_inner_model_call_fails_closed",
         ),
         servers=("langchain_core.tools.BaseTool",),
     ),

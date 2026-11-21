@@ -22,6 +22,11 @@ refused exactly like a wrapped tool declared ``unknown`` (ADR-0306 r3
 amendment, owner decision 2026-11-21): a matched servable record is served
 before the body runs; an unmatched or unservable call is refused, and under
 ``--permissive`` runs live only with ``--allow-unknown-mutation``.
+
+A tool whose body made model or tool calls (a sub-agent tool such as
+deepagents' ``task``) is served like a nested ``record.tool`` boundary
+(ADR-0306 r3b, the slice-4 rule): its body never runs, and the dispatcher
+consumes the records written inside it as *covered* (``on_served``).
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ from novafabric.adapters._adk_tool_seam import AdkToolCall
 from novafabric.adapters._langchain_tool_seam import CALL_ID_EXT, Served
 from novafabric.capture import _tool_codec
 from novafabric.replay._adk_tool_server import AdkToolServer, RecordNotDecodable
-from novafabric.replay._contract import TOOL_SURFACE_LANGCHAIN, upgrade_legacy_observed_record
+from novafabric.replay._contract import TOOL_SURFACE_LANGCHAIN, upgrade_legacy_langchain_record
 
 
 class LangChainToolServer(AdkToolServer):
@@ -47,9 +52,10 @@ class LangChainToolServer(AdkToolServer):
     )
 
     def __init__(self, records: list[dict[str, Any]], **kwargs: Any) -> None:
-        # A round-2 observed record kept its value but was marked not servable
-        # by policy only; serve it as current capture would have marked it.
-        super().__init__([upgrade_legacy_observed_record(r) for r in records], **kwargs)
+        # A round-2 observed record, or one an earlier capture marked not
+        # servable for nesting, kept its value but was marked by policy only;
+        # serve it as current capture would have marked it.
+        super().__init__([upgrade_legacy_langchain_record(r) for r in records], **kwargs)
 
     def _decode(self, record: dict[str, Any], call: AdkToolCall) -> Any:
         """A ToolMessage envelope is rebuilt into a real ``ToolMessage`` that

@@ -218,6 +218,24 @@ def legacy_nested_reason(nested: int) -> str:
     )
 
 
+def seam_nested_reason(subject: str, nested: int) -> str:
+    """The not-servable reason a framework tool seam writes for a call whose body
+    made *nested* model/tool records (``_adk_tool_seam.AdkToolHook.build_record``).
+
+    *subject* is the hook's ``SUBJECT`` (``"ADK tool"``, ``"OpenAI Agents tool"``,
+    ``"LangChain tool"``). The ADK and Agents seams still write it. The LangChain
+    seam no longer does (ADR-0306 r3b): replay serves such a call and covers its
+    nested records, as slice 4 does for ``record.tool``; a LangChain record
+    captured before that carries this exact text, and replay strips it
+    (``_contract.not_servable_reason``). Do not change the text.
+    """
+    return (
+        f"{nested} model/tool record(s) were written inside this {subject} call; "
+        "serving it would leave them unrequested (nested-call coverage is not "
+        "implemented)"
+    )
+
+
 #: The not-servable reason round-2 capture wrote on every *observed* LangChain
 #: record (ADR-0306 r2 amendment, D-LC2), alone or followed by ``"; "`` and the
 #: record's real reasons. It was policy ("declared tools only"), not data: the

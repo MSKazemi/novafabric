@@ -373,15 +373,22 @@ def not_servable_reason(record: dict[str, Any]) -> str | None:
             return "the record holds no result value"
         return None
     reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
+    stripped = False
     if is_observed_tool_record(record):
         reason = _without_legacy_not_wrapped(reason)
-        if reason is None:
-            # Round 2's only obstacle was policy; the value was kept.
-            if record.get("status", "success") == "success":
-                result = record.get("result")
-                if not (isinstance(result, dict) and "value" in result):
-                    return "the record holds no result value"
-            return None
+        stripped = reason is None
+    if not stripped and tool_surface(record) == TOOL_SURFACE_LANGCHAIN:
+        # ADR-0306 r3b: nesting no longer blocks a LangChain call; the text an
+        # earlier capture wrote for it is policy, not data.
+        without = _without_legacy_seam_nested(ext, reason)
+        stripped, reason = without is None, without
+    if stripped:
+        # The only obstacle was policy (round 2, or nesting); the value was kept.
+        if record.get("status", "success") == "success":
+            result = record.get("result")
+            if not (isinstance(result, dict) and "value" in result):
+                return "the record holds no result value"
+        return None
     if _only_nested(record, ext, reason):
         return None
     return str(reason) if reason else "the record was not marked servable at capture"
@@ -400,6 +407,34 @@ def _without_legacy_not_wrapped(reason: Any) -> str | None:
     if reason.startswith(legacy + "; "):
         return reason[len(legacy) + 2:] or None
     return reason
+
+
+def _without_part(reason: str, part: str) -> str | None:
+    """*reason* (``"; "``-joined reasons) without one occurrence of *part*;
+    ``None`` when nothing else is left. Unchanged when *part* is not one of them."""
+    if reason == part:
+        return None
+    sep = "; "
+    if reason.startswith(part + sep):
+        return reason[len(part) + len(sep):] or None
+    if reason.endswith(sep + part):
+        return reason[: -len(part) - len(sep)] or None
+    middle = sep + part + sep
+    if middle in reason:
+        return reason.replace(middle, sep, 1)
+    return reason
+
+
+def _without_legacy_seam_nested(ext: dict[str, Any], reason: Any) -> Any:
+    """*reason* without the nesting text an earlier LangChain capture wrote
+    (``_tool_codec.seam_nested_reason("LangChain tool", n)``, *n* the record's
+    ``nested_records``); ``None`` when nothing else is left. Any other reason
+    is kept: only the policy text is removed (the slice-4 ``_only_nested`` rule).
+    """
+    nested = ext.get(_tool_codec.NESTED_RECORDS_EXT)
+    if type(nested) is not int or nested <= 0 or not isinstance(reason, str) or not reason:
+        return reason
+    return _without_part(reason, _tool_codec.seam_nested_reason("LangChain tool", nested))
 
 
 def _only_nested(record: dict[str, Any], ext: dict[str, Any], reason: Any) -> bool:
@@ -477,19 +512,23 @@ def is_observed_tool_record(record: dict[str, Any]) -> bool:
     return isinstance(ext, dict) and ext.get(ext_key) == _tool_codec.LANGCHAIN_SEAM_OBSERVED
 
 
-def upgrade_legacy_observed_record(record: dict[str, Any]) -> dict[str, Any]:
-    """*record* as current capture would write it, when it is a round-2 observed
-    record whose only not-servable reason was the "not passed through
-    wrap_tools" policy (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``) and whose
-    value was kept: a copy marked ``json-v1``. Any other record is returned
-    unchanged (the same object)."""
-    if not is_observed_tool_record(record):
+def upgrade_legacy_langchain_record(record: dict[str, Any]) -> dict[str, Any]:
+    """*record* as current capture would write it, when it is a LangChain record
+    an earlier capture marked not servable by policy only -- round 2's "not
+    passed through wrap_tools" (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``, observed
+    records) and/or the nesting text (``_tool_codec.seam_nested_reason``, before
+    ADR-0306 r3b) -- and whose value was kept: a copy marked ``json-v1``. Any
+    other record is returned unchanged (the same object)."""
+    if (
+        tool_surface(record) != TOOL_SURFACE_LANGCHAIN
+        or record.get("status", "success") != "success"
+    ):
         return record
     ext = record.get("extensions")
     if not isinstance(ext, dict) or ext.get(_tool_codec.RESULT_CODEC_EXT) == _tool_codec.CODEC_JSON:
         return record
     reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
-    if reason != _tool_codec.LEGACY_NOT_WRAPPED_REASON or not_servable_reason(record) is not None:
+    if not isinstance(reason, str) or not reason or not_servable_reason(record) is not None:
         return record
     upgraded_ext = {k: v for k, v in ext.items() if k != _tool_codec.NOT_SERVABLE_REASON_EXT}
     upgraded_ext[_tool_codec.RESULT_CODEC_EXT] = _tool_codec.CODEC_JSON

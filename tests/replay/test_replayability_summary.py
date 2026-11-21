@@ -137,6 +137,18 @@ def _langchain_observed(name: str, *, payloads_off: bool = False) -> dict[str, A
 LC_CALL_ID_EXT = "io.novafabric.langchain_tool_call_id"
 
 
+def _langchain_legacy_nested(name: str) -> dict[str, Any]:
+    """An observed LangChain record an earlier capture marked not servable only
+    because its body made nested calls (ADR-0306 r3b strips that text)."""
+    record = _langchain_observed(name)
+    record["extensions"].update({
+        codec.NESTED_RECORDS_EXT: 2,
+        codec.RESULT_CODEC_EXT: codec.CODEC_NOT_SERVABLE,
+        codec.NOT_SERVABLE_REASON_EXT: codec.seam_nested_reason("LangChain tool", 2),
+    })
+    return record
+
+
 def _bedrock_echo(call_id: str, text: str) -> dict[str, Any]:
     """A recorded Bedrock request that sends *text* back as the result of *call_id*."""
     return {
@@ -252,6 +264,13 @@ def test_a_payloads_off_observed_tool_echoed_under_its_digest_is_served() -> Non
     summary = assess(_cli_manifest(), [_bedrock_echo("tooluse-read_log", "x")], [tool])
     assert summary.as_dict()["strict_mocked"] == "start"
     assert "tool_surface_not_served" not in _codes(summary)
+
+
+def test_a_legacy_nested_langchain_record_with_its_value_is_served() -> None:
+    summary = assess(_cli_manifest(), [], [_langchain_legacy_nested("task")])
+    doc = summary.as_dict()
+    assert doc["strict_mocked"] == "start" and doc["replayable"] == "full"
+    assert doc["tool_calls"]["servable"] == 1
 
 
 def test_an_observed_langchain_tool_refuses_strict() -> None:
@@ -450,10 +469,11 @@ def _cases(project: Path) -> list[tuple[dict[str, Any], list[Any], list[Any], An
         (_adapter_manifest(unknown), [_mistral(1)], [], None),
         (_adapter_manifest(_facet(project)), [_openai()], [], None),
         (_adapter_manifest(None), [], [], None),
+        (_cli_manifest(), [], [_langchain_legacy_nested("task")], None),
     ]
 
 
-@pytest.mark.parametrize("case", range(9))
+@pytest.mark.parametrize("case", range(10))
 def test_the_summary_agrees_with_the_dry_run(
     tmp_path: Path, project: Path, case: int,
 ) -> None:
