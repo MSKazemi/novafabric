@@ -182,6 +182,8 @@ class Scenario:
     #: Pre-registered: the verdicts a correct replay system may produce.
     expected: frozenset[str] = frozenset({"faithful"})
     needs: tuple[str, ...] = ()  # executables the scenario needs (skip if absent)
+    #: Extra environment for both phases (``(name, value)`` pairs).
+    env: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -454,7 +456,8 @@ class Harness:
         base = self.root / (name or scenario.sid)
         for sub in ("work", "outside", "runs", "replays", "home"):
             (base / sub).mkdir(parents=True, exist_ok=True)
-        extra = {"FIDELITY_STEPS": ",".join(scenario.steps), "NOVA_CAPTURE_LEVEL": scenario.level}
+        extra = {"FIDELITY_STEPS": ",".join(scenario.steps), "NOVA_CAPTURE_LEVEL": scenario.level,
+                 **dict(scenario.env)}
         obs, result = self._run(
             base,
             "capture",
@@ -566,6 +569,9 @@ SCENARIOS: dict[str, Scenario] = {
             "Ollama /api/embed to a loopback fake (a model call replay cannot serve)",
             ("ollama_embed",),
             expected=frozenset({"live-reported", "refused"}),
+            # ADR-0324 records /api/embed with its response (generic wire) and serves it;
+            # with body recording off it stays the pre-registered unservable case (#49).
+            env=(("NOVAFABRIC_CAPTURE_WIRE_RESPONSES", "off"),),
         ),
     )
 }

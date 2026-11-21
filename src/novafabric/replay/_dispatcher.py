@@ -103,6 +103,7 @@ from novafabric.replay._errors import (
     ReplayToolRecordNotServableError,
     ReplayToolUnmatchedError,
     ReplayUnsupportedSurfaceError,
+    ReplayWireRequestMismatchError,
 )
 from novafabric.replay._flags import LADDER_FLAG, ladder_flag
 from novafabric.replay._model_errors import (
@@ -128,6 +129,15 @@ from novafabric.replay._policy import (
     gating_mutation_class,
 )
 from novafabric.replay._process_observer import ProcessObserver
+from novafabric.replay._wire_serve import (
+    GENERIC_WIRE_QUEUE,
+    WireResponse,
+    recorded_streamed,
+    request_mismatch,
+)
+from novafabric.replay._wire_serve import httpx_response as _wire_transport_response
+from novafabric.replay._wire_serve import served_response as wire_served_response
+from novafabric.replay._wire_serve import unservable_reason as wire_unservable_reason
 
 #: Exit status of a strict replay whose dispatcher could not be installed: the
 #: process is stopped before the workload runs, because running it would send
@@ -971,6 +981,9 @@ class MockModelDispatcher:
             [r for r in model_calls if isinstance(r, dict)]
         )
         self._registry: Any = None
+        #: ADR-0324: the generic wire engine claims registry requests only when the
+        #: capsule holds a servable generic-wire record (older capsules: unchanged).
+        self._wire_active = bool(self._queues.get(GENERIC_WIRE_QUEUE))
 
     # Kept for introspection by existing callers/tests.
     @property
@@ -1024,10 +1037,17 @@ class MockModelDispatcher:
                 self.installed_surfaces.append(
                     f"{MODEL_SURFACES[queue]} ({module_name} transport)"
                 )
+        for module_name in sorted(installed):
+            self.installed_surfaces.append(
+                f"{MODEL_SURFACES[GENERIC_WIRE_QUEUE]} ({module_name} transport)"
+            )
         module_name, class_name, attr = SERVED_URLLIB3_SURFACE
         if self._patcher.patch(module_name, class_name, attr, self._make_urlopen):
             for queue in BEDROCK_QUEUES:
                 self.installed_surfaces.append(f"{MODEL_SURFACES[queue]} (urllib3 transport)")
+            self.installed_surfaces.append(
+                f"{MODEL_SURFACES[GENERIC_WIRE_QUEUE]} (urllib3 transport)"
+            )
 
     def _transport_queue(self, request: Any) -> str | None:
         """The Ollama queue a transport request is served from; ``None`` = live."""
@@ -1046,6 +1066,13 @@ class MockModelDispatcher:
             async def handle_async_request(transport: Any, request: Any) -> Any:
                 queue = dispatcher._transport_queue(request)
                 if queue is None:
+                    if dispatcher._wire_claims(str(request.url)):
+                        wire = dispatcher._serve_wire(
+                            str(request.method), str(request.url), await request.aread(),
+                            asynchronous=True,
+                        )
+                        if wire is not None:
+                            return _wire_transport_response(module_name, wire, request)
                     return await original(transport, request)
                 body = request_json(await request.aread())
                 served = dispatcher._serve_transport(queue, body, asynchronous=True)
@@ -1059,6 +1086,13 @@ class MockModelDispatcher:
         def handle_request(transport: Any, request: Any) -> Any:
             queue = dispatcher._transport_queue(request)
             if queue is None:
+                if dispatcher._wire_claims(str(request.url)):
+                    wire = dispatcher._serve_wire(
+                        str(request.method), str(request.url), request.read(),
+                        asynchronous=False,
+                    )
+                    if wire is not None:
+                        return _wire_transport_response(module_name, wire, request)
                 return original(transport, request)
             body = request_json(request.read())
             served = dispatcher._serve_transport(queue, body, asynchronous=False)
@@ -1108,6 +1142,18 @@ class MockModelDispatcher:
         def urlopen(pool: Any, method: Any, url: Any, *args: Any, **kwargs: Any) -> Any:
             target = dispatcher._bedrock_queue(pool, method, url)
             if target is None:
+                wire_url = dispatcher._wire_urllib3_url(pool, url)
+                if wire_url is not None:
+                    named = _urlopen_arguments(original, pool, method, url, args, kwargs)
+                    wire = dispatcher._serve_wire(
+                        str(method or ""), wire_url, named.get("body"), asynchronous=False
+                    )
+                    if wire is not None:
+                        return _urllib3_response(
+                            ServedHttp(wire.status, wire.reason, wire.framed_headers(),
+                                       wire.body),
+                            named, str(method), wire_url,
+                        )
                 return original(pool, method, url, *args, **kwargs)
             queue, full_url = target
             named = _urlopen_arguments(original, pool, method, url, args, kwargs)
@@ -1133,6 +1179,86 @@ class MockModelDispatcher:
             )
             return None
         return served_response(queue, record)
+
+    # ── generic wire calls (ADR-0324) ────────────────────────────────────
+
+    def _wire_claims(self, url: str) -> bool:
+        """The generic engine serves this request: the capsule holds generic-wire
+        records and the URL is a registry model host. Never raises."""
+        if not self._wire_active:
+            return False
+        try:
+            return bool(self._registry.is_known(url))
+        except Exception:  # noqa: BLE001 -- an unclassifiable request is not claimed
+            return False
+
+    def _wire_urllib3_url(self, pool: Any, url: Any) -> str | None:
+        if not self._wire_active:
+            return None
+        try:
+            full_url = _urllib3_url(pool, str(url))
+        except Exception:  # noqa: BLE001
+            return None
+        return full_url if self._wire_claims(full_url) else None
+
+    def _serve_wire(
+        self, method: str, url: str, body: Any, *, asynchronous: bool
+    ) -> WireResponse | None:
+        """The recorded response for this request, or ``None`` when a tolerated
+        divergence (``warn``) lets it go live. Raises under ``fail``."""
+        queue = GENERIC_WIRE_QUEUE
+        provider = QUEUE_PROVIDER[queue]
+        surface = MODEL_SURFACES[queue]
+        payload = body if isinstance(body, (bytes, bytearray, str)) or body is None else None
+        system = str(self._registry.gen_ai_system(url))
+        records = self._queues[queue]
+        self._skip_covered(queue)
+        idx = self._index[queue]
+        stream = False
+        if idx < len(records):
+            record = records[idx]
+            stream = recorded_streamed(record)
+            if payload is None and body is not None:
+                differs: dict[str, Any] | None = {
+                    "method": method.upper(), "system": system, "path": "",
+                    "differs": ["body"],
+                }
+            else:
+                differs = request_mismatch(
+                    record, method=method, url=url,
+                    body=bytes(payload) if isinstance(payload, bytearray) else payload,
+                    system=system,
+                )
+            if differs is not None:
+                _report_divergence(self._events, self._policy, ReplayWireRequestMismatchError(
+                    f"call #{idx + 1} to {surface} ({differs['method']} {system} "
+                    f"{differs['path']}) differs from the recorded request "
+                    f"({', '.join(differs['differs'])} differ"
+                    f"{'s' if len(differs['differs']) == 1 else ''}); "
+                    + ("running the call live" if self._policy == "warn"
+                       else "refusing to serve it"),
+                    provider=provider,
+                    call_index=idx,
+                    model_call_id=record.get("model_call_id"),
+                    **differs,
+                ))
+                self._index[queue] += 1
+                self._global_index += 1
+                self._events.emit("model_live", provider=provider, surface=surface)
+                return None
+        record, error = self._take(
+            queue, stream=stream, asynchronous=asynchronous,
+            request=request_json(
+                payload.encode() if isinstance(payload, str) else bytes(payload or b"")
+            ) or None,
+            unservable=wire_unservable_reason,
+        )
+        if error is not None:  # never the case for a wire record; fail closed anyway
+            raise error
+        if not record:
+            self._events.emit("model_live", provider=provider, surface=surface)
+            return None
+        return wire_served_response(record)
 
     def uninstall(self) -> None:
         self._patcher.restore()

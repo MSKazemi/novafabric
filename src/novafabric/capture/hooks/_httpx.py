@@ -78,7 +78,15 @@ from novafabric.capture.hooks._url_registry import (
     UrlRegistry,
     load_url_registry,
 )
-from novafabric.capture.record_roles import stamp_wire_record
+from novafabric.capture.hooks._wire_body import (
+    WireBodySink,
+    content_encoding,
+    mark_generic,
+    recording_off_reason,
+    records_body,
+)
+from novafabric.capture.hooks._wire_body import apply_response as apply_wire_response
+from novafabric.capture.record_roles import current_sdk_call_id, stamp_wire_record
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
@@ -220,7 +228,15 @@ class HttpxHook:
         with fail_open(self.library, MODEL_CALLS_STREAM):
             url = str(request.url)
             status_code = self._status_code(response, error_status)
-            if not self._defer_ollama_record(
+            if self._generic_wire(url):
+                if not self._defer_wire_record(
+                    request, response, url, status_code, started, t0
+                ):
+                    self._write_wire_call(
+                        request, url, status_code, started, duration_ms,
+                        response=response, error=error,
+                    )
+            elif not self._defer_ollama_record(
                 request, response, url, status_code, started, t0
             ):
                 self._write_model_call(
@@ -375,6 +391,104 @@ class HttpxHook:
         response.stream = tee_cls(inner, sink)
         return True
 
+    # ── generic wire calls (ADR-0324) ────────────────────────────────────
+
+    def _generic_wire(self, url: str) -> bool:
+        """A logical call to a registry model host that no dedicated server claims."""
+        return records_body(
+            self._registry.gen_ai_system(url),
+            in_sdk_call=current_sdk_call_id() is not None,
+            dedicated=self._ollama_surface(url) is not None,
+        )
+
+    def _write_wire_call(
+        self, request: Any, url: str, status_code: int, started: str, duration_ms: int,
+        *, response: Any = None, error: BaseException | None = None,
+        sink: WireBodySink | None = None, streamed: bool = False, complete: bool = True,
+        not_recorded: str | None = None,
+    ) -> None:
+        record = build_record_envelope(
+            model_call_id=new_ulid(),
+            parent_span_id=self._parent_span_id,
+            started_at=started,
+            finished_at=_now(),
+            duration_ms=duration_ms,
+            status="success" if 0 < status_code < 400 else "error",
+        )
+        record.update(extract_request_attributes(
+            self._request_body(request), url=url,
+            gen_ai_system=self._registry.gen_ai_system(url),
+        ))
+        mark_generic(record, str(getattr(request, "method", "") or ""), url,
+                     getattr(request, "content", None))
+        if sink is None and not_recorded is None:
+            if error is not None or response is None:
+                not_recorded = "the request raised before a response"
+            else:
+                content = _buffered_content(response)
+                if content is None:
+                    not_recorded = "the response body was not read"
+                else:
+                    sink = WireBodySink()
+                    sink.add(content)
+        apply_wire_response(
+            record, status=status_code,
+            reason=str(getattr(response, "reason_phrase", "") or ""),
+            headers=getattr(response, "headers", None), sink=sink, streamed=streamed,
+            complete=complete, not_recorded=not_recorded,
+        )
+        get_current_writer(self._writer).append_model_call(stamp_wire_record(record))
+
+    def _defer_wire_record(
+        self, request: Any, response: Any, url: str, status_code: int,
+        started: str, t0: float | None,
+    ) -> bool:
+        """Copy an unread generic-wire body as the workload reads it; record at the end.
+
+        True when the record is now deferred; False to record now (no response, a body
+        already read, recording off, a content encoding capture does not decode, or no
+        wrappable stream)."""
+        if response is None or status_code == 0 or recording_off_reason() is not None:
+            return False
+        if _buffered_content(response) is not None:
+            return False
+        tee_types = self._stream_wrappers()
+        if tee_types is None:
+            return False
+        sync_tee, async_tee = tee_types
+        inner = getattr(response, "stream", None)
+        if isinstance(inner, (sync_tee, async_tee)):
+            return False
+        if isinstance(inner, self._module.SyncByteStream):
+            tee_cls = sync_tee
+        elif isinstance(inner, self._module.AsyncByteStream):
+            tee_cls = async_tee
+        else:
+            return False
+        body = WireBodySink(encoding=content_encoding(getattr(response, "headers", None)))
+        if body.not_recorded is not None:
+            return False
+        start_t = t0 if t0 is not None else time.monotonic()
+
+        def done(
+            sink: WireBodySink, _count: int, _first_ms: int | None, complete: bool,
+            error: BaseException | None = None,
+        ) -> None:
+            with fail_open(self.library, MODEL_CALLS_STREAM):
+                self._write_wire_call(
+                    request, url, status_code, started,
+                    int((time.monotonic() - start_t) * 1000), response=response,
+                    sink=sink, streamed=True, complete=complete,
+                    not_recorded=(
+                        f"the response stream failed part-way ({type(error).__name__})"
+                        if error is not None else None
+                    ),
+                )
+
+        state = _StreamState(body, done, CaptureBinding.capture(self.is_live))
+        response.stream = tee_cls(inner, _WireTeeSink(state))
+        return True
+
     def _stream_wrappers(self) -> tuple[type, type] | None:
         if self._tee_types is None and self._module is not None:
             self._tee_types = _make_stream_wrappers(self._module)
@@ -517,6 +631,20 @@ class _OllamaSink:
             pass
 
 
+class _WireTeeSink:
+    """The tee-side face of a generic-wire body (ADR-0324): bytes go to the
+    ``WireBodySink`` through ``_StreamState``, which records once when the read ends."""
+
+    def __init__(self, state: _StreamState) -> None:
+        self._state = state
+
+    def feed(self, data: Any) -> None:
+        self._state.add(data)
+
+    def finish(self, error: BaseException | None = None, *, exhausted: bool = False) -> None:
+        self._state.finish(complete=exhausted, error=error)
+
+
 def _make_stream_wrappers(module: Any) -> tuple[type, type] | None:
     """Byte-stream wrappers deriving from *module*'s own stream base classes
     (``Response.iter_raw`` / ``aiter_raw`` check ``isinstance``). They yield the
@@ -529,7 +657,7 @@ def _make_stream_wrappers(module: Any) -> tuple[type, type] | None:
         return None
 
     class _SyncTee(base_sync):  # type: ignore[misc, valid-type]
-        def __init__(self, inner: Any, sink: _OllamaSink) -> None:
+        def __init__(self, inner: Any, sink: _OllamaSink | _WireTeeSink) -> None:
             self._nf_inner = inner
             self._nf_sink = sink
 
@@ -556,7 +684,7 @@ def _make_stream_wrappers(module: Any) -> tuple[type, type] | None:
                 pass
 
     class _AsyncTee(base_async):  # type: ignore[misc, valid-type]
-        def __init__(self, inner: Any, sink: _OllamaSink) -> None:
+        def __init__(self, inner: Any, sink: _OllamaSink | _WireTeeSink) -> None:
             self._nf_inner = inner
             self._nf_sink = sink
 

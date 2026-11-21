@@ -63,6 +63,14 @@ class ReplayRecordMalformedError(ReplayDivergenceError):
     kind = "malformed_recorded_response"
 
 
+class ReplayWireRequestMismatchError(ReplayDivergenceError):
+    """A request to a registry model host differs from the generic-wire record at the
+    head of its queue (ADR-0324 D3): another method, ``gen_ai.system``, path, or
+    canonical query/body. Strict replay refuses it; nothing reaches the network."""
+
+    kind = "wire_request_mismatch"
+
+
 class ReplayToolUnmatchedError(ReplayDivergenceError):
     """A tool call on an intercepted surface had no unconsumed recorded result.
 

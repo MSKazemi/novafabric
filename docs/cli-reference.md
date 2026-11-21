@@ -536,7 +536,7 @@ patterns:
     transport: "http"
 ```
 
-A user-override file **replaces** the vendored default — copy the entries you still want from the default before editing. To override per-invocation, set `NOVAFABRIC_URL_REGISTRY=/abs/path/to/registry.yaml`. Per RFC-0001 §"Adoption / migration plan," merge semantics for overrides are deferred to v0.6 with a dedicated ADR.
+Since ADR-0324 (**experimental**) a call to a registry host made outside an SDK call is also recorded with its response body and served by mocked replay from those bytes (generic wire; see [replay modes](architecture/replay-modes.md)), so adding a host here also makes it replayable. A user-override file **replaces** the vendored default — copy the entries you still want from the default before editing. To override per-invocation, set `NOVAFABRIC_URL_REGISTRY=/abs/path/to/registry.yaml`. Per RFC-0001 §"Adoption / migration plan," merge semantics for overrides are deferred to v0.6 with a dedicated ADR.
 
 **MCP capture (v0.5).** Each `call_tool` invocation produces a `tool-calls.jsonl`
 record with `transport: "mcp"` and a complete `mcp` sub-object:
@@ -8464,6 +8464,7 @@ failed).
 | `NOVAFABRIC_SUGGEST` | `1` | Set to `0` to disable the asset registration suggestion prompt after `nova capture`. |
 | `NOVAFABRIC_COMMUNITY_HINT` | `1` | Set to `0` to hide the one-line pointer to GitHub Discussions that `nova capture` prints after the first capsule in a directory, and that `nova --version` prints to stderr. Shown only on an interactive terminal; it is plain text, never a network call. |
 | `NOVAFABRIC_ENVIRONMENT` | — | Deployment-environment tag recorded on captured capsules as `deployment_environment` with `environment_source: env-var` (ADR-0126). Overridden by `nova capture --environment`; overrides the SDK `deployment_environment=` argument. Distinct from the `env.lock` technical environment. |
+| `NOVAFABRIC_CAPTURE_WIRE_RESPONSES` | on | `off` (also `0`, `false`, `no`) stores no response bodies for generic wire calls — registry model hosts reached through `httpx`/`httpx2` or `requests` outside an SDK call (ADR-0324, **experimental**). By default those bodies are stored at every capture level, like OpenAI responses. With it off the records say why (`io.novafabric.response_not_recorded`) and a strict `nova replay` refuses them (`ModelSurfaceNotServable`). Read at call time. |
 | `NOVAFABRIC_CAPTURE_STRICT` | off | Truthy (`1`/`true`/`yes`/`on`) makes a capture that would overlap another in the same process raise `ConcurrentCaptureRefused` instead of degrading to a scoped, contended capsule (ADR-0224 OQ-2; **works today**, opt-in). Equivalent to `install_all(..., strict=True)`. See [multi-agent capture](tutorials/multi-agent-capture.md#several-captures-in-one-process-scope-and-strict-mode). |
 | `NOVAFABRIC_VARIANT` | — | ADR-0116 (**experimental**, record-only): id of the externally assigned A/B variant (arm), recorded verbatim as `variant.variant_id`. Must be set together with `NOVAFABRIC_VARIANT_EXPERIMENT` and `NOVAFABRIC_VARIANT_SOURCE` (an incomplete set warns and is ignored). Overridden by the `nova capture --experiment/--variant/--variant-source` flags; overrides the SDK `variant=` argument. |
 | `NOVAFABRIC_VARIANT_EXPERIMENT` | — | ADR-0116: experiment id recorded verbatim as `variant.experiment_id`. |

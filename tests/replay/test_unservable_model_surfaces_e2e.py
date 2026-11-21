@@ -14,7 +14,10 @@ it with ``nova replay``. At replay the fake servers answer something else, so th
 workload's output shows who answered. No network beyond loopback.
 
 Since ADR-0320 Ollama ``/api/chat`` is recorded with its response and served, so the
-workload here calls ``/api/embed`` -- a model call replay still cannot serve.
+workload here calls ``/api/embed``; since ADR-0324 that call is recorded with its
+response bytes too (generic wire) -- so these captures switch body recording off
+(``NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off``), which leaves exactly the ADR-0319 case: a
+model call recorded without a response.
 """
 
 from __future__ import annotations
@@ -131,6 +134,8 @@ class Workload:
         for var in ("FORCE_COLOR", "COLORTERM", "OLLAMA_BASE_URL", "OLLAMA_HOST"):
             monkeypatch.delenv(var, raising=False)
         monkeypatch.setenv("COLUMNS", "400")
+        # ADR-0324: keep the /api/embed record response-less (see the module docstring).
+        monkeypatch.setenv("NOVAFABRIC_CAPTURE_WIRE_RESPONSES", "off")
 
     def capture(self, steps: str) -> Path:
         self._mp.setenv("STEPS", steps)

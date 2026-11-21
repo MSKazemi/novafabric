@@ -13,6 +13,22 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed — BREAKING
 
+- **Model calls to any registry host are now recorded with their response and served by mocked replay —
+  generic wire** (experimental, ADR-0324). Storage change: a call made through `httpx`/`httpx2` or `requests`
+  to a host the URL registry classifies as a model provider (Mistral, Cohere, Together, Replicate, Hugging Face
+  Inference, OpenAI-compatible local servers you register, Ollama endpoints other than `/api/chat` and
+  `/api/generate`, raw HTTP to OpenAI or Anthropic), outside an SDK call, now stores the response body in
+  `model-calls.jsonl` (`io.novafabric.wire.response`: status, allowlisted headers, the body as UTF-8 text
+  chunks) plus a request digest (`io.novafabric.wire.request`) — **completion text**, at every capture level,
+  exactly as OpenAI responses are stored and redacted. `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` stores none.
+  Behaviour change: a strict `nova replay` of a new capsule serves these calls at the `httpx` transport and at
+  `urllib3` (how `requests` sends) instead of refusing them (`ModelSurfaceNotServable`); a request whose method,
+  path or canonical query/body differs from the recorded one is the new divergence `wire_request_mismatch` (strict:
+  refused, never live; `--permissive`: runs live, counted); recorded HTTP errors and retries are served as
+  recorded; `Set-Cookie`, `Location` and auth headers are never recorded or served. In new capsules Ollama
+  `/api/tags`, `/api/show`, `/api/version`, `/api/ps` are served rather than run live. Capsules recorded before
+  are replayed exactly as before. Not covered yet: `aiohttp`, `urllib3` used directly (Bedrock `InvokeModel`),
+  gRPC, binary bodies, streamed bodies with a `content-encoding`.
 - **Mocked replay refuses a capsule whose recorded model calls it cannot serve** (works today, ADR-0319). Before,
   a model call recorded by the wire hook on a surface replay does not serve (Ollama, Hugging Face `InferenceClient`,
   other providers' raw HTTP; or a served surface with no recorded response) was ignored: the replay said
