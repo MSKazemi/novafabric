@@ -263,7 +263,9 @@ def test_permissive_counts_a_live_call_through_a_custom_transport_once_and_names
     assert doc["fidelity"]["verdict"] != "faithful"
     replayed = [json.loads(line) for line in
                 (replay_dir / "model-calls.jsonl").read_text().splitlines() if line.strip()]
-    live = [r for r in replayed if r.get("status") == "live"]
+    live = [r for r in replayed
+            if r.get("extensions", {}).get("io.novafabric.replay_placeholder") == "live"]
+    assert all("status" not in r for r in live)  # its outcome was not observed
     assert len(live) == 1
     assert live[0]["gen_ai.system"] == "mistral"
     assert live[0]["extensions"]["io.novafabric.replay_surface"] == (
