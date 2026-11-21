@@ -349,6 +349,22 @@ longer forwards the submitting shell's environment (ADR-0270).
   is unchanged, as are the counters (`tool_calls_live`, `tool_calls_refused`,
   `tool_calls_unmatched`, `tool_calls_by_surface`). A strict replay, which stops at the
   divergence, still lists the call as `…:unmatched`.
+- **A mocked replay capsule's placeholder records failed schema validation** (works
+  today). For each call it did not serve, a mocked replay writes a placeholder record into
+  its capsule's `tool-calls.jsonl` or `model-calls.jsonl`. Those records (`replay-live-2`
+  and the like) had no ULID id, a `status` outside the enum (`live`, `refused`) and were
+  missing most required fields, so no schema-checking reader could load the replay capsule.
+  A placeholder now holds only what the replay observed: a fresh ULID, `schema_version`, the
+  tool name or model provider, the mutation class when known, and the surface. Its status is
+  `denied` when the replay stopped the call before it ran, and absent when the call ran live,
+  because the replay never saw how it ended. It has no timing, span, arguments or result.
+  What it is stays in `extensions["io.novafabric.replay_placeholder"]` (`live`, `refused`,
+  `unmatched`). The `tool-call` and `model-call` schemas (packaged and dashboard copies) gain
+  an additive placeholder branch: only a record carrying that extension may omit the
+  unobserved fields, and every other record is validated exactly as before. `nova diff`
+  now marks a pair holding a placeholder (`replay_placeholder_a` / `replay_placeholder_b`,
+  and `(replay placeholder: live, not recorded)` in text output). The pair still counts as
+  changed, so `--assert-no-regressions` still fails on it.
 
 ## [0.108.0] - 2026-10-25
 

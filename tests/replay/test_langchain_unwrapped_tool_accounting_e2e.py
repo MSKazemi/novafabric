@@ -522,7 +522,112 @@ def test_an_unservable_call_that_then_runs_live_or_is_refused_is_one_replayed_ca
     lines = (env.last_replay_dir / "tool-calls.jsonl").read_text().splitlines()
     replayed = [json.loads(line) for line in lines if line.strip()]
     assert len(replayed) == executed, replayed
-    assert [r["status"] for r in replayed] == [status] * executed, replayed
+    assert [r["extensions"][PLACEHOLDER] for r in replayed] == [status] * executed, replayed
+
+
+_MODEL_SCHEMA = json.loads(
+    (REPO / "src" / "novafabric" / "schemas" / "model-call.schema.json").read_text()
+)
+_UI_SCHEMAS = REPO / "ui" / "dashboard" / "src" / "data" / "schemas"
+PLACEHOLDER = "io.novafabric.replay_placeholder"
+
+
+def _replay_capsule_records(replay_dir: Path, name: str) -> list[dict[str, Any]]:
+    path = replay_dir / name
+    return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+
+
+def _assert_replay_capsule_streams_validate(replay_dir: Path) -> list[dict[str, Any]]:
+    """Every line of the replay capsule's two call streams validates against the
+    shipped schemas (packaged and dashboard copies); returns the tool records."""
+    checker = jsonschema.FormatChecker()
+    streams = (("tool-calls.jsonl", "tool-call"), ("model-calls.jsonl", "model-call"))
+    for name, schema_name in streams:
+        packaged = _TOOL_SCHEMA if schema_name == "tool-call" else _MODEL_SCHEMA
+        dashboard = json.loads((_UI_SCHEMAS / f"{schema_name}.schema.json").read_text())
+        for record in _replay_capsule_records(replay_dir, name):
+            jsonschema.validate(record, packaged, format_checker=checker)
+            jsonschema.validate(record, dashboard, format_checker=checker)
+    return _replay_capsule_records(replay_dir, "tool-calls.jsonl")
+
+
+@pytest.mark.parametrize(
+    ("flags", "kind"),
+    [
+        (("--permissive", "--allow-unknown-mutation"), "live"),
+        (("--permissive",), "refused"),
+        ((), "served"),
+    ],
+)
+def test_replay_capsule_records_validate_against_the_shipped_schemas(
+    env: Env, monkeypatch: pytest.MonkeyPatch, flags: tuple[str, ...], kind: str
+) -> None:
+    """The replay capsule's ``tool-calls.jsonl`` held placeholder records
+    (``replay-live-N``) missing every required field but three, with a
+    ``status`` outside the enum: no schema-checking reader could load it. A
+    placeholder now validates and says only what replay knows -- it is a
+    placeholder (``io.novafabric.replay_placeholder``), which tool, which
+    surface -- never a timing, an argument or a result it did not observe."""
+    if kind == "served":
+        monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "forensic")
+    capsule, _ = env.capture(PLAN)
+    monkeypatch.delenv("NOVA_CAPTURE_LEVEL", raising=False)
+    _result, _observed, cli = env.replay(capsule, *flags)
+    replay_dir = env.last_replay_dir
+    tools = _assert_replay_capsule_streams_validate(replay_dir)
+    assert tools, cli.output
+    if kind == "served":
+        recorded = {r["tool_call_id"]: r for r in env.records(capsule)}
+        assert all(PLACEHOLDER not in r.get("extensions", {}) for r in tools)
+        assert all(recorded[r["tool_call_id"]] == r for r in tools)
+        return
+    for record in tools:
+        ext = record["extensions"]
+        assert ext[PLACEHOLDER] == kind
+        assert ext["io.novafabric.replay_surface"] == LC
+        assert record["tool_name"] in {"read_log", "write_diagnosis"}
+        # Nothing replay did not observe: no timing, arguments or result.
+        for unobserved in ("started_at", "finished_at", "duration_ms", "arguments",
+                           "result", "parent_span_id"):
+            assert unobserved not in record, (unobserved, record)
+        if kind == "refused":
+            assert record["status"] == "denied"  # refused before the body ran
+        else:
+            assert "status" not in record  # ran live; replay never saw how it ended
+
+
+def test_nova_diff_and_validate_read_a_replay_capsule_and_flag_its_placeholders(
+    env: Env,
+) -> None:
+    """``nova diff <original> <replay>`` reads the replay capsule, still fails the
+    gate on calls the replay ran live (fail closed), and marks each such pair as a
+    replay placeholder -- what the replay did not record is not presented as a
+    recorded call. ``nova validate`` accepts the replay directory."""
+    capsule, _ = env.capture(PLAN)
+    env.replay(capsule, "--permissive", "--allow-unknown-mutation")
+    replay_dir = env.last_replay_dir
+
+    validated = runner.invoke(app, ["validate", str(replay_dir)])
+    assert validated.exit_code == 0, validated.output
+
+    diffed = runner.invoke(app, ["diff", str(capsule), str(replay_dir), "--json"])
+    assert diffed.exit_code == 0, diffed.output
+    report = json.loads(diffed.output)
+    assert report["skipped_malformed_lines"]["b"] == {"model_calls": 0, "tool_calls": 0}
+    pairs = report["sections"]["tool_calls"]["pairs"]
+    assert sorted(p["tool_name"] for p in pairs) == ["read_log", "write_diagnosis"]
+    for pair in pairs:
+        assert pair["changed"] is True, pair  # never "unchanged": replay did not see it
+        assert pair["replay_placeholder_b"] == "live", pair
+        assert "replay_placeholder_a" not in pair, pair
+
+    text = runner.invoke(app, ["diff", str(capsule), str(replay_dir)])
+    assert "~ read_log (replay placeholder: live, not recorded)" in text.output, text.output
+
+    gate = runner.invoke(
+        app, ["diff", str(capsule), str(replay_dir), "--assert-no-regressions"]
+    )
+    assert gate.exit_code == 1, gate.output
 
 
 # ── replay: capsules written before this change ──────────────────────────────

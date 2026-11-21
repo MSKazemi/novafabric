@@ -10,7 +10,9 @@ dispatchers served (and the records a served nested ``record.tool`` boundary
 covered), in the order the replay reached them, plus one placeholder record for
 each call that was not served from the capsule (``io.novafabric.replay_placeholder``:
 ``live``, ``refused`` or ``unmatched``). The replayed process's own requests are
-not recorded -- a placeholder carries no request or response. Its
+not recorded -- a placeholder carries no request or response, timing or span:
+only what the replay observed, valid under the ``tool-call`` / ``model-call``
+schemas' placeholder branch. Its
 ``outputs/stdout.txt`` / ``outputs/stderr.txt`` are the replayed streams, written
 only when not empty (as ``nova capture`` writes them) and passed through the same
 built-in secret scanner capture uses, whose proof is ``redaction-proof.json``.
@@ -25,6 +27,8 @@ from typing import Any
 
 import yaml
 
+from novafabric.capsule.ulid_util import new_ulid
+from novafabric.capture._tool_codec import MUTATION_CLASSES
 from novafabric.capture.record_roles import RECORD_ROLE_EXT, ROLE_LOGICAL
 from novafabric.replay._contract import (
     MODEL_SURFACES,
@@ -39,6 +43,10 @@ logger = logging.getLogger(__name__)
 #: Extension key on a record the replay capsule holds for a call that was not
 #: served from the capsule.
 PLACEHOLDER_EXT = "io.novafabric.replay_placeholder"
+#: On a placeholder: the intercepted surface the call was made on.
+REPLAY_SURFACE_EXT = "io.novafabric.replay_surface"
+#: ``schema_version`` of the call records (``tool-call`` / ``model-call`` 0.1.0).
+RECORD_SCHEMA_VERSION = "0.1.0"
 
 REPLAY_CAPSULE_FILE = "capsule.yaml"
 
@@ -74,30 +82,48 @@ def write_capsule_streams(
     return path
 
 
-def _model_placeholder(n: int, ev: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "model_call_id": f"replay-live-{n}",
-        "gen_ai.system": ev.get("provider"),
-        "status": "live",
-        "gen_ai.response.choices": [],
-        "extensions": {
-            RECORD_ROLE_EXT: ROLE_LOGICAL,
-            PLACEHOLDER_EXT: "live",
-            "io.novafabric.replay_surface": ev.get("surface"),
-        },
-    }
+def _text(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
-def _tool_placeholder(n: int, ev: dict[str, Any], kind: str) -> dict[str, Any]:
-    return {
-        "tool_call_id": f"replay-{kind}-{n}",
-        "tool_name": ev.get("tool_name"),
-        "status": kind,
-        "extensions": {
-            PLACEHOLDER_EXT: kind,
-            "io.novafabric.replay_surface": ev.get("surface") or TOOL_SURFACE_MCP,
-        },
+def _model_placeholder(ev: dict[str, Any]) -> dict[str, Any]:
+    """A model call that ran live. Only what the replay observed: which provider
+    and surface -- never a request, a response, a timing or a status (the replay
+    did not see how it ended). Valid under the schemas' placeholder branch."""
+    extensions: dict[str, Any] = {RECORD_ROLE_EXT: ROLE_LOGICAL, PLACEHOLDER_EXT: "live"}
+    surface = _text(ev.get("surface"))
+    if surface is not None:
+        extensions[REPLAY_SURFACE_EXT] = surface
+    record: dict[str, Any] = {
+        "schema_version": RECORD_SCHEMA_VERSION,
+        "model_call_id": new_ulid(),
     }
+    provider = _text(ev.get("provider"))
+    if provider is not None:
+        record["gen_ai.system"] = provider
+    record["extensions"] = extensions
+    return record
+
+
+def _tool_placeholder(ev: dict[str, Any], kind: str) -> dict[str, Any]:
+    """A tool call the replay did not serve (``kind``: ``live``, ``refused`` or
+    ``unmatched``). ``status`` is ``denied`` when the replay stopped it before it
+    ran, and absent when it ran live (its outcome was not observed)."""
+    record: dict[str, Any] = {
+        "schema_version": RECORD_SCHEMA_VERSION,
+        "tool_call_id": new_ulid(),
+        "tool_name": _text(ev.get("tool_name")) or "unknown",
+    }
+    mutation_class = ev.get("mutation_class")
+    if mutation_class in MUTATION_CLASSES:
+        record["mutation_class"] = mutation_class
+    if kind != "live":
+        record["status"] = "denied"
+    record["extensions"] = {
+        PLACEHOLDER_EXT: kind,
+        REPLAY_SURFACE_EXT: _text(ev.get("surface")) or TOOL_SURFACE_MCP,
+    }
+    return record
 
 
 class _ToolRecords:
@@ -138,19 +164,17 @@ def replayed_streams(
             if queue in MODEL_SURFACES and 0 <= index < len(records):
                 models_out.append(records[index])
         elif kind == "model_live":
-            models_out.append(_model_placeholder(len(models_out) + 1, ev))
+            models_out.append(_model_placeholder(ev))
         elif kind in ("tool_mocked", "tool_covered"):
             record = tools.take(ev.get("record_id"), ev.get("tool_name"))
             if record is not None:
                 tools_out.append(record)
         elif kind in ("tool_live", "tool_refused"):
-            tools_out.append(
-                _tool_placeholder(len(tools_out) + 1, ev, kind.removeprefix("tool_"))
-            )
+            tools_out.append(_tool_placeholder(ev, kind.removeprefix("tool_")))
         elif kind == "divergence" and ev.get("kind") in (
             "tool_call_unmatched", "tool_result_not_servable",
         ):
-            tools_out.append(_tool_placeholder(len(tools_out) + 1, ev, "unmatched"))
+            tools_out.append(_tool_placeholder(ev, "unmatched"))
     return models_out, tools_out
 
 
