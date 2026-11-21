@@ -13,6 +13,29 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed — BREAKING
 
+- **A strict mocked replay fails when the replayed process tree connects past loopback** (works today, ADR-0319
+  amendment). Before, an IPv4/IPv6 connection that no served surface answered was only counted
+  (`network_connections_live`) and the replay could still end `status: success`: a model provider replay does not
+  know, a gRPC transport, a raw-HTTP tool or an MCP server child's own package-index check ran live with no
+  divergence. Served surfaces answer in-process and never open a socket, so a strict `nova replay` now turns every
+  connect attempt to a destination other than loopback (127.0.0.0/8, `::1`, `localhost`) by the replayed process
+  or a Python child that reported in into the divergence `unserved_network` (`connections`, `destinations`): `status:
+  failure`, `error.type: ReplayDivergence`, exit 1, and a `✗ unserved network: …` line naming the destinations. The
+  connection itself is observed, not blocked (`--hermetic` blocks). New additive fields
+  `replay_contract.network_connections_unserved`, `network_destinations_unserved` and `unserved_network_policy`
+  (`divergence` | `reported`). `--permissive` keeps the old behaviour: counted and reported, no divergence. Loopback
+  and AF_UNIX connections are unaffected (still counted in `network_connections_live`). A Bedrock replay with no AWS
+  credentials in its environment now fails strict too: botocore asks the EC2 metadata service (169.254.169.254)
+  before any request — set any credentials or `AWS_EC2_METADATA_DISABLED=true`.
+- **Google Gemini API and Vertex AI calls over HTTP are recorded, and a strict mocked replay refuses them** (works
+  today). Before, neither host was in the URL registry, so a `google-genai` call (REST over `httpx`) left no
+  model-call record and mocked replay neither served nor refused it. The vendored registry now classifies
+  `generativelanguage.googleapis.com` as `gcp.gemini` and `aiplatform.googleapis.com` /
+  `<region>-aiplatform.googleapis.com` as `gcp.vertex_ai` (anchored regexes, https only; request only, like
+  Mistral or Cohere), so a strict `nova replay` stops before anything runs (`ModelSurfaceNotServable`) and
+  `--permissive` counts them in `model_calls_not_servable`. The whole host is matched, so Vertex control-plane
+  requests are recorded as model calls too. A gRPC transport is not recorded; a strict replay fails on its
+  connection (`unserved_network`).
 - **Mocked replay refuses a capsule whose recorded model calls it cannot serve** (works today, ADR-0319). Before,
   a model call recorded by the wire hook on a surface replay does not serve (Ollama, Hugging Face `InferenceClient`,
   other providers' raw HTTP; or a served surface with no recorded response) was ignored: the replay said

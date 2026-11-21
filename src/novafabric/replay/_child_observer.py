@@ -227,13 +227,82 @@ class ProcessObserver:
             self._events.emit("child_process_capped", cap=self._cap)
 
 
-class SocketObserver:
-    """Report -- never block -- IPv4/IPv6 connection attempts of this process."""
+#: Logged once per process, past :data:`NETWORK_EVENT_CAP`, for the first
+#: non-loopback attempt: the cap stops listing connections, never hides that the
+#: process reached past loopback (the strict ``unserved_network`` rule).
+UNSERVED_NETWORK_AFTER_CAP_EVENT = "network_unserved_after_cap"
+
+#: Host names that resolve to loopback without asking DNS (RFC 6761 section 6.3).
+_LOOPBACK_NAMES = ("localhost",)
+
+
+def is_loopback_host(host: Any) -> bool:
+    """Is *host* -- the address a ``connect`` was given -- this machine itself?
+
+    True for 127.0.0.0/8, ``::1``, an IPv4-mapped loopback address, the unspecified
+    addresses ``0.0.0.0`` / ``::`` (a connect to them reaches this host on Linux),
+    and ``localhost`` or a name under ``.localhost``. Everything else -- every other
+    address and every other name, whatever it resolves to -- is not: the rule must
+    never call a destination local that might not be.
+    """
+    import ipaddress
+
+    if not isinstance(host, str) or not host:
+        return False
+    name = host.strip().rstrip(".").lower()
+    if name in _LOOPBACK_NAMES or name.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(name.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return bool(address.is_loopback or address.is_unspecified)
+
+
+class ConnectCounter:
+    """Log IPv4/IPv6 connect attempts of this process: host and port, never a payload.
+
+    One ``network_live`` event per attempt up to *cap*, then one
+    ``network_live_capped``; past the cap, the first attempt to a non-loopback
+    destination is still logged once (:data:`UNSERVED_NETWORK_AFTER_CAP_EVENT`).
+    Never raises.
+    """
 
     def __init__(self, events: Any, *, cap: int = NETWORK_EVENT_CAP) -> None:
         self._events = events
         self._cap = cap
         self._count = 0
+        self._unserved_after_cap = False
+
+    def seen(self, sock: Any, address: Any) -> None:
+        try:
+            import socket
+
+            if getattr(sock, "family", None) not in (socket.AF_INET, socket.AF_INET6):
+                return
+            if not isinstance(address, tuple) or len(address) < 2:
+                return
+            self._count += 1
+            host, port = str(address[0]), int(address[1])
+            if self._count <= self._cap:
+                self._events.emit("network_live", host=host, port=port)
+                return
+            if self._count == self._cap + 1:
+                self._events.emit("network_live_capped", cap=self._cap)
+            if not self._unserved_after_cap and not is_loopback_host(host):
+                self._unserved_after_cap = True
+                self._events.emit(UNSERVED_NETWORK_AFTER_CAP_EVENT, host=host, port=port)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            pass
+
+
+class SocketObserver:
+    """Report -- never block -- IPv4/IPv6 connection attempts of this process."""
+
+    def __init__(self, events: Any, *, cap: int = NETWORK_EVENT_CAP) -> None:
+        self._counter = ConnectCounter(events, cap=cap)
 
     def install(self) -> bool:
         try:
@@ -257,20 +326,7 @@ class SocketObserver:
         return observed
 
     def seen(self, sock: Any, address: Any) -> None:
-        try:
-            import socket
-
-            if getattr(sock, "family", None) not in (socket.AF_INET, socket.AF_INET6):
-                return
-            if not isinstance(address, tuple) or len(address) < 2:
-                return
-            self._count += 1
-            if self._count <= self._cap:
-                self._events.emit("network_live", host=str(address[0]), port=int(address[1]))
-            elif self._count == self._cap + 1:
-                self._events.emit("network_live_capped", cap=self._cap)
-        except Exception:  # noqa: BLE001 -- observation must never break the workload
-            pass
+        self._counter.seen(sock, address)
 
 
 def _under(path: str, root: str) -> bool:

@@ -539,6 +539,7 @@ def _print_network(contract: dict[str, Any]) -> None:
         if unobserved or contract.get("child_processes_capped"):
             line += "; a lower bound (network_observation_coverage: partial)"
         console.print(line, markup=False, highlight=False)
+        _print_unserved_network(contract)
     if not children:
         return
     names = ", ".join(contract.get("child_processes_argv0") or []) or "unnamed"
@@ -560,6 +561,29 @@ def _print_network(contract: dict[str, Any]) -> None:
             f"  {started}; {'all reported their' if children != 1 else 'it reported its'} "
             "connections (counted above); file activity is not observed",
             markup=False, highlight=False,
+        )
+
+
+def _print_unserved_network(contract: dict[str, Any]) -> None:
+    """W0 (ADR-0319 amendment): connect attempts past loopback no served surface
+    answered -- a divergence in a strict replay, reported under ``--permissive``."""
+    unserved = int(contract.get("network_connections_unserved") or 0)
+    if not unserved:
+        return
+    where = ", ".join(contract.get("network_destinations_unserved") or [])
+    line = (
+        f"  ✗ unserved network: {_plural(unserved, 'non-loopback connection attempt')}"
+        f" no served surface answered ({where})"
+    )
+    if contract.get("unserved_network_policy") == "reported":
+        console.print(
+            line + " — reported (--permissive); strict mode fails on it (unserved_network)",
+            style="yellow", markup=False, highlight=False,
+        )
+    else:
+        console.print(
+            line + " — divergence unserved_network: the replay is not offline",
+            style="red", markup=False, highlight=False,
         )
 
 

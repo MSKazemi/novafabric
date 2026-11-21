@@ -376,6 +376,17 @@ async def _run_step(step, session):
         socket.create_connection(("127.0.0.1", srv.getsockname()[1])).close()
         srv.close()
         return {"op": op}
+    if op == "net_out":
+        # A non-loopback connect attempt nothing serves (TEST-NET-1, RFC 5737: never
+        # routed). Non-blocking, so it returns at once and no reply is awaited.
+        import socket
+        s = socket.socket()
+        s.setblocking(False)
+        try:
+            s.connect_ex((step.get("host", "192.0.2.1"), int(step.get("port", 9))))
+        finally:
+            s.close()
+        return {"op": op}
     if op == "parse":
         _openai_client().chat.completions.parse(**CHAT)
         return {"op": op}

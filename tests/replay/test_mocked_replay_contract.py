@@ -738,7 +738,12 @@ def test_summary_counts_network_events_and_caps_destinations() -> None:
     assert out["network_observed"] is True
     assert len(out["network_destinations"]) == 20
     assert out["network_connections_capped"] is True
-    assert not report.diverged  # observation alone is never a divergence
+    # W0 (ADR-0319 amendment): in a strict replay a connection past loopback is the
+    # divergence unserved_network; under --permissive it is only counted.
+    assert [d["kind"] for d in report.divergences] == ["unserved_network"]
+    permissive = summarize([], [], events, divergence_policy="warn", substitute_tools=True)
+    assert permissive.network_connections_live == 40
+    assert not permissive.diverged
 
 
 # ── ADR-0306 slice 1: per-surface counters, the not-servable kind ───────────

@@ -1325,8 +1325,12 @@ part. Processes started (`ssh`, `curl`, `git`, …) are counted in
 `replay_contract.child_processes_spawned` and named in `child_processes_argv0`; those that
 did not report their own connections are counted in `child_processes_unobserved`, and
 `network_observation_coverage: partial` marks the connection count as a lower bound —
-`nova replay` says so in words. File activity is not observed. Report-only, except that an
-unobserved child keeps the fidelity verdict from `faithful`. Up to v0.108.0 a child whose
+`nova replay` says so in words. File activity is not observed. In a strict replay, any
+connection past loopback (not 127.0.0.0/8, `::1` or `localhost`) by an observed process is
+the divergence `unserved_network` and fails the replay (`✗ unserved network: …` line,
+`replay_contract.network_connections_unserved` / `network_destinations_unserved`,
+`unserved_network_policy: divergence`); `--permissive` counts it (`reported`). The child
+counts are report-only, except that an unobserved child keeps the fidelity verdict from `faithful`. Up to v0.108.0 a child whose
 environment was stripped was not observed and the replay reported `0` connections for it.
 
 **Per-tool overrides** (experimental, since v0.105.0, ADR-0306). A capsule's `replay.yaml`

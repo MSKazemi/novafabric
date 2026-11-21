@@ -817,7 +817,11 @@ level. Results must be
 JSON-native (no tuples or objects) and at most 1 MiB. See
 [Python API: `record.tool`](python-api.md#extended-event-recording-experimental).
 The result lists the outbound connections the replay made
-(`replay_contract.network_connections_live`); they are reported, not blocked.
+(`replay_contract.network_connections_live`); they are reported, not blocked. In a
+strict replay (the default) a connection past loopback fails the replay with the
+divergence `unserved_network`, since nothing served opens a socket
+(`replay_contract.network_connections_unserved`; `--permissive` only counts it;
+works today, unreleased).
 Since v0.105.0 (experimental), a recorded call that failed (a rate limit, a 4xx, a 5xx
 after the SDK's retries, a timeout) is replayed by raising the same SDK exception class at the same
 position, so the workload's error handling runs again.

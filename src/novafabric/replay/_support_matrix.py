@@ -66,6 +66,8 @@ _LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
 _CHILDNET = "tests/replay/test_child_process_network.py"
 _HERMETIC = "tests/replay/test_hermetic_replay.py"
 _LG_ADAPTER = "tests/replay/test_langgraph_adapter_replay_e2e.py"
+_GEMINI = "tests/replay/test_gemini_vertex_not_servable_e2e.py"
+_UNSERVED_NET = "tests/replay/test_unserved_network.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -342,6 +344,31 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_HF}::test_only_the_two_hugging_face_inference_hosts_are_classified",
             f"{_HF}::test_a_streamed_response_is_not_read_by_the_hook",
             f"{_HF}::test_real_inference_client_sync_chat_is_recorded_once_with_honest_identity",
+        ),
+    ),
+    SurfaceRow(
+        surface=(
+            "Google Gemini API and Vertex AI over HTTP (`google-genai` REST: "
+            "`generativelanguage.googleapis.com`, `[<region>-]aiplatform.googleapis.com`)"
+        ),
+        capture=(
+            "wire hook (`gcp.gemini`, `gcp.vertex_ai`): request, status, timing; the "
+            "response is never read"
+        ),
+        replay="refused",
+        replay_note=(
+            "not intercepted and recorded without a response, so a strict replay **refuses "
+            "to start** (`ModelSurfaceNotServable`, ADR-0319); `--permissive` runs it **live** "
+            "and reports it in `model_calls_not_servable`; a gRPC transport is not recorded "
+            "and a strict replay fails on its connection (`unserved_network`)"
+        ),
+        streaming="request recorded; stream not read",
+        asynchronous="request recorded",
+        status="capture only",
+        evidence=(
+            f"{_GEMINI}::test_capture_records_the_call_and_strict_replay_refuses_it",
+            f"{_GEMINI}::test_permissive_replay_runs_it_and_counts_it_not_servable",
+            f"{_GEMINI}::test_look_alikes_and_other_google_apis_are_not_gemini_or_vertex",
         ),
     ),
     SurfaceRow(
@@ -741,7 +768,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "of its Python children -- also those whose environment drops the replay's "
             "variables, such as MCP stdio servers -- are reported "
             "(`network_connections_live`, `network_observation_scope: python-process`), "
-            "files are not; child processes are counted and named "
+            "and in a strict replay any connection past loopback **fails the replay** "
+            "(divergence `unserved_network`; `--permissive` counts it in "
+            "`network_connections_unserved`); files are not; child processes are counted and named "
             "(`child_processes_spawned`, `child_processes_argv0`), and one that is not "
             "observed (a non-Python program) is counted in `child_processes_unobserved` "
             "with `network_observation_coverage: partial` (ADR-0319); `--hermetic` "
@@ -761,6 +790,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_CHILDNET}::"
             "test_a_non_python_child_is_counted_unobserved_and_the_count_is_a_lower_bound",
             f"{_HERMETIC}::test_hermetic_replay_reaches_no_host_service_from_any_process",
+            f"{_UNSERVED_NET}::test_e2e_strict_replay_fails_on_an_unserved_non_loopback_connection",
+            f"{_UNSERVED_NET}::test_e2e_permissive_replay_counts_it_and_does_not_diverge",
+            f"{_UNSERVED_NET}::test_a_child_process_connection_is_unserved_network_too",
         ),
     ),
 )

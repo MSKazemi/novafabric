@@ -46,6 +46,13 @@ from novafabric.capture.record_roles import (
     is_transport_record,
 )
 from novafabric.replay._model_errors import is_recorded_model_error
+from novafabric.replay._unserved_network import (
+    MAX_LISTED_UNSERVED_DESTINATIONS,
+    UNSERVED_NETWORK_AFTER_CAP_EVENT,
+    is_loopback_host,
+    policy_for,
+    unserved_network_divergence,
+)
 
 #: Model API surfaces mocked replay serves from the capsule, keyed by replay
 #: queue (``model_queue_key``). Each is served sync and async, with and without
@@ -847,6 +854,12 @@ class ReplayContractReport:
     network_connections_live: int = 0
     network_connections_capped: bool = False
     network_destinations: list[str] = field(default_factory=list)
+    #: W0 (ADR-0319 amendment): connect attempts past loopback -- none of them is a
+    #: served surface, which answers in-process -- and their distinct destinations;
+    #: a strict replay diverges on any (``unserved_network``).
+    network_connections_unserved: int = 0
+    network_connections_unserved_children: int = 0
+    network_destinations_unserved: list[str] = field(default_factory=list)
     divergences: list[dict[str, Any]] = field(default_factory=list)
     #: ``replay.yaml`` overrides and whether this replay honours each
     #: (ADR-0306 D11); written only when the capsule has overrides.
@@ -967,6 +980,11 @@ class ReplayContractReport:
             "network_connections_live": self.network_connections_live,
             "network_destinations": self.network_destinations[:MAX_LISTED_NETWORK_DESTINATIONS],
             "network_observation_scope": NETWORK_OBSERVATION_SCOPE,
+            "network_connections_unserved": self.network_connections_unserved,
+            "network_destinations_unserved": self.network_destinations_unserved[
+                :MAX_LISTED_UNSERVED_DESTINATIONS
+            ],
+            "unserved_network_policy": policy_for(self.divergence_policy),
             "model_calls_not_servable_by_system": {
                 k: {"count": int(v.get("count", 0)), "hosts": list(v.get("hosts") or [])}
                 for k, v in self.model_calls_not_servable_by_system.items()
@@ -1025,6 +1043,15 @@ _SURFACE_COUNTERS = (
     "recorded", "available", "mocked", "live", "refused", "unmatched", "covered",
     "unconsumed",
 )
+
+
+def _count_unserved(report: ReplayContractReport, destination: str, *, child: bool) -> None:
+    """One connect attempt past loopback (W0, ``_unserved_network``)."""
+    report.network_connections_unserved += 1
+    if child:
+        report.network_connections_unserved_children += 1
+    if destination not in report.network_destinations_unserved:
+        report.network_destinations_unserved.append(destination)
 
 
 def _fold_observer_started(
@@ -1162,13 +1189,21 @@ def summarize(
             report.network_observed = True
         elif kind == "network_live":
             report.network_connections_live += 1
-            if root_pid is not None and ev.get("pid") != root_pid:
+            child = root_pid is not None and ev.get("pid") != root_pid
+            if child:
                 report.network_connections_live_children += 1
             destination = f"{ev.get('host')}:{ev.get('port')}"
             if destination not in report.network_destinations:
                 report.network_destinations.append(destination)
+            if not is_loopback_host(ev.get("host")):
+                _count_unserved(report, destination, child=child)
         elif kind == "network_live_capped":
             report.network_connections_capped = True
+        elif kind == UNSERVED_NETWORK_AFTER_CAP_EVENT:
+            # Past the per-process cap: not in network_connections_live (capped),
+            # but never hidden from the unserved count.
+            child = root_pid is not None and ev.get("pid") != root_pid
+            _count_unserved(report, f"{ev.get('host')}:{ev.get('port')}", child=child)
         elif kind == "process_observer_installed":
             report.child_processes_observed = True
         elif kind == "observer_started":
@@ -1275,6 +1310,18 @@ def summarize(
                 "message": message,
                 "unconsumed": {s: n for s, n, _ in leftover},
             })
+    unserved = unserved_network_divergence(
+        divergence_policy=divergence_policy,
+        connections=report.network_connections_unserved,
+        connections_children=report.network_connections_unserved_children,
+        destinations=report.network_destinations_unserved,
+        lower_bound=(
+            report.network_connections_capped
+            or report.network_observation_coverage == COVERAGE_PARTIAL
+        ),
+    )
+    if unserved is not None:
+        report.divergences.append(unserved)
     report.adapter_runs_expected = adapter_runs_expected
     if (
         adapter_runs_expected is not None

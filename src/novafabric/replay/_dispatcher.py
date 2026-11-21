@@ -64,7 +64,7 @@ from novafabric.replay._bedrock_serve import (
 )
 from novafabric.replay._bedrock_serve import request_json as bedrock_request_json
 from novafabric.replay._bedrock_serve import request_queue as bedrock_request_queue
-from novafabric.replay._child_observer import start_tree_observation
+from novafabric.replay._child_observer import ConnectCounter, start_tree_observation
 from novafabric.replay._contract import (
     ECHO_DIFFERS,
     ECHO_NO_COUNTERPART,
@@ -2041,8 +2041,10 @@ class NetworkObserver:
     Patches ``socket.socket.connect`` / ``connect_ex`` (the methods
     ``socket.create_connection``, ``httpx``/``requests`` and ``asyncio`` call)
     and logs one ``network_live`` event per IPv4/IPv6 connection attempt with its
-    host and port -- never a payload. A mocked replay can therefore say whether
-    anything outside the intercepted surfaces reached the network (ADR-0304).
+    host and port -- never a payload (``_child_observer.ConnectCounter``). A mocked
+    replay can therefore say whether anything outside the intercepted surfaces
+    reached the network (ADR-0304); a strict one fails when it reached past loopback
+    (``unserved_network``, ``_unserved_network``).
     Connections made by C extensions that bypass the Python ``socket`` methods,
     and by non-Python child processes, are not seen: the result says so
     (``network_observation_scope: python-process``) and counts the children
@@ -2052,9 +2054,7 @@ class NetworkObserver:
     """
 
     def __init__(self, events: ReplayEventLog, *, cap: int = NETWORK_EVENT_CAP) -> None:
-        self._events = events
-        self._cap = cap
-        self._count = 0
+        self._counter = ConnectCounter(events, cap=cap)
         self._patcher = _Patcher()
 
     def install(self) -> bool:
@@ -2076,20 +2076,7 @@ class NetworkObserver:
         return observed
 
     def seen(self, sock: Any, address: Any) -> None:
-        try:
-            import socket
-
-            if getattr(sock, "family", None) not in (socket.AF_INET, socket.AF_INET6):
-                return
-            if not isinstance(address, tuple) or len(address) < 2:
-                return
-            self._count += 1
-            if self._count <= self._cap:
-                self._events.emit("network_live", host=str(address[0]), port=int(address[1]))
-            elif self._count == self._cap + 1:
-                self._events.emit("network_live_capped", cap=self._cap)
-        except Exception:  # noqa: BLE001 -- observation must never break the workload
-            pass
+        self._counter.seen(sock, address)
 
 
 # ── subprocess entry point ───────────────────────────────────────────────────

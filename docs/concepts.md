@@ -649,7 +649,9 @@ Inside the re-spawned process:
   intercepted. The
   result reports them as `tool_calls_not_interceptable`, and the outbound
   connections the replayed process opened as `network_connections_live`
-  (observed, not blocked). *Since v0.106.0 (slice 4, experimental):*
+  (observed, not blocked). A strict replay fails when one of them goes past
+  loopback (divergence `unserved_network`; works today, unreleased) — after the
+  fact, so the side effect has happened; `--hermetic` blocks instead. *Since v0.106.0 (slice 4, experimental):*
   the result an undeclared function sends back to the model is compared with the
   recorded one and a difference is reported in `replay_contract.tool_result_echo`
   — report-only, never a failure.

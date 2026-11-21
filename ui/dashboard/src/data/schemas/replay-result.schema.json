@@ -272,6 +272,26 @@
           "minimum": 0,
           "description": "ADR-0319 (#52 part 2): the part of network_connections_live made by observed child processes."
         },
+        "network_connections_unserved": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "W0 (ADR-0319 amendment): the IPv4/IPv6 connect attempts in network_connections_live to a destination other than loopback (127.0.0.0/8, ::1, localhost), plus at most one per process past the event cap. Served surfaces answer in-process and never open a socket, so none of these was served. Under divergence_policy fail any of them is the divergence unserved_network. A lower bound when network_observation_coverage is partial."
+        },
+        "network_destinations_unserved": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "W0 (ADR-0319 amendment): distinct host:port destinations of network_connections_unserved, first 20."
+        },
+        "unserved_network_policy": {
+          "type": "string",
+          "enum": [
+            "divergence",
+            "reported"
+          ],
+          "description": "W0 (ADR-0319 amendment): what an unserved non-loopback connect attempt does -- divergence (strict replay, the default: divergence unserved_network, the replay fails) or reported (--permissive: counted only)."
+        },
         "model_calls_not_servable_by_system": {
           "type": "object",
           "additionalProperties": {
