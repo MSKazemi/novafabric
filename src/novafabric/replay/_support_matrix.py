@@ -71,6 +71,8 @@ _HERMETIC = "tests/replay/test_hermetic_replay.py"
 _LG_ADAPTER = "tests/replay/test_langgraph_adapter_replay_e2e.py"
 _GEMINI = "tests/replay/test_gemini_vertex_not_servable_e2e.py"
 _UNSERVED_NET = "tests/replay/test_unserved_network.py"
+_WIRE = "tests/replay/test_generic_wire_replay_e2e.py"
+_WIRE_UNIT = "tests/replay/test_wire_serving.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -330,23 +332,32 @@ ROWS: tuple[SurfaceRow, ...] = (
         surface="Hugging Face `InferenceClient` / `AsyncInferenceClient` (router, Endpoints)",
         capture=(
             "wire hook, the router and Endpoints hosts (any provider route): request, requested "
-            "model and selector, status, timing; the response is never read, so reported model, "
-            "served provider and token counts are not recorded"
+            "model and selector, status, timing; since ADR-0324 the response too, as generic "
+            "wire bytes copied as the workload reads them (never read ahead); reported model, "
+            "served provider and token counts are not parsed (no decoder)"
         ),
-        replay="refused",
+        replay="served",
         replay_note=(
-            "not intercepted and recorded without a response, so a strict replay **refuses "
-            "to start** (`ModelSurfaceNotServable`, ADR-0319); `--permissive` runs it **live** "
-            "and reports it in `model_calls_not_servable` and `network_connections_live`"
+            "by the generic wire engine (ADR-0324) at the httpx/httpx2 transport, like any "
+            "registry model host; not tested end to end through the real `InferenceClient`; "
+            "a capsule recorded before ADR-0324 holds no response, so a strict replay "
+            "refuses it (`ModelSurfaceNotServable`, ADR-0319)"
         ),
-        streaming="request recorded; stream not read",
-        asynchronous="request recorded",
-        status="capture only",
+        streaming="served as the recorded chunks",
+        asynchronous="served (httpx transport)",
+        status="experimental",
         evidence=(
-            f"{_HF}::test_a_hugging_face_record_is_never_a_replayable_model_call",
+            f"{_HF}::test_a_hugging_face_record_is_a_generic_wire_call_with_its_response",
             f"{_HF}::test_only_the_two_hugging_face_inference_hosts_are_classified",
             f"{_HF}::test_a_streamed_response_is_not_read_by_the_hook",
             f"{_HF}::test_real_inference_client_sync_chat_is_recorded_once_with_honest_identity",
+            f"{_WIRE}::test_a_mistral_chat_completion_round_trips",
+        ),
+        patches=(
+            ("httpx", "HTTPTransport", "handle_request"),
+            ("httpx", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx2", "HTTPTransport", "handle_request"),
+            ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
         ),
     ),
     SurfaceRow(
@@ -355,22 +366,29 @@ ROWS: tuple[SurfaceRow, ...] = (
             "`generativelanguage.googleapis.com`, `[<region>-]aiplatform.googleapis.com`)"
         ),
         capture=(
-            "wire hook (`gcp.gemini`, `gcp.vertex_ai`): request, status, timing; the "
-            "response is never read"
+            "wire hook (`gcp.gemini`, `gcp.vertex_ai`): recorded with its response by the "
+            "generic wire layer (row below); `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off`: request, "
+            "status, timing only"
         ),
-        replay="refused",
+        replay="served",
         replay_note=(
-            "not intercepted and recorded without a response, so a strict replay **refuses "
-            "to start** (`ModelSurfaceNotServable`, ADR-0319); `--permissive` runs it **live** "
-            "and reports it in `model_calls_not_servable`; a gRPC transport is not recorded "
-            "and a strict replay fails on its connection (`unserved_network`)"
+            "served by the generic wire layer at the `httpx` transport (row below); with "
+            "responses off a strict replay **refuses to start** (`ModelSurfaceNotServable`, "
+            "ADR-0319) and `--permissive` runs it **live**, reported in "
+            "`model_calls_not_servable`; a client using its own `httpx` transport is not "
+            "served (the record stays unconsumed, a strict replay fails); a gRPC transport is "
+            "not recorded and a strict replay fails on its connection (`unserved_network`)"
         ),
-        streaming="request recorded; stream not read",
-        asynchronous="request recorded",
-        status="capture only",
+        streaming="as the generic wire row",
+        asynchronous="as the generic wire row",
+        status="experimental",
         evidence=(
-            f"{_GEMINI}::test_capture_records_the_call_and_strict_replay_refuses_it",
-            f"{_GEMINI}::test_permissive_replay_runs_it_and_counts_it_not_servable",
+            f"{_GEMINI}::test_by_default_the_response_is_recorded_and_the_record_is_servable",
+            f"{_GEMINI}::test_without_wire_responses_strict_replay_refuses_it_up_front",
+            f"{_GEMINI}::test_without_wire_responses_permissive_runs_it_and_counts_it_not_servable",
+            f"{_GEMINI}::test_a_custom_transport_that_bypasses_serving_fails_strict_never_success",
+            f"{_WIRE}::"
+            "test_gemini_generate_content_and_an_openai_compatible_local_server_are_served",
             f"{_GEMINI}::test_look_alikes_and_other_google_apis_are_not_gemini_or_vertex",
         ),
     ),
@@ -407,9 +425,11 @@ ROWS: tuple[SurfaceRow, ...] = (
             "`OLLAMA_BASE_URL`/`OLLAMA_HOST` at call time) and hosts the capsule "
             "recorded; one queue per endpoint, in order; exhaustion and endpoint "
             "mismatch fail closed; records captured before ADR-0320 (no response) are "
-            "never served; `/api/embed` is refused like any unserved model call; "
-            "`/api/tags`, `/api/show`, `/api/version` and `/api/ps` run no model, so they "
-            "are not refused: they run live and their connections are reported (ADR-0319)"
+            "never served; every other Ollama endpoint (`/api/embed`, `/v1/...`, `/api/tags`) "
+            "is a generic wire call (ADR-0324) in a capsule recorded since; in an older "
+            "capsule `/api/embed` is refused like any unserved model call and `/api/tags`, "
+            "`/api/show`, `/api/version`, `/api/ps` run no model, so they run live and "
+            "their connections are reported (ADR-0319)"
         ),
         streaming=(
             "served as NDJSON in the recorded chunks, ending with the `done` object; "
@@ -482,17 +502,69 @@ ROWS: tuple[SurfaceRow, ...] = (
     ),
     SurfaceRow(
         surface=(
-            "Other providers' SDKs, raw HTTP to a model API (any registry host), "
-            "or a served surface whose response was not recorded"
+            "Any registry model host over `httpx`/`httpx2` or `requests` that no dedicated "
+            "server claims: Mistral, Cohere, Together, Gemini REST, OpenAI-compatible local "
+            "servers, raw HTTP (generic wire, ADR-0324)"
         ),
-        capture="wire hook: request only",
+        capture=(
+            "wire hook: the request, a match key (method, path, digest of the canonical "
+            "query and body, credentials excluded) and the response: status, allowlisted "
+            "headers (never `set-cookie`/`location`), the body as UTF-8 text chunks in read "
+            "order, copied as the workload reads it; marked `io.novafabric.api_surface: "
+            "generic-wire`; not under an SDK call (the SDK hook records those); "
+            "`NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` records no body"
+        ),
+        replay="served",
+        replay_note=(
+            "at the httpx/httpx2 transport and urllib3 `HTTPConnectionPool.urlopen` (how "
+            "`requests` sends), only when the capsule holds such a record; one ordered "
+            "queue; a request that differs in method, `gen_ai.system`, path or canonical "
+            "query/body is the `wire_request_mismatch` divergence (strict: refused, never "
+            "live; `--permissive`: runs live, counted); headers are ignored; a recorded HTTP "
+            "error (e.g. a 429 the client retried) is served back as recorded"
+        ),
+        streaming=(
+            "served as the recorded chunks (SSE, NDJSON or any text framing); a streamed "
+            "body with a `content-encoding` or a binary body is not recorded (refused)"
+        ),
+        asynchronous="served (httpx `AsyncClient`); `aiohttp`: not served (planned)",
+        status="experimental",
+        evidence=(
+            f"{_WIRE}::test_a_mistral_chat_completion_round_trips",
+            f"{_WIRE}::test_a_streamed_sse_response_is_replayed_with_identical_chunks",
+            f"{_WIRE}::"
+            "test_gemini_generate_content_and_an_openai_compatible_local_server_are_served",
+            f"{_WIRE}::test_a_changed_request_body_at_replay_is_a_divergence_never_live",
+            f"{_WIRE}::test_a_changed_request_body_under_permissive_runs_live_and_is_counted",
+            f"{_WIRE}::test_changed_volatile_headers_and_credentials_still_match",
+            f"{_WIRE}::test_a_recorded_http_error_and_its_retry_are_served_as_recorded",
+            f"{_WIRE_UNIT}::test_a_served_record_never_carries_a_header_outside_the_allowlist",
+            f"{_WIRE_UNIT}::"
+            "test_capture_stores_a_body_only_for_a_logical_call_no_dedicated_server_claims",
+        ),
+        patches=(
+            ("httpx", "HTTPTransport", "handle_request"),
+            ("httpx", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx2", "HTTPTransport", "handle_request"),
+            ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
+            ("urllib3.connectionpool", "HTTPConnectionPool", "urlopen"),
+        ),
+    ),
+    SurfaceRow(
+        surface=(
+            "Registry model calls over `aiohttp` or `urllib3` directly (e.g. Bedrock "
+            "`InvokeModel`), other providers' gRPC SDKs, a generic-wire body not recorded "
+            "(recording off, streamed with a `content-encoding`, binary, over the cap, the "
+            "request raised), or a served surface whose response was not recorded"
+        ),
+        capture="wire hook: request only (and why the response was not recorded)",
         replay="refused",
         replay_note=(
-            "not intercepted, so a strict replay **refuses to start** "
+            "not served, so a strict replay **refuses to start** "
             "(`ModelSurfaceNotServable`, exit 1, also under `--dry-run`, which lists "
             "each as `[LIVE] model call (<system>, <host>)`); `--permissive` runs it "
             "**live** and reports `model_calls_not_servable` per `gen_ai.system` "
-            "(ADR-0319)"
+            "(ADR-0319); gRPC is not recorded at all"
         ),
         streaming="—",
         asynchronous="—",
@@ -502,6 +574,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_UNSERVED}::test_p7_permissive_runs_live_and_reports_it",
             f"{_UNSERVED}::test_p7_dry_run_lists_the_live_model_call",
             f"{_UNSERVED}::test_mixed_capsule_names_only_the_unserved_system",
+            f"{_WIRE}::test_recording_off_stores_no_body_and_strict_replay_refuses_as_before",
         ),
     ),
     SurfaceRow(

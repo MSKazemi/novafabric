@@ -52,7 +52,10 @@ if "openai" in STEPS:
                                        messages=[{"role": "user", "content": "hi"}])
     out["openai"] = r.choices[0].message.content
 if "mistral" in STEPS:
-    # Raw HTTP to a registry host replay does not serve (url_registry: mistral).
+    # Raw HTTP to a registry host (url_registry: mistral). Served by the generic wire layer
+    # (ADR-0324) only when its response was recorded; these tests capture with
+    # NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off unless they say otherwise, so it is the
+    # request-only, not-servable example.
     with httpx.Client(transport=httpx.MockTransport(chat)) as http:
         for i in range(3):
             http.post("https://api.mistral.ai/v1/chat/completions",
@@ -86,6 +89,7 @@ class Env:
         monkeypatch.setenv("COLUMNS", "400")
         for var in ("FORCE_COLOR", "COLORTERM", "NOVA_CAPTURE_LEVEL"):
             monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("NOVAFABRIC_CAPTURE_WIRE_RESPONSES", "off")
 
     def capture(self, steps: str, *flags: str) -> tuple[Any, Path]:
         self._mp.setenv("STEPS", steps)
@@ -167,6 +171,23 @@ def test_a_mistral_run_says_strict_replay_would_refuse_and_it_does(env: Env) -> 
     assert replayed.exit_code == 1
     assert outcome["error"]["type"] == doc["refusal"]["type"]
     assert outcome["error"]["message"] == doc["refusal"]["message"]
+
+
+def test_with_wire_responses_recorded_the_mistral_run_is_servable(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default capture (ADR-0324): the responses are recorded, so the summary counts the
+    three calls as servable, as replay's own classifier does."""
+    monkeypatch.delenv("NOVAFABRIC_CAPTURE_WIRE_RESPONSES", raising=False)
+    result, capsule = env.capture("mistral")
+    assert result.exit_code == 0, result.output
+    doc = _summary(capsule)
+    assert doc["model_calls"]["recorded"] == 3
+    assert doc["model_calls"]["servable"] == 3
+    assert doc["strict_mocked"] == "start"
+    assert doc["replayable"] == "full"
+    replayed, dry = env.replay(capsule, "--dry-run")
+    assert replayed.exit_code == 0, replayed.output
 
 
 def test_record_tool_at_the_standard_level_names_the_payload_reason(env: Env) -> None:

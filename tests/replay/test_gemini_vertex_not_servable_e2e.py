@@ -7,9 +7,12 @@ connection count -- the original Ollama defect again.
 
 Now the registry classifies ``generativelanguage.googleapis.com`` (``gcp.gemini``) and
 ``aiplatform.googleapis.com`` / ``<region>-aiplatform.googleapis.com``
-(``gcp.vertex_ai``), so capture records the request (request only, like Mistral or
-Cohere) and a strict replay refuses up front with ``ModelSurfaceNotServable``;
-``--permissive`` runs it and counts it as not servable.
+(``gcp.vertex_ai``), so capture records the call. By default the generic wire layer
+(ADR-0324) also records the response and replay serves it at the ``httpx`` transport
+(served end to end in ``test_generic_wire_replay_e2e.py``). With response recording off
+(``NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off``) the record is request only, like Mistral or
+Cohere before ADR-0324, and a strict replay refuses up front with
+``ModelSurfaceNotServable``; ``--permissive`` runs it and counts it as not servable.
 
 The workload posts over ``httpx.MockTransport``: nothing reaches the network.
 """
@@ -133,8 +136,12 @@ class Workload:
         for var in ("FORCE_COLOR", "COLORTERM"):
             monkeypatch.delenv(var, raising=False)
 
-    def capture(self, url: str) -> Path:
+    def capture(self, url: str, *, wire_responses: bool = True) -> Path:
         self._mp.setenv("GEMINI_URL", url)
+        if wire_responses:
+            self._mp.delenv("NOVAFABRIC_CAPTURE_WIRE_RESPONSES", raising=False)
+        else:
+            self._mp.setenv("NOVAFABRIC_CAPTURE_WIRE_RESPONSES", "off")
         self._mp.setenv("ANSWER", "capture-answer")
         result = runner.invoke(
             app, ["capture", "--output-dir", str(self.runs), sys.executable, str(self.agent)]
@@ -176,10 +183,10 @@ def _records(capsule: Path) -> list[dict[str, Any]]:
         (VERTEX, "gcp.vertex_ai", "us-central1-aiplatform.googleapis.com"),
     ],
 )
-def test_capture_records_the_call_and_strict_replay_refuses_it(
+def test_without_wire_responses_strict_replay_refuses_it_up_front(
     work: Workload, url: str, system: str, host: str
 ) -> None:
-    capsule = work.capture(url)
+    capsule = work.capture(url, wire_responses=False)
     (record,) = _records(capsule)
     assert record["gen_ai.system"] == system
     assert classify([record]) == [NOT_SERVABLE]
@@ -197,8 +204,10 @@ def test_capture_records_the_call_and_strict_replay_refuses_it(
     assert work.observed is None  # refused before the workload ran
 
 
-def test_permissive_replay_runs_it_and_counts_it_not_servable(work: Workload) -> None:
-    capsule = work.capture(GEMINI)
+def test_without_wire_responses_permissive_runs_it_and_counts_it_not_servable(
+    work: Workload,
+) -> None:
+    capsule = work.capture(GEMINI, wire_responses=False)
     result, doc = work.replay(capsule, "--permissive")
     assert result.exit_code == 0, result.output
     assert work.observed == {"text": "REPLAY-LIVE-ANSWER"}  # not served: it ran
@@ -207,4 +216,34 @@ def test_permissive_replay_runs_it_and_counts_it_not_servable(work: Workload) ->
     contract = doc["replay_contract"]
     assert contract["model_calls_not_servable_by_system"]["gcp.gemini"]["count"] == 1
     assert contract["divergences"][0]["kind"] == "model_surface_not_servable"
+    assert doc["fidelity"]["verdict"] != "faithful"
+
+
+@pytest.mark.parametrize(("url", "system"), [(GEMINI, "gcp.gemini"), (VERTEX, "gcp.vertex_ai")])
+def test_by_default_the_response_is_recorded_and_the_record_is_servable(
+    work: Workload, url: str, system: str
+) -> None:
+    capsule = work.capture(url)
+    (record,) = _records(capsule)
+    assert record["gen_ai.system"] == system
+    assert record["extensions"]["io.novafabric.api_surface"] == "generic-wire"
+    assert classify([record]) != [NOT_SERVABLE]
+    for path in capsule.rglob("*"):  # the API key reached no capsule file
+        if path.is_file():
+            assert FAKE_KEY not in path.read_text(errors="replace"), path
+
+
+def test_a_custom_transport_that_bypasses_serving_fails_strict_never_success(
+    work: Workload,
+) -> None:
+    """Replay serves at ``httpx.HTTPTransport``; this workload sends through its own
+    ``httpx.MockTransport``, so the call is not served. The recorded call is then
+    unconsumed: strict replay fails (diverged), it never reports success."""
+    capsule = work.capture(GEMINI)
+    result, doc = work.replay(capsule)
+    assert result.exit_code == 1, result.output
+    assert work.observed == {"text": "REPLAY-LIVE-ANSWER"}
+    assert doc["status"] == "failure"
+    kinds = [d["kind"] for d in doc["replay_contract"]["divergences"]]
+    assert "model_calls_unconsumed" in kinds
     assert doc["fidelity"]["verdict"] != "faithful"

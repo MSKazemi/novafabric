@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+from novafabric.capture.hooks._wire_body import has_wire_response
 from novafabric.capture.record_roles import ROLE_TRANSPORT, classify_model_calls
 from novafabric.replay._contract import is_replayable_model_call, is_replayable_model_error
 
@@ -96,6 +97,14 @@ SERVED_SURFACES: tuple[ServedSurface, ...] = (
             "(urllib3) -- every queue of _contract.model_queues"
         ),
         serves=_sdk_queue_position,
+    ),
+    ServedSurface(
+        name=(
+            "generic wire: any registry model host no dedicated server claims, served "
+            "from the recorded response bytes at the httpx transport and urllib3 "
+            "(ADR-0324, experimental)"
+        ),
+        serves=has_wire_response,
     ),
 )
 

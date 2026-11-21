@@ -11330,7 +11330,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "permissive",
         "label": "--permissive",
         "type": "toggle",
-        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces run LIVE, an unmatched intercepted tool call runs live only if an --allow-* flag permits its mutation class (MCP: --allow-unknown-mutation; record.tool, Google ADK, OpenAI Agents and LangChain tools: their declared class), never if replay.yaml says `allow: false`, and unconsumed recordings are only reported. Default is fail-closed.",
+        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces run LIVE, an unmatched intercepted tool call runs live only if an --allow-* flag permits its mutation class (MCP: --allow-unknown-mutation; record.tool, Google ADK, OpenAI Agents and LangChain tools: their declared class, LangChain and Agents tools not passed through wrap_tools: unknown), never if replay.yaml says `allow: false`, and unconsumed recordings are only reported. Default is fail-closed.",
         "flag": "--permissive"
       },
       {
@@ -11344,8 +11344,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "hermetic",
         "label": "--hermetic",
         "type": "toggle",
-        "hint": "mocked mode only, experimental, Linux (ADR-0322): run the replayed process tree in a bubblewrap sandbox -- no network beyond its own loopback (host services included), host filesystem read-only except the working directory and the replay result directory, host socket dirs masked; served model/tool calls still work. Refused with exit 5 (error.type HermeticUnavailable), before anything runs, if bwrap is missing or cannot create namespaces here; never run un-isolated.",
+        "hint": "mocked mode only, experimental, Linux (ADR-0322): run the replayed process tree in a sandbox -- no network beyond its own loopback (host services included), host filesystem read-only except the working directory and the replay result directory; served model/tool calls still work. Uses bubblewrap (host socket dirs masked) or, where user namespaces are restricted (stock Ubuntu 24.04), Landlock + seccomp (no TCP at all, loopback included; no UDP or Unix sockets); the result names the mechanism and what it enforces. Refused with exit 5 (error.type HermeticUnavailable), before anything runs, if no backend can be set up here; never run un-isolated.",
         "flag": "--hermetic"
+      },
+      {
+        "key": "hermetic-backend",
+        "label": "--hermetic-backend",
+        "type": "text",
+        "hint": "with --hermetic, experimental (ADR-0322): `auto` (default) tries bwrap, then Landlock + seccomp; `bwrap` or `landlock` is the only one tried (refused, exit 5, if it is unavailable).",
+        "flag": "--hermetic-backend"
       }
     ],
     "docsPath": "/docs/cli-reference/",

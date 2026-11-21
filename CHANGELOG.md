@@ -27,15 +27,33 @@ longer forwards the submitting shell's environment (ADR-0270).
   and AF_UNIX connections are unaffected (still counted in `network_connections_live`). A Bedrock replay with no AWS
   credentials in its environment now fails strict too: botocore asks the EC2 metadata service (169.254.169.254)
   before any request — set any credentials or `AWS_EC2_METADATA_DISABLED=true`.
-- **Google Gemini API and Vertex AI calls over HTTP are recorded, and a strict mocked replay refuses them** (works
-  today). Before, neither host was in the URL registry, so a `google-genai` call (REST over `httpx`) left no
-  model-call record and mocked replay neither served nor refused it. The vendored registry now classifies
-  `generativelanguage.googleapis.com` as `gcp.gemini` and `aiplatform.googleapis.com` /
-  `<region>-aiplatform.googleapis.com` as `gcp.vertex_ai` (anchored regexes, https only; request only, like
-  Mistral or Cohere), so a strict `nova replay` stops before anything runs (`ModelSurfaceNotServable`) and
-  `--permissive` counts them in `model_calls_not_servable`. The whole host is matched, so Vertex control-plane
+- **Google Gemini API and Vertex AI calls over HTTP are recorded** (works today). Before, neither host was in the
+  URL registry, so a `google-genai` call (REST over `httpx`) left no model-call record and mocked replay neither
+  served nor refused it. The vendored registry now classifies `generativelanguage.googleapis.com` as `gcp.gemini`
+  and `aiplatform.googleapis.com` / `<region>-aiplatform.googleapis.com` as `gcp.vertex_ai` (anchored regexes,
+  https only), so these calls are recorded with their response and served by the generic wire layer below
+  (experimental). With `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` the record is request only and a strict
+  `nova replay` stops before anything runs (`ModelSurfaceNotServable`); `--permissive` counts them in
+  `model_calls_not_servable`. A workload that sends through its own `httpx` transport (not `httpx.HTTPTransport`)
+  is not served: the recorded call stays unconsumed and a strict replay fails. The whole host is matched, so Vertex control-plane
   requests are recorded as model calls too. A gRPC transport is not recorded; a strict replay fails on its
   connection (`unserved_network`).
+- **Model calls to any registry host are now recorded with their response and served by mocked replay —
+  generic wire** (experimental, ADR-0324). Storage change: a call made through `httpx`/`httpx2` or `requests`
+  to a host the URL registry classifies as a model provider (Mistral, Cohere, Together, Replicate, Hugging Face
+  Inference, OpenAI-compatible local servers you register, Ollama endpoints other than `/api/chat` and
+  `/api/generate`, raw HTTP to OpenAI or Anthropic), outside an SDK call, now stores the response body in
+  `model-calls.jsonl` (`io.novafabric.wire.response`: status, allowlisted headers, the body as UTF-8 text
+  chunks) plus a request digest (`io.novafabric.wire.request`) — **completion text**, at every capture level,
+  exactly as OpenAI responses are stored and redacted. `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` stores none.
+  Behaviour change: a strict `nova replay` of a new capsule serves these calls at the `httpx` transport and at
+  `urllib3` (how `requests` sends) instead of refusing them (`ModelSurfaceNotServable`); a request whose method,
+  path or canonical query/body differs from the recorded one is the new divergence `wire_request_mismatch` (strict:
+  refused, never live; `--permissive`: runs live, counted); recorded HTTP errors and retries are served as
+  recorded; `Set-Cookie`, `Location` and auth headers are never recorded or served. In new capsules Ollama
+  `/api/tags`, `/api/show`, `/api/version`, `/api/ps` are served rather than run live. Capsules recorded before
+  are replayed exactly as before. Not covered yet: `aiohttp`, `urllib3` used directly (Bedrock `InvokeModel`),
+  gRPC, binary bodies, streamed bodies with a `content-encoding`.
 - **Mocked replay refuses a capsule whose recorded model calls it cannot serve** (works today, ADR-0319). Before,
   a model call recorded by the wire hook on a surface replay does not serve (Ollama, Hugging Face `InferenceClient`,
   other providers' raw HTTP; or a served surface with no recorded response) was ignored: the replay said

@@ -182,9 +182,11 @@ def test_a_body_that_is_not_json_records_why(hook: HttpxHook, tmp_path: Path) ->
     assert "not JSON" in record["extensions"]["io.novafabric.response_not_recorded"]
 
 
-def test_other_ollama_endpoints_keep_the_request_only_record(
+def test_other_ollama_endpoints_are_generic_wire_calls(
     hook: HttpxHook, tmp_path: Path
 ) -> None:
+    """ADR-0324: an Ollama endpoint no dedicated server claims (here ``/api/tags``) is
+    recorded with its response bytes by the generic wire engine, not parsed as Ollama."""
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"models": []})
 
@@ -193,4 +195,6 @@ def test_other_ollama_endpoints_keep_the_request_only_record(
     (record,) = _records(tmp_path)
     assert record["gen_ai.system"] == "ollama"
     assert record["gen_ai.response.choices"] == []
-    assert "io.novafabric.api_surface" not in record.get("extensions", {})
+    ext = record["extensions"]
+    assert ext["io.novafabric.api_surface"] == "generic-wire"
+    assert json.loads("".join(ext["io.novafabric.wire.response"]["chunks"])) == {"models": []}

@@ -12,7 +12,9 @@ What is pinned, and why:
 * the record never claims to know the *reported* model or the *served* provider -- the wire hook
   does not read the response and the router selects providers server-side;
 * no token reaches any capsule file, from a header, a URL or a prompt;
-* mocked replay never serves these records (capture-only), and the support matrix says so.
+* since ADR-0324 the record is a generic-wire call: the wire hook copies the response body as
+  the workload reads it (never reading ahead), mocked replay serves it from those bytes, and the
+  support matrix says so.
 """
 from __future__ import annotations
 
@@ -349,20 +351,25 @@ def test_hugging_face_records_are_no_more_and_no_less_permissive_than_openais(ca
 # ── replay: capture only, said in code and in the matrix ─────────────────────
 
 
-def test_a_hugging_face_record_is_never_a_replayable_model_call(capsule: Path) -> None:
+def test_a_hugging_face_record_is_a_generic_wire_call_with_its_response(capsule: Path) -> None:
     _post(_client())
     (record,) = _calls(capsule)
-    assert model_queue_key(record) is None
-    assert is_replayable_model_call(record) is False
+    # ADR-0324: no Hugging Face code is involved -- the router host is a registry model host.
+    assert model_queue_key(record) == "generic-wire"
+    assert is_replayable_model_call(record) is True
+    wire = record["extensions"]["io.novafabric.wire.response"]
+    assert json.loads("".join(wire["chunks"]))["model"] == "acme/tiny-x"
+    # The parsed gen_ai fields still make no claim about the reported model (no decoder).
+    assert record["gen_ai.response.model"] == "acme/tiny"
 
 
-def test_the_replay_support_matrix_states_hugging_face_is_capture_only() -> None:
+def test_the_replay_support_matrix_states_hugging_face_is_served_by_the_generic_engine() -> None:
     row = next(r for r in ROWS if "Hugging Face" in r.surface and "InferenceClient" in r.surface)
-    # Capture only: never served. Since ADR-0319 a strict replay refuses a capsule that
-    # holds one (it was recorded without a response) instead of running it live unreported.
-    assert row.replay == "refused" and row.status == "capture only"
-    assert "ModelSurfaceNotServable" in row.replay_note
-    assert not row.patches and not row.servers
+    # Served from the recorded bytes (ADR-0324); experimental, and not tested end to end
+    # through the real InferenceClient (the generic engine is, with other providers' shapes).
+    assert row.replay == "served" and row.status == "experimental"
+    assert "ADR-0324" in row.replay_note
+    assert not row.servers
     assert "request" in row.capture.lower() and "response" in row.capture.lower()
 
 

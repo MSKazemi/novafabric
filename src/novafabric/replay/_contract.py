@@ -40,6 +40,7 @@ from novafabric.capture.hooks._sdk_streams import (
     OPENAI_CHAT_SURFACE,
     OPENAI_RESPONSES_SURFACE,
 )
+from novafabric.capture.hooks._wire_body import GENERIC_WIRE_SURFACE, has_wire_response
 from novafabric.capture.record_roles import (
     ROLE_LOGICAL,
     classify_model_calls,
@@ -68,6 +69,9 @@ MODEL_SURFACES: dict[str, str] = {
     # Experimental: served at urllib3 (botocore's transport), not an SDK method.
     BEDROCK_CONVERSE_SURFACE: "aws.bedrock converse",
     BEDROCK_CONVERSE_STREAM_SURFACE: "aws.bedrock converse-stream",
+    # ADR-0324 (experimental): any registry model host no dedicated server claims,
+    # served at the httpx transport and urllib3 from the recorded wire response.
+    GENERIC_WIRE_SURFACE: "generic wire (registry model hosts)",
 }
 
 #: The provider (``gen_ai.system``) behind each replay queue.
@@ -79,6 +83,7 @@ QUEUE_PROVIDER: dict[str, str] = {
     OLLAMA_GENERATE_SURFACE: "ollama",
     BEDROCK_CONVERSE_SURFACE: BEDROCK_SYSTEM,
     BEDROCK_CONVERSE_STREAM_SURFACE: BEDROCK_SYSTEM,
+    GENERIC_WIRE_SURFACE: GENERIC_WIRE_SURFACE,
 }
 
 #: How each served model surface may be called during a mocked replay.
@@ -89,6 +94,12 @@ _HTTP_QUEUES = frozenset({OLLAMA_CHAT_SURFACE, OLLAMA_GENERATE_SURFACE})
 #: The same for the AWS Bedrock surfaces served at urllib3 (boto3 is sync only).
 URLLIB3_MODEL_CALL_MODES = "urllib3 transport (boto3/botocore), sync; JSON and AWS event stream"
 _URLLIB3_QUEUES = frozenset({BEDROCK_CONVERSE_SURFACE, BEDROCK_CONVERSE_STREAM_SURFACE})
+#: The same for generic-wire calls (ADR-0324).
+WIRE_MODEL_CALL_MODES = (
+    "httpx/httpx2 transport (sync and async) and urllib3 (incl. requests); recorded bytes, "
+    "buffered and streamed"
+)
+_WIRE_QUEUES = frozenset({GENERIC_WIRE_SURFACE})
 
 #: The tool surfaces mocked replay intercepts (ADR-0300, ADR-0306).
 TOOL_SURFACE_MCP = "mcp.ClientSession.call_tool"
@@ -161,10 +172,12 @@ def model_queue_key(record: dict[str, Any]) -> str | None:
     ``extensions["io.novafabric.api_surface"] = "openai.responses"``. A record
     marked with any other surface is not servable.
     """
+    surface = _surface_marker(record)
+    if surface == GENERIC_WIRE_SURFACE:  # ADR-0324: any gen_ai.system
+        return GENERIC_WIRE_SURFACE
     system = record.get("gen_ai.system")
     if system not in ("openai", "anthropic", "ollama", BEDROCK_SYSTEM):
         return None
-    surface = _surface_marker(record)
     if surface is None:
         # An unmarked Ollama or Bedrock record is a wire record captured before its
         # response was recorded (or a non-model endpoint such as /api/tags).
@@ -205,7 +218,7 @@ def records_async_and_streamed_calls(model_calls: list[dict[str, Any]]) -> bool:
     # (ADR-0320) or Bedrock record is always marked and says nothing about them.
     servable = [
         r for r in served_model_records(model_calls)
-        if model_queue_key(r) not in _HTTP_QUEUES | _URLLIB3_QUEUES
+        if model_queue_key(r) not in _HTTP_QUEUES | _URLLIB3_QUEUES | _WIRE_QUEUES
     ]
     return not servable or any(_surface_marker(r) is not None for r in servable)
 
@@ -225,8 +238,12 @@ def is_replayable_model_call(record: dict[str, Any]) -> bool:
     """
     if is_transport_record(record):
         return False
-    if model_queue_key(record) is None:
+    queue = model_queue_key(record)
+    if queue is None:
         return False
+    if queue == GENERIC_WIRE_SURFACE:
+        # ADR-0324: the recorded bytes are served as recorded, an HTTP error included.
+        return has_wire_response(record)
     if record.get("status", "success") != "success":
         return False
     choices = record.get("gen_ai.response.choices")
@@ -246,7 +263,7 @@ def is_replayable_model_error(record: dict[str, Any]) -> bool:
     """
     if is_transport_record(record):
         return False
-    if model_queue_key(record) is None:
+    if model_queue_key(record) in (None, GENERIC_WIRE_SURFACE):
         return False
     return is_recorded_model_error(record)
 
@@ -1165,6 +1182,8 @@ def surfaces_for(substitute_tools: bool) -> list[str]:
     def modes(queue: str) -> str:
         if queue in _HTTP_QUEUES:
             return HTTP_MODEL_CALL_MODES
+        if queue in _WIRE_QUEUES:
+            return WIRE_MODEL_CALL_MODES
         return URLLIB3_MODEL_CALL_MODES if queue in _URLLIB3_QUEUES else MODEL_CALL_MODES
 
     surfaces = [f"{name} ({modes(queue)})" for queue, name in MODEL_SURFACES.items()]
