@@ -480,6 +480,19 @@ def _verify_capsule_dir(
     _print_log_inclusion(result.log_inclusion, result.log_notes)
     _print_sealer_log(result.sealer_log)
     binding_ok = _print_capsule_binding(binding)
+    # Issue #74: name the first evidence file the seal no longer matches. The
+    # seal holds one digest per file, so no record index is ever claimed.
+    from novafabric.trust.novaseal.first_divergence import (  # noqa: PLC0415
+        binding_first_divergence,
+        format_binding_first_divergence,
+    )
+
+    first_divergence = binding_first_divergence(binding)
+    for line in (
+        format_binding_first_divergence(first_divergence) if first_divergence else []
+    ):
+        # markup=False: the path is a capsule file name, which may contain "[".
+        console.print(f"    {line}", markup=False, highlight=False)
     if chain_check is not None:
         _print_check("Signer certificate chain (CA bundle)", chain_check.ok)
         console.print(f"    {chain_check.reason}")
@@ -554,6 +567,9 @@ def _verify_capsule_dir(
                 "unsealed_manifests": list(binding.unsealed_manifests),
                 "unsealed_refs": list(binding.unsealed_refs),
                 "binding_errors": binding.failure_reasons(),
+                # Additive (issue #74): first modified/missing evidence file, or
+                # null; file granularity only (index is always null).
+                "first_divergence": first_divergence,
                 "capsule_id_ok": capsule_id_ok,
                 "ca_chain_checked": chain_check is not None,
                 "ca_chain_ok": chain_ok if chain_check is not None else None,

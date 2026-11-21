@@ -22,6 +22,17 @@ longer forwards the submitting shell's environment (ADR-0270).
 
   Every check reports `task`, `capture`, `integrity` or `replay` with an expected verdict. In the default zero-key profile, integrity is `NOT_EVALUATED` even though `nova validate` passes, and replay is `NOT_EVALUATED` (forensic only, no fidelity claim). The opt-in `--profile signed-offline` uses `nova seal init` and `nova verify --ca-bundle` with a disposable local CA (a self-asserted identity, no timestamp authority), and must see a tampered member, a missing member, a corrupted signature and a wrong CA refused, each for its own reason (the broken property false and the untouched ones true; a corrupted signature also fails the chain check). `--require-verified` exits 2 unless both variants verify. A wrong but faithfully captured decision fails that variant's `task` check, not `capture`. `--variant unsafe|corrected` keeps the single-run D1 report. Examples only: no change to `src/novafabric`, schemas, the CLI, dependencies or capture defaults.
 - **CI: a `golden-capsule` job (#225).** It builds the wheel, installs it into a clean Python 3.12 venv with versions from `uv.lock`, and runs from it the EvidenceLab walkthrough in both profiles (zero-key; signed-offline with `--require-verified`, including the four tamper negatives), the existing replay-fidelity oracles in `tests/replay/fidelity`, and one new test: mocked replay of a capsule captured at the default level must never report success. That capsule's `replayability.json` names `tool_result_not_servable` (`payload_not_recorded`) for both tools, and the replay ends `diverged` with no live model call, tool call or network connection. The step fails if any of those tests is skipped or xfailed, so a missing optional client cannot silently drop an oracle, and the install step checks that every `force-include` target in `pyproject.toml` is present in the installed wheel. The wheel is built from the checked-out commit; it is not the artifact `publish-pypi.yml` uploads. The reports are uploaded as a 7-day artifact; the fixtures are synthetic.
+- **`nova diff` and `nova verify` name the first divergent step (#74, works today).** `nova diff` prints the
+  earliest changed, added or removed model or tool call (`First divergence: step 2 model_call
+  changed (response) [A #2 MC-2; B #2 MC-2]`) and its JSON gains an additive top-level
+  `first_divergence` (`index`, `index_a`, `index_b`, `stream`, `event_type`, `reason`, `aspects`,
+  record ids, `timeline`), `null` when the call streams agree; `diff-report.schema.json` documents
+  it. Steps are ordered by recorded `started_at` across model and tool calls, or counted per stream
+  (`timeline: per_stream`) when a call lacks one. `nova verify` names the first evidence file the
+  seal no longer matches, event streams first, and `--json` gains `first_divergence` (`path`,
+  `stream`, `event_type`, `reason`, `granularity: file`, `index: null`): the seal holds one
+  SHA-256 per file, so the tampered record itself cannot be located and is never claimed. Exit
+  codes are unchanged.
 
 ### Documentation
 
