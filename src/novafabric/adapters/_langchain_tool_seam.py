@@ -59,6 +59,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from novafabric.adapters import _adk_tool_seam as _base
+from novafabric.adapters import _langchain_tool_message as _tool_message
 from novafabric.adapters._adk_tool_seam import AdkToolCall, AdkToolHandler, AdkToolHook
 from novafabric.adapters._oai_tool_seam import Served
 from novafabric.capture import _tool_codec as codec
@@ -649,8 +650,24 @@ class LangChainToolHook(AdkToolHook):
         self, pending: _base._Pending, nested: int, *,
         value: Any = None, error: BaseException | None = None,
     ) -> dict[str, Any]:
+        # A tool that returns a ToolMessage itself (deepagents' file tools) is
+        # recorded as a JSON envelope, rebuilt into a ToolMessage at replay.
+        message_reason: str | None = None
+        is_message = error is None and _tool_message.is_tool_message(value)
+        if is_message:
+            value, message_reason = _tool_message.encode_tool_message(value)
         record = super().build_record(pending, nested, value=value, error=error)
         ext = record["extensions"]
+        if is_message:
+            ext[_tool_message.RESULT_KIND_EXT] = _tool_message.KIND_TOOL_MESSAGE
+        if message_reason is not None:
+            previous = ext.get(codec.NOT_SERVABLE_REASON_EXT)
+            ext[codec.RESULT_CODEC_EXT] = codec.CODEC_NOT_SERVABLE
+            ext[codec.NOT_SERVABLE_REASON_EXT] = (
+                f"{previous}; {message_reason}" if previous else message_reason
+            )
+            ext.pop(codec.RESULT_DIGEST_EXT, None)
+            record["result"] = None
         ignored = getattr(pending.call, "ignored", ())
         if ignored:
             ext[codec.IGNORED_ARGUMENTS_EXT] = list(ignored)

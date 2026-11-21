@@ -10926,8 +10926,9 @@ nova replay <run-id>                 # tool bodies do not run; results come from
 - **Under a mocked `nova replay`** the recorded result is returned and the tool body
   never runs. An unmatched call, or one whose record is not servable (the body raised —
   including a `ToolException` LangChain turned into an error message —, made nested
-  model/tool calls, or returned a non-JSON value such as a LangGraph `Command`, a
-  `ToolMessage` or a `content_and_artifact` tuple), is refused before the tool runs and
+  model/tool calls, or returned a non-JSON value such as a LangGraph `Command` or a
+  `content_and_artifact` tuple; a `ToolMessage` the tool returned itself is served when
+  every field is JSON — unreleased), is refused before the tool runs and
   the replay fails (`tool_call_unmatched` / `tool_result_not_servable`) even if the
   workload catches the error. `ToolNode` re-raises the refusal by default; with
   `handle_tool_errors` it becomes an error message to the model, and the replay still

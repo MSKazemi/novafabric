@@ -64,6 +64,7 @@ _BEDROCK_SERVE = "tests/replay/test_bedrock_serving.py"
 _LC = "tests/replay/test_langchain_tool_replay_e2e.py"
 _LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
 _OAI_OBSERVED = "tests/replay/test_openai_agents_unwrapped_tool_e2e.py"
+_LC_MESSAGE = "tests/replay/test_langchain_tool_message_results_e2e.py"
 _CHILDNET = "tests/replay/test_child_process_network.py"
 _HERMETIC = "tests/replay/test_hermetic_replay.py"
 _LG_ADAPTER = "tests/replay/test_langgraph_adapter_replay_e2e.py"
@@ -668,8 +669,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             "and LangChain still builds the `ToolMessage`; direct `invoke`/`ainvoke` and "
             "LangGraph `ToolNode`; one-to-one by the model's `tool_call_id` (same name "
             "and arguments) or by name and canonical arguments; JSON-native results up "
-            "to 1 MiB (a `Command`, a `ToolMessage` or a `content_and_artifact` tuple is "
-            "not); a call that raised or made nested model/tool calls is not served; an "
+            "to 1 MiB, and a `ToolMessage` the tool returned itself when every field is "
+            "JSON (rebuilt with the replayed call's `tool_call_id`, ADR-0306 r3; a "
+            "`Command` or a `content_and_artifact` tuple is not); a call that raised or "
+            "made nested model/tool calls is not served; an "
             "unmatched or unservable call is refused (`--permissive` runs it live only "
             "if a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
             "`tool_overrides` enforced; tools not passed through `wrap_tools`: next "
@@ -742,6 +745,8 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_LC_OBSERVED}::test_wrapped_and_unwrapped_tools_are_both_served_one_record_per_call",
             f"{_LC_OBSERVED}::test_an_allow_false_override_stops_an_unwrapped_tool_before_its_body_runs",
             f"{_LG_ADAPTER}::test_an_unwrapped_tool_in_an_adapter_capsule_is_served_strict",
+            f"{_LC_MESSAGE}::test_strict_replay_serves_a_real_tool_message_and_never_runs_the_tool",
+            f"{_LC_MESSAGE}::test_a_tool_message_with_a_non_json_artifact_is_not_servable_and_says_why",
         ),
         servers=("langchain_core.tools.BaseTool",),
     ),

@@ -28,8 +28,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from novafabric.adapters import _langchain_tool_message as _tool_message
+from novafabric.adapters._adk_tool_seam import AdkToolCall
 from novafabric.adapters._langchain_tool_seam import CALL_ID_EXT, Served
-from novafabric.replay._adk_tool_server import AdkToolServer
+from novafabric.capture import _tool_codec
+from novafabric.replay._adk_tool_server import AdkToolServer, RecordNotDecodable
 from novafabric.replay._contract import TOOL_SURFACE_LANGCHAIN, upgrade_legacy_observed_record
 
 
@@ -47,6 +50,20 @@ class LangChainToolServer(AdkToolServer):
         # A round-2 observed record kept its value but was marked not servable
         # by policy only; serve it as current capture would have marked it.
         super().__init__([upgrade_legacy_observed_record(r) for r in records], **kwargs)
+
+    def _decode(self, record: dict[str, Any], call: AdkToolCall) -> Any:
+        """A ToolMessage envelope is rebuilt into a real ``ToolMessage`` that
+        answers the replayed call's own tool-call id."""
+        _ok, value = _tool_codec.decode_result(record)
+        ext = record.get("extensions")
+        if isinstance(ext, dict) and (
+            ext.get(_tool_message.RESULT_KIND_EXT) == _tool_message.KIND_TOOL_MESSAGE
+        ):
+            try:
+                return _tool_message.decode_tool_message(value, call.function_call_id)
+            except _tool_message.ToolMessageNotServable as exc:
+                raise RecordNotDecodable(str(exc)) from exc
+        return value
 
     def _answer(self, value: Any) -> Any:
         return Served(value)

@@ -45,6 +45,13 @@ longer forwards the submitting shell's environment (ADR-0270).
   <name>)` line per tool (for every surface). A `replay.yaml` `allow: false` override refuses an unservable such
   call before its body runs. Tools passed through `wrap_tools` are unaffected (their records now also carry
   `io.novafabric.langchain_tool_seam: wrap_tools`).
+- **A LangChain tool that returns a `ToolMessage` itself is served** (experimental; ADR-0306 r3 amendment). Before,
+  such a result (the shape `deepagents`' `ls` / `read_file` return) was recorded as "the result is a ToolMessage, not
+  a JSON value" and never served, even at `forensic`. Capture now records it as a JSON envelope (`content`,
+  `status`, `name`, `artifact`, non-empty `additional_kwargs` / `response_metadata`;
+  `io.novafabric.langchain_result_kind: tool_message`) and mocked replay rebuilds a real `ToolMessage` answering
+  the replayed call's `tool_call_id`. A field that is not a JSON value (an object `artifact`) keeps the record not
+  servable, with a reason naming the field.
 - **OpenAI Agents SDK function tools you did not pass through `wrap_tools` are recorded and served too, and never
   run uncounted** (experimental; ADR-0306 r3 amendment). Before, an unwrapped `@function_tool` was invisible to
   capture and replay: its body ran live in every mocked replay and the report said `tool_calls_live: 0`. Now an
