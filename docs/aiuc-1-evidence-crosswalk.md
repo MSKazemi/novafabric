@@ -8,7 +8,7 @@ you check your own runs with `nova audit map` once you have filled it in from yo
 copy.
 
 > **Not affiliated, and not a certification.** NovaFabric is not affiliated with, endorsed
-> by, or certified by AIUC (the Artificial Intelligence Underwriting Company). AIUC-1 is a
+> by, or certified by AIUC, the publisher of AIUC-1. AIUC-1 is a
 > standard published by its owner, and its name may be a trademark of that owner; this page
 > uses the name only to identify the standard. This page reproduces no AIUC-1 text: it cites
 > control identifiers only. The requirement wording, and everything an auditor will check
