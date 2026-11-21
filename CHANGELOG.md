@@ -333,6 +333,23 @@ longer forwards the submitting shell's environment (ADR-0270).
   LangGraph adapter (pseudo-command, open question 7), are unchanged. LangChain is not a
   NovaFabric dependency.
 
+### Fixed
+
+- **A permissive replay counted one unservable tool call as two replayed calls** (works
+  today). Under `nova replay --permissive`, an intercepted tool call that the capsule could
+  not serve (`tool_call_unmatched` or `tool_result_not_servable`) and that then ran live
+  (`--allow-unknown-mutation`) or was refused appeared twice in the fidelity
+  `tool_call_sequence`, once as `…:unmatched` and once as `…:live` (or `…:refused`). The
+  replay capsule's `tool-calls.jsonl` held two placeholder records for it as well, so
+  `nova diff` read a doubled tool stream. A real re-replay of a LangGraph workload whose four
+  calls were not servable reported "4 recorded, 8 replayed". Each call is now one entry and
+  one placeholder record, carrying what finally happened to it (`live` or `refused`). The fix
+  covers every intercepted surface: LangChain/LangGraph (wrapped and unwrapped), Google ADK,
+  OpenAI Agents, `record.tool` and MCP `tools/call`. The verdict was already `diverged` and
+  is unchanged, as are the counters (`tool_calls_live`, `tool_calls_refused`,
+  `tool_calls_unmatched`, `tool_calls_by_surface`). A strict replay, which stops at the
+  divergence, still lists the call as `…:unmatched`.
+
 ## [0.108.0] - 2026-10-25
 
 **Verification that checks content, state that survives a crash, and a dashboard that tells the truth.**

@@ -133,6 +133,7 @@ from novafabric.replay._policy import (
     gating_mutation_class,
 )
 from novafabric.replay._process_observer import ProcessObserver
+from novafabric.replay._tool_call_outcomes import AFTER_DIVERGENCE
 from novafabric.replay._wire_serve import (
     GENERIC_WIRE_QUEUE,
     WireResponse,
@@ -1908,12 +1909,12 @@ class _PythonToolServer:
         if live:
             self._events.emit(
                 "tool_live", tool_name=spec.name, surface=TOOL_SURFACE_PYTHON,
-                mutation_class=mutation_class,
+                mutation_class=mutation_class, **{AFTER_DIVERGENCE: True},
             )
             return False, None
         self._events.emit(
             "tool_refused", tool_name=spec.name, surface=TOOL_SURFACE_PYTHON,
-            mutation_class=mutation_class,
+            mutation_class=mutation_class, **{AFTER_DIVERGENCE: True},
             **({"override": label} if label is not None else {}),
         )
         raise error
@@ -2150,10 +2151,12 @@ class MockToolDispatcher:
         if live:
             self._events.emit(
                 "tool_live", tool_name=name, surface=TOOL_SURFACE_MCP, mutation_class=gating,
+                **{AFTER_DIVERGENCE: True},
             )
             return await original(inner_self, name, arguments, *args, **kwargs)
         self._events.emit(
             "tool_refused", tool_name=name, surface=TOOL_SURFACE_MCP, mutation_class=gating,
+            **{AFTER_DIVERGENCE: True},
             **({"override": label} if label is not None else {}),
         )
         raise error

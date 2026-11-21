@@ -84,6 +84,7 @@ from novafabric.replay._contract import (
     tool_surface,
 )
 from novafabric.replay._normalize import NORMALIZER_ID, normalize_volatile
+from novafabric.replay._tool_call_outcomes import collapse_tool_divergences
 
 VERDICT_FAITHFUL = "faithful"
 VERDICT_DIVERGED = "diverged"
@@ -719,7 +720,8 @@ def _replayed_tool_calls(events: list[dict[str, Any]]) -> list[tuple[str, int]]:
     the tool call: 0 before the first model call, *k* after the *k*-th."""
     out: list[tuple[str, int]] = []
     turn = 0
-    for ev in events:
+    # A divergence then a live run (or refusal) of the same call is one call.
+    for ev in collapse_tool_divergences(events):
         kind = ev.get("event")
         if kind in ("model_served", "model_live"):
             turn += 1

@@ -32,6 +32,7 @@ from novafabric.replay._contract import (
     interceptable_tool_calls,
     model_queues,
 )
+from novafabric.replay._tool_call_outcomes import collapse_tool_divergences
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,8 @@ def replayed_streams(
     tools = _ToolRecords(tool_calls)
     models_out: list[dict[str, Any]] = []
     tools_out: list[dict[str, Any]] = []
-    for ev in events:
+    # A divergence then a live run (or refusal) of the same call is one record.
+    for ev in collapse_tool_divergences(events):
         kind = ev.get("event")
         if kind in ("model_served", "model_covered"):
             queue = str(ev.get("queue") or ev.get("provider"))
