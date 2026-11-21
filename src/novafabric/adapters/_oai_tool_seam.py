@@ -21,6 +21,21 @@ built-in capture hook, writing one ``transport: "python"`` record per call with
 the ``record.tool`` codec) or the mocked-replay server
 (``replay._oai_tool_server``), which answers *before* the tool body runs.
 
+**Function tools that were not wrapped** are observed (ADR-0306 r3 amendment).
+While capture or a mocked replay is active, :func:`install_observer` patches
+the SDK's private helper that every run invokes a ``FunctionTool`` through,
+``agents.tool._invoke_function_tool_with_metadata`` (and the copy
+``agents.run_internal.tool_execution`` imported by name; checked against
+``openai-agents`` 0.24.0 only -- not an SDK extension point; restored by
+:func:`uninstall_observer`). A call whose invoker is not a seam copy reaches
+the same handler with ``wrapped=False`` and mutation class ``unknown``: capture
+records it (marked ``observed``), and mocked replay serves or refuses it like
+a wrapped tool declared ``unknown``. The observer steps aside for seam copies
+(they ask themselves), ``record.tool`` functions, and agents used as tools
+(``Agent.as_tool``: their model calls and tools are intercepted on their own
+surfaces). A release that renames the helper leaves unwrapped tools
+unobserved again (they then run live in a replay).
+
 Nothing here imports ``agents`` at module level: the module is importable, and
 the capture hook installable, without it.
 """
@@ -28,10 +43,14 @@ the capture hook installable, without it.
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import logging
+import sys
+import threading
 from collections.abc import Iterable, Mapping
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 from novafabric.adapters import _adk_tool_seam as _base
@@ -69,8 +88,21 @@ class Served:
         self.value = value
 
 
+@dataclass(frozen=True)
 class OaiToolCall(AdkToolCall):
-    """One Agents SDK tool call as the seam sees it (same fields as ADK's)."""
+    """One Agents SDK tool call as the seam sees it (ADK's fields, plus ``wrapped``)."""
+
+    #: ``False`` for a tool not passed through :func:`wrap_tools` (seen by the
+    #: observer): recorded as ``observed``, gated as ``unknown``.
+    wrapped: bool = True
+
+
+#: How an Agents SDK record was captured (``io.novafabric.openai_agents_tool_seam``).
+SEAM_EXT = codec.OPENAI_AGENTS_SEAM_EXT
+SEAM_WRAPPED = "wrap_tools"
+SEAM_OBSERVED = "observed"
+#: The mutation class of a tool that was not wrapped: nothing declared one.
+OBSERVED_MUTATION_CLASS = "unknown"
 
 
 #: The one global the invoker reads. ``None`` outside capture and replay.
@@ -105,7 +137,8 @@ def _wrapped_callable(tool: Any) -> Any:
 
 
 def describe_call(
-    tool: Any, func: Any, context: Any, arguments_json: Any, mutation_class: str
+    tool: Any, func: Any, context: Any, arguments_json: Any, mutation_class: str,
+    *, wrapped: bool = True,
 ) -> OaiToolCall:
     """Canonicalise one call (D6): the arguments are the JSON the model sent."""
     arguments: dict[str, Any] | None = None
@@ -136,6 +169,7 @@ def describe_call(
         qualname=qualname,
         long_running=False,
         tool_context=context,
+        wrapped=wrapped,
     )
 
 
@@ -247,6 +281,133 @@ def wrap_tools(
     return out
 
 
+# ── observer: function tools that were not wrapped ───────────────────────────
+
+#: Modules holding a reference to the SDK's function-tool invocation helper:
+#: ``agents.tool`` defines it, ``agents.run_internal.tool_execution`` imports it
+#: by name (``invoke_function_tool``, used by realtime sessions, looks it up in
+#: ``agents.tool`` at call time). Checked against openai-agents 0.24.0.
+_INVOKE_HELPER = "_invoke_function_tool_with_metadata"
+_INVOKE_MODULES = ("agents.tool", "agents.run_internal.tool_execution")
+#: Imported last of the two; the post-import hook patches both after it runs.
+_TRIGGER_MODULE = "agents.run_internal.tool_execution"
+#: Attribute marking the observer's replacement helper.
+_OBSERVER_MARKER = "__novafabric_oai_observer__"
+
+_OBSERVER_LOCK = threading.RLock()
+_observer_users = 0
+#: The helper the observer replaced (one function, bound in several modules).
+_observer_original: Any = None
+
+
+def _observer_skip(tool: Any) -> bool:
+    """Whether the observer leaves this call alone (the seam or another surface
+    owns it): a seam copy, a ``record.tool`` function, an agent used as a tool."""
+    invoker = getattr(tool, "on_invoke_tool", None)
+    if getattr(invoker, _MARKER, False) or getattr(tool, "_is_agent_tool", False) is True:
+        return True
+    return _skip(_wrapped_callable(tool))
+
+
+def _observing(original: Any) -> Any:
+    """The helper, asking the handler about every unwrapped function-tool call."""
+
+    @functools.wraps(original)
+    async def invoke(*args: Any, **kwargs: Any) -> Any:
+        handler = _handler
+        tool = kwargs.get("function_tool")
+        context = kwargs.get("context")
+        if handler is None or tool is None or args or _observer_skip(tool):
+            return await original(*args, **kwargs)
+        call = describe_call(
+            tool, _wrapped_callable(tool), context, kwargs.get("arguments"),
+            OBSERVED_MUTATION_CLASS, wrapped=False,
+        )
+        answer = handler.before(call)
+        if isinstance(answer, Served):
+            # The helper's own result type, built the way it builds a normal one.
+            result_cls = getattr(sys.modules.get("agents.tool"), "_FunctionToolInvocationResult")
+            return result_cls(answer.value)
+        try:
+            result = await original(*args, **kwargs)
+        except BaseException as exc:
+            handler.on_error(context, exc)
+            raise
+        handler.after(context, getattr(result, "output", result))
+        return result
+
+    setattr(invoke, _OBSERVER_MARKER, True)
+    return invoke
+
+
+def _patch_invoke(_module: Any = None) -> None:
+    """Replace the helper in every loaded module that holds it (idempotent)."""
+    global _observer_original
+    with _OBSERVER_LOCK:
+        if _observer_users <= 0:
+            return
+        defining = sys.modules.get(_INVOKE_MODULES[0])
+        current = getattr(defining, _INVOKE_HELPER, None)
+        if not callable(current):
+            _log.warning(
+                "novafabric: agents.tool.%s not found; OpenAI Agents function tools "
+                "not passed through wrap_tools are not observed (they run live in a "
+                "mocked replay)", _INVOKE_HELPER,
+            )
+            return
+        if _observer_original is None:
+            original = getattr(current, "__wrapped__", current) if getattr(
+                current, _OBSERVER_MARKER, False
+            ) else current
+            _observer_original = original
+        replacement = _observing(_observer_original)
+        for name in _INVOKE_MODULES:
+            module = sys.modules.get(name)
+            if module is None:
+                continue
+            value = getattr(module, _INVOKE_HELPER, None)
+            if value is _observer_original or getattr(value, _OBSERVER_MARKER, False):
+                setattr(module, _INVOKE_HELPER, replacement)
+
+
+def install_observer() -> None:
+    """Observe every Agents SDK function-tool call that is not a seam copy.
+
+    Reference-counted (capture and replay may both ask). Never imports
+    ``agents``: patched now if the SDK is loaded, otherwise when the workload
+    imports it (a one-shot post-import hook).
+    """
+    global _observer_users
+    with _OBSERVER_LOCK:
+        _observer_users += 1
+        if _observer_users > 1:
+            return
+    if _TRIGGER_MODULE in sys.modules:
+        _patch_invoke()
+        return
+    from novafabric.capture.hooks._deferred import register_post_import_hook
+
+    register_post_import_hook(_TRIGGER_MODULE, _patch_invoke)
+
+
+def uninstall_observer() -> None:
+    """Drop one :func:`install_observer`; the last one restores the helper."""
+    global _observer_users, _observer_original
+    with _OBSERVER_LOCK:
+        if _observer_users <= 0:
+            return
+        _observer_users -= 1
+        if _observer_users or _observer_original is None:
+            return
+        for name in _INVOKE_MODULES:
+            module = sys.modules.get(name)
+            if module is not None and getattr(
+                getattr(module, _INVOKE_HELPER, None), _OBSERVER_MARKER, False
+            ):
+                setattr(module, _INVOKE_HELPER, _observer_original)
+        _observer_original = None
+
+
 # ── capture ──────────────────────────────────────────────────────────────────
 
 #: The call in flight in this context. A separate variable from ADK's, so an
@@ -273,3 +434,26 @@ class OaiToolHook(AdkToolHook):
     _get_handler = staticmethod(lambda: _get_handler())
     _set_handler = staticmethod(lambda handler: _set_handler(handler))
     _pending_var = staticmethod(lambda: _pending)
+
+    def install(self) -> None:
+        super().install()
+        if self._installed:
+            # Function tools the workload never passed through wrap_tools too.
+            install_observer()
+
+    def uninstall(self) -> None:
+        if self._installed:
+            uninstall_observer()
+        super().uninstall()
+
+    def build_record(
+        self, pending: _base._Pending, nested: int, *,
+        value: Any = None, error: BaseException | None = None,
+    ) -> dict[str, Any]:
+        record = super().build_record(pending, nested, value=value, error=error)
+        # Observed records follow the wrapped records' payload and codec rules
+        # and are served alike (ADR-0306 r3 amendment).
+        record["extensions"][SEAM_EXT] = (
+            SEAM_WRAPPED if getattr(pending.call, "wrapped", True) else SEAM_OBSERVED
+        )
+        return record

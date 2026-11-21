@@ -35,13 +35,14 @@ from novafabric.replay._contract import (
     ReplayContractReport,
     describe_not_served,
     interceptable_tool_calls,
-    is_not_served_tool_record,
     is_servable_tool_record,
+    not_served_dry_run_lines,
     not_served_tool_calls,
     read_events,
     summarize,
 )
 from novafabric.replay._dispatcher import REPLAY_DISPATCHER_UNAVAILABLE_EXIT, TOOL_LADDER_ENV
+from novafabric.replay._echo_recovery import recover_tool_results_from_echo
 from novafabric.replay._env_check import EnvironmentResolver
 from novafabric.replay._errors import (
     CapsuleNotReplayableError,
@@ -247,6 +248,10 @@ class ReplayEngine:
         model_calls = logical_model_calls(recorded_model_records)
         not_servable = not_servable_by_system(recorded_model_records)
         tool_calls = _read_jsonl(self._capsule_dir / "tool-calls.jsonl")
+        if self._flags.mode == "mocked":
+            # ADR-0306 r3: a payloads-off tool result the next recorded model
+            # request echoes under exactly the recorded digest is servable.
+            tool_calls = recover_tool_results_from_echo(tool_calls, recorded_model_records)
 
         env_warnings = EnvironmentResolver().check(env_lock)
         run_id = manifest.get("run_id", "unknown")
@@ -536,15 +541,12 @@ class ReplayEngine:
                     f"{endpoint_host(r) or 'host not recorded'})\n"
                     for r in unserved
                 )
-            # ADR-0306 D1: each recorded tool call replay does not serve by
-            # policy (a LangChain tool not passed through wrap_tools) runs live.
+            # ADR-0306 r3 amendment: each recorded observed tool call (a LangChain
+            # tool not passed through wrap_tools) replay cannot serve.
             not_served = not_served_tool_calls(tool_calls)
             if not_served:
-                report += "Tool calls mocked replay does not serve (ADR-0306 D1):\n" + "".join(
-                    f"  [LIVE] LangChain tool call ({r.get('tool_name')}) -- not passed "
-                    "through wrap_tools\n"
-                    for r in tool_calls
-                    if isinstance(r, dict) and is_not_served_tool_record(r)
+                report += "Tool calls mocked replay cannot serve (ADR-0306 r3):\n" + "".join(
+                    not_served_dry_run_lines(tool_calls)
                 )
             # ADR-0306 D8: what the replayed process will do with each
             # replay.yaml override -- the same table the real run reports.
@@ -840,10 +842,11 @@ class ReplayEngine:
             write_replay_result(refused, result_dir)
             return refused
 
-        # ADR-0306 D1: recorded tool calls replay does not serve by policy
-        # (LangChain tools not passed through wrap_tools) would re-execute
-        # live -- a strict replay refuses to start, as for an unservable model
-        # surface (ADR-0319); under --permissive it runs and counts them.
+        # ADR-0306 r3 amendment: recorded observed tool calls (LangChain tools
+        # not passed through wrap_tools) whose results cannot be served -- a
+        # strict replay refuses to start, as for an unservable model surface
+        # (ADR-0319); under --permissive it runs, and each such call is refused
+        # unless --allow-unknown-mutation lets it run live.
         not_served = not_served_tool_calls(tool_calls)
         if not_served and not self._flags.permissive:
             tool_error = ToolSurfaceNotServedError(not_served)
@@ -968,9 +971,9 @@ class ReplayEngine:
             report.divergences[:0] = [{
                 "kind": ToolSurfaceNotServedError.kind,
                 "message": (
-                    "recorded tool calls mocked replay does not serve re-executed live if "
-                    f"the workload made them ({describe_not_served(not_served)}); each is "
-                    "counted in tool_calls_live"
+                    "recorded tool calls mocked replay cannot serve were refused, or run "
+                    "live under --allow-unknown-mutation and counted in tool_calls_live, "
+                    f"if the workload made them ({describe_not_served(not_served)})"
                 ),
                 "by_surface": {k: dict(v) for k, v in not_served.items()},
             }]

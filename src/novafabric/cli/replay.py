@@ -152,7 +152,8 @@ def replay_cmd(
                 "model surfaces run LIVE, an unmatched intercepted tool call runs "
                 "live only if an --allow-* flag permits its mutation class (MCP: "
                 "--allow-unknown-mutation; record.tool, Google ADK, OpenAI Agents "
-                "and LangChain tools: their declared class), never "
+                "and LangChain tools: their declared class, LangChain and Agents "
+                "tools not passed through wrap_tools: unknown), never "
                 "if replay.yaml says `allow: false`, and unconsumed recordings are "
                 "only reported. Default is fail-closed."
             ),
@@ -247,12 +248,16 @@ def replay_cmd(
     was never recorded) is refused up front too (error.type
     ModelSurfaceNotServable, exit 1, also under --dry-run, which lists each as
     [LIVE] model call); --permissive runs it and reports model_calls_not_servable.
-    LangChain tools NOT passed through wrap_tools are recorded by nova capture
-    but never served: a capsule that records them is refused up front
-    (error.type ToolSurfaceNotServed, exit 1, also under --dry-run, which lists
-    each as [LIVE] LangChain tool call); --permissive runs them live, and every
-    tool body that runs live is counted in tool_calls_live and named in a
-    [LIVE] tool call line (experimental).
+    LangChain tools and OpenAI Agents function tools NOT passed through
+    wrap_tools are recorded by nova capture and served like wrapped ones
+    declared unknown when the capsule holds their
+    results (capture level forensic); a capsule whose recorded ones cannot be
+    served is refused up front (error.type ToolSurfaceNotServed, exit 1, also
+    under --dry-run, which lists each as [NOT SERVED] ... tool call), and
+    one with no matching record is refused at the call; --permissive runs them
+    live only with --allow-unknown-mutation, and every tool body that runs live
+    is counted in tool_calls_live and named in a [LIVE] tool call line
+    (experimental).
     Network is observed, not blocked, in every Python process of the replayed
     tree (children that drop the replay's environment, such as MCP stdio
     servers, are observed too); a child that is not Python is counted
@@ -453,6 +458,14 @@ def replay_cmd(
             f"{not_intercepted} recorded on surfaces replay does not intercept"
         )
         contract = result.replay_contract or {}
+        echoed = (contract.get("tool_calls_mocked_by_source") or {}).get("model-request-echo")
+        if echoed:
+            # ADR-0306 r3: results the record did not keep, recovered from the
+            # next recorded model request under the recorded digest.
+            console.print(
+                f"  {echoed} of the served tool results came from the next recorded "
+                "model request (matched to the recorded result digest)"
+            )
         # Name every tool call that ran live, as the dry run names each [LIVE] call.
         for entry in contract.get("tool_calls_live_by_tool") or []:
             if not isinstance(entry, dict):

@@ -25,6 +25,7 @@ from typing import Any, Literal
 from novafabric.replay._contract import (
     TOOL_SURFACE_MCP,
     is_not_served_tool_record,
+    is_observed_tool_record,
     not_servable_reason,
     tool_surface,
 )
@@ -292,27 +293,22 @@ class PolicyEvaluator:
                 )
             return decided("live", f"{base}; the tool runs live")
 
-        if is_not_served_tool_record(tool_call):
-            # ADR-0306 D1: a LangChain tool not passed through wrap_tools is
-            # never served; the replayed process observes it (the same
-            # decisions as ``_langchain_tool_server.LangChainToolServer._observe``).
-            base = f"mocked mode: observed via {surface}, not passed through wrap_tools"
-            if override is not None and not override.allow:
-                return decided("deny", (
-                    f"{base}; {override.label}: refused before the tool body runs, even "
-                    "under --permissive"
-                ), "never live")
-            if not self._flags.permissive:
-                return decided("deny", (
-                    f"{base}: a strict replay refuses to start (ToolSurfaceNotServed)"
-                ), "replay refuses to start")
-            return decided("live", (
-                f"{base}: never served; under --permissive it re-executes live and is "
-                "counted in tool_calls_live"
-            ), "not wrapped")
+        if is_not_served_tool_record(tool_call) and not self._flags.permissive:
+            # ADR-0306 r3 amendment: an observed LangChain record that cannot
+            # be served is known up front; a strict replay refuses to start.
+            return decided("deny", (
+                f"mocked mode: observed via {surface} (not passed through wrap_tools) "
+                f"but not servable ({not_servable_reason(tool_call) or 'a recorded failure'})"
+                ": a strict replay refuses to start (ToolSurfaceNotServed)"
+            ), "replay refuses to start")
 
         mutation_class = str(tool_call.get("mutation_class") or "unknown")
-        gating = gating_mutation_class(surface, mutation_class)
+        # An observed tool declared no class: the seam gates it as `unknown`,
+        # whatever the capsule says (ADR-0306 r3 amendment).
+        gating = (
+            "unknown" if is_observed_tool_record(tool_call)
+            else gating_mutation_class(surface, mutation_class)
+        )
         permitted = self._flags.permits(gating)
         unservable = not_servable_reason(tool_call)
         action = decide_intercepted(
@@ -338,9 +334,15 @@ class PolicyEvaluator:
                     f"mocked mode: served from the capsule via {surface}; {override.label}: "
                     "an unmatched call is refused even under --permissive"
                 ), "never live")
+            ext = tool_call.get("extensions")
+            echoed = isinstance(ext, dict) and ext.get(
+                "io.novafabric.result_source"
+            ) == "model-request-echo"
             return decided("mock", (
-                f"mocked mode: served from the capsule via {surface}; an unmatched "
-                "call is refused"
+                f"mocked mode: served from the capsule via {surface}"
+                + ("; the result is the next model request's echo, matched to the "
+                   "recorded digest" if echoed else "")
+                + "; an unmatched call is refused"
                 + (", or under --permissive runs live only if the ladder flag permits "
                    f"it ({gate})")
             ))

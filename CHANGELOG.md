@@ -47,22 +47,52 @@ longer forwards the submitting shell's environment (ADR-0270).
   Capsules whose calls are all served, and ADR-0305 transport records, are unaffected; Ollama requests that run no
   model (`/api/tags`, `/api/show`, `/api/version`, `/api/ps`) are not refused either (they run live and their
   connections are reported).
-- **LangChain / LangGraph tools you did not pass through `wrap_tools` are recorded, and mocked replay never runs
-  one uncounted** (experimental, ADR-0306 D1). Before, `nova capture` recorded no call of a plain `@tool` /
-  `StructuredTool` / `BaseTool` subclass, and a mocked replay ran their bodies live while reporting
-  `tool_calls_live: 0` and a `faithful` verdict (a real LangGraph agent read a log file and wrote a JSON
-  file during "mocked" replay). Now, with no code change, capture writes one `tool-calls.jsonl` record per tool
-  body execution (`langchain.tool` marker, `io.novafabric.langchain_tool_seam: observed`, `mutation_class:
-  unknown`, payloads at `forensic`/`air_gapped` only, always not-servable). Replay still serves only tools
-  passed through `wrap_tools` (unchanged default), so a strict `nova replay` of a capsule that records such
-  calls stops before anything runs: `status: aborted`, `error.type: ToolSurfaceNotServed` (count and tool
-  names in `error.tool_calls_not_served_by_surface`), exit 1, also under `--dry-run`, which lists each as
-  `[LIVE] LangChain tool call (<name>)`. `--permissive` runs them live: each is counted in `tool_calls_live`
-  and `replay_contract.tool_calls_live_by_tool`, a `tool_surface_not_served` warning heads the divergences,
-  and the CLI prints a `[LIVE] tool call (<surface>: <name>)` line per tool (for every surface). A capsule
-  without LangChain tool records is not refused, but every tool body that runs is counted the same way. A
-  `replay.yaml` `allow: false` override now stops such a tool before its body runs. Tools passed through
-  `wrap_tools` are unaffected (their records now also carry `io.novafabric.langchain_tool_seam: wrap_tools`).
+- **LangChain / LangGraph tools you did not pass through `wrap_tools` are recorded and served by mocked replay,
+  and never run uncounted** (experimental; ADR-0306 r3 amendment, owner decision 2026-11-21). Before, `nova
+  capture` recorded no call of a plain `@tool` / `StructuredTool` / `BaseTool` subclass, and a mocked replay ran
+  their bodies live while reporting `tool_calls_live: 0` and a `faithful` verdict (a real LangGraph agent read a
+  log file and wrote a JSON file during "mocked" replay). Now, with no code change, capture writes one
+  `tool-calls.jsonl` record per tool body execution (`langchain.tool` marker,
+  `io.novafabric.langchain_tool_seam: observed`, `mutation_class: unknown`), under the same payload rules as a
+  `wrap_tools` tool: the result is kept at `NOVA_CAPTURE_LEVEL=forensic`/`air_gapped` only. A strict mocked
+  replay **serves** a matched, servable record before the tool body runs, exactly like a `wrap_tools` tool
+  declared `unknown` (`tool_calls_mocked`). A capsule whose observed records cannot be served (captured at the
+  default level, so no result was kept; a recorded failure; a non-JSON result) is refused before anything runs:
+  `status: aborted`, `error.type: ToolSurfaceNotServed` (count, tool names and `reasons` in
+  `error.tool_calls_not_served_by_surface`; the message says to capture again), exit 1, also under `--dry-run`,
+  which lists each as `[NOT SERVED] LangChain tool call (<name>) -- … <reason>`. An unwrapped tool call that
+  matches no record (for instance in a capsule captured before this change, which has no tool records) is
+  refused before its body runs. Under `--permissive` such calls run live **only with `--allow-unknown-mutation`**
+  (as MCP calls): each is counted in `tool_calls_live` and `replay_contract.tool_calls_live_by_tool`, a
+  `tool_surface_not_served` warning heads the divergences, and the CLI prints a `[LIVE] tool call (<surface>:
+  <name>)` line per tool (for every surface). A `replay.yaml` `allow: false` override refuses an unservable such
+  call before its body runs. Tools passed through `wrap_tools` are unaffected (their records now also carry
+  `io.novafabric.langchain_tool_seam: wrap_tools`).
+- **A LangChain tool that returns a `ToolMessage` itself is served** (experimental; ADR-0306 r3 amendment). Before,
+  such a result (the shape `deepagents`' `ls` / `read_file` return) was recorded as "the result is a ToolMessage, not
+  a JSON value" and never served, even at `forensic`. Capture now records it as a JSON envelope (`content`,
+  `status`, `name`, `artifact`, non-empty `additional_kwargs` / `response_metadata`;
+  `io.novafabric.langchain_result_kind: tool_message`) and mocked replay rebuilds a real `ToolMessage` answering
+  the replayed call's `tool_call_id`. A field that is not a JSON value (an object `artifact`) keeps the record not
+  servable, with a reason naming the field.
+- **Tool results captured below `forensic` are served from the next recorded model request** (experimental; ADR-0306
+  r3 amendment). A default-level tool record keeps only a digest of its result, but the result also went back to the
+  model in the next request, which the capsule keeps. Mocked replay now serves that echo (Chat Completions, Responses,
+  Anthropic and Bedrock Converse shapes) for LangChain, OpenAI Agents and ADK records, **only** when the capture
+  codec gives it exactly the recorded `result_digest`; otherwise the record stays unservable with its re-capture
+  hint. Nothing new is stored. Counted in `tool_calls_mocked` and the new optional
+  `replay_contract.tool_calls_mocked_by_source` (`model-request-echo`). Checked on the c08 Bedrock capsules: a dry
+  run of every `hpc_analyst` and `iot_detective` capsule (10 + 10) now predicts all 71 tool calls served.
+- **OpenAI Agents SDK function tools you did not pass through `wrap_tools` are recorded and served too, and never
+  run uncounted** (experimental; ADR-0306 r3 amendment). Before, an unwrapped `@function_tool` was invisible to
+  capture and replay: its body ran live in every mocked replay and the report said `tool_calls_live: 0`. Now an
+  observer (the SDK's private `agents.tool._invoke_function_tool_with_metadata`, checked against `openai-agents`
+  0.24.0 only) records each call (`io.novafabric.openai_agents_tool_seam: observed`, `mutation_class: unknown`) and
+  mocked replay serves, refuses or — under `--permissive --allow-unknown-mutation` — runs and counts it exactly as
+  for unwrapped LangChain tools above (including the up-front `ToolSurfaceNotServed` and the
+  `[NOT SERVED] OpenAI Agents tool call` dry-run line). Agents used as tools (`Agent.as_tool`) are not recorded;
+  their model calls and tools are. **Behaviour change:** a strict replay of a capsule captured before this (no
+  Agents tool records) now refuses each unwrapped function-tool call before its body runs.
 
 ### Changed
 

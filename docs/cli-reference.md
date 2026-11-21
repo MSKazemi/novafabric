@@ -1263,13 +1263,13 @@ nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --output-dir /mnt/repla
 Options:
 - `--mode {mocked,forensic,semantic,exact,intervention}` — replay mode (default: `mocked`). Tab-completion available via `nova --install-completion`.
   `exact` re-executes nothing: it checks whether the recorded run meets the exact-replay preconditions and exits `0` with `eligible for exact replay` when it does. An ineligible capsule (`env.lock` not `deterministic`, an unseeded model call, a non-re-runnable command, schema drift) exits `1` with `status: failure` in `replay_result.yaml` and each reason printed; it was a green tick and exit `0`. `semantic` prints the mean pairwise similarity of the recorded responses; with fewer than two responses there is nothing to compare, so `similarity_score` is absent (it read `1.0`) and `divergence_reason` says why.
-- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below) or records a model call mocked replay cannot serve (`error.type: ModelSurfaceNotServable`; each listed as `[LIVE] model call (<system>, <host>)`, see below), or records a LangChain tool call mocked replay does not serve (`error.type: ToolSurfaceNotServed`; each listed as `[LIVE] LangChain tool call (<name>)`), or exits 3 with `ToolOverrideUnenforceable` when a strict mocked replay would refuse to start (see *Per-tool overrides* below). In `mocked` mode each recorded tool call is labelled with exactly what the replay will do (`[MOCK]`, `[MOCK (never live)]`, `[MOCK (override not honoured: needs --allow-…)]`, `[LIVE]`, `[LIVE (override honoured)]`, `[DENY]`), followed by a `Tool overrides (replay.yaml)` table
+- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below) or records a model call mocked replay cannot serve (`error.type: ModelSurfaceNotServable`; each listed as `[LIVE] model call (<system>, <host>)`, see below), or records an observed LangChain tool call (not passed through `wrap_tools`) mocked replay cannot serve (`error.type: ToolSurfaceNotServed`; each listed as `[NOT SERVED] LangChain tool call (<name>)` with its reason), or exits 3 with `ToolOverrideUnenforceable` when a strict mocked replay would refuse to start (see *Per-tool overrides* below). In `mocked` mode each recorded tool call is labelled with exactly what the replay will do (`[MOCK]`, `[MOCK (never live)]`, `[MOCK (override not honoured: needs --allow-…)]`, `[LIVE]`, `[LIVE (override honoured)]`, `[DENY]`), followed by a `Tool overrides (replay.yaml)` table
 - `--allow-readonly` — safety-ladder rung: permit `read-only` tools
 - `--allow-mutating` — rung for `idempotent-write` and `non-idempotent-write` tools
 - `--allow-external-side-effects` — rung for `external-side-effect` tools (implies `--allow-mutating`)
 - `--allow-unknown-mutation` — rung for tools with `unknown` mutation class (implies every lower rung). **Every MCP call counts as `unknown`**, whatever class the capsule recorded, so this is the rung MCP calls need
 - **Policy gate.** Any of the three write-permitting rungs (`--allow-mutating`, `--allow-external-side-effects`, `--allow-unknown-mutation`), alone or combined, triggers the audited `replay_mutating` policy check before the replay starts, in every mode and with `--dry-run`. A deny, or a policy-engine error, refuses the replay before anything runs. `--allow-readonly` and no flag are not gated. *Unreleased (after v0.105.0):* up to v0.105.0 only `--allow-mutating` triggered the check.
-- The four rungs drive the `--dry-run` report. In a `mocked` replay they gate the intercepted tool surfaces (MCP `call_tool`, `record.tool`, Google ADK tools through the tool plugin, and OpenAI Agents function tools and LangChain tools through their `wrap_tools`) in two places only — ADR-0306, experimental: under `--permissive` an unmatched call runs live only if its class is permitted (`none` always is; a `record.tool` call uses its declared class, an ADK tool the class `make_tool_plugin` declares, an Agents SDK or LangChain tool the class its `wrap_tools` declares), and a `replay.yaml` `allow: true` override re-executes a tool only if its class is permitted. They never stop a tool replay does not intercept.
+- The four rungs drive the `--dry-run` report. In a `mocked` replay they gate the intercepted tool surfaces (MCP `call_tool`, `record.tool`, Google ADK tools through the tool plugin, and OpenAI Agents function tools and LangChain tools through their `wrap_tools`) in two places only — ADR-0306, experimental: under `--permissive` an unmatched call runs live only if its class is permitted (`none` always is; a `record.tool` call uses its declared class, an ADK tool the class `make_tool_plugin` declares, an Agents SDK or LangChain tool the class its `wrap_tools` declares, a LangChain or Agents SDK tool not passed through `wrap_tools` `unknown`), and a `replay.yaml` `allow: true` override re-executes a tool only if its class is permitted. They never stop a tool replay does not intercept.
 - `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces run **live**, an unmatched MCP, `record.tool`, ADK, Agents SDK or LangChain tool call runs live only if a ladder flag permits its mutation class — `--allow-unknown-mutation` for MCP, the declared class for `record.tool`, ADK, Agents SDK and LangChain tools — and never when `replay.yaml` says `allow: false` (otherwise it is refused and counted in `replay_contract.tool_calls_refused`), and unconsumed recordings are only reported. *Changed in v0.105.0 (ADR-0306 Q3):* `--permissive` alone used to run every unmatched MCP call live. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
 - `--require-faithful` — `mocked` mode only, **experimental** (ADR-0321): exit `4` unless the replay's `fidelity.verdict` is `faithful` (it replays the recorded exit code, stdout — RFC 4122 UUIDs masked —, the end state of the files the recorded run wrote and the call sequence, with no divergence and no live call; raw stdout and stderr bytes are advisory), and exit `0` when it is — also for a faithful replay of a run that failed at capture. It replaces the replay's own exit code; a replay refused before it ran keeps its refusal code. Exit 1 with any other mode.
 - `--hermetic` — `mocked` mode only, **experimental**, Linux (ADR-0322, unreleased): run the replayed process tree in a sandbox with no network beyond its own loopback (host loopback services included), a read-only host filesystem, and only the working directory (the workload's outputs reach the host) and the replay result directory writable; served model/tool calls still work. Two backends, chosen by preflight: bubblewrap (`bwrap`: a private network namespace; `/run`, `/tmp`, `/var/tmp` and `$XDG_RUNTIME_DIR` masked) and, where unprivileged user namespaces are restricted (stock Ubuntu 24.04), Landlock + seccomp (Linux >= 6.7, Landlock ABI >= 4: every TCP connect/bind denied, loopback included; UDP, raw, MPTCP and Unix socket creation denied; host `/tmp` and `/run` stay readable; `TMPDIR` points into the replay's temp dir). The result carries a `hermetic` block naming the `mechanism` and what it does (`enforced`) and does not (`not_enforced`) enforce, and the summary a `hermetic:` line. If no backend can be set up (not Linux, no `bwrap` or its namespaces denied and no usable Landlock, or the working directory is `/`, a masked directory or under `/run`) the replay is refused before anything runs: `error.type: HermeticUnavailable` with the failed `check` (`no-backend` lists every `attempts` entry), exit `5`, also under `--dry-run`. Blocked attempts are not counted from outside the process yet (`counting: none`). See [Hermetic replay](architecture/replay-modes.md#hermetic-replay---hermetic-experimental-adr-0322). Exit 1 with any other mode.
@@ -1320,16 +1320,28 @@ call goes live — and reports `model_calls_not_servable` and
 (ollama: 1 (127.0.0.1:11434)) …`. Up to v0.108.0 such a call was ignored and the replay
 reported `0 of 0 served` and success.
 
-**LangChain tools not passed through `wrap_tools`** (experimental, unreleased; ADR-0306
-D1). `nova capture` records them (see
+**LangChain tools and OpenAI Agents function tools not passed through `wrap_tools`**
+(experimental, unreleased; ADR-0306 r3 amendment; the Agents SDK observer is checked against
+`openai-agents` 0.24.0 only). `nova capture` records them (see
 [the LangChain tool seam](#langchain--langgraph-tool-seam--record-and-serve-tool-calls-experimental)),
-but mocked replay never serves them: a capsule that records one is refused before
-anything is spawned (`status: aborted`, `error.type: ToolSurfaceNotServed`, count and
-tool names per surface in `error.tool_calls_not_served_by_surface`), exit 1, also under
-`--dry-run`. `--permissive` runs them live; each is counted in `tool_calls_live` and named
-in a `[LIVE] tool call (…)` summary line. A tool body that runs live is counted even when
-the capsule recorded no tool call at all. Before this, such a replay reported
-`tool_calls_live: 0` and a `faithful` verdict while the tool bodies ran.
+and mocked replay **serves their recorded results by default**, like a `wrap_tools` tool
+declared `unknown`: the body never runs. That needs the result in the capsule, which
+capture keeps only at `NOVA_CAPTURE_LEVEL=forensic` (or `air_gapped`). A capsule whose
+observed records cannot be served — captured at the default level, a recorded failure,
+a non-JSON result — is refused before anything is spawned (`status: aborted`,
+`error.type: ToolSurfaceNotServed`, count, tool names and reasons per surface in
+`error.tool_calls_not_served_by_surface`; the message says to capture again), exit 1,
+also under `--dry-run` (each listed as `[NOT SERVED] LangChain tool call (<name>)` or `[NOT SERVED] OpenAI Agents tool call (<name>)`). A
+call with no matching record — for instance in a capsule that recorded no tool calls —
+is refused before its body runs. A record captured without its result is still served when
+the next recorded model request echoes that result under exactly the recorded
+`result_digest` (counted in `replay_contract.tool_calls_mocked_by_source.model-request-echo`;
+the CLI prints `N of the served tool results came from the next recorded model request`).
+Under `--permissive` such calls run live only with `--allow-unknown-mutation`; each is counted in `tool_calls_live` and named in a
+`[LIVE] tool call (…)` summary line. **Behaviour change:** before this, unwrapped LangChain
+tools were never served (a strict replay refused every capsule that recorded one) and
+`--permissive` ran them live without a ladder flag; unwrapped Agents SDK function tools were
+not recorded or counted at all and ran live in every mocked replay.
 
 **Network scope and child processes** (works today, unreleased after v0.108.0; ADR-0319). The live-connection
 count covers every observed Python process of the replayed tree
@@ -10938,8 +10950,9 @@ nova replay <run-id>                 # tool bodies do not run; results come from
 - **Under a mocked `nova replay`** the recorded result is returned and the tool body
   never runs. An unmatched call, or one whose record is not servable (the body raised —
   including a `ToolException` LangChain turned into an error message —, made nested
-  model/tool calls, or returned a non-JSON value such as a LangGraph `Command`, a
-  `ToolMessage` or a `content_and_artifact` tuple), is refused before the tool runs and
+  model/tool calls, or returned a non-JSON value such as a LangGraph `Command` or a
+  `content_and_artifact` tuple; a `ToolMessage` the tool returned itself is served when
+  every field is JSON — unreleased), is refused before the tool runs and
   the replay fails (`tool_call_unmatched` / `tool_result_not_servable`) even if the
   workload catches the error. `ToolNode` re-raises the refusal by default; with
   `handle_tool_errors` it becomes an error message to the model, and the replay still

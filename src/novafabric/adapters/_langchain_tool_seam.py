@@ -28,16 +28,17 @@ The generated class and the ``__class__`` swap are NovaFabric's construction,
 not a LangChain API; a release that changes how ``run`` reaches the body can
 bypass the seam (the tool then runs live in a replay).
 
-**Tools that were not wrapped** are observed, never served (ADR-0306 D1 serves
-declared tools only). While capture or a mocked replay is active,
-:func:`install_observer` patches ``BaseTool.run`` / ``arun`` and, on first use
-of a tool class, the class that defines its ``_run`` / ``_arun`` (restored by
-:func:`uninstall_observer`). The same handler sees the call with
-``wrapped=False`` and mutation class ``unknown``: capture records it (marked
-``observed``, never servable), and replay counts it as a live call -- or
-refuses it before the body runs when a ``replay.yaml`` ``allow: false``
-override names it. ``langchain_core`` is never imported for this: the patch is
-applied when the workload itself imports ``langchain_core.tools.base``.
+**Tools that were not wrapped** are observed. While capture or a mocked replay
+is active, :func:`install_observer` patches ``BaseTool.run`` / ``arun`` and, on
+first use of a tool class, the class that defines its ``_run`` / ``_arun``
+(restored by :func:`uninstall_observer`). The same handler sees the call with
+``wrapped=False`` and mutation class ``unknown`` (nothing declared one): capture
+records it (marked ``observed``, under the same payload rules as a wrapped
+record), and mocked replay serves its recorded result before the body runs, or
+refuses it -- exactly as for a wrapped tool declared ``unknown`` (ADR-0306 r3
+amendment; round 2 recorded and counted these, never served them).
+``langchain_core`` is never imported for this: the patch is applied when the
+workload itself imports ``langchain_core.tools.base``.
 
 Outside capture and replay no handler is registered and the copy behaves like
 the original. Nothing here imports ``langchain_core`` at module level: the
@@ -58,12 +59,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from novafabric.adapters import _adk_tool_seam as _base
+from novafabric.adapters import _langchain_tool_message as _tool_message
 from novafabric.adapters._adk_tool_seam import AdkToolCall, AdkToolHandler, AdkToolHook
 from novafabric.adapters._oai_tool_seam import Served
 from novafabric.capture import _tool_codec as codec
 
 __all__ = [
-    "CALL_ID_EXT", "NOT_WRAPPED_REASON", "SEAM_EXT", "SEAM_OBSERVED", "SEAM_WRAPPED",
+    "CALL_ID_EXT", "SEAM_EXT", "SEAM_OBSERVED", "SEAM_WRAPPED",
     "LangChainToolCall", "LangChainToolHook", "Served", "install_observer",
     "uninstall_observer", "wrap_tools",
 ]
@@ -82,13 +84,6 @@ SEAM_WRAPPED = codec.LANGCHAIN_SEAM_WRAPPED
 SEAM_OBSERVED = codec.LANGCHAIN_SEAM_OBSERVED
 #: The mutation class of a tool that was not wrapped: nothing declared one.
 OBSERVED_MUTATION_CLASS = "unknown"
-
-NOT_WRAPPED_REASON = (
-    "the LangChain tool was not passed through "
-    "novafabric.adapters.langchain_tools.wrap_tools: mocked replay serves only "
-    "declared tools (ADR-0306 D1) and re-executes this one live, counted in "
-    "tool_calls_live"
-)
 
 FAILURE_REASON = (
     "the tool raised: a recorded LangChain tool failure is not served -- LangChain "
@@ -109,7 +104,7 @@ class LangChainToolCall(AdkToolCall):
     #: ``InjectedToolCallId``, ...): the model never sent them.
     ignored: tuple[str, ...] = ()
     #: ``False`` for a tool that was not passed through :func:`wrap_tools`
-    #: (seen by the observer): it is recorded and counted, never served.
+    #: (seen by the observer): recorded as ``observed``, gated as ``unknown``.
     wrapped: bool = True
 
 
@@ -655,19 +650,29 @@ class LangChainToolHook(AdkToolHook):
         self, pending: _base._Pending, nested: int, *,
         value: Any = None, error: BaseException | None = None,
     ) -> dict[str, Any]:
+        # A tool that returns a ToolMessage itself (deepagents' file tools) is
+        # recorded as a JSON envelope, rebuilt into a ToolMessage at replay.
+        message_reason: str | None = None
+        is_message = error is None and _tool_message.is_tool_message(value)
+        if is_message:
+            value, message_reason = _tool_message.encode_tool_message(value)
         record = super().build_record(pending, nested, value=value, error=error)
         ext = record["extensions"]
-        ignored = getattr(pending.call, "ignored", ())
-        if ignored:
-            ext[codec.IGNORED_ARGUMENTS_EXT] = list(ignored)
-        if getattr(pending.call, "wrapped", True):
-            ext[SEAM_EXT] = SEAM_WRAPPED
-        else:
-            # Recorded for comparison and accounting, never served (ADR-0306 D1).
-            ext[SEAM_EXT] = SEAM_OBSERVED
+        if is_message:
+            ext[_tool_message.RESULT_KIND_EXT] = _tool_message.KIND_TOOL_MESSAGE
+        if message_reason is not None:
             previous = ext.get(codec.NOT_SERVABLE_REASON_EXT)
             ext[codec.RESULT_CODEC_EXT] = codec.CODEC_NOT_SERVABLE
             ext[codec.NOT_SERVABLE_REASON_EXT] = (
-                NOT_WRAPPED_REASON if not previous else f"{NOT_WRAPPED_REASON}; {previous}"
+                f"{previous}; {message_reason}" if previous else message_reason
             )
+            ext.pop(codec.RESULT_DIGEST_EXT, None)
+            record["result"] = None
+        ignored = getattr(pending.call, "ignored", ())
+        if ignored:
+            ext[codec.IGNORED_ARGUMENTS_EXT] = list(ignored)
+        # Observed records follow the wrapped records' payload and codec rules
+        # and are served alike (ADR-0306 r3 amendment); the marker says which
+        # seam saw the call.
+        ext[SEAM_EXT] = SEAM_WRAPPED if getattr(pending.call, "wrapped", True) else SEAM_OBSERVED
         return record

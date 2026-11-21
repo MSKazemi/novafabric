@@ -1928,10 +1928,11 @@ class MockToolDispatcher:
         self._previous_adk_handler = _adk_tool_seam._set_handler(self._adk)
         self._previous_oai_handler = _oai_tool_seam._set_handler(self._oai)
         self._previous_langchain_handler = _langchain_tool_seam._set_handler(self._langchain)
-        # LangChain tools the workload did not pass through wrap_tools are never
-        # served, but each execution is counted (and an `allow: false` override
-        # refuses it): the report must never say 0 live tools when a body ran.
+        # LangChain and Agents SDK tools the workload did not pass through
+        # wrap_tools reach the same servers, gated as `unknown` (ADR-0306 r3
+        # amendment): served when recorded, never run live uncounted.
         _langchain_tool_seam.install_observer()
+        _oai_tool_seam.install_observer()
         self._handler_registered = True
         self.installed_surfaces.append(TOOL_SURFACE_PYTHON)
         self.installed_surfaces.append(TOOL_SURFACE_ADK)
@@ -1953,6 +1954,7 @@ class MockToolDispatcher:
             if _langchain_tool_seam._get_handler() is self._langchain:
                 _langchain_tool_seam._set_handler(self._previous_langchain_handler)
             _langchain_tool_seam.uninstall_observer()
+            _oai_tool_seam.uninstall_observer()
             self._previous_handler = None
             self._previous_adk_handler = None
             self._previous_oai_handler = None

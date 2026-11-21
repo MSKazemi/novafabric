@@ -186,16 +186,20 @@ class ModelSurfaceNotServableError(Exception):
 
 class ToolSurfaceNotServedError(Exception):
     """A strict mocked replay refused to start: the capsule records tool calls
-    mocked replay does not serve by policy -- LangChain tools the workload did
-    not pass through ``wrap_tools`` (ADR-0306 D1 serves declared tools only).
-    Run anyway, each would re-execute live under a "mocked" label.
+    of LangChain tools the workload did not pass through ``wrap_tools``
+    (recorded by the seam's observer) whose results mocked replay cannot serve
+    -- most often because payload capture was off, so no result was kept.
 
-    The tool-side twin of :class:`ModelSurfaceNotServableError`: raised *before*
-    anything is spawned, recorded as ``status: aborted`` with ``error.type:
-    ToolSurfaceNotServed``; ``nova replay`` exits 1 (also under ``--dry-run``).
-    Under ``--permissive`` the replay starts instead and reports a
-    ``tool_surface_not_served`` divergence (a warning); each call it makes is
-    counted in ``tool_calls_live``.
+    Observed records that *can* be served are served by default (ADR-0306 r3
+    amendment); this refusal names the rest up front instead of failing at the
+    first such call. It is the tool-side twin of
+    :class:`ModelSurfaceNotServableError`: raised *before* anything is spawned,
+    recorded as ``status: aborted`` with ``error.type: ToolSurfaceNotServed``;
+    ``nova replay`` exits 1 (also under ``--dry-run``). Under ``--permissive``
+    the replay starts and reports a ``tool_surface_not_served`` divergence (a
+    warning); each such call is refused before its body runs unless
+    ``--allow-unknown-mutation`` lets it run live (counted in
+    ``tool_calls_live``).
     """
 
     error_type = "ToolSurfaceNotServed"
@@ -215,14 +219,21 @@ class ToolSurfaceNotServedError(Exception):
 
         total = sum(int(v.get("count", 0)) for v in by_surface.values())
         many = total != 1
+        reasons: list[str] = []
+        for entry in by_surface.values():
+            for reason in entry.get("reasons") or []:
+                if reason not in reasons:
+                    reasons.append(str(reason))
+        why = f" (why: {'; '.join(reasons)})" if reasons else ""
         return (
             f"the capsule records {total} tool call{'s' if many else ''} mocked replay "
-            f"does not serve -- {describe_not_served(by_surface)} -- replayed, "
-            f"{'they' if many else 'it'} would re-execute live. A strict replay refuses "
-            "to start; pass the tools through "
-            "novafabric.adapters.langchain_tools.wrap_tools and capture again to have "
-            f"them served, or pass --permissive to run {'them' if many else 'it'} live "
-            "and count each in tool_calls_live (ADR-0306 D1)"
+            f"cannot serve -- {describe_not_served(by_surface)}{why}. A strict replay "
+            "refuses to start: capture again -- with NOVA_CAPTURE_LEVEL=forensic when "
+            "the result was not kept -- to have "
+            f"{'them' if many else 'it'} served, or pass --permissive "
+            "--allow-unknown-mutation to run "
+            f"{'them' if many else 'it'} live, each counted in tool_calls_live "
+            "(ADR-0306 r3 amendment)"
         )
 
     def as_error(self) -> dict[str, Any]:

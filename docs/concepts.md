@@ -632,6 +632,10 @@ Inside the re-spawned process:
   `novafabric.adapters.openai_agents.wrap_tools()`, by replacing the tool's
   `on_invoke_tool` — an **undocumented SDK seam**, checked against
   `openai-agents` 0.17.x — again for `nova capture python …` workloads only.
+  Function tools **not** passed through `wrap_tools` are recorded and served the
+  same way when the capsule holds their results (capture level `forensic`;
+  experimental, unreleased, through a private SDK helper checked against
+  `openai-agents` 0.24.0).
 - **Experimental (ADR-0306 slice 3, unreleased):** it also serves
   **LangChain / LangGraph** tools (`@tool`, `StructuredTool`, `BaseTool`
   subclasses, including through LangGraph's `ToolNode`) passed through
@@ -640,10 +644,12 @@ Inside the re-spawned process:
   construction, not a LangChain extension point, checked against
   `langchain-core` 1.8.3 and `langgraph` 1.2.23 — for `nova capture python …`
   workloads only. LangChain tools **not** passed through `wrap_tools` are
-  recorded too but never served: a strict replay of a capsule that records them
-  refuses to start (`ToolSurfaceNotServed`), and under `--permissive` — or for a
-  capsule without such records — every one whose body runs is counted in
-  `tool_calls_live` and named in a `[LIVE] tool call` line (experimental).
+  recorded too and, when the capsule holds their results (capture level
+  `forensic`), served the same way (experimental, unreleased); a strict replay
+  of a capsule whose observed records cannot be served refuses to start
+  (`ToolSurfaceNotServed`), an unmatched call is refused before its body runs,
+  and under `--permissive --allow-unknown-mutation` every one whose body runs is
+  counted in `tool_calls_live` and named in a `[LIVE] tool call` line.
 - **Every other tool runs live**: HTTP requests, shell commands, file writes,
   other framework-native tools, undeclared functions and other providers' SDKs are not
   intercepted. The

@@ -356,9 +356,33 @@ def not_servable_reason(record: dict[str, Any]) -> str | None:
             return "the record holds no result value"
         return None
     reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
+    if is_observed_tool_record(record):
+        reason = _without_legacy_not_wrapped(reason)
+        if reason is None:
+            # Round 2's only obstacle was policy; the value was kept.
+            if record.get("status", "success") == "success":
+                result = record.get("result")
+                if not (isinstance(result, dict) and "value" in result):
+                    return "the record holds no result value"
+            return None
     if _only_nested(record, ext, reason):
         return None
     return str(reason) if reason else "the record was not marked servable at capture"
+
+
+def _without_legacy_not_wrapped(reason: Any) -> str | None:
+    """*reason* without round 2's "not passed through wrap_tools" policy text
+    (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``); ``None`` when nothing else is left.
+
+    Only applied to observed LangChain records (ADR-0306 r3 amendment)."""
+    if not isinstance(reason, str) or not reason:
+        return None if reason in (None, "") else str(reason)
+    legacy = _tool_codec.LEGACY_NOT_WRAPPED_REASON
+    if reason == legacy:
+        return None
+    if reason.startswith(legacy + "; "):
+        return reason[len(legacy) + 2:] or None
+    return reason
 
 
 def _only_nested(record: dict[str, Any], ext: dict[str, Any], reason: Any) -> bool:
@@ -413,47 +437,130 @@ def nested_boundary_ids(boundary_id: str, tool_calls: list[dict[str, Any]]) -> s
     return ids
 
 
-def is_not_served_tool_record(record: dict[str, Any]) -> bool:
-    """A recorded call mocked replay does not serve **by policy**: a LangChain
-    tool the workload did not pass through ``wrap_tools`` (recorded by the
-    seam's observer). Replayed, it runs live."""
-    if tool_surface(record) != TOOL_SURFACE_LANGCHAIN:
+#: Surfaces with an observer for tools not passed through ``wrap_tools``, and
+#: the record extension that marks such a record ``observed``.
+OBSERVED_SEAM_EXTS: dict[str, str] = {
+    TOOL_SURFACE_LANGCHAIN: _tool_codec.LANGCHAIN_SEAM_EXT,
+    TOOL_SURFACE_OPENAI_AGENTS: _tool_codec.OPENAI_AGENTS_SEAM_EXT,
+}
+#: How each such surface is named in refusals and ``--dry-run`` lines.
+OBSERVED_SURFACE_LABELS: dict[str, str] = {
+    TOOL_SURFACE_LANGCHAIN: "LangChain",
+    TOOL_SURFACE_OPENAI_AGENTS: "OpenAI Agents",
+}
+
+
+def is_observed_tool_record(record: dict[str, Any]) -> bool:
+    """A LangChain or OpenAI Agents record of a tool the workload did not pass
+    through ``wrap_tools`` (recorded by that seam's observer)."""
+    ext_key = OBSERVED_SEAM_EXTS.get(str(tool_surface(record)))
+    if ext_key is None:
         return False
     ext = record.get("extensions")
-    return isinstance(ext, dict) and (
-        ext.get(_tool_codec.LANGCHAIN_SEAM_EXT) == _tool_codec.LANGCHAIN_SEAM_OBSERVED
-    )
+    return isinstance(ext, dict) and ext.get(ext_key) == _tool_codec.LANGCHAIN_SEAM_OBSERVED
+
+
+def upgrade_legacy_observed_record(record: dict[str, Any]) -> dict[str, Any]:
+    """*record* as current capture would write it, when it is a round-2 observed
+    record whose only not-servable reason was the "not passed through
+    wrap_tools" policy (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``) and whose
+    value was kept: a copy marked ``json-v1``. Any other record is returned
+    unchanged (the same object)."""
+    if not is_observed_tool_record(record):
+        return record
+    ext = record.get("extensions")
+    if not isinstance(ext, dict) or ext.get(_tool_codec.RESULT_CODEC_EXT) == _tool_codec.CODEC_JSON:
+        return record
+    reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
+    if reason != _tool_codec.LEGACY_NOT_WRAPPED_REASON or not_servable_reason(record) is not None:
+        return record
+    upgraded_ext = {k: v for k, v in ext.items() if k != _tool_codec.NOT_SERVABLE_REASON_EXT}
+    upgraded_ext[_tool_codec.RESULT_CODEC_EXT] = _tool_codec.CODEC_JSON
+    return {**record, "extensions": upgraded_ext}
+
+
+def observed_not_served_reason(record: dict[str, Any]) -> str | None:
+    """Why mocked replay cannot serve this *observed* record, else ``None``.
+
+    Also ``None`` for any record that is not observed. A recorded failure is
+    never served (the LangChain server's rule)."""
+    if not is_observed_tool_record(record):
+        return None
+    reason = not_servable_reason(record)
+    if reason is None and record.get("status", "success") != "success":
+        label = OBSERVED_SURFACE_LABELS.get(str(tool_surface(record)), "tool")
+        reason = f"the record is a failure, and {label} tool failures are not served"
+    return reason
+
+
+def is_not_served_tool_record(record: dict[str, Any]) -> bool:
+    """An observed LangChain or OpenAI Agents record (a tool not passed through
+    ``wrap_tools``) mocked replay cannot serve -- the capsule shows, before anything runs, that
+    the call would be refused (strict) or need ``--allow-unknown-mutation``
+    (``--permissive``). Observed records that *can* be served are served by
+    default (ADR-0306 r3 amendment) and are not "not served"."""
+    return observed_not_served_reason(record) is not None
 
 
 #: Most tool names listed per surface in ``tool_calls_not_served_by_surface``.
 MAX_LISTED_NOT_SERVED_TOOLS = 10
+#: Most distinct reasons listed per surface there.
+MAX_LISTED_NOT_SERVED_REASONS = 5
 
 
 def not_served_tool_calls(tool_calls: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Recorded calls replay does not serve by policy, as ``{surface: {"count",
-    "tools"}}`` (distinct tool names, sorted, at most
-    :data:`MAX_LISTED_NOT_SERVED_TOOLS`); empty when there are none."""
+    """Recorded observed calls mocked replay cannot serve, as ``{surface:
+    {"count", "tools", "reasons"}}`` (distinct tool names, sorted, at most
+    :data:`MAX_LISTED_NOT_SERVED_TOOLS`; distinct reasons in first-seen order,
+    at most :data:`MAX_LISTED_NOT_SERVED_REASONS`); empty when there are none."""
     counts: dict[str, int] = {}
     names: dict[str, set[str]] = {}
+    reasons: dict[str, list[str]] = {}
     for record in tool_calls:
-        if not isinstance(record, dict) or not is_not_served_tool_record(record):
+        if not isinstance(record, dict):
             continue
-        surface = TOOL_SURFACE_LANGCHAIN
+        reason = observed_not_served_reason(record)
+        if reason is None:
+            continue
+        surface = str(tool_surface(record))
         counts[surface] = counts.get(surface, 0) + 1
         names.setdefault(surface, set()).add(str(record.get("tool_name")))
+        listed = reasons.setdefault(surface, [])
+        if reason not in listed:
+            listed.append(reason)
     return {
-        surface: {"count": n, "tools": sorted(names[surface])[:MAX_LISTED_NOT_SERVED_TOOLS]}
+        surface: {
+            "count": n,
+            "tools": sorted(names[surface])[:MAX_LISTED_NOT_SERVED_TOOLS],
+            "reasons": reasons[surface][:MAX_LISTED_NOT_SERVED_REASONS],
+        }
         for surface, n in counts.items()
     }
 
 
+def not_served_dry_run_lines(tool_calls: list[dict[str, Any]]) -> list[str]:
+    """One ``--dry-run`` line per recorded observed call replay cannot serve."""
+    lines = []
+    for record in tool_calls:
+        reason = observed_not_served_reason(record) if isinstance(record, dict) else None
+        if reason is not None:
+            label = OBSERVED_SURFACE_LABELS.get(str(tool_surface(record)), "tool")
+            lines.append(
+                f"  [NOT SERVED] {label} tool call ({record.get('tool_name')}) -- "
+                f"observed (not passed through wrap_tools): {reason}\n"
+            )
+    return lines
+
+
 def describe_not_served(by_surface: dict[str, dict[str, Any]]) -> str:
-    """``LangChain tools not passed through wrap_tools: 2 (read_log, write_diagnosis)``."""
+    """``observed LangChain tool calls (...) without a servable record: 2 (read_log, ...)``."""
     parts = []
     for surface, entry in sorted(by_surface.items()):
+        label = OBSERVED_SURFACE_LABELS.get(surface)
         what = (
-            "LangChain tools not passed through wrap_tools"
-            if surface == TOOL_SURFACE_LANGCHAIN else surface
+            f"observed {label} tool calls (not passed through wrap_tools) without a "
+            "servable record"
+            if label is not None else surface
         )
         tools = ", ".join(entry.get("tools") or [])
         parts.append(f"{what}: {int(entry.get('count', 0))}" + (f" ({tools})" if tools else ""))
@@ -849,6 +956,9 @@ class ReplayContractReport:
     #: Live tool calls by (surface, tool name), in first-seen order: what the
     #: ``[LIVE] tool call`` lines name.
     tool_calls_live_by_tool: dict[tuple[str, str], int] = field(default_factory=dict)
+    #: ADR-0306 r3: served tool calls whose result did not come from the record
+    #: itself, by source (``model-request-echo``); empty -> omitted.
+    tool_calls_mocked_by_source: dict[str, int] = field(default_factory=dict)
     #: Recorded tool calls replay does not serve by policy (LangChain tools
     #: that were not passed through ``wrap_tools``), by surface
     #: (``{"count", "tools"}``); they run live if made (``--permissive``).
@@ -1033,9 +1143,14 @@ class ReplayContractReport:
             )
         if self.tool_calls_not_served_by_surface:
             out["tool_calls_not_served_by_surface"] = {
-                k: {"count": int(v.get("count", 0)), "tools": list(v.get("tools") or [])}
+                k: {
+                    "count": int(v.get("count", 0)), "tools": list(v.get("tools") or []),
+                    **({"reasons": list(v["reasons"])} if v.get("reasons") else {}),
+                }
                 for k, v in self.tool_calls_not_served_by_surface.items()
             }
+        if self.tool_calls_mocked_by_source:
+            out["tool_calls_mocked_by_source"] = dict(self.tool_calls_mocked_by_source)
         if self.tool_overrides:
             out["tool_overrides"] = [dict(o) for o in self.tool_overrides]
         if self.adapter_runs_expected is not None:
@@ -1267,6 +1382,11 @@ def summarize(
         elif kind == "tool_mocked":
             report.tool_calls_mocked += 1
             _surface_of(ev)["mocked"] += 1
+            source = ev.get("source")
+            if isinstance(source, str) and source:
+                report.tool_calls_mocked_by_source[source] = (
+                    report.tool_calls_mocked_by_source.get(source, 0) + 1
+                )
         elif kind == "tool_live":
             report.tool_calls_live += 1
             _surface_of(ev)["live"] += 1
