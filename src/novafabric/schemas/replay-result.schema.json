@@ -321,6 +321,14 @@
           "type": "boolean",
           "description": "ADR-0319: more child processes were started than the observer logs per process."
         },
+        "tool_calls_mocked_by_source": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "ADR-0306 r3 amendment: served tool calls whose result did not come from the tool record itself, by source. `model-request-echo`: a record captured without its result, served from the tool result the next recorded model request sent back, only when it matches the recorded result_digest. Also counted in tool_calls_mocked. Additive and optional; omitted when empty."
+        },
         "tool_calls_live_by_tool": {
           "type": "array",
           "items": {

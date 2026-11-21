@@ -334,9 +334,15 @@ class PolicyEvaluator:
                     f"mocked mode: served from the capsule via {surface}; {override.label}: "
                     "an unmatched call is refused even under --permissive"
                 ), "never live")
+            ext = tool_call.get("extensions")
+            echoed = isinstance(ext, dict) and ext.get(
+                "io.novafabric.result_source"
+            ) == "model-request-echo"
             return decided("mock", (
-                f"mocked mode: served from the capsule via {surface}; an unmatched "
-                "call is refused"
+                f"mocked mode: served from the capsule via {surface}"
+                + ("; the result is the next model request's echo, matched to the "
+                   "recorded digest" if echoed else "")
+                + "; an unmatched call is refused"
                 + (", or under --permissive runs live only if the ladder flag permits "
                    f"it ({gate})")
             ))

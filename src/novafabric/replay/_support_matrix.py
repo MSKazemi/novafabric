@@ -65,6 +65,7 @@ _LC = "tests/replay/test_langchain_tool_replay_e2e.py"
 _LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
 _OAI_OBSERVED = "tests/replay/test_openai_agents_unwrapped_tool_e2e.py"
 _LC_MESSAGE = "tests/replay/test_langchain_tool_message_results_e2e.py"
+_ECHO_RECOVERY = "tests/replay/test_tool_result_echo_recovery.py"
 _CHILDNET = "tests/replay/test_child_process_network.py"
 _HERMETIC = "tests/replay/test_hermetic_replay.py"
 _LG_ADAPTER = "tests/replay/test_langgraph_adapter_replay_e2e.py"
@@ -725,7 +726,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             "`--allow-unknown-mutation`, counted in `tool_calls_live` and "
             "`replay_contract.tool_calls_live_by_tool`; a round-2 observed record "
             "that kept its value is served without a re-capture; `allow: false` "
-            "refuses an unservable call before its body runs; the seam patches "
+            "refuses an unservable call before its body runs; a record captured "
+            "without its result is served from the next recorded model request's echo "
+            "when it has exactly the recorded `result_digest` (`model-request-echo`); "
+            "the seam patches "
             "`BaseTool.run`/`arun` and the class defining `_run`/`_arun` -- **not a "
             "LangChain extension point**, checked against `langchain-core` 1.8.3 and "
             "`langgraph` 1.2.23 only"
@@ -747,6 +751,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_LG_ADAPTER}::test_an_unwrapped_tool_in_an_adapter_capsule_is_served_strict",
             f"{_LC_MESSAGE}::test_strict_replay_serves_a_real_tool_message_and_never_runs_the_tool",
             f"{_LC_MESSAGE}::test_a_tool_message_with_a_non_json_artifact_is_not_servable_and_says_why",
+            f"{_LC_OBSERVED}::test_a_default_level_capsule_is_served_from_the_model_request_echo",
+            f"{_LC_OBSERVED}::test_an_echo_that_does_not_match_the_recorded_digest_is_never_served",
+            f"{_ECHO_RECOVERY}::test_a_digest_mismatch_leaves_the_record_unservable",
         ),
         servers=("langchain_core.tools.BaseTool",),
     ),

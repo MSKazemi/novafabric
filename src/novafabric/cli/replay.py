@@ -433,6 +433,14 @@ def replay_cmd(
             f"{not_intercepted} recorded on surfaces replay does not intercept"
         )
         contract = result.replay_contract or {}
+        echoed = (contract.get("tool_calls_mocked_by_source") or {}).get("model-request-echo")
+        if echoed:
+            # ADR-0306 r3: results the record did not keep, recovered from the
+            # next recorded model request under the recorded digest.
+            console.print(
+                f"  {echoed} of the served tool results came from the next recorded "
+                "model request (matched to the recorded result digest)"
+            )
         # Name every tool call that ran live, as the dry run names each [LIVE] call.
         for entry in contract.get("tool_calls_live_by_tool") or []:
             if not isinstance(entry, dict):

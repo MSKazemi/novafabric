@@ -946,6 +946,9 @@ class ReplayContractReport:
     #: Live tool calls by (surface, tool name), in first-seen order: what the
     #: ``[LIVE] tool call`` lines name.
     tool_calls_live_by_tool: dict[tuple[str, str], int] = field(default_factory=dict)
+    #: ADR-0306 r3: served tool calls whose result did not come from the record
+    #: itself, by source (``model-request-echo``); empty -> omitted.
+    tool_calls_mocked_by_source: dict[str, int] = field(default_factory=dict)
     #: Recorded tool calls replay does not serve by policy (LangChain tools
     #: that were not passed through ``wrap_tools``), by surface
     #: (``{"count", "tools"}``); they run live if made (``--permissive``).
@@ -1097,9 +1100,14 @@ class ReplayContractReport:
             )
         if self.tool_calls_not_served_by_surface:
             out["tool_calls_not_served_by_surface"] = {
-                k: {"count": int(v.get("count", 0)), "tools": list(v.get("tools") or [])}
+                k: {
+                    "count": int(v.get("count", 0)), "tools": list(v.get("tools") or []),
+                    **({"reasons": list(v["reasons"])} if v.get("reasons") else {}),
+                }
                 for k, v in self.tool_calls_not_served_by_surface.items()
             }
+        if self.tool_calls_mocked_by_source:
+            out["tool_calls_mocked_by_source"] = dict(self.tool_calls_mocked_by_source)
         if self.tool_overrides:
             out["tool_overrides"] = [dict(o) for o in self.tool_overrides]
         if self.adapter_runs_expected is not None:
@@ -1297,6 +1305,11 @@ def summarize(
         elif kind == "tool_mocked":
             report.tool_calls_mocked += 1
             _surface_of(ev)["mocked"] += 1
+            source = ev.get("source")
+            if isinstance(source, str) and source:
+                report.tool_calls_mocked_by_source[source] = (
+                    report.tool_calls_mocked_by_source.get(source, 0) + 1
+                )
         elif kind == "tool_live":
             report.tool_calls_live += 1
             _surface_of(ev)["live"] += 1

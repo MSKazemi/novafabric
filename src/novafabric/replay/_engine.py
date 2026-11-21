@@ -42,6 +42,7 @@ from novafabric.replay._contract import (
     summarize,
 )
 from novafabric.replay._dispatcher import REPLAY_DISPATCHER_UNAVAILABLE_EXIT, TOOL_LADDER_ENV
+from novafabric.replay._echo_recovery import recover_tool_results_from_echo
 from novafabric.replay._env_check import EnvironmentResolver
 from novafabric.replay._errors import (
     CapsuleNotReplayableError,
@@ -248,6 +249,10 @@ class ReplayEngine:
         model_calls = logical_model_calls(recorded_model_records)
         not_servable = not_servable_by_system(recorded_model_records)
         tool_calls = _read_jsonl(self._capsule_dir / "tool-calls.jsonl")
+        if self._flags.mode == "mocked":
+            # ADR-0306 r3: a payloads-off tool result the next recorded model
+            # request echoes under exactly the recorded digest is servable.
+            tool_calls = recover_tool_results_from_echo(tool_calls, recorded_model_records)
 
         env_warnings = EnvironmentResolver().check(env_lock)
         run_id = manifest.get("run_id", "unknown")

@@ -47,6 +47,10 @@ from novafabric.replay._policy import decide_intercepted
 _NONE_RESPONSE: dict[str, Any] = {"result": None}
 
 
+#: ``_echo_recovery.SOURCE_EXT``: where a served record's result came from.
+_RESULT_SOURCE_EXT = "io.novafabric.result_source"
+
+
 class RecordNotDecodable(Exception):
     """A matched, servable record whose value a server cannot rebuild."""
 
@@ -149,12 +153,16 @@ class AdkToolServer:
                 call, ReplayToolRecordNotServableError, call.digest,
                 "matched a recorded call that cannot be served", str(exc), consumed=True,
             )
+        ext = record.get("extensions")
+        source = ext.get(_RESULT_SOURCE_EXT) if isinstance(ext, dict) else None
         self._events.emit(
             "tool_mocked",
             tool_name=call.tool_name,
             record_id=record.get("tool_call_id"),
             how=match.how,
             surface=self.SURFACE,
+            # ADR-0306 r3: e.g. `model-request-echo` for a recovered result.
+            **({"source": source} if isinstance(source, str) else {}),
         )
         return self._answer(value)
 

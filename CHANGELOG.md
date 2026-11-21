@@ -52,6 +52,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   `io.novafabric.langchain_result_kind: tool_message`) and mocked replay rebuilds a real `ToolMessage` answering
   the replayed call's `tool_call_id`. A field that is not a JSON value (an object `artifact`) keeps the record not
   servable, with a reason naming the field.
+- **Tool results captured below `forensic` are served from the next recorded model request** (experimental; ADR-0306
+  r3 amendment). A default-level tool record keeps only a digest of its result, but the result also went back to the
+  model in the next request, which the capsule keeps. Mocked replay now serves that echo (Chat Completions, Responses,
+  Anthropic and Bedrock Converse shapes) for LangChain, OpenAI Agents and ADK records, **only** when the capture
+  codec gives it exactly the recorded `result_digest`; otherwise the record stays unservable with its re-capture
+  hint. Nothing new is stored. Counted in `tool_calls_mocked` and the new optional
+  `replay_contract.tool_calls_mocked_by_source` (`model-request-echo`). Checked on the c08 Bedrock capsules: a dry
+  run of every `hpc_analyst` and `iot_detective` capsule (10 + 10) now predicts all 71 tool calls served.
 - **OpenAI Agents SDK function tools you did not pass through `wrap_tools` are recorded and served too, and never
   run uncounted** (experimental; ADR-0306 r3 amendment). Before, an unwrapped `@function_tool` was invisible to
   capture and replay: its body ran live in every mocked replay and the report said `tool_calls_live: 0`. Now an

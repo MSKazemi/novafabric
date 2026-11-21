@@ -612,3 +612,75 @@ def test_an_allow_false_override_stops_an_unwrapped_tool_before_its_body_runs(
     assert result["replay_contract"]["tool_calls_refused"] == 1
     assert _live_by_tool(result) == {"read_log": 1}
     assert any(o.get("error") for o in observed)
+
+
+# ── default capture level: results recovered from the next model request ────
+
+
+def _openai_hpc_capsule(env: Env, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Any]:
+    pytest.importorskip("openai")
+    pytest.importorskip("httpx")
+    from _mocked_replay_agent import openai_body
+
+    monkeypatch.setenv("AGENT_MODEL", "openai")
+    monkeypatch.setenv("AGENT_CANNED", json.dumps([
+        openai_body(tool_calls=[("call_R", "read_log", {"path": LOG})], rid="r1"),
+        openai_body(tool_calls=[
+            ("call_W", "write_diagnosis", {"job_id": "42819", "severity": "HIGH"}),
+        ], rid="r2"),
+        openai_body(content="diagnosed", rid="r3"),
+    ]))
+    return env.capture([])  # default level: tool results not kept, digests are
+
+
+def test_a_default_level_capsule_is_served_from_the_model_request_echo(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The c08 hpc_analyst case: each tool result is recorded only as a digest,
+    but the next model request carries it back to the model. A strict replay
+    serves it from there, because its digest matches the recorded one."""
+    capsule, captured = _openai_hpc_capsule(env, monkeypatch)
+    records = env.records(capsule)
+    assert {r["tool_name"] for r in records} == {"read_log", "write_diagnosis"}
+    assert all(r["result"] is None for r in records)  # nothing new was stored
+
+    result, observed, cli = env.replay(capsule)  # strict, AGENT_CANNED unset
+    assert cli.exit_code == 0, cli.output
+    assert result["status"] == "success", result.get("error")
+    assert env.side_effects == [], "a tool body ran during mocked replay"
+    assert not (env.work / DIAGNOSIS).exists()
+    assert observed == captured
+    assert result["model_calls_mocked"] == 3
+    assert result["tool_calls_mocked"] == 2
+    assert result["tool_calls_live"] == 0
+    contract = result["replay_contract"]
+    assert contract["tool_calls_mocked_by_source"] == {"model-request-echo": 2}
+    assert "2 of the served tool results came from the next recorded model request" in (
+        cli.output.replace("\n", " ")
+    )
+    assert contract["divergences"] == []
+
+    dry, _, cli = env.replay(capsule, "--dry-run")
+    assert cli.exit_code == 0, cli.output
+    report = next(env.replays.glob(f"{dry['replay_id']}/dry_run_report.txt")).read_text()
+    assert "[MOCK] read_log" in report
+    assert "the next model request's echo, matched to the recorded digest" in report
+
+
+def test_an_echo_that_does_not_match_the_recorded_digest_is_never_served(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    capsule, _ = _openai_hpc_capsule(env, monkeypatch)
+    records = env.records(capsule)
+    for rec in records:
+        if rec["tool_name"] == "read_log":
+            rec["extensions"]["io.novafabric.result_digest"] = "sha256:" + "0" * 64
+    env.write_records(capsule, records)
+
+    result, observed, cli = env.replay(capsule)
+    assert cli.exit_code == 1, cli.output
+    assert result["error"]["type"] == "ToolSurfaceNotServed"
+    by_surface = result["error"]["tool_calls_not_served_by_surface"][LC]
+    assert by_surface["tools"] == ["read_log"]  # write_diagnosis is still recoverable
+    assert "NOVA_CAPTURE_LEVEL=forensic" in result["error"]["message"]
+    assert env.side_effects == []

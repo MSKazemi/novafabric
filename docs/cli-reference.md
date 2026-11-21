@@ -1318,8 +1318,11 @@ a non-JSON result — is refused before anything is spawned (`status: aborted`,
 `error.tool_calls_not_served_by_surface`; the message says to capture again), exit 1,
 also under `--dry-run` (each listed as `[NOT SERVED] LangChain tool call (<name>)` or `[NOT SERVED] OpenAI Agents tool call (<name>)`). A
 call with no matching record — for instance in a capsule that recorded no tool calls —
-is refused before its body runs. Under `--permissive` such calls run live only with
-`--allow-unknown-mutation`; each is counted in `tool_calls_live` and named in a
+is refused before its body runs. A record captured without its result is still served when
+the next recorded model request echoes that result under exactly the recorded
+`result_digest` (counted in `replay_contract.tool_calls_mocked_by_source.model-request-echo`;
+the CLI prints `N of the served tool results came from the next recorded model request`).
+Under `--permissive` such calls run live only with `--allow-unknown-mutation`; each is counted in `tool_calls_live` and named in a
 `[LIVE] tool call (…)` summary line. **Behaviour change:** before this, unwrapped LangChain
 tools were never served (a strict replay refused every capsule that recorded one) and
 `--permissive` ran them live without a ladder flag; unwrapped Agents SDK function tools were

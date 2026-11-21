@@ -382,19 +382,45 @@ def test_an_unwrapped_tool_in_an_adapter_capsule_is_served_strict(
     assert _check(result, "live_calls")["equal"] is True
 
 
-def test_an_unwrapped_tool_without_its_result_is_refused_strict_and_runs_with_the_ladder(
+def test_an_unwrapped_tool_captured_without_its_result_is_served_from_the_model_echo(
     bench: Bench, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Captured below ``forensic``, the observed record holds no result: a strict
-    replay refuses before re-running the script (``ToolSurfaceNotServed``), and
-    ``--permissive --allow-unknown-mutation`` re-runs it with the tool body live and
-    counted, so the verdict is not faithful."""
+    """Captured below ``forensic``, the observed record holds only a digest of the
+    result; the next recorded OpenAI request carries the result back to the model,
+    and its digest matches, so a strict replay serves it (ADR-0306 r3)."""
     side = tmp_path / "side.log"
     monkeypatch.setenv("AGENT_SIDE", str(side))
     monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "standard")
     (capsule,) = bench.capture()
     captured = bench.answers()
     side.unlink()
+
+    result, replayed = bench.replay(capsule)
+    assert result["status"] == "success", result.get("error")
+    assert replayed == captured
+    assert not side.exists(), "the unwrapped tool body ran during mocked replay"
+    assert result["replay_contract"]["tool_calls_mocked_by_source"] == {
+        "model-request-echo": 1
+    }
+
+
+def test_an_unwrapped_tool_without_a_recoverable_result_is_refused_strict_and_runs_with_the_ladder(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No result and no usable digest: a strict replay refuses before re-running the
+    script (``ToolSurfaceNotServed``), and ``--permissive --allow-unknown-mutation``
+    re-runs it with the tool body live and counted, so the verdict is not faithful."""
+    side = tmp_path / "side.log"
+    monkeypatch.setenv("AGENT_SIDE", str(side))
+    monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "standard")
+    (capsule,) = bench.capture()
+    captured = bench.answers()
+    side.unlink()
+    path = capsule / "tool-calls.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    for rec in records:  # as a result over the digest cap: no digest was kept
+        rec["extensions"].pop("io.novafabric.result_digest", None)
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
 
     result, replayed = bench.replay(capsule)
     assert result["status"] == "aborted"
