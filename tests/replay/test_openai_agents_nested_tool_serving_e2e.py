@@ -12,9 +12,8 @@ as not servable instead (unit tests in ``tests/adapters``).
 The workload is a real ``agents`` ``Runner`` with the SDK's own
 ``OpenAIResponsesModel`` over the real ``openai`` SDK and an
 ``httpx.MockTransport`` (no network, no API key), so every model call is
-recorded and served. (``OpenAIChatCompletionsModel`` is not used: mocked replay
-serves a non-streamed Chat Completion as a duck-typed object, and that model
-checks ``isinstance(ret, ChatCompletion)`` -- a separate limitation.)
+recorded and served. (``OpenAIChatCompletionsModel`` is covered by
+``test_openai_agents_chat_completions_e2e.py``.)
 """
 
 from __future__ import annotations
