@@ -399,7 +399,16 @@
         },
         "guard": {
           "type": "string",
-          "enum": ["facet_malformed", "entry_not_reproducible", "long_lived_host", "argv_redacted", "not_first_adapter_run", "entry_file_missing", "entry_changed", "entry_not_verifiable"],
+          "enum": [
+            "facet_malformed",
+            "entry_not_reproducible",
+            "long_lived_host",
+            "argv_redacted",
+            "not_first_adapter_run",
+            "entry_file_missing",
+            "entry_changed",
+            "entry_not_verifiable"
+          ],
           "description": "ADR-0306 Q7, on error.type CapsuleNotReplayable: the guard that refused an adapter capsule's recorded process invocation. Absent when the capsule records no invocation at all. Additive and optional."
         },
         "model_calls_not_servable_by_system": {
@@ -445,14 +454,51 @@
           "enum": [
             "platform",
             "bwrap-missing",
+            "landlock-abi",
             "preflight",
-            "writable-path"
+            "writable-path",
+            "no-backend"
           ],
-          "description": "ADR-0322, on error.type HermeticUnavailable: the precondition that failed (writable-path: the working directory or the result directory would make the host root, a masked directory or a socket directory writable)."
+          "description": "ADR-0322, on error.type HermeticUnavailable: the precondition that failed (writable-path: the working directory or the result directory would make the host root, a masked directory or a socket directory writable; landlock-abi: Landlock absent or older than ABI 4; no-backend: --hermetic-backend auto found neither bwrap nor Landlock usable, see attempts)."
         },
         "stderr": {
           "type": "string",
           "description": "ADR-0322, on error.type HermeticUnavailable with check preflight: the preflight's stderr (first 2000 characters)."
+        },
+        "mechanism": {
+          "type": "string",
+          "enum": [
+            "bwrap",
+            "landlock"
+          ],
+          "description": "ADR-0322 amendment, on error.type HermeticUnavailable: the backend whose precondition failed (absent for writable-path and no-backend)."
+        },
+        "attempts": {
+          "type": "array",
+          "description": "ADR-0322 amendment, on check no-backend: every backend --hermetic-backend auto tried, in order, and why it failed.",
+          "items": {
+            "type": "object",
+            "required": [
+              "mechanism",
+              "check",
+              "message"
+            ],
+            "properties": {
+              "mechanism": {
+                "type": "string",
+                "enum": [
+                  "bwrap",
+                  "landlock"
+                ]
+              },
+              "check": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
         }
       },
       "description": "Error details if status is failure or aborted."
@@ -618,7 +664,8 @@
         "mechanism": {
           "type": "string",
           "enum": [
-            "bwrap"
+            "bwrap",
+            "landlock"
           ]
         },
         "bwrap_version": {
@@ -627,19 +674,27 @@
             "null"
           ]
         },
+        "landlock_abi": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "ADR-0322 amendment, mechanism landlock: the kernel's Landlock ABI version."
+        },
         "network": {
           "type": "string",
           "enum": [
             "none"
           ],
-          "description": "A private network namespace with only its own loopback: host services, host loopback included, are unreachable."
+          "description": "No network beyond the sandbox. bwrap: a private network namespace with only its own loopback; host services, host loopback included, are unreachable. landlock: every TCP bind and connect is denied (loopback included) and UDP, raw/ICMP, SCTP, MPTCP and Unix socket creation fails (seccomp)."
         },
         "filesystem": {
           "type": "string",
           "enum": [
             "read-only"
           ],
-          "description": "Host tree read-only except writable_paths; /run, /tmp, /var/tmp and XDG_RUNTIME_DIR masked."
+          "description": "Host tree read-only except writable_paths. bwrap: /run, /tmp, /var/tmp and XDG_RUNTIME_DIR masked. landlock: nothing is masked (those stay readable, not writable); TMPDIR points into the replay's temp dir."
         },
         "writable_paths": {
           "type": "array",
@@ -662,6 +717,63 @@
                 "type": "string"
               }
             }
+          }
+        },
+        "enforced": {
+          "type": "array",
+          "description": "ADR-0322 amendment: the controls this mechanism enforces, and by what (bwrap, landlock or seccomp).",
+          "items": {
+            "type": "object",
+            "required": [
+              "control",
+              "by"
+            ],
+            "properties": {
+              "control": {
+                "type": "string",
+                "enum": [
+                  "network.tcp",
+                  "network.udp",
+                  "network.other_inet",
+                  "network.unix",
+                  "network.unix_abstract",
+                  "network.unix_visible_paths",
+                  "filesystem.write",
+                  "filesystem.read_hidden_dirs",
+                  "processes.signal",
+                  "processes.ptrace",
+                  "processes.lifetime"
+                ]
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "bwrap",
+                  "landlock",
+                  "seccomp"
+                ]
+              }
+            }
+          }
+        },
+        "not_enforced": {
+          "type": "array",
+          "description": "ADR-0322 amendment: the controls this mechanism does not enforce (docs/architecture/replay-modes.md, Hermetic replay).",
+          "items": {
+            "type": "string",
+            "enum": [
+              "network.tcp",
+              "network.udp",
+              "network.other_inet",
+              "network.unix",
+              "network.unix_abstract",
+              "network.unix_visible_paths",
+              "filesystem.write",
+              "filesystem.read_hidden_dirs",
+              "processes.signal",
+              "processes.ptrace",
+              "processes.lifetime"
+            ]
           }
         },
         "counting": {

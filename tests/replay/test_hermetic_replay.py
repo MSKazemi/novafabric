@@ -30,6 +30,8 @@ import yaml
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
+from novafabric.replay import _hermetic
+from novafabric.replay import _landlock_exec as ll
 from novafabric.replay._hermetic import (
     EXIT_HERMETIC_UNAVAILABLE,
     HOST_SOCKET_ENV,
@@ -61,6 +63,28 @@ _UNAVAILABLE = _available()
 needs_sandbox = pytest.mark.skipif(
     _UNAVAILABLE is not None, reason=f"hermetic sandbox unavailable here: {_UNAVAILABLE}"
 )
+
+
+def _landlock_available() -> str | None:
+    """Why this kernel cannot run the backend at all -- not whether the preflight
+    passes: a self-test that fails where Landlock exists must fail these tests, never
+    skip them."""
+    if not sys.platform.startswith("linux"):
+        return f"not Linux ({sys.platform})"
+    if ll.current_arch() is None:
+        return "no seccomp syscall table for this machine"
+    abi = ll.probe_abi()
+    if abi < ll.MIN_ABI:
+        return f"Landlock ABI {abi} (< {ll.MIN_ABI})"
+    return None
+
+
+_LANDLOCK_UNAVAILABLE = _landlock_available()
+needs_landlock = pytest.mark.skipif(
+    _LANDLOCK_UNAVAILABLE is not None,
+    reason=f"Landlock backend unavailable here: {_LANDLOCK_UNAVAILABLE}",
+)
+LANDLOCK = ("--hermetic", "--hermetic-backend", "landlock")
 
 
 # ── the argv, the environment, the preflight (no namespaces) ─────────────────
@@ -186,6 +210,11 @@ def test_a_passing_preflight_reports_the_bwrap_version() -> None:
         "filesystem": "read-only",
         "writable_paths": [{"role": "working_directory", "path": "/w"},
                            {"role": "replay_result_dir", "path": "/r"}],
+        "enforced": [{"control": c, "by": "bwrap"} for c in (
+            "network.tcp", "network.udp", "network.other_inet", "network.unix_abstract",
+            "filesystem.write", "filesystem.read_hidden_dirs", "processes.signal",
+            "processes.ptrace", "processes.lifetime")],
+        "not_enforced": ["network.unix_visible_paths"],
         "counting": "none", "connections_blocked": None,
         "unix_connects_outside": None, "writes_blocked": None,
     }
@@ -465,20 +494,21 @@ def test_refused_never_run_unisolated(
         _fake_bwrap(bin_dir, "echo 'bwrap: No permissions to create new namespace' >&2\nexit 1\n")
     monkeypatch.setenv("PATH", str(bin_dir))
 
-    result, doc = work.replay(capsule, "--hermetic")
+    result, doc = work.replay(capsule, "--hermetic", "--hermetic-backend", "bwrap")
     assert result.exit_code == 5, result.output
     assert work.observed is None  # nothing ran
     assert work.host.take() == 0
     assert doc["status"] == "aborted"
     assert doc["error"]["type"] == "HermeticUnavailable"
     assert doc["error"]["check"] == ("bwrap-missing" if bwrap == "missing" else "preflight")
+    assert doc["error"]["mechanism"] == "bwrap"
     assert "exit_code" not in doc
     assert doc["fidelity"]["verdict"] == "failed"
     assert "HermeticUnavailable" in result.output
     if bwrap == "denied":
         assert "No permissions to create new namespace" in doc["error"]["stderr"]
 
-    result, doc = work.replay(capsule, "--hermetic", "--dry-run")
+    result, doc = work.replay(capsule, "--hermetic", "--hermetic-backend", "bwrap", "--dry-run")
     assert result.exit_code == 5, result.output
     assert result.output.startswith("REFUSED: ")
     assert doc["error"]["type"] == "HermeticUnavailable"
@@ -491,3 +521,132 @@ def test_hermetic_applies_to_mocked_mode_only(work: Workload) -> None:
         assert result.exit_code == 1
         assert "--hermetic only applies to --mode mocked" in result.output
     assert os.environ.get("STEPS") == "root"
+
+
+def test_hermetic_backend_needs_hermetic(work: Workload) -> None:
+    capsule = work.capture("root")
+    result = runner.invoke(app, ["replay", str(capsule), "--hermetic-backend", "landlock"])
+    assert result.exit_code == 1
+    assert "--hermetic-backend only applies with --hermetic" in result.output
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the Linux refusal paths")
+def test_auto_with_no_usable_backend_refuses_and_lists_every_attempt(
+    work: Workload, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    capsule = work.capture("root")
+    bin_dir = work.root / "bin"
+    bin_dir.mkdir()
+    monkeypatch.setenv("PATH", str(bin_dir))  # no bwrap
+    monkeypatch.setattr(_hermetic._landlock_exec, "probe_abi", lambda: 0)  # no Landlock
+    result, doc = work.replay(capsule, "--hermetic")
+    assert result.exit_code == 5, result.output
+    assert work.observed is None and work.host.take() == 0  # nothing ran
+    error = doc["error"]
+    assert (error["type"], error["check"]) == ("HermeticUnavailable", "no-backend")
+    assert [(a["mechanism"], a["check"]) for a in error["attempts"]] == [
+        ("bwrap", "bwrap-missing"), ("landlock", "landlock-abi")]
+    assert "hermetic" not in doc
+
+
+# ── the Landlock + seccomp backend (no user namespace) ───────────────────────
+
+
+@needs_landlock
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux only")
+def test_auto_falls_back_to_landlock_when_bwrap_cannot_start_and_says_so(
+    work: Workload, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stock Ubuntu 24.04: bwrap's namespaces are denied. ``--hermetic`` still
+    isolates -- with Landlock -- and the result names it; never a silent downgrade."""
+    capsule = work.capture("root")
+    _fake_bwrap(work.root / "bin",
+                "echo 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n")
+    monkeypatch.setenv("PATH", f"{work.root / 'bin'}:{os.environ.get('PATH', '')}")
+    result, doc = work.replay(capsule, "--hermetic")
+    assert result.exit_code == 0, result.output
+    assert work.host.take() == 0
+    assert work.observed == {"root": "PermissionError"}  # Landlock: EACCES, even to loopback
+    assert doc["hermetic"]["mechanism"] == "landlock"
+    assert doc["policy_flags_used"] == ["--hermetic"]
+    assert "landlock ABI" in " ".join(result.output.split())
+
+
+@needs_landlock
+def test_landlock_replay_reaches_no_host_service_from_any_process(work: Workload) -> None:
+    capsule = work.capture(_steps())
+    result, _doc = work.replay(capsule)  # control: un-isolated, every step reaches the host
+    assert result.exit_code == 0, result.output
+    assert work.host.take() == len(_steps().split(","))
+
+    result, doc = work.replay(capsule, *LANDLOCK)
+    assert result.exit_code == 0, result.output
+    assert work.host.take() == 0  # nothing reached the host
+    observed = work.observed
+    assert observed is not None
+    assert observed["root"] == "PermissionError"  # EACCES: denied, not refused
+    assert observed["child"] == 3
+    if "bash" in observed:
+        assert observed["bash"] != 0  # a non-Python child is confined too
+    assert doc["status"] == "success"
+    assert doc["policy_flags_used"] == ["--hermetic", "--hermetic-backend=landlock"]
+    hermetic = doc["hermetic"]
+    assert hermetic["mechanism"] == "landlock"
+    assert hermetic["landlock_abi"] >= 4
+    assert "bwrap_version" not in hermetic
+    assert [w["path"] for w in hermetic["writable_paths"]] == [
+        str(work.root.resolve()), str(work.last_dir.resolve())]
+    by = {e["control"]: e["by"] for e in hermetic["enforced"]}
+    assert by["network.tcp"] == "landlock" and by["network.udp"] == "seccomp"
+    assert "filesystem.read_hidden_dirs" in hermetic["not_enforced"]
+    assert hermetic["connections_blocked"] is None  # not measured is never 0
+    assert doc["replay_contract"]["network_connections_live"] == 2  # in-process observers
+    line = " ".join(result.output.split())
+    assert "hermetic: network none no TCP even to loopback" in line
+    assert "not enforced: filesystem.read_hidden_dirs" in line
+
+
+@needs_landlock
+def test_landlock_serves_a_recorded_openai_call_faithfully(work: Workload) -> None:
+    pytest.importorskip("openai")
+    capsule = work.capture("openai")
+    work.host.model.shutdown()  # the model server is gone: only the capsule can answer
+    result, doc = work.replay(capsule, *LANDLOCK)
+    assert result.exit_code == 0, result.output
+    assert work.observed == {"openai": "capture-answer"}
+    assert doc["model_calls_mocked"] == 1
+    assert doc["replay_contract"]["network_connections_live"] == 0
+    assert doc["fidelity"]["verdict"] == "faithful", doc["fidelity"]
+
+
+@needs_landlock
+def test_landlock_lets_the_workload_write_its_cwd_and_nothing_else(
+    work: Workload, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = Path(sys.prefix) / f"nf-landlock-probe-{work.root.name}"
+    monkeypatch.setenv("OUTSIDE_PATH", str(outside))
+    capsule = work.capture("write-cwd")
+    output = work.root / "output" / "result.json"
+    output.unlink()
+    result, doc = work.replay(capsule, *LANDLOCK)
+    assert result.exit_code == 0, result.output
+    assert output.read_text() == '{"answer": 42}'
+    assert doc["fidelity"]["verdict"] == "faithful", doc["fidelity"]
+
+    monkeypatch.setenv("STEPS", "write-cwd,write-outside")
+    try:
+        result, doc = work.replay(capsule, *LANDLOCK)
+        assert work.observed == {"write-cwd": "ok", "write-outside": "EACCES"}
+        assert not outside.exists()
+    finally:
+        outside.unlink(missing_ok=True)
+
+
+@needs_landlock
+def test_landlock_dry_run_runs_the_preflight(work: Workload) -> None:
+    capsule = work.capture("root")
+    result, doc = work.replay(capsule, "--dry-run", *LANDLOCK)
+    assert result.exit_code == 0, result.output
+    assert "Hermetic (ADR-0322): landlock ABI" in result.output
+    assert "error" not in doc
+    assert work.observed is None

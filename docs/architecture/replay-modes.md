@@ -764,7 +764,7 @@ and is counted in `replay_contract.model_calls_live`.
 | LangChain / LangGraph tool **not** passed through `wrap_tools` (`@tool`, `StructuredTool`, `BaseTool` subclasses run by `invoke`/`ainvoke`/`run`/`arun` or LangGraph `ToolNode`) | recorded automatically when `langchain_core` is imported (no code change): one `transport: python` record per tool body execution (`langchain.tool` marker, `io.novafabric.langchain_tool_seam: observed`, `mutation_class: unknown`), same payload rules as `wrap_tools` (values at `forensic`/`air_gapped` only, digests otherwise), always marked not-servable | Refused — **never served** (ADR-0306 D1 serves declared tools only): a capsule that records such calls makes a strict replay **refuse to start** (`ToolSurfaceNotServed`, exit 1, also under `--dry-run`, which lists each as `[LIVE] LangChain tool call`); under `--permissive`, and for a capsule that recorded none, each tool body that runs is **live** and counted in `tool_calls_live` and `replay_contract.tool_calls_live_by_tool` (the CLI prints a `[LIVE] tool call` line per tool), so the fidelity verdict is never `faithful`; a `replay.yaml` `allow: false` override refuses the call before its body runs; the seam patches `BaseTool.run`/`arun` and the class defining `_run`/`_arun` -- **not a LangChain extension point**, checked against `langchain-core` 1.8.3 and `langgraph` 1.2.23 only | — (tools are not streamed) | counted (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph) | experimental | `test_langchain_unwrapped_tool_accounting_e2e.py::test_capture_records_langchain_tools_that_were_not_wrapped`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_strict_replay_refuses_to_start_when_unwrapped_tool_calls_were_recorded`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_permissive_runs_unwrapped_tools_live_and_counts_and_names_them`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_a_capsule_without_tool_records_still_counts_every_live_tool_body`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_wrapped_tools_are_served_while_unwrapped_ones_run_live_and_are_counted`; `test_langchain_unwrapped_tool_accounting_e2e.py::test_an_allow_false_override_stops_an_unwrapped_tool_before_its_body_runs` |
 | MCP session set-up (server start, `initialize`, `list_tools`) | not recorded as tool calls | Not intercepted — runs **live** | — | — | not controlled | e2e tests start a real in-memory MCP server during replay |
 | Undeclared functions the workload runs for a model (the result goes back as a tool message) | the model's tool choice, and the result as the next request sent it back (`role: tool` message / Anthropic `tool_result` block) | Not intercepted — runs **live**; the result it sends back is compared with the recorded one (redacted digests, by `tool_call_id`): a difference is reported in `replay_contract.tool_result_echo` and never fails the replay (report-only, experimental, ADR-0306 D10); not checked for the Responses API, whose request input is not recorded | — | — | not controlled | `test_echo_and_nested_coverage_e2e.py::test_a_changed_tool_result_is_reported_but_never_fails_the_replay`; `test_echo_and_nested_coverage_e2e.py::test_a_capsule_without_request_messages_reports_not_checked_never_matched`; `test_slice4_matching_and_echo_contract.py::test_the_echo_check_compares_anthropic_tool_results` |
-| HTTP, shell, filesystem, framework-native tools (other than Google ADK tools through the tool plugin, OpenAI Agents function tools through their `wrap_tools`, and LangChain tools) | network/file events, not tool records | Not intercepted — runs **live**; outbound connections of the replayed Python process and of its Python children -- also those whose environment drops the replay's variables, such as MCP stdio servers -- are reported (`network_connections_live`, `network_observation_scope: python-process`), files are not; child processes are counted and named (`child_processes_spawned`, `child_processes_argv0`), and one that is not observed (a non-Python program) is counted in `child_processes_unobserved` with `network_observation_coverage: partial` (ADR-0319); `--hermetic` (experimental, Linux, ADR-0322) blocks the network of the whole process tree instead; a `replay.yaml` `allow: false` override on one makes a strict replay refuse to start (`ToolOverrideUnenforceable`, exit 3) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked`; `test_tool_overrides_enforced_e2e.py::test_strict_replay_refuses_to_start_on_an_unenforceable_override`; `test_unservable_model_surfaces_e2e.py::test_a_child_process_is_counted_and_named_with_a_warning`; `test_child_process_network.py::test_an_mcp_stdio_server_child_is_observed`; `test_child_process_network.py::test_a_non_python_child_is_counted_unobserved_and_the_count_is_a_lower_bound`; `test_hermetic_replay.py::test_hermetic_replay_reaches_no_host_service_from_any_process` |
+| HTTP, shell, filesystem, framework-native tools (other than Google ADK tools through the tool plugin, OpenAI Agents function tools through their `wrap_tools`, and LangChain tools) | network/file events, not tool records | Not intercepted — runs **live**; outbound connections of the replayed Python process and of its Python children -- also those whose environment drops the replay's variables, such as MCP stdio servers -- are reported (`network_connections_live`, `network_observation_scope: python-process`), files are not; child processes are counted and named (`child_processes_spawned`, `child_processes_argv0`), and one that is not observed (a non-Python program) is counted in `child_processes_unobserved` with `network_observation_coverage: partial` (ADR-0319); `--hermetic` (experimental, Linux, ADR-0322) blocks the network of the whole process tree instead (bubblewrap, or Landlock + seccomp where user namespaces are restricted); a `replay.yaml` `allow: false` override on one makes a strict replay refuse to start (`ToolOverrideUnenforceable`, exit 3) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked`; `test_tool_overrides_enforced_e2e.py::test_strict_replay_refuses_to_start_on_an_unenforceable_override`; `test_unservable_model_surfaces_e2e.py::test_a_child_process_is_counted_and_named_with_a_warning`; `test_child_process_network.py::test_an_mcp_stdio_server_child_is_observed`; `test_child_process_network.py::test_a_non_python_child_is_counted_unobserved_and_the_count_is_a_lower_bound`; `test_hermetic_replay.py::test_hermetic_replay_reaches_no_host_service_from_any_process`; `test_hermetic_replay.py::test_landlock_replay_reaches_no_host_service_from_any_process` |
 
 <!-- END GENERATED: replay-support-matrix -->
 
@@ -882,44 +882,74 @@ These limits are stated so you can rely on the parts that do work:
 ### Hermetic replay (`--hermetic`, experimental, ADR-0322)
 
 *Experimental, Linux only, unreleased.* `nova replay --hermetic` (mocked mode only) runs
-the replayed command and every process it starts inside a bubblewrap (`bwrap`)
-sandbox:
+the replayed command and every process it starts inside a sandbox. There are two
+backends; `--hermetic-backend auto` (the default) tries **bubblewrap** first and
+**Landlock + seccomp** second, and the result says which one ran (`hermetic.mechanism`)
+and what it does and does not enforce (`hermetic.enforced`, `hermetic.not_enforced`).
+The two differ (table below), so the choice is reported, never silent.
+`--hermetic-backend bwrap` or `--hermetic-backend landlock` names one; only that one is
+tried.
 
-- **Network:** a private network namespace with only its own loopback. Nothing outside
-  the sandbox is reachable -- host loopback services included (a host Ollama, Postgres
-  or MCP-over-HTTP server); a server the workload starts inside is. DNS fails fast.
-  Served model and tool calls keep working: they are answered in-process, with no socket.
-- **Filesystem:** the host tree is read-only; `/run`, `/tmp`, `/var/tmp` and
-  `$XDG_RUNTIME_DIR` are empty (host Unix sockets such as Docker's and D-Bus's live
-  there). Two directories are writable: the working directory `nova replay` runs in
+**Platform requirements.**
+
+| Backend | Needs | Where it works |
+|---|---|---|
+| `bwrap` | the `bwrap` program on `PATH` and unprivileged user namespaces | most distributions; **not** stock Ubuntu 24.04 and later, where `kernel.apparmor_restrict_unprivileged_userns=1` denies them unless an AppArmor profile allows `bwrap` (an administrator decision), nor hosts with `kernel.unprivileged_userns_clone=0` or a container seccomp profile that blocks `unshare` |
+| `landlock` | Linux >= 6.7 with Landlock ABI >= 4 (TCP rules) and `landlock` in the active LSM list, on x86_64 or aarch64; no program, no privilege, no new Python dependency | Ubuntu 24.04 (kernel 6.8: ABI 4, the ABI its kernel headers define -- not run on that kernel by our tests yet), and any newer kernel (tested: 7.0, ABI 8) |
+
+**What each enforces.**
+
+| Control | `bwrap` | `landlock` |
+|---|---|---|
+| TCP out of the sandbox (`network.tcp`) | private network namespace: only the sandbox's own loopback exists; host loopback services are unreachable, a server the workload starts inside is reachable | Landlock denies every TCP `connect` and `bind` (`EACCES`) -- **loopback included**, so a workload that talks to a server it started itself fails here |
+| UDP / DNS (`network.udp`) | no route out | seccomp: `socket(AF_INET*, SOCK_DGRAM)` fails (`EACCES`); name resolution fails fast |
+| raw, ICMP, SCTP, MPTCP (`network.other_inet`) | no route out | seccomp: only `SOCK_STREAM` TCP sockets can be created; `listen()` fails (it would autobind past Landlock's bind rule), `MSG_FASTOPEN` sends fail, `io_uring_setup` fails (io_uring creates sockets without the `socket` call) |
+| Unix sockets | abstract sockets: own namespace (`network.unix_abstract`); pathname sockets: `/run`, `/tmp`, `/var/tmp`, `$XDG_RUNTIME_DIR` masked, but a socket under a path that stays visible (`$HOME`, the working directory) **remains connectable** (`network.unix_visible_paths`, not enforced) | seccomp: `socket(AF_UNIX)` fails, so no pathname or abstract Unix socket can be connected -- the Docker and D-Bus sockets included (`network.unix`); `socketpair` stays allowed (asyncio uses it). A workload that creates Unix sockets (for example `multiprocessing`'s `forkserver`, the default from Python 3.14) fails here |
+| Writes (`filesystem.write`) | host tree bound read-only (`EROFS`) | Landlock: `/` read + execute only (`EACCES`) |
+| Host `/tmp`, `/run`, `/var/tmp` (`filesystem.read_hidden_dirs`) | masked with empty tmpfs; `/tmp` is a private writable tmpfs | **not enforced**: readable (not writable); `TMPDIR` points into the replay's temp dir, so `tempfile` works, but a hard-coded `/tmp/...` write fails |
+| Signals to host processes (`processes.signal`) | new pid namespace | Landlock ABI >= 6 scopes signals to the sandbox; below ABI 6 **not enforced** |
+| `ptrace` of host processes (`processes.ptrace`) | new pid namespace | Landlock |
+| Process-tree lifetime (`processes.lifetime`) | killed with the replay (`--die-with-parent`, pid namespace) | **not enforced**: a grandchild that daemonises can outlive the replay -- still confined, it can never reach the network or write outside the writable set |
+
+Common to both:
+
+- **Served calls keep working.** Model and tool calls are answered in-process, with no
+  socket.
+- **Writable:** exactly two directories -- the working directory `nova replay` runs in
   (the workload's outputs, such as `output/*.json`, are written there **for real** --
-  they reach the host) and the replay result directory. A write anywhere else fails
-  with `EROFS` (or `ENOENT` under a masked directory). There is no flag to make more
+  they reach the host) and the replay result directory. There is no flag to make more
   writable. A working directory that would undo the protection -- `/`, a masked
   directory or one of its ancestors, anything under `/run` -- is refused
   (`check: writable-path`): run the replay from the workload's own directory.
-  `stdout` and `stderr` are captured as usual.
-- **Processes and environment:** new pid/ipc/uts/user namespaces, no nested user
-  namespace, killed with the replay; `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS` and
-  `DOCKER_HOST` are not passed in.
+  `stdout` and `stderr` are captured as usual; the device files `/dev/null`,
+  `/dev/zero`, `/dev/full`, `/dev/random` and `/dev/urandom` stay writable.
+- **Environment:** `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS` and `DOCKER_HOST` are not
+  passed in. A new session (no controlling terminal), so the replayed tree cannot type
+  into your shell; no privilege can be gained (`no_new_privs` under Landlock).
 
-The result carries `hermetic: {enabled: true, mechanism: bwrap, bwrap_version, network:
-none, filesystem: read-only, writable_paths: [{role: working_directory, path}, {role:
-replay_result_dir, path}], counting: none, …}` and `nova replay` prints a `hermetic:`
-line. If `bwrap` is missing, the platform is not Linux, or a preflight
-`bwrap … -- true` fails (an AppArmor user-namespace restriction, a disabled
-`kernel.unprivileged_userns_clone`, a container seccomp profile), the replay is refused
+The result carries `hermetic: {enabled: true, mechanism: bwrap | landlock,
+bwrap_version | landlock_abi, network: none, filesystem: read-only, writable_paths:
+[{role: working_directory, path}, {role: replay_result_dir, path}], enforced: [{control,
+by: bwrap | landlock | seccomp}], not_enforced: [control], counting: none, …}` and
+`nova replay` prints a `hermetic:` line naming the mechanism and what it does not enforce.
+
+**Preflight, and refusal.** Each backend proves itself before anything runs. bwrap runs
+`bwrap <same args> -- true`. Landlock probes the ABI, then runs its launcher's
+self-test: the same confinement, then a TCP connect, UDP, Unix and MPTCP socket
+creation, `listen()` and a write outside the writable set must each be denied -- a
+kernel that accepts the calls without enforcing them is refused, not trusted. When the
+chosen backend -- or, under `auto`, both -- cannot be set up, the replay is refused
 before anything runs: `status: aborted`, `error.type: HermeticUnavailable` with the
-failed `check` and the preflight's `stderr`, exit **5**, also under `--dry-run`. It never
-runs un-isolated under `--hermetic`.
+failed `check` (`platform`, `bwrap-missing`, `landlock-abi`, `preflight`,
+`writable-path`, or `no-backend` with every `attempts` entry under `auto`), the
+backend in `error.mechanism` and the preflight's `stderr`, exit **5**, also under
+`--dry-run`. It never runs un-isolated under `--hermetic`.
 
 Not yet (planned, ADR-0322): counting blocked attempts from outside the process
 (`counting: none`; `connections_blocked`, `unix_connects_outside` and `writes_blocked`
 are `null` -- not measured, never 0; the in-process observers still report the
 attempts they see), a copy-on-write overlay of the working directory (so a replay's
-writes there do not touch the real files), a fidelity `isolation` check, and a second
-backend for hosts where bwrap cannot create namespaces. A Unix socket under a path that
-stays visible (for example in `$HOME` or the working directory) remains connectable.
+writes there do not touch the real files), and a fidelity `isolation` check.
 - **Model requests are not compared**, except for the tool results they send
   back (the echo check, since v0.106.0, report-only). Responses are served by
   position per API surface; a changed prompt with the same call count and order

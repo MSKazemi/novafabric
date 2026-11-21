@@ -53,12 +53,11 @@ from novafabric.replay._fidelity import compute_fidelity
 from novafabric.replay._fidelity import not_run as fidelity_not_run
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._hermetic import (
-    HermeticSandbox,
     HermeticUnavailableError,
+    Sandbox,
     check_writable,
-    sandbox_env,
+    select_sandbox,
 )
-from novafabric.replay._hermetic import preflight as hermetic_preflight
 from novafabric.replay._policy import INSTALL_REQUIRED_ENV, TOOL_POLICY_ENV, PolicyEvaluator
 from novafabric.replay._replay_capsule import (
     REPLAY_CAPSULE_FILE,
@@ -589,7 +588,7 @@ class ReplayEngine:
             if self._flags.hermetic:
                 # ADR-0322 D7: the dry run runs the same preflight as the real run.
                 try:
-                    sandbox = hermetic_preflight()
+                    sandbox = select_sandbox(self._flags.hermetic_backend)
                     check_writable(
                         [path for _role, path in self._hermetic_writable(result_dir)],
                         runtime_dir=os.environ.get("XDG_RUNTIME_DIR"),
@@ -600,10 +599,11 @@ class ReplayEngine:
                         report = f"REFUSED: {exc}\n\n{report}"
                 else:
                     report += (
-                        f"Hermetic (ADR-0322): bwrap {sandbox.version or '(version unknown)'} "
-                        "preflight passed; the replayed process tree would run with no network "
-                        "beyond its own loopback and a read-only filesystem except the working "
-                        f"directory ({Path.cwd()}) and the replay result directory.\n"
+                        f"Hermetic (ADR-0322): {sandbox.label()} preflight passed; the "
+                        "replayed process tree would run with no network beyond its own "
+                        "loopback (none at all under landlock) and a read-only filesystem "
+                        f"except the working directory ({Path.cwd()}) and the replay result "
+                        "directory.\n"
                     )
         elif self._flags.mode == "intervention":
             reason = not_reexecutable_reason(manifest)
@@ -896,13 +896,13 @@ class ReplayEngine:
 
         # ADR-0322: --hermetic runs only inside a sandbox that the preflight
         # proved can be built here; otherwise it is refused, never run un-isolated.
-        sandbox: HermeticSandbox | None = None
+        sandbox: Sandbox | None = None
         writable = self._hermetic_writable(
             result_dir, plan.cwd if plan.source == "process_invocation" else None
         )
         if self._flags.hermetic:
             try:
-                sandbox = hermetic_preflight()
+                sandbox = select_sandbox(self._flags.hermetic_backend)
                 check_writable(
                     [path for _role, path in writable],
                     runtime_dir=os.environ.get("XDG_RUNTIME_DIR"),
@@ -1079,7 +1079,7 @@ class ReplayEngine:
         divergence_policy: str = "warn",
         tool_policy: dict[str, Any] | None = None,
         install_required: bool = False,
-        sandbox: HermeticSandbox | None = None,
+        sandbox: Sandbox | None = None,
         writable: list[Path] | None = None,
         plan: ReexecutionPlan | None = None,
     ) -> tuple[
@@ -1157,7 +1157,7 @@ class ReplayEngine:
                 plan.cwd if plan is not None and plan.source == "process_invocation" else None
             )
             if sandbox is not None:
-                env = sandbox_env(env)
+                env = sandbox.environment(env, Path(tmp))
                 command = sandbox.wrap(
                     command, writable=writable or [Path(tmp)], cwd=spawn_cwd or Path.cwd()
                 )

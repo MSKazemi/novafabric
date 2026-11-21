@@ -124,6 +124,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   anything runs (`error.type: HermeticUnavailable`, exit 5, also under `--dry-run`) — never run un-isolated.
   Not yet: counting blocked attempts from outside the process (the counts are `null`), a copy-on-write overlay
   of the working directory.
+- **`nova replay --hermetic` works without user namespaces** (experimental, Linux, ADR-0322 amendment). A second
+  backend, Landlock + seccomp, needs no privilege and no new dependency: stock Ubuntu 24.04
+  (`kernel.apparmor_restrict_unprivileged_userns=1`) refused the bubblewrap backend, so `--hermetic` was unavailable
+  there. `--hermetic` now tries bwrap, then Landlock (Linux >= 6.7, ABI >= 4); `--hermetic-backend
+  auto|bwrap|landlock` names one. Under Landlock every TCP connect and bind is denied (loopback included), and seccomp
+  denies UDP, raw, ICMP, SCTP, MPTCP and Unix socket creation, `listen()`, TCP Fast Open sends and `io_uring_setup`;
+  writes outside the working directory and the result directory fail. Host `/tmp` and `/run` stay readable (`TMPDIR`
+  points into the replay's temp dir) and a daemonised grandchild can outlive the replay -- both listed in the result's
+  new `hermetic.not_enforced`. The `hermetic` block gains additive `landlock_abi`, `enforced` and `not_enforced`;
+  `error` gains `mechanism` and, for the new `check: no-backend`, `attempts`. Relative to the bwrap-only `--hermetic`
+  above (also unreleased): on a host where bwrap cannot start, `--hermetic` now runs under Landlock instead of exiting
+  5; `--hermetic-backend bwrap` keeps that refusal.
 - **Mocked replay reports whether it reproduced the recorded run** (experimental, ADR-0321). A new, additive
   `fidelity` block in `replay_result.yaml` compares the replay with the capsule: the exit code, the stdout
   digest after a declared volatile-token rule set, the end state of every file the recorded workload wrote, the

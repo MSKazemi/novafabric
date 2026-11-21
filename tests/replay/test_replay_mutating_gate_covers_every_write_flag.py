@@ -57,6 +57,7 @@ NON_PERMISSION_FIELDS = {
     "required_environment",
     "permissive",
     "hermetic",  # ADR-0322: restricts the replay (sandbox), permits nothing
+    "hermetic_backend",  # ADR-0322 amendment: which sandbox, permits nothing
 }
 
 _WRITE_CLASSES = {"idempotent-write", "non-idempotent-write", "external-side-effect", "unknown"}

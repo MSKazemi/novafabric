@@ -746,7 +746,8 @@ ROWS: tuple[SurfaceRow, ...] = (
             "observed (a non-Python program) is counted in `child_processes_unobserved` "
             "with `network_observation_coverage: partial` (ADR-0319); `--hermetic` "
             "(experimental, Linux, ADR-0322) blocks the network of the whole process "
-            "tree instead; a `replay.yaml` `allow: false` override on one makes a strict "
+            "tree instead (bubblewrap, or Landlock + seccomp where user namespaces are "
+            "restricted); a `replay.yaml` `allow: false` override on one makes a strict "
             "replay refuse to start (`ToolOverrideUnenforceable`, exit 3)"
         ),
         streaming="—",
@@ -761,6 +762,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_CHILDNET}::"
             "test_a_non_python_child_is_counted_unobserved_and_the_count_is_a_lower_bound",
             f"{_HERMETIC}::test_hermetic_replay_reaches_no_host_service_from_any_process",
+            f"{_HERMETIC}::test_landlock_replay_reaches_no_host_service_from_any_process",
         ),
     ),
 )
