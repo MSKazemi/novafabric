@@ -265,7 +265,23 @@
     },
     "extensions": {
       "type": "object",
-      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed (e.g. 'io.langgraph.thread_id')."
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed (e.g. 'io.langgraph.thread_id').",
+      "properties": {
+        "io.novafabric.replay_placeholder": {
+          "type": "string",
+          "enum": [
+            "live",
+            "refused",
+            "unmatched"
+          ],
+          "description": "ADR-0321 (additive, optional). Only in a replay capsule (replay_mode set): this record is a placeholder for a call the mocked replay did not serve from the original capsule. 'live': it ran live (its outcome was not observed, so status is absent); 'refused': the replay refused it before it ran (status denied); 'unmatched': a strict replay stopped at it (status denied). The original run's record is never copied into a placeholder: it has no timing, request, arguments or result."
+        },
+        "io.novafabric.replay_surface": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ADR-0321 (additive, optional). On a replay capsule placeholder: the intercepted surface the call was made on, e.g. 'mcp.ClientSession.call_tool'."
+        }
+      }
     }
   },
   "if": {
