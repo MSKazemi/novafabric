@@ -93,6 +93,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   `io.novafabric.langchain_result_kind: tool_message`) and mocked replay rebuilds a real `ToolMessage` answering
   the replayed call's `tool_call_id`. A field that is not a JSON value (an object `artifact`) keeps the record not
   servable, with a reason naming the field.
+- **A LangChain tool that returns a LangGraph `Command` is served** (experimental; ADR-0306 r3b). Before, a tool
+  returning `langgraph.types.Command(update=..., goto=...)` (a state update) was recorded as "not a JSON value" and
+  never served, even at `forensic`. Capture now records a JSON envelope (`graph`, `goto`, `resume`, the `update`
+  entries; `io.novafabric.langchain_result_kind: langgraph_command`) and mocked replay rebuilds a real `Command`
+  whose `ToolMessage`s answer the replayed call's `tool_call_id`, so `ToolNode` and the graph apply the same update
+  and route (tested: the final graph state equals the captured one). Served only when it can be rebuilt exactly:
+  a `Send` in `goto`, an update that is not a `dict`, an update value that is neither JSON nor a list of
+  `ToolMessage`s answering the call, or a non-JSON message field keeps the record not servable, with a reason
+  naming the field. Below `forensic` only the envelope's digest is kept and nothing the model saw can reproduce
+  it, so such a capsule is refused with the re-capture hint. A record with a result kind this version does not
+  know is now refused instead of being served as plain JSON.
 - **A LangChain tool whose body made model or tool calls is served** (experimental; ADR-0306 r3b). Before, a
   sub-agent tool (the shape of `deepagents`' `task`: a `@tool` whose body runs a chat model and more tools) was
   recorded with `io.novafabric.nested_records` and marked "nested-call coverage is not implemented", so a strict

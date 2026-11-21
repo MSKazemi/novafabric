@@ -66,6 +66,7 @@ _LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
 _OAI_OBSERVED = "tests/replay/test_openai_agents_unwrapped_tool_e2e.py"
 _LC_MESSAGE = "tests/replay/test_langchain_tool_message_results_e2e.py"
 _LC_NESTED = "tests/replay/test_langchain_nested_tool_serving_e2e.py"
+_LG_COMMAND = "tests/replay/test_langgraph_command_results_e2e.py"
 _ECHO_RECOVERY = "tests/replay/test_tool_result_echo_recovery.py"
 _CHILDNET = "tests/replay/test_child_process_network.py"
 _HERMETIC = "tests/replay/test_hermetic_replay.py"
@@ -772,8 +773,12 @@ ROWS: tuple[SurfaceRow, ...] = (
             "LangGraph `ToolNode`; one-to-one by the model's `tool_call_id` (same name "
             "and arguments) or by name and canonical arguments; JSON-native results up "
             "to 1 MiB, and a `ToolMessage` the tool returned itself when every field is "
-            "JSON (rebuilt with the replayed call's `tool_call_id`, ADR-0306 r3; a "
-            "`Command` or a `content_and_artifact` tuple is not); a call that raised is not "
+            "JSON (rebuilt with the replayed call's `tool_call_id`, ADR-0306 r3), and a "
+            "LangGraph `Command` whose `graph`, `goto` (node names) and `resume` are JSON "
+            "and whose `update` values are JSON or lists of `ToolMessage`s answering the "
+            "call (rebuilt the same way, ADR-0306 r3b; a `Send` in `goto` or any other "
+            "update value is not); a `content_and_artifact` tuple is not; a call that "
+            "raised is not "
             "served; a call whose body made model/tool calls (a sub-agent tool, e.g. "
             "deepagents' `task`) is served and the records it wrote are consumed as "
             "covered (`*_calls_covered`, ADR-0306 r3b, the slice-4 rule); an "
@@ -863,6 +868,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_LC_NESTED}::test_a_default_level_capsule_serves_the_outer_tool_from_the_echo",
             f"{_LC_NESTED}::test_a_record_captured_before_nested_serving_is_served_without_a_recapture",
             f"{_LC_NESTED}::test_an_unmarked_inner_model_call_fails_closed",
+            f"{_LG_COMMAND}::test_strict_replay_serves_the_command_and_reaches_the_same_final_state",
+            f"{_LG_COMMAND}::test_a_command_that_cannot_be_rebuilt_is_not_servable_and_says_why",
+            f"{_LG_COMMAND}::test_a_default_level_command_is_digested_and_refused_with_the_recapture_hint",
         ),
         servers=("langchain_core.tools.BaseTool",),
     ),

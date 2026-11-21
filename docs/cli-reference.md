@@ -10951,8 +10951,9 @@ nova replay <run-id>                 # tool bodies do not run; results come from
 - **Under a mocked `nova replay`** the recorded result is returned and the tool body
   never runs. An unmatched call, or one whose record is not servable (the body raised —
   including a `ToolException` LangChain turned into an error message —, or returned a
-  non-JSON value such as a LangGraph `Command` or a `content_and_artifact` tuple; a
-  `ToolMessage` the tool returned itself is served when every field is JSON — unreleased),
+  non-JSON value such as a `content_and_artifact` tuple; a `ToolMessage` the tool
+  returned itself is served when every field is JSON, and so is a LangGraph `Command`
+  that can be rebuilt exactly — unreleased, see below),
   is refused before the tool runs and
   the replay fails (`tool_call_unmatched` / `tool_result_not_servable`) even if the
   workload catches the error. `ToolNode` re-raises the refusal by default; with
@@ -10960,6 +10961,18 @@ nova replay <run-id>                 # tool bodies do not run; results come from
   fails. `--permissive` runs an unmatched call live only when an `--allow-*` flag permits
   the class declared in `wrap_tools` (default `unknown`), and `replay.yaml`
   `tool_overrides` hold as on the other tool surfaces.
+- **A tool that returns a LangGraph `Command`** (a state update; experimental,
+  unreleased, ADR-0306 r3b) is recorded as a JSON envelope
+  (`io.novafabric.langchain_result_kind: langgraph_command`) and served as a real
+  `Command` rebuilt from it, so `ToolNode` and the graph apply the same update and route.
+  Served only when `graph` is `None` or a name, `goto` is a node name or a list/tuple of
+  them, `resume` is a JSON value, and `update` is a `dict` whose values are JSON values
+  or lists of `ToolMessage`s answering this call (each rebuilt with the replayed call's
+  `tool_call_id`; a message `id` the tool set is kept). A `Send` in `goto`, an update
+  that is a list or a state object, another message type, a message answering another
+  call, or a non-JSON value keeps the record not servable, with a reason naming the
+  field. Below `forensic` only the envelope's digest is kept and the model never sees
+  the `Command`, so the model-request echo cannot recover it: capture at `forensic`.
 - **A tool whose body made model or tool calls** (a sub-agent tool, such as deepagents'
   `task`; experimental, unreleased, ADR-0306 r3b) is served like a nested `record.tool`
   boundary: its body — and so the sub-agent — never runs, and the model and tool calls

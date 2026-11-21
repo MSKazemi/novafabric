@@ -500,9 +500,12 @@ that gates `--permissive` and `replay.yaml` `allow: true` is declared in `wrap_t
 **Limits:** LangChain has no hook that can answer a call for every caller, so each copy's
 class is a generated subclass of the tool's class — NovaFabric's construction, checked
 against `langchain-core` 1.8.3 and `langgraph` 1.2.23 only; a tool that returns a LangGraph
-`Command` (state update) is recorded but not served; tools you do not pass through
-`wrap_tools` still run live; and capsules from `wrap_langgraph()` stay non-replayable
-(pseudo-command). Details: [`cli-reference.md`](cli-reference.md) §LangChain / LangGraph
+`Command` (state update) is served only when it can be rebuilt exactly (no `Send`, JSON
+values and `ToolMessage`s only; experimental, unreleased) and only from a `forensic`
+capture; tools you do not pass through `wrap_tools` are observed and served the same
+way, gated as mutation class `unknown` (ADR-0306 r3, unreleased); and capsules from
+`wrap_langgraph()` are re-run only from a recorded process invocation that passes every
+guard. Details: [`cli-reference.md`](cli-reference.md) §LangChain / LangGraph
 tool seam.
 
 **`local` (default).** Runs the workload as a local subprocess. Equivalent to

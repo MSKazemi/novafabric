@@ -34,6 +34,7 @@ from __future__ import annotations
 from typing import Any
 
 from novafabric.adapters import _langchain_tool_message as _tool_message
+from novafabric.adapters import _langgraph_command as _command
 from novafabric.adapters._adk_tool_seam import AdkToolCall
 from novafabric.adapters._langchain_tool_seam import CALL_ID_EXT, Served
 from novafabric.capture import _tool_codec
@@ -58,17 +59,25 @@ class LangChainToolServer(AdkToolServer):
         super().__init__([upgrade_legacy_langchain_record(r) for r in records], **kwargs)
 
     def _decode(self, record: dict[str, Any], call: AdkToolCall) -> Any:
-        """A ToolMessage envelope is rebuilt into a real ``ToolMessage`` that
-        answers the replayed call's own tool-call id."""
+        """A ToolMessage envelope is rebuilt into a real ``ToolMessage``, and a
+        LangGraph Command envelope into a real ``Command`` (ADR-0306 r3b), each
+        message answering the replayed call's own tool-call id."""
         _ok, value = _tool_codec.decode_result(record)
         ext = record.get("extensions")
-        if isinstance(ext, dict) and (
-            ext.get(_tool_message.RESULT_KIND_EXT) == _tool_message.KIND_TOOL_MESSAGE
-        ):
+        kind = ext.get(_tool_message.RESULT_KIND_EXT) if isinstance(ext, dict) else None
+        if kind == _tool_message.KIND_TOOL_MESSAGE:
             try:
                 return _tool_message.decode_tool_message(value, call.function_call_id)
             except _tool_message.ToolMessageNotServable as exc:
                 raise RecordNotDecodable(str(exc)) from exc
+        if kind == _command.KIND_COMMAND:
+            try:
+                return _command.decode_command(value, call.function_call_id)
+            except _command.CommandNotServable as exc:
+                raise RecordNotDecodable(f"the recorded LangGraph Command: {exc}") from exc
+        if kind is not None:
+            # A result kind this version does not know: never serve it as JSON.
+            raise RecordNotDecodable(f"the recorded LangChain result kind {kind!r} is unknown")
         return value
 
     def _answer(self, value: Any) -> Any:
