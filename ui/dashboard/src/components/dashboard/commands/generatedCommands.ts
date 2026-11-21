@@ -1700,6 +1700,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--pii-subject"
       },
       {
+        "key": "require-replayable",
+        "label": "--require-replayable",
+        "type": "toggle",
+        "hint": "EXPERIMENTAL: after the capsule is written, exit 4 unless a strict mocked replay would serve every recorded call (replayability.json `replayable: full`). Never stops the workload: it runs and the capsule is written first; a workload that exited non-zero keeps its own exit code.",
+        "flag": "--require-replayable"
+      },
+      {
         "key": "daemon",
         "label": "--daemon",
         "type": "toggle",
@@ -11330,8 +11337,15 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "require-faithful",
         "label": "--require-faithful",
         "type": "toggle",
-        "hint": "mocked mode only, experimental (ADR-0321): exit 4 unless the replay's fidelity verdict is `faithful` -- the replay reproduced the recorded exit code, stdout, stderr and call sequence, with no divergence and no live call -- and exit 0 when it is, even for a faithful replay of a run that failed. A replay refused before it ran keeps its refusal code.",
+        "hint": "mocked mode only, experimental (ADR-0321): exit 4 unless the replay's fidelity verdict is `faithful` -- the replay reproduced the recorded exit code, stdout (UUIDs masked), the files it wrote and the call sequence, with no divergence and no live call -- and exit 0 when it is, even for a faithful replay of a run that failed. A replay refused before it ran keeps its refusal code.",
         "flag": "--require-faithful"
+      },
+      {
+        "key": "hermetic",
+        "label": "--hermetic",
+        "type": "toggle",
+        "hint": "mocked mode only, experimental, Linux (ADR-0322): run the replayed process tree in a bubblewrap sandbox -- no network beyond its own loopback (host services included), host filesystem read-only except the working directory and the replay result directory, host socket dirs masked; served model/tool calls still work. Refused with exit 5 (error.type HermeticUnavailable), before anything runs, if bwrap is missing or cannot create namespaces here; never run un-isolated.",
+        "flag": "--hermetic"
       }
     ],
     "docsPath": "/docs/cli-reference/",

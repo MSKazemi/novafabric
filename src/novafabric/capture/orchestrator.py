@@ -146,6 +146,8 @@ class CaptureResult:
     #: Why a capsule that could have been sealed was not (the manifest gate, a
     #: failed seal). ``None`` when it was sealed or sealing is not configured.
     unsealed_reason: str | None = None
+    #: The capsule's ``replayability.json``; ``None`` when none was written.
+    replayability: dict[str, Any] | None = None
 
 
 class AssetStatusCheckError(Exception):
@@ -886,6 +888,7 @@ class CaptureOrchestrator:
             runner_error=runner_result.runner_error,
             sealed=finalized.sealed,
             unsealed_reason=finalized.unsealed_reason,
+            replayability=finalized.replayability,
         )
 
 
