@@ -31,10 +31,14 @@ the SDK's private helper that every run invokes a ``FunctionTool`` through,
 the same handler with ``wrapped=False`` and mutation class ``unknown``: capture
 records it (marked ``observed``), and mocked replay serves or refuses it like
 a wrapped tool declared ``unknown``. The observer steps aside for seam copies
-(they ask themselves), ``record.tool`` functions, and agents used as tools
-(``Agent.as_tool``: their model calls and tools are intercepted on their own
-surfaces). A release that renames the helper leaves unwrapped tools
-unobserved again (they then run live in a replay).
+(they ask themselves) and ``record.tool`` functions. Agents used as tools
+(``Agent.as_tool``) are observed since ADR-0306 r3c: served when recorded and
+servable, their sub-run's calls consumed as covered; one whose sub-run has an
+effect beyond its value (``on_stream``, ``hooks``, ``session``, a server-side
+conversation, a nested approval) is recorded not servable
+(:func:`agent_tool_option_obstacles`, :func:`agent_tool_run_pending`). A
+release that renames the helper leaves unwrapped tools unobserved again (they
+then run live in a replay).
 
 Nothing here imports ``agents`` at module level: the module is importable, and
 the capture hook installable, without it.
