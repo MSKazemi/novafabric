@@ -8,8 +8,8 @@ replay: its body ran live in a "mocked" replay and the report said
 function-tool invocation helper (``agents.tool._invoke_function_tool_with_metadata``,
 checked against ``openai-agents`` 0.24.0 only -- not an SDK extension point) and
 hands every unwrapped call to the same handler as ``wrap_tools`` copies, with
-mutation class ``unknown``. Agents used as tools (``Agent.as_tool``) are left
-alone: their model calls and tools are intercepted on their own surfaces.
+mutation class ``unknown``. Agents used as tools (``Agent.as_tool``) are observed
+too (ADR-0306 r3c): served when recorded, their sub-run's calls covered.
 
 The workload is a real ``agents`` ``Runner`` with an offline fake ``Model`` (no
 network, no API key).
@@ -246,18 +246,30 @@ def test_capture_records_unwrapped_function_tools_as_observed(env: Env) -> None:
         ]
 
 
-def test_an_agent_used_as_a_tool_is_not_a_boundary_its_inner_tool_is(env: Env) -> None:
+def test_an_agent_used_as_a_tool_is_a_served_boundary_its_inner_tool_is_covered(
+    env: Env,
+) -> None:
+    """ADR-0306 r3c: an ``Agent.as_tool`` call is observed like any function tool;
+    replay serves it and consumes its sub-run's tool call as covered."""
     capsule, captured = env.capture(
         [{"tool": "ask_helper", "args": {"input": "please"}}], level="forensic"
     )
     assert {"name": "ask_helper", "response": "helped"} in captured
-    assert [r["tool_name"] for r in env.records(capsule)] == ["inner"]
+    records = {r["tool_name"]: r for r in env.records(capsule)}
+    assert set(records) == {"inner", "ask_helper"}
+    outer = records["ask_helper"]
+    assert records["inner"]["extensions"]["io.novafabric.within_tool_call_id"] == (
+        outer["tool_call_id"]
+    )
+    assert outer["extensions"]["io.novafabric.openai_agents_tool_seam"] == "observed"
+    assert outer["extensions"]["io.novafabric.result_codec"] == "json-v1"
 
     result, observed, cli = env.replay(capsule)
     assert cli.exit_code == 0, cli.output
     assert observed == captured
     assert env.side_effects == [], "the agent-as-tool's inner tool ran during mocked replay"
     assert result["tool_calls_mocked"] == 1
+    assert result["replay_contract"]["tool_calls_covered"] == 1
 
 
 def test_strict_replay_serves_unwrapped_function_tools_and_never_runs_their_bodies(

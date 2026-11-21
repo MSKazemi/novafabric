@@ -16,7 +16,9 @@ every tool call to whichever handler is registered here:
   "google.adk.tool"``), with the ``record.tool`` codec: canonical JSON
   arguments, after-redaction digests, payloads only at the ``forensic`` /
   ``air_gapped`` capture level (``_tool_codec``), nested-record marking
-  (``_tool_scope``);
+  (``_tool_scope``): a call whose body made model or tool calls -- an
+  ``AgentTool`` running a sub-agent -- is served at replay and what its body
+  recorded is consumed as covered (ADR-0306 r3c);
 * **mocked replay** -- ``replay._adk_tool_server.AdkToolServer``, registered by
   ``MockToolDispatcher.install``, answers the call from the capsule *before*
   the tool body runs, or refuses it (fail closed).
@@ -333,8 +335,10 @@ class AdkToolHook:
     LONG_RUNNING = LONG_RUNNING_REASON
     #: Whether replay serves a call of this seam whose body made nested
     #: model/tool records (covering them, ADR-0306 slice 4). ``False``: such a
-    #: record is marked not servable with ``codec.seam_nested_reason``.
-    SERVES_NESTED = False
+    #: record is marked not servable with ``codec.seam_nested_reason``. ``True``
+    #: for every seam since ADR-0306 r3c (ADK ``AgentTool``, Agents SDK
+    #: ``Agent.as_tool``); LangChain since r3b.
+    SERVES_NESTED = True
 
     # The handler registry and in-flight variable of this hook's seam.
     _get_handler = staticmethod(lambda: _get_handler())

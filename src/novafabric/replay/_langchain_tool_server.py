@@ -39,7 +39,7 @@ from novafabric.adapters._adk_tool_seam import AdkToolCall
 from novafabric.adapters._langchain_tool_seam import CALL_ID_EXT, Served
 from novafabric.capture import _tool_codec
 from novafabric.replay._adk_tool_server import AdkToolServer, RecordNotDecodable
-from novafabric.replay._contract import TOOL_SURFACE_LANGCHAIN, upgrade_legacy_langchain_record
+from novafabric.replay._contract import TOOL_SURFACE_LANGCHAIN
 
 
 class LangChainToolServer(AdkToolServer):
@@ -51,12 +51,6 @@ class LangChainToolServer(AdkToolServer):
     FAILURE_SERVED_REASON = (
         "the record is a failure, and LangChain tool failures are not served"
     )
-
-    def __init__(self, records: list[dict[str, Any]], **kwargs: Any) -> None:
-        # A round-2 observed record, or one an earlier capture marked not
-        # servable for nesting, kept its value but was marked by policy only;
-        # serve it as current capture would have marked it.
-        super().__init__([upgrade_legacy_langchain_record(r) for r in records], **kwargs)
 
     def _decode(self, record: dict[str, Any], call: AdkToolCall) -> Any:
         """A ToolMessage envelope is rebuilt into a real ``ToolMessage``, and a

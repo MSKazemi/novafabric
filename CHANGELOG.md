@@ -140,9 +140,30 @@ longer forwards the submitting shell's environment (ADR-0270).
   any served boundary), never counted unconsumed; the fidelity verdict stays `faithful`. A record captured earlier
   with that text and its value kept is served without a re-capture (replay strips the text, as it does for
   slice 1); a payloads-off one is served from the model-request echo when its digest matches. A nested call capture
-  could not mark stays unconsumed and the strict replay fails. Not changed: an unservable record written *inside*
-  such a tool still refuses a strict replay up front, and the ADK and Agents SDK seams still mark nested calls
-  unservable.
+  could not mark stays unconsumed and the strict replay fails. (Both limits named here at r3b are lifted by r3c,
+  below.)
+- **A call recorded inside a served tool call refuses nothing up front** (experimental; ADR-0306 r3c). Before, an
+  unservable record written inside a servable outer call — an inner tool whose result was not kept, an inner model
+  call on a surface replay does not serve — made a strict replay refuse to start (`ToolSurfaceNotServed`,
+  `ModelSurfaceNotServable`), although the replay never asks for it: the served outer call's body does not run.
+  Now such a record is *covered*: it is left out of those refusals and of `model_calls_not_servable`, `--dry-run`
+  lists it as `[COVERED by <tool>]` (not `[MOCK]`/`[LIVE]`/`[DENY]`), and `replayability.json` counts it under a
+  new `covered` key in `model_calls` and `tool_calls` (in no other bucket). One function decides it for the
+  engine, `--dry-run` and the capture-time summary. Fails closed: missing, ambiguous or cyclic
+  `within_tool_call_id` ancestry covers nothing, and neither does an outer call that may run live in this replay
+  (`allow: true` with a ladder flag; `--permissive` when an unmatched call could run live). When the outer call is
+  not served, its inner calls are made and accounted as before.
+- **Google ADK `AgentTool` and OpenAI Agents SDK `Agent.as_tool` calls are served** (experimental; ADR-0306 r3c).
+  Before, the ADK and Agents SDK seams marked a call whose body made model or tool calls "nested-call coverage is
+  not implemented", and the Agents SDK observer skipped agents used as tools. Now both follow the LangChain model:
+  the outer call is recorded servable, served at replay, and the sub-agent's model and tool calls are consumed as
+  covered. **Behaviour change (Agents SDK):** an agent used as a tool without `wrap_tools` is now recorded
+  (`observed`); when its record cannot be served, a strict replay refuses up front instead of running the
+  sub-agent with its own calls served. An `Agent.as_tool` call whose sub-run has an effect beyond its value —
+  `on_stream`, `hooks`, `session`, `previous_response_id`, `conversation_id`, or a nested approval — is recorded
+  not servable with a reason naming it; these are read from the SDK's private `_run_agent_impl` closure and
+  agent-tool state store (checked against `openai-agents` 0.24.0 only), and unreadable options fail closed. Records
+  an earlier capture marked not servable for nesting alone are served without a re-capture.
 - **Tool results captured below `forensic` are served from the next recorded model request** (experimental; ADR-0306
   r3 amendment). A default-level tool record keeps only a digest of its result, but the result also went back to the
   model in the next request, which the capsule keeps. Mocked replay now serves that echo (Chat Completions, Responses,

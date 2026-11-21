@@ -72,6 +72,7 @@ from novafabric.replay._replayability import (
 )
 from novafabric.replay._result import ReplayResult, write_replay_result
 from novafabric.replay._servability import (
+    covered_not_servable_records,
     describe_by_system,
     endpoint_host,
     not_servable_by_system,
@@ -246,7 +247,6 @@ class ReplayEngine:
         # role depends on the records around it.
         recorded_model_records = _read_jsonl(self._capsule_dir / "model-calls.jsonl")
         model_calls = logical_model_calls(recorded_model_records)
-        not_servable = not_servable_by_system(recorded_model_records)
         tool_calls = _read_jsonl(self._capsule_dir / "tool-calls.jsonl")
         if self._flags.mode == "mocked":
             # ADR-0306 r3: a payloads-off tool result the next recorded model
@@ -256,6 +256,10 @@ class ReplayEngine:
         env_warnings = EnvironmentResolver().check(env_lock)
         run_id = manifest.get("run_id", "unknown")
         evaluator = PolicyEvaluator(replay_policy, self._flags)
+        # ADR-0306 r3c: a call made inside a tool call that is certain to be
+        # served is never made, so it refuses nothing up front (mocked only).
+        coverage = evaluator.coverage(tool_calls)
+        not_servable = not_servable_by_system(recorded_model_records, coverage)
 
         # ADR-0128: re-validate stored tool calls against their *current*
         # declared schemas. Drift is recorded on the replay result in every
@@ -534,19 +538,31 @@ class ReplayEngine:
         refusal: dict[str, Any] | None = None
         if self._flags.mode == "mocked":
             # ADR-0319: each recorded model call replay cannot serve would run live.
-            unserved = not_servable_records(recorded_model_records or [])
+            coverage = evaluator.coverage(tool_calls)
+            unserved = not_servable_records(recorded_model_records or [], coverage)
             if unserved:
                 report += "Model calls mocked replay cannot serve (ADR-0319):\n" + "".join(
                     f"  [LIVE] model call ({system_of(r)}, "
                     f"{endpoint_host(r) or 'host not recorded'})\n"
                     for r in unserved
                 )
+            # ADR-0306 r3c: unservable model calls made inside a served tool call.
+            covered = covered_not_servable_records(recorded_model_records or [], coverage)
+            if covered:
+                report += (
+                    "Model calls inside a served tool call (never made, ADR-0306 r3c):\n"
+                    + "".join(
+                        f"  [COVERED by {outer.get('tool_name')}] model call "
+                        f"({system_of(r)}, {endpoint_host(r) or 'host not recorded'})\n"
+                        for r, outer in covered
+                    )
+                )
             # ADR-0306 r3 amendment: each recorded observed tool call (a LangChain
             # tool not passed through wrap_tools) replay cannot serve.
-            not_served = not_served_tool_calls(tool_calls)
+            not_served = not_served_tool_calls(tool_calls, coverage)
             if not_served:
                 report += "Tool calls mocked replay cannot serve (ADR-0306 r3):\n" + "".join(
-                    not_served_dry_run_lines(tool_calls)
+                    not_served_dry_run_lines(tool_calls, coverage)
                 )
             # ADR-0306 D8: what the replayed process will do with each
             # replay.yaml override -- the same table the real run reports.
@@ -847,7 +863,7 @@ class ReplayEngine:
         # strict replay refuses to start, as for an unservable model surface
         # (ADR-0319); under --permissive it runs, and each such call is refused
         # unless --allow-unknown-mutation lets it run live.
-        not_served = not_served_tool_calls(tool_calls)
+        not_served = not_served_tool_calls(tool_calls, evaluator.coverage(tool_calls))
         if not_served and not self._flags.permissive:
             tool_error = ToolSurfaceNotServedError(not_served)
             refused = ReplayResult(

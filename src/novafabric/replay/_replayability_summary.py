@@ -14,7 +14,10 @@ servability rule of its own:
 * re-execution -- :func:`novafabric.replay._replayability.require_reexecution_plan`
   (ADR-0306 Q7 guards);
 * ``replay.yaml`` overrides --
-  :meth:`novafabric.replay._policy.PolicyEvaluator.unenforceable_overrides`.
+  :meth:`novafabric.replay._policy.PolicyEvaluator.unenforceable_overrides`;
+* nested coverage -- :meth:`novafabric.replay._policy.PolicyEvaluator.coverage`
+  (ADR-0306 r3c): a call recorded inside a tool call certain to be served is
+  never made, so it is counted ``covered`` and refuses nothing.
 
 A change to any of those rules changes the summary with it. Refusals are listed
 in the order the engine checks them, so :attr:`ReplayabilitySummary.refusal` is
@@ -31,7 +34,10 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
+
+if TYPE_CHECKING:
+    from novafabric.replay._contract import NestedCoverage
 
 Replayable = Literal["full", "partial", "none"]
 StrictOutcome = Literal["start", "refuse"]
@@ -198,7 +204,9 @@ def _reexecution(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], Reason | 
     return {"reexecutable": True, "source": plan.source, "guard": None}, None, None
 
 
-def _model_part(records: Sequence[Any]) -> tuple[dict[str, int], list[Reason], Any]:
+def _model_part(
+    records: Sequence[Any], coverage: NestedCoverage,
+) -> tuple[dict[str, int], list[Reason], Any]:
     from novafabric.replay._errors import ModelSurfaceNotServableError
     from novafabric.replay._servability import (
         METADATA,
@@ -210,16 +218,22 @@ def _model_part(records: Sequence[Any]) -> tuple[dict[str, int], list[Reason], A
         not_servable_by_system,
     )
 
-    classes = classify(records)
+    # ADR-0306 r3c: a call made inside a tool call that will be served is never
+    # made -- counted as covered, in no other class.
+    classes = [
+        c if c == TRANSPORT or not coverage.is_covered(r) else "covered"
+        for r, c in zip(records, classify(records))
+    ]
     counts = {
         "recorded": sum(1 for c in classes if c != TRANSPORT),
         "servable": classes.count(SERVABLE),
         "not_servable": classes.count(NOT_SERVABLE),
         "live": classes.count(METADATA),
+        "covered": classes.count("covered"),
     }
     reasons: list[Reason] = []
     refusal = None
-    by_system = not_servable_by_system(records)
+    by_system = not_servable_by_system(records, coverage)
     if by_system:
         error = ModelSurfaceNotServableError(by_system)
         reasons.append(Reason(
@@ -251,6 +265,7 @@ def _never_sent(record: Mapping[str, Any]) -> bool:
 
 def _tool_part(
     tool_calls: Sequence[Any], replay_policy: Mapping[str, Any] | None,
+    coverage: NestedCoverage,
 ) -> tuple[dict[str, int], list[Reason], list[tuple[str, Any]]]:
     from novafabric.capture.hooks._python_tool import PAYLOADS_OFF_REASON
     from novafabric.replay._contract import (
@@ -271,8 +286,12 @@ def _tool_part(
     not_intercepted: list[dict[str, Any]] = []
     unservable: dict[str, list[tuple[dict[str, Any], str]]] = {}
     servable = 0
+    covered = 0
     for record in records:
-        if is_not_served_tool_record(record):
+        if coverage.is_covered(record):
+            # ADR-0306 r3c: never requested; consumed as covered at replay.
+            covered += 1
+        elif is_not_served_tool_record(record):
             observed.append(record)
         elif tool_surface(record) is None:
             not_intercepted.append(record)
@@ -294,11 +313,12 @@ def _tool_part(
         "not_servable": sum(len(v) for v in unservable.values()),
         "observed_only": len(observed),
         "not_intercepted": len(not_intercepted),
+        "covered": covered,
     }
     reasons: list[Reason] = []
     refusals: list[tuple[str, Any]] = []
 
-    by_surface = not_served_tool_calls(records)
+    by_surface = not_served_tool_calls(records, coverage)
     if by_surface:
         error = ToolSurfaceNotServedError(by_surface)
         never_sent = _tool_names([r for r in observed if _never_sent(r)])
@@ -391,17 +411,24 @@ def assess(
     *model_records* is the whole ``model-calls.jsonl`` (transport records
     included: ADR-0305 roles depend on the records around them).
     """
-    reexecution, reexec_reason, reexec_refusal = _reexecution(manifest)
-    model_counts, model_reasons, model_refusal = _model_part(model_records)
     from novafabric.replay._echo_recovery import recover_tool_results_from_echo
+    from novafabric.replay._flags import ReplayFlags
+    from novafabric.replay._policy import PolicyEvaluator
 
+    reexecution, reexec_reason, reexec_refusal = _reexecution(manifest)
     # Same step the engine runs before classifying (ADR-0306 r3): a payloads-off
     # tool result the next model request echoes under its digest is servable.
     tool_calls = recover_tool_results_from_echo(
         [r for r in tool_calls if isinstance(r, dict)],
         [r for r in model_records if isinstance(r, dict)],
     )
-    tool_counts, tool_reasons, tool_refusals = _tool_part(tool_calls, replay_policy)
+    # The coverage a strict mocked replay computes (ADR-0306 r3c), from the same
+    # evaluator the engine and --dry-run use.
+    coverage = PolicyEvaluator(
+        dict(replay_policy or {}), ReplayFlags(mode="mocked")
+    ).coverage(tool_calls)
+    model_counts, model_reasons, model_refusal = _model_part(model_records, coverage)
+    tool_counts, tool_reasons, tool_refusals = _tool_part(tool_calls, replay_policy, coverage)
 
     reasons = [*([reexec_reason] if reexec_reason else []), *model_reasons, *tool_reasons]
     reasons.sort(key=lambda r: _REASON_ORDER.index(r.code))

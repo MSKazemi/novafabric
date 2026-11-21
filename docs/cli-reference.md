@@ -1263,7 +1263,7 @@ nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --output-dir /mnt/repla
 Options:
 - `--mode {mocked,forensic,semantic,exact,intervention}` — replay mode (default: `mocked`). Tab-completion available via `nova --install-completion`.
   `exact` re-executes nothing: it checks whether the recorded run meets the exact-replay preconditions and exits `0` with `eligible for exact replay` when it does. An ineligible capsule (`env.lock` not `deterministic`, an unseeded model call, a non-re-runnable command, schema drift) exits `1` with `status: failure` in `replay_result.yaml` and each reason printed; it was a green tick and exit `0`. `semantic` prints the mean pairwise similarity of the recorded responses; with fewer than two responses there is nothing to compare, so `similarity_score` is absent (it read `1.0`) and `divergence_reason` says why.
-- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below) or records a model call mocked replay cannot serve (`error.type: ModelSurfaceNotServable`; each listed as `[LIVE] model call (<system>, <host>)`, see below), or records an observed LangChain tool call (not passed through `wrap_tools`) mocked replay cannot serve (`error.type: ToolSurfaceNotServed`; each listed as `[NOT SERVED] LangChain tool call (<name>)` with its reason), or exits 3 with `ToolOverrideUnenforceable` when a strict mocked replay would refuse to start (see *Per-tool overrides* below). In `mocked` mode each recorded tool call is labelled with exactly what the replay will do (`[MOCK]`, `[MOCK (never live)]`, `[MOCK (override not honoured: needs --allow-…)]`, `[LIVE]`, `[LIVE (override honoured)]`, `[DENY]`), followed by a `Tool overrides (replay.yaml)` table
+- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below) or records a model call mocked replay cannot serve (`error.type: ModelSurfaceNotServable`; each listed as `[LIVE] model call (<system>, <host>)`, see below), or records an observed LangChain tool call (not passed through `wrap_tools`) mocked replay cannot serve (`error.type: ToolSurfaceNotServed`; each listed as `[NOT SERVED] LangChain tool call (<name>)` with its reason), or exits 3 with `ToolOverrideUnenforceable` when a strict mocked replay would refuse to start (see *Per-tool overrides* below). In `mocked` mode each recorded tool call is labelled with exactly what the replay will do (`[MOCK]`, `[MOCK (never live)]`, `[MOCK (override not honoured: needs --allow-…)]`, `[LIVE]`, `[LIVE (override honoured)]`, `[DENY]`, `[COVERED by <tool>]` for a call recorded inside a tool call the replay is certain to serve, ADR-0306 r3c), followed by a `Tool overrides (replay.yaml)` table
 - `--allow-readonly` — safety-ladder rung: permit `read-only` tools
 - `--allow-mutating` — rung for `idempotent-write` and `non-idempotent-write` tools
 - `--allow-external-side-effects` — rung for `external-side-effect` tools (implies `--allow-mutating`)
@@ -1353,6 +1353,25 @@ Under `--permissive` such calls run live only with `--allow-unknown-mutation`; e
 tools were never served (a strict replay refused every capsule that recorded one) and
 `--permissive` ran them live without a ladder flag; unwrapped Agents SDK function tools were
 not recorded or counted at all and ran live in every mocked replay.
+
+**Calls inside a served tool call** (experimental, unreleased; ADR-0306 r3c). A model or
+tool call recorded inside a tool call that the replay is certain to serve is never made:
+the served call's body does not run. Such a record — an inner tool call that could not
+be served, or an inner model call on a surface replay does not serve — no longer makes a
+strict replay refuse up front (`ToolSurfaceNotServed`, `ModelSurfaceNotServable`), is
+left out of `model_calls_not_servable`, and `--dry-run` lists it as `[COVERED by <tool>]`
+(model calls as `[COVERED by <tool>] model call (<system>, <host>)`). The capsule's
+`replayability.json` counts it under `covered` in `model_calls` / `tool_calls`. It applies
+to `record.tool` boundaries, LangChain tools, ADK tools (an `AgentTool`) and Agents SDK
+tools (`Agent.as_tool`). "Certain to be served" fails closed: the outer record must be
+servable and count its nested records; the chain of `within_tool_call_id` links up to it
+must be complete and unambiguous (each id held by exactly one record); and the outer
+call must never run live in this replay — not under `allow: true` with a ladder flag
+(re-execution), and not under `--permissive` when an unmatched call could run live (a
+wrapped tool's mutation class is declared by the workload at replay, so any ladder flag
+counts; an observed tool is always gated `unknown`). `allow: false` still serves a
+matched call, so it still covers. When the outer call is not served, its inner calls are
+made and accounted exactly as before (served, refused, or live and counted).
 
 **Network scope and child processes** (works today, unreleased after v0.108.0; ADR-0319). The live-connection
 count covers every observed Python process of the replayed tree
@@ -10679,13 +10698,25 @@ nova replay <run-id>                 # tool bodies do not run; results come from
   and replay refuses the call with a re-capture hint. The SDK turns a tool exception into a
   model-visible error string, and that string is what is recorded.
 - **Under a mocked `nova replay`** the recorded result is returned and the tool body never
-  runs. An unmatched call, or one whose record is not servable (made nested model/tool
-  calls, including through `Agent.as_tool`; non-JSON result), is refused before the tool
-  runs and the replay fails (`tool_call_unmatched` / `tool_result_not_servable`) even if
+  runs. An unmatched call, or one whose record is not servable (non-JSON result, a raised
+  error), is refused before the tool runs and the replay fails (`tool_call_unmatched` / `tool_result_not_servable`) even if
   the workload catches the error, which the SDK re-raises as `UserError`. `--permissive`
   runs an unmatched call live only when an `--allow-*` flag permits the class declared in
   `wrap_tools` (default `unknown`), and `replay.yaml` `tool_overrides` hold as on the other
   tool surfaces.
+- **An agent used as a tool (`Agent.as_tool`)**, and any function tool whose body made
+  model or tool calls (experimental, unreleased, ADR-0306 r3c), is served like a nested
+  `record.tool` boundary: the sub-agent never runs, and the model and tool calls recorded
+  inside the call are consumed as covered (`model_calls_covered` /
+  `tool_calls_covered`). Agent tools are recorded whether or not they went through
+  `wrap_tools`. An agent tool whose sub-run does more than return its value is recorded
+  **not servable**, with a reason naming why: it sets `on_stream`, `hooks`, `session`,
+  `previous_response_id` or `conversation_id`, or its sub-run paused for approval (or
+  resumed one). These options are read from the SDK's private `_run_agent_impl` closure
+  and agent-tool state store (checked against `openai-agents` 0.24.0 only); when they
+  cannot be read, the call is not servable. Before r3c an unwrapped agent tool was not
+  recorded and its sub-agent ran with its own calls served; now an unservable one makes a
+  strict replay refuse up front (`ToolSurfaceNotServed`).
 - **Outside capture and replay** a wrapped tool behaves like the original.
 - A function declared with `novafabric.capture.record.tool` is already a boundary of its
   own, so the seam steps aside for it.
@@ -10744,12 +10775,18 @@ nova replay <run-id>                 # ADK tool bodies do not run; results come 
 - **Under a mocked `nova replay`** the plugin's `before_tool_callback` returns the
   recorded result — the way ADK documents to skip a tool — so the tool body never runs.
   An unmatched call, or one whose record is not servable (the tool raised, changed
-  `tool_context.actions`, is long-running, or made nested model/tool calls), is refused
-  before the tool runs; the replay fails (`tool_call_unmatched` /
+  `tool_context.actions`, or is long-running), is refused before the tool runs; the replay fails (`tool_call_unmatched` /
   `tool_result_not_servable`) even if the workload catches the error, which ADK wraps in
   `RuntimeError`. `--permissive` runs an unmatched call live only when an `--allow-*`
   flag permits the class declared in `make_tool_plugin` (default `unknown`), and
   `replay.yaml` `tool_overrides` hold as on the other tool surfaces.
+- **A tool whose body made model or tool calls** — an `AgentTool` running a sub-agent
+  (experimental, unreleased, ADR-0306 r3c) — is served like a nested `record.tool`
+  boundary: the sub-agent never runs, and the model and tool calls recorded inside the
+  call are consumed as covered (`model_calls_covered` / `tool_calls_covered`).
+  `AgentTool` hands its sub-runner the parent's plugins by default
+  (`include_plugins=True`), so the sub-agent's tool calls are recorded inside the call;
+  an `AgentTool` that forwards a state change (`tool_context.actions`) stays not servable.
 - **Outside capture and replay** every callback returns `None`.
 - The plugin steps aside for ADK `McpTool`s (the MCP surface already serves them) and
   for functions declared with `novafabric.capture.record.tool`.
@@ -10990,8 +11027,9 @@ nova replay <run-id>                 # tool bodies do not run; results come from
   recorded inside it are consumed as covered (`replay_contract.model_calls_covered` /
   `tool_calls_covered`, `covered` in `tool_calls_by_surface`), never left over. A
   nested call capture could not mark (one made from a raw thread) stays unconsumed and
-  the strict replay fails. An unservable record written inside such a tool still makes
-  a strict replay refuse up front, even when the outer call is servable.
+  the strict replay fails. Since ADR-0306 r3c an unservable record written inside a
+  call that is certain to be served refuses nothing up front, and `--dry-run` lists it
+  as `[COVERED by <tool>]`; see *Calls inside a served tool call* under `nova replay`.
 - **Outside capture and replay** a wrapped tool behaves like the original.
 - Tools built by `langchain_mcp_adapters` are returned unchanged: their MCP calls are
   already served on the MCP surface. A function declared with

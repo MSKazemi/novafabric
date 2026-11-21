@@ -66,6 +66,10 @@ _LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
 _OAI_OBSERVED = "tests/replay/test_openai_agents_unwrapped_tool_e2e.py"
 _LC_MESSAGE = "tests/replay/test_langchain_tool_message_results_e2e.py"
 _LC_NESTED = "tests/replay/test_langchain_nested_tool_serving_e2e.py"
+_ADK_NESTED = "tests/replay/test_adk_nested_tool_serving_e2e.py"
+_OAI_NESTED = "tests/replay/test_openai_agents_nested_tool_serving_e2e.py"
+_OAI_GUARDS = "tests/adapters/test_openai_agents_agent_tool_guards.py"
+_COVERAGE = "tests/replay/test_nested_coverage_upfront.py"
 _LG_COMMAND = "tests/replay/test_langgraph_command_results_e2e.py"
 _LAST_CALL = "tests/replay/test_tool_result_last_call_gap_e2e.py"
 _ECHO_RECOVERY = "tests/replay/test_tool_result_echo_recovery.py"
@@ -647,7 +651,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "(`--permissive` runs it live only if a ladder flag permits its declared "
             "mutation class); `replay.yaml` `tool_overrides` enforced in-process; a "
             "boundary that called a model or tool is served too, and the records it "
-            "wrote are consumed as covered (`*_calls_covered`, slice 4)"
+            "wrote are consumed as covered (`*_calls_covered`, slice 4); a record "
+            "written inside a call certain to be served refuses nothing up front and "
+            "`--dry-run` lists it `[COVERED by <tool>]` (ADR-0306 r3c)"
         ),
         streaming="refused at decoration (generator functions)",
         asynchronous="served (`async def`)",
@@ -662,6 +668,8 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_PY_TOOL}::test_a_nested_boundary_is_served_and_its_inner_records_are_covered",
             f"{_ECHO}::test_a_nested_boundary_is_served_and_its_nested_model_call_is_covered",
             f"{_ECHO}::test_an_unmarked_nested_call_fails_closed",
+            f"{_COVERAGE}::test_engine_dry_run_policy_report_and_summary_agree",
+            f"{_COVERAGE}::test_missing_ambiguous_or_unservable_ancestry_covers_nothing",
         ),
         servers=("novafabric.capture.record.tool",),
     ),
@@ -680,8 +688,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             "through ADK's documented `before_tool_callback` short-circuit, before the "
             "tool body runs; one-to-one by the model's `function_call_id` (same name "
             "and arguments) or by name and canonical arguments; JSON-native results up "
-            "to 1 MiB; a call that failed, changed `tool_context.actions`, is "
-            "long-running or made nested model/tool calls is not served; an unmatched "
+            "to 1 MiB; a call that failed, changed `tool_context.actions` or is "
+            "long-running is not served; a call whose body made model/tool calls (an "
+            "`AgentTool` running a sub-agent, which inherits the plugin) is served and "
+            "the records it wrote are consumed as covered (ADR-0306 r3c); an unmatched "
             "or unservable call is refused (`--permissive` runs it live only if a "
             "ladder flag permits the class the plugin declares); `replay.yaml` "
             "`tool_overrides` enforced; `nova capture python …` capsules (a "
@@ -698,7 +708,11 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_ADK}::test_the_function_call_id_pairs_identical_calls_by_id",
             f"{_ADK}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
             f"{_ADK}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
-            f"{_ADK}::test_a_nested_record_makes_the_adk_call_unservable",
+            f"{_ADK}::test_a_adk_call_with_a_nested_record_is_served_and_covers_it",
+            f"{_ADK_NESTED}::test_strict_replay_serves_the_agent_tool_and_covers_the_sub_agent",
+            f"{_ADK_NESTED}::test_an_unservable_inner_tool_inside_a_served_agent_tool_does_not_refuse",
+            f"{_ADK_NESTED}::test_a_record_captured_before_r3c_is_served_without_a_recapture",
+            f"{_ADK_NESTED}::test_an_agent_tool_that_is_not_served_runs_nothing_and_fails_closed",
         ),
         servers=("google.adk.tools.BaseTool",),
     ),
@@ -718,8 +732,13 @@ ROWS: tuple[SurfaceRow, ...] = (
             "**undocumented SDK seam**, checked against `openai-agents` 0.17.x only -- so "
             "the recorded result is returned before the tool body runs; one-to-one by the "
             "model's `call_id` (same name and arguments) or by name and canonical "
-            "arguments; JSON-native results up to 1 MiB; a call that raised, or made "
-            "nested model/tool calls (including `Agent.as_tool`), is not served; an "
+            "arguments; JSON-native results up to 1 MiB; a call that raised is not "
+            "served; a call whose body made model/tool calls (`Agent.as_tool`) is served "
+            "and the records it wrote are consumed as covered (ADR-0306 r3c), unless the "
+            "agent tool sets `on_stream`, `hooks`, `session`, `previous_response_id` or "
+            "`conversation_id`, or its sub-run paused for approval (read from the SDK's "
+            "private `_run_agent_impl` closure and agent-tool state, `openai-agents` "
+            "0.24.0; unreadable options are not served); an "
             "unmatched or unservable call is refused (`--permissive` runs it live only if "
             "a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
             "`tool_overrides` enforced; tools not passed through `wrap_tools`: next "
@@ -736,7 +755,11 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_OAI}::test_the_call_id_pairs_identical_calls_by_id",
             f"{_OAI}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
             f"{_OAI}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
-            f"{_OAI}::test_a_nested_record_makes_the_agents_call_unservable",
+            f"{_OAI}::test_a_agents_call_with_a_nested_record_is_served_and_covers_it",
+            f"{_OAI_NESTED}::test_strict_replay_serves_the_agent_tool_and_covers_the_sub_run",
+            f"{_OAI_NESTED}::test_a_record_captured_before_r3c_is_served_without_a_recapture",
+            f"{_OAI_GUARDS}::test_an_option_with_an_effect_beyond_the_value_is_an_obstacle",
+            f"{_OAI_GUARDS}::test_options_that_cannot_be_read_are_an_obstacle",
         ),
         servers=("agents.FunctionTool",),
     ),
@@ -750,8 +773,8 @@ ROWS: tuple[SurfaceRow, ...] = (
             "`transport: python` record per call (`openai.agents.tool` marker, "
             "`io.novafabric.openai_agents_tool_seam: observed`, `mutation_class: "
             "unknown`), same payload and codec rules as `wrap_tools`; agents used as "
-            "tools (`Agent.as_tool`) are not recorded -- their own model calls and tools "
-            "are"
+            "tools (`Agent.as_tool`) are recorded too since ADR-0306 r3c, their sub-run's "
+            "model and tool calls marked inside the call"
         ),
         replay="served",
         replay_note=(
@@ -763,7 +786,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             "(`ToolSurfaceNotServed`, also under `--dry-run`); an unmatched call (e.g. a "
             "capsule captured before this, with no tool records) is refused before its "
             "body runs; under `--permissive` it runs **live** only with "
-            "`--allow-unknown-mutation`, counted in `tool_calls_live`; the seam patches "
+            "`--allow-unknown-mutation`, counted in `tool_calls_live`; an `Agent.as_tool` "
+            "call is served like a wrapped one and its sub-run's calls are covered "
+            "(ADR-0306 r3c; an unservable one refuses a strict replay up front, where "
+            "before r3c the sub-agent ran with its own calls served); the seam patches "
             "the SDK's private `agents.tool._invoke_function_tool_with_metadata` -- "
             "**not an SDK extension point**, checked against `openai-agents` 0.24.0 only"
         ),
@@ -772,7 +798,9 @@ ROWS: tuple[SurfaceRow, ...] = (
         status="experimental",
         evidence=(
             f"{_OAI_OBSERVED}::test_capture_records_unwrapped_function_tools_as_observed",
-            f"{_OAI_OBSERVED}::test_an_agent_used_as_a_tool_is_not_a_boundary_its_inner_tool_is",
+            f"{_OAI_OBSERVED}::test_an_agent_used_as_a_tool_is_a_served_boundary_its_inner_tool_is_covered",
+            f"{_OAI_NESTED}::test_a_default_level_capsule_whose_outer_result_is_lost_covers_nothing",
+            f"{_OAI_NESTED}::test_an_unservable_observed_agent_tool_refuses_up_front_and_runs_nothing",
             f"{_OAI_OBSERVED}::test_strict_replay_serves_unwrapped_function_tools_and_never_runs_their_bodies",
             f"{_OAI_OBSERVED}::test_strict_replay_refuses_to_start_when_unwrapped_results_were_not_recorded",
             f"{_OAI_OBSERVED}::test_a_capsule_without_tool_records_refuses_strict_and_counts_permissive",
@@ -871,7 +899,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "also in `replayability.json`, ADR-0306 r3b); "
             "a tool whose body made model/tool calls (a sub-agent tool) is served "
             "like a nested `record.tool` boundary and what it did is covered, never "
-            "requested (ADR-0306 r3b); the seam patches "
+            "requested (ADR-0306 r3b), and an unservable record it wrote refuses "
+            "nothing up front (`[COVERED by <tool>]` in `--dry-run`, ADR-0306 r3c); "
+            "the seam patches "
             "`BaseTool.run`/`arun` and the class defining `_run`/`_arun` -- **not a "
             "LangChain extension point**, checked against `langchain-core` 1.8.3 and "
             "`langgraph` 1.2.23 only"
@@ -900,6 +930,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_LC_NESTED}::test_a_default_level_capsule_serves_the_outer_tool_from_the_echo",
             f"{_LC_NESTED}::test_a_record_captured_before_nested_serving_is_served_without_a_recapture",
             f"{_LC_NESTED}::test_an_unmarked_inner_model_call_fails_closed",
+            f"{_LC_NESTED}::test_an_unservable_inner_tool_inside_a_served_sub_agent_does_not_refuse",
+            f"{_LC_NESTED}::test_an_unservable_inner_model_call_inside_a_served_sub_agent_does_not_refuse",
+            f"{_LC_NESTED}::test_an_outer_call_that_may_run_live_covers_nothing_strict_refuses",
+            f"{_LC_NESTED}::test_an_outer_call_run_live_makes_its_inner_calls_and_counts_them",
             f"{_LG_COMMAND}::test_strict_replay_serves_the_command_and_reaches_the_same_final_state",
             f"{_LG_COMMAND}::test_a_command_that_cannot_be_rebuilt_is_not_servable_and_says_why",
             f"{_LG_COMMAND}::test_a_default_level_command_is_digested_and_refused_with_the_recapture_hint",
