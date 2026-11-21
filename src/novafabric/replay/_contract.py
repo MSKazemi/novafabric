@@ -489,6 +489,97 @@ def nested_boundary_ids(boundary_id: str, tool_calls: list[dict[str, Any]]) -> s
     return ids
 
 
+#: Surfaces whose replay server, when it serves a call, consumes the records its
+#: body wrote as *covered* (``MockToolDispatcher._cover_nested`` passed as
+#: ``on_served``). A guard test pins this set against the dispatcher wiring.
+COVERING_TOOL_SURFACES: frozenset[str] = frozenset({
+    TOOL_SURFACE_PYTHON, TOOL_SURFACE_LANGCHAIN,
+})
+
+
+def serves_on_match(record: dict[str, Any]) -> bool:
+    """A matched replayed call would be served from *record*, covering what its body
+    wrote: a covering surface, servable, with a positive ``nested_records`` count
+    (the dispatcher covers nothing without one), and -- off the python surface,
+    whose server re-raises a recorded failure -- a success."""
+    surface = tool_surface(record)
+    if surface not in COVERING_TOOL_SURFACES or not_servable_reason(record) is not None:
+        return False
+    ext = record.get("extensions")
+    nested = ext.get(_tool_codec.NESTED_RECORDS_EXT) if isinstance(ext, dict) else None
+    if type(nested) is not int or nested <= 0:
+        return False
+    return surface == TOOL_SURFACE_PYTHON or record.get("status", "success") == "success"
+
+
+@dataclass(frozen=True)
+class NestedCoverage:
+    """Which recorded calls a strict mocked replay never requests, because an
+    ancestor call will be served (ADR-0306 r3c).
+
+    Built by :func:`nested_coverage` and shared by every up-front classifier --
+    the engine's refusals (``not_served_tool_calls``, ``_servability``), the
+    ``--dry-run`` policy report (``PolicyEvaluator.check_all``) and the capture-
+    time summary (``_replayability_summary``) -- so they cannot disagree.
+    """
+
+    #: ``tool_call_id`` -> record, for ids held by exactly one tool record.
+    by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: ids of tool records certain to be served when the replayed call is made.
+    served: frozenset[str] = frozenset()
+
+    def covering(self, record: Any) -> dict[str, Any] | None:
+        """The outermost ancestor of *record* that will be served, or ``None``.
+
+        Fails closed: a record whose ancestry is missing (an id no tool record
+        holds), ambiguous (an id two records hold) or cyclic is not covered,
+        whatever lies above the break."""
+        if not isinstance(record, dict):
+            return None
+        found: dict[str, Any] | None = None
+        seen: set[str] = set()
+        within = nested_within(record)
+        while within is not None:
+            parent = self.by_id.get(within)
+            if parent is None or within in seen:
+                return None
+            seen.add(within)
+            if within in self.served:
+                found = parent
+            within = nested_within(parent)
+        return found
+
+    def is_covered(self, record: Any) -> bool:
+        return self.covering(record) is not None
+
+
+#: No record is covered (a replay that serves nothing, or no tool records).
+NO_COVERAGE = NestedCoverage()
+
+
+def nested_coverage(
+    tool_calls: list[dict[str, Any]], served: Any = serves_on_match,
+) -> NestedCoverage:
+    """The coverage of a capsule's tool records, given *served*: a predicate
+    saying a tool record is certain to be served at replay (the engine and the
+    summary pass ``PolicyEvaluator.certainly_served``, which also applies the
+    flags and ``replay.yaml``). Pure; reads no file."""
+    counts: dict[str, int] = {}
+    for rec in tool_calls:
+        tool_call_id = rec.get("tool_call_id") if isinstance(rec, dict) else None
+        if isinstance(tool_call_id, str) and tool_call_id:
+            counts[tool_call_id] = counts.get(tool_call_id, 0) + 1
+    by_id = {
+        str(rec["tool_call_id"]): rec
+        for rec in tool_calls
+        if isinstance(rec, dict) and counts.get(str(rec.get("tool_call_id")), 0) == 1
+    }
+    return NestedCoverage(
+        by_id=by_id,
+        served=frozenset(i for i, rec in by_id.items() if served(rec)),
+    )
+
+
 #: Surfaces with an observer for tools not passed through ``wrap_tools``, and
 #: the record extension that marks such a record ``observed``.
 OBSERVED_SEAM_EXTS: dict[str, str] = {
@@ -564,16 +655,21 @@ MAX_LISTED_NOT_SERVED_TOOLS = 10
 MAX_LISTED_NOT_SERVED_REASONS = 5
 
 
-def not_served_tool_calls(tool_calls: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def not_served_tool_calls(
+    tool_calls: list[dict[str, Any]], coverage: NestedCoverage = NO_COVERAGE,
+) -> dict[str, dict[str, Any]]:
     """Recorded observed calls mocked replay cannot serve, as ``{surface:
     {"count", "tools", "reasons"}}`` (distinct tool names, sorted, at most
     :data:`MAX_LISTED_NOT_SERVED_TOOLS`; distinct reasons in first-seen order,
-    at most :data:`MAX_LISTED_NOT_SERVED_REASONS`); empty when there are none."""
+    at most :data:`MAX_LISTED_NOT_SERVED_REASONS`); empty when there are none.
+
+    A record *coverage* covers is left out: a served ancestor's body never runs,
+    so the call is never made (ADR-0306 r3c)."""
     counts: dict[str, int] = {}
     names: dict[str, set[str]] = {}
     reasons: dict[str, list[str]] = {}
     for record in tool_calls:
-        if not isinstance(record, dict):
+        if not isinstance(record, dict) or coverage.is_covered(record):
             continue
         reason = observed_not_served_reason(record)
         if reason is None:
@@ -594,11 +690,17 @@ def not_served_tool_calls(tool_calls: list[dict[str, Any]]) -> dict[str, dict[st
     }
 
 
-def not_served_dry_run_lines(tool_calls: list[dict[str, Any]]) -> list[str]:
-    """One ``--dry-run`` line per recorded observed call replay cannot serve."""
+def not_served_dry_run_lines(
+    tool_calls: list[dict[str, Any]], coverage: NestedCoverage = NO_COVERAGE,
+) -> list[str]:
+    """One ``--dry-run`` line per recorded observed call replay cannot serve
+    (records *coverage* covers are left out, as in :func:`not_served_tool_calls`)."""
     lines = []
     for record in tool_calls:
-        reason = observed_not_served_reason(record) if isinstance(record, dict) else None
+        reason = (
+            observed_not_served_reason(record)
+            if isinstance(record, dict) and not coverage.is_covered(record) else None
+        )
         if reason is not None:
             label = OBSERVED_SURFACE_LABELS.get(str(tool_surface(record)), "tool")
             lines.append(

@@ -418,3 +418,126 @@ def test_an_unmarked_inner_model_call_fails_closed(env: Env) -> None:
     assert result["status"] == "failure"
     assert "model_calls_unconsumed" in _kinds(result)
     assert result["fidelity"]["verdict"] != "faithful"
+
+
+# ── ADR-0306 r3c: covered records refuse nothing up front ────────────────────
+
+_SET_REASON = "the result is a set, not JSON"
+
+
+def _break_lookup(env: Env, capsule: Path) -> None:
+    """Make the sub-agent's inner tool record unservable (as a set result would)."""
+    path = capsule / "tool-calls.jsonl"
+    records = env.read(path)
+    for rec in records:
+        if rec["tool_name"] == "lookup":
+            rec["extensions"]["io.novafabric.result_codec"] = "not-servable"
+            rec["extensions"]["io.novafabric.not_servable_reason"] = _SET_REASON
+            rec["result"] = None
+    env.write(path, records)
+
+
+def _break_sub_agent_model_call(env: Env, capsule: Path) -> None:
+    """Make the sub-agent's first model call unservable (no recorded response)."""
+    path = capsule / "model-calls.jsonl"
+    records = env.read(path)
+    (first,) = [
+        r for r in records
+        if (r.get("extensions") or {}).get("io.novafabric.record_role") == "logical"
+        and (r.get("extensions") or {}).get(WITHIN)
+        and r.get("gen_ai.response.id") == "sub-1"
+    ]
+    first["gen_ai.response.choices"] = []
+    env.write(path, records)
+
+
+def test_an_unservable_inner_tool_inside_a_served_sub_agent_does_not_refuse(
+    env: Env,
+) -> None:
+    """Before r3c a strict replay refused up front (``ToolSurfaceNotServed``) for a
+    record the replay never asks for: the served outer call's body never runs."""
+    capsule, captured = env.capture()
+    _break_lookup(env, capsule)
+    result, observed, cli = env.replay(capsule)
+    _assert_served_and_covered(result, observed, captured, env, cli)
+
+    dry, _, cli = env.replay(capsule, "--dry-run")
+    assert cli.exit_code == 0, cli.output
+    assert dry.get("error") is None
+    report = next(env.replays.glob(f"{dry['replay_id']}/dry_run_report.txt")).read_text()
+    assert "[MOCK] task" in report
+    assert "[COVERED by task] lookup" in report
+    assert "[MOCK] lookup" not in report and "[NOT SERVED]" not in report
+    summary = json.loads((capsule / "replayability.json").read_text())
+    # The capture-time summary predates the tampering; recompute it as capture would.
+    from novafabric.replay._replayability_summary import assess_capsule
+
+    doc = assess_capsule(capsule, yaml.safe_load((capsule / "capsule.yaml").read_text()))
+    assert doc.strict_mocked == "start", doc.as_dict()
+    assert doc.tool_calls["covered"] == 1
+    assert summary["strict_mocked"] == "start"
+
+
+def test_an_unservable_inner_model_call_inside_a_served_sub_agent_does_not_refuse(
+    env: Env,
+) -> None:
+    """Before r3c: ``ModelSurfaceNotServable`` up front for a call never made."""
+    capsule, captured = env.capture()
+    _break_sub_agent_model_call(env, capsule)
+    result, observed, cli = env.replay(capsule)
+    assert cli.exit_code == 0, cli.output
+    assert result["status"] == "success", result.get("error")
+    assert result.get("model_calls_not_servable") in (None, 0)
+    assert observed == captured
+    assert env.side_effects == []
+    contract = result["replay_contract"]
+    assert contract["model_calls_covered"] == 1  # the servable sub-2; sub-1 is never asked
+    assert contract["model_calls_unconsumed"] == 0
+    assert result["fidelity"]["verdict"] == "faithful", result["fidelity"]
+
+    dry, _, cli = env.replay(capsule, "--dry-run")
+    assert cli.exit_code == 0, cli.output
+    report = next(env.replays.glob(f"{dry['replay_id']}/dry_run_report.txt")).read_text()
+    assert "[COVERED by task] model call (openai" in report
+    assert "[LIVE] model call" not in report
+
+
+def _allow_task(capsule: Path) -> None:
+    (capsule / "replay.yaml").write_text(yaml.safe_dump({
+        "schema_version": "0.1.0",
+        "tool_overrides": [{"tool_name": "task", "allow": True}],
+    }))
+
+
+def test_an_outer_call_that_may_run_live_covers_nothing_strict_refuses(env: Env) -> None:
+    """Fail closed: `allow: true` plus the ladder flag re-executes the outer call,
+    so its body -- and the unservable inner call -- would run: refused up front."""
+    capsule, _ = env.capture()
+    _break_lookup(env, capsule)
+    _allow_task(capsule)
+    result, _, cli = env.replay(capsule, "--allow-unknown-mutation")
+    assert cli.exit_code == 1, cli.output
+    assert result["error"]["type"] == "ToolSurfaceNotServed"
+    assert result["error"]["tool_calls_not_served_by_surface"][LC]["tools"] == ["lookup"]
+    assert env.side_effects == []
+
+
+def test_an_outer_call_run_live_makes_its_inner_calls_and_counts_them(env: Env) -> None:
+    """The same capsule under --permissive: the outer call is re-executed, so the
+    inner calls are made and accounted as today -- the unservable lookup runs
+    live (counted), the sub-agent's model calls are served, nothing is covered."""
+    capsule, captured = env.capture()
+    _break_lookup(env, capsule)
+    _allow_task(capsule)
+    result, observed, cli = env.replay(capsule, "--permissive", "--allow-unknown-mutation")
+    assert cli.exit_code == 0, cli.output
+    assert observed == captured
+    assert env.side_effects == ["task find order 7", "lookup 7"]
+    contract = result["replay_contract"]
+    assert contract["tool_calls_covered"] == 0
+    assert contract["model_calls_covered"] == 0
+    assert result["tool_calls_live"] == 2  # task (override) and lookup (not servable)
+    assert result["model_calls_mocked"] == 4
+    # The up-front warning still names the inner record: it was not covered.
+    assert contract["tool_calls_not_served_by_surface"][LC]["tools"] == ["lookup"]
+    assert result["fidelity"]["verdict"] != "faithful"

@@ -42,7 +42,12 @@ from urllib.parse import urlsplit
 
 from novafabric.capture.hooks._wire_body import has_wire_response
 from novafabric.capture.record_roles import ROLE_TRANSPORT, classify_model_calls
-from novafabric.replay._contract import is_replayable_model_call, is_replayable_model_error
+from novafabric.replay._contract import (
+    NO_COVERAGE,
+    NestedCoverage,
+    is_replayable_model_call,
+    is_replayable_model_error,
+)
 
 Servability = Literal["servable", "not_servable", "metadata", "transport"]
 SERVABLE: Servability = "servable"
@@ -152,9 +157,30 @@ def classify(records: Sequence[Any]) -> list[Servability]:
     return out
 
 
-def not_servable_records(records: Sequence[Any]) -> list[Any]:
-    """The recorded model calls mocked replay cannot serve, in recorded order."""
-    return [r for r, c in zip(records, classify(records)) if c == NOT_SERVABLE]
+def not_servable_records(
+    records: Sequence[Any], coverage: NestedCoverage = NO_COVERAGE,
+) -> list[Any]:
+    """The recorded model calls mocked replay cannot serve, in recorded order.
+
+    A call *coverage* covers is left out: it was made inside a tool call that
+    will be served, whose body never runs, so it is never made (ADR-0306 r3c)."""
+    return [
+        r for r, c in zip(records, classify(records))
+        if c == NOT_SERVABLE and not coverage.is_covered(r)
+    ]
+
+
+def covered_not_servable_records(
+    records: Sequence[Any], coverage: NestedCoverage,
+) -> list[tuple[Any, dict[str, Any]]]:
+    """``(record, covering tool record)`` of each unservable model call *coverage*
+    covers, in recorded order (the ``--dry-run`` ``[COVERED by ...]`` lines)."""
+    out: list[tuple[Any, dict[str, Any]]] = []
+    for record, cls in zip(records, classify(records)):
+        outer = coverage.covering(record) if cls == NOT_SERVABLE else None
+        if outer is not None:
+            out.append((record, outer))
+    return out
 
 
 def system_of(record: Any) -> str:
@@ -181,14 +207,17 @@ def endpoint_host(record: Any) -> str | None:
     return f"{host}:{port}" if port is not None else host
 
 
-def not_servable_by_system(records: Sequence[Any]) -> dict[str, dict[str, Any]]:
-    """``{gen_ai.system: {"count": n, "hosts": [...]}}`` of the unservable calls.
+def not_servable_by_system(
+    records: Sequence[Any], coverage: NestedCoverage = NO_COVERAGE,
+) -> dict[str, dict[str, Any]]:
+    """``{gen_ai.system: {"count": n, "hosts": [...]}}`` of the unservable calls
+    (those *coverage* covers left out).
 
     Systems in first-recorded order; up to :data:`MAX_LISTED_HOSTS` distinct
     endpoint hosts per system, in first-recorded order.
     """
     out: dict[str, dict[str, Any]] = {}
-    for record in not_servable_records(records):
+    for record in not_servable_records(records, coverage):
         entry = out.setdefault(system_of(record), {"count": 0, "hosts": []})
         entry["count"] += 1
         host = endpoint_host(record)

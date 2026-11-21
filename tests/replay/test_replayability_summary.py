@@ -186,7 +186,8 @@ def test_a_served_openai_run_is_fully_replayable() -> None:
     assert doc["strict_mocked"] == "start"
     assert doc["refusal"] is None
     assert doc["reasons"] == []
-    assert doc["model_calls"] == {"recorded": 2, "servable": 2, "not_servable": 0, "live": 0}
+    assert doc["model_calls"] == {"recorded": 2, "servable": 2, "not_servable": 0, "live": 0,
+                                 "covered": 0}
     assert doc["tool_calls"]["recorded"] == 1
     assert doc["tool_calls"]["servable"] == 1
     assert summary.one_line() == (
@@ -211,7 +212,8 @@ def test_mistral_calls_make_strict_replay_refuse_with_the_reason() -> None:
     assert reason["count"] == 3
     assert reason["refuses_strict"] is True
     assert reason["by_system"] == {"mistral": {"count": 3, "hosts": ["api.mistral.ai"]}}
-    assert doc["model_calls"] == {"recorded": 4, "servable": 1, "not_servable": 3, "live": 0}
+    assert doc["model_calls"] == {"recorded": 4, "servable": 1, "not_servable": 3, "live": 0,
+                                 "covered": 0}
     line = summary.one_line()
     assert line.startswith("replay: strict mocked replay would refuse")
     assert "3 model calls not servable (mistral: 3 (api.mistral.ai))" in line
