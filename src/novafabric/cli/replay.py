@@ -33,6 +33,12 @@ class ReplayMode(str, Enum):
     exact = "exact"
     intervention = "intervention"
 
+
+class HermeticBackend(str, Enum):
+    auto = "auto"
+    bwrap = "bwrap"
+    landlock = "landlock"
+
 console = Console()
 
 
@@ -172,16 +178,31 @@ def replay_cmd(
             "--hermetic",
             help=(
                 "mocked mode only, experimental, Linux (ADR-0322): run the replayed "
-                "process tree in a bubblewrap sandbox -- no network beyond its own "
+                "process tree in a sandbox -- no network beyond its own "
                 "loopback (host services included), host filesystem read-only except "
-                "the working directory and the replay result directory, host socket "
-                "dirs masked; served model/tool calls still work. Refused with "
-                "exit 5 (error.type HermeticUnavailable), before anything runs, if "
-                "bwrap is missing or cannot create namespaces here; never run "
+                "the working directory and the replay result directory; served "
+                "model/tool calls still work. Uses bubblewrap (host socket dirs "
+                "masked) or, where user namespaces are restricted (stock Ubuntu "
+                "24.04), Landlock + seccomp (no TCP at all, loopback included; no "
+                "UDP or Unix sockets); the result names the mechanism and what it "
+                "enforces. Refused with exit 5 (error.type HermeticUnavailable), "
+                "before anything runs, if no backend can be set up here; never run "
                 "un-isolated."
             ),
         ),
     ] = False,
+    hermetic_backend: Annotated[
+        HermeticBackend | None,
+        typer.Option(
+            "--hermetic-backend",
+            help=(
+                "with --hermetic, experimental (ADR-0322): `auto` (default) tries "
+                "bwrap, then Landlock + seccomp; `bwrap` or `landlock` is the only "
+                "one tried (refused, exit 5, if it is unavailable)."
+            ),
+            case_sensitive=False,
+        ),
+    ] = None,
 ) -> None:
     """Re-run a captured run against recorded or mocked LLM responses.
 
@@ -330,6 +351,9 @@ def replay_cmd(
     if hermetic and mode is not ReplayMode.mocked:
         console.print("[red]--hermetic only applies to --mode mocked[/red]")
         raise typer.Exit(code=1)
+    if hermetic_backend is not None and not hermetic:
+        console.print("[red]--hermetic-backend only applies with --hermetic[/red]")
+        raise typer.Exit(code=1)
 
     flags = ReplayFlags(
         mode=mode.value,
@@ -343,6 +367,7 @@ def replay_cmd(
         required_environment=environment,
         permissive=permissive,
         hermetic=hermetic,
+        hermetic_backend=(hermetic_backend or HermeticBackend.auto).value,
     )
 
     base = output_dir or default_replays_dir()
@@ -589,12 +614,19 @@ def _print_unserved_network(contract: dict[str, Any]) -> None:
 
 def _print_hermetic(hermetic: dict[str, Any]) -> None:
     """ADR-0322: one line saying the run was sandboxed, and what was not measured."""
-    version = hermetic.get("bwrap_version")
+    mechanism = hermetic.get("mechanism")
+    if mechanism == "landlock":
+        where = "no TCP even to loopback, no UDP or Unix sockets"
+        detail = f"landlock ABI {hermetic.get('landlock_abi')} + seccomp"
+    else:
+        where = "beyond the sandbox's own loopback"
+        version = hermetic.get("bwrap_version")
+        detail = f"{mechanism}" + (f" {version}" if version else "")
+    gaps = ", ".join(hermetic.get("not_enforced") or []) or "none"
     console.print(
-        f"  hermetic: network {hermetic.get('network')} beyond the sandbox's own loopback, "
-        f"filesystem {hermetic.get('filesystem')} ({hermetic.get('mechanism')}"
-        + (f" {version}" if version else "")
-        + "); blocked attempts are not counted from outside the process "
+        f"  hermetic: network {hermetic.get('network')} {where}, "
+        f"filesystem {hermetic.get('filesystem')} ({detail}); not enforced: {gaps}; "
+        "blocked attempts are not counted from outside the process "
         f"(counting: {hermetic.get('counting')})",
         markup=False, highlight=False,
     )
