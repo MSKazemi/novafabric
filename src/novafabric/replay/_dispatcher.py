@@ -69,6 +69,14 @@ from novafabric.replay._child_observer import (
     observe_connect,
     start_tree_observation,
 )
+from novafabric.replay._client_transport import (
+    SERVED_CLIENT_SURFACES,
+    TRANSPORT_FOR_URL,
+    covered,
+    handled_upstream,
+    is_handled_upstream,
+    serving_transport,
+)
 from novafabric.replay._contract import (
     ECHO_DIFFERS,
     ECHO_NO_COUNTERPART,
@@ -988,6 +996,9 @@ class MockModelDispatcher:
         #: ADR-0324: the generic wire engine claims registry requests only when the
         #: capsule holds a servable generic-wire record (older capsules: unchanged).
         self._wire_active = bool(self._queues.get(GENERIC_WIRE_QUEUE))
+        #: The patched transport request methods (``HTTPTransport.handle_request``
+        #: and friends): a client transport that resolves to one needs no wrapper.
+        self._seam_functions: tuple[Any, ...] = ()
 
     # Kept for introspection by existing callers/tests.
     @property
@@ -1036,6 +1047,19 @@ class MockModelDispatcher:
                 functools.partial(self._make_transport, module_name, is_async),
             ):
                 installed.add(module_name)
+                owner = getattr(importlib.import_module(module_name), class_name)
+                self._seam_functions += (getattr(owner, attr),)
+        clients: set[str] = set()
+        for module_name, class_name, is_async in SERVED_CLIENT_SURFACES:
+            if module_name in installed and self._patcher.patch(
+                module_name, class_name, TRANSPORT_FOR_URL,
+                functools.partial(self._make_transport_for_url, module_name, is_async),
+            ):
+                clients.add(module_name)
+        for module_name in sorted(clients):
+            # Named only when patched: a client library without ``_transport_for_url``
+            # serves ``HTTPTransport`` clients only, and the report says so by omission.
+            self.installed_surfaces.append(f"{module_name} client transports (any transport)")
         for module_name in sorted(installed):
             for queue in ("ollama.chat", "ollama.generate"):
                 self.installed_surfaces.append(
@@ -1061,6 +1085,31 @@ class MockModelDispatcher:
             method, url, self._registry.gen_ai_system(url), self._ollama_hosts
         )
 
+    def transport_target(self, request: Any) -> str | None:
+        """The queue that claims an httpx request -- an Ollama queue, else the generic
+        wire queue -- or ``None`` (pass through). A request replay already handled
+        above this seam (``handled_upstream``) is never claimed again."""
+        if is_handled_upstream():
+            return None
+        queue = self._transport_queue(request)
+        if queue is not None:
+            return queue
+        return GENERIC_WIRE_QUEUE if self._wire_claims(str(request.url)) else None
+
+    def transport_answer(
+        self, module_name: str, target: str, request: Any, content: bytes,
+        *, asynchronous: bool,
+    ) -> Any | None:
+        """The served ``Response`` for a claimed request, or ``None`` when a tolerated
+        divergence (``warn``) lets it run live (already counted)."""
+        if target == GENERIC_WIRE_QUEUE:
+            wire = self._serve_wire(
+                str(request.method), str(request.url), content, asynchronous=asynchronous
+            )
+            return None if wire is None else _wire_transport_response(module_name, wire, request)
+        served = self._serve_transport(target, request_json(content), asynchronous=asynchronous)
+        return None if served is None else _transport_response(module_name, served, request)
+
     def _make_transport(self, module_name: str, is_async: bool, original: Any) -> Any:
         dispatcher = self
 
@@ -1068,43 +1117,45 @@ class MockModelDispatcher:
 
             @functools.wraps(original)
             async def handle_async_request(transport: Any, request: Any) -> Any:
-                queue = dispatcher._transport_queue(request)
-                if queue is None:
-                    if dispatcher._wire_claims(str(request.url)):
-                        wire = dispatcher._serve_wire(
-                            str(request.method), str(request.url), await request.aread(),
-                            asynchronous=True,
-                        )
-                        if wire is not None:
-                            return _wire_transport_response(module_name, wire, request)
-                    return await original(transport, request)
-                body = request_json(await request.aread())
-                served = dispatcher._serve_transport(queue, body, asynchronous=True)
-                if served is None:
-                    return await original(transport, request)
-                return _transport_response(module_name, served, request)
+                target = dispatcher.transport_target(request)
+                if target is not None:
+                    response = dispatcher.transport_answer(
+                        module_name, target, request, await request.aread(), asynchronous=True
+                    )
+                    if response is not None:
+                        return response
+                return await original(transport, request)
 
             return handle_async_request
 
         @functools.wraps(original)
         def handle_request(transport: Any, request: Any) -> Any:
-            queue = dispatcher._transport_queue(request)
-            if queue is None:
-                if dispatcher._wire_claims(str(request.url)):
-                    wire = dispatcher._serve_wire(
-                        str(request.method), str(request.url), request.read(),
-                        asynchronous=False,
-                    )
-                    if wire is not None:
-                        return _wire_transport_response(module_name, wire, request)
-                return original(transport, request)
-            body = request_json(request.read())
-            served = dispatcher._serve_transport(queue, body, asynchronous=False)
-            if served is None:
-                return original(transport, request)
-            return _transport_response(module_name, served, request)
+            target = dispatcher.transport_target(request)
+            if target is not None:
+                response = dispatcher.transport_answer(
+                    module_name, target, request, request.read(), asynchronous=False
+                )
+                if response is not None:
+                    return response
+            return original(transport, request)
 
         return handle_request
+
+    def _make_transport_for_url(self, module_name: str, is_async: bool, original: Any) -> Any:
+        """ADR-0324 amendment: a client whose transport is not a serving seam itself
+        (``MockTransport``, a delegating ``BaseTransport``, an ``HTTPTransport``
+        subclass overriding ``handle_request``) gets that transport wrapped, so its
+        model calls are served -- or refused, or counted live -- like any other."""
+        dispatcher = self
+
+        @functools.wraps(original)
+        def transport_for_url(client: Any, url: Any) -> Any:
+            transport = original(client, url)
+            if covered(transport, dispatcher._seam_functions, asynchronous=is_async):
+                return transport
+            return serving_transport(module_name, transport, dispatcher, asynchronous=is_async)
+
+        return transport_for_url
 
     def _serve_transport(
         self, queue: str, body: dict[str, Any], *, asynchronous: bool
@@ -1248,7 +1299,9 @@ class MockModelDispatcher:
                 ))
                 self._index[queue] += 1
                 self._global_index += 1
-                self._events.emit("model_live", provider=provider, surface=surface)
+                self._events.emit(
+                    "model_live", provider=provider, surface=surface, system=system
+                )
                 return None
         record, error = self._take(
             queue, stream=stream, asynchronous=asynchronous,
@@ -1260,12 +1313,15 @@ class MockModelDispatcher:
         if error is not None:  # never the case for a wire record; fail closed anyway
             raise error
         if not record:
-            self._events.emit("model_live", provider=provider, surface=surface)
+            self._events.emit(
+                "model_live", provider=provider, surface=surface, system=system
+            )
             return None
         return wire_served_response(record)
 
     def uninstall(self) -> None:
         self._patcher.restore()
+        self._seam_functions = ()
         self.installed_surfaces = []
 
     def _make_create(self, queue: str, is_async: bool, original: Any) -> Any:
@@ -1279,7 +1335,8 @@ class MockModelDispatcher:
                 refused = dispatcher._refusal(queue, kwargs, asynchronous=True)
                 if refused:
                     dispatcher._unsupported(provider, refused)
-                    return await original(inner_self, *args, **kwargs)
+                    with handled_upstream():  # counted here, never again on the wire
+                        return await original(inner_self, *args, **kwargs)
                 return dispatcher._serve(queue, kwargs, asynchronous=True)
 
             return mock_create_async
@@ -1289,7 +1346,8 @@ class MockModelDispatcher:
             refused = dispatcher._refusal(queue, kwargs, asynchronous=False)
             if refused:
                 dispatcher._unsupported(provider, refused)
-                return original(inner_self, *args, **kwargs)
+                with handled_upstream():  # counted here, never again on the wire
+                    return original(inner_self, *args, **kwargs)
             return dispatcher._serve(queue, kwargs, asynchronous=False)
 
         return mock_create
@@ -1301,14 +1359,16 @@ class MockModelDispatcher:
             @functools.wraps(original)
             async def async_guard(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
                 dispatcher._unsupported(provider, surface)
-                return await original(inner_self, *args, **kwargs)
+                with handled_upstream():
+                    return await original(inner_self, *args, **kwargs)
 
             return async_guard
 
         @functools.wraps(original)
         def guard(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
             dispatcher._unsupported(provider, surface)
-            return original(inner_self, *args, **kwargs)
+            with handled_upstream():
+                return original(inner_self, *args, **kwargs)
 
         return guard
 

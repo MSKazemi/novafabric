@@ -233,17 +233,21 @@ def test_by_default_the_response_is_recorded_and_the_record_is_servable(
             assert FAKE_KEY not in path.read_text(errors="replace"), path
 
 
-def test_a_custom_transport_that_bypasses_serving_fails_strict_never_success(
+def test_a_call_through_a_custom_transport_is_served_from_the_capsule(
     work: Workload,
 ) -> None:
-    """Replay serves at ``httpx.HTTPTransport``; this workload sends through its own
-    ``httpx.MockTransport``, so the call is not served. The recorded call is then
-    unconsumed: strict replay fails (diverged), it never reports success."""
+    """The workload sends through its own ``httpx.MockTransport``, not
+    ``httpx.HTTPTransport``. Replay wraps the transport the client picks
+    (``Client._transport_for_url``, ADR-0324 amendment), so the call is served from the
+    capsule and the workload's transport never runs. Before, the call bypassed serving:
+    it ran on the mock transport, the record stayed unconsumed and ``model_calls_live``
+    read 0."""
     capsule = work.capture(GEMINI)
     result, doc = work.replay(capsule)
-    assert result.exit_code == 1, result.output
-    assert work.observed == {"text": "REPLAY-LIVE-ANSWER"}
-    assert doc["status"] == "failure"
-    kinds = [d["kind"] for d in doc["replay_contract"]["divergences"]]
-    assert "model_calls_unconsumed" in kinds
-    assert doc["fidelity"]["verdict"] != "faithful"
+    assert result.exit_code == 0, result.output
+    assert work.observed == {"text": "capture-answer"}  # served, not the live answer
+    assert doc["status"] == "success"
+    contract = doc["replay_contract"]
+    assert contract["divergences"] == []
+    assert contract["model_calls_live"] == 0
+    assert doc["model_calls_mocked"] == 1

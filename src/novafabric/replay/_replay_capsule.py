@@ -76,7 +76,8 @@ def write_capsule_streams(
 def _model_placeholder(n: int, ev: dict[str, Any]) -> dict[str, Any]:
     return {
         "model_call_id": f"replay-live-{n}",
-        "gen_ai.system": ev.get("provider"),
+        # The registry system when the seam knows it (generic wire), else the provider.
+        "gen_ai.system": ev.get("system") or ev.get("provider"),
         "status": "live",
         "gen_ai.response.choices": [],
         "extensions": {
