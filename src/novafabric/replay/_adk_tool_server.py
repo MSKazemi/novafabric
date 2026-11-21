@@ -34,6 +34,7 @@ from novafabric.replay._contract import (
     ToolMatch,
     not_servable_reason,
     record_arguments_digest,
+    upgrade_legacy_seam_record,
 )
 from novafabric.replay._errors import (
     ReplayDivergenceError,
@@ -90,6 +91,10 @@ class AdkToolServer:
         overrides: dict[str, bool] | None = None,
         on_served: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
+        # A record an earlier capture marked not servable for nesting alone (or,
+        # LangChain, for round 2's "not wrapped"), its value kept, is served as
+        # current capture would have marked it (ADR-0306 r3b/r3c).
+        records = [upgrade_legacy_seam_record(r) for r in records]
         counts = Counter(_function_call_id(r, self.CALL_ID_EXT) for r in records)
         #: unique recorded function_call_id -> (tool name, argument digest).
         self._by_call_id: dict[str, tuple[Any, str]] = {}

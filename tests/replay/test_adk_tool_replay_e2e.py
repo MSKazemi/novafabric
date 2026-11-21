@@ -418,22 +418,24 @@ def test_payloads_off_records_digests_only_and_replay_asks_for_a_recapture(
     assert div["surface"] == ADK
 
 
-def test_a_nested_record_makes_the_adk_call_unservable(env: Env) -> None:
-    capsule, _ = env.capture([_call("wrapper", x="a")])
+def test_a_adk_call_with_a_nested_record_is_served_and_covers_it(env: Env) -> None:
+    """ADR-0306 r3c: nesting no longer blocks a ADK call. The outer call is
+    served, its body never runs, and the ``record.tool`` boundary it called is
+    consumed as covered."""
+    capsule, captured = env.capture([_call("wrapper", x="a")])
     records = env.records(capsule)
     inner = next(r for r in records if r["tool_name"] == "helper")
     outer = next(r for r in records if r["tool_name"] == "wrapper")
     assert inner["extensions"]["io.novafabric.within_tool_call_id"] == outer["tool_call_id"]
     assert outer["extensions"]["io.novafabric.nested_records"] == 1
-    assert outer["extensions"]["io.novafabric.result_codec"] == "not-servable"
-    result, _, _ = env.replay(capsule)
+    assert outer["extensions"]["io.novafabric.result_codec"] == "json-v1"
+    result, observed, _ = env.replay(capsule)
     assert env.side_effects == [], "neither the ADK tool nor its nested tool may run"
-    assert result["status"] == "failure"
-    (div,) = [
-        d for d in result["replay_contract"]["divergences"]
-        if d["kind"] == "tool_result_not_servable"
-    ]
-    assert "inside this ADK tool call" in div["reason"]
+    assert result["status"] == "success", result.get("error")
+    assert _responses(observed) == _responses(captured)
+    assert result["tool_calls_mocked"] == 1
+    assert result["replay_contract"]["tool_calls_covered"] == 1
+    assert result["replay_contract"]["divergences"] == []
 
 
 def test_a_tool_that_changes_session_state_is_not_served(env: Env) -> None:

@@ -2042,6 +2042,8 @@ class MockToolDispatcher:
             events=self._events,
             permitted=permitted_mutation_classes,
             overrides=self._overrides,
+            # ADR-0306 r3c: a served ADK tool (an AgentTool) covers its body's calls.
+            on_served=self._cover_nested,
         )
         from novafabric.replay._oai_tool_server import OaiToolServer
 
@@ -2051,6 +2053,8 @@ class MockToolDispatcher:
             events=self._events,
             permitted=permitted_mutation_classes,
             overrides=self._overrides,
+            # ADR-0306 r3c: a served Agents SDK tool (Agent.as_tool) covers its body's calls.
+            on_served=self._cover_nested,
         )
         from novafabric.replay._langchain_tool_server import LangChainToolServer
 
@@ -2075,8 +2079,9 @@ class MockToolDispatcher:
         """Consume as covered every record written inside a served boundary.
 
         ADR-0306 slice 4 (D3's nested coverage): a served ``record.tool``
-        boundary -- or, since r3b, a served LangChain tool whose body made calls
-        (a sub-agent tool) -- never runs its body, so the model calls, MCP calls,
+        boundary -- or a served framework tool whose body made calls (a sub-agent
+        tool: LangChain since r3b, ADK and the Agents SDK since r3c) -- never
+        runs its body, so the model calls, MCP calls,
         framework tool calls and inner boundaries it made at capture are never
         requested. Records marked
         ``within_tool_call_id`` (transitively) are consumed as ``covered``

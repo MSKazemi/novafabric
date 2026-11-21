@@ -377,10 +377,12 @@ def not_servable_reason(record: dict[str, Any]) -> str | None:
     if is_observed_tool_record(record):
         reason = _without_legacy_not_wrapped(reason)
         stripped = reason is None
-    if not stripped and tool_surface(record) == TOOL_SURFACE_LANGCHAIN:
-        # ADR-0306 r3b: nesting no longer blocks a LangChain call; the text an
-        # earlier capture wrote for it is policy, not data.
-        without = _without_legacy_seam_nested(ext, reason)
+    subject = SEAM_NESTED_SUBJECTS.get(str(tool_surface(record)))
+    if not stripped and subject is not None:
+        # ADR-0306 r3b (LangChain), r3c (ADK, Agents SDK): nesting no longer
+        # blocks a framework tool call; the text an earlier capture wrote for it
+        # is policy, not data.
+        without = _without_legacy_seam_nested(ext, reason, subject)
         stripped, reason = without is None, without
     if stripped:
         # The only obstacle was policy (round 2, or nesting); the value was kept.
@@ -425,16 +427,25 @@ def _without_part(reason: str, part: str) -> str | None:
     return reason
 
 
-def _without_legacy_seam_nested(ext: dict[str, Any], reason: Any) -> Any:
-    """*reason* without the nesting text an earlier LangChain capture wrote
-    (``_tool_codec.seam_nested_reason("LangChain tool", n)``, *n* the record's
+#: Framework seam surface -> the ``SUBJECT`` its capture named in
+#: ``_tool_codec.seam_nested_reason`` (``AdkToolHook`` and subclasses).
+SEAM_NESTED_SUBJECTS: dict[str, str] = {
+    TOOL_SURFACE_ADK: "ADK tool",
+    TOOL_SURFACE_OPENAI_AGENTS: "Agents SDK tool",
+    TOOL_SURFACE_LANGCHAIN: "LangChain tool",
+}
+
+
+def _without_legacy_seam_nested(ext: dict[str, Any], reason: Any, subject: str) -> Any:
+    """*reason* without the nesting text an earlier capture of this seam wrote
+    (``_tool_codec.seam_nested_reason(subject, n)``, *n* the record's
     ``nested_records``); ``None`` when nothing else is left. Any other reason
     is kept: only the policy text is removed (the slice-4 ``_only_nested`` rule).
     """
     nested = ext.get(_tool_codec.NESTED_RECORDS_EXT)
     if type(nested) is not int or nested <= 0 or not isinstance(reason, str) or not reason:
         return reason
-    return _without_part(reason, _tool_codec.seam_nested_reason("LangChain tool", nested))
+    return _without_part(reason, _tool_codec.seam_nested_reason(subject, nested))
 
 
 def _only_nested(record: dict[str, Any], ext: dict[str, Any], reason: Any) -> bool:
@@ -493,7 +504,7 @@ def nested_boundary_ids(boundary_id: str, tool_calls: list[dict[str, Any]]) -> s
 #: body wrote as *covered* (``MockToolDispatcher._cover_nested`` passed as
 #: ``on_served``). A guard test pins this set against the dispatcher wiring.
 COVERING_TOOL_SURFACES: frozenset[str] = frozenset({
-    TOOL_SURFACE_PYTHON, TOOL_SURFACE_LANGCHAIN,
+    TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS, TOOL_SURFACE_LANGCHAIN,
 })
 
 
@@ -603,15 +614,16 @@ def is_observed_tool_record(record: dict[str, Any]) -> bool:
     return isinstance(ext, dict) and ext.get(ext_key) == _tool_codec.LANGCHAIN_SEAM_OBSERVED
 
 
-def upgrade_legacy_langchain_record(record: dict[str, Any]) -> dict[str, Any]:
-    """*record* as current capture would write it, when it is a LangChain record
-    an earlier capture marked not servable by policy only -- round 2's "not
-    passed through wrap_tools" (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``, observed
-    records) and/or the nesting text (``_tool_codec.seam_nested_reason``, before
-    ADR-0306 r3b) -- and whose value was kept: a copy marked ``json-v1``. Any
-    other record is returned unchanged (the same object)."""
+def upgrade_legacy_seam_record(record: dict[str, Any]) -> dict[str, Any]:
+    """*record* as current capture would write it, when it is a framework seam
+    record an earlier capture marked not servable by policy only -- round 2's
+    "not passed through wrap_tools" (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``,
+    observed LangChain records) and/or the nesting text
+    (``_tool_codec.seam_nested_reason``, before ADR-0306 r3b for LangChain and
+    r3c for ADK and the Agents SDK) -- and whose value was kept: a copy marked
+    ``json-v1``. Any other record is returned unchanged (the same object)."""
     if (
-        tool_surface(record) != TOOL_SURFACE_LANGCHAIN
+        tool_surface(record) not in SEAM_NESTED_SUBJECTS
         or record.get("status", "success") != "success"
     ):
         return record
@@ -624,6 +636,10 @@ def upgrade_legacy_langchain_record(record: dict[str, Any]) -> dict[str, Any]:
     upgraded_ext = {k: v for k, v in ext.items() if k != _tool_codec.NOT_SERVABLE_REASON_EXT}
     upgraded_ext[_tool_codec.RESULT_CODEC_EXT] = _tool_codec.CODEC_JSON
     return {**record, "extensions": upgraded_ext}
+
+
+#: The r3b name, kept for callers of the LangChain-only version.
+upgrade_legacy_langchain_record = upgrade_legacy_seam_record
 
 
 def observed_not_served_reason(record: dict[str, Any]) -> str | None:

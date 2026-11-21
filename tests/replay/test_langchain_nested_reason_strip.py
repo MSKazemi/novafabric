@@ -2,7 +2,7 @@
 not data. ``_contract.not_servable_reason`` strips exactly that text (for the
 record's own ``nested_records`` count) and keeps every other reason; the
 LangChain server upgrades a record whose only obstacle it was to ``json-v1``.
-The ADK and Agents SDK seams still write it, and it still blocks them.
+Since r3c the ADK and Agents SDK seams follow the same rule for their own text.
 
 Unit tests over record dicts; no capture, no network.
 """
@@ -69,11 +69,20 @@ def test_the_text_is_stripped_only_for_the_records_own_count(nested: Any) -> Non
     assert not_servable_reason(_record(NESTED, nested=nested)) == NESTED
 
 
-@pytest.mark.parametrize("surface", [codec.TOOL_SURFACE_ADK_TOOL,
-                                     codec.TOOL_SURFACE_OPENAI_AGENTS_TOOL])
-def test_other_framework_seams_stay_unservable_when_nested(surface: str) -> None:
-    for subject in ("ADK tool", "Agents SDK tool"):
-        reason = codec.seam_nested_reason(subject, 3)
+@pytest.mark.parametrize(("surface", "own"), [
+    (codec.TOOL_SURFACE_ADK_TOOL, "ADK tool"),
+    (codec.TOOL_SURFACE_OPENAI_AGENTS_TOOL, "Agents SDK tool"),
+    (codec.TOOL_SURFACE_LANGCHAIN_TOOL, "LangChain tool"),
+])
+def test_each_seam_strips_its_own_nesting_text_only(surface: str, own: str) -> None:
+    """ADR-0306 r3c: the ADK and Agents SDK seams serve nested calls too; each
+    strips the exact text its own capture wrote, never another seam's."""
+    record = _record(codec.seam_nested_reason(own, 3), surface=surface)
+    assert not_servable_reason(record) is None
+    upgraded = upgrade_legacy_langchain_record(record)
+    assert codec.decode_result(upgraded) == (True, "done")
+    for other in {"ADK tool", "Agents SDK tool", "LangChain tool"} - {own}:
+        reason = codec.seam_nested_reason(other, 3)
         assert not_servable_reason(_record(reason, surface=surface)) == reason
 
 
