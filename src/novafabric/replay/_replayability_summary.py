@@ -371,6 +371,14 @@ def assess(
     """
     reexecution, reexec_reason, reexec_refusal = _reexecution(manifest)
     model_counts, model_reasons, model_refusal = _model_part(model_records)
+    from novafabric.replay._echo_recovery import recover_tool_results_from_echo
+
+    # Same step the engine runs before classifying (ADR-0306 r3): a payloads-off
+    # tool result the next model request echoes under its digest is servable.
+    tool_calls = recover_tool_results_from_echo(
+        [r for r in tool_calls if isinstance(r, dict)],
+        [r for r in model_records if isinstance(r, dict)],
+    )
     tool_counts, tool_reasons, tool_refusals = _tool_part(tool_calls, replay_policy)
 
     reasons = [*([reexec_reason] if reexec_reason else []), *model_reasons, *tool_reasons]

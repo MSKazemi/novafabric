@@ -106,8 +106,8 @@ def _python_tool(name: str, *, reason: str | None = None) -> dict[str, Any]:
     return record
 
 
-def _langchain_observed(name: str) -> dict[str, Any]:
-    return {
+def _langchain_observed(name: str, *, payloads_off: bool = False) -> dict[str, Any]:
+    record: dict[str, Any] = {
         "tool_call_id": f"lc-{name}",
         "tool_name": name,
         "transport": "python",
@@ -120,6 +120,37 @@ def _langchain_observed(name: str) -> dict[str, Any]:
             codec.LANGCHAIN_SEAM_EXT: codec.LANGCHAIN_SEAM_OBSERVED,
             codec.RESULT_CODEC_EXT: codec.CODEC_JSON,
         },
+    }
+    if payloads_off:
+        digest = codec.encode_result("x", keep_value=False).digest
+        record["arguments"] = {}
+        record["result"] = None
+        record["extensions"].update({
+            LC_CALL_ID_EXT: f"tooluse-{name}",
+            "io.novafabric.result_digest": digest,
+            codec.RESULT_CODEC_EXT: "not-servable",
+            codec.NOT_SERVABLE_REASON_EXT: PAYLOADS_OFF_REASON,
+        })
+    return record
+
+
+LC_CALL_ID_EXT = "io.novafabric.langchain_tool_call_id"
+
+
+def _bedrock_echo(call_id: str, text: str) -> dict[str, Any]:
+    """A recorded Bedrock request that sends *text* back as the result of *call_id*."""
+    return {
+        "model_call_id": f"m-{call_id}", "gen_ai.system": "aws.bedrock",
+        "endpoint": "https://bedrock-runtime.eu-central-1.amazonaws.com/model/x/converse",
+        "gen_ai.response.choices": [{"message": {"role": "assistant", "content": "ok"}}],
+        "extensions": {"io.novafabric.api_surface": "aws.bedrock.converse"},
+        "gen_ai.request.messages": [
+            {"role": "user", "content": [{"text": "go"}]},
+            {"role": "assistant", "content": [{"toolUse": {"toolUseId": call_id}}]},
+            {"role": "user", "content": [{"toolResult": {
+                "toolUseId": call_id, "content": [{"text": text}], "status": "success",
+            }}]},
+        ],
     }
 
 
@@ -206,8 +237,25 @@ def test_another_unservable_tool_result_keeps_its_recorded_reason() -> None:
     assert why in reason["detail"]
 
 
-def test_an_observed_langchain_tool_refuses_strict() -> None:
+def test_an_observed_langchain_tool_with_its_result_is_served() -> None:
+    # ADR-0306 r3: observed (unwrapped) tools are served when their value was kept.
     summary = assess(_cli_manifest(), [], [_langchain_observed("read_log")])
+    doc = summary.as_dict()
+    assert doc["strict_mocked"] == "start"
+    assert "tool_surface_not_served" not in _codes(summary)
+
+
+def test_a_payloads_off_observed_tool_echoed_under_its_digest_is_served() -> None:
+    # The engine recovers it from the next model request (ADR-0306 r3, "A");
+    # the capture-time summary must agree with that replay.
+    tool = _langchain_observed("read_log", payloads_off=True)
+    summary = assess(_cli_manifest(), [_bedrock_echo("tooluse-read_log", "x")], [tool])
+    assert summary.as_dict()["strict_mocked"] == "start"
+    assert "tool_surface_not_served" not in _codes(summary)
+
+
+def test_an_observed_langchain_tool_refuses_strict() -> None:
+    summary = assess(_cli_manifest(), [], [_langchain_observed("read_log", payloads_off=True)])
     doc = summary.as_dict()
     assert doc["strict_mocked"] == "refuse"
     assert doc["refusal"]["type"] == "ToolSurfaceNotServed"
@@ -320,7 +368,8 @@ def test_every_reason_is_listed_even_when_the_first_one_refuses(project: Path) -
                    entry_sha256=None)
     summary = assess(
         _adapter_manifest(facet), [_mistral(1)],
-        [_langchain_observed("t"), _python_tool("p", reason=PAYLOADS_OFF_REASON)],
+        [_langchain_observed("t", payloads_off=True),
+         _python_tool("p", reason=PAYLOADS_OFF_REASON)],
     )
     assert _codes(summary) == [
         "capsule_not_reexecutable", "model_surface_not_servable",
