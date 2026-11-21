@@ -146,8 +146,8 @@ def replay_cmd(
                 "model surfaces run LIVE, an unmatched intercepted tool call runs "
                 "live only if an --allow-* flag permits its mutation class (MCP: "
                 "--allow-unknown-mutation; record.tool, Google ADK, OpenAI Agents "
-                "and LangChain tools: their declared class, LangChain tools not "
-                "passed through wrap_tools: unknown), never "
+                "and LangChain tools: their declared class, LangChain and Agents "
+                "tools not passed through wrap_tools: unknown), never "
                 "if replay.yaml says `allow: false`, and unconsumed recordings are "
                 "only reported. Default is fail-closed."
             ),
@@ -227,11 +227,12 @@ def replay_cmd(
     was never recorded) is refused up front too (error.type
     ModelSurfaceNotServable, exit 1, also under --dry-run, which lists each as
     [LIVE] model call); --permissive runs it and reports model_calls_not_servable.
-    LangChain tools NOT passed through wrap_tools are recorded by nova capture
-    and served like wrapped ones declared unknown when the capsule holds their
+    LangChain tools and OpenAI Agents function tools NOT passed through
+    wrap_tools are recorded by nova capture and served like wrapped ones
+    declared unknown when the capsule holds their
     results (capture level forensic); a capsule whose recorded ones cannot be
     served is refused up front (error.type ToolSurfaceNotServed, exit 1, also
-    under --dry-run, which lists each as [NOT SERVED] LangChain tool call), and
+    under --dry-run, which lists each as [NOT SERVED] ... tool call), and
     one with no matching record is refused at the call; --permissive runs them
     live only with --allow-unknown-mutation, and every tool body that runs live
     is counted in tool_calls_live and named in a [LIVE] tool call line

@@ -63,6 +63,7 @@ _BEDROCK_WIRE = "tests/capture/test_bedrock_wire_capture.py"
 _BEDROCK_SERVE = "tests/replay/test_bedrock_serving.py"
 _LC = "tests/replay/test_langchain_tool_replay_e2e.py"
 _LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
+_OAI_OBSERVED = "tests/replay/test_openai_agents_unwrapped_tool_e2e.py"
 _CHILDNET = "tests/replay/test_child_process_network.py"
 _HERMETIC = "tests/replay/test_hermetic_replay.py"
 _LG_ADAPTER = "tests/replay/test_langgraph_adapter_replay_e2e.py"
@@ -588,8 +589,8 @@ ROWS: tuple[SurfaceRow, ...] = (
             "nested model/tool calls (including `Agent.as_tool`), is not served; an "
             "unmatched or unservable call is refused (`--permissive` runs it live only if "
             "a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
-            "`tool_overrides` enforced; only tools passed through `wrap_tools` are "
-            "covered; `nova capture python …` capsules (a `register()` capsule is re-run "
+            "`tool_overrides` enforced; tools not passed through `wrap_tools`: next "
+            "row; `nova capture python …` capsules (a `register()` capsule is re-run "
             "only from a recorded process invocation that passes every guard, ADR-0306 Q7, "
             "experimental -- not tested end to end for the Agents SDK)"
         ),
@@ -603,6 +604,46 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_OAI}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
             f"{_OAI}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
             f"{_OAI}::test_a_nested_record_makes_the_agents_call_unservable",
+        ),
+        servers=("agents.FunctionTool",),
+    ),
+    SurfaceRow(
+        surface=(
+            "OpenAI Agents SDK function tool **not** passed through `wrap_tools` "
+            "(`@function_tool`, `FunctionTool`)"
+        ),
+        capture=(
+            "recorded automatically when `agents` is imported (no code change): one "
+            "`transport: python` record per call (`openai.agents.tool` marker, "
+            "`io.novafabric.openai_agents_tool_seam: observed`, `mutation_class: "
+            "unknown`), same payload and codec rules as `wrap_tools`; agents used as "
+            "tools (`Agent.as_tool`) are not recorded -- their own model calls and tools "
+            "are"
+        ),
+        replay="served",
+        replay_note=(
+            "**served by default** when the record holds a servable result (ADR-0306 r3 "
+            "amendment, owner decision 2026-11-21; before, these tools were neither "
+            "recorded nor counted and ran live): the same matcher, codec and refusals "
+            "as a `wrap_tools` tool declared `unknown`; a capsule whose observed records "
+            "cannot be served makes a strict replay **refuse to start** "
+            "(`ToolSurfaceNotServed`, also under `--dry-run`); an unmatched call (e.g. a "
+            "capsule captured before this, with no tool records) is refused before its "
+            "body runs; under `--permissive` it runs **live** only with "
+            "`--allow-unknown-mutation`, counted in `tool_calls_live`; the seam patches "
+            "the SDK's private `agents.tool._invoke_function_tool_with_metadata` -- "
+            "**not an SDK extension point**, checked against `openai-agents` 0.24.0 only"
+        ),
+        streaming="— (not exercised by the e2e: `Runner.run` only)",
+        asynchronous="served (the SDK awaits every tool on its event loop)",
+        status="experimental",
+        evidence=(
+            f"{_OAI_OBSERVED}::test_capture_records_unwrapped_function_tools_as_observed",
+            f"{_OAI_OBSERVED}::test_an_agent_used_as_a_tool_is_not_a_boundary_its_inner_tool_is",
+            f"{_OAI_OBSERVED}::test_strict_replay_serves_unwrapped_function_tools_and_never_runs_their_bodies",
+            f"{_OAI_OBSERVED}::test_strict_replay_refuses_to_start_when_unwrapped_results_were_not_recorded",
+            f"{_OAI_OBSERVED}::test_a_capsule_without_tool_records_refuses_strict_and_counts_permissive",
+            f"{_OAI_OBSERVED}::test_wrapped_and_unwrapped_function_tools_one_record_per_call",
         ),
         servers=("agents.FunctionTool",),
     ),
@@ -744,7 +785,7 @@ ROWS: tuple[SurfaceRow, ...] = (
         surface=(
             "HTTP, shell, filesystem, framework-native tools "
             "(other than Google ADK tools through the tool plugin, OpenAI Agents "
-            "function tools through their `wrap_tools`, and LangChain tools)"
+            "function tools, and LangChain tools)"
         ),
         capture="network/file events, not tool records",
         replay="not intercepted",

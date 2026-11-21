@@ -427,15 +427,27 @@ def nested_boundary_ids(boundary_id: str, tool_calls: list[dict[str, Any]]) -> s
     return ids
 
 
+#: Surfaces with an observer for tools not passed through ``wrap_tools``, and
+#: the record extension that marks such a record ``observed``.
+OBSERVED_SEAM_EXTS: dict[str, str] = {
+    TOOL_SURFACE_LANGCHAIN: _tool_codec.LANGCHAIN_SEAM_EXT,
+    TOOL_SURFACE_OPENAI_AGENTS: _tool_codec.OPENAI_AGENTS_SEAM_EXT,
+}
+#: How each such surface is named in refusals and ``--dry-run`` lines.
+OBSERVED_SURFACE_LABELS: dict[str, str] = {
+    TOOL_SURFACE_LANGCHAIN: "LangChain",
+    TOOL_SURFACE_OPENAI_AGENTS: "OpenAI Agents",
+}
+
+
 def is_observed_tool_record(record: dict[str, Any]) -> bool:
-    """A LangChain record of a tool the workload did not pass through
-    ``wrap_tools`` (recorded by the seam's observer)."""
-    if tool_surface(record) != TOOL_SURFACE_LANGCHAIN:
+    """A LangChain or OpenAI Agents record of a tool the workload did not pass
+    through ``wrap_tools`` (recorded by that seam's observer)."""
+    ext_key = OBSERVED_SEAM_EXTS.get(str(tool_surface(record)))
+    if ext_key is None:
         return False
     ext = record.get("extensions")
-    return isinstance(ext, dict) and (
-        ext.get(_tool_codec.LANGCHAIN_SEAM_EXT) == _tool_codec.LANGCHAIN_SEAM_OBSERVED
-    )
+    return isinstance(ext, dict) and ext.get(ext_key) == _tool_codec.LANGCHAIN_SEAM_OBSERVED
 
 
 def upgrade_legacy_observed_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -466,13 +478,14 @@ def observed_not_served_reason(record: dict[str, Any]) -> str | None:
         return None
     reason = not_servable_reason(record)
     if reason is None and record.get("status", "success") != "success":
-        reason = "the record is a failure, and LangChain tool failures are not served"
+        label = OBSERVED_SURFACE_LABELS.get(str(tool_surface(record)), "tool")
+        reason = f"the record is a failure, and {label} tool failures are not served"
     return reason
 
 
 def is_not_served_tool_record(record: dict[str, Any]) -> bool:
-    """An observed LangChain record (a tool not passed through ``wrap_tools``)
-    mocked replay cannot serve -- the capsule shows, before anything runs, that
+    """An observed LangChain or OpenAI Agents record (a tool not passed through
+    ``wrap_tools``) mocked replay cannot serve -- the capsule shows, before anything runs, that
     the call would be refused (strict) or need ``--allow-unknown-mutation``
     (``--permissive``). Observed records that *can* be served are served by
     default (ADR-0306 r3 amendment) and are not "not served"."""
@@ -499,7 +512,7 @@ def not_served_tool_calls(tool_calls: list[dict[str, Any]]) -> dict[str, dict[st
         reason = observed_not_served_reason(record)
         if reason is None:
             continue
-        surface = TOOL_SURFACE_LANGCHAIN
+        surface = str(tool_surface(record))
         counts[surface] = counts.get(surface, 0) + 1
         names.setdefault(surface, set()).add(str(record.get("tool_name")))
         listed = reasons.setdefault(surface, [])
@@ -521,8 +534,9 @@ def not_served_dry_run_lines(tool_calls: list[dict[str, Any]]) -> list[str]:
     for record in tool_calls:
         reason = observed_not_served_reason(record) if isinstance(record, dict) else None
         if reason is not None:
+            label = OBSERVED_SURFACE_LABELS.get(str(tool_surface(record)), "tool")
             lines.append(
-                f"  [NOT SERVED] LangChain tool call ({record.get('tool_name')}) -- "
+                f"  [NOT SERVED] {label} tool call ({record.get('tool_name')}) -- "
                 f"observed (not passed through wrap_tools): {reason}\n"
             )
     return lines
@@ -532,10 +546,11 @@ def describe_not_served(by_surface: dict[str, dict[str, Any]]) -> str:
     """``observed LangChain tool calls (...) without a servable record: 2 (read_log, ...)``."""
     parts = []
     for surface, entry in sorted(by_surface.items()):
+        label = OBSERVED_SURFACE_LABELS.get(surface)
         what = (
-            "observed LangChain tool calls (not passed through wrap_tools) without a "
+            f"observed {label} tool calls (not passed through wrap_tools) without a "
             "servable record"
-            if surface == TOOL_SURFACE_LANGCHAIN else surface
+            if label is not None else surface
         )
         tools = ", ".join(entry.get("tools") or [])
         parts.append(f"{what}: {int(entry.get('count', 0))}" + (f" ({tools})" if tools else ""))

@@ -45,6 +45,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   <name>)` line per tool (for every surface). A `replay.yaml` `allow: false` override refuses an unservable such
   call before its body runs. Tools passed through `wrap_tools` are unaffected (their records now also carry
   `io.novafabric.langchain_tool_seam: wrap_tools`).
+- **OpenAI Agents SDK function tools you did not pass through `wrap_tools` are recorded and served too, and never
+  run uncounted** (experimental; ADR-0306 r3 amendment). Before, an unwrapped `@function_tool` was invisible to
+  capture and replay: its body ran live in every mocked replay and the report said `tool_calls_live: 0`. Now an
+  observer (the SDK's private `agents.tool._invoke_function_tool_with_metadata`, checked against `openai-agents`
+  0.24.0 only) records each call (`io.novafabric.openai_agents_tool_seam: observed`, `mutation_class: unknown`) and
+  mocked replay serves, refuses or — under `--permissive --allow-unknown-mutation` — runs and counts it exactly as
+  for unwrapped LangChain tools above (including the up-front `ToolSurfaceNotServed` and the
+  `[NOT SERVED] OpenAI Agents tool call` dry-run line). Agents used as tools (`Agent.as_tool`) are not recorded;
+  their model calls and tools are. **Behaviour change:** a strict replay of a capsule captured before this (no
+  Agents tool records) now refuses each unwrapped function-tool call before its body runs.
 
 ### Changed
 

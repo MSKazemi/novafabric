@@ -632,6 +632,10 @@ Inside the re-spawned process:
   `novafabric.adapters.openai_agents.wrap_tools()`, by replacing the tool's
   `on_invoke_tool` — an **undocumented SDK seam**, checked against
   `openai-agents` 0.17.x — again for `nova capture python …` workloads only.
+  Function tools **not** passed through `wrap_tools` are recorded and served the
+  same way when the capsule holds their results (capture level `forensic`;
+  experimental, unreleased, through a private SDK helper checked against
+  `openai-agents` 0.24.0).
 - **Experimental (ADR-0306 slice 3, unreleased):** it also serves
   **LangChain / LangGraph** tools (`@tool`, `StructuredTool`, `BaseTool`
   subclasses, including through LangGraph's `ToolNode`) passed through

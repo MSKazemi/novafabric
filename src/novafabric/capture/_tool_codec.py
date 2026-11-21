@@ -39,6 +39,10 @@ TOOL_SURFACE_LANGCHAIN_TOOL = "langchain.tool"
 LANGCHAIN_SEAM_EXT = "io.novafabric.langchain_tool_seam"
 LANGCHAIN_SEAM_WRAPPED = "wrap_tools"
 LANGCHAIN_SEAM_OBSERVED = "observed"
+#: The same for an OpenAI Agents SDK record: ``"wrap_tools"`` or ``"observed"``
+#: (a ``FunctionTool`` not passed through ``openai_agents.wrap_tools``, seen by
+#: the seam's observer; ADR-0306 r3 amendment). Absent on older records.
+OPENAI_AGENTS_SEAM_EXT = "io.novafabric.openai_agents_tool_seam"
 QUALNAME_EXT = "io.novafabric.tool_qualname"
 RESULT_CODEC_EXT = "io.novafabric.result_codec"
 NOT_SERVABLE_REASON_EXT = "io.novafabric.not_servable_reason"
