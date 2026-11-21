@@ -25,7 +25,12 @@ comparing the replay with what the capsule recorded:
   advisory (such names are often volatile). A recorded write the replay did not
   repeat is not judged: it cannot be told from a served tool's effect;
 * ``model_call_sequence`` / ``tool_call_sequence`` -- the calls the replay
-  served, in the order it served them, against the recorded order;
+  served, in the order it served them, against the recorded order. Model calls
+  are compared in strict order; tool calls in strict order *across* model turns
+  but as a multiset *within* one (the calls between two consecutive model calls,
+  which answer one model response and may run in parallel); recorded turns come
+  from the records' ``started_at`` (``comparison: per-model-turn-multiset``), and
+  without usable timestamps the order is strict (``comparison: strict-order``);
 * ``divergence`` -- the replay contract's divergence state (ADR-0300);
 * ``live_calls`` -- calls the replay reported going live or could not intercept;
 * ``tool_result_echo`` -- the report-only echo check (ADR-0306 D10).
@@ -45,7 +50,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from bisect import bisect_right
+from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +142,12 @@ _NOT_COMPLETED_ERRORS = frozenset({"ReplayTimeout", "ReplayLaunchError"})
 #: Most sequence entries listed per side in a check; the rest are counted.
 MAX_LISTED_SEQUENCE = 50
 
+#: How ``tool_call_sequence`` compared (its ``comparison`` field): the calls of
+#: each model turn as a multiset, turns in order -- or, when the recording gives
+#: no usable turn boundaries, the whole sequence in strict order.
+COMPARISON_PER_TURN = "per-model-turn-multiset"
+COMPARISON_STRICT = "strict-order"
+
 STDOUT_REF = "outputs/stdout.txt"
 STDERR_REF = "outputs/stderr.txt"
 
@@ -163,6 +177,9 @@ class FidelityCheck:
     #: does not make the verdict ``not_compared``; the result lists it in
     #: ``unchecked``. Only for checks in :data:`UNCHECKED_WHEN_UNRECORDED`.
     unrecorded: bool = False
+    #: How a sequence check compared (``tool_call_sequence`` only):
+    #: :data:`COMPARISON_PER_TURN` or :data:`COMPARISON_STRICT`.
+    comparison: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -177,6 +194,8 @@ class FidelityCheck:
             out["normalizer"] = self.normalizer
         if self.differences:
             out["differences"] = self.differences
+        if self.comparison:
+            out["comparison"] = self.comparison
         if self.name in ADVISORY_CHECKS:
             out["advisory"] = True
         return out
@@ -619,6 +638,26 @@ def _sequence_check(name: str, recorded: list[str], replayed: list[str]) -> Fide
     return FidelityCheck(name, equal, _listed(recorded), _listed(replayed), note)
 
 
+def _recorded_model_calls(
+    model_calls: list[dict[str, Any]], events: list[dict[str, Any]]
+) -> list[tuple[str, int, dict[str, Any]]]:
+    """The servable records a replay is expected to request, in recorded order, as
+    ``(queue, index in queue, record)``: every servable record less those a served
+    nested ``record.tool`` boundary covered (never requested, ADR-0306 slice 4)."""
+    queues = model_queues(model_calls)
+    order: list[tuple[str, int]] = []
+    seen: dict[str, int] = {}
+    for served in served_model_records(model_calls):
+        key = str(model_queue_key(served))
+        order.append((key, seen.get(key, 0)))
+        seen[key] = seen.get(key, 0) + 1
+    covered = {
+        (str(ev.get("queue")), int(ev.get("call_index") or 0))
+        for ev in events if ev.get("event") == "model_covered"
+    }
+    return [(q, i, queues[q][i]) for q, i in order if (q, i) not in covered]
+
+
 def _model_entry(queue: str, index: int, record: dict[str, Any] | None) -> str:
     surface = MODEL_SURFACES.get(queue, queue)
     call_id = record.get("model_call_id") if isinstance(record, dict) else None
@@ -636,18 +675,8 @@ def model_sequences(
     ``live:<surface>`` for each call that went live.
     """
     queues = model_queues(model_calls)
-    order: list[tuple[str, int]] = []
-    seen: dict[str, int] = {}
-    for served in served_model_records(model_calls):
-        key = str(model_queue_key(served))
-        order.append((key, seen.get(key, 0)))
-        seen[key] = seen.get(key, 0) + 1
-    covered = {
-        (str(ev.get("queue")), int(ev.get("call_index") or 0))
-        for ev in events if ev.get("event") == "model_covered"
-    }
     recorded = [
-        _model_entry(q, i, queues[q][i]) for q, i in order if (q, i) not in covered
+        _model_entry(q, i, record) for q, i, record in _recorded_model_calls(model_calls, events)
     ]
     replayed: list[str] = []
     for ev in events:
@@ -668,36 +697,165 @@ def _tool_entry(surface: Any, name: Any, ident: Any) -> str:
     return f"{surface or TOOL_SURFACE_MCP}:{name}:{ident}"
 
 
+def _recorded_tool_calls(
+    tool_calls: list[dict[str, Any]], events: list[dict[str, Any]]
+) -> list[tuple[str, dict[str, Any]]]:
+    """``(entry, record)`` for each intercepted recorded tool call the replay is
+    expected to make, in recorded order (less those a served boundary covered)."""
+    covered = {
+        ev.get("record_id") for ev in events if ev.get("event") == "tool_covered"
+    }
+    return [
+        (_tool_entry(tool_surface(r), r.get("tool_name"), r.get("tool_call_id")), r)
+        for r in interceptable_tool_calls(tool_calls)
+        if r.get("tool_call_id") is None or r.get("tool_call_id") not in covered
+    ]
+
+
+def _replayed_tool_calls(events: list[dict[str, Any]]) -> list[tuple[str, int]]:
+    """``(entry, model turn)`` for each tool call the replay made, in event order.
+
+    The turn is the number of model calls (served or live) the replay made before
+    the tool call: 0 before the first model call, *k* after the *k*-th."""
+    out: list[tuple[str, int]] = []
+    turn = 0
+    for ev in events:
+        kind = ev.get("event")
+        if kind in ("model_served", "model_live"):
+            turn += 1
+        elif kind == "tool_mocked":
+            out.append(
+                (_tool_entry(ev.get("surface"), ev.get("tool_name"), ev.get("record_id")), turn)
+            )
+        elif kind in ("tool_live", "tool_refused"):
+            out.append((
+                _tool_entry(ev.get("surface"), ev.get("tool_name"), kind.removeprefix("tool_")),
+                turn,
+            ))
+        elif kind == "divergence" and ev.get("kind") in (
+            "tool_call_unmatched", "tool_result_not_servable",
+        ):
+            out.append((_tool_entry(ev.get("surface"), ev.get("tool_name"), "unmatched"), turn))
+    return out
+
+
 def tool_sequences(
     tool_calls: list[dict[str, Any]], events: list[dict[str, Any]]
 ) -> tuple[list[str], list[str]]:
     """Recorded and replayed intercepted tool-call sequences, as
     ``surface:tool_name:tool_call_id``. A replayed call that was not served is
     ``...:live``, ``...:refused`` or ``...:unmatched``."""
-    covered = {
-        ev.get("record_id") for ev in events if ev.get("event") == "tool_covered"
-    }
-    recorded = [
-        _tool_entry(tool_surface(r), r.get("tool_name"), r.get("tool_call_id"))
-        for r in interceptable_tool_calls(tool_calls)
-        if r.get("tool_call_id") is None or r.get("tool_call_id") not in covered
+    return (
+        [entry for entry, _ in _recorded_tool_calls(tool_calls, events)],
+        [entry for entry, _ in _replayed_tool_calls(events)],
+    )
+
+
+class TurnBoundariesUnavailable(ValueError):
+    """The recording does not say which model turn each tool call belongs to."""
+
+
+def _started_at(record: dict[str, Any], what: str) -> datetime:
+    value = record.get("started_at")
+    if not isinstance(value, str):
+        raise TurnBoundariesUnavailable(f"a recorded {what} has no started_at")
+    try:
+        stamp = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise TurnBoundariesUnavailable(
+            f"a recorded {what} has an unreadable started_at"
+        ) from exc
+    if stamp.tzinfo is None:
+        raise TurnBoundariesUnavailable(f"a recorded {what} started_at has no time zone")
+    return stamp
+
+
+def recorded_tool_turns(
+    model_calls: list[dict[str, Any]],
+    tool_records: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> list[int]:
+    """The model turn of each recorded tool call: how many of the model calls the
+    replay is expected to make had started before it (``started_at``).
+
+    Raises :class:`TurnBoundariesUnavailable` when a timestamp is missing or
+    unreadable, or the recorded model calls did not start in recorded order
+    (concurrent agents): turns are then unknown, never guessed."""
+    boundaries = [
+        _started_at(record, "model call")
+        for _, _, record in _recorded_model_calls(model_calls, events)
     ]
-    replayed: list[str] = []
-    for ev in events:
-        kind = ev.get("event")
-        if kind == "tool_mocked":
-            replayed.append(
-                _tool_entry(ev.get("surface"), ev.get("tool_name"), ev.get("record_id"))
+    if any(later < earlier for earlier, later in zip(boundaries, boundaries[1:])):
+        raise TurnBoundariesUnavailable("the recorded model calls did not start in time order")
+    return [bisect_right(boundaries, _started_at(r, "tool call")) for r in tool_records]
+
+
+def _by_turn(entries: list[tuple[str, int]]) -> dict[int, Counter[str]]:
+    turns: dict[int, Counter[str]] = {}
+    for entry, turn in entries:
+        turns.setdefault(turn, Counter())[entry] += 1
+    return turns
+
+
+def _turn_order(entries: list[tuple[str, int]]) -> dict[int, list[str]]:
+    turns: dict[int, list[str]] = {}
+    for entry, turn in entries:
+        turns.setdefault(turn, []).append(entry)
+    return turns
+
+
+def tool_sequence_check(
+    model_calls: list[dict[str, Any]],
+    tool_calls: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> FidelityCheck:
+    """``tool_call_sequence``: the same tool calls in the same model turns.
+
+    Within one model turn -- the tool calls between two consecutive model calls,
+    which answer the same model response -- the calls are compared as a multiset:
+    parallel calls may complete, and be served, in another order. Across turns the
+    order is strict. Without usable turn boundaries
+    (:class:`TurnBoundariesUnavailable`) the whole sequence is compared in strict
+    order, as before."""
+    recorded_pairs = _recorded_tool_calls(tool_calls, events)
+    replayed_turns = _replayed_tool_calls(events)
+    recorded = [entry for entry, _ in recorded_pairs]
+    replayed = [entry for entry, _ in replayed_turns]
+    try:
+        turns = recorded_tool_turns(model_calls, [r for _, r in recorded_pairs], events)
+    except TurnBoundariesUnavailable as exc:
+        check = _sequence_check("tool_call_sequence", recorded, replayed)
+        check.comparison = COMPARISON_STRICT
+        check.note = (check.note + "; " if check.note else "") + (
+            f"turn boundaries unavailable ({exc}): compared in strict order"
+        )
+        return check
+    recorded_turns = list(zip(recorded, turns, strict=True))
+    want, got = _by_turn(recorded_turns), _by_turn(replayed_turns)
+    differing = sorted(t for t in set(want) | set(got) if want.get(t) != got.get(t))
+    note: str | None = None
+    if differing:
+        first = differing[0]
+        note = (
+            f"first difference in model turn {first} "
+            f"({sum(want.get(first, Counter()).values())} recorded, "
+            f"{sum(got.get(first, Counter()).values())} replayed in that turn; "
+            f"{len(recorded)} recorded, {len(replayed)} replayed in all)"
+        )
+    else:
+        want_order, got_order = _turn_order(recorded_turns), _turn_order(replayed_turns)
+        reordered = sorted(t for t in want_order if want_order[t] != got_order.get(t))
+        if reordered:
+            note = (
+                f"order within model turn {', '.join(str(t) for t in reordered)} differed "
+                "(calls in one turn are compared as a multiset: parallel tool calls)"
             )
-        elif kind in ("tool_live", "tool_refused"):
-            replayed.append(
-                _tool_entry(ev.get("surface"), ev.get("tool_name"), kind.removeprefix("tool_"))
-            )
-        elif kind == "divergence" and ev.get("kind") in (
-            "tool_call_unmatched", "tool_result_not_servable",
-        ):
-            replayed.append(_tool_entry(ev.get("surface"), ev.get("tool_name"), "unmatched"))
-    return recorded, replayed
+    if len(recorded) > MAX_LISTED_SEQUENCE or len(replayed) > MAX_LISTED_SEQUENCE:
+        note = (note + "; " if note else "") + f"first {MAX_LISTED_SEQUENCE} entries listed"
+    return FidelityCheck(
+        "tool_call_sequence", not differing, _listed(recorded), _listed(replayed), note,
+        comparison=COMPARISON_PER_TURN,
+    )
 
 
 def not_interceptable_tool_count(tool_calls: list[dict[str, Any]]) -> int:
@@ -846,7 +1004,7 @@ def compute_fidelity(
         checks.append(_uncompared_files("the replayed command did not run to completion"))
 
     checks.append(_sequence_check("model_call_sequence", *model_sequences(model_calls, events)))
-    checks.append(_sequence_check("tool_call_sequence", *tool_sequences(tool_calls, events)))
+    checks.append(tool_sequence_check(model_calls, tool_calls, events))
     checks.append(FidelityCheck(
         "divergence", not report.diverged, 0, len(report.divergences), report.divergence_reason
     ))

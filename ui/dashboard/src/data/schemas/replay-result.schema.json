@@ -635,6 +635,14 @@
                   }
                 }
               },
+              "comparison": {
+                "type": "string",
+                "enum": [
+                  "per-model-turn-multiset",
+                  "strict-order"
+                ],
+                "description": "tool_call_sequence only, additive: per-model-turn-multiset -- the tool calls between two consecutive model calls (one model turn; recorded turns from started_at) are compared as a multiset, the turns in order, so parallel calls served in another order are equal; strict-order -- the recording gives no usable turn boundaries (a missing or unreadable started_at, model calls not started in recorded order) and the whole sequence is compared in order."
+              },
               "advisory": {
                 "type": "boolean",
                 "description": "true: reported but never decides the verdict (stdout_sha256 and stderr_sha256, the raw byte comparisons, and file_writes_not_recorded, ADR-0321)."

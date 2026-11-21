@@ -149,16 +149,131 @@ def test_a_divergence_is_diverged(tmp_path: Path) -> None:
     assert "model_call_sequence" in fidelity.failing_checks
 
 
-def test_tool_calls_served_out_of_recorded_order_are_diverged(tmp_path: Path) -> None:
+# ── tool_call_sequence: a multiset within one model turn, ordered across turns ──
+#
+# c08 log_mcp: the model asked for three (then four) MCP calls in one response;
+# they ran in parallel and the replay served them in another order, so a strict
+# comparison said "first difference at position 2" although every call was served.
+
+
+def _at(second: int) -> str:
+    return f"2026-11-20T05:20:{second:02d}.000000Z"
+
+
+def _model(call_id: str, second: int | None) -> dict[str, Any]:
+    rec = openai_record("ok", call_id=call_id)
+    if second is not None:
+        rec["started_at"] = _at(second)
+    return rec
+
+
+def _tool(call_id: str, k: int, second: int) -> dict[str, Any]:
+    return mcp_record("get", {"k": k}, str(k), tool_call_id=call_id, started_at=_at(second),
+                      finished_at=_at(second))
+
+
+def _served(call_id: str, index: int) -> dict[str, Any]:
+    return {"event": "model_served", "queue": "openai", "call_index": index,
+            "model_call_id": call_id}
+
+
+def _mocked(record_id: str) -> dict[str, Any]:
+    return {"event": "tool_mocked", "tool_name": "get", "record_id": record_id}
+
+
+#: Recorded: model m1 at :01 asks for t1 and t2 (run in parallel, :02 and :03);
+#: model m2 at :04 asks for t3 (:05); model m3 at :06 answers.
+_TURNS_MODELS = [("m1", 1), ("m2", 4), ("m3", 6)]
+_TURNS_TOOLS = [("t1", 1, 2), ("t2", 2, 3), ("t3", 3, 5)]
+
+
+def _turns_verdict(tmp_path: Path, replayed: list[str], *,
+                   model_seconds: list[int | None] | None = None) -> Any:
+    seconds = model_seconds or [s for _, s in _TURNS_MODELS]
+    models = [_model(cid, s) for (cid, _), s in zip(_TURNS_MODELS, seconds, strict=True)]
+    tools = [_tool(cid, k, s) for cid, k, s in _TURNS_TOOLS]
+    index = {cid: i for i, (cid, _) in enumerate(_TURNS_MODELS)}
+    events = [_served(x, index[x]) if x.startswith("m") else _mocked(x) for x in replayed]
+    return _verdict(_capsule(tmp_path), model_calls=models, tool_calls=tools, events=events)
+
+
+def test_parallel_tool_calls_served_in_another_order_within_one_turn_are_faithful(
+    tmp_path: Path,
+) -> None:
+    fidelity = _turns_verdict(tmp_path, ["m1", "t2", "t1", "m2", "t3", "m3"])
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+    check = _check(fidelity, "tool_call_sequence")
+    assert check["equal"] is True
+    assert check["comparison"] == "per-model-turn-multiset"
+    # The report still shows the order the calls were served in, and says it differed.
+    assert check["recorded"] == ["mcp.ClientSession.call_tool:get:t1",
+                                 "mcp.ClientSession.call_tool:get:t2",
+                                 "mcp.ClientSession.call_tool:get:t3"]
+    assert check["replayed"][:2] == ["mcp.ClientSession.call_tool:get:t2",
+                                     "mcp.ClientSession.call_tool:get:t1"]
+    assert "order within model turn 1 differed" in check["note"]
+
+
+def test_the_same_calls_in_recorded_order_have_no_order_note(tmp_path: Path) -> None:
+    check = _check(_turns_verdict(tmp_path, ["m1", "t1", "t2", "m2", "t3", "m3"]),
+                   "tool_call_sequence")
+    assert check["equal"] is True
+    assert "note" not in check
+
+
+@pytest.mark.parametrize("replayed,turn", [
+    # t3 answered m1 instead of m2: the same calls, but not in the same turns.
+    (["m1", "t1", "t2", "t3", "m2", "m3"], 1),
+    # t2 moved after m2.
+    (["m1", "t1", "m2", "t2", "t3", "m3"], 1),
+    # A call before the first model call that the recording made after it.
+    (["t1", "m1", "t2", "m2", "t3", "m3"], 0),
+])
+def test_a_tool_call_in_another_model_turn_is_diverged(
+    tmp_path: Path, replayed: list[str], turn: int
+) -> None:
+    fidelity = _turns_verdict(tmp_path, replayed)
+    assert fidelity.failing_checks == ["tool_call_sequence"], fidelity.as_dict()
+    check = _check(fidelity, "tool_call_sequence")
+    assert check["comparison"] == "per-model-turn-multiset"
+    assert f"first difference in model turn {turn}" in check["note"]
+
+
+def test_a_live_call_in_place_of_a_served_one_is_diverged_within_a_turn(
+    tmp_path: Path,
+) -> None:
+    models = [_model("m1", 1)]
+    tools = [_tool("t1", 1, 2), _tool("t2", 2, 3)]
+    events = [_served("m1", 0), _mocked("t2"),
+              {"event": "tool_live", "tool_name": "get", "surface": "mcp.ClientSession.call_tool"}]
+    fidelity = _verdict(_capsule(tmp_path), model_calls=models, tool_calls=tools, events=events)
+    assert "tool_call_sequence" in fidelity.failing_checks
+
+
+def test_tool_calls_with_no_model_call_between_them_are_one_turn(tmp_path: Path) -> None:
     a = mcp_record("get", {"k": 1}, "one", tool_call_id="t1")
     b = mcp_record("get", {"k": 2}, "two", tool_call_id="t2")
-    events = [
-        {"event": "tool_mocked", "tool_name": "get", "record_id": "t2"},
-        {"event": "tool_mocked", "tool_name": "get", "record_id": "t1"},
-    ]
+    events = [_mocked("t2"), _mocked("t1")]
     fidelity = _verdict(_capsule(tmp_path), tool_calls=[a, b], events=events)
-    assert fidelity.failing_checks == ["tool_call_sequence"]
-    in_order = _verdict(_capsule(tmp_path / "x"), tool_calls=[a, b], events=events[::-1])
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+
+
+@pytest.mark.parametrize("model_seconds,why", [
+    ([1, None, 6], "started_at"),        # a model record without a start time
+    ([1, 7, 6], "did not start in time order"),  # overlapping model calls: turns unknown
+])
+def test_without_usable_turn_boundaries_the_order_is_strict(
+    tmp_path: Path, model_seconds: list[int | None], why: str
+) -> None:
+    replayed = ["m1", "t2", "t1", "m2", "t3", "m3"]
+    fidelity = _turns_verdict(tmp_path, replayed, model_seconds=model_seconds)
+    assert fidelity.failing_checks == ["tool_call_sequence"], fidelity.as_dict()
+    check = _check(fidelity, "tool_call_sequence")
+    assert check["comparison"] == "strict-order"
+    assert "first difference at position 1" in check["note"]
+    assert why in check["note"]
+    in_order = _turns_verdict(tmp_path / "x", ["m1", "t1", "t2", "m2", "t3", "m3"],
+                              model_seconds=model_seconds)
     assert in_order.verdict == "faithful", in_order.as_dict()
 
 
