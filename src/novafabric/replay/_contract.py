@@ -136,6 +136,9 @@ MAX_LISTED_NETWORK_DESTINATIONS = 20
 #: child observer -- never those of a non-Python child process.
 NETWORK_OBSERVATION_SCOPE = "python-process"
 
+#: ``network_connect_outcomes``: an attempt whose outcome was never logged.
+CONNECT_OUTCOME_UNKNOWN = "unknown"
+
 #: ``network_observation_coverage`` (ADR-0319, #52 part 2): whether every process
 #: of the replayed tree was observed. ``partial`` makes ``network_connections_live``
 #: a lower bound; ``none`` means no network observer was installed at all.
@@ -854,6 +857,10 @@ class ReplayContractReport:
     network_connections_live: int = 0
     network_connections_capped: bool = False
     network_destinations: list[str] = field(default_factory=list)
+    #: Per ``host:port``, the attempts logged (``network_live``) and how
+    #: they ended (``network_connect_outcome``), first-seen order.
+    network_connect_attempts: dict[str, int] = field(default_factory=dict)
+    network_connect_outcomes: dict[str, dict[str, int]] = field(default_factory=dict)
     #: W0 (ADR-0319 amendment): connect attempts past loopback -- none of them is a
     #: served surface, which answers in-process -- and their distinct destinations;
     #: a strict replay diverges on any (``unserved_network``).
@@ -888,6 +895,22 @@ class ReplayContractReport:
     #: connections made by observed processes other than the root.
     child_processes_network_observed: int = 0
     network_connections_live_children: int = 0
+
+    def connect_outcomes_listed(self) -> list[dict[str, Any]]:
+        """``network_connect_outcomes``: per destination (first
+        :data:`MAX_LISTED_NETWORK_DESTINATIONS`), its attempts and their outcomes;
+        an attempt with no outcome event (the process ended inside the call) is
+        ``unknown``, so the outcomes always sum to the attempts."""
+        listed: list[dict[str, Any]] = []
+        for destination, attempts in list(self.network_connect_attempts.items())[
+            :MAX_LISTED_NETWORK_DESTINATIONS
+        ]:
+            seen = dict(sorted(self.network_connect_outcomes.get(destination, {}).items()))
+            unknown = attempts - sum(seen.values())
+            if unknown > 0:
+                seen[CONNECT_OUTCOME_UNKNOWN] = unknown
+            listed.append({"destination": destination, "attempts": attempts, "outcomes": seen})
+        return listed
 
     @property
     def child_processes_unobserved(self) -> int:
@@ -998,6 +1021,8 @@ class ReplayContractReport:
             "network_observation_coverage": self.network_observation_coverage,
             "divergences": listed,
         }
+        if self.network_connect_attempts:
+            out["network_connect_outcomes"] = self.connect_outcomes_listed()
         if self.network_connections_capped:
             out["network_connections_capped"] = True
         if self.child_processes_capped:
@@ -1052,6 +1077,19 @@ def _count_unserved(report: ReplayContractReport, destination: str, *, child: bo
         report.network_connections_unserved_children += 1
     if destination not in report.network_destinations_unserved:
         report.network_destinations_unserved.append(destination)
+
+
+def _fold_connect_outcome(ev: dict[str, Any], report: ReplayContractReport) -> None:
+    """Count one attempt's outcome under its destination -- never more outcomes
+    than the destination has logged attempts: an outcome adds no attempt."""
+    destination = f"{ev.get('host')}:{ev.get('port')}"
+    attempts = report.network_connect_attempts.get(destination, 0)
+    outcomes = report.network_connect_outcomes.get(destination, {})
+    if sum(outcomes.values()) >= attempts:
+        return
+    report.network_connect_outcomes[destination] = outcomes
+    outcome = str(ev.get("outcome") or CONNECT_OUTCOME_UNKNOWN)
+    outcomes[outcome] = outcomes.get(outcome, 0) + 1
 
 
 def _fold_observer_started(
@@ -1197,6 +1235,10 @@ def summarize(
                 report.network_destinations.append(destination)
             if not is_loopback_host(ev.get("host")):
                 _count_unserved(report, destination, child=child)
+            attempts = report.network_connect_attempts
+            attempts[destination] = attempts.get(destination, 0) + 1
+        elif kind == "network_connect_outcome":
+            _fold_connect_outcome(ev, report)
         elif kind == "network_live_capped":
             report.network_connections_capped = True
         elif kind == UNSERVED_NETWORK_AFTER_CAP_EVENT:

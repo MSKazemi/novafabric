@@ -64,7 +64,11 @@ from novafabric.replay._bedrock_serve import (
 )
 from novafabric.replay._bedrock_serve import request_json as bedrock_request_json
 from novafabric.replay._bedrock_serve import request_queue as bedrock_request_queue
-from novafabric.replay._child_observer import ConnectCounter, start_tree_observation
+from novafabric.replay._child_observer import (
+    ConnectCounter,
+    observe_connect,
+    start_tree_observation,
+)
 from novafabric.replay._contract import (
     ECHO_DIFFERS,
     ECHO_NO_COUNTERPART,
@@ -2041,7 +2045,9 @@ class NetworkObserver:
     Patches ``socket.socket.connect`` / ``connect_ex`` (the methods
     ``socket.create_connection``, ``httpx``/``requests`` and ``asyncio`` call)
     and logs one ``network_live`` event per IPv4/IPv6 connection attempt with its
-    host and port -- never a payload (``_child_observer.ConnectCounter``). A mocked
+    host and port -- never a payload -- before the call, then one
+    ``network_connect_outcome`` with how it ended (``_child_observer.ConnectCounter``,
+    ``observe_connect``). A mocked
     replay can therefore say whether anything outside the intercepted surfaces
     reached the network (ADR-0304); a strict one fails when it reached past loopback
     (``unserved_network``, ``_unserved_network``).
@@ -2066,17 +2072,11 @@ class NetworkObserver:
         self._patcher.restore()
 
     def _wrap(self, original: Any) -> Any:
-        observer = self
+        # Each logged attempt also gets a `network_connect_outcome` event.
+        return observe_connect(original, self._counter)
 
-        @functools.wraps(original)
-        def observed(sock: Any, address: Any, *args: Any, **kwargs: Any) -> Any:
-            observer.seen(sock, address)
-            return original(sock, address, *args, **kwargs)
-
-        return observed
-
-    def seen(self, sock: Any, address: Any) -> None:
-        self._counter.seen(sock, address)
+    def seen(self, sock: Any, address: Any) -> bool:
+        return self._counter.seen(sock, address)
 
 
 # ── subprocess entry point ───────────────────────────────────────────────────

@@ -702,6 +702,8 @@ def test_network_observer_reports_inet_connections_and_restores_socket() -> None
         observer.uninstall()
     assert events.items == [
         ("network_live", {"host": "127.0.0.1", "port": port}),
+        # How the logged attempt ended (an attempt over the cap logs no outcome).
+        ("network_connect_outcome", {"host": "127.0.0.1", "port": port, "outcome": "ok"}),
         ("network_live_capped", {"cap": 1}),
     ]
     assert socket.socket.connect is original

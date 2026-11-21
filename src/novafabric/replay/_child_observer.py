@@ -30,7 +30,8 @@ Pieces:
   bypasses these calls is not seen. An audit hook cannot be removed: after
   :meth:`ProcessObserver.uninstall` it stays registered and does nothing.
 
-* :class:`SocketObserver` -- ``socket.socket.connect``/``connect_ex`` attempts to
+* :class:`SocketObserver` -- ``socket.socket.connect``/``connect_ex`` attempts (and
+  their outcomes, :func:`observe_connect`) to
   IPv4/IPv6 addresses (host and port only), for the child bootstrap; the replayed
   process itself uses the dispatcher's ``NetworkObserver``.
 
@@ -56,6 +57,7 @@ Pieces:
 from __future__ import annotations
 
 import atexit
+import errno
 import functools
 import json
 import os
@@ -78,6 +80,28 @@ QUEUE_ENV = "NOVAFABRIC_REPLAY_QUEUE_PATH"
 CHILD_PROCESS_EVENT_CAP = 10_000
 #: Most ``network_live`` events one observed process writes (as ``NetworkObserver``).
 NETWORK_EVENT_CAP = 10_000
+
+#: The event naming how one logged connect attempt ended. It follows the
+#: attempt's ``network_live`` event, which is written *before* the call, so an
+#: attempt is counted even when the process dies inside it.
+CONNECT_OUTCOME_EVENT = "network_connect_outcome"
+#: ``connect`` returned / ``connect_ex`` returned 0.
+OUTCOME_OK = "ok"
+#: A non-blocking connect was started; whether it completed is decided later and
+#: not observed (``asyncio`` and ``anyio`` connect this way).
+OUTCOME_IN_PROGRESS = "in_progress"
+#: The socket's timeout expired (``socket.timeout`` carries no errno).
+OUTCOME_TIMEOUT = "timeout"
+#: Any other exception, e.g. an unusable address.
+OUTCOME_ERROR = "error"
+_IN_PROGRESS_ERRNOS = frozenset(
+    {errno.EINPROGRESS, errno.EALREADY, errno.EWOULDBLOCK, errno.EAGAIN}
+)
+
+#: Audit events that start a process (counted).
+_SPAWN_EVENTS = frozenset({
+    "subprocess.Popen", "os.system", "os.posix_spawn", "os.fork", "os.forkpty", "os.exec",
+})
 
 #: Audit events that start a process (counted).
 _SPAWN_EVENTS = frozenset({
@@ -276,19 +300,21 @@ class ConnectCounter:
         self._count = 0
         self._unserved_after_cap = False
 
-    def seen(self, sock: Any, address: Any) -> None:
+    def seen(self, sock: Any, address: Any) -> bool:
+        """Log one attempt; ``True`` when its ``network_live`` event was written
+        (an attempt past the cap logs no outcome)."""
         try:
             import socket
 
             if getattr(sock, "family", None) not in (socket.AF_INET, socket.AF_INET6):
-                return
+                return False
             if not isinstance(address, tuple) or len(address) < 2:
-                return
+                return False
             self._count += 1
             host, port = str(address[0]), int(address[1])
             if self._count <= self._cap:
                 self._events.emit("network_live", host=host, port=port)
-                return
+                return True
             if self._count == self._cap + 1:
                 self._events.emit("network_live_capped", cap=self._cap)
             if not self._unserved_after_cap and not is_loopback_host(host):
@@ -296,10 +322,63 @@ class ConnectCounter:
                 self._events.emit(UNSERVED_NETWORK_AFTER_CAP_EVENT, host=host, port=port)
         except Exception:  # noqa: BLE001 -- observation must never break the workload
             pass
+        return False
+
+    def outcome(self, address: Any, outcome: str) -> None:
+        """Log how one attempt :meth:`seen` logged ended."""
+        try:
+            self._events.emit(CONNECT_OUTCOME_EVENT, host=str(address[0]),
+                              port=int(address[1]), outcome=outcome)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            pass
+
+
+def _errno_outcome(code: int) -> str:
+    if code == 0:
+        return OUTCOME_OK
+    if code in _IN_PROGRESS_ERRNOS:
+        return OUTCOME_IN_PROGRESS
+    return errno.errorcode.get(code, f"errno_{code}")
+
+
+def connect_outcome(*, result: Any = None, error: BaseException | None = None) -> str:
+    """How one ``connect``/``connect_ex`` call ended: ``ok``, ``in_progress``,
+    ``timeout``, ``error`` or the errno name (``ENETUNREACH``, ``ECONNREFUSED``)."""
+    if error is None:
+        return _errno_outcome(result) if isinstance(result, int) else OUTCOME_OK
+    if isinstance(error, OSError) and isinstance(error.errno, int):
+        return _errno_outcome(error.errno)
+    if isinstance(error, TimeoutError):
+        return OUTCOME_TIMEOUT
+    return OUTCOME_ERROR
+
+
+def observe_connect(original: Any, counter: ConnectCounter) -> Any:
+    """Wrap ``socket.socket.connect``/``connect_ex``: ``counter.seen`` logs the
+    attempt before the call and says whether it did; after the call, a logged
+    attempt gets a :data:`CONNECT_OUTCOME_EVENT` (``counter.outcome``), so the
+    outcome events are capped with the attempts. The call's result and exception
+    pass through unchanged; observation never breaks the workload."""
+
+    @functools.wraps(original)
+    def observed(sock: Any, address: Any, *args: Any, **kwargs: Any) -> Any:
+        logged = counter.seen(sock, address)
+        try:
+            result = original(sock, address, *args, **kwargs)
+        except Exception as exc:
+            if logged:
+                counter.outcome(address, connect_outcome(error=exc))
+            raise
+        if logged:
+            counter.outcome(address, connect_outcome(result=result))
+        return result
+
+    return observed
 
 
 class SocketObserver:
-    """Report -- never block -- IPv4/IPv6 connection attempts of this process."""
+    """Report -- never block -- IPv4/IPv6 connection attempts of this process,
+    and how each ended (:func:`observe_connect`)."""
 
     def __init__(self, events: Any, *, cap: int = NETWORK_EVENT_CAP) -> None:
         self._counter = ConnectCounter(events, cap=cap)
@@ -316,17 +395,10 @@ class SocketObserver:
         return True
 
     def _wrap(self, original: Any) -> Any:
-        observer = self
+        return observe_connect(original, self._counter)
 
-        @functools.wraps(original)
-        def observed(sock: Any, address: Any, *args: Any, **kwargs: Any) -> Any:
-            observer.seen(sock, address)
-            return original(sock, address, *args, **kwargs)
-
-        return observed
-
-    def seen(self, sock: Any, address: Any) -> None:
-        self._counter.seen(sock, address)
+    def seen(self, sock: Any, address: Any) -> bool:
+        return self._counter.seen(sock, address)
 
 
 def _under(path: str, root: str) -> bool:
