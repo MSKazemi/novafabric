@@ -761,6 +761,8 @@ covers the providers below out of the box:
 | `127.0.0.1:11434` | `ollama` |
 | `^https://router\.huggingface\.co(:443)?/` (regex) | `huggingface` (experimental, unreleased) |
 | `^https://[a-z0-9][a-z0-9.-]*\.endpoints\.huggingface\.cloud(:443)?/` (regex) | `huggingface.endpoint` (experimental, unreleased) |
+| `^https://generativelanguage\.googleapis\.com(:443)?/` (regex) | `gcp.gemini` (request only; unreleased) |
+| `^https://([a-z0-9-]+-)?aiplatform\.googleapis\.com(:443)?/` (regex) | `gcp.vertex_ai` (global and regional; request only; unreleased) |
 
 Every entry is a substring match unless it sets the optional `match_kind: regex`, which is matched
 from the start of the URL (`re.match`, case-insensitive). Use it when a substring would also match a

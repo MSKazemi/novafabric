@@ -86,6 +86,8 @@ _AI_API_ANCHORED: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"^https://[a-z0-9][a-z0-9.-]*\.endpoints\.huggingface\.cloud(:443)?/", re.IGNORECASE
     ),
+    # Vertex AI, global and regional (the Gemini API host is a substring entry above).
+    re.compile(r"^https://([a-z0-9-]+-)?aiplatform\.googleapis\.com(:443)?/", re.IGNORECASE),
 )
 
 
