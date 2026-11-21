@@ -257,6 +257,7 @@ class Env:
         before = set(self.replays.iterdir()) if self.replays.exists() else set()
         cli = runner.invoke(app, ["replay", str(capsule), "-o", str(self.replays), *flags])
         (replay_dir,) = set(self.replays.iterdir()) - before
+        self.last_replay_dir = replay_dir
         result = yaml.safe_load((replay_dir / "replay_result.yaml").read_text())
         jsonschema.validate(result, _RESULT_SCHEMA)
         observed = json.loads(self.out.read_text()) if self.out.exists() else []
@@ -474,6 +475,54 @@ def test_permissive_runs_unservable_unwrapped_tools_live_only_with_allow_unknown
     assert result["fidelity"]["verdict"] != "faithful"
     assert "[LIVE] tool call (langchain_core.tools.BaseTool: read_log)" in cli.output
     assert "[LIVE] tool call (langchain_core.tools.BaseTool: write_diagnosis)" in cli.output
+
+
+def _fidelity_check(result: dict[str, Any], name: str) -> dict[str, Any]:
+    (check,) = [c for c in result["fidelity"]["checks"] if c["name"] == name]
+    return check
+
+
+@pytest.mark.parametrize(
+    ("flags", "status"),
+    [
+        (("--permissive", "--allow-unknown-mutation"), "live"),
+        (("--permissive",), "refused"),
+    ],
+)
+def test_an_unservable_call_that_then_runs_live_or_is_refused_is_one_replayed_call(
+    env: Env, flags: tuple[str, ...], status: str
+) -> None:
+    """c08 ``ml_reviewer`` re-replay (2026-11-21): each observed call without a
+    servable record wrote a ``tool_result_not_servable`` divergence *and* a
+    ``tool_live`` event, and both landed in the replayed tool-call sequence and
+    in the replay capsule's ``tool-calls.jsonl`` -- "4 recorded, 8 replayed",
+    one ``...:unmatched`` and one ``...:live`` per call. One call is one entry,
+    carrying what finally happened to it (live, or refused)."""
+    capsule, _ = env.capture(PLAN)  # default level: not servable
+    result, _observed, cli = env.replay(capsule, *flags)
+    executed = result["tool_calls_live"] + result["replay_contract"]["tool_calls_refused"]
+    assert executed >= 1, cli.output
+    if status == "live":
+        assert result["tool_calls_live"] == 2
+        assert result["replay_contract"]["tool_calls_by_surface"][LC]["live"] == 2
+        assert _live_by_tool(result) == {"read_log": 1, "write_diagnosis": 1}
+    else:
+        assert result["tool_calls_live"] == 0
+
+    sequence = _fidelity_check(result, "tool_call_sequence")
+    assert len(sequence["recorded"]) == 2
+    assert len(sequence["replayed"]) == executed, sequence
+    assert all(e.startswith(f"{LC}:") for e in sequence["replayed"]), sequence
+    assert all(e.endswith(f":{status}") for e in sequence["replayed"]), sequence
+    if status == "live":
+        assert sorted(sequence["replayed"]) == [
+            f"{LC}:read_log:live", f"{LC}:write_diagnosis:live",
+        ]
+
+    lines = (env.last_replay_dir / "tool-calls.jsonl").read_text().splitlines()
+    replayed = [json.loads(line) for line in lines if line.strip()]
+    assert len(replayed) == executed, replayed
+    assert [r["status"] for r in replayed] == [status] * executed, replayed
 
 
 # ── replay: capsules written before this change ──────────────────────────────

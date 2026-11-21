@@ -40,6 +40,7 @@ from novafabric.replay._errors import (
     ReplayToolUnmatchedError,
 )
 from novafabric.replay._policy import decide_intercepted
+from novafabric.replay._tool_call_outcomes import AFTER_DIVERGENCE
 
 #: Served in place of a recorded ``None``: ADK would have turned ``None`` into
 #: exactly this function response (``_caller.py`` ``_normalize_tool_result``),
@@ -232,12 +233,12 @@ class AdkToolServer:
         if live:
             self._events.emit(
                 "tool_live", tool_name=call.tool_name, surface=self.SURFACE,
-                mutation_class=call.mutation_class,
+                mutation_class=call.mutation_class, **{AFTER_DIVERGENCE: True},
             )
             return None
         self._events.emit(
             "tool_refused", tool_name=call.tool_name, surface=self.SURFACE,
-            mutation_class=call.mutation_class,
+            mutation_class=call.mutation_class, **{AFTER_DIVERGENCE: True},
             **({"override": label} if label is not None else {}),
         )
         raise error

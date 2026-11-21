@@ -332,6 +332,19 @@ def test_the_function_call_id_pairs_identical_calls_by_id(env: Env) -> None:
     assert {o["id"]: o["response"]["n"] for o in replayed} == by_id
 
 
+def _replayed_tool_tails(result: dict[str, Any], replay_dir: Path) -> list[str]:
+    """What the replay did with each tool call, one entry per call: the last
+    field of each ``tool_call_sequence`` entry (a record id, or ``live`` /
+    ``refused`` / ``unmatched``). The replay capsule's ``tool-calls.jsonl`` must
+    hold exactly as many records."""
+    (check,) = [c for c in result["fidelity"]["checks"] if c["name"] == "tool_call_sequence"]
+    tails = [str(entry).rsplit(":", 1)[1] for entry in check["replayed"]]
+    path = replay_dir / "tool-calls.jsonl"
+    lines = [ln for ln in path.read_text().splitlines() if ln.strip()] if path.exists() else []
+    assert len(lines) == len(tails), (lines, tails)
+    return tails
+
+
 # ── permissive keeps the safety ladder; overrides hold ───────────────────────
 
 
@@ -341,17 +354,22 @@ def test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder(
     monkeypatch.setenv("AGENT_CLASSES", json.dumps({"ping": "none"}))
     capsule, _ = env.capture([_call("lookup", order_id="o-1")])
     plan = [_call("lookup", order_id="o-1"), _call("ping")]
-    result, replayed, _ = env.replay(capsule, "--permissive", plan=plan)
+    result, replayed, replay_dir = env.replay(capsule, "--permissive", plan=plan)
     assert env.side_effects == ["ping"], "a `none` tool runs live under --permissive"
     assert result["tool_calls_live"] == 1
     assert ("ping", {"result": "pong-live-in-replay"}) in _responses(replayed)
+    # One entry per call: the unmatched `ping` is `live`, not `unmatched` + `live`.
+    assert sorted(_replayed_tool_tails(result, replay_dir))[-1:] == ["live"]
+    assert len(_replayed_tool_tails(result, replay_dir)) == 2
 
     # `lookup` is `unknown` (the default): refused without --allow-unknown-mutation.
     env.side.unlink()
     plan = [_call("lookup", order_id="o-1"), _call("lookup", order_id="o-9")]
-    result, replayed, _ = env.replay(capsule, "--permissive", plan=plan)
+    result, replayed, replay_dir = env.replay(capsule, "--permissive", plan=plan)
     assert env.side_effects == []
     assert result["replay_contract"]["tool_calls_refused"] == 1
+    tails = _replayed_tool_tails(result, replay_dir)
+    assert len(tails) == 2 and tails.count("refused") == 1, tails
     assert {"error": "RuntimeError", "cause": "ReplayToolUnmatchedError"} in replayed
 
 
