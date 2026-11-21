@@ -1337,6 +1337,17 @@ is refused before its body runs. A record captured without its result is still s
 the next recorded model request echoes that result under exactly the recorded
 `result_digest` (counted in `replay_contract.tool_calls_mocked_by_source.model-request-echo`;
 the CLI prints `N of the served tool results came from the next recorded model request`).
+The result of a run's **last** tool call — or of any call whose result ends the run — never
+went back to a model, so no recorded request holds it and nothing else in the capsule is a
+digest-checked source (below `forensic` the final graph state is kept only as a digest, and
+`outputs/stdout.txt` holds a result only if the workload printed it verbatim). It is never
+guessed: the refusal reason, the `--dry-run` `[NOT SERVED]` line and the capsule's
+`replayability.json` name it (`result never sent to a model: …`; `result_never_sent_to_a_model`
+lists the tools, or is the `cause` of a `tool_result_not_servable` reason) and say what works —
+capture at `NOVA_CAPTURE_LEVEL=forensic`, or replay `--permissive --allow-unknown-mutation`
+(experimental, unreleased; ADR-0306 r3b). A request that carries the result in a form whose
+digest does not match, and a capsule whose model calls hold no request messages, are named
+too.
 Under `--permissive` such calls run live only with `--allow-unknown-mutation`; each is counted in `tool_calls_live` and named in a
 `[LIVE] tool call (…)` summary line. **Behaviour change:** before this, unwrapped LangChain
 tools were never served (a strict replay refused every capsule that recorded one) and
@@ -10950,16 +10961,37 @@ nova replay <run-id>                 # tool bodies do not run; results come from
   are kept and replay refuses the call with a re-capture hint.
 - **Under a mocked `nova replay`** the recorded result is returned and the tool body
   never runs. An unmatched call, or one whose record is not servable (the body raised —
-  including a `ToolException` LangChain turned into an error message —, made nested
-  model/tool calls, or returned a non-JSON value such as a LangGraph `Command` or a
-  `content_and_artifact` tuple; a `ToolMessage` the tool returned itself is served when
-  every field is JSON — unreleased), is refused before the tool runs and
+  including a `ToolException` LangChain turned into an error message —, or returned a
+  non-JSON value such as a `content_and_artifact` tuple; a `ToolMessage` the tool
+  returned itself is served when every field is JSON, and so is a LangGraph `Command`
+  that can be rebuilt exactly — unreleased, see below),
+  is refused before the tool runs and
   the replay fails (`tool_call_unmatched` / `tool_result_not_servable`) even if the
   workload catches the error. `ToolNode` re-raises the refusal by default; with
   `handle_tool_errors` it becomes an error message to the model, and the replay still
   fails. `--permissive` runs an unmatched call live only when an `--allow-*` flag permits
   the class declared in `wrap_tools` (default `unknown`), and `replay.yaml`
   `tool_overrides` hold as on the other tool surfaces.
+- **A tool that returns a LangGraph `Command`** (a state update; experimental,
+  unreleased, ADR-0306 r3b) is recorded as a JSON envelope
+  (`io.novafabric.langchain_result_kind: langgraph_command`) and served as a real
+  `Command` rebuilt from it, so `ToolNode` and the graph apply the same update and route.
+  Served only when `graph` is `None` or a name, `goto` is a node name or a list/tuple of
+  them, `resume` is a JSON value, and `update` is a `dict` whose values are JSON values
+  or lists of `ToolMessage`s answering this call (each rebuilt with the replayed call's
+  `tool_call_id`; a message `id` the tool set is kept). A `Send` in `goto`, an update
+  that is a list or a state object, another message type, a message answering another
+  call, or a non-JSON value keeps the record not servable, with a reason naming the
+  field. Below `forensic` only the envelope's digest is kept and the model never sees
+  the `Command`, so the model-request echo cannot recover it: capture at `forensic`.
+- **A tool whose body made model or tool calls** (a sub-agent tool, such as deepagents'
+  `task`; experimental, unreleased, ADR-0306 r3b) is served like a nested `record.tool`
+  boundary: its body — and so the sub-agent — never runs, and the model and tool calls
+  recorded inside it are consumed as covered (`replay_contract.model_calls_covered` /
+  `tool_calls_covered`, `covered` in `tool_calls_by_surface`), never left over. A
+  nested call capture could not mark (one made from a raw thread) stays unconsumed and
+  the strict replay fails. An unservable record written inside such a tool still makes
+  a strict replay refuse up front, even when the outer call is servable.
 - **Outside capture and replay** a wrapped tool behaves like the original.
 - Tools built by `langchain_mcp_adapters` are returned unchanged: their MCP calls are
   already served on the MCP surface. A function declared with

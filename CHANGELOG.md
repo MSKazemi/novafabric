@@ -93,6 +93,41 @@ longer forwards the submitting shell's environment (ADR-0270).
   `io.novafabric.langchain_result_kind: tool_message`) and mocked replay rebuilds a real `ToolMessage` answering
   the replayed call's `tool_call_id`. A field that is not a JSON value (an object `artifact`) keeps the record not
   servable, with a reason naming the field.
+- **The last-call echo gap is named instead of left generic** (experimental; ADR-0306 r3b). Below `forensic` a
+  tool result is served only from a later recorded model request that echoes it under the recorded digest; the
+  result of a run's last tool call never went back to a model, so it cannot be recovered, and nothing else in the
+  capsule is a digest-checked source (the final graph state is kept only as a digest; stdout holds it only if the
+  workload printed it verbatim). Nothing new is served. Such a record's reason now says `result never sent to a
+  model: …` with what works (capture at `NOVA_CAPTURE_LEVEL=forensic`, or `--permissive
+  --allow-unknown-mutation`) — in the `ToolSurfaceNotServed` refusal and its
+  `tool_calls_not_served_by_surface.reasons`, the `--dry-run` `[NOT SERVED]` line, a `tool_result_not_servable`
+  divergence, and `replayability.json` (new optional `result_never_sent_to_a_model` tool list on the
+  `tool_surface_not_served` reason; new `cause` `result_never_sent_to_a_model`). An echo whose digest does not
+  match, and a capsule whose model calls hold no request messages, get their own reason text too.
+- **A LangChain tool that returns a LangGraph `Command` is served** (experimental; ADR-0306 r3b). Before, a tool
+  returning `langgraph.types.Command(update=..., goto=...)` (a state update) was recorded as "not a JSON value" and
+  never served, even at `forensic`. Capture now records a JSON envelope (`graph`, `goto`, `resume`, the `update`
+  entries; `io.novafabric.langchain_result_kind: langgraph_command`) and mocked replay rebuilds a real `Command`
+  whose `ToolMessage`s answer the replayed call's `tool_call_id`, so `ToolNode` and the graph apply the same update
+  and route (tested: the final graph state equals the captured one). Served only when it can be rebuilt exactly:
+  a `Send` in `goto`, an update that is not a `dict`, an update value that is neither JSON nor a list of
+  `ToolMessage`s answering the call, or a non-JSON message field keeps the record not servable, with a reason
+  naming the field. Below `forensic` only the envelope's digest is kept and nothing the model saw can reproduce
+  it, so such a capsule is refused with the re-capture hint. A record with a result kind this version does not
+  know is now refused instead of being served as plain JSON.
+- **A LangChain tool whose body made model or tool calls is served** (experimental; ADR-0306 r3b). Before, a
+  sub-agent tool (the shape of `deepagents`' `task`: a `@tool` whose body runs a chat model and more tools) was
+  recorded with `io.novafabric.nested_records` and marked "nested-call coverage is not implemented", so a strict
+  replay refused it — up front for a tool not passed through `wrap_tools`. Capture no longer marks it, and mocked
+  replay serves it like a nested `record.tool` boundary (ADR-0306 slice 4): its body never runs, and the model and
+  tool calls recorded inside it are consumed as covered (`replay_contract.model_calls_covered` /
+  `tool_calls_covered`, `covered` in `tool_calls_by_surface`, also for ADK, Agents SDK and LangChain records inside
+  any served boundary), never counted unconsumed; the fidelity verdict stays `faithful`. A record captured earlier
+  with that text and its value kept is served without a re-capture (replay strips the text, as it does for
+  slice 1); a payloads-off one is served from the model-request echo when its digest matches. A nested call capture
+  could not mark stays unconsumed and the strict replay fails. Not changed: an unservable record written *inside*
+  such a tool still refuses a strict replay up front, and the ADK and Agents SDK seams still mark nested calls
+  unservable.
 - **Tool results captured below `forensic` are served from the next recorded model request** (experimental; ADR-0306
   r3 amendment). A default-level tool record keeps only a digest of its result, but the result also went back to the
   model in the next request, which the capsule keeps. Mocked replay now serves that echo (Chat Completions, Responses,

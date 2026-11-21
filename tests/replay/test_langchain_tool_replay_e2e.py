@@ -506,22 +506,25 @@ def test_payloads_off_records_digests_only_and_replay_asks_for_a_recapture(
     assert div["surface"] == LC
 
 
-def test_a_nested_record_makes_the_langchain_call_unservable(env: Env) -> None:
-    capsule, _ = env.capture([_call("wrapper", x="a")])
+def test_a_langchain_call_with_a_nested_record_is_served_and_covers_it(env: Env) -> None:
+    """ADR-0306 r3b: a LangChain tool whose body made a nested call is served
+    like a nested ``record.tool`` boundary; the nested record is covered."""
+    capsule, captured = env.capture([_call("wrapper", x="a")])
     records = env.records(capsule)
     inner = next(r for r in records if r["tool_name"] == "helper")
     outer = next(r for r in records if r["tool_name"] == "wrapper")
     assert inner["extensions"]["io.novafabric.within_tool_call_id"] == outer["tool_call_id"]
     assert outer["extensions"]["io.novafabric.nested_records"] == 1
-    assert outer["extensions"]["io.novafabric.result_codec"] == "not-servable"
-    result, _, _ = env.replay(capsule)
+    assert outer["extensions"]["io.novafabric.result_codec"] == "json-v1"
+    result, observed, _ = env.replay(capsule)
     assert env.side_effects == [], "neither the LangChain tool nor its nested tool may run"
-    assert result["status"] == "failure"
-    (div,) = [
-        d for d in result["replay_contract"]["divergences"]
-        if d["kind"] == "tool_result_not_servable"
-    ]
-    assert "inside this LangChain tool call" in div["reason"]
+    assert result["status"] == "success", result.get("error")
+    assert _responses(observed) == _responses(captured)
+    contract = result["replay_contract"]
+    assert contract["divergences"] == []
+    assert result["tool_calls_mocked"] == 1
+    assert contract["tool_calls_covered"] == 1
+    assert contract["tool_calls_unconsumed"] == 0
 
 
 def test_a_failed_tool_call_is_recorded_but_never_served(env: Env) -> None:

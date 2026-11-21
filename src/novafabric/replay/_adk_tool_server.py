@@ -22,6 +22,7 @@ workload swallows it.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
 
 from novafabric.adapters._adk_tool_seam import FUNCTION_CALL_ID_EXT, AdkToolCall
@@ -87,6 +88,7 @@ class AdkToolServer:
         events: ReplayEventLog,
         permitted: frozenset[str],
         overrides: dict[str, bool] | None = None,
+        on_served: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         counts = Counter(_function_call_id(r, self.CALL_ID_EXT) for r in records)
         #: unique recorded function_call_id -> (tool name, argument digest).
@@ -111,6 +113,16 @@ class AdkToolServer:
         self._events = events
         self._permitted = permitted
         self._overrides = dict(overrides or {})
+        #: Called with each served record (as stored in the capsule) before its
+        #: value is returned, so the records nested inside it are covered
+        #: (ADR-0306 slice 4; LangChain since r3b).
+        self._on_served = on_served
+
+    def cover(self, boundary_ids: set[str]) -> list[dict[str, Any]]:
+        """Consume, without serving, every unconsumed record written inside one
+        of *boundary_ids*; return them as stored in the capsule (the matcher
+        holds views whose ``tool_call_id`` may be the model's call id)."""
+        return [self._originals.get(id(v), v) for v in self._matcher.cover(boundary_ids)]
 
     # ── handler protocol (adapters._adk_tool_seam.AdkToolHandler) ────────────
 
@@ -165,6 +177,8 @@ class AdkToolServer:
             # ADR-0306 r3: e.g. `model-request-echo` for a recovered result.
             **({"source": source} if isinstance(source, str) else {}),
         )
+        if self._on_served is not None:
+            self._on_served(record)
         return self._answer(value)
 
     def _decode(self, record: dict[str, Any], call: AdkToolCall) -> Any:

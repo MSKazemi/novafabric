@@ -137,6 +137,18 @@ def _langchain_observed(name: str, *, payloads_off: bool = False) -> dict[str, A
 LC_CALL_ID_EXT = "io.novafabric.langchain_tool_call_id"
 
 
+def _langchain_legacy_nested(name: str) -> dict[str, Any]:
+    """An observed LangChain record an earlier capture marked not servable only
+    because its body made nested calls (ADR-0306 r3b strips that text)."""
+    record = _langchain_observed(name)
+    record["extensions"].update({
+        codec.NESTED_RECORDS_EXT: 2,
+        codec.RESULT_CODEC_EXT: codec.CODEC_NOT_SERVABLE,
+        codec.NOT_SERVABLE_REASON_EXT: codec.seam_nested_reason("LangChain tool", 2),
+    })
+    return record
+
+
 def _bedrock_echo(call_id: str, text: str) -> dict[str, Any]:
     """A recorded Bedrock request that sends *text* back as the result of *call_id*."""
     return {
@@ -252,6 +264,43 @@ def test_a_payloads_off_observed_tool_echoed_under_its_digest_is_served() -> Non
     summary = assess(_cli_manifest(), [_bedrock_echo("tooluse-read_log", "x")], [tool])
     assert summary.as_dict()["strict_mocked"] == "start"
     assert "tool_surface_not_served" not in _codes(summary)
+
+
+def test_a_legacy_nested_langchain_record_with_its_value_is_served() -> None:
+    summary = assess(_cli_manifest(), [], [_langchain_legacy_nested("task")])
+    doc = summary.as_dict()
+    assert doc["strict_mocked"] == "start" and doc["replayable"] == "full"
+    assert doc["tool_calls"]["servable"] == 1
+
+
+def _openai_request(call_id: str = "call-unrelated") -> dict[str, Any]:
+    """A recorded OpenAI call whose request carries the result of *call_id* only."""
+    record = _openai("ok")
+    record["gen_ai.request.messages"] = [
+        {"role": "user", "content": "go"},
+        {"role": "tool", "tool_call_id": call_id, "content": "something else"},
+    ]
+    return record
+
+
+def test_a_last_call_result_never_sent_to_a_model_is_named() -> None:
+    """ADR-0306 r3b: payloads off, and no recorded request carries the result."""
+    observed = _langchain_observed("finish", payloads_off=True)
+    doc = assess(_cli_manifest(), [_openai_request()], [observed]).as_dict()
+    assert doc["strict_mocked"] == "refuse"
+    (reason,) = [r for r in doc["reasons"] if r["code"] == "tool_surface_not_served"]
+    assert reason["result_never_sent_to_a_model"] == ["finish"]
+    assert "result never sent to a model: finish" in reason["summary"]
+    assert "result never sent to a model" in reason["detail"]
+
+    wrapped = _langchain_observed("finish", payloads_off=True)
+    wrapped["extensions"][codec.LANGCHAIN_SEAM_EXT] = codec.LANGCHAIN_SEAM_WRAPPED
+    doc = assess(_cli_manifest(), [_openai_request()], [wrapped]).as_dict()
+    assert doc["strict_mocked"] == "start"
+    (reason,) = [r for r in doc["reasons"] if r["code"] == "tool_result_not_servable"]
+    assert reason["cause"] == "result_never_sent_to_a_model"
+    assert "never sent to a model" in reason["summary"]
+    assert "NOVA_CAPTURE_LEVEL=forensic" in reason["detail"]
 
 
 def test_an_observed_langchain_tool_refuses_strict() -> None:
@@ -450,10 +499,13 @@ def _cases(project: Path) -> list[tuple[dict[str, Any], list[Any], list[Any], An
         (_adapter_manifest(unknown), [_mistral(1)], [], None),
         (_adapter_manifest(_facet(project)), [_openai()], [], None),
         (_adapter_manifest(None), [], [], None),
+        (_cli_manifest(), [], [_langchain_legacy_nested("task")], None),
+        (_cli_manifest(), [_openai_request()],
+         [_langchain_observed("finish", payloads_off=True)], None),
     ]
 
 
-@pytest.mark.parametrize("case", range(9))
+@pytest.mark.parametrize("case", range(11))
 def test_the_summary_agrees_with_the_dry_run(
     tmp_path: Path, project: Path, case: int,
 ) -> None:

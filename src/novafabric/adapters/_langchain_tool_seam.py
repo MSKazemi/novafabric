@@ -60,6 +60,7 @@ from typing import Any
 
 from novafabric.adapters import _adk_tool_seam as _base
 from novafabric.adapters import _langchain_tool_message as _tool_message
+from novafabric.adapters import _langgraph_command as _command
 from novafabric.adapters._adk_tool_seam import AdkToolCall, AdkToolHandler, AdkToolHook
 from novafabric.adapters._oai_tool_seam import Served
 from novafabric.capture import _tool_codec as codec
@@ -630,6 +631,11 @@ class LangChainToolHook(AdkToolHook):
     CLASS_EXT = TOOL_CLASS_EXT
     SUBJECT = "LangChain tool"
     FAILURE_REASON = FAILURE_REASON
+    #: A tool whose body made model/tool calls (a sub-agent tool such as
+    #: deepagents' ``task``) keeps ``nested_records`` but is not marked
+    #: unservable for it: replay serves it and covers the nested records
+    #: (ADR-0306 r3b, the slice-4 rule for ``record.tool``).
+    SERVES_NESTED = True
 
     _get_handler = staticmethod(lambda: _get_handler())
     _set_handler = staticmethod(lambda handler: _set_handler(handler))
@@ -650,16 +656,23 @@ class LangChainToolHook(AdkToolHook):
         self, pending: _base._Pending, nested: int, *,
         value: Any = None, error: BaseException | None = None,
     ) -> dict[str, Any]:
-        # A tool that returns a ToolMessage itself (deepagents' file tools) is
-        # recorded as a JSON envelope, rebuilt into a ToolMessage at replay.
+        # A tool that returns a ToolMessage itself (deepagents' file tools) or a
+        # LangGraph Command (a state update) is recorded as a JSON envelope,
+        # rebuilt into the same object at replay.
         message_reason: str | None = None
-        is_message = error is None and _tool_message.is_tool_message(value)
-        if is_message:
+        kind: str | None = None
+        if error is None and _tool_message.is_tool_message(value):
+            kind = _tool_message.KIND_TOOL_MESSAGE
             value, message_reason = _tool_message.encode_tool_message(value)
+        elif error is None and _command.is_command(value):
+            kind = _command.KIND_COMMAND
+            value, message_reason = _command.encode_command(
+                value, pending.call.function_call_id
+            )
         record = super().build_record(pending, nested, value=value, error=error)
         ext = record["extensions"]
-        if is_message:
-            ext[_tool_message.RESULT_KIND_EXT] = _tool_message.KIND_TOOL_MESSAGE
+        if kind is not None:
+            ext[_tool_message.RESULT_KIND_EXT] = kind
         if message_reason is not None:
             previous = ext.get(codec.NOT_SERVABLE_REASON_EXT)
             ext[codec.RESULT_CODEC_EXT] = codec.CODEC_NOT_SERVABLE
