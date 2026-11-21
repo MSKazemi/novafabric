@@ -359,10 +359,16 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             }
           },
-          "description": "ADR-0306 D1, under --permissive: recorded tool calls mocked replay does not serve by policy (LangChain tools not passed through wrap_tools), by surface; each one made ran live and is counted in tool_calls_live."
+          "description": "ADR-0306 r3 amendment, under --permissive: recorded observed tool calls (LangChain tools not passed through wrap_tools) mocked replay cannot serve, by surface; each one made was refused before its body ran, or ran live under --allow-unknown-mutation and is counted in tool_calls_live. Observed calls with a servable record are served and not listed. `reasons` (optional, additive) lists up to 5 distinct reasons."
         },
         "adapter_runs_expected": {
           "type": "integer",
@@ -435,10 +441,16 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             }
           },
-          "description": "On error.type ToolSurfaceNotServed: the recorded tool calls mocked replay does not serve by policy (LangChain tools not passed through wrap_tools), by surface."
+          "description": "On error.type ToolSurfaceNotServed: the recorded observed tool calls (LangChain tools not passed through wrap_tools) mocked replay cannot serve, by surface (ADR-0306 r3 amendment). `reasons` (optional, additive) lists up to 5 distinct reasons, e.g. payload capture off."
         },
         "check": {
           "type": "string",

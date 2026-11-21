@@ -24,22 +24,27 @@ longer forwards the submitting shell's environment (ADR-0270).
   Capsules whose calls are all served, and ADR-0305 transport records, are unaffected; Ollama requests that run no
   model (`/api/tags`, `/api/show`, `/api/version`, `/api/ps`) are not refused either (they run live and their
   connections are reported).
-- **LangChain / LangGraph tools you did not pass through `wrap_tools` are recorded, and mocked replay never runs
-  one uncounted** (experimental, ADR-0306 D1). Before, `nova capture` recorded no call of a plain `@tool` /
-  `StructuredTool` / `BaseTool` subclass, and a mocked replay ran their bodies live while reporting
-  `tool_calls_live: 0` and a `faithful` verdict (a real LangGraph agent read a log file and wrote a JSON
-  file during "mocked" replay). Now, with no code change, capture writes one `tool-calls.jsonl` record per tool
-  body execution (`langchain.tool` marker, `io.novafabric.langchain_tool_seam: observed`, `mutation_class:
-  unknown`, payloads at `forensic`/`air_gapped` only, always not-servable). Replay still serves only tools
-  passed through `wrap_tools` (unchanged default), so a strict `nova replay` of a capsule that records such
-  calls stops before anything runs: `status: aborted`, `error.type: ToolSurfaceNotServed` (count and tool
-  names in `error.tool_calls_not_served_by_surface`), exit 1, also under `--dry-run`, which lists each as
-  `[LIVE] LangChain tool call (<name>)`. `--permissive` runs them live: each is counted in `tool_calls_live`
-  and `replay_contract.tool_calls_live_by_tool`, a `tool_surface_not_served` warning heads the divergences,
-  and the CLI prints a `[LIVE] tool call (<surface>: <name>)` line per tool (for every surface). A capsule
-  without LangChain tool records is not refused, but every tool body that runs is counted the same way. A
-  `replay.yaml` `allow: false` override now stops such a tool before its body runs. Tools passed through
-  `wrap_tools` are unaffected (their records now also carry `io.novafabric.langchain_tool_seam: wrap_tools`).
+- **LangChain / LangGraph tools you did not pass through `wrap_tools` are recorded and served by mocked replay,
+  and never run uncounted** (experimental; ADR-0306 r3 amendment, owner decision 2026-11-21). Before, `nova
+  capture` recorded no call of a plain `@tool` / `StructuredTool` / `BaseTool` subclass, and a mocked replay ran
+  their bodies live while reporting `tool_calls_live: 0` and a `faithful` verdict (a real LangGraph agent read a
+  log file and wrote a JSON file during "mocked" replay). Now, with no code change, capture writes one
+  `tool-calls.jsonl` record per tool body execution (`langchain.tool` marker,
+  `io.novafabric.langchain_tool_seam: observed`, `mutation_class: unknown`), under the same payload rules as a
+  `wrap_tools` tool: the result is kept at `NOVA_CAPTURE_LEVEL=forensic`/`air_gapped` only. A strict mocked
+  replay **serves** a matched, servable record before the tool body runs, exactly like a `wrap_tools` tool
+  declared `unknown` (`tool_calls_mocked`). A capsule whose observed records cannot be served (captured at the
+  default level, so no result was kept; a recorded failure; a non-JSON result) is refused before anything runs:
+  `status: aborted`, `error.type: ToolSurfaceNotServed` (count, tool names and `reasons` in
+  `error.tool_calls_not_served_by_surface`; the message says to capture again), exit 1, also under `--dry-run`,
+  which lists each as `[NOT SERVED] LangChain tool call (<name>) -- … <reason>`. An unwrapped tool call that
+  matches no record (for instance in a capsule captured before this change, which has no tool records) is
+  refused before its body runs. Under `--permissive` such calls run live **only with `--allow-unknown-mutation`**
+  (as MCP calls): each is counted in `tool_calls_live` and `replay_contract.tool_calls_live_by_tool`, a
+  `tool_surface_not_served` warning heads the divergences, and the CLI prints a `[LIVE] tool call (<surface>:
+  <name>)` line per tool (for every surface). A `replay.yaml` `allow: false` override refuses an unservable such
+  call before its body runs. Tools passed through `wrap_tools` are unaffected (their records now also carry
+  `io.novafabric.langchain_tool_seam: wrap_tools`).
 
 ### Changed
 

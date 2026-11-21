@@ -1,5 +1,6 @@
 """LangChain / LangGraph tools NOT passed through ``wrap_tools``: capture records
-them, and mocked replay never runs one without counting it.
+them, mocked replay serves a recorded result by default, and never runs one
+without counting it.
 
 The defect this pins (c07 real-workload run, 2026-11-19, workload
 ``hpc_analyst``): a LangGraph agent with two plain ``@tool`` functions -- one
@@ -7,6 +8,13 @@ reads a log file, one writes a JSON diagnosis -- was captured with 3 model
 calls and **no** tool calls, and its mocked replay reported ``tool_calls_live:
 0`` and a ``faithful`` verdict while strace showed the replayed process read
 the log and wrote the diagnosis: the tool bodies ran live, unreported.
+
+Owner decision 2026-11-21 (ADR-0306 amendment r3): the recorded result of an
+observed (unwrapped) tool is **served** by default, matched one-to-one like a
+wrapped tool and gated as mutation class ``unknown``. A call with no servable
+record is refused in a strict replay -- up front when the capsule shows it
+(observed records without a payload), at the call otherwise -- and runs live
+under ``--permissive`` only with ``--allow-unknown-mutation``.
 
 The workload here has the same shape (``ToolNode`` over plain ``@tool``
 functions that read and write files), with an offline scripted model
@@ -285,6 +293,12 @@ def _live_by_tool(result: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _not_wrapped_legacy_reason() -> str:
+    from novafabric.capture import _tool_codec
+
+    return _tool_codec.LEGACY_NOT_WRAPPED_REASON
+
+
 # ── capture ──────────────────────────────────────────────────────────────────
 
 
@@ -306,22 +320,101 @@ def test_capture_records_langchain_tools_that_were_not_wrapped(
         assert ext["io.novafabric.langchain_tool_seam"] == "observed"
         assert rec["mutation_class"] == "unknown"
         assert ext["io.novafabric.langchain_tool_call_id"].startswith("call-")
-        # Never served: replay serves only tools declared through wrap_tools.
+        # Default capture level: no payload, so not servable -- and the reason
+        # says how to fix it (not "wrap_tools": an observed record is servable).
         assert ext["io.novafabric.result_codec"] == "not-servable"
-        assert "wrap_tools" in ext["io.novafabric.not_servable_reason"]
-    # Default capture level: digests only, no payload.
+        assert "NOVA_CAPTURE_LEVEL=forensic" in ext["io.novafabric.not_servable_reason"]
+        assert "wrap_tools" not in ext["io.novafabric.not_servable_reason"]
     read = next(r for r in records if r["tool_name"] == "read_log")
     assert read["arguments"] == {} and read["result"] is None
     assert read["extensions"]["io.novafabric.arguments_digest"]
 
 
-# ── replay: knowable up front ────────────────────────────────────────────────
+def test_a_forensic_capture_makes_an_unwrapped_tool_record_servable(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "forensic")
+    capsule, _ = env.capture(PLAN)
+    records = {r["tool_name"]: r for r in env.records(capsule)}
+    read = records["read_log"]
+    jsonschema.validate(read, _TOOL_SCHEMA)
+    ext = read["extensions"]
+    assert ext["io.novafabric.langchain_tool_seam"] == "observed"
+    assert ext["io.novafabric.result_codec"] == "json-v1"
+    assert "io.novafabric.not_servable_reason" not in ext
+    assert read["arguments"] == {"path": LOG}
+    assert read["result"]["value"].startswith("slurmstepd: error")
 
 
-def test_strict_replay_refuses_to_start_when_unwrapped_tool_calls_were_recorded(
+# ── replay: served by default ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("mode", ["invoke", "ainvoke"])
+def test_strict_replay_serves_recorded_unwrapped_tool_calls_and_never_runs_their_bodies(
+    env: Env, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "forensic")
+    monkeypatch.setenv("AGENT_MODE", mode)
+    plan = [*PLAN, _call("ping")] if mode == "ainvoke" else PLAN
+    capsule, captured = env.capture(plan)
+    monkeypatch.delenv("NOVA_CAPTURE_LEVEL")
+
+    result, observed, cli = env.replay(capsule)  # strict
+    assert cli.exit_code == 0, cli.output
+    assert result["status"] == "success", result.get("error")
+    assert env.side_effects == [], "an unwrapped tool body ran during mocked replay"
+    assert not (env.work / DIAGNOSIS).exists()
+    assert observed == captured  # the served results, by an oracle outside the capsule
+    n = len(plan)
+    assert result["tool_calls_mocked"] == n
+    assert result["tool_calls_live"] == 0
+    assert result["tool_calls_available"] == n
+    contract = result["replay_contract"]
+    assert contract["tool_calls_by_surface"][LC]["mocked"] == n
+    assert contract["tool_calls_refused"] == 0
+    assert contract["tool_calls_unconsumed"] == 0
+    assert contract["divergences"] == []
+    assert "tool_calls_not_served_by_surface" not in contract
+    assert result["queues_fully_consumed"] is True
+    live_check = next(c for c in result["fidelity"]["checks"] if c["name"] == "live_calls")
+    assert live_check["equal"] is True
+
+    # --dry-run predicts it: served, nothing refused.
+    dry, _, cli = env.replay(capsule, "--dry-run")
+    assert cli.exit_code == 0, cli.output
+    report = next(env.replays.glob(f"{dry['replay_id']}/dry_run_report.txt")).read_text()
+    assert not report.startswith("REFUSED:")
+    assert "[MOCK] read_log" in report
+    assert "[MOCK] write_diagnosis" in report
+
+
+def test_an_unmatched_unwrapped_call_is_refused_strict_before_its_body_runs(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "forensic")
+    capsule, _ = env.capture(PLAN)
+    monkeypatch.delenv("NOVA_CAPTURE_LEVEL")
+    # The replayed run asks for a log the capsule never recorded.
+    monkeypatch.setenv("AGENT_PLAN", json.dumps([_call("read_log", path="logs/other.err")]))
+    before = set(env.replays.iterdir()) if env.replays.exists() else set()
+    cli = runner.invoke(app, ["replay", str(capsule), "-o", str(env.replays)])
+    (replay_dir,) = set(env.replays.iterdir()) - before
+    result = yaml.safe_load((replay_dir / "replay_result.yaml").read_text())
+    jsonschema.validate(result, _RESULT_SCHEMA)
+    assert env.side_effects == [], "an unmatched unwrapped tool ran live in a strict replay"
+    assert cli.exit_code == 1, cli.output
+    assert result["status"] == "failure"
+    assert "tool_call_unmatched" in _kinds(result)
+    assert result["tool_calls_live"] == 0
+
+
+# ── replay: not servable, knowable up front ──────────────────────────────────
+
+
+def test_strict_replay_refuses_to_start_when_unwrapped_tool_results_were_not_recorded(
     env: Env,
 ) -> None:
-    capsule, _ = env.capture(PLAN)
+    capsule, _ = env.capture(PLAN)  # default level: no payloads
     result, observed, cli = env.replay(capsule)
     assert env.side_effects == [], "the workload must not run"
     assert not (env.work / DIAGNOSIS).exists()
@@ -332,8 +425,10 @@ def test_strict_replay_refuses_to_start_when_unwrapped_tool_calls_were_recorded(
     by_surface = result["error"]["tool_calls_not_served_by_surface"]
     assert by_surface[LC]["count"] == 2
     assert by_surface[LC]["tools"] == ["read_log", "write_diagnosis"]
-    assert "wrap_tools" in result["error"]["message"]
-    assert "--permissive" in result["error"]["message"]
+    assert any("NOVA_CAPTURE_LEVEL=forensic" in r for r in by_surface[LC]["reasons"])
+    message = result["error"]["message"]
+    assert "capture again" in message and "NOVA_CAPTURE_LEVEL=forensic" in message
+    assert "--permissive" in message and "--allow-unknown-mutation" in message
 
     # --dry-run predicts it exactly, naming each call.
     dry, _, cli = env.replay(capsule, "--dry-run")
@@ -341,13 +436,28 @@ def test_strict_replay_refuses_to_start_when_unwrapped_tool_calls_were_recorded(
     assert dry["error"]["type"] == "ToolSurfaceNotServed"
     report = next(env.replays.glob(f"{dry['replay_id']}/dry_run_report.txt")).read_text()
     assert report.startswith("REFUSED:")
-    assert "[LIVE] LangChain tool call (read_log)" in report
-    assert "[LIVE] LangChain tool call (write_diagnosis)" in report
+    assert "[NOT SERVED] LangChain tool call (read_log)" in report
+    assert "[NOT SERVED] LangChain tool call (write_diagnosis)" in report
+    assert "[DENY (replay refuses to start)] read_log" in report
 
 
-def test_permissive_runs_unwrapped_tools_live_and_counts_and_names_them(env: Env) -> None:
-    capsule, captured = env.capture(PLAN)
+def test_permissive_runs_unservable_unwrapped_tools_live_only_with_allow_unknown_mutation(
+    env: Env,
+) -> None:
+    capsule, captured = env.capture(PLAN)  # default level: not servable
+
+    # --permissive alone: the ladder does not permit `unknown`, so each call is
+    # refused before its body runs (ADR-0306 Q3, as MCP).
     result, observed, cli = env.replay(capsule, "--permissive")
+    assert env.side_effects == [], "--permissive alone ran an unwrapped tool live"
+    assert not (env.work / DIAGNOSIS).exists()
+    assert result["tool_calls_live"] == 0
+    assert result["replay_contract"]["tool_calls_refused"] >= 1
+    assert _kinds(result)[0] == "tool_surface_not_served"
+    assert any(o.get("error") for o in observed)
+
+    # With the ladder flag: live, counted and named.
+    result, observed, cli = env.replay(capsule, "--permissive", "--allow-unknown-mutation")
     assert observed == captured
     # ToolNode runs the two calls of one model turn in parallel: any order.
     assert sorted(env.side_effects) == [f"read_log {LOG}", "write_diagnosis 42819"]
@@ -355,12 +465,10 @@ def test_permissive_runs_unwrapped_tools_live_and_counts_and_names_them(env: Env
     assert cli.exit_code == 0, cli.output
     assert result["tool_calls_live"] == 2
     assert result["tool_calls_mocked"] == 0
-    assert result["tool_calls_available"] == 0  # never served, so never available
+    assert result["tool_calls_available"] == 0
     contract = result["replay_contract"]
     assert contract["tool_calls_by_surface"][LC]["live"] == 2
     assert _live_by_tool(result) == {"read_log": 1, "write_diagnosis": 1}
-    # The recorded calls were requested (consumed), so nothing is left over.
-    assert contract["tool_calls_unconsumed"] == 0
     assert result["queues_fully_consumed"] is True
     assert _kinds(result)[0] == "tool_surface_not_served"
     assert result["fidelity"]["verdict"] != "faithful"
@@ -368,16 +476,64 @@ def test_permissive_runs_unwrapped_tools_live_and_counts_and_names_them(env: Env
     assert "[LIVE] tool call (langchain_core.tools.BaseTool: write_diagnosis)" in cli.output
 
 
+# ── replay: capsules written before this change ──────────────────────────────
+
+
+def test_an_r2_observed_record_with_its_payload_is_served(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-2 capture marked every observed record not-servable with exactly the
+    "not passed through wrap_tools" reason, even at ``forensic`` with the value
+    kept: that reason was policy, not data, so the record is servable now."""
+    monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "forensic")
+    capsule, captured = env.capture(PLAN)
+    monkeypatch.delenv("NOVA_CAPTURE_LEVEL")
+    records = env.records(capsule)
+    for rec in records:
+        rec["extensions"]["io.novafabric.result_codec"] = "not-servable"
+        rec["extensions"]["io.novafabric.not_servable_reason"] = _not_wrapped_legacy_reason()
+    env.write_records(capsule, records)
+
+    result, observed, cli = env.replay(capsule)
+    assert cli.exit_code == 0, cli.output
+    assert env.side_effects == []
+    assert observed == captured
+    assert result["tool_calls_mocked"] == 2
+
+
+def test_an_r2_observed_record_without_payload_is_refused_and_says_capture_again(
+    env: Env,
+) -> None:
+    from novafabric.capture.hooks._python_tool import PAYLOADS_OFF_REASON
+
+    capsule, _ = env.capture(PLAN)
+    records = env.records(capsule)
+    for rec in records:
+        rec["extensions"]["io.novafabric.not_servable_reason"] = (
+            f"{_not_wrapped_legacy_reason()}; {PAYLOADS_OFF_REASON}"
+        )
+    env.write_records(capsule, records)
+
+    result, _, cli = env.replay(capsule)
+    assert cli.exit_code == 1
+    assert result["error"]["type"] == "ToolSurfaceNotServed"
+    reasons = result["error"]["tool_calls_not_served_by_surface"][LC]["reasons"]
+    assert reasons == [PAYLOADS_OFF_REASON]  # the legacy policy text is gone
+    assert "capture again" in result["error"]["message"]
+
+
 # ── replay: not knowable up front (the c07 case) ─────────────────────────────
 
 
 @pytest.mark.parametrize("mode", ["invoke", "ainvoke"])
-def test_a_capsule_without_tool_records_still_counts_every_live_tool_body(
+def test_a_capsule_without_tool_records_refuses_strict_and_counts_permissive(
     env: Env, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
     """The hpc_analyst shape: model calls recorded and served, tool calls not
-    recorded (a capsule from before this capture existed). The tool bodies run
-    live; the report must say so."""
+    recorded (a capsule from before the observer existed). Nothing tells the
+    replay up front; a strict replay refuses each tool call at the call (before
+    its body), and ``--permissive --allow-unknown-mutation`` runs them live,
+    counted and named."""
     pytest.importorskip("openai")
     pytest.importorskip("httpx")
     from _mocked_replay_agent import openai_body
@@ -396,11 +552,18 @@ def test_a_capsule_without_tool_records_still_counts_every_live_tool_body(
     env.write_records(capsule, [])  # as the c07 capsule: no tool records
 
     result, observed, cli = env.replay(capsule)  # strict, AGENT_CANNED unset
+    assert env.side_effects == [], "a strict replay ran an unrecorded tool body"
+    assert not (env.work / DIAGNOSIS).exists()
+    assert cli.exit_code == 1, cli.output
+    assert result["status"] == "failure"
+    assert "tool_call_unmatched" in _kinds(result)
+    assert result["tool_calls_live"] == 0
+    assert result["fidelity"]["verdict"] != "faithful"
+
+    result, observed, cli = env.replay(capsule, "--permissive", "--allow-unknown-mutation")
     assert observed == captured
     assert result["model_calls_mocked"] == 3
     assert env.side_effects == [f"read_log {LOG}", "write_diagnosis 42819"]
-    assert (env.work / DIAGNOSIS).exists()
-    # Before the fix: tool_calls_live 0 and a faithful verdict.
     assert result["tool_calls_live"] == 2, result
     assert _live_by_tool(result) == {"read_log": 1, "write_diagnosis": 1}
     assert result["fidelity"]["verdict"] != "faithful"
@@ -410,10 +573,10 @@ def test_a_capsule_without_tool_records_still_counts_every_live_tool_body(
     assert "2 live" in cli.output
 
 
-# ── wrapped tools keep being served; one record per call ─────────────────────
+# ── wrapped and unwrapped tools together; one record per call ────────────────
 
 
-def test_wrapped_tools_are_served_while_unwrapped_ones_run_live_and_are_counted(
+def test_wrapped_and_unwrapped_tools_are_both_served_one_record_per_call(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "forensic")
@@ -427,12 +590,11 @@ def test_wrapped_tools_are_served_while_unwrapped_ones_run_live_and_are_counted(
              for r in records}
     assert seams == {"lookup": "wrap_tools", "read_log": "observed"}
 
-    result, observed, _ = env.replay(capsule, "--permissive")
+    result, observed, _ = env.replay(capsule)
     assert observed == captured
-    assert env.side_effects == [f"read_log {LOG}"], "the wrapped tool's body ran"
-    assert result["tool_calls_mocked"] == 1
-    assert result["tool_calls_live"] == 1
-    assert _live_by_tool(result) == {"read_log": 1}
+    assert env.side_effects == [], "a tool body ran during mocked replay"
+    assert result["tool_calls_mocked"] == 2
+    assert result["tool_calls_live"] == 0
     assert result["queues_fully_consumed"] is True
 
 

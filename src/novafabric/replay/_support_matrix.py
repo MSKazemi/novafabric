@@ -631,9 +631,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "not); a call that raised or made nested model/tool calls is not served; an "
             "unmatched or unservable call is refused (`--permissive` runs it live only "
             "if a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
-            "`tool_overrides` enforced; only tools passed through `wrap_tools` are "
-            "served (other `BaseTool`s: next row; `langchain_mcp_adapters` tools are "
-            "left to the MCP surface); `nova capture python …` capsules, and LangGraph "
+            "`tool_overrides` enforced; tools not passed through `wrap_tools`: next "
+            "row (`langchain_mcp_adapters` tools are left to the MCP surface); "
+            "`nova capture python …` capsules, and LangGraph "
             "`wrap()` capsules re-run from their recorded process invocation when every "
             "guard passes (ADR-0306 Q7, experimental)"
         ),
@@ -662,35 +662,47 @@ ROWS: tuple[SurfaceRow, ...] = (
             "recorded automatically when `langchain_core` is imported (no code "
             "change): one `transport: python` record per tool body execution "
             "(`langchain.tool` marker, `io.novafabric.langchain_tool_seam: observed`, "
-            "`mutation_class: unknown`), same payload rules as `wrap_tools` (values at "
-            "`forensic`/`air_gapped` only, digests otherwise), always marked "
-            "not-servable"
+            "`mutation_class: unknown`), same payload and codec rules as `wrap_tools` "
+            "(values at `forensic`/`air_gapped` only, digests otherwise)"
         ),
-        replay="refused",
+        replay="served",
         replay_note=(
-            "**never served** (ADR-0306 D1 serves declared tools only): a capsule that "
-            "records such calls makes a strict replay **refuse to start** "
-            "(`ToolSurfaceNotServed`, exit 1, also under `--dry-run`, which lists each "
-            "as `[LIVE] LangChain tool call`); under `--permissive`, and for a capsule "
-            "that recorded none, each tool body that runs is **live** and counted in "
-            "`tool_calls_live` and `replay_contract.tool_calls_live_by_tool` (the CLI "
-            "prints a `[LIVE] tool call` line per tool), so the fidelity verdict is "
-            "never `faithful`; a `replay.yaml` `allow: false` override refuses the call "
-            "before its body runs; the seam patches `BaseTool.run`/`arun` and the class "
-            "defining `_run`/`_arun` -- **not a LangChain extension point**, checked "
-            "against `langchain-core` 1.8.3 and `langgraph` 1.2.23 only"
+            "**served by default** when the record holds a servable result (ADR-0306 "
+            "r3 amendment, owner decision 2026-11-21; round 2 never served these): the "
+            "same one-to-one matcher, codec and refusals as a `wrap_tools` tool "
+            "declared `unknown` -- the body never runs; a capsule whose observed "
+            "records cannot be served (captured below `forensic`, so no result was "
+            "kept; a failure; a non-JSON result) makes a strict replay **refuse to "
+            "start** (`ToolSurfaceNotServed`, exit 1, also under `--dry-run`, which "
+            "lists each as `[NOT SERVED] LangChain tool call` with its reason, and "
+            "says to capture again); an unmatched call (e.g. a capsule that recorded "
+            "no tool calls) is refused before its body runs; under `--permissive` an "
+            "unservable or unmatched call runs **live** only with "
+            "`--allow-unknown-mutation`, counted in `tool_calls_live` and "
+            "`replay_contract.tool_calls_live_by_tool`; a round-2 observed record "
+            "that kept its value is served without a re-capture; `allow: false` "
+            "refuses an unservable call before its body runs; the seam patches "
+            "`BaseTool.run`/`arun` and the class defining `_run`/`_arun` -- **not a "
+            "LangChain extension point**, checked against `langchain-core` 1.8.3 and "
+            "`langgraph` 1.2.23 only"
         ),
         streaming="— (tools are not streamed)",
-        asynchronous="counted (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph)",
+        asynchronous="served (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph)",
         status="experimental",
         evidence=(
             f"{_LC_OBSERVED}::test_capture_records_langchain_tools_that_were_not_wrapped",
-            f"{_LC_OBSERVED}::test_strict_replay_refuses_to_start_when_unwrapped_tool_calls_were_recorded",
-            f"{_LC_OBSERVED}::test_permissive_runs_unwrapped_tools_live_and_counts_and_names_them",
-            f"{_LC_OBSERVED}::test_a_capsule_without_tool_records_still_counts_every_live_tool_body",
-            f"{_LC_OBSERVED}::test_wrapped_tools_are_served_while_unwrapped_ones_run_live_and_are_counted",
+            f"{_LC_OBSERVED}::test_a_forensic_capture_makes_an_unwrapped_tool_record_servable",
+            f"{_LC_OBSERVED}::test_strict_replay_serves_recorded_unwrapped_tool_calls_and_never_runs_their_bodies",
+            f"{_LC_OBSERVED}::test_an_unmatched_unwrapped_call_is_refused_strict_before_its_body_runs",
+            f"{_LC_OBSERVED}::test_strict_replay_refuses_to_start_when_unwrapped_tool_results_were_not_recorded",
+            f"{_LC_OBSERVED}::test_permissive_runs_unservable_unwrapped_tools_live_only_with_allow_unknown_mutation",
+            f"{_LC_OBSERVED}::test_an_r2_observed_record_with_its_payload_is_served",
+            f"{_LC_OBSERVED}::test_a_capsule_without_tool_records_refuses_strict_and_counts_permissive",
+            f"{_LC_OBSERVED}::test_wrapped_and_unwrapped_tools_are_both_served_one_record_per_call",
             f"{_LC_OBSERVED}::test_an_allow_false_override_stops_an_unwrapped_tool_before_its_body_runs",
+            f"{_LG_ADAPTER}::test_an_unwrapped_tool_in_an_adapter_capsule_is_served_strict",
         ),
+        servers=("langchain_core.tools.BaseTool",),
     ),
     SurfaceRow(
         surface="MCP session set-up (server start, `initialize`, `list_tools`)",

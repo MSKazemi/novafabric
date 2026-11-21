@@ -146,7 +146,8 @@ def replay_cmd(
                 "model surfaces run LIVE, an unmatched intercepted tool call runs "
                 "live only if an --allow-* flag permits its mutation class (MCP: "
                 "--allow-unknown-mutation; record.tool, Google ADK, OpenAI Agents "
-                "and LangChain tools: their declared class), never "
+                "and LangChain tools: their declared class, LangChain tools not "
+                "passed through wrap_tools: unknown), never "
                 "if replay.yaml says `allow: false`, and unconsumed recordings are "
                 "only reported. Default is fail-closed."
             ),
@@ -227,11 +228,14 @@ def replay_cmd(
     ModelSurfaceNotServable, exit 1, also under --dry-run, which lists each as
     [LIVE] model call); --permissive runs it and reports model_calls_not_servable.
     LangChain tools NOT passed through wrap_tools are recorded by nova capture
-    but never served: a capsule that records them is refused up front
-    (error.type ToolSurfaceNotServed, exit 1, also under --dry-run, which lists
-    each as [LIVE] LangChain tool call); --permissive runs them live, and every
-    tool body that runs live is counted in tool_calls_live and named in a
-    [LIVE] tool call line (experimental).
+    and served like wrapped ones declared unknown when the capsule holds their
+    results (capture level forensic); a capsule whose recorded ones cannot be
+    served is refused up front (error.type ToolSurfaceNotServed, exit 1, also
+    under --dry-run, which lists each as [NOT SERVED] LangChain tool call), and
+    one with no matching record is refused at the call; --permissive runs them
+    live only with --allow-unknown-mutation, and every tool body that runs live
+    is counted in tool_calls_live and named in a [LIVE] tool call line
+    (experimental).
     Network is observed, not blocked, in every Python process of the replayed
     tree (children that drop the replay's environment, such as MCP stdio
     servers, are observed too); a child that is not Python is counted

@@ -245,8 +245,8 @@ def test_a_langgraph_adapter_capsule_records_its_process_invocation(bench: Bench
 def test_mocked_replay_reruns_the_script_and_serves_its_model_calls(
     bench: Bench, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The tool goes through wrap_tools: an unwrapped one is refused by a strict
-    # replay (ADR-0306 D1, see the unwrapped-tool test below).
+    # The tool goes through wrap_tools here; the unwrapped tests below cover the
+    # observed path (served when recorded, ADR-0306 r3 amendment).
     monkeypatch.setenv("AGENT_WRAP_TOOLS", "1")
     (capsule,) = bench.capture()
     captured = bench.answers()
@@ -356,15 +356,42 @@ def test_a_second_adapter_run_in_the_replayed_process_diverges(
     assert bench.capsule_count() == 2  # no capsule written during the replay
 
 
-def test_an_unwrapped_tool_in_an_adapter_capsule_is_refused_strict_and_counted_permissive(
+def test_an_unwrapped_tool_in_an_adapter_capsule_is_served_strict(
     bench: Bench, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """ADR-0306 Q7 meets ADR-0306 D1: the adapter capsule records the unwrapped
-    ``read_snippet`` call as observed; a strict replay refuses before re-running the
-    script, and ``--permissive`` re-runs it with the tool body live and counted, so the
-    verdict is not faithful."""
+    """ADR-0306 Q7 meets the ADR-0306 r3 amendment: the adapter capsule records the
+    unwrapped ``read_snippet`` call as observed, with its result (``forensic``); a
+    strict replay re-runs the script and serves it -- the body never runs."""
     side = tmp_path / "side.log"
     monkeypatch.setenv("AGENT_SIDE", str(side))
+    (capsule,) = bench.capture()
+    captured = bench.answers()
+    assert side.read_text().splitlines() == ["read snippet_a.py"]
+    side.unlink()
+
+    result, replayed = bench.replay(capsule)
+    assert result["status"] == "success", result.get("error")
+    assert result["_cli_exit"] == 0
+    assert replayed == captured
+    assert not side.exists(), "the unwrapped tool body ran during mocked replay"
+    assert result["tool_calls_mocked"] == 1
+    assert result["tool_calls_live"] == 0
+    assert result["model_calls_mocked"] == 2
+    assert result["queues_fully_consumed"] is True
+    assert _check(result, "tool_call_sequence")["equal"] is True
+    assert _check(result, "live_calls")["equal"] is True
+
+
+def test_an_unwrapped_tool_without_its_result_is_refused_strict_and_runs_with_the_ladder(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Captured below ``forensic``, the observed record holds no result: a strict
+    replay refuses before re-running the script (``ToolSurfaceNotServed``), and
+    ``--permissive --allow-unknown-mutation`` re-runs it with the tool body live and
+    counted, so the verdict is not faithful."""
+    side = tmp_path / "side.log"
+    monkeypatch.setenv("AGENT_SIDE", str(side))
+    monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "standard")
     (capsule,) = bench.capture()
     captured = bench.answers()
     side.unlink()
@@ -372,10 +399,11 @@ def test_an_unwrapped_tool_in_an_adapter_capsule_is_refused_strict_and_counted_p
     result, replayed = bench.replay(capsule)
     assert result["status"] == "aborted"
     assert result["error"]["type"] == "ToolSurfaceNotServed"
+    assert "NOVA_CAPTURE_LEVEL=forensic" in result["error"]["message"]
     assert replayed is None
     assert not side.exists(), "the strict refusal let the script run"
 
-    result, replayed = bench.replay(capsule, "--permissive")
+    result, replayed = bench.replay(capsule, "--permissive", "--allow-unknown-mutation")
     assert replayed == captured
     assert side.read_text().splitlines() == ["read snippet_a.py"]
     assert result["tool_calls_live"] == 1

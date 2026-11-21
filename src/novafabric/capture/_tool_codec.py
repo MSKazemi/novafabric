@@ -33,7 +33,9 @@ TOOL_SURFACE_OPENAI_AGENTS_TOOL = "openai.agents.tool"
 #: -- or by the seam's observer, for a tool that was not wrapped.
 TOOL_SURFACE_LANGCHAIN_TOOL = "langchain.tool"
 #: How a LangChain record was captured: ``"wrap_tools"`` (a declared tool) or
-#: ``"observed"`` (not wrapped: recorded, never served). Absent on older records.
+#: ``"observed"`` (not wrapped: recorded by the seam's observer and, since the
+#: ADR-0306 r3 amendment, served like a wrapped record, gated as mutation class
+#: ``unknown``). Absent on older records.
 LANGCHAIN_SEAM_EXT = "io.novafabric.langchain_tool_seam"
 LANGCHAIN_SEAM_WRAPPED = "wrap_tools"
 LANGCHAIN_SEAM_OBSERVED = "observed"
@@ -210,6 +212,20 @@ def legacy_nested_reason(nested: int) -> str:
         "serving it would leave them unrequested (nested boundaries are "
         "served from slice 3)"
     )
+
+
+#: The not-servable reason round-2 capture wrote on every *observed* LangChain
+#: record (ADR-0306 r2 amendment, D-LC2), alone or followed by ``"; "`` and the
+#: record's real reasons. It was policy ("declared tools only"), not data: the
+#: ADR-0306 r3 amendment serves observed records, so replay strips this text
+#: (``_contract.not_servable_reason``) and a record whose only reason it was is
+#: servable without a re-capture. Do not change the text.
+LEGACY_NOT_WRAPPED_REASON = (
+    "the LangChain tool was not passed through "
+    "novafabric.adapters.langchain_tools.wrap_tools: mocked replay serves only "
+    "declared tools (ADR-0306 D1) and re-executes this one live, counted in "
+    "tool_calls_live"
+)
 
 
 def echo_digest(value: Any) -> str:

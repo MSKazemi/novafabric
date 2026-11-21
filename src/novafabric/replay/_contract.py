@@ -346,9 +346,33 @@ def not_servable_reason(record: dict[str, Any]) -> str | None:
             return "the record holds no result value"
         return None
     reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
+    if is_observed_tool_record(record):
+        reason = _without_legacy_not_wrapped(reason)
+        if reason is None:
+            # Round 2's only obstacle was policy; the value was kept.
+            if record.get("status", "success") == "success":
+                result = record.get("result")
+                if not (isinstance(result, dict) and "value" in result):
+                    return "the record holds no result value"
+            return None
     if _only_nested(record, ext, reason):
         return None
     return str(reason) if reason else "the record was not marked servable at capture"
+
+
+def _without_legacy_not_wrapped(reason: Any) -> str | None:
+    """*reason* without round 2's "not passed through wrap_tools" policy text
+    (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``); ``None`` when nothing else is left.
+
+    Only applied to observed LangChain records (ADR-0306 r3 amendment)."""
+    if not isinstance(reason, str) or not reason:
+        return None if reason in (None, "") else str(reason)
+    legacy = _tool_codec.LEGACY_NOT_WRAPPED_REASON
+    if reason == legacy:
+        return None
+    if reason.startswith(legacy + "; "):
+        return reason[len(legacy) + 2:] or None
+    return reason
 
 
 def _only_nested(record: dict[str, Any], ext: dict[str, Any], reason: Any) -> bool:
@@ -403,10 +427,9 @@ def nested_boundary_ids(boundary_id: str, tool_calls: list[dict[str, Any]]) -> s
     return ids
 
 
-def is_not_served_tool_record(record: dict[str, Any]) -> bool:
-    """A recorded call mocked replay does not serve **by policy**: a LangChain
-    tool the workload did not pass through ``wrap_tools`` (recorded by the
-    seam's observer). Replayed, it runs live."""
+def is_observed_tool_record(record: dict[str, Any]) -> bool:
+    """A LangChain record of a tool the workload did not pass through
+    ``wrap_tools`` (recorded by the seam's observer)."""
     if tool_surface(record) != TOOL_SURFACE_LANGCHAIN:
         return False
     ext = record.get("extensions")
@@ -415,34 +438,103 @@ def is_not_served_tool_record(record: dict[str, Any]) -> bool:
     )
 
 
+def upgrade_legacy_observed_record(record: dict[str, Any]) -> dict[str, Any]:
+    """*record* as current capture would write it, when it is a round-2 observed
+    record whose only not-servable reason was the "not passed through
+    wrap_tools" policy (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``) and whose
+    value was kept: a copy marked ``json-v1``. Any other record is returned
+    unchanged (the same object)."""
+    if not is_observed_tool_record(record):
+        return record
+    ext = record.get("extensions")
+    if not isinstance(ext, dict) or ext.get(_tool_codec.RESULT_CODEC_EXT) == _tool_codec.CODEC_JSON:
+        return record
+    reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
+    if reason != _tool_codec.LEGACY_NOT_WRAPPED_REASON or not_servable_reason(record) is not None:
+        return record
+    upgraded_ext = {k: v for k, v in ext.items() if k != _tool_codec.NOT_SERVABLE_REASON_EXT}
+    upgraded_ext[_tool_codec.RESULT_CODEC_EXT] = _tool_codec.CODEC_JSON
+    return {**record, "extensions": upgraded_ext}
+
+
+def observed_not_served_reason(record: dict[str, Any]) -> str | None:
+    """Why mocked replay cannot serve this *observed* record, else ``None``.
+
+    Also ``None`` for any record that is not observed. A recorded failure is
+    never served (the LangChain server's rule)."""
+    if not is_observed_tool_record(record):
+        return None
+    reason = not_servable_reason(record)
+    if reason is None and record.get("status", "success") != "success":
+        reason = "the record is a failure, and LangChain tool failures are not served"
+    return reason
+
+
+def is_not_served_tool_record(record: dict[str, Any]) -> bool:
+    """An observed LangChain record (a tool not passed through ``wrap_tools``)
+    mocked replay cannot serve -- the capsule shows, before anything runs, that
+    the call would be refused (strict) or need ``--allow-unknown-mutation``
+    (``--permissive``). Observed records that *can* be served are served by
+    default (ADR-0306 r3 amendment) and are not "not served"."""
+    return observed_not_served_reason(record) is not None
+
+
 #: Most tool names listed per surface in ``tool_calls_not_served_by_surface``.
 MAX_LISTED_NOT_SERVED_TOOLS = 10
+#: Most distinct reasons listed per surface there.
+MAX_LISTED_NOT_SERVED_REASONS = 5
 
 
 def not_served_tool_calls(tool_calls: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Recorded calls replay does not serve by policy, as ``{surface: {"count",
-    "tools"}}`` (distinct tool names, sorted, at most
-    :data:`MAX_LISTED_NOT_SERVED_TOOLS`); empty when there are none."""
+    """Recorded observed calls mocked replay cannot serve, as ``{surface:
+    {"count", "tools", "reasons"}}`` (distinct tool names, sorted, at most
+    :data:`MAX_LISTED_NOT_SERVED_TOOLS`; distinct reasons in first-seen order,
+    at most :data:`MAX_LISTED_NOT_SERVED_REASONS`); empty when there are none."""
     counts: dict[str, int] = {}
     names: dict[str, set[str]] = {}
+    reasons: dict[str, list[str]] = {}
     for record in tool_calls:
-        if not isinstance(record, dict) or not is_not_served_tool_record(record):
+        if not isinstance(record, dict):
+            continue
+        reason = observed_not_served_reason(record)
+        if reason is None:
             continue
         surface = TOOL_SURFACE_LANGCHAIN
         counts[surface] = counts.get(surface, 0) + 1
         names.setdefault(surface, set()).add(str(record.get("tool_name")))
+        listed = reasons.setdefault(surface, [])
+        if reason not in listed:
+            listed.append(reason)
     return {
-        surface: {"count": n, "tools": sorted(names[surface])[:MAX_LISTED_NOT_SERVED_TOOLS]}
+        surface: {
+            "count": n,
+            "tools": sorted(names[surface])[:MAX_LISTED_NOT_SERVED_TOOLS],
+            "reasons": reasons[surface][:MAX_LISTED_NOT_SERVED_REASONS],
+        }
         for surface, n in counts.items()
     }
 
 
+def not_served_dry_run_lines(tool_calls: list[dict[str, Any]]) -> list[str]:
+    """One ``--dry-run`` line per recorded observed call replay cannot serve."""
+    lines = []
+    for record in tool_calls:
+        reason = observed_not_served_reason(record) if isinstance(record, dict) else None
+        if reason is not None:
+            lines.append(
+                f"  [NOT SERVED] LangChain tool call ({record.get('tool_name')}) -- "
+                f"observed (not passed through wrap_tools): {reason}\n"
+            )
+    return lines
+
+
 def describe_not_served(by_surface: dict[str, dict[str, Any]]) -> str:
-    """``LangChain tools not passed through wrap_tools: 2 (read_log, write_diagnosis)``."""
+    """``observed LangChain tool calls (...) without a servable record: 2 (read_log, ...)``."""
     parts = []
     for surface, entry in sorted(by_surface.items()):
         what = (
-            "LangChain tools not passed through wrap_tools"
+            "observed LangChain tool calls (not passed through wrap_tools) without a "
+            "servable record"
             if surface == TOOL_SURFACE_LANGCHAIN else surface
         )
         tools = ", ".join(entry.get("tools") or [])
