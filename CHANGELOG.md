@@ -66,6 +66,14 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed
 
+- **The fidelity verdict compares tool calls per model turn** (experimental, ADR-0321). Before, `tool_call_sequence`
+  needed the exact recorded order. Parallel tool calls that answer one model response can be served in another
+  order, so a replay with every call served was `diverged`; a real MCP workload whose model asked for three, then
+  four, calls at once reported "first difference at position 2". Now the calls between two consecutive model calls
+  are compared as a multiset, and turns stay in strict order: a call in another turn is still a difference. The
+  check gains `comparison: per-model-turn-multiset`, and its `note` says when the order within a turn differed.
+  If the recording gives no usable turn boundaries (a missing `started_at`, overlapping model calls), the check
+  falls back to strict order (`comparison: strict-order`).
 - **Adapters write no capsule inside a mocked replay** (ADR-0306 open question 7). A framework adapter or the
   `@agent` decorator running in a process that `nova replay --mode mocked` (or `intervention`) re-runs — including
   a `nova capture` workload that also uses an adapter — used to open a new capsule in the live capsule home on
@@ -74,6 +82,17 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **The replay report lists each network connection attempt's outcome** (works today). New in the replay contract:
+  `replay_contract.network_connect_outcomes`, per `host:port`, with `attempts` and their `outcomes` (`ok`,
+  `in_progress`, `timeout`, `error`, `unknown` or an errno name such as `ENETUNREACH`). Python children that report
+  in are covered too. The docs now say exactly what `network_connections_live` counts: every `connect` /
+  `connect_ex` call on an IPv4/IPv6 Python socket, before the call, whatever its outcome. A syscall tracer counts
+  more. In one MCP workload `strace -f` saw 9 `connect()` calls where the report said 1: eight were glibc
+  `getaddrinfo` ordering the host's addresses on datagram sockets, which sends no packet.
+- **`--hermetic` platform note** (docs). On Ubuntu 23.10 and later, AppArmor's
+  `apparmor_restrict_unprivileged_userns=1` stops bwrap from creating user namespaces. `--hermetic` is then refused
+  with exit 5 and never downgraded. `docs/architecture/replay-modes.md` shows the AppArmor profile an administrator
+  can add to allow it.
 - **Framework-adapter capsules can be replayed (experimental, ADR-0306 open question 7, issue #56).** Every
   framework adapter (LangGraph, Google ADK, OpenAI Agents SDK, A2A and the shared core used by CrewAI, AutoGen,
   DSPy, LlamaIndex, smolagents, Haystack, Pydantic AI and Bedrock AgentCore) and the `@agent` decorator now record

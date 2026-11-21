@@ -1321,7 +1321,9 @@ count covers every observed Python process of the replayed tree
 (`network_observation_scope: python-process`): the replayed process and its Python
 children, including those whose environment drops the replay's variables (an MCP stdio
 server started by `mcp`'s `stdio_client`); `network_connections_live_children` is their
-part. Processes started (`ssh`, `curl`, `git`, …) are counted in
+part. The count is of `connect`/`connect_ex` *attempts*, whatever their outcome;
+`replay_contract.network_connect_outcomes` lists, per destination, how each attempt ended
+(`ok`, `in_progress`, `timeout`, `error`, `unknown`, or an errno name such as `ENETUNREACH`). Processes started (`ssh`, `curl`, `git`, …) are counted in
 `replay_contract.child_processes_spawned` and named in `child_processes_argv0`; those that
 did not report their own connections are counted in `child_processes_unobserved`, and
 `network_observation_coverage: partial` marks the connection count as a lower bound —
