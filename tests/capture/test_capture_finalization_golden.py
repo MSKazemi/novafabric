@@ -58,6 +58,8 @@ EXPECTED_BOUND_FILES = {
     "outputs/stdout.txt",
     "redaction-proof.json",
     "replay.yaml",
+    # 2026-11-21: what a strict mocked replay would do, classified at capture.
+    "replayability.json",
     "tool-calls.jsonl",
     "trace.jsonl",
 }

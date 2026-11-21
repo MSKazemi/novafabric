@@ -166,6 +166,52 @@ replay. Before ADR-0319 such a record was ignored and the replay reported
 "model calls: 0 of 0 served" and `success` while the call ran live.
 `intervention` does not apply this check.
 
+## Replayability at capture time (experimental)
+
+Every capsule written through the shared finalization path — `nova capture`, the
+framework adapters, the `@agent` decorator, OpenTelemetry import — now carries
+`replayability.json`: what a **strict `mocked` replay** of it would do, decided when
+the capsule is written instead of when it is first replayed. It is computed by
+`replay/_replayability_summary.py:assess` from the redacted streams, with the same
+functions the replay engine and `--dry-run` use (`_servability.classify`, the tool
+predicates of `_contract`, `_replayability.require_reexecution_plan`,
+`PolicyEvaluator.unenforceable_overrides`), so it follows any change to those rules. A
+test runs the dry run and the summary over the same capsules and requires the same
+refusal, the same unservable-model-call count and the same per-tool decision.
+
+| Field | Meaning |
+|---|---|
+| `replayable` | `full` — a strict replay would start and serve every recorded call; `partial` — it would refuse (an unservable surface) or start with calls it does not serve; `none` — the capsule cannot be re-run at all (`CapsuleNotReplayable`) |
+| `strict_mocked` | `start` or `refuse` |
+| `refusal` | the `error` a strict mocked replay records (`type`, `message`, and `guard` / `model_calls_not_servable_by_system` / `tool_calls_not_served_by_surface` as the replay writes them), or `null` |
+| `reexecution` | `reexecutable`, `source` (`command` or `process_invocation`) and the refusing `guard` |
+| `model_calls` / `tool_calls` | counts: `recorded`, `servable`, `not_servable`, plus `live` (model-host metadata calls), `observed_only` and `not_intercepted` (tools) |
+| `reasons` | one entry per reason, in the order the replay checks them, each with `code`, `count`, `refuses_strict`, a `summary` and a `detail` |
+
+Reason codes: `capsule_not_reexecutable` (with `guard`), `model_surface_not_servable`
+(with `by_system`), `tool_surface_not_served` (LangChain tools observed but not passed
+through `wrap_tools`), `tool_override_unenforceable` — these four refuse a strict replay
+before anything runs — and `tool_result_not_servable` (with `cause:
+payload_not_recorded` when payload capture was off, e.g. `record.tool` at the default
+`standard` level, else `other`; a strict replay starts and refuses the call when it is
+made), `tool_not_intercepted` (a tool on a transport replay does not intercept; it runs
+live), `model_metadata_call_live` (an Ollama `/api/tags`-style or Bedrock control-plane
+request; it runs live).
+
+`nova capture` prints one line from it after `Capsule written`, for example
+`! replay: strict mocked replay would refuse -- 3 model calls not servable (mistral: 3
+(api.mistral.ai)) (see nova replay --dry-run)`, and `nova capture --require-replayable`
+exits `4` unless `replayable` is `full` (the workload runs and the capsule is written
+first; see the [CLI reference](../cli-reference.md#nova-capture-cmd)).
+
+Limits: the summary is a prediction by the version that captured the capsule — `nova
+replay` never reads it and classifies the capsule again, so a later version that serves
+more surfaces is not bound by it. It cannot predict calls the capture did not record
+(an uninstrumented client, a non-Python child, raw sockets); those show up only at
+replay, as reported network connections. A capsule written before this change has no
+`replayability.json` (unknown); it replays exactly as before. Computing the summary
+is fail-open: on an error the file is not written and the capture is not affected.
+
 ## The mocked-replay contract (ADR-0300, ADR-0304)
 
 `replay/_contract.py` is the one place that decides what the dispatchers may

@@ -93,6 +93,19 @@ longer forwards the submitting shell's environment (ADR-0270).
   `apparmor_restrict_unprivileged_userns=1` stops bwrap from creating user namespaces. `--hermetic` is then refused
   with exit 5 and never downgraded. `docs/architecture/replay-modes.md` shows the AppArmor profile an administrator
   can add to allow it.
+- **Capsules say at capture time whether they can be replayed** (experimental). Before, a user learned that a
+  capsule would not replay only by replaying it (`ModelSurfaceNotServable`, `ToolSurfaceNotServed`,
+  `CapsuleNotReplayable`, or a `tool_result_not_servable` divergence mid-run). Every capsule finalized by
+  `nova capture`, a framework adapter, the `@agent` decorator or OpenTelemetry import now carries an additive
+  `replayability.json` (scanned and listed in `evidence_digests`): `replayable` (`full` · `partial` · `none`),
+  `strict_mocked` (`start` · `refuse`), the refusal a strict mocked replay would record, per-surface counts and
+  reason codes (`model_surface_not_servable` per `gen_ai.system`, `tool_result_not_servable` with cause
+  `payload_not_recorded`, `capsule_not_reexecutable` with its guard, …). It is classified by the replay's own
+  functions, and a test requires it to agree with `nova replay --dry-run`. `nova capture` prints one `replay:` line
+  after `Capsule written`; new `nova capture --require-replayable` exits `4` after writing the capsule unless the
+  capsule is fully replayable (the workload is never stopped; a failing workload keeps its exit code). Replay does
+  not read the file; older capsules without it replay as before. Calls the capture did not record (non-Python
+  children, raw sockets) cannot be predicted.
 - **Framework-adapter capsules can be replayed (experimental, ADR-0306 open question 7, issue #56).** Every
   framework adapter (LangGraph, Google ADK, OpenAI Agents SDK, A2A and the shared core used by CrewAI, AutoGen,
   DSPy, LlamaIndex, smolagents, Haystack, Pydantic AI and Bedrock AgentCore) and the `@agent` decorator now record
