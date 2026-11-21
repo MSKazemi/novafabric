@@ -22,6 +22,24 @@ longer forwards the submitting shell's environment (ADR-0270).
 
   Every check reports `task`, `capture`, `integrity` or `replay` with an expected verdict. In the default zero-key profile, integrity is `NOT_EVALUATED` even though `nova validate` passes, and replay is `NOT_EVALUATED` (forensic only, no fidelity claim). The opt-in `--profile signed-offline` uses `nova seal init` and `nova verify --ca-bundle` with a disposable local CA (a self-asserted identity, no timestamp authority), and must see a tampered member, a missing member, a corrupted signature and a wrong CA refused, each for its own reason (the broken property false and the untouched ones true; a corrupted signature also fails the chain check). `--require-verified` exits 2 unless both variants verify. A wrong but faithfully captured decision fails that variant's `task` check, not `capture`. `--variant unsafe|corrected` keeps the single-run D1 report. Examples only: no change to `src/novafabric`, schemas, the CLI, dependencies or capture defaults.
 - **CI: a `golden-capsule` job (#225).** It builds the wheel, installs it into a clean Python 3.12 venv with versions from `uv.lock`, and runs from it the EvidenceLab walkthrough in both profiles (zero-key; signed-offline with `--require-verified`, including the four tamper negatives), the existing replay-fidelity oracles in `tests/replay/fidelity`, and one new test: mocked replay of a capsule captured at the default level must never report success. That capsule's `replayability.json` names `tool_result_not_servable` (`payload_not_recorded`) for both tools, and the replay ends `diverged` with no live model call, tool call or network connection. The step fails if any of those tests is skipped or xfailed, so a missing optional client cannot silently drop an oracle, and the install step checks that every `force-include` target in `pyproject.toml` is present in the installed wheel. The wheel is built from the checked-out commit; it is not the artifact `publish-pypi.yml` uploads. The reports are uploaded as a 7-day artifact; the fixtures are synthetic.
+- **EU AI Act Art. 12 conformance report (`build_art12_report`): rows for the provisions it lacked
+  (#63, works today).** Five rows apply to every report: `risk_situation_events` (Art. 12(2)(a)),
+  `post_market_monitoring_events` (Art. 12(2)(b), Art. 72), `deployer_monitoring_events`
+  (Art. 12(2)(c), Art. 26(5)), `log_instructions_for_use` (Art. 13(3)(f), operator-declared through the
+  new `log_instructions_ref` argument) and `authority_log_access` (Art. 21(2); names `nova verify` as a check
+  only when the capsule's seal verifies and binds the evidence streams). The 12(2)(a)-(c) rows are at most `partial`, because which events
+  are relevant is the provider's call. The remote biometric identification rows `rbi_reference_database`,
+  `rbi_matched_input_data` and `rbi_verifying_persons` (Art. 12(3)(b)-(d)) appear only with the new
+  `remote_biometric_identification=True` argument. New report fields: `requirements` (one
+  `{field_name, label, basis}` per row, where `basis` is `ai_act`, `standards` or `novafabric_evidence`)
+  and `remote_biometric_identification`. Additive: no key is removed, and the six existing rows keep
+  their names, order and status logic.
+- **`nova euaiact status` and `GET /api/compliance/euaiact/status` / `POST /api/compliance/euaiact/export`
+  report the log floor and the documentation horizon separately (works today).** New keys:
+  `log_retention_floor_months` (always 6, Art. 19(1) / Art. 26(6)) and `documentation_retention_months`
+  (120 in provider mode, Art. 18(1), else `null`). `retention_months` keeps its values (6, or 120 with
+  `NOVA_EUAIACT_PROVIDER=true`). It now means the retention NovaFabric applies to capsules, not the
+  Act's log floor. No retention is shortened.
 
 ### Documentation
 
@@ -83,6 +101,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   the v0.109.0 tag's collector vulnerability scan on 1.26.10 (lint, unit tests and the build passed).
   The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
   chart), so the release is unaffected; anyone building the collector from source should use Go 1.26.11.
+- **EU AI Act Art. 12 report and `nova euaiact` cited the wrong provisions (#63).** Checked against
+  the EUR-Lex text of Regulation (EU) 2024/1689. The row labels changed, but the keys did not:
+  `automatic_event_recording` now says "over its lifetime" (Art. 12(1)), not "operation";
+  `period_of_use` cites Art. 12(3)(a), a duty that applies only to remote biometric identification
+  systems, not 12(2)(a); `traceability` cites the Art. 12(2) chapeau, not 12(1); `retention` cites
+  Art. 19(1) (providers) and Art. 26(6) (deployers), at least six months, not 12(3).
+  `input_output_records` is now labelled as NovaFabric evidence supporting the Art. 12(2)(a)-(c)
+  purposes. No Art. 12 paragraph sets a general input/output duty. `tamper_evidence` is labelled as a
+  standards item that goes beyond the Act (prEN 18229-1; ISO/IEC 24970), since the Act sets no log
+  tamper-protection duty. The report's `standard` string now names Arts. 13(3)(f), 19(1), 21(2) and
+  26(6) as well. The `euaiact` module no longer claims its event taxonomy is aligned with Annex XII,
+  which covers transparency for general-purpose AI models. Provider mode's 120 months is now called
+  the Art. 18(1) *documentation* horizon, not a log floor. The `nova euaiact export` help cites
+  Art. 21(2) (authority access to logs), not Art. 74.
 
 ## [0.109.0] - 2026-11-22
 

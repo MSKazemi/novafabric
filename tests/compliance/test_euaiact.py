@@ -60,6 +60,25 @@ class TestEuAiActConfig:
         assert cfg.provider_mode
         assert cfg.retention_months == 120
 
+    def test_log_floor_is_six_months_in_both_modes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Art. 19(1) (providers) and Art. 26(6) (deployers): logs at least six months.
+        # The 10-year Art. 18(1) period covers documentation, not logs (issue #63).
+        monkeypatch.delenv("NOVA_EUAIACT_PROVIDER", raising=False)
+        deployer = EuAiActConfig()
+        assert deployer.log_retention_floor_months == 6
+        assert deployer.documentation_retention_months is None
+        monkeypatch.setenv("NOVA_EUAIACT_PROVIDER", "true")
+        provider = EuAiActConfig()
+        assert provider.log_retention_floor_months == 6
+        assert provider.documentation_retention_months == 120
+
+    def test_retention_constants(self) -> None:
+        from novafabric.compliance import euaiact
+
+        assert euaiact.LOG_RETENTION_FLOOR_MONTHS == 6
+        assert euaiact.DOCUMENTATION_RETENTION_MONTHS == 120
+        assert not hasattr(euaiact, "_PROVIDER_RETENTION_MONTHS")
+
 
 class TestInferLoggingEventTypes:
     def test_interaction_timestamp_always_present(self, tmp_path: Path) -> None:
@@ -173,6 +192,17 @@ class TestEuAiActCli:
         result = runner.invoke(app, ["euaiact", "status"])
         assert result.exit_code == 0, result.output
         assert "NOVA_EUAIACT_HIGH_RISK" in result.output
+        assert "Art. 19(1)" in result.output
+        assert "Art.18 provider" not in result.output
+
+    def test_status_provider_mode_labels_documentation_horizon(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NOVA_EUAIACT_PROVIDER", "true")
+        result = CliRunner().invoke(app, ["euaiact", "status"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0, result.output
+        assert "Art. 18(1) documentation, not logs" in result.output
+        assert "6 months" in result.output and "120 months" in result.output
 
     def test_export_command_json_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         caps = tmp_path / "capsules"

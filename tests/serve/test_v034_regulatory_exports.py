@@ -103,6 +103,8 @@ class TestEuAiActStatus:
         body = res.json()
         assert body["provider_mode"] is False
         assert body["retention_months"] == 6  # deployer default
+        assert body["log_retention_floor_months"] == 6  # Art. 19(1) / 26(6)
+        assert body["documentation_retention_months"] is None
 
     def test_provider_mode_when_env_set(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -111,7 +113,9 @@ class TestEuAiActStatus:
         res = client.get(f"/api/compliance/euaiact/status?{TOKEN_Q}", headers=AUTH)
         body = res.json()
         assert body["provider_mode"] is True
-        assert body["retention_months"] == 120  # 10-year floor
+        assert body["retention_months"] == 120  # applied: Art. 18(1) documentation horizon
+        assert body["log_retention_floor_months"] == 6  # the log floor is unchanged
+        assert body["documentation_retention_months"] == 120
 
     def test_requires_auth(self, client: TestClient) -> None:
         res = client.get("/api/compliance/euaiact/status", headers=HEADERS)

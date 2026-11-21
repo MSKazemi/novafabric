@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from novafabric._paths import default_capsule_dir
+
+if TYPE_CHECKING:
+    from novafabric.compliance.euaiact import EuAiActConfig
 
 console = Console()
 
@@ -18,6 +21,20 @@ euaiact_app = typer.Typer(
     help="EU AI Act Article 12 compliance: export structured logs for authority access requests.",
     no_args_is_help=True,
 )
+
+
+def _retention_line(cfg: EuAiActConfig) -> str:
+    """One line separating the Act's log floor from the optional documentation horizon."""
+    line = (
+        f"Log retention floor: {cfg.log_retention_floor_months} months "
+        "(Art. 19(1) / Art. 26(6))"
+    )
+    if cfg.documentation_retention_months is not None:
+        line += (
+            f"; documentation horizon applied: {cfg.documentation_retention_months} "
+            "months (Art. 18(1), provider mode)"
+        )
+    return line
 
 
 @euaiact_app.command("export")
@@ -60,8 +77,9 @@ def euaiact_export_cmd(
 ) -> None:
     """Export a structured activity log for an EU AI Act authority access request.
 
-    Art. 74 of the EU AI Act requires providers to make technical documentation
-    available to national authorities on request.
+    Art. 21(2) of the EU AI Act requires providers, on a reasoned request, to give
+    the competent authority access to the automatically generated logs under their
+    control.
 
     Scope: single capsule.
 
@@ -118,10 +136,7 @@ def euaiact_export_cmd(
                 ", ".join(rec.get("logging_event_type", [])),
             )
         console.print(table)
-        console.print(
-            f"[dim]Retention floor: {cfg.retention_months} months "
-            f"({'provider' if cfg.provider_mode else 'deployer'} mode)[/dim]"
-        )
+        console.print(f"[dim]{_retention_line(cfg)}[/dim]")
     else:
         payload = json.dumps(records, indent=2, default=str)
         if output:
@@ -159,10 +174,17 @@ def euaiact_status_cmd() -> None:
         "[green]true[/green]" if cfg.provider_mode else "[dim]false (deployer mode)[/dim]",
     )
     table.add_row(
-        "Retention floor",
-        f"{cfg.retention_months} months "
-        f"({'Art.18 provider' if cfg.provider_mode else 'Art.12 deployer'})",
+        "Log retention floor",
+        f"{cfg.log_retention_floor_months} months (Art. 19(1) providers / Art. 26(6) deployers)",
     )
+    table.add_row(
+        "Documentation horizon",
+        f"{cfg.documentation_retention_months} months "
+        "(Art. 18(1) documentation, not logs; applied to capsules as policy)"
+        if cfg.documentation_retention_months is not None
+        else "[dim]not applied (set NOVA_EUAIACT_PROVIDER=true)[/dim]",
+    )
+    table.add_row("Applied retention", f"{cfg.retention_months} months")
     table.add_row(
         "Art.50 deadline",
         "2026-08-02",
