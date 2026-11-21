@@ -433,6 +433,7 @@ Options:
 - `--masker NAME` — **experimental** ([ADR-0135](./decisions.md)). Enable a registered PII masker for this capture, by `novafabric.maskers` entry-point name or dotted import path (repeatable). Custom maskers run **after** the built-in ADR-0009 secret scanner — built-ins always run and can never be disabled by a plugin — and every mask is attributed in `redaction-proof.json` (`masker_findings[]`). Fail-closed: a crashing, hanging, or invalid masker redacts the field (recorded in `masker_errors[]`) and never blocks the workload; an unresolvable masker aborts capture *before* the workload runs. Example: `nova capture --masker novafabric-email python agent.py`
 - `--masking-config PATH` — **experimental** (ADR-0135). Path to a `masking.yaml` describing the custom masking pipeline (masker order, per-masker `timeout_ms`, `max_input_bytes`, `on_error: redact|drop`, opaque `config`). Defaults to `.novafabric/masking.yaml` when that file exists. Absent config or `enabled: false` ⇒ capture behaves exactly as ADR-0009 today, byte-for-byte. Schema: `schemas/masking-config.schema.json`. See the [developer guide](developer-guide.md#writing-a-custom-pii-masker-adr-0135--experimental) for writing a masker.
 - `--pii-subject ID` — **experimental** (ADR-0314). Names the data subject this run's PII belongs to. Detected PII (the cap-001 regex detector: email, phone, person name) and every literal occurrence of `ID` in the capsule's text targets are replaced by AES-256-GCM envelope tokens (`[NFPII:v1:…]`, `schemas/pii-envelope.schema.json`) under the subject's DEK in `$NOVAFABRIC_HOME/dek.db`; each one is listed in the capsule's `redaction_manifest.json`. [`nova pii erase ID`](#nova-pii-erase-subject_id) then makes them permanently unreadable (readers render `[erased]`). Requires `NOVA_PII_PEPPER` (capture refuses to start without it). If the DEK cannot be created, the PII is masked (`[REDACTED:…]`) and a `masker_errors[]` entry is recorded — never stored in plaintext; the workload is never blocked. Text that is not UTF-8 (Latin-1, for example) is protected byte-for-byte, and a match written straight after CJK or accented letters is protected (releases up to v0.107.0 skipped both, leaving the PII in plaintext). Not covered: binary artifacts (with NUL bytes) and oversize ones, media blobs, in-process (adapter/decorator) capsules, and the `redaction-proof.json` whole-file `hash_before` of the ADR-0009 scanner. Without `--pii-subject` nothing is encrypted.
+- `--require-replayable` — **experimental**. After the capsule is written, exit `4` unless its `replayability.json` says a strict mocked replay would serve every recorded call (`replayable: full`): it fails when strict replay would refuse (`CapsuleNotReplayable`, `ModelSurfaceNotServable`, `ToolSurfaceNotServed`, `ToolOverrideUnenforceable`) and also when it would start but not serve a call (a `record.tool` result not recorded at the `standard` capture level, a tool on a transport replay does not intercept, a model-host metadata call). It never stops the workload: the workload runs and the capsule is finalized first. A workload that exited non-zero keeps its own exit code. Example: `nova capture --require-replayable -- python agent.py`. See [Replayability at capture time](architecture/replay-modes.md#replayability-at-capture-time-experimental).
 
 Use `--` to separate `nova capture` options from commands that contain flags:
 
@@ -446,13 +447,26 @@ all artifacts are finalized and secret-scanned before the process returns.
 Output:
 ```
 ✓ Capsule written: ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
+✓ replay: strict mocked replay would serve every recorded call (2 model, 1 tool)
 ```
+
+The `replay:` line (experimental) comes from the capsule's `replayability.json`: what a
+strict `nova replay` would do with it, classified at capture by the replay's own rules.
+A capsule that would not replay fully says why, for example
+`! replay: strict mocked replay would refuse -- 3 model calls not servable (mistral: 3
+(api.mistral.ai)) (see nova replay --dry-run)` or `! replay: strict mocked replay would
+start, but not every recorded call is served -- 2 tool calls whose payload was not
+recorded (add) (see nova replay --dry-run)`. It is a report and changes no exit code
+unless `--require-replayable` is passed. A capture delegated to the warm daemon
+(`novacap`) writes the same file but does not print the line.
 
 Exit code mirrors the wrapped command's exit code, with two exceptions that
 NovaFabric produces itself: `124` when the workload exceeded its wall-clock
 deadline, and `127` when the workload **never started** (the command does not
 exist, is not executable, or the runner could not launch it). A capsule is
 written in every case, including both of those — the attempt is evidence.
+With `--require-replayable` (experimental), a workload that exited `0` but whose
+capsule is not fully replayable exits `4`, after the capsule is written.
 
 Because a real program can also exit `127`, the code alone cannot tell the two
 apart, so the never-started case prints an extra line naming the reason:
