@@ -1337,6 +1337,17 @@ is refused before its body runs. A record captured without its result is still s
 the next recorded model request echoes that result under exactly the recorded
 `result_digest` (counted in `replay_contract.tool_calls_mocked_by_source.model-request-echo`;
 the CLI prints `N of the served tool results came from the next recorded model request`).
+The result of a run's **last** tool call — or of any call whose result ends the run — never
+went back to a model, so no recorded request holds it and nothing else in the capsule is a
+digest-checked source (below `forensic` the final graph state is kept only as a digest, and
+`outputs/stdout.txt` holds a result only if the workload printed it verbatim). It is never
+guessed: the refusal reason, the `--dry-run` `[NOT SERVED]` line and the capsule's
+`replayability.json` name it (`result never sent to a model: …`; `result_never_sent_to_a_model`
+lists the tools, or is the `cause` of a `tool_result_not_servable` reason) and say what works —
+capture at `NOVA_CAPTURE_LEVEL=forensic`, or replay `--permissive --allow-unknown-mutation`
+(experimental, unreleased; ADR-0306 r3b). A request that carries the result in a form whose
+digest does not match, and a capsule whose model calls hold no request messages, are named
+too.
 Under `--permissive` such calls run live only with `--allow-unknown-mutation`; each is counted in `tool_calls_live` and named in a
 `[LIVE] tool call (…)` summary line. **Behaviour change:** before this, unwrapped LangChain
 tools were never served (a strict replay refused every capsule that recorded one) and

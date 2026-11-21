@@ -93,6 +93,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   `io.novafabric.langchain_result_kind: tool_message`) and mocked replay rebuilds a real `ToolMessage` answering
   the replayed call's `tool_call_id`. A field that is not a JSON value (an object `artifact`) keeps the record not
   servable, with a reason naming the field.
+- **The last-call echo gap is named instead of left generic** (experimental; ADR-0306 r3b). Below `forensic` a
+  tool result is served only from a later recorded model request that echoes it under the recorded digest; the
+  result of a run's last tool call never went back to a model, so it cannot be recovered, and nothing else in the
+  capsule is a digest-checked source (the final graph state is kept only as a digest; stdout holds it only if the
+  workload printed it verbatim). Nothing new is served. Such a record's reason now says `result never sent to a
+  model: …` with what works (capture at `NOVA_CAPTURE_LEVEL=forensic`, or `--permissive
+  --allow-unknown-mutation`) — in the `ToolSurfaceNotServed` refusal and its
+  `tool_calls_not_served_by_surface.reasons`, the `--dry-run` `[NOT SERVED]` line, a `tool_result_not_servable`
+  divergence, and `replayability.json` (new optional `result_never_sent_to_a_model` tool list on the
+  `tool_surface_not_served` reason; new `cause` `result_never_sent_to_a_model`). An echo whose digest does not
+  match, and a capsule whose model calls hold no request messages, get their own reason text too.
 - **A LangChain tool that returns a LangGraph `Command` is served** (experimental; ADR-0306 r3b). Before, a tool
   returning `langgraph.types.Command(update=..., goto=...)` (a state update) was recorded as "not a JSON value" and
   never served, even at `forensic`. Capture now records a JSON envelope (`graph`, `goto`, `resume`, the `update`

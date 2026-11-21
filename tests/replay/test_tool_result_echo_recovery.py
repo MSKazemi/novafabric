@@ -24,6 +24,13 @@ from novafabric.capture import _tool_codec as codec
 from novafabric.capture.hooks._python_tool import PAYLOADS_OFF_REASON
 from novafabric.replay._contract import not_servable_reason
 from novafabric.replay._echo_recovery import (
+    ECHO_NEVER_SENT,
+    ECHO_NEVER_SENT_REASON,
+    ECHO_NO_MATCH,
+    ECHO_NO_MATCH_REASON,
+    ECHO_NO_REQUESTS,
+    ECHO_NO_REQUESTS_REASON,
+    ECHO_RECOVERY_EXT,
     SOURCE_EXT,
     SOURCE_MODEL_REQUEST_ECHO,
     recover_tool_results_from_echo,
@@ -146,12 +153,36 @@ def test_a_tool_message_envelope_is_recovered_from_its_content_and_status() -> N
 # ── never served on anything but an exact digest match ───────────────────────
 
 
+def _unservable_and_unchanged_but_for_the_reason(
+    out: dict[str, Any], record: dict[str, Any], marker: str, reason: str,
+) -> None:
+    """Not recovered: still unservable, nothing served, only the reason says why."""
+    assert out is not record
+    ext = dict(out["extensions"])
+    assert ext.pop(ECHO_RECOVERY_EXT) == marker
+    assert ext.pop("io.novafabric.not_servable_reason") == f"{PAYLOADS_OFF_REASON}; {reason}"
+    expected = {k: v for k, v in record["extensions"].items()
+                if k != "io.novafabric.not_servable_reason"}
+    assert ext == expected
+    assert {k: v for k, v in out.items() if k != "extensions"} == {
+        k: v for k, v in record.items() if k != "extensions"
+    }
+    assert out["result"] is None
+    assert not_servable_reason(out) == f"{PAYLOADS_OFF_REASON}; {reason}"
+    # Idempotent: a second pass neither recovers nor repeats the reason.
+    (again,) = recover_tool_results_from_echo([out], [])
+    assert again == out
+
+
 def test_a_digest_mismatch_leaves_the_record_unservable() -> None:
     tools = [_tool_record("the real result")]
+    before = copy.deepcopy(tools[0])
     models = [_bedrock("tooluse_A", "a different text")]
     (out,) = recover_tool_results_from_echo(tools, models)
-    assert out == tools[0]
-    assert not_servable_reason(out) == PAYLOADS_OFF_REASON
+    assert tools[0] == before, "the input records are never modified"
+    _unservable_and_unchanged_but_for_the_reason(
+        out, before, ECHO_NO_MATCH, ECHO_NO_MATCH_REASON
+    )
 
 
 def test_a_missing_digest_leaves_the_record_unservable() -> None:
@@ -161,10 +192,30 @@ def test_a_missing_digest_leaves_the_record_unservable() -> None:
     assert out == record
 
 
-def test_no_echo_leaves_the_record_unservable() -> None:
+def test_no_echo_leaves_the_record_unservable_and_names_the_last_call_gap() -> None:
+    """The last tool call of a run: its result never went back to a model, so no
+    recorded request holds it, and nothing else in the capsule is a
+    digest-checked source. Never guessed; the reason says exactly that."""
     record = _tool_record("x")
     (out,) = recover_tool_results_from_echo([record], [_bedrock("tooluse_OTHER", "x")])
-    assert out == record
+    _unservable_and_unchanged_but_for_the_reason(
+        out, record, ECHO_NEVER_SENT, ECHO_NEVER_SENT_REASON
+    )
+    assert "result never sent to a model" in ECHO_NEVER_SENT_REASON
+    assert "NOVA_CAPTURE_LEVEL=forensic" in ECHO_NEVER_SENT_REASON
+    assert "--permissive --allow-unknown-mutation" in ECHO_NEVER_SENT_REASON
+
+
+def test_without_recorded_request_messages_the_reason_says_so() -> None:
+    """A capsule whose model calls carry no request messages (or has none) cannot
+    tell a last call from any other: the reason does not claim it was the last."""
+    record = _tool_record("x")
+    for models in ([], [{"model_call_id": "m1", "gen_ai.system": "openai"}]):
+        (out,) = recover_tool_results_from_echo([record], models)
+        _unservable_and_unchanged_but_for_the_reason(
+            out, record, ECHO_NO_REQUESTS, ECHO_NO_REQUESTS_REASON
+        )
+        assert "result never sent to a model" not in ECHO_NO_REQUESTS_REASON
 
 
 @pytest.mark.parametrize("mutate", [

@@ -53,6 +53,9 @@ MODEL_METADATA_CALL_LIVE: Final[str] = "model_metadata_call_live"
 
 #: ``cause`` of a :data:`TOOL_RESULT_NOT_SERVABLE` reason.
 CAUSE_PAYLOAD_NOT_RECORDED: Final[str] = "payload_not_recorded"
+#: Payloads off, and no recorded model request carries the result (the run's last
+#: tool call): the model-request echo cannot recover it (ADR-0306 r3b).
+CAUSE_RESULT_NEVER_SENT: Final[str] = "result_never_sent_to_a_model"
 CAUSE_OTHER: Final[str] = "other"
 
 #: Most tool names listed per reason.
@@ -238,6 +241,14 @@ def _model_part(records: Sequence[Any]) -> tuple[dict[str, int], list[Reason], A
     return counts, reasons, refusal
 
 
+def _never_sent(record: Mapping[str, Any]) -> bool:
+    """The echo recovery found no recorded model request carrying this result."""
+    from novafabric.replay._echo_recovery import ECHO_NEVER_SENT, ECHO_RECOVERY_EXT
+
+    ext = record.get("extensions")
+    return isinstance(ext, Mapping) and ext.get(ECHO_RECOVERY_EXT) == ECHO_NEVER_SENT
+
+
 def _tool_part(
     tool_calls: Sequence[Any], replay_policy: Mapping[str, Any] | None,
 ) -> tuple[dict[str, int], list[Reason], list[tuple[str, Any]]]:
@@ -270,9 +281,12 @@ def _tool_part(
             if why is None:
                 servable += 1
             else:
-                cause = (
-                    CAUSE_PAYLOAD_NOT_RECORDED if PAYLOADS_OFF_REASON in why else CAUSE_OTHER
-                )
+                if _never_sent(record):
+                    cause = CAUSE_RESULT_NEVER_SENT
+                elif PAYLOADS_OFF_REASON in why:
+                    cause = CAUSE_PAYLOAD_NOT_RECORDED
+                else:
+                    cause = CAUSE_OTHER
                 unservable.setdefault(cause, []).append((record, why))
     counts = {
         "recorded": len(records),
@@ -287,11 +301,17 @@ def _tool_part(
     by_surface = not_served_tool_calls(records)
     if by_surface:
         error = ToolSurfaceNotServedError(by_surface)
+        never_sent = _tool_names([r for r in observed if _never_sent(r)])
+        extra: dict[str, Any] = {"tools": _tool_names(observed)}
+        tail = ""
+        if never_sent:
+            extra[CAUSE_RESULT_NEVER_SENT] = never_sent
+            tail = f"; result never sent to a model: {', '.join(never_sent)}"
         reasons.append(Reason(
             TOOL_SURFACE_NOT_SERVED, error.count, True,
             f"{_plural(error.count, 'tool call')} observed but not served "
-            f"({', '.join(_tool_names(observed))})",
-            str(error), {"tools": _tool_names(observed)},
+            f"({', '.join(_tool_names(observed))}{tail})",
+            str(error), extra,
         ))
         refusals.append((TOOL_SURFACE_NOT_SERVED, error.as_error()))
 
@@ -307,18 +327,20 @@ def _tool_part(
         ))
         refusals.append((TOOL_OVERRIDE_UNENFORCEABLE, override_error.as_error()))
 
-    for cause in (CAUSE_PAYLOAD_NOT_RECORDED, CAUSE_OTHER):
+    for cause in (CAUSE_RESULT_NEVER_SENT, CAUSE_PAYLOAD_NOT_RECORDED, CAUSE_OTHER):
         entries = unservable.get(cause)
         if not entries:
             continue
         names = _tool_names([r for r, _ in entries])
         n = len(entries)
         whys = sorted({why for _, why in entries})
-        what = (
-            f"{_plural(n, 'tool call')} whose payload was not recorded"
-            if cause == CAUSE_PAYLOAD_NOT_RECORDED
-            else f"{_plural(n, 'tool call')} whose result is not servable"
-        )
+        what = {
+            CAUSE_RESULT_NEVER_SENT: (
+                f"{_plural(n, 'tool call')} whose result was never sent to a model "
+                "and not recorded"
+            ),
+            CAUSE_PAYLOAD_NOT_RECORDED: f"{_plural(n, 'tool call')} whose payload was not recorded",
+        }.get(cause, f"{_plural(n, 'tool call')} whose result is not servable")
         reasons.append(Reason(
             TOOL_RESULT_NOT_SERVABLE, n, False, f"{what} ({', '.join(names)})",
             "a strict replay starts and refuses each call when it is made "

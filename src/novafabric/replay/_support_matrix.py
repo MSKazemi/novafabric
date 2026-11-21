@@ -67,6 +67,7 @@ _OAI_OBSERVED = "tests/replay/test_openai_agents_unwrapped_tool_e2e.py"
 _LC_MESSAGE = "tests/replay/test_langchain_tool_message_results_e2e.py"
 _LC_NESTED = "tests/replay/test_langchain_nested_tool_serving_e2e.py"
 _LG_COMMAND = "tests/replay/test_langgraph_command_results_e2e.py"
+_LAST_CALL = "tests/replay/test_tool_result_last_call_gap_e2e.py"
 _ECHO_RECOVERY = "tests/replay/test_tool_result_echo_recovery.py"
 _CHILDNET = "tests/replay/test_child_process_network.py"
 _HERMETIC = "tests/replay/test_hermetic_replay.py"
@@ -836,7 +837,10 @@ ROWS: tuple[SurfaceRow, ...] = (
             "that kept its value is served without a re-capture; `allow: false` "
             "refuses an unservable call before its body runs; a record captured "
             "without its result is served from the next recorded model request's echo "
-            "when it has exactly the recorded `result_digest` (`model-request-echo`); "
+            "when it has exactly the recorded `result_digest` (`model-request-echo`) -- "
+            "the result of a run's last tool call never went back to a model, so it "
+            "is refused with a reason that says so (`result never sent to a model`, "
+            "also in `replayability.json`, ADR-0306 r3b); "
             "a tool whose body made model/tool calls (a sub-agent tool) is served "
             "like a nested `record.tool` boundary and what it did is covered, never "
             "requested (ADR-0306 r3b); the seam patches "
@@ -871,6 +875,8 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_LG_COMMAND}::test_strict_replay_serves_the_command_and_reaches_the_same_final_state",
             f"{_LG_COMMAND}::test_a_command_that_cannot_be_rebuilt_is_not_servable_and_says_why",
             f"{_LG_COMMAND}::test_a_default_level_command_is_digested_and_refused_with_the_recapture_hint",
+            f"{_LAST_CALL}::test_strict_replay_refuses_and_names_the_last_call",
+            f"{_LAST_CALL}::test_the_capture_time_summary_names_the_last_call_gap",
         ),
         servers=("langchain_core.tools.BaseTool",),
     ),

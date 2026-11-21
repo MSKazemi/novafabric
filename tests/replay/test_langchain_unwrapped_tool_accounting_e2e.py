@@ -518,7 +518,12 @@ def test_an_r2_observed_record_without_payload_is_refused_and_says_capture_again
     assert cli.exit_code == 1
     assert result["error"]["type"] == "ToolSurfaceNotServed"
     reasons = result["error"]["tool_calls_not_served_by_surface"][LC]["reasons"]
-    assert reasons == [PAYLOADS_OFF_REASON]  # the legacy policy text is gone
+    # The legacy policy text is gone; what is left is the payloads-off reason and,
+    # since ADR-0306 r3b, why the model-request echo could not recover it (this
+    # capsule's scripted model records no model calls).
+    assert len(reasons) == 1 and reasons[0].startswith(PAYLOADS_OFF_REASON)
+    assert "no recorded model call holds request messages" in reasons[0]
+    assert _not_wrapped_legacy_reason() not in reasons[0]
     assert "capture again" in result["error"]["message"]
 
 
