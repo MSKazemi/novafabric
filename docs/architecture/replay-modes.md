@@ -805,7 +805,17 @@ placeholder record (`extensions["io.novafabric.replay_placeholder"]`: `live`,
 call: a call that diverged and then ran live, or was refused, under
 `--permissive` is one `live` or `refused` record — the replayed
 process's own requests are not recorded, so a placeholder carries no request or
-response; `outputs/stdout.txt` / `outputs/stderr.txt`, written only when not
+response. A placeholder holds only what the replay observed: a fresh ULID,
+`schema_version`, the tool name (or model provider), the mutation class when
+known, the surface (`io.novafabric.replay_surface`), and `status: denied` when
+the replay stopped the call before it ran (no `status` when it ran live: the
+replay did not see how it ended). It has no timing, span, arguments or result,
+and validates against the shipped `tool-call` / `model-call` schemas, which
+require the other fields only on records without the placeholder mark (works
+today, unreleased; before, placeholders failed schema validation). `nova diff`
+marks a pair holding one with `replay_placeholder_a` / `replay_placeholder_b`
+and prints `(replay placeholder: live, not recorded)`; the pair still counts as
+changed, so `--assert-no-regressions` fails on it; `outputs/stdout.txt` / `outputs/stderr.txt`, written only when not
 empty; an `env.lock` of the replaying host; and `redaction-proof.json`. The
 streams are copies of the capsule's records as it stores them (redacted), so
 the replay directory holds the same prompts, responses and — at the `forensic`

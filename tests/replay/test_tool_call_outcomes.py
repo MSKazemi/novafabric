@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from novafabric.replay._fidelity import tool_sequences
-from novafabric.replay._replay_capsule import replayed_streams
+from novafabric.replay._replay_capsule import PLACEHOLDER_EXT, replayed_streams
 from novafabric.replay._tool_call_outcomes import AFTER_DIVERGENCE, collapse_tool_divergences
 
 LC = "langchain_core.tools.BaseTool"
@@ -56,5 +56,5 @@ def test_sequence_and_replay_capsule_count_one_per_call_and_input_is_not_mutated
     snapshot = [dict(e) for e in events]
     assert tool_sequences([], events)[1] == [f"{LC}:ls:live", f"{LC}:cat:refused"]
     _models, tools = replayed_streams([], [], events)
-    assert [t["status"] for t in tools] == ["live", "refused"]
+    assert [t["extensions"][PLACEHOLDER_EXT] for t in tools] == ["live", "refused"]
     assert events == snapshot
