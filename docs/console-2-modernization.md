@@ -1,5 +1,7 @@
 # NovaFabric Console 2.0 — GUI/UX modernization plan
 
+**Architecture decision reopened 2026-11-22:** the owner welcomes a major frontend redesign. `Astro + React` is a measured baseline, **not a mandatory final architecture**. Compare a React/Vite replacement shell and unified topology experience under [architecture/versions spec](console-2-architecture-and-versioning.md) and issues #262/#263/#264; retain Python runtime, CLI and evidence contracts. This note supersedes any categorical “do not rewrite Astro” language below.
+
 **Status:** proposed, design-only. **Reviewed:** 2026-11-21, Europe/Rome. **Base reviewed:** `main` at `4f89480c2de83f0f51003cb096db58b9904a4ce5`. Refresh the base and re-audit before implementing. Not a release commitment.
 
 ## Intent
