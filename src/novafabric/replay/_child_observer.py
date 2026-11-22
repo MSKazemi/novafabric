@@ -1,0 +1,837 @@
+"""Observe the process tree of a mocked replay (ADR-0319, #52 parts 1 and 2).
+
+**Standard library only -- this module must never import novafabric.** Its source
+is also written into the replay's site directory as ``_nf_child_observer.py`` and
+loaded by the generated ``sitecustomize.py`` in Python child processes whose
+environment no longer carries the replay's dispatcher variables -- an MCP stdio
+client, for example, starts its server with a short allowlisted environment. Such
+a child runs this observer (sockets and child processes, reported, never blocked)
+and serves nothing; a child that inherits the full environment loads the replay
+dispatcher as before.
+
+Pieces:
+
+* :class:`ProcessObserver` -- a :func:`sys.addaudithook` hook on CPython's
+  process-creation audit events (verified on CPython 3.12):
+
+  * ``subprocess.Popen`` (``executable, args, cwd, env``) -- also behind
+    ``subprocess.run``, ``os.popen`` and ``asyncio`` subprocesses;
+  * ``os.system`` (``command``);
+  * ``os.posix_spawn`` (``path, argv, env``) -- also ``os.posix_spawnp``; skipped
+    when it is the spawn of the ``subprocess.Popen`` just reported (``Popen`` uses
+    it when ``close_fds=False``);
+  * ``os.fork`` / ``os.forkpty`` -- also behind ``os.spawn*`` and ``pty.spawn``;
+  * ``os.exec`` (``path, args, env``) -- counted when the observed process itself
+    becomes another program; in a fork child it only names the program the
+    counted fork started.
+
+  Only the basename of ``argv[0]`` is logged -- never arguments or environment,
+  which may carry secrets. A process started through ``ctypes``/C code that
+  bypasses these calls is not seen. An audit hook cannot be removed: after
+  :meth:`ProcessObserver.uninstall` it stays registered and does nothing.
+
+* :class:`SocketObserver` -- ``socket.socket.connect``/``connect_ex`` attempts (and
+  their outcomes, :func:`observe_connect`) to
+  IPv4/IPv6 addresses (host and port only), for the child bootstrap; the replayed
+  process itself uses the dispatcher's ``NetworkObserver``.
+
+* :class:`WriteObserver` -- the child's copy of ``capture/file_effects.py``'s
+  replay write observer (ADR-0321 amendment): every open for writing, kept by
+  absolute path with the same skip rules and cap, reported as
+  ``file_observer_installed`` at start and ``files_written`` at interpreter exit,
+  so ``replay_written_paths`` judges a child's writes like the dispatcher's -- and
+  a child that dies without reporting makes them unknown. Its constants are
+  duplicated (this module must not import novafabric); a test pins them equal.
+
+* :func:`start_capture_propagation` / :func:`bootstrap_capture_child` -- the same
+  for ``nova capture`` (local runner): a stripped-environment Python child records
+  its opens-for-write through the capture's file-effects hand-off files.
+
+* :func:`start_tree_observation` -- one ``observer_started`` event per observed
+  process (``role``: ``root`` / ``child`` / ``fork``, with ``ppid``), the
+  ``subprocess.Popen`` environment propagation (:func:`child_env`) and a fork
+  hook. The engine folds these into ``child_processes_network_observed`` /
+  ``child_processes_unobserved`` (``_contract.summarize``).
+"""
+
+from __future__ import annotations
+
+import atexit
+import errno
+import functools
+import json
+import os
+import re
+import sys
+import threading
+from typing import Any
+
+#: Path of the replay's event log; set for every observed process.
+OBSERVE_ENV = "NOVAFABRIC_REPLAY_OBSERVE_EVENTS_PATH"
+#: The replay's site directory (``sitecustomize.py`` + this module's copy).
+SITE_ENV = "NOVAFABRIC_REPLAY_SITE_DIR"
+#: ``root`` for the process the engine started, ``child`` for its descendants.
+ROLE_ENV = "NOVAFABRIC_REPLAY_OBSERVER_ROLE"
+#: Present only where the full replay dispatcher activates (``_engine``).
+QUEUE_ENV = "NOVAFABRIC_REPLAY_QUEUE_PATH"
+
+#: Most ``child_process`` events one observed process writes; beyond it a single
+#: ``child_process_capped`` event says the count is a lower bound.
+CHILD_PROCESS_EVENT_CAP = 10_000
+#: Most ``network_live`` events one observed process writes (as ``NetworkObserver``).
+NETWORK_EVENT_CAP = 10_000
+
+#: The event naming how one logged connect attempt ended. It follows the
+#: attempt's ``network_live`` event, which is written *before* the call, so an
+#: attempt is counted even when the process dies inside it.
+CONNECT_OUTCOME_EVENT = "network_connect_outcome"
+#: ``connect`` returned / ``connect_ex`` returned 0.
+OUTCOME_OK = "ok"
+#: A non-blocking connect was started; whether it completed is decided later and
+#: not observed (``asyncio`` and ``anyio`` connect this way).
+OUTCOME_IN_PROGRESS = "in_progress"
+#: The socket's timeout expired (``socket.timeout`` carries no errno).
+OUTCOME_TIMEOUT = "timeout"
+#: Any other exception, e.g. an unusable address.
+OUTCOME_ERROR = "error"
+_IN_PROGRESS_ERRNOS = frozenset(
+    {errno.EINPROGRESS, errno.EALREADY, errno.EWOULDBLOCK, errno.EAGAIN}
+)
+
+#: Audit events that start a process (counted).
+_SPAWN_EVENTS = frozenset({
+    "subprocess.Popen", "os.system", "os.posix_spawn", "os.fork", "os.forkpty", "os.exec",
+})
+
+#: Audit events that start a process (counted).
+_SPAWN_EVENTS = frozenset({
+    "subprocess.Popen", "os.system", "os.posix_spawn", "os.fork", "os.forkpty", "os.exec",
+})
+
+#: A program name safe to log: anything else is reported as ``?``.
+_SAFE_NAME = re.compile(r"[A-Za-z0-9._+-]{1,64}")
+
+# ── file writes: duplicated from capture/file_effects.py (pinned by a test) ──
+
+#: Replay event-log events (``file_effects.REPLAY_OBSERVER_EVENT`` / ``_WRITES_EVENT``).
+REPLAY_OBSERVER_EVENT = "file_observer_installed"
+REPLAY_WRITES_EVENT = "files_written"
+#: Distinct written paths one process keeps (``file_effects.MAX_PATHS_PER_PROCESS``).
+MAX_WRITTEN_PATHS = 1024
+#: Longest path kept, in characters (``file_effects.MAX_PATH_CHARS``).
+MAX_PATH_CHARS = 4096
+_WRITE_MODE_CHARS = frozenset("wax+")
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+#: Pseudo filesystems: an open there is a device or kernel interface, not a file effect.
+_PSEUDO_ROOTS = ("/dev", "/proc", "/sys")
+#: Frames looked through for the code that asked for the open.
+_MAX_CALLER_FRAMES = 8
+#: Replay event log, as the dispatcher reads it; the child is told it under
+#: OBSERVE_ENV when its environment lost this one.
+EVENTS_ENV = "NOVAFABRIC_REPLAY_EVENTS_PATH"
+
+#: ``depth > 0`` while this thread is inside ``subprocess.Popen.__init__``: a fork
+#: there (``preexec_fn``) is Popen's own, already counted, and execs at once.
+_IN_POPEN = threading.local()
+
+
+class EventLog:
+    """Append one JSON line per event to the replay's event log; never raises."""
+
+    def __init__(self, path: str | None) -> None:
+        self._path = path or None
+
+    def emit(self, event: str, **fields: Any) -> None:
+        if self._path is None:
+            return
+        line = json.dumps({"event": event, "pid": os.getpid(), **fields}, default=str)
+        try:
+            with open(self._path, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except OSError:
+            pass
+
+
+def program_name(argv0: Any) -> str:
+    """Basename of ``argv[0]`` if it looks like a program name, else ``"?"``."""
+    if isinstance(argv0, bytes):
+        argv0 = argv0.decode("utf-8", "replace")
+    elif isinstance(argv0, os.PathLike):
+        argv0 = os.fspath(argv0)
+        if isinstance(argv0, bytes):
+            argv0 = argv0.decode("utf-8", "replace")
+    if not isinstance(argv0, str) or not argv0:
+        return "?"
+    name = argv0.replace("\\", "/").rsplit("/", 1)[-1]
+    return name if _SAFE_NAME.fullmatch(name) else "?"
+
+
+def _first_arg(args: Any) -> Any:
+    if isinstance(args, (list, tuple)):
+        return args[0] if args else None
+    if isinstance(args, (str, bytes)):
+        return _shell_program(args)
+    return args
+
+
+def _shell_program(command: Any) -> str | None:
+    """The program a shell command line runs: its first word that is not a
+    ``NAME=value`` assignment (an assignment may carry a secret)."""
+    if isinstance(command, bytes):
+        command = command.decode("utf-8", "replace")
+    if not isinstance(command, str):
+        return None
+    for word in command.split():
+        if "=" not in word:
+            return word
+    return None
+
+
+class ProcessObserver:
+    """Log one ``child_process`` event per process the observed process starts."""
+
+    def __init__(self, events: Any, *, cap: int = CHILD_PROCESS_EVENT_CAP) -> None:
+        self._events = events
+        self._cap = cap
+        self._count = 0
+        self._active = False
+        self._pid = os.getpid()
+        self._last_popen = threading.local()
+
+    def install(self) -> bool:
+        try:
+            sys.addaudithook(self._hook)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            return False
+        self._pid = os.getpid()
+        self._active = True
+        return True
+
+    def uninstall(self) -> None:
+        """Stop observing (the audit hook itself cannot be removed)."""
+        self._active = False
+
+    def _hook(self, event: str, args: tuple[Any, ...]) -> None:
+        if not self._active or event not in _SPAWN_EVENTS:
+            return
+        try:
+            self._seen(event, args)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            pass
+
+    def _seen(self, event: str, args: tuple[Any, ...]) -> None:
+        if event == "subprocess.Popen":
+            executable, argv = (list(args) + [None, None])[:2]
+            name = program_name(executable if executable is not None else _first_arg(argv))
+            self._last_popen.argv = argv
+        elif event == "os.posix_spawn":
+            argv = args[1] if len(args) > 1 else None
+            if argv is not None and getattr(self._last_popen, "argv", None) == argv:
+                self._last_popen.argv = None  # the Popen above, already counted
+                return
+            name = program_name(args[0] if args else None)
+        elif event == "os.system":
+            name = program_name(_shell_program(args[0] if args else None))
+        elif event == "os.exec":
+            name = program_name(args[0] if args else None)
+            if os.getpid() != self._pid:
+                # A fork child becoming a program: the fork was counted; this
+                # ends the fork child's observation (summarize revokes it).
+                self._events.emit("child_process_exec", argv0=name)
+                return
+        else:  # os.fork / os.forkpty: a copy of this process, no program yet
+            name = None
+        self._count += 1
+        if self._count <= self._cap:
+            self._events.emit(
+                "child_process", audit_event=event,
+                **({"argv0": name} if name is not None else {}),
+            )
+        elif self._count == self._cap + 1:
+            self._events.emit("child_process_capped", cap=self._cap)
+
+
+#: Logged once per process, past :data:`NETWORK_EVENT_CAP`, for the first
+#: non-loopback attempt: the cap stops listing connections, never hides that the
+#: process reached past loopback (the strict ``unserved_network`` rule).
+UNSERVED_NETWORK_AFTER_CAP_EVENT = "network_unserved_after_cap"
+
+#: Host names that resolve to loopback without asking DNS (RFC 6761 section 6.3).
+_LOOPBACK_NAMES = ("localhost",)
+
+
+def is_loopback_host(host: Any) -> bool:
+    """Is *host* -- the address a ``connect`` was given -- this machine itself?
+
+    True for 127.0.0.0/8, ``::1``, an IPv4-mapped loopback address, the unspecified
+    addresses ``0.0.0.0`` / ``::`` (a connect to them reaches this host on Linux),
+    and ``localhost`` or a name under ``.localhost``. Everything else -- every other
+    address and every other name, whatever it resolves to -- is not: the rule must
+    never call a destination local that might not be.
+    """
+    import ipaddress
+
+    if not isinstance(host, str) or not host:
+        return False
+    name = host.strip().rstrip(".").lower()
+    if name in _LOOPBACK_NAMES or name.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(name.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return bool(address.is_loopback or address.is_unspecified)
+
+
+class ConnectCounter:
+    """Log IPv4/IPv6 connect attempts of this process: host and port, never a payload.
+
+    One ``network_live`` event per attempt up to *cap*, then one
+    ``network_live_capped``; past the cap, the first attempt to a non-loopback
+    destination is still logged once (:data:`UNSERVED_NETWORK_AFTER_CAP_EVENT`).
+    Never raises.
+    """
+
+    def __init__(self, events: Any, *, cap: int = NETWORK_EVENT_CAP) -> None:
+        self._events = events
+        self._cap = cap
+        self._count = 0
+        self._unserved_after_cap = False
+
+    def seen(self, sock: Any, address: Any) -> bool:
+        """Log one attempt; ``True`` when its ``network_live`` event was written
+        (an attempt past the cap logs no outcome)."""
+        try:
+            import socket
+
+            if getattr(sock, "family", None) not in (socket.AF_INET, socket.AF_INET6):
+                return False
+            if not isinstance(address, tuple) or len(address) < 2:
+                return False
+            self._count += 1
+            host, port = str(address[0]), int(address[1])
+            if self._count <= self._cap:
+                self._events.emit("network_live", host=host, port=port)
+                return True
+            if self._count == self._cap + 1:
+                self._events.emit("network_live_capped", cap=self._cap)
+            if not self._unserved_after_cap and not is_loopback_host(host):
+                self._unserved_after_cap = True
+                self._events.emit(UNSERVED_NETWORK_AFTER_CAP_EVENT, host=host, port=port)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            pass
+        return False
+
+    def outcome(self, address: Any, outcome: str) -> None:
+        """Log how one attempt :meth:`seen` logged ended."""
+        try:
+            self._events.emit(CONNECT_OUTCOME_EVENT, host=str(address[0]),
+                              port=int(address[1]), outcome=outcome)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            pass
+
+
+def _errno_outcome(code: int) -> str:
+    if code == 0:
+        return OUTCOME_OK
+    if code in _IN_PROGRESS_ERRNOS:
+        return OUTCOME_IN_PROGRESS
+    return errno.errorcode.get(code, f"errno_{code}")
+
+
+def connect_outcome(*, result: Any = None, error: BaseException | None = None) -> str:
+    """How one ``connect``/``connect_ex`` call ended: ``ok``, ``in_progress``,
+    ``timeout``, ``error`` or the errno name (``ENETUNREACH``, ``ECONNREFUSED``)."""
+    if error is None:
+        return _errno_outcome(result) if isinstance(result, int) else OUTCOME_OK
+    if isinstance(error, OSError) and isinstance(error.errno, int):
+        return _errno_outcome(error.errno)
+    if isinstance(error, TimeoutError):
+        return OUTCOME_TIMEOUT
+    return OUTCOME_ERROR
+
+
+def observe_connect(original: Any, counter: ConnectCounter) -> Any:
+    """Wrap ``socket.socket.connect``/``connect_ex``: ``counter.seen`` logs the
+    attempt before the call and says whether it did; after the call, a logged
+    attempt gets a :data:`CONNECT_OUTCOME_EVENT` (``counter.outcome``), so the
+    outcome events are capped with the attempts. The call's result and exception
+    pass through unchanged; observation never breaks the workload."""
+
+    @functools.wraps(original)
+    def observed(sock: Any, address: Any, *args: Any, **kwargs: Any) -> Any:
+        logged = counter.seen(sock, address)
+        try:
+            result = original(sock, address, *args, **kwargs)
+        except Exception as exc:
+            if logged:
+                counter.outcome(address, connect_outcome(error=exc))
+            raise
+        if logged:
+            counter.outcome(address, connect_outcome(result=result))
+        return result
+
+    return observed
+
+
+class SocketObserver:
+    """Report -- never block -- IPv4/IPv6 connection attempts of this process,
+    and how each ended (:func:`observe_connect`)."""
+
+    def __init__(self, events: Any, *, cap: int = NETWORK_EVENT_CAP) -> None:
+        self._counter = ConnectCounter(events, cap=cap)
+
+    def install(self) -> bool:
+        try:
+            import socket
+
+            for name in ("connect", "connect_ex"):
+                original = getattr(socket.socket, name)
+                setattr(socket.socket, name, self._wrap(original))
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            return False
+        return True
+
+    def _wrap(self, original: Any) -> Any:
+        return observe_connect(original, self._counter)
+
+    def seen(self, sock: Any, address: Any) -> bool:
+        return self._counter.seen(sock, address)
+
+
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def write_intent(mode: Any, flags: Any) -> bool:
+    """Does an ``open`` audit event's ``(mode, flags)`` open the file for writing?"""
+    if isinstance(mode, str) and _WRITE_MODE_CHARS.intersection(mode):
+        return True
+    return isinstance(flags, int) and not isinstance(flags, bool) and bool(flags & _WRITE_FLAGS)
+
+
+def _stdlib_prefixes() -> tuple[str, ...]:
+    import sysconfig
+
+    paths = sysconfig.get_paths()
+    return tuple(
+        os.path.abspath(paths[k]).rstrip(os.sep) + os.sep
+        for k in ("stdlib", "platstdlib") if paths.get(k)
+    )
+
+
+def _own_code_prefixes() -> tuple[str, ...]:
+    """Where NovaFabric's own code lives: this module's directory (the replay site
+    dir in a child) and the ``novafabric`` package, located without importing it."""
+    prefixes = [os.path.dirname(os.path.abspath(__file__)) + os.sep]
+    try:
+        import importlib.machinery
+
+        spec = importlib.machinery.PathFinder.find_spec("novafabric")
+        for location in (spec.submodule_search_locations or []) if spec else []:
+            prefixes.append(os.path.abspath(location).rstrip(os.sep) + os.sep)
+    except Exception:  # noqa: BLE001 -- not installed here: only this module's own opens
+        pass
+    return tuple(prefixes)
+
+
+class WriteObserver:
+    """Keep the absolute path of every file this process opens for writing
+    (``file_effects.FileWriteObserver``'s rules: opens under *skip_roots*, under
+    ``/dev``, ``/proc``, ``/sys`` and from NovaFabric's own code are not kept; past
+    the cap the report is ``capped``)."""
+
+    def __init__(self, skip_roots: list[str], *, cap: int = MAX_WRITTEN_PATHS) -> None:
+        self._skip = tuple(os.path.abspath(r) for r in skip_roots)
+        self._stdlib = _stdlib_prefixes()
+        self._own = _own_code_prefixes()
+        self._cap = cap
+        self._paths: set[str] = set()
+        self._handled: set[str] = set()
+        self.capped = False
+        self._pid = os.getpid()
+        self._active = False
+        self._lock = threading.Lock()
+        self._busy = threading.local()
+
+    @property
+    def paths(self) -> list[str]:
+        with self._lock:
+            return sorted(self._paths)
+
+    def install(self) -> bool:
+        try:
+            sys.addaudithook(self._hook)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            return False
+        self._pid = os.getpid()
+        self._active = True
+        return True
+
+    def stop(self) -> None:
+        self._active = False
+
+    def _called_from_own_code(self, frame: Any) -> bool:
+        for _ in range(_MAX_CALLER_FRAMES):
+            if frame is None:
+                return False
+            name = frame.f_code.co_filename
+            if name.startswith(self._own):
+                return True
+            if not (name.startswith(self._stdlib) or name.startswith("<")):
+                return False  # the workload's own code
+            frame = frame.f_back
+        return False
+
+    def _hook(self, event: str, args: tuple[Any, ...]) -> None:
+        if event != "open" or not self._active or getattr(self._busy, "on", False):
+            return
+        self._busy.on = True
+        try:
+            if len(args) < 3 or not write_intent(args[1], args[2]):
+                return
+            raw = args[0]
+            if isinstance(raw, os.PathLike):
+                raw = os.fspath(raw)
+            if raw in self._handled:
+                return
+            if not self._called_from_own_code(sys._getframe(1)):
+                self._seen(args)
+        except Exception:  # noqa: BLE001 -- observation must never break the workload
+            pass
+        finally:
+            self._busy.on = False
+
+    def _seen(self, args: tuple[Any, ...]) -> None:
+        if os.getpid() != self._pid:
+            return
+        path = args[0]
+        if isinstance(path, int):
+            return
+        decoded = os.fsdecode(path)
+        text = os.path.abspath(decoded)
+        if decoded == text and len(self._handled) < 4 * self._cap:
+            self._handled.add(decoded)
+        if any(_under(text, r) for r in self._skip) or any(
+            _under(text, r) for r in _PSEUDO_ROOTS
+        ):
+            return
+        with self._lock:
+            if text in self._paths:
+                return
+            if len(self._paths) >= self._cap or len(text) > MAX_PATH_CHARS:
+                self.capped = True
+                return
+            self._paths.add(text)
+
+
+def _report_writes_at_exit(observer: WriteObserver, events: Any, pid: int) -> None:
+    if os.getpid() != pid:
+        return  # a fork child inherited the handler; its parent reports
+    observer.stop()
+    events.emit(REPLAY_WRITES_EVENT, paths=observer.paths, capped=observer.capped)
+
+
+def install_write_observer(events: Any, events_path: str | None) -> WriteObserver | None:
+    """Observe this process's writes; ``file_observer_installed`` now,
+    ``files_written`` at interpreter exit. The event log's directory is skipped."""
+    observer = WriteObserver([os.path.dirname(events_path)] if events_path else [])
+    if not observer.install():
+        return None
+    events.emit(REPLAY_OBSERVER_EVENT)
+    atexit.register(_report_writes_at_exit, observer, events, os.getpid())
+    return observer
+
+
+# ── environment propagation ──────────────────────────────────────────────────
+
+
+def child_env(env: Any) -> dict[str, str] | None:
+    """The environment a child should be started with so that it reports in.
+
+    ``None`` means "leave the call as it is": not in a replay, the mapping is not
+    plain ``str -> str`` (``bytes`` keys are left alone), or it already carries
+    everything. Otherwise a **new** dict -- the caller's mapping is never
+    modified: the replay's event log, site dir and ``role: child`` set, and the
+    site dir prepended to ``PYTHONPATH`` (the child's own entries keep their
+    order after it).
+    """
+    events = os.environ.get(OBSERVE_ENV)
+    site = os.environ.get(SITE_ENV)
+    if not events or not site:
+        return None
+    base = os.environ if env is None else env
+    try:
+        items = list(base.items())
+    except Exception:  # noqa: BLE001 -- not a mapping: leave it to Popen
+        return None
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in items):
+        return None
+    new = dict(items)
+    new[OBSERVE_ENV] = events
+    new[SITE_ENV] = site
+    new[ROLE_ENV] = "child"
+    entries = [p for p in new.get("PYTHONPATH", "").split(os.pathsep) if p]
+    if site not in entries:
+        new["PYTHONPATH"] = os.pathsep.join([site, *entries])
+    if new == dict(items):
+        return None
+    return new
+
+
+#: Position of ``env`` in ``subprocess.Popen.__init__``'s parameters after
+#: ``self`` (stable since Python 3.0: args, bufsize, executable, stdin, stdout,
+#: stderr, preexec_fn, close_fds, shell, cwd, env).
+_POPEN_ENV_POSITION = 10
+
+
+#: Environment transforms applied, in order, to every child ``Popen`` starts:
+#: :func:`child_env` (replay) and :func:`capture_child_env` (capture). Each takes
+#: the child's env (``None`` = inherited) and returns a new dict or ``None``.
+_PROPAGATORS: list[Any] = []
+
+
+def _propagated_env(env: Any) -> Any:
+    current, changed = env, False
+    for propagate in list(_PROPAGATORS):
+        new = propagate(current)
+        if new is not None:
+            current, changed = new, True
+    return current if changed else None
+
+
+def install_env_propagation(propagator: Any = None) -> bool:
+    """Wrap ``subprocess.Popen.__init__`` once, so children get each registered
+    propagator's environment (:func:`child_env` unless another is given)."""
+    propagator = child_env if propagator is None else propagator
+    if propagator not in _PROPAGATORS:
+        _PROPAGATORS.append(propagator)
+    try:
+        import subprocess
+
+        original = subprocess.Popen.__init__
+        if getattr(original, "_nf_propagates_env", False):
+            return True
+
+        @functools.wraps(original)
+        def __init__(self: Any, *args: Any, **kwargs: Any) -> None:  # noqa: N807
+            try:
+                if len(args) > _POPEN_ENV_POSITION:
+                    new = _propagated_env(args[_POPEN_ENV_POSITION])
+                    if new is not None:
+                        args = (
+                            *args[:_POPEN_ENV_POSITION], new, *args[_POPEN_ENV_POSITION + 1:]
+                        )
+                else:
+                    new = _propagated_env(kwargs.get("env"))
+                    if new is not None:
+                        kwargs["env"] = new
+            except Exception:  # noqa: BLE001 -- never break the workload's spawn
+                pass
+            _IN_POPEN.depth = getattr(_IN_POPEN, "depth", 0) + 1
+            try:
+                original(self, *args, **kwargs)
+            finally:
+                _IN_POPEN.depth -= 1
+
+        __init__._nf_propagates_env = True  # type: ignore[attr-defined]
+        subprocess.Popen.__init__ = __init__  # type: ignore[method-assign]
+    except Exception:  # noqa: BLE001 -- observation must never break the workload
+        return False
+    return True
+
+
+# ── capture side (``nova capture``, local runner) ────────────────────────────
+
+#: Set by the capture main process for a child whose environment lost
+#: ``NOVAFABRIC_CAPSULE_DIR``: the capsule its observe-only bootstrap hands off to.
+CAPTURE_OBSERVE_ENV = "NOVAFABRIC_CAPTURE_OBSERVE_CAPSULE_DIR"
+#: The capture site directory (the hook loader + this module's copy).
+CAPTURE_SITE_ENV = "NOVAFABRIC_CAPTURE_SITE_DIR"
+#: What makes the full capture hooks activate (``runners/_sitecustomize.py``).
+CAPSULE_ENV = "NOVAFABRIC_CAPSULE_DIR"
+#: The workload-side hand-off ``collect_file_effects`` merges (duplicated from
+#: ``capture/file_effects.py``: ``HANDOFF_PREFIX``, ``_STARTED_SUFFIX``, ``_DONE_SUFFIX``).
+HANDOFF_PREFIX = ".file-effects.workload."
+_STARTED_SUFFIX = ".started"
+_DONE_SUFFIX = ".json"
+
+#: The capture targets of this process: ``(capsule dir, site dir)``.
+_CAPTURE: dict[str, str] = {}
+
+
+def capture_child_env(env: Any) -> dict[str, str] | None:
+    """As :func:`child_env`, for ``nova capture``: a child whose environment lacks
+    ``NOVAFABRIC_CAPSULE_DIR`` (the full hooks would not load) gets the capsule to
+    hand its writes off to and the capture site dir first on ``PYTHONPATH``. A
+    child that inherits the capture environment is left alone (``None``)."""
+    capsule, site = _CAPTURE.get("capsule"), _CAPTURE.get("site")
+    if not capsule or not site:
+        return None
+    base = os.environ if env is None else env
+    try:
+        items = list(base.items())
+    except Exception:  # noqa: BLE001 -- not a mapping: leave it to Popen
+        return None
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in items):
+        return None
+    new = dict(items)
+    if new.get(CAPSULE_ENV):
+        return None
+    new[CAPTURE_OBSERVE_ENV] = capsule
+    new[CAPTURE_SITE_ENV] = site
+    entries = [p for p in new.get("PYTHONPATH", "").split(os.pathsep) if p]
+    if site not in entries:
+        new["PYTHONPATH"] = os.pathsep.join([site, *entries])
+    if new == dict(items):
+        return None
+    return new
+
+
+def start_capture_propagation(capsule_dir: str, site_dir: str) -> bool:
+    """In the captured main process: make stripped-environment Python children
+    load the observe-only bootstrap (:func:`bootstrap_capture_child`)."""
+    _CAPTURE["capsule"], _CAPTURE["site"] = capsule_dir, site_dir
+    return install_env_propagation(capture_child_env)
+
+
+def _dir_identity(path: str) -> tuple[int, int] | None:
+    import stat
+
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino) if stat.S_ISDIR(st.st_mode) else None
+
+
+def _write_handoff(capsule_dir: str, identity: tuple[int, int], name: str, data: bytes) -> bool:
+    """Create *name* in the capsule dir, following no link: the directory is
+    opened ``O_NOFOLLOW`` and must still be the one first seen; the file is
+    created exclusively (``O_EXCL | O_NOFOLLOW``). Fail-open: ``False``."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    try:
+        dfd = os.open(capsule_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow | cloexec)
+    except OSError:
+        return False
+    try:
+        st = os.fstat(dfd)
+        if (st.st_dev, st.st_ino) != identity:
+            return False
+        fd = os.open(
+            name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow | cloexec, 0o666, dir_fd=dfd
+        )
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(dfd)
+
+
+def _hand_off_at_exit(
+    observer: WriteObserver, capsule_dir: str, identity: tuple[int, int], pid: int
+) -> None:
+    if os.getpid() != pid:
+        return  # a fork child inherited the handler; its parent hands off
+    observer.stop()
+    payload = json.dumps({"pid": pid, "paths": observer.paths, "capped": observer.capped})
+    _write_handoff(
+        capsule_dir, identity, f"{HANDOFF_PREFIX}{pid}{_DONE_SUFFIX}",
+        payload.encode("utf-8") + b"\n",
+    )
+
+
+def bootstrap_capture_child(site_file: str) -> None:
+    """Entry point of a captured child whose environment lost the capture hooks.
+
+    Records only its opens-for-write, through the same hand-off files the full
+    hooks write (``.started`` now, ``.json`` with the paths at interpreter exit),
+    so ``collect_file_effects`` merges them like any other process's -- and a
+    child that dies without handing off makes the record incomplete. No model,
+    tool or network records: those need the full hooks. Writes nothing to stdout;
+    the loader runs the shadowed ``sitecustomize`` afterwards.
+    """
+    capsule_dir = os.environ.get(CAPTURE_OBSERVE_ENV, "")
+    identity = _dir_identity(capsule_dir) if capsule_dir else None
+    if identity is None:
+        return  # a link or not a directory: write nothing through it
+    pid = os.getpid()
+    if not _write_handoff(capsule_dir, identity, f"{HANDOFF_PREFIX}{pid}{_STARTED_SUFFIX}", b""):
+        return
+    observer = WriteObserver([capsule_dir])
+    if not observer.install():
+        return
+    atexit.register(_hand_off_at_exit, observer, capsule_dir, identity, pid)
+    _CAPTURE["capsule"] = capsule_dir
+    _CAPTURE["site"] = os.environ.get(CAPTURE_SITE_ENV) or os.path.dirname(
+        os.path.abspath(site_file)
+    )
+    install_env_propagation(capture_child_env)
+
+
+def start_tree_observation(events: Any, *, observer: str) -> None:
+    """Record this process as observed and make its children report in too.
+
+    Emits ``observer_started`` (``role`` from the environment: ``root`` for the
+    process the engine started, else ``child``), then marks the environment so
+    every descendant is a ``child``, wraps ``Popen`` (:func:`child_env`) and
+    registers a fork hook: a fork child that stays Python is observed by the
+    observers it inherited and says so (``role: fork``); one that then execs is
+    revoked by its ``child_process_exec`` event.
+    """
+    role = "root" if os.environ.get(ROLE_ENV) == "root" else "child"
+    events.emit("observer_started", role=role, ppid=os.getppid(), observer=observer)
+    os.environ[ROLE_ENV] = "child"
+    install_env_propagation(child_env)
+
+    def _after_fork_in_child() -> None:
+        if getattr(_IN_POPEN, "depth", 0):
+            return  # Popen's own fork (preexec_fn): it execs at once, counted already
+        events.emit("observer_started", role="fork", ppid=os.getppid(), observer=observer)
+
+    try:
+        os.register_at_fork(after_in_child=_after_fork_in_child)
+    except Exception:  # noqa: BLE001 -- e.g. a platform without fork
+        pass
+
+
+def _chain_shadowed_sitecustomize(own_dir: str) -> None:
+    """Run the ``sitecustomize`` this replay's site dir shadows (e.g. a tracer's
+    bootstrap on the child's own ``PYTHONPATH``), as Python would have."""
+    import importlib.machinery
+    import importlib.util
+
+    own = os.path.realpath(own_dir)
+    paths = [p for p in sys.path if os.path.realpath(p or os.curdir) != own]
+    spec = importlib.machinery.PathFinder.find_spec("sitecustomize", paths)
+    if spec is None or spec.loader is None:
+        return
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+
+def bootstrap_child(site_file: str) -> None:
+    """Entry point of a child whose environment lost the replay dispatcher.
+
+    Observes only -- file writes, sockets and child processes -- and serves nothing: the
+    capsule's recorded answers belong to the processes that recorded them.
+    Writes nothing to stdout (an MCP stdio server speaks its protocol there).
+    """
+    events_path = os.environ.get(EVENTS_ENV) or os.environ.get(OBSERVE_ENV)
+    events = EventLog(events_path)
+    # First, so every write the workload makes is seen (ADR-0321 amendment).
+    install_write_observer(events, events_path)
+    if SocketObserver(events).install():
+        events.emit("network_observer_installed")
+    if ProcessObserver(events).install():
+        events.emit("process_observer_installed")
+    start_tree_observation(events, observer="child-bootstrap")
+    try:
+        _chain_shadowed_sitecustomize(os.path.dirname(os.path.abspath(site_file)))
+    except Exception as exc:  # noqa: BLE001 -- the shadowed one failed, as it would have
+        print(f"[novafabric] sitecustomize shadowed by the replay failed: {exc}", file=sys.stderr)

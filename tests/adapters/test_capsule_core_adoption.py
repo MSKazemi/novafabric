@@ -75,8 +75,8 @@ def test_docstring_names_the_adapters_on_the_shared_core() -> None:
 
 
 def test_counts_are_the_ones_the_review_found() -> None:
-    """Four with their own body plus seven on the core = the eleven framework adapters
+    """Four with their own body plus eight on the core = the twelve framework adapters
     (bedrock_agentcore moved onto the core for eval-adapters-query-12; autogen, crewai
-    and dspy for -19)."""
+    and dspy for -19; smolagents was written on it, HF-01)."""
     assert len(_own_body_adapters()) == 4
-    assert len(_shared_core_adapters()) == 7
+    assert len(_shared_core_adapters()) == 8

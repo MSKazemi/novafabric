@@ -18,6 +18,7 @@ from typing import Any
 import jsonschema
 import pytest
 import yaml
+from _mocked_replay_agent import assert_replay_outputs_hold_no_value
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -310,9 +311,7 @@ def test_agents_tool_calls_are_served_and_their_bodies_never_run(
     assert contract["tool_calls_by_surface"][OAI]["mocked"] == 3
     assert OAI in contract["interception_surfaces"]
     # No argument or result value reaches the replay's own outputs.
-    for path in replay_dir.rglob("*"):
-        if path.is_file():
-            assert SENTINEL not in path.read_text(errors="replace"), path
+    assert_replay_outputs_hold_no_value(replay_dir, capsule, SENTINEL)
 
 
 # ── fail closed ──────────────────────────────────────────────────────────────
@@ -373,6 +372,19 @@ def test_the_call_id_pairs_identical_calls_by_id(env: Env) -> None:
     } == by_id
 
 
+def _replayed_tool_tails(result: dict[str, Any], replay_dir: Path) -> list[str]:
+    """What the replay did with each tool call, one entry per call: the last
+    field of each ``tool_call_sequence`` entry (a record id, or ``live`` /
+    ``refused`` / ``unmatched``). The replay capsule's ``tool-calls.jsonl`` must
+    hold exactly as many records."""
+    (check,) = [c for c in result["fidelity"]["checks"] if c["name"] == "tool_call_sequence"]
+    tails = [str(entry).rsplit(":", 1)[1] for entry in check["replayed"]]
+    path = replay_dir / "tool-calls.jsonl"
+    lines = [ln for ln in path.read_text().splitlines() if ln.strip()] if path.exists() else []
+    assert len(lines) == len(tails), (lines, tails)
+    return tails
+
+
 # ── permissive keeps the safety ladder; overrides hold ───────────────────────
 
 
@@ -382,17 +394,22 @@ def test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder(
     monkeypatch.setenv("AGENT_CLASSES", json.dumps({"ping": "none"}))
     capsule, _ = env.capture([_call("lookup", order_id="o-1")])
     plan = [_call("lookup", order_id="o-1"), _call("ping")]
-    result, replayed, _ = env.replay(capsule, "--permissive", plan=plan)
+    result, replayed, replay_dir = env.replay(capsule, "--permissive", plan=plan)
     assert env.side_effects == ["ping"], "a `none` tool runs live under --permissive"
     assert result["tool_calls_live"] == 1
     assert ("ping", "pong-live-in-replay") in _responses(replayed)
+    # One entry per call: the unmatched `ping` is `live`, not `unmatched` + `live`.
+    assert sorted(_replayed_tool_tails(result, replay_dir))[-1:] == ["live"]
+    assert len(_replayed_tool_tails(result, replay_dir)) == 2
 
     # `lookup` is `unknown` (the default): refused without --allow-unknown-mutation.
     env.side.unlink()
     plan = [_call("lookup", order_id="o-1"), _call("lookup", order_id="o-9")]
-    result, replayed, _ = env.replay(capsule, "--permissive", plan=plan)
+    result, replayed, replay_dir = env.replay(capsule, "--permissive", plan=plan)
     assert env.side_effects == []
     assert result["replay_contract"]["tool_calls_refused"] == 1
+    tails = _replayed_tool_tails(result, replay_dir)
+    assert len(tails) == 2 and tails.count("refused") == 1, tails
     assert _refused(replayed)
 
 
@@ -440,22 +457,24 @@ def test_payloads_off_records_digests_only_and_replay_asks_for_a_recapture(
     assert div["surface"] == OAI
 
 
-def test_a_nested_record_makes_the_agents_call_unservable(env: Env) -> None:
-    capsule, _ = env.capture([_call("wrapper", x="a")])
+def test_a_agents_call_with_a_nested_record_is_served_and_covers_it(env: Env) -> None:
+    """ADR-0306 r3c: nesting no longer blocks a Agents SDK call. The outer call is
+    served, its body never runs, and the ``record.tool`` boundary it called is
+    consumed as covered."""
+    capsule, captured = env.capture([_call("wrapper", x="a")])
     records = env.records(capsule)
     inner = next(r for r in records if r["tool_name"] == "helper")
     outer = next(r for r in records if r["tool_name"] == "wrapper")
     assert inner["extensions"]["io.novafabric.within_tool_call_id"] == outer["tool_call_id"]
     assert outer["extensions"]["io.novafabric.nested_records"] == 1
-    assert outer["extensions"]["io.novafabric.result_codec"] == "not-servable"
-    result, _, _ = env.replay(capsule)
+    assert outer["extensions"]["io.novafabric.result_codec"] == "json-v1"
+    result, observed, _ = env.replay(capsule)
     assert env.side_effects == [], "neither the Agents SDK tool nor its nested tool may run"
-    assert result["status"] == "failure"
-    (div,) = [
-        d for d in result["replay_contract"]["divergences"]
-        if d["kind"] == "tool_result_not_servable"
-    ]
-    assert "inside this Agents SDK tool call" in div["reason"]
+    assert result["status"] == "success", result.get("error")
+    assert _responses(observed) == _responses(captured)
+    assert result["tool_calls_mocked"] == 1
+    assert result["replay_contract"]["tool_calls_covered"] == 1
+    assert result["replay_contract"]["divergences"] == []
 
 
 def test_a_failed_tool_call_is_recorded_but_never_served(env: Env) -> None:

@@ -33,6 +33,49 @@ patterns:
   - match: "api.replicate.com"
     gen_ai_system: "replicate"
     transport: "http"
+  # Hugging Face -- added 2026-10-28 (HF-02). Deliberately NOT a bare "huggingface.co":
+  # that would also record Hub metadata, dataset and weight-file traffic, none of which is a
+  # model call. Both entries are regexes anchored at the start of the URL (match_kind: regex),
+  # so they pin the https scheme and the whole host: a look-alike that merely *contains* the
+  # host in a path, query or fragment, or that continues the host (router.huggingface.co.x),
+  # does not match. Every path on the router host is inference (the Hub itself is
+  # huggingface.co), and an InferenceClient with an explicit provider posts to
+  # /<provider>/... rather than /v1/ -- so the whole host is matched, not one path.
+  # Phase 1 is capture-only: the wire hook records the request (requested model, host class,
+  # status, timing), never the response, so the served provider and reported model are unknown.
+  # A custom `base_url` is not matched; add it via a registry override.
+  - match: '^https://router\.huggingface\.co(:443)?/'
+    match_kind: regex
+    gen_ai_system: "huggingface"
+    transport: "http"
+    notes: "Hugging Face Inference Providers router (InferenceClient default and explicit providers)."
+  - match: '^https://[a-z0-9][a-z0-9.-]*\.endpoints\.huggingface\.cloud(:443)?/'
+    match_kind: regex
+    gen_ai_system: "huggingface.endpoint"
+    transport: "http"
+    notes: "Hugging Face dedicated Inference Endpoints."
+  # Google Gemini API and Vertex AI -- added 2026-11-21 (replay strategy W0). Before, neither
+  # host was here: a Gemini/Vertex call over httpx (the google-genai SDK's REST transport) left
+  # no model-call record, so mocked replay neither served nor refused it. Regexes anchored at
+  # the start of the URL pin https and the whole host, as for Hugging Face above. Vertex is
+  # regional (<location>-aiplatform.googleapis.com) or global (aiplatform.googleapis.com).
+  # gen_ai_system follows the OpenTelemetry GenAI provider names (gcp.gemini, gcp.vertex_ai).
+  # Capture-only: the request is recorded, never the response, so mocked replay cannot serve
+  # these calls (a strict replay refuses them, ModelSurfaceNotServable). The whole host is
+  # matched, so a Vertex control-plane request (datasets, pipelines, endpoint listing) is
+  # recorded as a model call too. gRPC transports (google-cloud-aiplatform's default) are not
+  # HTTP and are not recorded; a strict replay reports them as unserved_network. A custom
+  # base_url (a proxy) is not matched; add it via a registry override.
+  - match: '^https://generativelanguage\.googleapis\.com(:443)?/'
+    match_kind: regex
+    gen_ai_system: "gcp.gemini"
+    transport: "http"
+    notes: "Google Gemini API (google-genai SDK, REST)."
+  - match: '^https://([a-z0-9-]+-)?aiplatform\.googleapis\.com(:443)?/'
+    match_kind: regex
+    gen_ai_system: "gcp.vertex_ai"
+    transport: "http"
+    notes: "Google Vertex AI, global and regional endpoints (google-genai with vertexai=True, REST)."
   # AWS Bedrock — added 2026-05-09 (C-3.3a) after verifying boto3
   # transitively goes through urllib3. Match the per-region Bedrock host
   # pattern. Body parsing is sub-optimal because Bedrock's request shape

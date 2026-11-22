@@ -138,3 +138,37 @@ def test_first_match_wins() -> None:
         ],
     )
     assert registry.gen_ai_system("https://api.openai.com/v1/chat") == "openai-first"
+
+
+def test_regex_entries_are_anchored_and_case_insensitive_while_substring_stays_default() -> None:
+    registry = UrlRegistry(
+        patterns=[
+            {  # type: ignore[list-item]
+                "match": r"^https://llm\.example\.com(:443)?/",
+                "match_kind": "regex",
+                "gen_ai_system": "anchored",
+            },
+            {"match": "plain.example.org", "gen_ai_system": "substring"},  # type: ignore[list-item]
+        ]
+    )
+    assert registry.patterns[1].match_kind == "substring"  # every pre-existing entry is unchanged
+    assert registry.gen_ai_system("https://LLM.example.com/v1/x") == "anchored"
+    assert registry.gen_ai_system("https://llm.example.com:443/v1/x") == "anchored"
+    for lookalike in (
+        "https://evil.test/?u=https://llm.example.com/v1/",
+        "https://evil.test/#https://llm.example.com/",
+        "http://llm.example.com/v1/",
+        "https://llm.example.com.evil.test/v1/",
+        "https://llm.example.com@evil.test/v1/",
+    ):
+        assert registry.gen_ai_system(lookalike) == "unknown"
+    # The same text as a substring entry *would* match anywhere, which is the point of the kind:
+    loose = UrlRegistry(patterns=[{"match": "llm.example.com", "gen_ai_system": "x"}])  # type: ignore[list-item]
+    assert loose.gen_ai_system("https://evil.test/?u=https://llm.example.com/") == "x"
+
+
+def test_an_invalid_regex_entry_is_rejected_when_the_registry_loads(tmp_path: Path) -> None:
+    bad = tmp_path / "registry.yaml"
+    bad.write_text("patterns:\n  - match: '([unclosed'\n    match_kind: regex\n    gen_ai_system: x\n")
+    with pytest.raises(UrlRegistryError):
+        load_url_registry(_override_path=bad)

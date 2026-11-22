@@ -30,7 +30,10 @@ permissions:
 jobs:
   security-gate:
     name: MetadataStore Security Gate
-    runs-on: ubuntu-latest
+    # Pinned with the postgres service image below: ubuntu-24.04 ships pg_dump/pg_restore 16;
+    # ubuntu-latest (26.04) ships 17+, whose pg_restore a 16 server rejects (#207).
+    # tests/docs/test_workflow_runner_images_are_pinned.py enforces the pairing.
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -53,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
 

@@ -11,6 +11,7 @@ Implements:
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import shutil
@@ -81,6 +82,7 @@ from novafabric.server.schemas import (
 from novafabric.server.step_up import require_step_up
 
 router = APIRouter(prefix="/capsules", tags=["capsules"])
+logger = logging.getLogger(__name__)
 
 
 def _unpack_slot(request: Request, limits: Any) -> AbstractAsyncContextManager[Any]:
@@ -498,8 +500,15 @@ def _index_and_meter(
                     tenant_id=_tenant_id,
                     event_type="capsule.upload",
                 )
-        except Exception:  # noqa: BLE001
-            pass  # MetadataStore indexing is best-effort; the capsule store is source of truth
+        except Exception as exc:  # noqa: BLE001 — published capsule must survive
+            # MetadataStore is derived. Report a bounded, non-sensitive signal
+            # instead of silently losing the index; never log the exception
+            # message, which may contain database credentials or raw SQL.
+            logger.warning(
+                "capsule_metadata_index_failed run_id=%s error_type=%s",
+                run_id,
+                type(exc).__name__,
+            )
 
     # ADR-0206 P1: upsert the runs-cache row (keyset-pagination index) at
     # upload time. Best-effort — the index is derived and rebuildable; the
@@ -510,8 +519,14 @@ def _index_and_meter(
             capsule_index.upsert_capsule(_conn, capsule_dir, run_id, manifest)
         finally:
             _conn.close()
-    except Exception:  # noqa: BLE001 — never blocks the upload
-        pass
+    except Exception as exc:  # noqa: BLE001 — never blocks the upload
+        # The runs-cache is rebuildable via list-time sync_index, but without
+        # an operator-visible warning the missing row looks like lost evidence.
+        logger.warning(
+            "capsule_runs_cache_index_failed run_id=%s error_type=%s",
+            run_id,
+            type(exc).__name__,
+        )
 
     # ADR-0208 (experimental): usage metering — count + unpacked bytes,
     # attributed at ingest. Fail-safe; inert unless rate_limits.enabled AND
