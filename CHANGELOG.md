@@ -11,6 +11,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Collector CI on Go 1.26.11.** GO-2026-6859 (`net/http`) is fixed only in Go 1.26.11 and failed
+  the v0.109.0 tag's collector vulnerability scan on 1.26.10 (lint, unit tests and the build passed).
+  The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
+  chart), so the release is unaffected; anyone building the collector from source should use Go 1.26.11.
+
 ## [0.109.0] - 2026-11-22
 
 **Replay that refuses rather than pretends: what it cannot serve, it names.**
