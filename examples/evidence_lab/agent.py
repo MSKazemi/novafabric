@@ -23,7 +23,7 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,10 @@ def search_logs(scn: lab.Scenario, service: str, limit: int) -> dict[str, Any]:
     return lab.query_logs(scn, service, limit)
 
 
-_TOOLS = {"read_metrics": read_metrics, "search_logs": search_logs}
+_TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
+    "read_metrics": read_metrics,
+    "search_logs": search_logs,
+}
 
 
 def call_tool(scn: lab.Scenario, name: str, **arguments: Any) -> dict[str, Any]:
@@ -136,17 +139,39 @@ def _ask_model(
 # ── flow ─────────────────────────────────────────────────────────────────────
 
 
+def record_consumption(asset_ref: str, status: str, env: Mapping[str, str]) -> None:
+    """Declare, through NovaFabric's documented SDK call, that this run used ``asset_ref``.
+
+    ``record_asset_consumption`` appends to the active capsule's ``assets.jsonl``; at
+    finalisation ``nova capture`` turns it into a ``consumed`` lineage edge. Outside a
+    capture there is no capsule to write to, which is a named failure, not a silent skip.
+    """
+    capsule_dir = env.get("NOVAFABRIC_CAPSULE_DIR")
+    if not capsule_dir:
+        raise lab.EvidenceLabError(
+            "E_CAPTURE_CONTEXT_MISSING", "--asset-ref needs the capsule that `nova capture` opens"
+        )
+    from novafabric.registry.service import record_asset_consumption
+
+    record_asset_consumption(asset_ref, status, Path(capsule_dir))
+
+
 def run_agent(
     scenario_dir: Path,
     *,
     env: Mapping[str, str] | None = None,
     result_path: Path | None = None,
     timeout_seconds: float | None = None,
+    variant: str = lab.BASE_VARIANT,
+    asset_ref: str | None = None,
+    asset_status: str = "development",
 ) -> dict[str, Any]:
     """Run the whole flow once; raise :class:`lab.EvidenceLabError` on any named failure."""
     env = os.environ if env is None else env
     lab.validate_environment(env)  # before anything else, and before any SDK use
-    scn = lab.load_scenario(scenario_dir)
+    scn = lab.load_scenario(scenario_dir, variant)
+    if asset_ref is not None:
+        record_consumption(asset_ref, asset_status, env)
     manifest = scn.manifest
     budget = _StepBudget(manifest.limits.max_steps)
     if len(manifest.tools.expected_order) + 2 > manifest.limits.max_steps:
@@ -182,6 +207,8 @@ def run_agent(
         "schema_revision": RESULT_SCHEMA_REVISION,
         "status": "completed",
         "scenario_id": manifest.scenario_id,
+        "variant": scn.variant,
+        "prompt_revision": scn.prompt_revision,
         "tool_sequence": tool_sequence,
         "observation_sha256": {
             name: lab.sha256_hex(lab.canonical_json(value)) for name, value in observations.items()
@@ -213,10 +240,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scenario-dir", type=Path, default=DEFAULT_SCENARIO_DIR)
     parser.add_argument("--result-path", type=Path, help="write the diagnostic result here")
     parser.add_argument("--timeout-seconds", type=float, help="cap the model-call timeout")
+    parser.add_argument("--variant", choices=lab.VARIANTS, default=lab.BASE_VARIANT)
+    parser.add_argument("--asset-ref", help="registered asset this run consumes (name@version)")
+    parser.add_argument("--asset-status", default="development")
     args = parser.parse_args(argv)
     try:
         result = run_agent(
-            args.scenario_dir, result_path=args.result_path, timeout_seconds=args.timeout_seconds
+            args.scenario_dir,
+            result_path=args.result_path,
+            timeout_seconds=args.timeout_seconds,
+            variant=args.variant,
+            asset_ref=args.asset_ref,
+            asset_status=args.asset_status,
         )
     except lab.EvidenceLabError as exc:
         sys.stderr.write(f"EVIDENCELAB_ERROR code={exc.code} message={exc.message}\n")

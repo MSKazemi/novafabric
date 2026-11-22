@@ -30,6 +30,10 @@ DUMMY_API_KEY = "sk-evidencelab-local-dummy"
 
 SCENARIOS_ROOT = Path(__file__).resolve().parent / "scenarios"
 FIXTURE_FILES = ("metrics.json", "logs.jsonl", "prompt.txt", "model_response.json")
+#: D2: the base keys describe the ``unsafe`` variant; ``corrected`` is declared under
+#: ``variants`` and changes only the prompt and the fixture reply.
+VARIANTS = ("unsafe", "corrected")
+BASE_VARIANT = "unsafe"
 KNOWN_TOOLS = ("read_metrics", "search_logs")
 MAX_FIXTURE_BYTES = 1024 * 1024
 MIN_PORT = 1024  # an ephemeral port, never a well-known one
@@ -94,14 +98,45 @@ class Tools(_Strict):
         return names
 
 
+class Bounds(_Strict):
+    min: int
+    max: int
+
+
 class Policy(_Strict):
     forbidden_actions: list[str]
     allowed_actions: list[str]
+    # D2: an allowlisted action listed here is accepted only with an integer value in range.
+    value_bounds: dict[str, Bounds] = Field(default_factory=dict)
 
 
 class Expected(_Strict):
     unsafe_action: str
     policy_result: Literal["reject"]
+
+
+class VariantExpected(_Strict):
+    action: str
+    policy_result: Literal["accept", "reject"]
+
+
+class Variant(_Strict):
+    """A controlled input variant: another prompt and fixture reply, same observations."""
+
+    prompt_revision: str
+    prompt: str
+    model_response: str
+    golden: str
+    fixture_sha256: dict[str, str]
+    expected: VariantExpected
+
+    @field_validator("prompt", "model_response", "golden")
+    @classmethod
+    def _plain_file_name(cls, value: str) -> str:
+        parts = Path(value).parts
+        if not parts or Path(value).is_absolute() or ".." in parts:
+            raise ValueError(f"{value!r} must be a relative path inside the scenario directory")
+        return value
 
 
 class Limits(_Strict):
@@ -121,6 +156,15 @@ class Manifest(_Strict):
     policy: Policy
     expected: Expected
     limits: Limits
+    variants: dict[str, Variant] = Field(default_factory=dict)
+
+    @field_validator("variants")
+    @classmethod
+    def _known_variants(cls, value: dict[str, Variant]) -> dict[str, Variant]:
+        unknown = sorted(set(value) - set(VARIANTS[1:]))
+        if unknown:
+            raise ValueError(f"unknown variants {unknown}; D2 declares {list(VARIANTS[1:])}")
+        return value
 
     @field_validator("model_id")
     @classmethod
@@ -150,10 +194,41 @@ class Scenario:
     logs: list[dict[str, Any]]
     prompt: str
     model_response: dict[str, Any]
+    variant: str = BASE_VARIANT
 
     @property
     def fixture_manifest_sha256(self) -> str:
         return sha256_hex(canonical_json(self.manifest.fixture_sha256))
+
+    @property
+    def _variant(self) -> Variant | None:
+        return None if self.variant == BASE_VARIANT else self.manifest.variants[self.variant]
+
+    @property
+    def prompt_revision(self) -> str:
+        v = self._variant
+        return self.manifest.prompt_revision if v is None else v.prompt_revision
+
+    @property
+    def expected_action(self) -> str:
+        v = self._variant
+        return self.manifest.expected.unsafe_action if v is None else v.expected.action
+
+    @property
+    def expected_policy_result(self) -> str:
+        v = self._variant
+        return self.manifest.expected.policy_result if v is None else v.expected.policy_result
+
+    @property
+    def golden_path(self) -> Path:
+        v = self._variant
+        return GOLDEN_REQUEST if v is None else Path(v.golden)
+
+    @property
+    def variant_fixture_sha256(self) -> dict[str, str]:
+        """Digests of the files this variant adds (empty for the base variant)."""
+        v = self._variant
+        return {} if v is None else dict(v.fixture_sha256)
 
 
 def resolve_scenario_dir(scenario_id: str, root: Path | None = None) -> Path:
@@ -185,8 +260,10 @@ def _read_fixture(directory: Path, name: str, expected_sha: str) -> bytes:
     return data
 
 
-def load_scenario(directory: Path) -> Scenario:
-    """Load and validate a scenario. Unknown or missing manifest keys are errors."""
+def load_scenario(directory: Path, variant: str = BASE_VARIANT) -> Scenario:
+    """Load and validate a scenario variant. Unknown or missing manifest keys are errors."""
+    if variant not in VARIANTS:
+        raise EvidenceLabError("E_VARIANT_UNKNOWN", f"{variant!r} is not one of {list(VARIANTS)}")
     manifest_path = directory / "scenario.yaml"
     try:
         raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
@@ -215,7 +292,31 @@ def load_scenario(directory: Path) -> Scenario:
             "E_MANIFEST_INVALID", "tools.logs_limit exceeds tools.max_logs_limit"
         )
 
+    policy = manifest.policy
+    for action, bounds in policy.value_bounds.items():
+        if action not in policy.allowed_actions or bounds.min > bounds.max:
+            raise EvidenceLabError(
+                "E_MANIFEST_INVALID",
+                f"policy.value_bounds.{action}: must name an allowed action with min <= max",
+            )
+    for name, spec in manifest.variants.items():
+        if sorted(spec.fixture_sha256) != sorted([spec.prompt, spec.model_response]) or any(
+            not _SHA256.match(d) for d in spec.fixture_sha256.values()
+        ):
+            raise EvidenceLabError(
+                "E_MANIFEST_INVALID",
+                f"variants.{name}.fixture_sha256 must pin exactly its prompt and model_response",
+            )
+    if variant != BASE_VARIANT and variant not in manifest.variants:
+        raise EvidenceLabError("E_VARIANT_UNKNOWN", f"the scenario declares no {variant!r} variant")
+
     data = {n: _read_fixture(directory, n, manifest.fixture_sha256[n]) for n in FIXTURE_FILES}
+    if variant != BASE_VARIANT:
+        spec = manifest.variants[variant]
+        data["prompt.txt"] = _read_fixture(directory, spec.prompt, spec.fixture_sha256[spec.prompt])
+        data["model_response.json"] = _read_fixture(
+            directory, spec.model_response, spec.fixture_sha256[spec.model_response]
+        )
     try:
         metrics = json.loads(data["metrics.json"])
         logs = [
@@ -227,7 +328,7 @@ def load_scenario(directory: Path) -> Scenario:
         raise EvidenceLabError(
             "E_FIXTURE_INVALID", f"a fixture is not valid JSON/UTF-8: {exc}"
         ) from exc
-    return Scenario(manifest, directory, metrics, logs, prompt, model_response)
+    return Scenario(manifest, directory, metrics, logs, prompt, model_response, variant)
 
 
 # ── the two tools' simulator functions (pure; the agent wraps them) ───────────
@@ -270,7 +371,7 @@ def build_request_body(scn: Scenario, observations: Mapping[str, Any]) -> dict[s
     user = canonical_json(
         {
             "scenario_id": scn.manifest.scenario_id,
-            "prompt_revision": scn.manifest.prompt_revision,
+            "prompt_revision": scn.prompt_revision,
             "observations": dict(observations),
         }
     )
@@ -290,28 +391,27 @@ GOLDEN_REQUEST = Path("golden") / "model_request.json"
 
 def load_golden_request(scn: Scenario) -> dict[str, Any]:
     """The committed golden request transcript, read from the scenario directory."""
-    path = scn.directory / GOLDEN_REQUEST
+    name = scn.golden_path
+    path = scn.directory / name
     if not path.is_file():  # follows symlinks: a directory, device or FIFO is not a transcript
         if path.exists():
-            raise EvidenceLabError("E_FIXTURE_INVALID", f"{GOLDEN_REQUEST} is not a regular file")
-        raise EvidenceLabError("E_FIXTURE_MISSING", f"{GOLDEN_REQUEST} is missing")
+            raise EvidenceLabError("E_FIXTURE_INVALID", f"{name} is not a regular file")
+        raise EvidenceLabError("E_FIXTURE_MISSING", f"{name} is missing")
     try:
         with path.open("rb") as handle:
             data = handle.read(MAX_FIXTURE_BYTES + 1)  # bounded whatever st_size claims
     except OSError as exc:
         raise EvidenceLabError(
-            "E_FIXTURE_MISSING", f"{GOLDEN_REQUEST} is unreadable: {exc.strerror}"
+            "E_FIXTURE_MISSING", f"{name} is unreadable: {exc.strerror}"
         ) from exc
     if len(data) > MAX_FIXTURE_BYTES:
-        raise EvidenceLabError("E_FIXTURE_TOO_LARGE", f"{GOLDEN_REQUEST} is too large")
+        raise EvidenceLabError("E_FIXTURE_TOO_LARGE", f"{name} is too large")
     try:
         golden = json.loads(data)
     except (ValueError, RecursionError) as exc:  # deep nesting raises RecursionError
-        raise EvidenceLabError(
-            "E_FIXTURE_INVALID", f"{GOLDEN_REQUEST} is not valid JSON/UTF-8"
-        ) from exc
+        raise EvidenceLabError("E_FIXTURE_INVALID", f"{name} is not valid JSON/UTF-8") from exc
     if not isinstance(golden, dict):
-        raise EvidenceLabError("E_FIXTURE_INVALID", f"{GOLDEN_REQUEST} is not a JSON object")
+        raise EvidenceLabError("E_FIXTURE_INVALID", f"{name} is not a JSON object")
     return golden
 
 
@@ -356,13 +456,20 @@ def parse_decision(content: str) -> Decision:
 
 
 def evaluate_policy(scn: Scenario, decision: Decision) -> PolicyVerdict:
-    """Deny by default: only an allowlisted action is accepted."""
+    """Deny by default: only an allowlisted action is accepted, and only within its bounds."""
     policy = scn.manifest.policy
     if decision.action in policy.forbidden_actions:
         return PolicyVerdict("reject", "forbidden_action")
-    if decision.action in policy.allowed_actions:
-        return PolicyVerdict("accept", "allowlisted_action")
-    return PolicyVerdict("reject", "action_not_allowlisted")
+    if decision.action not in policy.allowed_actions:
+        return PolicyVerdict("reject", "action_not_allowlisted")
+    bounds = policy.value_bounds.get(decision.action)
+    if bounds is not None:
+        value = decision.value
+        if isinstance(value, bool) or not isinstance(value, int):
+            return PolicyVerdict("reject", "value_not_an_integer")
+        if not bounds.min <= value <= bounds.max:
+            return PolicyVerdict("reject", "value_out_of_bounds")
+    return PolicyVerdict("accept", "allowlisted_action")
 
 
 # ── loopback + credential guards ─────────────────────────────────────────────

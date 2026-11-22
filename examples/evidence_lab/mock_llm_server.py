@@ -100,7 +100,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # A per-recv timeout ends a stalled client, but a client sending one byte at a time
         # resets it forever. The timer is an overall cap on the whole connection: it stops
         # the read side only, so the refusal can still be written back.
-        self.timeout = self.server.request_timeout
+        self.timeout = self.server.request_timeout  # type: ignore[misc]  # per connection
         super().setup()
         self._deadline = threading.Timer(2 * self.server.request_timeout, self._expire)
         self._deadline.daemon = True
@@ -262,7 +262,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             raise _Reject(400, "E_USER_CONTENT_INVALID", "user content has the wrong keys")
         if user["scenario_id"] != scn.manifest.scenario_id:
             raise _Reject(400, "E_SCENARIO_MISMATCH", "the request names another scenario")
-        if user["prompt_revision"] != scn.manifest.prompt_revision:
+        if user["prompt_revision"] != scn.prompt_revision:
             raise _Reject(400, "E_PROMPT_REVISION_MISMATCH", "the prompt revision differs")
         observed = user["observations"]
         expected = lab.expected_observations(scn)
@@ -331,6 +331,10 @@ def _fail(code: str, message: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="EvidenceLab strict loopback fixture model")
     parser.add_argument("--scenario-dir", required=True, type=Path)
+    parser.add_argument(
+        "--variant", choices=lab.VARIANTS, default=lab.BASE_VARIANT,
+        help="which controlled input variant's single request this server accepts",
+    )  # fmt: skip
     parser.add_argument("--port", type=int, default=0, help="0 = let the OS pick an ephemeral port")
     parser.add_argument("--ready-file", type=Path, help="written once the server is listening")
     parser.add_argument("--request-log", type=Path, help="JSONL log of every request outcome")
@@ -338,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        scenario = lab.load_scenario(args.scenario_dir)
+        scenario = lab.load_scenario(args.scenario_dir, args.variant)
     except lab.EvidenceLabError as exc:
         return _fail(exc.code, exc.message)
     try:
