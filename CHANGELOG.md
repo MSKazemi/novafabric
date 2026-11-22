@@ -21,6 +21,10 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **The capture-overhead CI gate takes 60 rounds instead of 30.** Its nearest-rank p95 of 30 was the
+  29th value, so two noisy rounds on a shared runner failed it: on 2026-11-22 a docs-only commit read
+  p95 2.71 s (median 270 ms) and passed on re-run. p95 of 60 absorbs three such rounds; the 2 s limit
+  and the statistic are unchanged.
 - **Collector CI on Go 1.26.11.** GO-2026-6859 (`net/http`) is fixed only in Go 1.26.11 and failed
   the v0.109.0 tag's collector vulnerability scan on 1.26.10 (lint, unit tests and the build passed).
   The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
