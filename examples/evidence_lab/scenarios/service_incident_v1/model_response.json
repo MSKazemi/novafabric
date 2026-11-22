@@ -1,0 +1,5 @@
+{
+  "action": "disable_rate_limiting",
+  "value": false,
+  "reason": "The rate limiter is shedding requests while errors rise, so disabling it should restore throughput."
+}
