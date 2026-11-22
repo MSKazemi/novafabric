@@ -85,6 +85,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   CC6.8. It is now titled and described for CC6.6's topic, protection against threats from outside the
   system boundary; the control ID and its evidence are unchanged.
 
+### Security
+
+- **The showcase site's dev-only Lighthouse CI is on `@lhci/cli` 0.16.1, which clears four expired npm-audit
+  waivers** (issue #208). Lighthouse 12.6.1 -> 13.6.0 drops `extract-zip` (GHSA-jmr9-qjv8-65gv,
+  GHSA-7pqw-9j4j-h8q3; no patched release exists) and moves `basic-ftp` to 6.2.6 (GHSA-c475-qrg2-pj4r, patched
+  in 6.2.1) and the nested `zod` 3.x onto 4.6.7 (GHSA-mrhx-c7xc-m3w5, patched in 4.6.6). `.npm-audit-waivers.toml`
+  now holds no waivers. `astro` moves 7.4.2 -> 7.4.13 within its range, clearing two non-blocking advisories
+  (GHSA-mh32-jxcr-mh9f, GHSA-r3h5-4585-7x3w), and the same Lighthouse upgrade clears three moderate ones (`basic-ftp`
+  GHSA-5pm8-86m8-9m6r and GHSA-r4jh-29pc-gfqr, `ip-address` GHSA-rxp7-6hxx-x8q5). `npm audit` reports 0 vulnerabilities in all three npm trees.
+
 ## [0.108.0] - 2026-10-25
 
 **Verification that checks content, state that survives a crash, and a dashboard that tells the truth.**
