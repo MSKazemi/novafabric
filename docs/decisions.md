@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**300 decisions recorded** — **283** accepted · **14** proposed · **3** superseded.
+**307 decisions recorded** — **290** accepted · **14** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -333,3 +333,10 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0316` | CI runs the unit suite as duration-balanced file shards with a proven partition; releases publish only from a commit whose CI passed | accepted | 2026-10-22 |
 | `ADR-0317` | Each Alembic track keeps its own version table | proposed | 2026-10-23 |
 | `ADR-0318` | Deletion fails closed when configured local WORM state cannot be read | accepted | 2026-10-23 |
+| `ADR-0319` | Mocked replay refuses unservable recorded model calls, and states its network-observation scope | accepted | 2026-11-19 |
+| `ADR-0320` | Ollama as a served model surface — capture the response at the wire, serve it at the httpx transport | accepted | 2026-11-19 |
+| `ADR-0321` | Replay fidelity verdict and the mocked replay capsule | accepted | 2026-11-19 |
+| `ADR-0322` | Opt-in hermetic mocked replay: the replayed process tree confined in network and filesystem (bubblewrap, or Landlock + seccomp) | accepted | 2026-11-19 |
+| `ADR-0323` | AWS Bedrock Converse as a served model surface — capture the response at urllib3, serve it at urllib3 | accepted | 2026-11-20 |
+| `ADR-0324` | Generic wire-level record and serve for HTTP model surfaces | accepted | 2026-11-21 |
+| `ADR-0325` | Replayability is checked when the capsule is written | accepted | 2026-11-21 |

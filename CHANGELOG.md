@@ -11,6 +11,14 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Documentation
+
+- **SECURITY.md says what a capsule stores.** A new section states that capsules hold model prompts and
+  responses by default, that v0.109.0 stores response bodies for every model host in the URL registry
+  (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
+- **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
+  v0.109.0 ships.
+
 ### Fixed
 
 - **Collector CI on Go 1.26.11.** GO-2026-6859 (`net/http`) is fixed only in Go 1.26.11 and failed
