@@ -53,6 +53,11 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova restore` (pg profile) names a Postgres version mismatch instead of a bare error (#207).**
+  A newer `pg_restore` than the target server (17+ against 16 fails on `SET transaction_timeout`),
+  or an archive written by a newer `pg_dump` than `pg_restore`, now fails with both versions and
+  the fix. CI jobs pin `ubuntu-24.04` instead of the moving `ubuntu-latest` (26.04 ships client
+  tools 17+); a test keeps every job pinned and each Postgres service on its runner's client major.
 - **`iso42001` audit profile: two control IDs named the wrong clause.** `ISO42-8.5-RESPONSIBLE-AI`
   pointed at a clause ISO/IEC 42001:2023 does not have (clause 8 ends at 8.4); it is replaced by
   `ISO42-7.5-DOCUMENTED-INFORMATION`, with the same evidence. `ISO42-10.2-CONTINUAL-IMPROVEMENT` is now
