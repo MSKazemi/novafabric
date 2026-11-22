@@ -7,7 +7,7 @@ own copy of that body: ``a2a``, ``google_adk``, ``langgraph`` and
 ``openai_agents``.
 
 New adapters use this instead (``autogen``, ``bedrock_agentcore``, ``crewai``,
-``dspy``, ``haystack``, ``llamaindex`` and ``pydantic_ai`` do). It is
+``dspy``, ``haystack``, ``llamaindex``, ``pydantic_ai`` and ``smolagents`` do). It is
 **additive**: an existing adapter moves onto it only when its own body is broken
 — ``bedrock_agentcore`` did for review eval-adapters-query-12 (no capsule for an
 abandoned stream), and ``autogen``, ``crewai`` and ``dspy`` for -19 (a changed
@@ -37,6 +37,7 @@ import yaml
 from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
 from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
+from novafabric.capture.process_invocation import AdapterRun, attach_facet, begin_adapter_run
 
 # Module-level so tests can patch via ``novafabric.adapters._capsule.<name>``.
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
@@ -93,6 +94,9 @@ class AdapterCapture:
     #: Vendor-specific manifest ``extensions``, keyed by reverse DNS (e.g. a
     #: pointer to a framework's own trace stream). Omitted when empty.
     extensions: dict[str, Any] = field(default_factory=dict)
+    #: ADR-0306 Q7: how this process was started (the ``process_invocation``
+    #: facet), so replay can re-run it; ``None`` when it could not be taken.
+    invocation: dict[str, Any] | None = None
 
     def fail(self, exc: BaseException) -> None:
         """Record *exc* as the run's failure. Never swallows it."""
@@ -202,6 +206,7 @@ class AdapterCapture:
             manifest["error"] = self.error
         if self.extensions:
             manifest["extensions"] = self.extensions
+        attach_facet(manifest, self.invocation)
 
         # Main scan (after replay.yaml), manifest redaction, lineage, residual pass,
         # evidence_digests, gate and opt-in seal: the path `nova capture` uses.
@@ -235,17 +240,50 @@ class UncapturedRun:
         """Nothing to write."""
 
 
+@dataclass
+class ReplayedRun(UncapturedRun):
+    """What :func:`begin_capture` returns in a process re-run by mocked replay.
+
+    Writes no capsule and installs no hooks (the replay's dispatchers serve the
+    calls); it reports how the framework call ended to the replay's event log,
+    which the replay verdict compares with the capsule's (ADR-0306 Q7).
+    """
+
+    run: AdapterRun | None = None
+    exit_code: int = 0
+    partial_reason: str | None = None
+
+    def fail(self, exc: BaseException) -> None:
+        self.exit_code = 1
+
+    def mark_partial(self, reason: str) -> None:
+        if self.exit_code == 0:
+            self.partial_reason = reason
+
+    def finish(self) -> None:
+        if self.run is None:
+            return
+        status = (
+            "failure" if self.exit_code else "partial" if self.partial_reason else "success"
+        )
+        self.run.replay_finished(self.exit_code, status)
+
+
 def begin_capture(
     *, framework: str, run_name: str, data_dir: Path | None
 ) -> AdapterCapture | UncapturedRun:
     """Open a capsule and claim the wire hooks for one framework invocation.
 
     An unusable capsule store returns an :class:`UncapturedRun` instead of
-    raising: capture never blocks the framework call.
+    raising: capture never blocks the framework call. Under mocked replay it
+    returns a :class:`ReplayedRun` and writes nothing (ADR-0306 Q7).
     """
     from novafabric.capture._ulid import new_span_id, new_ulid
     from novafabric.capture.hooks import install_all_or_discard
 
+    run = begin_adapter_run(framework)
+    if run.replaying:
+        return ReplayedRun(run=run)
     run_id = new_ulid()
     writer = open_capsule_writer(
         resolve_data_dir(data_dir), run_id, hook=f"adapter-{framework}"
@@ -264,6 +302,7 @@ def begin_capture(
         hook_token=install_all_or_discard(writer=writer, parent_span_id=root_span_id),
         created_at=_now(),
         t0=time.monotonic(),
+        invocation=run.facet,
     )
 
 

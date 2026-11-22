@@ -69,6 +69,7 @@ REGISTERED_FACETS = (
     "model_provenance",
     "output_conformance",
     "preservation",
+    "process_invocation",
     "regression_alarm",
     "risk_transfer",
     "safety",

@@ -1,0 +1,444 @@
+"""ADR-0321: the fidelity verdict's rules, over synthetic capsules and event logs.
+
+``faithful`` only when every computable check is equal, nothing diverged and no
+call went live or past the interceptors; never by default.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from _mocked_replay_agent import mcp_record, openai_record
+
+from novafabric.replay._contract import summarize
+from novafabric.replay._fidelity import (
+    REQUIRED_CHECKS,
+    VERDICTS,
+    compute_fidelity,
+    not_run,
+)
+
+
+def _capsule(tmp_path: Path, *, stdout: bytes = b"hi\n", exit_code: Any = 0,
+             digests: bool = True, capture_mode: str = "cli-wrapper",
+             file_effects: bool = True) -> Path:
+    capsule = tmp_path / "capsule"
+    (capsule / "outputs").mkdir(parents=True)
+    if file_effects:  # a complete record of a workload that wrote no file
+        (capsule / "file-effects.json").write_text(json.dumps({
+            "schema": "novafabric.file-effects/1", "observer": "python-open-audit-hook",
+            "complete": True, "files": [],
+        }))
+    manifest: dict[str, Any] = {"run_id": "R1", "capture_mode": capture_mode}
+    if exit_code is not None:
+        manifest["exit_code"] = exit_code
+    if stdout:
+        (capsule / "outputs" / "stdout.txt").write_bytes(stdout)
+    if digests:
+        manifest["evidence_digests"] = {} if not stdout else {
+            "outputs/stdout.txt": {"sha256": "sha256:" + hashlib.sha256(stdout).hexdigest(),
+                                   "size_bytes": len(stdout)}
+        }
+    (capsule / "capsule.yaml").write_text(yaml.safe_dump(manifest))
+    return capsule
+
+
+def _verdict(
+    capsule: Path,
+    *,
+    model_calls: list[dict[str, Any]] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    events: list[dict[str, Any]] | None = None,
+    stdout: bytes | None = b"hi\n",
+    stderr: bytes | None = b"",
+    exit_code: int = 0,
+    run_error: dict[str, Any] | None = None,
+    extra_contract: dict[str, Any] | None = None,
+) -> Any:
+    model_calls = model_calls or []
+    tool_calls = tool_calls or []
+    events = [{"event": "installed"}, *(events or [])]
+    report = summarize(model_calls, tool_calls, events, divergence_policy="fail",
+                       substitute_tools=True)
+    if extra_contract:
+        original = report.as_dict
+
+        def as_dict() -> dict[str, Any]:
+            return {**original(), **extra_contract}
+
+        report.as_dict = as_dict  # type: ignore[method-assign]
+    manifest = yaml.safe_load((capsule / "capsule.yaml").read_text())
+    return compute_fidelity(
+        capsule_dir=capsule, manifest=manifest, model_calls=model_calls,
+        tool_calls=tool_calls, events=events, report=report, exit_code=exit_code,
+        run_error=run_error, stdout=stdout, stderr=stderr, replay_capsule=None,
+    )
+
+
+def test_matching_outcome_and_calls_are_faithful(tmp_path: Path) -> None:
+    rec = openai_record("Paris", call_id="m1")
+    fidelity = _verdict(
+        _capsule(tmp_path), model_calls=[rec],
+        events=[{"event": "model_served", "queue": "openai", "call_index": 0,
+                 "model_call_id": "m1"}],
+    )
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+    assert fidelity.as_dict()["normalization"] == "volatile-ids/1"
+    assert fidelity.verdict in VERDICTS
+
+
+@pytest.mark.parametrize("counter", [
+    "model_calls_live", "network_connections_live",
+    # Added by the replay-accounting work; honoured whenever the contract has them.
+    "model_calls_not_servable", "child_processes_unobserved",
+])
+def test_any_live_or_unintercepted_call_makes_faithful_impossible(
+    tmp_path: Path, counter: str
+) -> None:
+    fidelity = _verdict(_capsule(tmp_path), extra_contract={counter: 1})
+    assert fidelity.verdict == "diverged"
+    assert fidelity.failing_checks == ["live_calls"]
+
+
+def test_a_child_that_reported_its_connections_is_not_live_by_itself(tmp_path: Path) -> None:
+    """ADR-0319 (#52 part 2): an observed child's connections are already in
+    ``network_connections_live``; only an unobserved child blocks ``faithful``."""
+    fidelity = _verdict(
+        _capsule(tmp_path),
+        extra_contract={"child_processes_spawned": 1, "child_processes_unobserved": 0},
+    )
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+
+
+def test_a_live_model_call_event_is_never_faithful(tmp_path: Path) -> None:
+    """Under --permissive an unsupported surface runs live and diverges nothing."""
+    events = [{"event": "model_live", "provider": "openai", "surface": "x.create"}]
+    model_calls: list[dict[str, Any]] = []
+    report = summarize(model_calls, [], [{"event": "installed"}, *events],
+                       divergence_policy="warn", substitute_tools=True)
+    assert not report.diverged
+    manifest = yaml.safe_load((_capsule(tmp_path) / "capsule.yaml").read_text())
+    fidelity = compute_fidelity(
+        capsule_dir=tmp_path / "capsule", manifest=manifest, model_calls=model_calls,
+        tool_calls=[], events=events, report=report, exit_code=0, run_error=None,
+        stdout=b"hi\n", stderr=b"", replay_capsule=None,
+    )
+    assert fidelity.verdict == "diverged"
+    assert set(fidelity.failing_checks) == {"live_calls", "model_call_sequence"}
+
+
+def test_a_tool_on_a_surface_replay_does_not_intercept_is_never_faithful(
+    tmp_path: Path,
+) -> None:
+    unintercepted = {"tool_call_id": "t1", "tool_name": "shell", "transport": "subprocess"}
+    fidelity = _verdict(_capsule(tmp_path), tool_calls=[unintercepted])
+    assert fidelity.verdict == "diverged"
+    assert fidelity.failing_checks == ["live_calls"]
+
+
+def test_a_divergence_is_diverged(tmp_path: Path) -> None:
+    rec = openai_record("Paris", call_id="m1")
+    fidelity = _verdict(_capsule(tmp_path), model_calls=[rec])  # never requested
+    assert fidelity.verdict == "diverged"
+    assert "divergence" in fidelity.failing_checks
+    assert "model_call_sequence" in fidelity.failing_checks
+
+
+# ── tool_call_sequence: a multiset within one model turn, ordered across turns ──
+#
+# c08 log_mcp: the model asked for three (then four) MCP calls in one response;
+# they ran in parallel and the replay served them in another order, so a strict
+# comparison said "first difference at position 2" although every call was served.
+
+
+def _at(second: int) -> str:
+    return f"2026-11-20T05:20:{second:02d}.000000Z"
+
+
+def _model(call_id: str, second: int | None) -> dict[str, Any]:
+    rec = openai_record("ok", call_id=call_id)
+    if second is not None:
+        rec["started_at"] = _at(second)
+    return rec
+
+
+def _tool(call_id: str, k: int, second: int) -> dict[str, Any]:
+    return mcp_record("get", {"k": k}, str(k), tool_call_id=call_id, started_at=_at(second),
+                      finished_at=_at(second))
+
+
+def _served(call_id: str, index: int) -> dict[str, Any]:
+    return {"event": "model_served", "queue": "openai", "call_index": index,
+            "model_call_id": call_id}
+
+
+def _mocked(record_id: str) -> dict[str, Any]:
+    return {"event": "tool_mocked", "tool_name": "get", "record_id": record_id}
+
+
+#: Recorded: model m1 at :01 asks for t1 and t2 (run in parallel, :02 and :03);
+#: model m2 at :04 asks for t3 (:05); model m3 at :06 answers.
+_TURNS_MODELS = [("m1", 1), ("m2", 4), ("m3", 6)]
+_TURNS_TOOLS = [("t1", 1, 2), ("t2", 2, 3), ("t3", 3, 5)]
+
+
+def _turns_verdict(tmp_path: Path, replayed: list[str], *,
+                   model_seconds: list[int | None] | None = None) -> Any:
+    seconds = model_seconds or [s for _, s in _TURNS_MODELS]
+    models = [_model(cid, s) for (cid, _), s in zip(_TURNS_MODELS, seconds, strict=True)]
+    tools = [_tool(cid, k, s) for cid, k, s in _TURNS_TOOLS]
+    index = {cid: i for i, (cid, _) in enumerate(_TURNS_MODELS)}
+    events = [_served(x, index[x]) if x.startswith("m") else _mocked(x) for x in replayed]
+    return _verdict(_capsule(tmp_path), model_calls=models, tool_calls=tools, events=events)
+
+
+def test_parallel_tool_calls_served_in_another_order_within_one_turn_are_faithful(
+    tmp_path: Path,
+) -> None:
+    fidelity = _turns_verdict(tmp_path, ["m1", "t2", "t1", "m2", "t3", "m3"])
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+    check = _check(fidelity, "tool_call_sequence")
+    assert check["equal"] is True
+    assert check["comparison"] == "per-model-turn-multiset"
+    # The report still shows the order the calls were served in, and says it differed.
+    assert check["recorded"] == ["mcp.ClientSession.call_tool:get:t1",
+                                 "mcp.ClientSession.call_tool:get:t2",
+                                 "mcp.ClientSession.call_tool:get:t3"]
+    assert check["replayed"][:2] == ["mcp.ClientSession.call_tool:get:t2",
+                                     "mcp.ClientSession.call_tool:get:t1"]
+    assert "order within model turn 1 differed" in check["note"]
+
+
+def test_the_same_calls_in_recorded_order_have_no_order_note(tmp_path: Path) -> None:
+    check = _check(_turns_verdict(tmp_path, ["m1", "t1", "t2", "m2", "t3", "m3"]),
+                   "tool_call_sequence")
+    assert check["equal"] is True
+    assert "note" not in check
+
+
+@pytest.mark.parametrize("replayed,turn", [
+    # t3 answered m1 instead of m2: the same calls, but not in the same turns.
+    (["m1", "t1", "t2", "t3", "m2", "m3"], 1),
+    # t2 moved after m2.
+    (["m1", "t1", "m2", "t2", "t3", "m3"], 1),
+    # A call before the first model call that the recording made after it.
+    (["t1", "m1", "t2", "m2", "t3", "m3"], 0),
+])
+def test_a_tool_call_in_another_model_turn_is_diverged(
+    tmp_path: Path, replayed: list[str], turn: int
+) -> None:
+    fidelity = _turns_verdict(tmp_path, replayed)
+    assert fidelity.failing_checks == ["tool_call_sequence"], fidelity.as_dict()
+    check = _check(fidelity, "tool_call_sequence")
+    assert check["comparison"] == "per-model-turn-multiset"
+    assert f"first difference in model turn {turn}" in check["note"]
+
+
+def test_a_live_call_in_place_of_a_served_one_is_diverged_within_a_turn(
+    tmp_path: Path,
+) -> None:
+    models = [_model("m1", 1)]
+    tools = [_tool("t1", 1, 2), _tool("t2", 2, 3)]
+    events = [_served("m1", 0), _mocked("t2"),
+              {"event": "tool_live", "tool_name": "get", "surface": "mcp.ClientSession.call_tool"}]
+    fidelity = _verdict(_capsule(tmp_path), model_calls=models, tool_calls=tools, events=events)
+    assert "tool_call_sequence" in fidelity.failing_checks
+
+
+def test_tool_calls_with_no_model_call_between_them_are_one_turn(tmp_path: Path) -> None:
+    a = mcp_record("get", {"k": 1}, "one", tool_call_id="t1")
+    b = mcp_record("get", {"k": 2}, "two", tool_call_id="t2")
+    events = [_mocked("t2"), _mocked("t1")]
+    fidelity = _verdict(_capsule(tmp_path), tool_calls=[a, b], events=events)
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+
+
+@pytest.mark.parametrize("model_seconds,why", [
+    ([1, None, 6], "started_at"),        # a model record without a start time
+    ([1, 7, 6], "did not start in time order"),  # overlapping model calls: turns unknown
+])
+def test_without_usable_turn_boundaries_the_order_is_strict(
+    tmp_path: Path, model_seconds: list[int | None], why: str
+) -> None:
+    replayed = ["m1", "t2", "t1", "m2", "t3", "m3"]
+    fidelity = _turns_verdict(tmp_path, replayed, model_seconds=model_seconds)
+    assert fidelity.failing_checks == ["tool_call_sequence"], fidelity.as_dict()
+    check = _check(fidelity, "tool_call_sequence")
+    assert check["comparison"] == "strict-order"
+    assert "first difference at position 1" in check["note"]
+    assert why in check["note"]
+    in_order = _turns_verdict(tmp_path / "x", ["m1", "t1", "t2", "m2", "t3", "m3"],
+                              model_seconds=model_seconds)
+    assert in_order.verdict == "faithful", in_order.as_dict()
+
+
+def test_stderr_and_exit_code_are_compared(tmp_path: Path) -> None:
+    capsule = _capsule(tmp_path)
+    stderr_only = _verdict(capsule, stderr=b"warning\n")
+    # stderr is advisory (owner decision 2026-11-19): reported, never in the verdict.
+    assert stderr_only.failing_checks == []
+    assert stderr_only.advisory_differences == ["stderr_sha256"]
+    assert stderr_only.verdict == "faithful"
+    check = next(c for c in stderr_only.as_dict()["checks"] if c["name"] == "stderr_sha256")
+    assert check["equal"] is False and check["advisory"] is True
+    assert _verdict(capsule, exit_code=2).failing_checks == ["exit_code"]
+    other = _verdict(capsule, stdout=b"other\n")
+    assert other.failing_checks == ["stdout_normalized_sha256"]
+    assert other.advisory_differences == ["stdout_sha256"]
+
+
+@pytest.mark.parametrize("error_type", ["ReplayTimeout", "ReplayLaunchError"])
+def test_a_replay_that_did_not_complete_is_failed(tmp_path: Path, error_type: str) -> None:
+    fidelity = _verdict(
+        _capsule(tmp_path), stdout=None, stderr=None, exit_code=124,
+        run_error={"type": error_type, "message": "stopped"},
+    )
+    assert fidelity.verdict == "failed"
+    assert fidelity.reason == "stopped"
+
+
+def test_a_dispatcher_that_was_not_installed_is_failed(tmp_path: Path) -> None:
+    capsule = _capsule(tmp_path)
+    report = summarize([], [], [{"event": "install_failed", "error": "ImportError: x"}],
+                       divergence_policy="fail", substitute_tools=True)
+    manifest = yaml.safe_load((capsule / "capsule.yaml").read_text())
+    fidelity = compute_fidelity(
+        capsule_dir=capsule, manifest=manifest, model_calls=[], tool_calls=[],
+        events=[], report=report, exit_code=3, run_error=None, stdout=b"", stderr=b"",
+        replay_capsule=None,
+    )
+    assert fidelity.verdict == "failed"
+
+
+def test_a_refused_replay_is_failed_with_no_checks() -> None:
+    fidelity = not_run("refused")
+    assert fidelity.as_dict() == {
+        "verdict": "failed", "normalization": "none", "checks": [], "reason": "refused",
+    }
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"exit_code": None},
+    {"capture_mode": "sdk-decorator"},
+    {"stdout": b"", "digests": False},
+])
+def test_missing_recorded_data_is_not_compared_never_faithful(
+    tmp_path: Path, kwargs: dict[str, Any]
+) -> None:
+    capsule = _capsule(tmp_path, **kwargs)
+    fidelity = _verdict(capsule, stdout=b"" if "stdout" in kwargs else b"hi\n")
+    assert fidelity.verdict == "not_compared", fidelity.as_dict()
+    assert fidelity.uncompared_checks
+    assert set(fidelity.uncompared_checks) <= set(REQUIRED_CHECKS)
+
+
+def test_a_capsule_with_no_file_effects_record_is_judged_on_the_other_checks(
+    tmp_path: Path,
+) -> None:
+    """An older capsule never had file-effects.json: not an inconsistency. The verdict
+    comes from exit code + normalised stdout, and says it does not cover file effects."""
+    capsule = _capsule(tmp_path, file_effects=False)
+    fidelity = _verdict(capsule)
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+    assert fidelity.uncompared_checks == []
+    assert fidelity.unchecked == ["file_effects"]
+    out = fidelity.as_dict()
+    assert out["unchecked"] == ["file_effects"]
+    files = next(c for c in out["checks"] if c["name"] == "file_effects")
+    assert files["equal"] is None and "not recorded" in files["note"]
+    # The other required checks still decide: a stdout difference still diverges.
+    assert _verdict(capsule, stdout=b"other\n").verdict == "diverged"
+    # And a capsule that also lacks stdout is still not_compared.
+    bare = _capsule(tmp_path / "bare", stdout=b"", digests=False, file_effects=False)
+    assert _verdict(bare, stdout=b"").verdict == "not_compared"
+
+
+def test_unchecked_is_absent_when_every_check_has_its_record(tmp_path: Path) -> None:
+    assert "unchecked" not in _verdict(_capsule(tmp_path)).as_dict()
+
+
+def test_an_empty_stream_absent_from_a_digest_bound_capsule_is_empty(tmp_path: Path) -> None:
+    """``nova capture`` writes a stream only when not empty; ADR-0251 digests
+    bind every file, so there an absent stream was empty."""
+    capsule = _capsule(tmp_path, stdout=b"")
+    assert _verdict(capsule, stdout=b"").verdict == "faithful"
+    assert _verdict(capsule, stdout=b"x").failing_checks == ["stdout_normalized_sha256"]
+
+
+def test_a_stream_that_no_longer_matches_its_evidence_digest_is_not_compared(
+    tmp_path: Path,
+) -> None:
+    capsule = _capsule(tmp_path)
+    (capsule / "outputs" / "stdout.txt").write_bytes(b"edited\n")
+    fidelity = _verdict(capsule, stdout=b"edited\n")
+    assert fidelity.verdict == "not_compared"
+    assert fidelity.uncompared_checks == ["stdout_normalized_sha256"]
+
+
+def test_a_divergence_outranks_missing_recorded_data(tmp_path: Path) -> None:
+    capsule = _capsule(tmp_path, exit_code=None)
+    assert _verdict(capsule, stdout=b"boom").verdict == "diverged"
+
+
+# ── volatile-token normalisation of stdout (ADR-0321 amendment, rule set volatile-ids/1) ──
+
+_U1 = "3f2b8c1e-9d4a-4f6b-8a2c-1e5d7f9b0c3a"
+_U2 = "a1b2c3d4-e5f6-4a7b-9c8d-0e1f2a3b4c5d"
+_U3 = "0c9d8e7f-6a5b-4c3d-b2e1-f0a9b8c7d6e5"
+
+
+def _check(fidelity: Any, name: str) -> dict[str, Any]:
+    (check,) = [c for c in fidelity.as_dict()["checks"] if c["name"] == name]
+    return check
+
+
+def test_stdout_that_differs_only_in_generated_uuids_is_faithful(tmp_path: Path) -> None:
+    """The AWS log_mcp case: LangChain prints ``lc_<uuid4>`` ids it generates."""
+    recorded = f"content=[{{'id': 'lc_{_U1}'}}] tool_call_id={_U2}\n".encode()
+    replayed = f"content=[{{'id': 'lc_{_U3}'}}] tool_call_id={_U1.upper()}\n".encode()
+    fidelity = _verdict(_capsule(tmp_path, stdout=recorded), stdout=replayed)
+    assert fidelity.verdict == "faithful", fidelity.as_dict()
+    normalized = _check(fidelity, "stdout_normalized_sha256")
+    assert normalized["equal"] is True
+    assert normalized["normalizer"] == "volatile-ids/1"
+    assert "advisory" not in normalized
+    raw = _check(fidelity, "stdout_sha256")
+    # The raw byte comparison stays visible: advisory, and false here.
+    assert raw["equal"] is False and raw["advisory"] is True
+    assert fidelity.advisory_differences == ["stdout_sha256"]
+
+
+def test_an_id_printed_twice_must_be_printed_twice(tmp_path: Path) -> None:
+    """The rule keeps structure: one id twice is not two different ids."""
+    recorded = f"call {_U1} -> result for {_U1}\n".encode()
+    replayed = f"call {_U2} -> result for {_U3}\n".encode()
+    fidelity = _verdict(_capsule(tmp_path, stdout=recorded), stdout=replayed)
+    assert fidelity.verdict == "diverged"
+    assert fidelity.failing_checks == ["stdout_normalized_sha256"]
+
+
+@pytest.mark.parametrize("recorded,replayed", [
+    # Anything but an RFC 4122 UUID still diverges: no evidence asked to mask it.
+    (b"at 2026-11-20T10:00:00Z\n", b"at 2026-11-20T10:00:01Z\n"),
+    (f"id {_U1.replace('-', '')}\n".encode(), f"id {_U2.replace('-', '')}\n".encode()),
+    (f"answer 1 {_U1}\n".encode(), f"answer 2 {_U2}\n".encode()),
+])
+def test_differences_outside_the_rule_set_still_diverge(
+    tmp_path: Path, recorded: bytes, replayed: bytes
+) -> None:
+    fidelity = _verdict(_capsule(tmp_path, stdout=recorded), stdout=replayed)
+    assert fidelity.verdict == "diverged"
+    assert "stdout_normalized_sha256" in fidelity.failing_checks
+
+
+def test_stderr_is_not_normalised(tmp_path: Path) -> None:
+    capsule = _capsule(tmp_path)
+    names = [c["name"] for c in _verdict(capsule).as_dict()["checks"]]
+    assert "stderr_normalized_sha256" not in names
+    assert names[:4] == ["exit_code", "stdout_normalized_sha256", "stdout_sha256",
+                         "stderr_sha256"]

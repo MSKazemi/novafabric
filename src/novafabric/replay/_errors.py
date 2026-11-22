@@ -63,6 +63,14 @@ class ReplayRecordMalformedError(ReplayDivergenceError):
     kind = "malformed_recorded_response"
 
 
+class ReplayWireRequestMismatchError(ReplayDivergenceError):
+    """A request to a registry model host differs from the generic-wire record at the
+    head of its queue (ADR-0324 D3): another method, ``gen_ai.system``, path, or
+    canonical query/body. Strict replay refuses it; nothing reaches the network."""
+
+    kind = "wire_request_mismatch"
+
+
 class ReplayToolUnmatchedError(ReplayDivergenceError):
     """A tool call on an intercepted surface had no unconsumed recorded result.
 
@@ -70,6 +78,19 @@ class ReplayToolUnmatchedError(ReplayDivergenceError):
     """
 
     kind = "tool_call_unmatched"
+
+
+class AdapterRunCountMismatchError(ReplayDivergenceError):
+    """A re-run adapter process started more framework-adapter runs than the
+    capsule recorded (ADR-0306 Q7): the extra run's calls were never recorded.
+
+    Raised in the replayed process by
+    :func:`novafabric.capture.process_invocation.begin_adapter_run` under the
+    default fail-closed policy; the engine also reports it when the process
+    made fewer runs than recorded.
+    """
+
+    kind = "adapter_run_count_mismatch"
 
 
 class ReplayRecordedToolError(Exception):
@@ -99,14 +120,138 @@ class CapsuleNotReplayableError(Exception):
     error_type = "CapsuleNotReplayable"
 
     def __init__(
-        self, message: str, *, capture_mode: str | None, command: list[str]
+        self,
+        message: str,
+        *,
+        capture_mode: str | None,
+        command: list[str],
+        guard: str | None = None,
     ) -> None:
         super().__init__(message)
         self.capture_mode = capture_mode
         self.command = command
+        #: ADR-0306 Q7: the process-invocation guard that refused an adapter
+        #: capsule that records one; ``None`` when it records none at all.
+        self.guard = guard
 
     def as_error(self) -> dict[str, str]:
-        return {"type": self.error_type, "message": str(self)}
+        error = {"type": self.error_type, "message": str(self)}
+        if self.guard is not None:
+            error["guard"] = self.guard
+        return error
+
+
+class ModelSurfaceNotServableError(Exception):
+    """A strict mocked replay refused to start: the capsule records model calls
+    mocked replay cannot serve (ADR-0319) -- an unserved surface (Ollama, Hugging
+    Face, other providers' raw HTTP) or a served surface whose response was never
+    recorded. Run anyway, each would reach the network under a "mocked" label.
+
+    Not a divergence: nothing was re-run. Raised *before* anything is spawned;
+    the engine records it as ``status: aborted`` with ``error.type:
+    ModelSurfaceNotServable``; ``nova replay`` exits 1 (also under
+    ``--dry-run``). Under ``--permissive`` the replay starts instead and reports
+    a ``model_surface_not_servable`` divergence (a warning) and the counters
+    ``model_calls_not_servable`` / ``replay_contract.model_calls_not_servable_by_system``.
+    """
+
+    #: Stable ``error.type`` written to ``replay_result.yaml``.
+    error_type = "ModelSurfaceNotServable"
+    #: Divergence kind reported instead under ``--permissive``.
+    kind = "model_surface_not_servable"
+
+    def __init__(self, by_system: dict[str, dict[str, Any]]) -> None:
+        self.by_system = {k: dict(v) for k, v in by_system.items()}
+        super().__init__(self.describe(self.by_system))
+
+    @property
+    def count(self) -> int:
+        return sum(int(v.get("count", 0)) for v in self.by_system.values())
+
+    @staticmethod
+    def describe(by_system: dict[str, dict[str, Any]]) -> str:
+        from novafabric.replay._servability import describe_by_system
+
+        total = sum(int(v.get("count", 0)) for v in by_system.values())
+        return (
+            f"the capsule records {total} model call{'s' if total != 1 else ''} "
+            f"mocked replay cannot serve -- {describe_by_system(by_system)} -- "
+            "(no recorded response on a surface replay serves); replayed, "
+            f"{'they' if total != 1 else 'it'} would run live. A strict replay "
+            "refuses to start; pass --permissive to run it anyway and report "
+            f"{'them' if total != 1 else 'it'} (ADR-0319)"
+        )
+
+    def as_error(self) -> dict[str, Any]:
+        return {
+            "type": self.error_type,
+            "message": str(self),
+            "model_calls_not_servable_by_system": {
+                k: dict(v) for k, v in self.by_system.items()
+            },
+        }
+
+
+class ToolSurfaceNotServedError(Exception):
+    """A strict mocked replay refused to start: the capsule records tool calls
+    of LangChain tools the workload did not pass through ``wrap_tools``
+    (recorded by the seam's observer) whose results mocked replay cannot serve
+    -- most often because payload capture was off, so no result was kept.
+
+    Observed records that *can* be served are served by default (ADR-0306 r3
+    amendment); this refusal names the rest up front instead of failing at the
+    first such call. It is the tool-side twin of
+    :class:`ModelSurfaceNotServableError`: raised *before* anything is spawned,
+    recorded as ``status: aborted`` with ``error.type: ToolSurfaceNotServed``;
+    ``nova replay`` exits 1 (also under ``--dry-run``). Under ``--permissive``
+    the replay starts and reports a ``tool_surface_not_served`` divergence (a
+    warning); each such call is refused before its body runs unless
+    ``--allow-unknown-mutation`` lets it run live (counted in
+    ``tool_calls_live``).
+    """
+
+    error_type = "ToolSurfaceNotServed"
+    kind = "tool_surface_not_served"
+
+    def __init__(self, by_surface: dict[str, dict[str, Any]]) -> None:
+        self.by_surface = {k: dict(v) for k, v in by_surface.items()}
+        super().__init__(self.describe(self.by_surface))
+
+    @property
+    def count(self) -> int:
+        return sum(int(v.get("count", 0)) for v in self.by_surface.values())
+
+    @staticmethod
+    def describe(by_surface: dict[str, dict[str, Any]]) -> str:
+        from novafabric.replay._contract import describe_not_served
+
+        total = sum(int(v.get("count", 0)) for v in by_surface.values())
+        many = total != 1
+        reasons: list[str] = []
+        for entry in by_surface.values():
+            for reason in entry.get("reasons") or []:
+                if reason not in reasons:
+                    reasons.append(str(reason))
+        why = f" (why: {'; '.join(reasons)})" if reasons else ""
+        return (
+            f"the capsule records {total} tool call{'s' if many else ''} mocked replay "
+            f"cannot serve -- {describe_not_served(by_surface)}{why}. A strict replay "
+            "refuses to start: capture again -- with NOVA_CAPTURE_LEVEL=forensic when "
+            "the result was not kept -- to have "
+            f"{'them' if many else 'it'} served, or pass --permissive "
+            "--allow-unknown-mutation to run "
+            f"{'them' if many else 'it'} live, each counted in tool_calls_live "
+            "(ADR-0306 r3 amendment)"
+        )
+
+    def as_error(self) -> dict[str, Any]:
+        return {
+            "type": self.error_type,
+            "message": str(self),
+            "tool_calls_not_served_by_surface": {
+                k: dict(v) for k, v in self.by_surface.items()
+            },
+        }
 
 
 class ReplayRecordedErrorUnreconstructableError(ReplayDivergenceError):

@@ -25,6 +25,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric import _paths as _nf_paths
+from novafabric._safe_path import PathEscapeError, UnsafePathSegmentError, safe_child
 from novafabric.compliance.audit import (
     BUILT_IN_PROFILES,
     AuditEngine,
@@ -77,8 +78,16 @@ def _resolve_dirs(data_dir: Optional[Path]) -> tuple[Path, Path]:  # noqa: UP045
     return data_dir, data_dir / "capsules"
 
 
-def _load_engine(data_dir: Optional[Path], profile: str) -> AuditEngine:  # noqa: UP045
-    """Resolve profile and return an :class:`AuditEngine`."""
+def _load_engine(
+    data_dir: Optional[Path],  # noqa: UP045
+    profile: str,
+    capsule_id: str | None = None,
+) -> AuditEngine:
+    """Resolve profile and return an :class:`AuditEngine`.
+
+    With *capsule_id* the engine scans that one capsule only, so its gaps are
+    reported (and fail the gate) instead of being filtered out of a whole-tree scan.
+    """
     try:
         ctrl_profile = load_profile(profile)
     except ProfileValidationError as exc:
@@ -89,7 +98,22 @@ def _load_engine(data_dir: Optional[Path], profile: str) -> AuditEngine:  # noqa
         console.print(f"[red]x[/red] {exc}")
         raise typer.Exit(code=1) from exc
     root, capsules_dir = _resolve_dirs(data_dir)
-    return AuditEngine(data_dir=root, profile=ctrl_profile, capsules_dir=capsules_dir)
+    if capsule_id is None:
+        return AuditEngine(data_dir=root, profile=ctrl_profile, capsules_dir=capsules_dir)
+    try:
+        capsule = safe_child(capsules_dir, capsule_id, field="capsule id")
+    except (UnsafePathSegmentError, PathEscapeError) as exc:
+        console.print(f"[red]x[/red] {exc}", markup=True, highlight=False)
+        raise typer.Exit(code=2) from exc
+    if not capsule.is_dir():
+        console.print(
+            f"[red]x[/red] no capsule {capsule_id!r} under {capsules_dir}",
+            markup=True, highlight=False,
+        )
+        raise typer.Exit(code=2)
+    return AuditEngine(
+        data_dir=root, profile=ctrl_profile, capsules_dir=capsules_dir, capsule_paths=[capsule]
+    )
 
 
 def _status_colour(status: str) -> str:
@@ -196,18 +220,8 @@ def audit_map(
       # Export the audit report as JSON
       nova audit map --profile gdpr --json
     """
-    engine = _load_engine(data_dir, profile)
+    engine = _load_engine(data_dir, profile, capsule_id)
     report = engine.scan()
-
-    if capsule_id is not None:
-        # Filter coverages to those that reference the requested capsule
-        report = report.model_copy(
-            update={
-                "coverages": [
-                    c for c in report.coverages if capsule_id in c.capsule_ids
-                ]
-            }
-        )
 
     if output_json:
         typer.echo(
