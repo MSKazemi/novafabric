@@ -223,6 +223,8 @@ def test_p7_permissive_runs_live_and_reports_it(work: Workload) -> None:
     (system,) = contract["model_calls_not_servable_by_system"]
     assert system == "ollama"
     assert contract["model_calls_not_servable_by_system"]["ollama"]["count"] == 1
+    # /api/embed is no Ollama queue: the call it sent is counted live once (c09).
+    assert contract["model_calls_live"] == work.server_hits == 1
     assert contract["divergences"][0]["kind"] == "model_surface_not_servable"
     assert "model_surface_not_servable" in doc["divergence_reason"]
     flat = _flat(result.output)  # the console wraps at the terminal width

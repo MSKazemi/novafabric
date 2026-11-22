@@ -278,3 +278,50 @@ def test_recording_off_stores_no_body_and_strict_replay_refuses_as_before(
     assert not env["side"].exists()
     assert replay["error"]["type"] == "ModelSurfaceNotServable"
     assert replay["model_calls_not_servable"] == 1
+
+
+@pytest.mark.parametrize("client", ["httpx", "httpx-async", "requests"])
+def test_recording_off_under_permissive_counts_each_live_request_as_live(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch, client: str
+) -> None:
+    """c09 (E7 ``model_calls_live_undercount``): a recorded generic-wire call with no
+    stored response cannot be served, so ``--permissive`` lets it run live. The
+    request reached the provider, yet ``model_calls_live`` read 0 -- the call showed
+    up only in ``model_calls_not_servable``, a count taken from the recording. The
+    live counter now counts what the seam saw being sent: one per request the fake
+    provider received, retries included; ``model_calls_not_servable`` is unchanged."""
+    monkeypatch.setenv("NOVAFABRIC_CAPTURE_WIRE_RESPONSES", "off")
+    plan = [
+        {"api": "mistral", "client": client, "prompt": "one"},
+        {"api": "gemini", "client": client, "prompt": "two", "fail_first": 1},
+    ]
+    capsule, _, _ = _capture(env, monkeypatch, plan)
+    monkeypatch.delenv("NOVAFABRIC_CAPTURE_WIRE_RESPONSES")
+    assert all(WIRE_RESPONSE not in r["extensions"] for r in _records(capsule))
+
+    result, replay, replayed = _replay(env, monkeypatch, capsule, args=("--permissive",))
+    assert result.exit_code == 0, (result.output, replay)
+    assert replayed is not None
+    assert [r["text"] for r in replayed] == [
+        "REPLAY-LIVE-ANSWER number 1", "REPLAY-LIVE-ANSWER number 2"
+    ]  # not served: the live provider answered both
+    hits = env["side"].read_text().splitlines()
+    assert len(hits) == 3  # two calls, the second retried once after a 429
+    contract = replay["replay_contract"]
+    assert contract["model_calls_live"] == len(hits)
+    assert replay["model_calls_not_servable"] == len(_records(capsule))
+    assert replay["model_calls_mocked"] == 0
+    live = {c["name"]: c for c in replay["fidelity"]["checks"]}["live_calls"]
+    assert live["equal"] is False
+    assert replay["fidelity"]["verdict"] == "diverged"
+
+
+def test_a_served_call_under_permissive_still_counts_nothing_live(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live count follows what was sent, not what was recorded: a capsule whose
+    every wire call is servable reports ``model_calls_live: 0`` under ``--permissive``
+    too, and the new counting never claims a served call."""
+    capsule, captured, _ = _capture(env, monkeypatch, [{"api": "mistral", "prompt": "hi"}])
+    result, replay, replayed = _replay(env, monkeypatch, capsule, args=("--permissive",))
+    _assert_faithful(env, result, replay, captured, replayed, model_calls=1)

@@ -215,6 +215,8 @@ def test_without_wire_responses_permissive_runs_it_and_counts_it_not_servable(
     assert doc["model_calls_not_servable"] == 1
     contract = doc["replay_contract"]
     assert contract["model_calls_not_servable_by_system"]["gcp.gemini"]["count"] == 1
+    # It was sent (on the workload's own transport): counted live, once (c09).
+    assert contract["model_calls_live"] == 1
     assert contract["divergences"][0]["kind"] == "model_surface_not_servable"
     assert doc["fidelity"]["verdict"] != "faithful"
 

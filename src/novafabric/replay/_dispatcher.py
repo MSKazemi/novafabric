@@ -141,6 +141,7 @@ from novafabric.replay._policy import (
     gating_mutation_class,
 )
 from novafabric.replay._process_observer import ProcessObserver
+from novafabric.replay._servability import UNKNOWN_SYSTEM, is_metadata_call, not_servable_by_system
 from novafabric.replay._tool_call_outcomes import AFTER_DIVERGENCE
 from novafabric.replay._wire_serve import (
     GENERIC_WIRE_QUEUE,
@@ -1025,6 +1026,12 @@ class MockModelDispatcher:
         #: ADR-0324: the generic wire engine claims registry requests only when the
         #: capsule holds a servable generic-wire record (older capsules: unchanged).
         self._wire_active = bool(self._queues.get(GENERIC_WIRE_QUEUE))
+        #: ADR-0319: the ``gen_ai.system`` of each recorded model call replay cannot
+        #: serve. A request to one that no seam serves runs live, and is counted
+        #: live where it is seen (:meth:`_count_unserved_live`).
+        self._unserved_systems = frozenset(
+            not_servable_by_system(model_calls if isinstance(model_calls, list) else [])
+        ) - {UNKNOWN_SYSTEM}
         #: The patched transport request methods (``HTTPTransport.handle_request``
         #: and friends): a client transport that resolves to one needs no wrapper.
         self._seam_functions: tuple[Any, ...] = ()
@@ -1117,13 +1124,19 @@ class MockModelDispatcher:
     def transport_target(self, request: Any) -> str | None:
         """The queue that claims an httpx request -- an Ollama queue, else the generic
         wire queue -- or ``None`` (pass through). A request replay already handled
-        above this seam (``handled_upstream``) is never claimed again."""
+        above this seam (``handled_upstream``) is never claimed again. A request
+        passed through to a system whose recorded calls are not servable is counted
+        live here (:meth:`_count_unserved_live`)."""
         if is_handled_upstream():
             return None
         queue = self._transport_queue(request)
         if queue is not None:
             return queue
-        return GENERIC_WIRE_QUEUE if self._wire_claims(str(request.url)) else None
+        url = str(request.url)
+        if self._wire_claims(url):
+            return GENERIC_WIRE_QUEUE
+        self._count_unserved_live(url)
+        return None
 
     def transport_answer(
         self, module_name: str, target: str, request: Any, content: bytes,
@@ -1238,6 +1251,11 @@ class MockModelDispatcher:
                                        wire.body),
                             named, str(method), wire_url,
                         )
+                elif dispatcher._unserved_systems:
+                    try:
+                        dispatcher._count_unserved_live(_urllib3_url(pool, str(url)))
+                    except Exception:  # noqa: BLE001 -- counting never stops a request
+                        pass
                 return original(pool, method, url, *args, **kwargs)
             queue, full_url = target
             named = _urlopen_arguments(original, pool, method, url, args, kwargs)
@@ -1275,6 +1293,31 @@ class MockModelDispatcher:
             return bool(self._registry.is_known(url))
         except Exception:  # noqa: BLE001 -- an unclassifiable request is not claimed
             return False
+
+    def _count_unserved_live(self, url: str) -> None:
+        """Count a request no seam serves as a live model call when it goes to a
+        ``gen_ai.system`` whose recorded calls replay cannot serve (ADR-0319): a
+        generic-wire record captured without its response, an Ollama ``/api/embed``.
+        Under ``--permissive`` such a call runs live; before, it reached only
+        ``model_calls_not_servable`` -- a count of the recording, not of what was sent
+        (c09, ``model_calls_live_undercount``). Every request is counted, retries
+        included; a metadata request (Ollama ``/api/tags``, the Bedrock control
+        plane) runs no model and is not. A request already counted above this seam
+        (``handled_upstream``) is never counted again. Never raises."""
+        if not self._unserved_systems or is_handled_upstream():
+            return
+        try:
+            system = str(self._registry.gen_ai_system(url))
+            if system not in self._unserved_systems or is_metadata_call(
+                {"gen_ai.system": system, "endpoint": url}
+            ):
+                return
+        except Exception:  # noqa: BLE001 -- an unclassifiable request is not counted
+            return
+        self._events.emit(
+            "model_live", provider=QUEUE_PROVIDER[GENERIC_WIRE_QUEUE],
+            surface=MODEL_SURFACES[GENERIC_WIRE_QUEUE], system=system,
+        )
 
     def _wire_urllib3_url(self, pool: Any, url: Any) -> str | None:
         if not self._wire_active:

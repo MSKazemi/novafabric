@@ -409,6 +409,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **A permissive replay counted an unservable model call that ran live as 0 live calls**
+  (works today). Under `nova replay --mode mocked --permissive`, a recorded model call that
+  replay cannot serve still runs, and goes to the network. Examples are a generic-wire call
+  (ADR-0324) captured with `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` or by an older build, and
+  an Ollama `/api/embed` call. If no serving seam claimed the request, the replay reported
+  `model_calls_live: 0` and showed the call only in `model_calls_not_servable`, which is a
+  count of the recording, not of what was sent. Experiment c09's oracle saw one request per
+  call while the counter read 0. Now each such request the `httpx`/`httpx2` transport (any
+  client transport) or urllib3 sees going out is counted in `model_calls_live`, retries
+  included, and named `live:generic wire …` in the fidelity sequence. Only requests to a
+  `gen_ai.system` the capsule holds unservable calls for are counted, and metadata requests
+  (Ollama `/api/tags`, the Bedrock control plane) are not. A request already counted above
+  the seam is never counted twice. `model_calls_not_servable` and the verdict (`diverged`)
+  are unchanged. A strict replay still refuses up front (`ModelSurfaceNotServable`).
 - **A served non-streamed Chat Completion or Anthropic Message was not the SDK's type**
   (works today). Mocked replay returned a non-streamed `chat.completions.create` result and
   an Anthropic `messages.create` result as plain attribute objects, so an `isinstance` check
