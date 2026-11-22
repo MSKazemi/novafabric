@@ -126,6 +126,9 @@ def test_a_served_chat_completion_round_trips_through_the_sdks_helpers() -> None
     assert json.loads(resp.model_dump_json()) == json.loads(json.dumps(dumped))
     assert resp.to_dict()["object"] == "chat.completion"
     assert construct_type(type_=ChatCompletion, value=dumped) == resp
+    # Strict validation too: ``created`` (not recorded) is served as 0, as in
+    # the streamed chunks, so code that re-validates a served call works.
+    assert ChatCompletion.model_validate(dumped) == resp
 
 
 def test_the_chat_completion_payload_is_the_api_body_shape(
@@ -144,6 +147,7 @@ def test_the_chat_completion_payload_is_the_api_body_shape(
     assert seen == [("openai", "openai.types.chat", "ChatCompletion", {
         "id": "rid-1",
         "object": "chat.completion",
+        "created": 0,
         "model": "m-1",
         "choices": [{
             "index": 0,

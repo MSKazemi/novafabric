@@ -412,8 +412,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   or an SDK helper (`model_dump()`, `to_dict()`) failed on the first served call. The OpenAI
   Agents SDK's `OpenAIChatCompletionsModel` crashed this way. Both are now the SDK's own
   `ChatCompletion` / `Message`, with the same recorded values, when the SDK is installed, and
-  attribute objects otherwise. `created` is not recorded, so a served Chat Completion's
-  `created` is `None`.
+  attribute objects otherwise. `created` is not recorded; a served Chat Completion carries
+  `created: 0`, as streamed chunks already did, so it validates.
 - **A permissive replay counted one unservable tool call as two replayed calls** (works
   today). Under `nova replay --permissive`, an intercepted tool call that the capsule could
   not serve (`tool_call_unmatched` or `tool_result_not_servable`) and that then ran live

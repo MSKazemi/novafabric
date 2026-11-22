@@ -300,8 +300,10 @@ def _openai_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]] | None:
 def _openai_chat_payload(stored: dict[str, Any]) -> dict[str, Any]:
     """The Chat Completion body a recorded call stands for.
 
-    Only recorded values: ``created`` is not recorded, so it is left out (the
-    SDK's ``construct_type`` does not validate, and reads it as ``None``).
+    Recorded values only, except ``created``, which capture does not record: it
+    is ``0``, as in the streamed chunks (``created: 0``) and Responses
+    (``created_at: 0``), so the served object validates (``model_dump`` →
+    ``model_validate`` round-trips).
     """
     choices = []
     for c in stored.get("gen_ai.response.choices", []):
@@ -320,6 +322,7 @@ def _openai_chat_payload(stored: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": stored.get("gen_ai.response.id", "replay-mocked"),
         "object": "chat.completion",
+        "created": 0,
         "model": stored.get("gen_ai.response.model", ""),
         "choices": choices,
         "usage": {
