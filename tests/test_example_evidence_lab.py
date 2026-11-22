@@ -9,7 +9,7 @@ Three layers, cheapest first:
 * unit — scenario loading, the two tools, the policy oracle, URL/env guards;
 * mock + agent against a real loopback HTTP server (no ``nova capture``);
 * one integration fixture that runs the actual harness twice (real capture),
-  because "NovaFabric itself is never mocked" (epic #286, A-05).
+  because "NovaFabric itself is never mocked" (epic #286).
 
 The golden request transcript in ``scenarios/service_incident_v1/golden/`` was
 derived independently of the code under test; the literal digests below pin it.
@@ -790,6 +790,42 @@ def test_mock_refuses_a_body_shorter_than_its_declared_length(
     ]
     assert entries[0]["body_bytes"] == len(sent)  # the bytes received, not the declared size
     assert entries[0]["request_sha256"] is None  # nothing was parsed from a truncated body
+
+
+def test_mock_logs_the_bytes_it_read_for_a_rejection_after_the_body(
+    scenario: Any, golden_request: dict[str, Any], tmp_path: Path
+) -> None:
+    """A refusal made after the body was read still logs how many bytes arrived."""
+    log = tmp_path / "requests.jsonl"
+    body = json.dumps({**golden_request, "unexpected": 1}).encode()
+    with _MockServer(scenario, log) as server:
+        assert server.post(body)[0] == 400
+        assert server.post(b"{not json")[0] == 400
+    entries = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [e["body_bytes"] for e in entries] == [len(body), len(b"{not json")]
+
+
+def test_mock_bounds_a_slow_drip_client_by_an_overall_deadline(scenario: Any) -> None:
+    """One byte at a time resets a per-recv timeout forever; an overall deadline must end it."""
+    with _MockServer(scenario, request_timeout=0.3) as server:
+        started = time.monotonic()
+        ended = None
+        with socket.create_connection(("127.0.0.1", server.port), timeout=5) as sock:
+            sock.sendall(b"POST /v1/chat/completions HTTP/1.1\r\n")
+            while time.monotonic() - started < 8:
+                try:
+                    sock.sendall(b"X")
+                    sock.settimeout(0.1)
+                    if sock.recv(1) == b"":
+                        ended = time.monotonic() - started
+                        break
+                except (BrokenPipeError, ConnectionResetError):
+                    ended = time.monotonic() - started
+                    break
+                except TimeoutError:
+                    continue
+        assert ended is not None, "the server never ended a client that dripped for 8 seconds"
+        assert ended < 3
 
 
 def test_mock_logs_a_stalled_client_and_keeps_serving(
@@ -1653,6 +1689,46 @@ def test_judge_fails_on_missing_extra_or_wrong_records(
             log_outcomes=log,
         )
     assert exc.value.code == code
+
+
+def _scenario_copy(tmp_path: Path) -> Path:
+    copy = tmp_path / "service_incident_v1"
+    shutil.copytree(SCENARIO_DIR, copy)
+    return copy
+
+
+def test_judge_reads_the_committed_golden_transcript_not_only_the_builder(
+    tmp_path: Path,
+) -> None:
+    """The check named 'matches the golden transcript' must compare with the golden file."""
+    copy = _scenario_copy(tmp_path)
+    golden_path = copy / "golden" / "model_request.json"
+    golden = json.loads(golden_path.read_text())
+    golden["messages"][0]["content"] += " (edited)"
+    golden_path.write_text(json.dumps(golden))
+    drifted = lab.load_scenario(copy)  # the manifest pins the four fixtures, not the golden
+    (tmp_path / "run").mkdir()
+    with pytest.raises(lab.EvidenceLabError) as exc:
+        _judge(
+            tmp_path / "run", drifted,
+            models=[_model_record()],
+            tools=[_tool_record(n) for n in GOOD_TOOLS],
+        )  # fmt: skip
+    assert exc.value.code == "E_MODEL_RECORD_MISMATCH"
+    assert "golden" in str(exc.value)
+
+
+def test_judge_names_a_missing_golden_transcript(tmp_path: Path) -> None:
+    copy = _scenario_copy(tmp_path)
+    (copy / "golden" / "model_request.json").unlink()
+    (tmp_path / "run").mkdir()
+    with pytest.raises(lab.EvidenceLabError) as exc:
+        _judge(
+            tmp_path / "run", lab.load_scenario(copy),
+            models=[_model_record()],
+            tools=[_tool_record(n) for n in GOOD_TOOLS],
+        )  # fmt: skip
+    assert exc.value.code == "E_FIXTURE_MISSING"
 
 
 @pytest.mark.parametrize("omitted", ["gen_ai.request.messages", "gen_ai.response.choices"])

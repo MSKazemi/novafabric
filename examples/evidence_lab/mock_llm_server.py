@@ -24,6 +24,7 @@ import http.server
 import json
 import os
 import signal
+import socket
 import sys
 import threading
 from pathlib import Path
@@ -39,10 +40,10 @@ _ALLOWED_FIELDS = {"model", "seed", "temperature", "messages"}
 
 
 class _Reject(Exception):
-    def __init__(self, status: int, code: str, message: str, received: int = 0) -> None:
+    def __init__(self, status: int, code: str, message: str, received: int | None = None) -> None:
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
-        self.received = received  # body bytes actually read, for the request log
+        self.received = received  # body bytes read when the refusal knows it, else None
 
 
 def _error_payload(code: str, message: str) -> dict[str, Any]:
@@ -96,9 +97,24 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
 
     def setup(self) -> None:
-        # A per-connection socket timeout: a stalled client cannot hold the server.
+        # A per-recv timeout ends a stalled client, but a client sending one byte at a time
+        # resets it forever. The timer is an overall cap on the whole connection: it stops
+        # the read side only, so the refusal can still be written back.
         self.timeout = self.server.request_timeout
         super().setup()
+        self._deadline = threading.Timer(2 * self.server.request_timeout, self._expire)
+        self._deadline.daemon = True
+        self._deadline.start()
+
+    def _expire(self) -> None:
+        try:
+            self.connection.shutdown(socket.SHUT_RD)
+        except OSError:
+            pass  # the connection is already closed
+
+    def finish(self) -> None:
+        self._deadline.cancel()
+        super().finish()
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         pass  # the structured request log replaces the default stderr access log
@@ -128,7 +144,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             payload = self._completion(parsed)
             outcome, status = "accepted", 200
         except _Reject as rejection:
-            code, status, size = rejection.code, rejection.status, rejection.received
+            code, status = rejection.code, rejection.status
+            if rejection.received is not None:
+                size = rejection.received
             payload = _error_payload(rejection.code, rejection.message)
         except TimeoutError:
             outcome, code, status = "error", "E_REQUEST_TIMEOUT", 408

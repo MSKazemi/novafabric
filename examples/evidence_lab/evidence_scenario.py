@@ -285,6 +285,31 @@ def build_request_body(scn: Scenario, observations: Mapping[str, Any]) -> dict[s
     }
 
 
+GOLDEN_REQUEST = Path("golden") / "model_request.json"
+
+
+def load_golden_request(scn: Scenario) -> dict[str, Any]:
+    """The committed golden request transcript, read from the scenario directory."""
+    path = scn.directory / GOLDEN_REQUEST
+    try:
+        if path.stat().st_size > MAX_FIXTURE_BYTES:
+            raise EvidenceLabError("E_FIXTURE_TOO_LARGE", f"{GOLDEN_REQUEST} is too large")
+        data = path.read_bytes()
+    except OSError as exc:
+        raise EvidenceLabError(
+            "E_FIXTURE_MISSING", f"{GOLDEN_REQUEST} is unreadable: {exc.strerror}"
+        ) from exc
+    try:
+        golden = json.loads(data)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise EvidenceLabError(
+            "E_FIXTURE_INVALID", f"{GOLDEN_REQUEST} is not valid JSON/UTF-8: {exc}"
+        ) from exc
+    if not isinstance(golden, dict):
+        raise EvidenceLabError("E_FIXTURE_INVALID", f"{GOLDEN_REQUEST} is not a JSON object")
+    return golden
+
+
 def expected_observations(scn: Scenario) -> dict[str, Any]:
     """What the two tools must have returned, computed from the fixtures alone."""
     return {
