@@ -2,13 +2,13 @@
 
 > **Status: PARTIAL AUDIT — source inspection performed, runtime/browser benchmarks NOT performed.**  
 > Issue: [#253](https://github.com/MSKazemi/novafabric/issues/253); program: [#252](https://github.com/MSKazemi/novafabric/issues/252); design proposal: [draft PR #251](https://github.com/MSKazemi/novafabric/pull/251).  
-> Reviewed public default branch `main` at commit `4f89480c2de83f0f51003cb096db58b9904a4ce5` on 2026-11-22 (Europe/Rome). Connector read-only inspection; this audit did not execute the repository, run CI or operate a live browser. Private background design was checked separately, but no confidential information is reproduced here.
+> Reviewed public default branch `main` at commit `4f89480c2de83f0f51003cb096db58b9904a4ce5` (v0.108.0) on 2026-11-22 (Europe/Rome); `main` has since moved (v0.109.0), so re-audit before acting on a specific line. Connector read-only inspection; this audit did not execute the repository, run CI or operate a live browser. 
 
 ## Summary and decisions
 
-**Do not rebuild the frontend from scratch.** The existing application is substantial and already contains most core technical panels. Best next investment: simplify information architecture, connect previously isolated workflows, improve clarity of replay/evidence semantics, and validate performance/accessibility using actual users.
+**Recommendation at the audited base: do not rebuild the frontend from scratch.** (The architecture choice is open and compared in the Console 2.0 roadmap; this audit gives the evidence for the baseline, not the decision.) The existing application is substantial and already contains most core technical panels. Best next investment: simplify information architecture, connect previously isolated workflows, improve clarity of replay/evidence semantics, and validate performance/accessibility using actual users.
 
-**Keep existing stack:** Astro 7 + React 19 + TypeScript + Tailwind CSS 4 + React Flow; retain bundled font/assets and wheel-packaged dashboard. Three experience variants should be design/nav presets over one application: Developer Studio (default), Evidence Workbench and Operations Console. All proposals are subject to usability pilot and maintainer review.
+**Baseline stack at the audited base (not a final decision):** Astro 7 + React 19 + TypeScript + Tailwind CSS 4 + React Flow; retain bundled font/assets and wheel-packaged dashboard. Three experience variants should be design/nav presets over one application: Developer Studio (default), Evidence Workbench and Operations Console. All proposals are subject to usability pilot and maintainer review.
 
 **Do not call this a live UX baseline:** no locally running NovaFabric server, captured task timings, screenshots of the shipped dashboard, Lighthouse results, browser network measurements, or CI pass evidence were obtained. These are explicit outstanding acceptance items for #253.
 
@@ -66,7 +66,7 @@ Proposed workspace presets share one accessible tool directory so that expert fu
 
 ## Technical implications
 
-- Preserve `Astro` shell and `npm run build:dashboard`; no standalone Next.js app or new always-on runtime.
+- At the audited base, the `Astro` shell and `npm run build:dashboard` are the baseline; any replacement is compared in the roadmap, with no standalone Next.js app or new always-on runtime assumed.
 - Keep existing `api.ts` as source of frontend integration and OpenAPI generator; later introduce generated types only after parity validation.
 - Reuse React Flow, graphology, virtualized lists, existing chart/diff views before adding new stack.
 - Keep no telemetry/no external fonts/no CDN/air-gap capabilities and Tier-A transitive license policy.
@@ -84,7 +84,7 @@ Proposed workspace presets share one accessible tool directory so that expert fu
 | Interaction benchmarks | cold start, search, inspect, trace, large graph, bundle size on defined device | **NOT MEASURED** |
 | Usability test | moderated sessions and task results; baseline vs prototype | **NOT RUN** |
 | End-to-end security | actual token leakage tests, mutation refusals, XSS corpus, permissions | **NOT RUN** |
-| Current Project V2 status | native project #14 field/board membership | **NOT VERIFIED** (GitHub connector does not expose Project V2 actions) |
+| Project-board status | maintainer-managed board membership and fields | **NOT VERIFIED** (outside this source audit) |
 
 A static prototype can proceed as a *research artifact* without claiming these gates passed. Production integration #255 remains blocked until G0/G1/G2/G3 and review.
 
@@ -125,4 +125,4 @@ For the prototype research, run the same tasks against baseline and sample-marke
 
 ## Context, safety and provenance
 
-This is a **source-based audit**, not a UI screenshot review or penetration test. Keep separate the older private strategic plans and current public evidence: old private plans have historically been corrected when newer code shipped. This file does not override security ADRs or grant permission to add unsafe executable operations.
+This is a **source-based audit**, not a UI screenshot review or penetration test. Treat older plans and current public evidence separately: plans have historically been corrected when newer code shipped. This file does not override security ADRs or grant permission to add unsafe executable operations.
