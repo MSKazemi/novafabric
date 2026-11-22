@@ -278,52 +278,66 @@ def _unfinished(stored: dict[str, Any]) -> bool:
     return any(_delivered_finish(c) is None for c in _choices(stored))
 
 
-def _openai_tool_calls(message: dict[str, Any]) -> list[Any] | None:
+def _openai_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]] | None:
     refs = message.get("tool_calls")
     if not isinstance(refs, list) or not refs:
         return None
     calls = [
-        types.SimpleNamespace(
-            id=ref.get("id", ""),
-            type="function",
-            function=types.SimpleNamespace(
-                name=ref["name"],
-                arguments=_arguments_json(ref.get("arguments")),
-            ),
-        )
+        {
+            "id": ref.get("id", ""),
+            "type": "function",
+            "function": {
+                "name": ref["name"],
+                "arguments": _arguments_json(ref.get("arguments")),
+            },
+        }
         for ref in refs
         if _well_formed_ref(ref)
     ]
     return calls or None
 
 
-def _mock_openai_response(stored: dict[str, Any]) -> Any:
+def _openai_chat_payload(stored: dict[str, Any]) -> dict[str, Any]:
+    """The Chat Completion body a recorded call stands for.
+
+    Recorded values only, except ``created``, which capture does not record: it
+    is ``0``, as in the streamed chunks (``created: 0``) and Responses
+    (``created_at: 0``), so the served object validates (``model_dump`` →
+    ``model_validate`` round-trips).
+    """
     choices = []
     for c in stored.get("gen_ai.response.choices", []):
         message = c.get("message", {})
-        msg = types.SimpleNamespace(
-            role=message.get("role", "assistant"),
-            content=message.get("content", ""),
-            tool_calls=_openai_tool_calls(message),
-        )
-        choices.append(types.SimpleNamespace(
-            index=c.get("index", 0),
-            message=msg,
-            finish_reason=_delivered_finish(c),
-        ))
-    usage = types.SimpleNamespace(
-        prompt_tokens=stored.get("gen_ai.usage.input_tokens", 0),
-        completion_tokens=stored.get("gen_ai.usage.output_tokens", 0),
-        total_tokens=(
-            stored.get("gen_ai.usage.input_tokens", 0)
-            + stored.get("gen_ai.usage.output_tokens", 0)
-        ),
-    )
-    return types.SimpleNamespace(
-        id=stored.get("gen_ai.response.id", "replay-mocked"),
-        model=stored.get("gen_ai.response.model", ""),
-        choices=choices,
-        usage=usage,
+        choices.append({
+            "index": c.get("index", 0),
+            "message": {
+                "role": message.get("role", "assistant"),
+                "content": message.get("content", ""),
+                "tool_calls": _openai_tool_calls(message),
+            },
+            "finish_reason": _delivered_finish(c),
+        })
+    prompt = stored.get("gen_ai.usage.input_tokens", 0)
+    completion = stored.get("gen_ai.usage.output_tokens", 0)
+    return {
+        "id": stored.get("gen_ai.response.id", "replay-mocked"),
+        "object": "chat.completion",
+        "created": 0,
+        "model": stored.get("gen_ai.response.model", ""),
+        "choices": choices,
+        "usage": {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": prompt + completion,
+        },
+    }
+
+
+def _mock_openai_response(stored: dict[str, Any]) -> Any:
+    # The SDK's own ChatCompletion: code that checks isinstance (the Agents SDK's
+    # OpenAIChatCompletionsModel) or calls model_dump() works on a served call.
+    return _construct(
+        "openai", "openai.types.chat", "ChatCompletion", _openai_chat_payload(stored)
     )
 
 
@@ -592,38 +606,52 @@ def _anthropic_stop_reason(stored: dict[str, Any], finish_reason: str | None) ->
     return _ANTHROPIC_STOP_REASON.get(finish_reason, finish_reason)
 
 
-def _mock_anthropic_response(stored: dict[str, Any]) -> Any:
+def _anthropic_payload(stored: dict[str, Any]) -> dict[str, Any]:
+    """The Messages API ``Message`` body a recorded call stands for."""
     choices = stored.get("gen_ai.response.choices", [])
     message = choices[0].get("message", {}) if choices else {}
     content_text = message.get("content", "") or ""
     finish_reason = _delivered_finish(choices[0]) if choices else "end_turn"
-    blocks: list[Any] = []
+    blocks: list[dict[str, Any]] = []
     if content_text:
-        blocks.append(types.SimpleNamespace(type="text", text=content_text))
+        blocks.append({"type": "text", "text": content_text})
     for ref in message.get("tool_calls") or []:
         if _well_formed_ref(ref):
             arguments = ref.get("arguments")
-            blocks.append(types.SimpleNamespace(
-                type="tool_use",
-                id=ref.get("id", ""),
-                name=ref["name"],
-                input=arguments if isinstance(arguments, dict) else {},
-            ))
+            blocks.append({
+                "type": "tool_use",
+                "id": ref.get("id", ""),
+                "name": ref["name"],
+                "input": arguments if isinstance(arguments, dict) else {},
+            })
     if not blocks:
-        blocks.append(types.SimpleNamespace(type="text", text=""))
-    usage = types.SimpleNamespace(
-        input_tokens=stored.get("gen_ai.usage.input_tokens", 0),
-        output_tokens=stored.get("gen_ai.usage.output_tokens", 0),
-    )
-    return types.SimpleNamespace(
-        id=stored.get("gen_ai.response.id", "replay-mocked"),
-        model=stored.get("gen_ai.response.model", ""),
-        content=blocks,
-        stop_reason=_anthropic_stop_reason(stored, finish_reason),
-        usage=usage,
-        type="message",
-        role="assistant",
-    )
+        blocks.append({"type": "text", "text": ""})
+    return {
+        "id": stored.get("gen_ai.response.id", "replay-mocked"),
+        "type": "message",
+        "role": "assistant",
+        "model": stored.get("gen_ai.response.model", ""),
+        "content": blocks,
+        "stop_reason": _anthropic_stop_reason(stored, finish_reason),
+        "usage": {
+            "input_tokens": stored.get("gen_ai.usage.input_tokens", 0),
+            "output_tokens": stored.get("gen_ai.usage.output_tokens", 0),
+        },
+    }
+
+
+def _mock_anthropic_response(stored: dict[str, Any]) -> Any:
+    # The SDK's own Message (isinstance checks, model_dump()); attribute objects
+    # without the SDK.
+    payload = _anthropic_payload(stored)
+    built = _construct("anthropic", "anthropic.types", "Message", payload)
+    if isinstance(built, types.SimpleNamespace):
+        # A tool_use block's input is a JSON object (a dict in the SDK too),
+        # not an attribute object.
+        for block, raw in zip(built.content, payload["content"], strict=True):
+            if raw["type"] == "tool_use":
+                block.input = raw["input"]
+    return built
 
 
 def _anthropic_events(stored: dict[str, Any], *, partial: bool = False) -> list[Any]:
