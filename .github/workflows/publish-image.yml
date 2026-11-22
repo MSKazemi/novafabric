@@ -32,7 +32,7 @@ jobs:
   image:
     needs: ci-green
     name: Build and push image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Publish only from the public repo. A tag pushed to the private mirror
     # (MSKazemi/novafabric-private) must never publish images.

@@ -225,6 +225,26 @@ In v0.107.0 and earlier, an unreadable or truncated `worm.db` was treated as "no
 adapter tamper-proof. For compliance retention, use object-store locks (S3 Object Lock, Azure immutable blob, GCS
 Bucket Lock).
 
+### What a capsule stores: model responses (changed in v0.109.0)
+
+A capsule is evidence of what an agent did, so by default it stores model prompts and
+responses in `model-calls.jsonl` after the capture-time secret scan. It is not a
+digest-only record: treat a capsule as you treat the conversation it captured.
+
+**Since v0.109.0 more response bodies are stored** (experimental, ADR-0324). A call made
+through `httpx`/`httpx2` or `requests` to a host the URL registry classifies as a model
+provider (for example Mistral, Cohere, Together, Hugging Face Inference, Gemini, Vertex AI,
+or an OpenAI-compatible server you register) now stores its response body, the
+completion text, at every capture level, as OpenAI responses already were. Ollama
+(`/api/chat`, `/api/generate`) and AWS Bedrock `Converse` responses are stored as well
+(ADR-0320, ADR-0323). This is what lets `nova replay --mode mocked` serve those calls.
+
+To stop storing the HTTP-layer bodies, set `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` (`0`,
+`false` and `no` also work). Those calls are then recorded without a response and a
+strict replay refuses them (`ModelSurfaceNotServable`). The variable does not affect the
+dedicated OpenAI, Anthropic, Ollama and Bedrock surfaces. Check what your capsules hold
+before you share them, and see the CHANGELOG entry for 0.109.0 for the full list.
+
 ### Escape hatches — every safety default that an environment variable can turn off
 
 These exist so an operator can make a deliberate, auditable exception. They were

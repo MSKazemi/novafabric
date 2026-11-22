@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from novafabric.diff._report import DiffReport
 
@@ -30,6 +31,13 @@ def malformed_line_messages(report: DiffReport) -> list[str]:
 
 
 
+def _placeholder_note(pair: dict[str, Any]) -> str:
+    """`` (replay placeholder: live, not recorded)`` for a pair holding a replay
+    capsule placeholder: the replay never recorded that call's content."""
+    kinds = [pair[k] for k in ("replay_placeholder_a", "replay_placeholder_b") if k in pair]
+    return f" (replay placeholder: {', '.join(kinds)}, not recorded)" if kinds else ""
+
+
 def format_text(report: DiffReport) -> str:
     lines: list[str] = []
     lines.append(f"Diff: {report.run_a_id} → {report.run_b_id}")
@@ -51,11 +59,15 @@ def format_text(report: DiffReport) -> str:
     if changed_models or added_models or removed_models:
         lines.append("Model calls:")
         for p in changed_models:
-            lines.append(f"  ~ call at span {p.get('span_id', '?')}")
+            lines.append(f"  ~ call at span {p.get('span_id', '?')}{_placeholder_note(p)}")
         for p in added_models:
-            lines.append(f"  + call at span {p.get('span_id', '?')} (added)")
+            lines.append(
+                f"  + call at span {p.get('span_id', '?')} (added){_placeholder_note(p)}"
+            )
         for p in removed_models:
-            lines.append(f"  - call at span {p.get('span_id', '?')} (removed)")
+            lines.append(
+                f"  - call at span {p.get('span_id', '?')} (removed){_placeholder_note(p)}"
+            )
 
     changed_tools = [p for p in report.tool_call_pairs if p.get("changed")]
     added_tools = [p for p in report.tool_call_pairs if p.get("added")]
@@ -63,11 +75,11 @@ def format_text(report: DiffReport) -> str:
     if changed_tools or added_tools or removed_tools:
         lines.append("Tool calls:")
         for p in changed_tools:
-            lines.append(f"  ~ {p.get('tool_name', '?')}")
+            lines.append(f"  ~ {p.get('tool_name', '?')}{_placeholder_note(p)}")
         for p in added_tools:
-            lines.append(f"  + {p.get('tool_name', '?')} (added)")
+            lines.append(f"  + {p.get('tool_name', '?')} (added){_placeholder_note(p)}")
         for p in removed_tools:
-            lines.append(f"  - {p.get('tool_name', '?')} (removed)")
+            lines.append(f"  - {p.get('tool_name', '?')} (removed){_placeholder_note(p)}")
 
     if report.output_changes:
         lines.append("Outputs:")

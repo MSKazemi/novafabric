@@ -45,8 +45,13 @@ def test_tool_dispatcher_is_installed_only_by_the_mocked_path() -> None:
     src = inspect.getsource(_engine.ReplayEngine._mocked)
     assert "_run_replay_subprocess(" in src and "tool_calls" in src
     intervention = inspect.getsource(_engine.ReplayEngine._intervention)
-    # intervention passes no tool queue -> no tool dispatcher is installed
-    assert re.search(r"_run_mocked_subprocess\(\s*command, mutated_model_calls\s*\)", intervention)
+    # intervention passes no tool queue -> no tool dispatcher is installed (the
+    # only extra argument is the re-execution plan, ADR-0306 Q7)
+    assert re.search(
+        r"_run_mocked_subprocess\(\s*plan\.command, mutated_model_calls, plan=plan\s*\)",
+        intervention,
+    )
+    assert "tool_calls=" not in intervention.split("_run_mocked_subprocess(", 1)[1].split(")", 1)[0]
 
 
 def test_engine_never_reports_a_nonzero_mocked_tool_count_from_a_length() -> None:
@@ -67,8 +72,11 @@ def test_capsule_tool_call_count_is_still_reported() -> None:
     """The information was preserved, not deleted, on every replay path."""
     src = inspect.getsource(_engine)
     # forensic, dry-run, intervention, the mocked CapsuleNotReplayable refusal,
-    # and the mocked ToolOverrideUnenforceable refusal (ADR-0306 Q5)
-    assert src.count("tool_calls_recorded=len(") == 5
+    # the mocked ModelSurfaceNotServable refusal (ADR-0319), the mocked
+    # ToolSurfaceNotServed refusal (ADR-0306 D1, unwrapped LangChain tools), the mocked
+    # ToolOverrideUnenforceable refusal (ADR-0306 Q5) and the mocked
+    # HermeticUnavailable refusal (ADR-0322)
+    assert src.count("tool_calls_recorded=len(") == 8
     assert '"tool_calls_recorded": report.tool_calls_recorded' in src  # mocked
 
 

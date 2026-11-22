@@ -47,7 +47,7 @@ STORY_END = "/* END generated story */"
 MATURITY = ("works today", "experimental", "planned", "future design")
 # The last tagged release. Steps marked ``unreleased`` describe behaviour on main
 # after it; bump this (and clear those flags) when the next release is cut.
-LAST_RELEASE = "v0.108.0"
+LAST_RELEASE = "v0.109.0"
 
 WIDTH = 980
 SLOT_SECONDS = 3.4  # how long each step stays lit
@@ -659,7 +659,7 @@ REPLAY = Flow(
         Node("cmd", 22, 78, 150, 104, "nova replay",
              ("--mode mocked", "(the default)", "capsule or run ID"), "cap"),
         Node("chk", 192, 78, 170, 104, "Replayable?",
-             ("needs a real argv;", "sdk-decorator, otel-", "import, @label: no"), "rep"),
+             ("a real argv, or an", "adapter's guarded", "invocation; else no"), "rep"),
         Node("pre", 382, 78, 190, 104, "Pre-checks",
              ("env.lock vs this host", "tool-schema drift", "(ADR-0128)"), "rep"),
         Node("spawn", 592, 78, 180, 104, "Re-run the command",
@@ -673,8 +673,8 @@ REPLAY = Flow(
              ("raised as the SDK's", "own class, for example", "openai.RateLimitError",
               "allow-listed classes only"), "amb"),
         Node("tool", 562, 236, 196, 120, "MockToolDispatcher",
-             ("MCP call_tool results", "served one-to-one", "other tools: run live",
-              "(non-MCP: planned)"), "rep"),
+             ("MCP · record.tool", "ADK · Agents · LangChain", "seams: served 1:1",
+              "other tools: run live"), "rep"),
         Node("net", 778, 236, 180, 120, "NetworkObserver",
              ("IPv4/IPv6 connects", "observed and counted", "never blocked"), "amb"),
         Node("refuse", 192, 404, 280, 80, "Refused up front",
@@ -699,9 +699,13 @@ REPLAY = Flow(
     ),
     steps=(
         Step(("cmd", "chk", "refuse"), ("m1", "mref"),
-             "A capsule with no command to re-run (framework adapter, OTLP import, an @label) "
-             "is refused before anything is spawned.",
-             "<p><code>not_reexecutable_reason</code> is the one check. A refused replay "
+             "A capsule with nothing to re-run (OTLP import, @label, an unguarded adapter "
+             "capsule) is refused before anything is spawned.",
+             "<p><code>not_reexecutable_reason</code> is the one check. An adapter capsule "
+             "whose recorded process invocation passes every guard is re-run from it "
+             "(experimental (LangGraph end-to-end tested; other adapters record the "
+             "facet), ADR-0306 Q7); a refusal names the failed guard in "
+             "<code>error.guard</code>. A refused replay "
              "still writes <code>replay_result.yaml</code> with <code>status: aborted</code> "
              "and exits 1; the message names the modes that do work on that capsule "
              "(<code>forensic</code>, <code>semantic</code>). <code>--dry-run</code> says "
@@ -740,11 +744,17 @@ REPLAY = Flow(
              "replay/_model_errors.py:rebuild_sdk_error · ALLOWED_SDK_ERRORS",
              "experimental", "err", "amb"),
         Step(("tool", "div"), ("dtool", "ddiv"),
-             "MCP call_tool results are served one-to-one and an unmatched call fails "
-             "closed. Other tools still run live.",
-             "<p>Substituting non-MCP tool results on owned boundaries is "
-             "<strong>planned</strong> (ADR-0306, proposed). Until then, a tool that writes "
-             "files or calls an API does so again on replay, so replay in a sandbox.</p>",
+             "MCP results, record.tool functions and wrapped ADK, Agents SDK and LangChain "
+             "tools are served 1:1; unmatched fails closed.",
+             "<p>MCP <code>call_tool</code> results are served (works today); "
+             "<code>record.tool</code> functions and the ADK, Agents SDK and LangChain "
+             "<code>wrap_tools</code> seams are served too (experimental, ADR-0306). "
+             "Unwrapped LangChain tools and Agents SDK function tools are recorded and "
+             "served too when the capsule holds their results (capture level forensic; "
+             "experimental); one that cannot be "
+             "served is refused. Every other tool still runs live: a tool that writes "
+             "files or calls an API does so again on replay, so replay in a sandbox. "
+             "Pydantic AI, LlamaIndex and CrewAI seams are <strong>planned</strong>.</p>",
              "replay/_dispatcher.py:MockToolDispatcher · replay/_contract.py",
              "experimental", "tool", "rep"),
         Step(("net",), ("dnet",),
@@ -981,7 +991,7 @@ STORY = Flow(
         Node("server", 598, 560, 170, 116, "nova server /v0",
              ("team REST API", "API keys · quotas", "SQLite or Postgres"), "seal"),
         Node("next", 790, 560, 170, 116, "Not built yet",
-             ("non-MCP tool replay", "→ planned (ADR-0306)", "adapter-capsule re-run",
+             ("3 more tool seams", "→ planned (ADR-0306)", "HTTP/exec · federation",
               "→ future design"), "amb", style="planned"),
     ),
     edges=(
@@ -1139,8 +1149,20 @@ STORY = Flow(
             ("cap_replay", "replay_wl"), ("capsule", "re-run"),
             "nova replay re-runs the command (mocked, the default) and serves recorded model "
             "calls per API surface, sync, async or streamed.",
-            "<p>MCP tool results are served one-to-one; other tools run live, so replay in a "
-            "sandbox. Divergence fails closed. Every IPv4/IPv6 connection the re-run opens is "
+            "<p>What tool calls a mocked replay serves today: <strong>MCP</strong> "
+            "<code>call_tool</code> results (works today); functions declared with "
+            "<code>record.tool</code>, Google ADK tools through the tool plugin, OpenAI "
+            "Agents SDK function tools and LangChain/LangGraph tools passed through their "
+            "<code>wrap_tools</code> (all <strong>experimental</strong>, ADR-0306), each "
+            "matched one-to-one and fail-closed. LangChain and Agents SDK tools <em>not</em> "
+            "wrapped are "
+            "recorded and served the same way when the capsule holds their results "
+            "(capture level <code>forensic</code>); otherwise a strict replay refuses, "
+            "and under <code>--permissive --allow-unknown-mutation</code> they run live "
+            "and are counted (experimental). Every other tool (HTTP, shell, files, "
+            "other frameworks' tools) runs live, so replay in a sandbox. Divergence "
+            "fails closed. Every "
+            "IPv4/IPv6 connection the re-run opens is "
             "reported in <code>replay_contract.network_*</code>, never blocked. "
             "<code>forensic</code>, <code>semantic</code> and <code>exact</code> read the "
             "capsule without executing anything. Zoom in: "
@@ -1148,6 +1170,23 @@ STORY = Flow(
             "replay/_engine.py:ReplayEngine.run · replay/_dispatcher.py:MockModelDispatcher · "
             "replay/_contract.py",
             "experimental", "replay", "rep", "$ nova replay 01J9Z…"),
+        _ss("replay", "Replay an adapter capsule", ("capsule", "replay", "wl"),
+            ("cap_replay", "replay_wl"), ("process_invocation",),
+            "Adapter capsules re-run from their recorded invocation when guards pass "
+            "(LangGraph end-to-end tested; other adapters record the facet).",
+            "<p>experimental (LangGraph end-to-end tested; other adapters record the "
+            "facet). Every framework adapter and the "
+            "<code>@agent</code> decorator also record how their process was started "
+            "(<code>facets.process_invocation</code>: argv, entry file and its SHA-256, "
+            "working directory, run ordinal). Mocked replay re-runs that invocation in the "
+            "recorded directory, with stdin closed, only when every guard passes: not a "
+            "REPL, notebook, test runner or known server; no redacted argument; the "
+            "process's first adapter run; the entry file unchanged. A refusal names the "
+            "guard in <code>error.guard</code>. A capsule written before this records no "
+            "invocation and is still refused (ADR-0306, open question 7).</p>",
+            "capture/process_invocation.py:begin_adapter_run · "
+            "replay/_replayability.py:require_reexecution_plan",
+            "experimental", "replay", "rep", "$ python agent.py && nova replay <run-id>"),
         _ss("replay", "Replay a recorded failure", ("replay", "wl"), ("replay_wl",),
             ("RateLimitError 429",),
             "A recorded rate limit or 5xx is raised again as the SDK's own exception class; "
@@ -1255,20 +1294,33 @@ STORY = Flow(
             "server/config.py:ServerConfig · server/routes/capsules.py · "
             "metadata_store/postgres.py",
             "experimental", "server", "seal", "$ nova server start --backend postgres"),
-        _ss("next", "Planned: substitute every tool", ("next", "replay"), (), (),
-            "Planned: mocked replay substitutes non-MCP tool results on owned boundaries "
-            "(ADR-0306, proposed). Today those tools run live.",
-            "<p>Nothing in ADR-0306 is implemented yet. Until it ships, only MCP "
-            "<code>call_tool</code> results are served on replay.</p>",
-            "replay/_dispatcher.py:MockToolDispatcher",
+        _ss("next", "Planned: more framework tool seams", ("next", "replay"), (), (),
+            "Planned: Pydantic AI, LlamaIndex and CrewAI tool seams (ADR-0306 slice 3). "
+            "Their tools run live in a mocked replay today.",
+            "<p><strong>Planned</strong> (ADR-0306 slice 3, one seam and one end-to-end test "
+            "per framework): serving Pydantic AI, LlamaIndex and CrewAI tool calls. Until "
+            "then, declare the underlying function with <code>record.tool</code> to have it "
+            "served. Already implemented, see <a href=\"#story-11\">step 11</a>: MCP "
+            "results (works today); <code>record.tool</code>, the Google ADK tool plugin, "
+            "and the OpenAI Agents SDK and LangChain <code>wrap_tools</code> seams "
+            "(experimental); unwrapped LangChain and Agents SDK tools recorded and served "
+            "when their "
+            "results were kept (experimental). Functions a model asks the workload to "
+            "run that are not declared are only compared with the recording (the "
+            "report-only echo check, "
+            "experimental).</p>",
+            "replay/_support_matrix.py:ROWS · replay/_dispatcher.py:MockToolDispatcher",
             "planned", "next", "amb"),
         _ss("next", "Future design", ("next",), (), (),
-            "Future design: re-running a framework-adapter capsule, and multi-cluster "
-            "federation of capsules and lineage. Not implemented.",
-            "<p>An adapter capsule records a label, not a command, so it cannot be re-run "
-            "(ADR-0306, open question 7). Federation is documented intent with no "
-            "implementation and no target.</p>",
-            "replay/_replayability.py:not_reexecutable_reason",
+            "Future design: subprocess, HTTP and filesystem substitution in replay; "
+            "multi-cluster federation. Not implemented.",
+            "<p>Substituting <code>subprocess</code> results, HTTP calls (by host "
+            "allowlist) and filesystem effects (an overlay or sandbox) are each future "
+            "design that needs its own ADR (ADR-0306, Later). Federation is documented "
+            "intent with no implementation and no target. "
+            "(Re-running a framework-adapter capsule, once listed here, is now experimental: "
+            "see <a href=\"#story-12\">step 12</a>.)</p>",
+            "—",
             "future design", "next", "amb"),
     ),
 )

@@ -1,0 +1,12 @@
+{
+  "schema_version": "0.1.0",
+  "argv": ["/usr/bin/python3", "-m", "reviewer", "--snippet", "a.py"],
+  "entry_kind": "module",
+  "entry": "reviewer",
+  "entry_file": "/srv/app/reviewer/__main__.py",
+  "entry_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "cwd": "/srv/app",
+  "stdin_isatty": null,
+  "adapter_run_ordinal": 2,
+  "host_modules": []
+}

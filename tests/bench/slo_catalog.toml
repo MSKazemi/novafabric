@@ -22,7 +22,7 @@ title = "Full captured run of `python -c pass` (subprocess spawn, fast-emit hook
 status = "gated"
 value = 2.000
 unit = "s"
-workload = "30 rounds, fresh run dir per round, warm filesystem"
+workload = "60 rounds, fresh run dir per round, warm filesystem"
 gate = "tests/bench/test_capture_overhead_gate.py::test_capture_overhead_p95_gate"
 tier = "ci:capture-overhead-gate"
 

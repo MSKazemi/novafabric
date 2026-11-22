@@ -69,7 +69,7 @@ permissions:
 jobs:
   image-toolchain:
     name: Image build toolchain (no push)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -139,7 +139,7 @@ jobs:
 
   chart-toolchain:
     name: Helm chart toolchain (no push)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
