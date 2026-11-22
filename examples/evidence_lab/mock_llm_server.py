@@ -39,9 +39,10 @@ _ALLOWED_FIELDS = {"model", "seed", "temperature", "messages"}
 
 
 class _Reject(Exception):
-    def __init__(self, status: int, code: str, message: str) -> None:
+    def __init__(self, status: int, code: str, message: str, received: int = 0) -> None:
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
+        self.received = received  # body bytes actually read, for the request log
 
 
 def _error_payload(code: str, message: str) -> dict[str, Any]:
@@ -127,7 +128,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             payload = self._completion(parsed)
             outcome, status = "accepted", 200
         except _Reject as rejection:
-            code, status = rejection.code, rejection.status
+            code, status, size = rejection.code, rejection.status, rejection.received
             payload = _error_payload(rejection.code, rejection.message)
         except TimeoutError:
             outcome, code, status = "error", "E_REQUEST_TIMEOUT", 408
@@ -171,7 +172,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if length > limit:
             self._drain(min(length, 2 * limit))
             raise _Reject(413, "E_REQUEST_TOO_LARGE", f"body is larger than {limit} bytes")
-        return self.rfile.read(length), length
+        body = self.rfile.read(length)  # returns early, with fewer bytes, if the client hangs up
+        if len(body) != length:
+            raise _Reject(
+                400,
+                "E_BODY_TRUNCATED",
+                f"Content-Length declared {length} bytes but {len(body)} arrived",
+                received=len(body),
+            )
+        return body, length
 
     def _drain(self, count: int) -> None:
         # Read (and discard) what the client already sent so closing the socket does

@@ -630,6 +630,18 @@ def main(argv: list[str] | None = None) -> int:
         "python_version": sys.version.split()[0],
         "openai_version": _version("openai"),
         "harness_git_sha": _git_sha(),
+        "input": {
+            "kind": "synthetic",
+            "real_data": False,
+            "note": "scenario fixtures written for this example; no real logs, metrics or prompts",
+        },
+        "capture": {
+            "kind": "actual-nova-capture",
+            "command": "nova capture",
+            "novafabric_version": _version("novafabric"),
+            "injected_records": False,
+            "note": "the capsule is written by the real recorder; the harness only reads it",
+        },
         "run_id": None,
         "capsule_path": None,
         "commands": {},
@@ -687,6 +699,11 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"evidence-lab: scenario {report['scenario_id']} "
         f"(seed={report['seed']}, profile={args.profile})"
+    )
+    print("input: SYNTHETIC fixtures only (no real data)")
+    print(
+        f"capture: actual `nova capture` (NovaFabric {report['novafabric_version']}); "
+        "no record was injected by the harness"
     )
     print(f"run_id: {report['run_id']}")
     print(f"capsule: {report['capsule_path']}")

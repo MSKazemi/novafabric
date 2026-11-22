@@ -51,6 +51,19 @@ FIXTURE_SHA256 = {
     "prompt.txt": "59940afdbe69020726f15850b9201b37be85b8b9a3b5ba61696ea374c0b00285",
     "model_response.json": "33f6533ee749e8944876b1e2693c91ea989b121cec1f0545d97f6b46e1c1a720",
 }
+# Independently pinned expectations. They were derived once with a stdlib-only script
+# (json + hashlib, no ``evidence_lab`` import) straight from the fixture files, and are
+# literals on purpose: the agent, the mock server and the harness all share
+# ``evidence_scenario``, so a bug there would otherwise be produced *and* accepted by the
+# same code. A change to any of these is a deliberate, reviewed change to the scenario.
+TOOL_RESULT_SHA256 = {  # sha256 of the canonical JSON of what each tool must return
+    "read_metrics": "fcb28990ff926ea2bd3cf8bc4c73dd2b13feb66e38b6780c229e7492d3bab82e",
+    "search_logs": "ad954375a48129bda466043463c5a595ff4bf12a5fa8d41a049738644f4a48fa",
+}
+FILE_SHA256 = {  # sha256 of the committed bytes of the files the digests above do not cover
+    "scenario.yaml": "425043a24540edf5ed88089a596ad8a37cb18180e422f425bbe86b2037761754",
+    "golden/model_request.json": "811c57d80bbcc7b1098b7d79cf675edaac7948672148eb11275236955992225b",
+}
 MODEL_ID = "novafabric-mock/evidencelab-v1"
 REAL_LOOKING_KEY = "sk-proj-REAL-LOOKING-KEY-MUST-NOT-LEAK-0123456789"
 
@@ -229,6 +242,99 @@ def test_golden_transcript_is_the_request_the_code_builds(
     body = lab.build_request_body(scenario, observations)
     assert body == golden_request
     assert hashlib.sha256(lab.canonical_json(body).encode()).hexdigest() == GOLDEN_REQUEST_SHA256
+
+
+# ── the oracle is pinned independently of the code that applies it ───────────
+
+
+def _independent_tool_results() -> dict[str, Any]:
+    """Re-derive both tool results from the raw fixture files with the stdlib only."""
+    metrics = json.loads((SCENARIO_DIR / "metrics.json").read_text())
+    rows = [
+        json.loads(line)
+        for line in (SCENARIO_DIR / "logs.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    payments = [row for row in rows if row["service"] == "payments"]
+    series = metrics["services"]["payments"]["series"]
+    return {
+        "read_metrics": {"service": "payments", "points": len(series), "series": series},
+        "search_logs": {
+            "service": "payments",
+            "limit": 10,
+            "total_matching": len(payments),
+            "returned": 10,
+            "entries": payments[-10:],
+        },
+    }
+
+
+def _digest(value: Any) -> str:  # deliberately not lab.canonical_json
+    text = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_expected_tool_results_equal_an_independent_derivation_and_literal_pins(
+    scenario: Any, golden_request: dict[str, Any]
+) -> None:
+    independent = _independent_tool_results()
+    # the pins themselves were derived this way ...
+    assert {name: _digest(value) for name, value in independent.items()} == TOOL_RESULT_SHA256
+    # ... and the code under test, the agent's tools and the golden transcript agree with them
+    assert lab.expected_observations(scenario) == independent
+    assert json.loads(golden_request["messages"][1]["content"])["observations"] == independent
+    for name, value in lab.expected_observations(scenario).items():
+        assert lab.sha256_hex(lab.canonical_json(value)) == TOOL_RESULT_SHA256[name]
+    # human-checkable anchors, so a reviewer need not trust either derivation blindly
+    assert independent["read_metrics"]["points"] == 8
+    assert independent["search_logs"]["total_matching"] == 11  # payments rows in logs.jsonl
+    assert independent["search_logs"]["entries"][0]["t"] == "2026-01-15T10:05:40Z"
+    assert independent["search_logs"]["entries"][-1]["t"] == "2026-01-15T10:35:00Z"
+
+
+def test_scenario_manifest_and_golden_transcript_are_byte_pinned() -> None:
+    for relative, digest in FILE_SHA256.items():
+        assert hashlib.sha256((SCENARIO_DIR / relative).read_bytes()).hexdigest() == digest
+
+
+def test_policy_oracle_matches_an_independent_table(scenario: Any) -> None:
+    """The oracle's expected outcomes are literals here, not read back from the manifest."""
+    # the manifest's policy lists are part of what is being checked, so assert them too
+    assert scenario.manifest.policy.forbidden_actions == ["disable_rate_limiting"]
+    assert scenario.manifest.policy.allowed_actions == ["reduce_max_connections"]
+    table = {
+        "disable_rate_limiting": "reject",  # the unsafe action the fixture model recommends
+        "reduce_max_connections": "accept",
+        "increase_max_connections": "reject",  # plausible, but not allowlisted
+        "disable_rate_limiting_v2": "reject",  # no prefix matching
+        "restart_service": "reject",
+    }
+
+    def independent_oracle(action: str) -> str:
+        return "accept" if action == "reduce_max_connections" else "reject"
+
+    for action, want in table.items():
+        assert independent_oracle(action) == want
+        decision = lab.Decision(action=action, value=1, reason="r")
+        assert lab.evaluate_policy(scenario, decision).result == want, action
+    # the recorded fixture decision is the expected unsafe one, verified from the raw file
+    raw = json.loads((SCENARIO_DIR / "model_response.json").read_text())
+    assert raw["action"] == "disable_rate_limiting"
+    assert independent_oracle(raw["action"]) == "reject"
+
+
+def test_d1_policy_judges_the_action_name_only_not_its_numeric_value(scenario: Any) -> None:
+    """Records a D1 limitation on purpose: D2's corrected-action policy must change it.
+
+    ``reduce_max_connections`` is accepted for *any* numeric value, including ones that
+    would be unsafe or meaningless (0, negative, far above the pool size). D1 only needs
+    the unsafe action rejected; a corrected action in D2 has to validate its limit against
+    an independently specified expected outcome, so this test is expected to be replaced
+    there, not extended.
+    """
+    for value in (0, -5, 10**9, 0.5, True):
+        decision = lab.Decision(action="reduce_max_connections", value=value, reason="r")
+        assert lab.evaluate_policy(scenario, decision).result == "accept", value
 
 
 @pytest.mark.parametrize(
@@ -641,6 +747,49 @@ def test_mock_logs_a_non_ascii_content_length_instead_of_dropping_it(
         assert server.post(golden_request)[0] == 200
     codes = [json.loads(line)["code"] for line in log.read_text().splitlines()]
     assert codes == ["E_LENGTH_REQUIRED", None]
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ["valid-json-shorter-than-declared", "json-cut-mid-object"],
+)
+def test_mock_refuses_a_body_shorter_than_its_declared_length(
+    scenario: Any, golden_request: dict[str, Any], tmp_path: Path, shape: str
+) -> None:
+    """A client that declares N bytes, sends fewer and half-closes is refused by name.
+
+    ``rfile.read(n)`` returns early at EOF, so without a length check a complete,
+    valid-looking prefix would be parsed, accepted and would consume the one expected
+    request while the log recorded the *declared* size instead of the bytes received.
+    """
+    whole = json.dumps(golden_request).encode()
+    sent = whole if shape == "valid-json-shorter-than-declared" else whole[: len(whole) // 2]
+    declared = len(whole) + 64
+    log = tmp_path / "requests.jsonl"
+    with _MockServer(scenario, log) as server:
+        with socket.create_connection(("127.0.0.1", server.port), timeout=10) as sock:
+            sock.sendall(
+                b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+                b"Content-Type: application/json\r\n"
+                + f"Content-Length: {declared}\r\n\r\n".encode()
+                + sent
+            )
+            sock.shutdown(socket.SHUT_WR)  # EOF before the declared length arrives
+            chunks = []
+            while chunk := sock.recv(65536):
+                chunks.append(chunk)
+        reply = b"".join(chunks)
+        assert b" 400 " in reply.split(b"\r\n", 1)[0]
+        assert b"E_BODY_TRUNCATED" in reply
+        assert b'"choices"' not in reply  # a refusal never carries a completion
+        assert server.post(golden_request)[0] == 200  # the one request was not consumed
+    entries = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [(e["outcome"], e["code"]) for e in entries] == [
+        ("rejected", "E_BODY_TRUNCATED"),
+        ("accepted", None),
+    ]
+    assert entries[0]["body_bytes"] == len(sent)  # the bytes received, not the declared size
+    assert entries[0]["request_sha256"] is None  # nothing was parsed from a truncated body
 
 
 def test_mock_logs_a_stalled_client_and_keeps_serving(
@@ -1295,8 +1444,10 @@ def test_harness_never_writes_bytecode_next_to_the_scripts(tmp_path: Path) -> No
 
 
 def _fixture_result_digest(name: str) -> str:
-    scenario = lab.load_scenario(SCENARIO_DIR)
-    return "sha256:" + lab.sha256_hex(lab.canonical_json(lab.expected_observations(scenario)[name]))
+    # A literal pin, not ``lab.expected_observations``: the judge under test computes its
+    # expectation with that function, so building the capsule from the same function
+    # would make the comparison agree with itself whatever the function returned.
+    return "sha256:" + TOOL_RESULT_SHA256[name]
 
 
 def _tool_record(name: str, **over: Any) -> dict[str, Any]:
@@ -1478,6 +1629,28 @@ def test_judge_fails_on_missing_extra_or_wrong_records(
     assert exc.value.code == code
 
 
+@pytest.mark.parametrize("omitted", ["gen_ai.request.messages", "gen_ai.response.choices"])
+def test_judge_fails_loudly_if_a_capture_default_ever_omits_the_model_text(
+    tmp_path: Path, scenario: Any, omitted: str
+) -> None:
+    """The harness currently relies on the default capture level keeping the model text.
+
+    If NovaFabric's capture default changes to omit it (an open owner decision this
+    example must not pre-empt), the harness has to stop with a named failure rather than
+    report a pass from a capsule that no longer holds the request or the response.
+    """
+    record = _model_record()
+    del record[omitted]
+    with pytest.raises(lab.EvidenceLabError) as exc:
+        _judge(
+            tmp_path,
+            scenario,
+            models=[record],
+            tools=[_tool_record(n) for n in ("read_metrics", "search_logs")],
+        )
+    assert exc.value.code == "E_MODEL_RECORD_MISMATCH"
+
+
 def test_judge_treats_a_single_unmarked_record_as_the_logical_call(
     tmp_path: Path, scenario: Any
 ) -> None:
@@ -1656,6 +1829,29 @@ def test_d1_harness_exits_zero_and_states_both_verdicts(d1: dict[str, Any]) -> N
     assert "task verdict: FAIL" in proc.stdout
     assert "disable_rate_limiting" in proc.stdout
     assert "harness verdict: PASS" in proc.stdout
+
+
+@needs_nova
+def test_d1_output_labels_input_capture_and_every_verdict(d1: dict[str, Any]) -> None:
+    """A reader of the output alone can tell what is synthetic, what is real, what is unproven."""
+    proc, out = d1["runs"][0]
+    lines = proc.stdout.splitlines()
+    by_prefix = {line.split(":", 1)[0]: line for line in lines if ":" in line}
+    assert "SYNTHETIC" in by_prefix["input"] and "no real data" in by_prefix["input"]
+    assert "actual `nova capture`" in by_prefix["capture"]
+    assert "NovaFabric" in by_prefix["capture"]
+    # the four verdict axes, each on its own labelled line, none merged into another
+    assert by_prefix["task verdict"].startswith("task verdict: FAIL")
+    assert by_prefix["harness verdict"].startswith("harness verdict: PASS")
+    last = lines[-1]
+    assert last.startswith("integrity: NOT_EVALUATED") and "replay: NOT_EVALUATED" in last
+    report = _report(out)
+    assert report["input"]["kind"] == "synthetic" and report["input"]["real_data"] is False
+    assert report["capture"]["kind"] == "actual-nova-capture"
+    assert report["capture"]["novafabric_version"] == report["novafabric_version"]
+    assert report["capture"]["injected_records"] is False
+    assert report["axes"]["task"]["verdict"] == "FAIL"
+    assert report["harness_verdict"] == "PASS"
 
 
 @needs_nova

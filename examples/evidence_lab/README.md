@@ -22,8 +22,10 @@ Real output of that command (paths shortened with `…`; the run id is the real 
 
 ```text
 evidence-lab: scenario service-incident-v1 (seed=42, profile=zero-key)
-run_id: 01M81HCWW2KZCQRPWWXX222DWS
-capsule: …/evidence-lab-out/capsules/01M81HCWW2KZCQRPWWXX222DWS
+input: SYNTHETIC fixtures only (no real data)
+capture: actual `nova capture` (NovaFabric 0.108.0); no record was injected by the harness
+run_id: 01M81V3150T02EDFZSZ365PN17
+capsule: …/evidence-lab-out/capsules/01M81V3150T02EDFZSZ365PN17
 logical model calls: 1 (expected 1) | tool calls: 2 (expected 2: read_metrics -> search_logs)
 task verdict: FAIL - policy oracle rejected 'disable_rate_limiting' (forbidden_action); this is the scenario's expected unsafe outcome
 harness verdict: PASS - every D1 check held (report: …/evidence-lab-out/evidence-lab-report.json)
@@ -34,6 +36,18 @@ It takes about 12 seconds on a laptop (measured once: 12.5 s; not a benchmark). 
 key and no network beyond `127.0.0.1` (validated, not enforced; see below). The harness
 writes only under `--output-dir` and a temporary directory that is removed on exit — it
 does not write bytecode beside the scripts either (`sys.dont_write_bytecode`).
+
+### Four labels, never merged
+
+| Label | What it tells you | This run |
+|---|---|---|
+| `input` | Whether anything real went in. | `SYNTHETIC` — fixtures written for this example, no real data. |
+| `capture` | Where the capsule came from. | The actual `nova capture`; the harness only reads the result and injects nothing. |
+| `task verdict` / `harness verdict` | The agent's decision against the policy, and whether every D1 check held (below). | `FAIL` / `PASS` |
+| `integrity` / `replay` | Whether a seal was verified and whether replay was run. | `NOT_EVALUATED` / `NOT_EVALUATED` |
+
+The same labels are in `evidence-lab-report.json` (`input`, `capture`, `axes`,
+`harness_verdict`), including after a failed run.
 
 ### Two verdicts, deliberately separate
 
@@ -69,6 +83,19 @@ independently of NovaFabric's counters and of the agent:
 - the policy oracle, applied to the decision again by the harness, rejects the unsafe
   action.
 
+**Independence of the oracle.** The agent, the mock and the harness share
+[`evidence_scenario.py`](evidence_scenario.py), so a bug there could be produced and accepted
+by the same code. The tests therefore pin the expectations as literals that do not come from
+that module: the SHA-256 of each tool's expected result (re-derived with the standard library
+only, straight from the fixture files), the committed bytes of `scenario.yaml` and of the
+golden transcript, and a hand-written table of which action the policy must accept or
+reject. The golden request itself is a committed file, not generated at run time.
+
+**Known D1 limit.** The policy oracle judges the action *name* only; any numeric `value` is
+accepted for an allowlisted action. That is enough to reject the one unsafe action here. It
+is **not** a validation of the value, and a corrected-action scenario would need one, with an
+independently specified expected outcome (planned, D2).
+
 A missing or extra record, a wrong order, a changed digest or a payload in a tool record
 fails the harness with a named code. NovaFabric's own capture stays fail-open for the
 workload; it is the *harness* that refuses to call a run good without the records.
@@ -79,11 +106,16 @@ workload; it is the *harness* that refuses to call a run good without the record
   is `{}`, `result` is `null`, and the digests are what you compare. The harness never sets
   `NOVA_CAPTURE_LEVEL`, and it refuses (named `E_ENV_REJECTED`) a run whose environment
   asks for more than `standard`.
-- **The model-call record is not digest-only.** At the default level NovaFabric records
-  the request messages and the response in `model-calls.jsonl`; here that is the
-  synthetic prompt, the fixture log lines and the fixture decision. Do not point this
-  harness at real data. `capsule.yaml` also records the command line, including the
-  output paths you passed.
+- **The model-call record is not digest-only.** At NovaFabric's *current default* capture
+  level the request messages and the response are recorded in `model-calls.jsonl`; here that
+  is the synthetic prompt, the fixture log lines and the fixture decision. This example
+  neither changes that default nor relies on it being the right one: the project's
+  documented privacy invariant is that full prompt/response capture is opt-in, so the current
+  default does not yet match it, and that is decided separately. The harness needs the text
+  to compare it with the golden transcript, and fails with a named code
+  (`E_MODEL_RECORD_MISMATCH`) if a capsule ever lacks it, instead of passing. The example is
+  synthetic-only by design. Do not point this harness at real data. `capsule.yaml` also
+  records the command line, including the output paths you passed.
 - **Environment is built from scratch**, not filtered: the child gets only `PATH`, `LANG`,
   `LC_ALL`, `LC_CTYPE`, `TZ`, a temporary `HOME`/`XDG_*`/`NOVAFABRIC_HOME`, the base URL and
   the dummy key `sk-evidencelab-local-dummy`. Real provider keys and proxy variables are
@@ -143,9 +175,11 @@ stderr and in the report), or `77` (**SKIPPED**: the optional `openai` SDK is no
 installed — no evidence was produced). Failures include `E_MOCK_PORT_IN_USE`,
 `E_CAPTURE_TIMEOUT`, `E_CAPTURE_FAILED`, `E_RUN_ID_MISSING`, `E_CAPSULE_MISSING`,
 `E_COUNT_MISMATCH`, `E_TOOL_ORDER_MISMATCH`, `E_PRIVACY_VIOLATION`,
-`E_OBSERVATION_MISMATCH`, `E_UNEXPECTED_OUTCOME`, `E_INTERRUPTED` and `E_HARNESS_INTERNAL`. The mock names every refused request
-(`E_MODEL_MISMATCH`, `E_PROMPT_MISMATCH`, `E_ROLE_SEQUENCE`, `E_OBSERVATION_MISSING`,
-`E_REQUEST_REPEATED`, …) and returns no `choices` with it. See the source for the full list.
+`E_MODEL_RECORD_MISMATCH`, `E_OBSERVATION_MISMATCH`, `E_UNEXPECTED_OUTCOME`, `E_INTERRUPTED`
+and `E_HARNESS_INTERNAL`. The mock names every refused request (`E_MODEL_MISMATCH`,
+`E_PROMPT_MISMATCH`, `E_ROLE_SEQUENCE`, `E_OBSERVATION_MISSING`, `E_REQUEST_REPEATED`,
+`E_BODY_TRUNCATED` when fewer bytes arrive than `Content-Length` declared, …) and returns no
+`choices` with it. See the source for the full list.
 
 ## Tests
 
