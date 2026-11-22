@@ -477,6 +477,10 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Public replay wording no longer says "no live model call" without scope.** `docs/comparison.md` and
+  the "prove a run to an auditor" tutorial now say that OpenAI and Anthropic model calls are served from
+  the capsule, and that a model call on any other surface runs live and may not yet be counted in the
+  replay report (a known issue). A claims-guard pattern now rejects the unscoped phrase.
 - **`nova restore` (pg profile) names a Postgres version mismatch instead of a bare error (#207).**
   A newer `pg_restore` than the target server (17+ against 16 fails on `SET transaction_timeout`),
   or an archive written by a newer `pg_dump` than `pg_restore`, now fails with both versions and
