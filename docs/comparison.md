@@ -51,9 +51,20 @@ Use something else if:
   key) is signed, can carry an RFC 3161 timestamp, and verifies with no server and no
   network. A seal proves the record is unchanged since signing; it does not prove the
   record is complete.
-- **Replaying a run against its recorded model responses** — no live model call and no
-  model tokens spent. OpenAI and Anthropic model calls (sync or async, streamed or
-  not) and MCP tool results are served from the capsule; every other tool runs live.
+- **Replaying a run against its recorded model responses** — recorded model calls on the
+  supported surfaces are served from the capsule, so those calls are never sent live and
+  spend no model tokens: OpenAI and Anthropic SDK calls (sync or async, streamed or not)
+  and, experimental, Ollama, AWS Bedrock `Converse` and other model-provider hosts in the
+  URL registry ([support matrix](architecture/replay-modes.md#support-matrix)). A strict
+  replay refuses, before anything runs, a capsule holding a recorded model call it cannot
+  serve; under `--permissive` such a call runs live and is counted in `model_calls_live`
+  when it goes through `httpx`, `requests` or `urllib3`. A call the capture never recorded
+  (a raw socket, gRPC) in the replayed Python process or a Python child is seen only as a
+  network connection: past loopback it fails a strict replay (`unserved_network`), to
+  loopback it is only counted. A non-Python child process is not observed: the replay
+  reports it in `child_processes_unobserved`, and `--hermetic` contains it. MCP tool results, `record.tool` functions and the experimental Google
+  ADK, OpenAI Agents SDK and LangChain / LangGraph tool seams are served too; every other
+  tool runs live.
 - **Structural diff between two runs** — not "metric A went up", but *what changed
   in the execution*.
 - **Air-gapped and regulated environments.** No telemetry, no update checks, no

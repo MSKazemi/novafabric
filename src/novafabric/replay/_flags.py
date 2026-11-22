@@ -67,6 +67,13 @@ class ReplayFlags:
     # call runs live only if `permits` its class, never against a replay.yaml
     # `allow: false` (ADR-0306 D7/D8).
     permissive: bool = False
+    # ADR-0322 — opt-in, `mocked` only, experimental: run the replayed process
+    # tree in a bubblewrap sandbox with no network beyond its own loopback and a
+    # read-only host filesystem; refused (HermeticUnavailable) if unavailable.
+    hermetic: bool = False
+    # ADR-0322 amendment: which sandbox `--hermetic` uses -- "auto" tries bwrap,
+    # then Landlock + seccomp; "bwrap" / "landlock" name the only one tried.
+    hermetic_backend: str = "auto"
 
     @property
     def divergence_policy(self) -> Literal["fail", "warn"]:
@@ -116,6 +123,10 @@ class ReplayFlags:
             flags.append("--allow-unknown-mutation")
         if self.permissive:
             flags.append("--permissive")
+        if self.hermetic:
+            flags.append("--hermetic")
+            if self.hermetic_backend != "auto":
+                flags.append(f"--hermetic-backend={self.hermetic_backend}")
         # No implicit entry: a "--mock-tools" placeholder used to be recorded here,
         # but no such flag ever existed (ADR-0261). Tool substitution in mocked
         # mode (ADR-0300) is reported by the result's counters, not by a flag.

@@ -547,7 +547,7 @@ wheels = [
 
 [[package]]
 name = "novafabric"
-version = "0.108.0"
+version = "0.109.0"
 source = { editable = "../../" }
 dependencies = [
     { name = "cryptography" },
@@ -651,6 +651,8 @@ dev = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "hypothesis", specifier = ">=6.115" },
+    { name = "langchain-core", specifier = ">=1.8.3" },
+    { name = "langgraph", specifier = ">=1.2.23" },
     { name = "lxml", specifier = ">=5.2.1" },
     { name = "moto", specifier = ">=5.0" },
     { name = "mutmut", specifier = ">=3.0,<3.9" },

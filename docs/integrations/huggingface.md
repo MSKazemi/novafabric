@@ -18,17 +18,21 @@ required: a run that never touches these entry points is captured exactly as bef
 | Surface | Recorded | Replay | Status |
 |---|---|---|---|
 | `smolagents` agent run (`wrap_agent`) | one capsule per `run()`; a span per step; one tool-call record per tool call named in a step (name, argument digest, step outcome) | **not intercepted** — tools run live | experimental |
-| `InferenceClient.chat_completion` through the Inference Providers router (`https://router.huggingface.co/…`, auto-routed or an explicit provider) | the request, requested model and selector, status, timing | **not intercepted** — runs live | experimental |
-| the same with `stream=True`, and `AsyncInferenceClient` | the request at send time; the stream is never read | not intercepted | experimental |
-| Dedicated Inference Endpoint (`https://*.endpoints.huggingface.cloud/…`) | as above, with system `huggingface.endpoint` | not intercepted | experimental |
+| `InferenceClient.chat_completion` through the Inference Providers router (`https://router.huggingface.co/…`, auto-routed or an explicit provider) | the request, requested model and selector, status, timing; since ADR-0324 the response body (generic wire) | **served** from the recorded bytes at the `httpx` transport (ADR-0324); a capsule recorded before is refused by a strict replay (ADR-0319) | experimental |
+| the same with `stream=True`, and `AsyncInferenceClient` | the request at send time; the stream is copied as your code reads it, never read ahead | served as the recorded chunks (as above) | experimental |
+| Dedicated Inference Endpoint (`https://*.endpoints.huggingface.cloud/…`) | as above, with system `huggingface.endpoint` | served (as above) | experimental |
 | A custom `base_url` | **not captured** unless you add it through a URL-registry override | — | — |
 | Hub metadata, dataset and weight downloads | **never** recorded | — | — |
 | Hub model, dataset or space revision references | an opt-in receipt you create yourself (below) | — | experimental |
 | Evaluation receipts and `.eval_results` export | an opt-in receipt over an existing experiment (below) | — | experimental |
 
-Mocked replay never serves Hugging Face model calls or `smolagents` tools. Both are listed in the
-[replay support matrix](../architecture/replay-modes.md) as *capture only*; a replay runs them live
-and reports their connections.
+Since ADR-0324 (**experimental**) a Hugging Face model call is recorded with its response body as
+generic wire bytes and mocked replay serves it from those bytes at the `httpx` transport, like any
+registry model host (see the [replay support matrix](../architecture/replay-modes.md)); this is not yet
+tested end to end through the real `InferenceClient`. A capsule recorded before ADR-0324 holds no
+response, so a strict mocked replay **refuses** it (`ModelSurfaceNotServable`, ADR-0319);
+`--permissive` runs it live and reports it. `smolagents` tools are *capture only*: a replay runs them
+live.
 
 ## smolagents
 
@@ -164,15 +168,17 @@ The match is deliberately **not** a bare `huggingface.co`: the Hub itself (metad
 files) lives there and is not a model call. `match_kind` is an optional registry field; every existing
 entry stays a substring match.
 
-The wire layer reads the **request, not the response**. A Hugging Face model-call record therefore
-carries an `io.novafabric.model_identity` block that says exactly what is and is not known:
+The identity fields are parsed from the **request only**. Since ADR-0324 the wire hook also stores the
+response body (`io.novafabric.wire.response`, copied as your code reads it, never read ahead), but no
+Hugging Face decoder parses it. A Hugging Face model-call record therefore carries an
+`io.novafabric.model_identity` block that says exactly what is and is not known:
 
 | Field | Value | Meaning |
 |---|---|---|
 | `requested_model` | the `model` you sent, minus a routing selector (router only) | observed |
 | `requested_selector` / `selector_kind` | `fastest`, `cheapest`, `preferred` (a policy) or a known provider name (an explicit provider); any other `:tag` such as `:latest` stays part of the model; none for a dedicated endpoint | what you *asked for* — not what happened |
-| `reported_model` | `null` | **not observed** — the response is never read |
-| `served_provider` | `null` | **not observed** — the router selects a provider server-side, and the hook does not read the response |
+| `reported_model` | `null` | **not parsed** — the raw response body is stored, but not decoded |
+| `served_provider` | `null` | **not parsed** — the router selects a provider server-side, and nothing decodes the response |
 | `identity_source` | `request_only` | |
 
 `gen_ai.response.model` on every wire record mirrors the request; for Hugging Face records read this
@@ -180,17 +186,18 @@ block instead. Token counts are not recorded either. A Hub commit is a repositor
 which weights a provider served.
 
 Limits: every classified route, including embeddings, is labelled `operation: chat`; the
-Responses API (beta) has no route-specific handling. Replay never serves these records (**capture
-only**).
+Responses API (beta) has no route-specific handling. Replay serves these records from the recorded
+bytes (generic wire, ADR-0324, **experimental**).
 
 ## Privacy: what a capsule holds by default
 
 This is a project-wide default, not something specific to Hugging Face. Wire-level model-call capture
 (`model-calls.jsonl`) stores request messages — **prompt text** — at every capture level, for every
 provider including Hugging Face; `NOVA_CAPTURE_LEVEL` does not change that
-([CLI reference § nova policy capture-level](../cli-reference.md)). For Hugging Face only the request is
-recorded, so no completion text is stored from the inference hook. If prompts are sensitive, do not
-share the capsule unreviewed.
+([CLI reference § nova policy capture-level](../cli-reference.md)). Since ADR-0324 the response body —
+**completion text** — is stored too, at every capture level, exactly as OpenAI responses are;
+`NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` stores no response bodies (the calls are then refused at
+replay). If prompts or completions are sensitive, do not share the capsule unreviewed.
 
 The `Authorization` header is not written to a capsule. The secret scanner includes a rule for Hugging
 Face tokens, so a token pasted into a prompt is redacted at finalisation — scanning is rule-based and
@@ -285,7 +292,8 @@ show that the benchmark is uncontaminated.
 
 ## Known limits
 
-- **Replay:** Hugging Face model calls and `smolagents` tools are never served by mocked replay.
+- **Replay:** Hugging Face model calls are served from recorded bytes since ADR-0324 (experimental; a
+  capsule recorded before is refused by a strict replay, ADR-0319); `smolagents` tools are never served.
 - **`CodeAgent`:** tools called from generated code are not individually visible.
 - **Identity:** the reported model and served provider of an Inference Providers call are recorded as
   unknown (`null`), not guessed.

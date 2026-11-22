@@ -759,8 +759,10 @@ covers the providers below out of the box:
 | `bedrock.` | `aws.bedrock` (control plane) |
 | `localhost:11434` | `ollama` |
 | `127.0.0.1:11434` | `ollama` |
-| `^https://router\.huggingface\.co(:443)?/` (regex) | `huggingface` (experimental, unreleased) |
-| `^https://[a-z0-9][a-z0-9.-]*\.endpoints\.huggingface\.cloud(:443)?/` (regex) | `huggingface.endpoint` (experimental, unreleased) |
+| `^https://router\.huggingface\.co(:443)?/` (regex) | `huggingface` (experimental, new in v0.109.0) |
+| `^https://[a-z0-9][a-z0-9.-]*\.endpoints\.huggingface\.cloud(:443)?/` (regex) | `huggingface.endpoint` (experimental, new in v0.109.0) |
+| `^https://generativelanguage\.googleapis\.com(:443)?/` (regex) | `gcp.gemini` (response recorded by the generic wire layer, experimental; new in v0.109.0) |
+| `^https://([a-z0-9-]+-)?aiplatform\.googleapis\.com(:443)?/` (regex) | `gcp.vertex_ai` (global and regional; response recorded by the generic wire layer, experimental; new in v0.109.0) |
 
 Every entry is a substring match unless it sets the optional `match_kind: regex`, which is matched
 from the start of the URL (`re.match`, case-insensitive). Use it when a substring would also match a

@@ -19,7 +19,7 @@ claim**, which is itself information.
 
 | Metric | Value | Status | Workload | Enforcement / provenance |
 |---|---|---|---|---|
-| `capture.trivial-run.p95` — Full captured run of `python -c pass` (subprocess spawn, fast-emit hooks, capsule write), p95 | 2 s | gated | 30 rounds, fresh run dir per round, warm filesystem | `tests/bench/test_capture_overhead_gate.py::test_capture_overhead_p95_gate` (ci:capture-overhead-gate) |
+| `capture.trivial-run.p95` — Full captured run of `python -c pass` (subprocess spawn, fast-emit hooks, capsule write), p95 | 2 s | gated | 60 rounds, fresh run dir per round, warm filesystem | `tests/bench/test_capture_overhead_gate.py::test_capture_overhead_p95_gate` (ci:capture-overhead-gate) |
 | `dashboard.analytics-summary.p95` — Dashboard /api/analytics/summary at 100K runs, p95 | 250 ms | gated | 100K flat runs, in-process | `tests/bench/test_dashboard_scale_gate.py::analytics_summary` (nightly:dashboard-scale) |
 | `dashboard.audit-tail.p95` — Dashboard audit tail over 100K audit lines, p95 | 100 ms | gated | 100K audit lines, in-process | `tests/bench/test_dashboard_scale_gate.py::audit_tail` (nightly:dashboard-scale) |
 | `dashboard.report-executive-summary.p95` — Dashboard executive-summary report at 100K runs, p95 | 300 ms | gated | 100K flat runs, in-process | `tests/bench/test_dashboard_scale_gate.py::report_executive_summary` (nightly:dashboard-scale) |

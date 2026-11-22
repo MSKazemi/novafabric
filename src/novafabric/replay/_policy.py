@@ -22,7 +22,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from novafabric.replay._contract import TOOL_SURFACE_MCP, not_servable_reason, tool_surface
+from novafabric.replay._contract import (
+    NO_COVERAGE,
+    TOOL_SURFACE_MCP,
+    NestedCoverage,
+    is_not_served_tool_record,
+    is_observed_tool_record,
+    nested_coverage,
+    not_servable_reason,
+    serves_on_match,
+    tool_surface,
+)
 from novafabric.replay._flags import ReplayFlags, ladder_flag
 
 #: Env var naming the JSON override table the replayed process enforces.
@@ -113,7 +123,7 @@ class PolicyDecision:
     tool_call_id: str
     tool_name: str
     mutation_class: str
-    decision: Literal["mock", "allow", "deny", "live"]
+    decision: Literal["mock", "allow", "deny", "live", "covered"]
     reason: str
     #: Extra words printed after the label in the dry-run report.
     label_note: str = ""
@@ -216,15 +226,57 @@ class PolicyEvaluator:
             out.append(entry)
         return out
 
+    # ── nested coverage (ADR-0306 r3c) ──────────────────────────────────────
+
+    def certainly_served(self, record: dict[str, Any]) -> bool:
+        """A mocked replay of this capsule, with these flags and ``replay.yaml``,
+        serves *record* whenever its call is made -- and never runs its body.
+
+        The same :func:`decide_intercepted` the replayed process applies, asked
+        for both outcomes of matching: a matched call must be served, and an
+        unmatched one (the replayed arguments differ) must be refused, not run
+        live. The ladder is assumed to permit the tool unless replay fixes its
+        gating class (MCP and observed tools are always ``unknown``): a wrapped
+        tool's class is declared by the workload's code at replay, not read from
+        the capsule, so it may differ from the recorded one. Fails closed: any
+        doubt means "not certain", and nothing it wrote is covered."""
+        if self._flags.mode != "mocked" or not serves_on_match(record):
+            return False
+        override = self._overrides.get(str(record.get("tool_name", "")))
+        if is_observed_tool_record(record) or tool_surface(record) == TOOL_SURFACE_MCP:
+            permitted = self._flags.permits("unknown")
+        else:
+            permitted = True
+        allow = None if override is None else override.allow
+        return decide_intercepted(
+            override=allow, servable_match=True, permitted=permitted,
+            permissive=self._flags.permissive,
+        ) == "serve" and decide_intercepted(
+            override=allow, servable_match=False, permitted=permitted,
+            permissive=self._flags.permissive,
+        ) != "live"
+
+    def coverage(self, tool_calls: list[dict[str, Any]]) -> NestedCoverage:
+        """Which recorded calls this replay never requests (ADR-0306 r3c): the
+        one coverage the engine, ``--dry-run`` and the capture-time summary use."""
+        if self._flags.mode != "mocked":
+            return NO_COVERAGE
+        return nested_coverage(
+            [tc for tc in tool_calls if isinstance(tc, dict)], self.certainly_served
+        )
+
     # ── what --dry-run prints ───────────────────────────────────────────────
 
-    def check_tool(self, tool_call: dict[str, Any]) -> PolicyDecision:
+    def check_tool(
+        self, tool_call: dict[str, Any], coverage: NestedCoverage = NO_COVERAGE,
+    ) -> PolicyDecision:
         tool_call_id = tool_call.get("tool_call_id", "")
         tool_name = tool_call.get("tool_name", "")
         mutation_class = tool_call.get("mutation_class", "unknown")
 
         def decided(
-            decision: Literal["mock", "allow", "deny", "live"], reason: str, note: str = ""
+            decision: Literal["mock", "allow", "deny", "live", "covered"], reason: str,
+            note: str = "",
         ) -> PolicyDecision:
             return PolicyDecision(
                 tool_call_id=tool_call_id,
@@ -240,6 +292,15 @@ class PolicyEvaluator:
         # Mocked mode (ADR-0300, ADR-0306): the same decision the replayed
         # process makes (``decide_intercepted``), for the recorded call.
         if self._flags.mode == "mocked":
+            outer = coverage.covering(tool_call)
+            if outer is not None:
+                # ADR-0306 r3c: an ancestor call is served, so its body -- and
+                # this call in it -- never runs; the record is consumed as covered.
+                return decided("covered", (
+                    f"mocked mode: recorded inside {outer.get('tool_name')!r}, which is "
+                    "served from the capsule: its body never runs, so this call is "
+                    "never made (consumed as covered)"
+                ), str(outer.get("tool_name")))
             return self._check_mocked(tool_call, override, decided)
 
         # Forensic mode: nothing is allowed to execute
@@ -287,8 +348,22 @@ class PolicyEvaluator:
                 )
             return decided("live", f"{base}; the tool runs live")
 
+        if is_not_served_tool_record(tool_call) and not self._flags.permissive:
+            # ADR-0306 r3 amendment: an observed LangChain record that cannot
+            # be served is known up front; a strict replay refuses to start.
+            return decided("deny", (
+                f"mocked mode: observed via {surface} (not passed through wrap_tools) "
+                f"but not servable ({not_servable_reason(tool_call) or 'a recorded failure'})"
+                ": a strict replay refuses to start (ToolSurfaceNotServed)"
+            ), "replay refuses to start")
+
         mutation_class = str(tool_call.get("mutation_class") or "unknown")
-        gating = gating_mutation_class(surface, mutation_class)
+        # An observed tool declared no class: the seam gates it as `unknown`,
+        # whatever the capsule says (ADR-0306 r3 amendment).
+        gating = (
+            "unknown" if is_observed_tool_record(tool_call)
+            else gating_mutation_class(surface, mutation_class)
+        )
         permitted = self._flags.permits(gating)
         unservable = not_servable_reason(tool_call)
         action = decide_intercepted(
@@ -314,9 +389,15 @@ class PolicyEvaluator:
                     f"mocked mode: served from the capsule via {surface}; {override.label}: "
                     "an unmatched call is refused even under --permissive"
                 ), "never live")
+            ext = tool_call.get("extensions")
+            echoed = isinstance(ext, dict) and ext.get(
+                "io.novafabric.result_source"
+            ) == "model-request-echo"
             return decided("mock", (
-                f"mocked mode: served from the capsule via {surface}; an unmatched "
-                "call is refused"
+                f"mocked mode: served from the capsule via {surface}"
+                + ("; the result is the next model request's echo, matched to the "
+                   "recorded digest" if echoed else "")
+                + "; an unmatched call is refused"
                 + (", or under --permissive runs live only if the ladder flag permits "
                    f"it ({gate})")
             ))
@@ -344,7 +425,8 @@ class PolicyEvaluator:
         return decided("deny", f"mocked mode: intercepted via {surface} but {why}; {tail}")
 
     def check_all(self, tool_calls: list[dict[str, Any]]) -> list[PolicyDecision]:
-        return [self.check_tool(tc) for tc in tool_calls]
+        coverage = self.coverage(tool_calls)
+        return [self.check_tool(tc, coverage) for tc in tool_calls]
 
     def dry_run_report(self, tool_calls: list[dict[str, Any]]) -> str:
         decisions = self.check_all(tool_calls)
@@ -354,7 +436,9 @@ class PolicyEvaluator:
         lines = ["[dry-run: no execution]\n", "Tool call policy report:\n"]
         for d in decisions:
             icon = {"mock": "MOCK", "allow": "ALLOW", "live": "LIVE"}.get(d.decision, "DENY")
-            if d.label_note:
+            if d.decision == "covered":
+                icon = f"COVERED by {d.label_note}"
+            elif d.label_note:
                 icon = f"{icon} ({d.label_note})"
             lines.append(
                 f"  [{icon}] {d.tool_name}  mutation_class={d.mutation_class}  ({d.reason})\n"

@@ -163,7 +163,7 @@ implemented versus design intent.
 |---|---|
 | [Integrations index](integrations/README.md) | The front door for "how do I run this alongside X" — and an honest list of what has no guide yet |
 | [GitHub Actions](integrations/github-actions.md) | Capturing a CI step as a capsule and uploading it as a build artifact (inputs, outputs, and what happens when the step fails) |
-| [Hugging Face](integrations/huggingface.md) | **Experimental, unreleased.** `smolagents` capture, Inference Providers capture, Hub revision receipts and evaluation receipts, with exactly what each does not record |
+| [Hugging Face](integrations/huggingface.md) | **Experimental, new in v0.109.0.** `smolagents` capture, Inference Providers capture, Hub revision receipts and evaluation receipts, with exactly what each does not record |
 
 ## Extend
 
