@@ -5484,8 +5484,8 @@ stdout). The CLI only parses and serialises — the exporter logic lives in
 # NIST GenAI + CSA Agentic profile, built from a capsule's NIST-RMF report (NF-097)
 nova export-compliance genai-profile .novafabric/runs/01HX.../ --evidence tool_permissions,eval_gate --out profile.json
 
-# ISO/IEC 42001 control-evidence mapping from a declared catalog (NF-095)
-nova export-compliance iso42001 --catalog controls.json --evidence eval_gate --capsule-id run-123 --out iso.json
+# Control-evidence mapping from a declared catalog — ISO/IEC 42001 or your own (NF-095)
+nova export-compliance iso42001 --catalog controls.json --evidence eval_gate --capsule .novafabric/runs/01HX.../ --out iso.json
 
 # First sealed revision of a GPAI Art. 53 documentation form (NF-093)
 nova export-compliance gpai53 --model my-gpai --fields art53.json --out form.json
@@ -5496,9 +5496,17 @@ nova export-compliance pmm --system triage --findings findings.json --occurred-a
 
 Subcommands and key options:
 - `genai-profile <capsule>` — `--evidence a,b` (governance-evidence kinds present), `--out`. A focus area is evidenced from the base report only by a positive metric read from a recorded artifact (audit coverage, eval results, a regression report, a redaction manifest); default-derived scores and mere file presence do not count. Releases up to v0.107.0 marked governance, content provenance and incident disclosure evidenced for a capsule holding only `run_id:`.
-- `iso42001 --catalog c.json` — `--evidence a,b`, `--capsule-id ID` (supplies the
-  re-performable reference evidenced controls require; without it, evidenced controls
-  honestly degrade to `not_evidenced`), `--out`.
+- `iso42001 --catalog c.json` — `--evidence a,b`, `--capsule DIR`, `--capsule-id ID`,
+  `--standard LABEL`, `--out`. An `evidenced` control carries a reference computed from
+  `--capsule`: the capsule's id, a SHA-256 digest over `capsule.yaml` and its model-call, tool-call and
+  tool-permission streams, and
+  `.seal/manifest.dsse` when its NovaSeal seal verifies. Without `--capsule`, evidenced
+  controls honestly degrade to `not_evidenced`. `--capsule-id` is optional and must match
+  the capsule's own id; given alone it is refused (exit 2). `--evidence` lists the evidence
+  kinds you assert are present: they are not read from the capsule, so an evidenced
+  control's provenance stays `operator_asserted`. `--standard` labels the report (default
+  `ISO/IEC 42001:2023`), so the same command maps any catalog you supply. A repeated
+  `control_id` is refused (exit 2).
 - `gpai53 --model NAME --fields f.json` — `--out`. `fields.json` is a `{field: value}` object. Each revision's `content_digest` (`digest_scheme: v2`) covers the whole revision — fields, `created_at`, `retention_until`, revision number, predecessor link — and the model name, so a silent edit to any of them fails verification. Revisions sealed before `v2` (no `digest_scheme`) covered `fields` only, and still verify only those.
 - `pmm --system NAME --findings f.json --occurred-at ISO` — `--period-start`, `--period-end`,
   `--out`. A serious finding (severity `critical`/`high`) must carry an
@@ -9535,7 +9543,13 @@ nova audit map --profile eu-ai-act-high-risk --capsule 01HXAY7M5JZ8R7K4P9DPBYK2W
 nova audit map --profile gdpr --json
 ```
 
-**Options:** `--capsule ID` — audit a single capsule; `--json` — machine-readable output instead of a table.
+**Options:** `--capsule ID` — audit that one capsule only: the counts, the score and every
+control's status describe it alone, a control it has no evidence for is `missing` and exits 1,
+and an ID that names no capsule directory (or is not a single path segment) exits 2. Releases up
+to v0.108.0 scanned every capsule and then hid the controls the named capsule had no evidence
+for, so they never failed the gate; `--json` — machine-readable output instead of a table.
+`--profile PATH` loads your own catalog — see
+[Map evidence to your own control framework](tutorials/map-evidence-to-your-control-framework.md).
 
 ### nova audit report
 

@@ -28,7 +28,7 @@ class EvidenceRequirement(BaseModel):
         ...,
         description=(
             "Evidence type token: model_calls | tool_permissions | pii_scan | "
-            "policy_events | seal_signature | lineage"
+            "policy_events | seal_signature | lineage | tool_calls"
         ),
     )
     required: bool = Field(default=True, description="Whether this evidence is mandatory")

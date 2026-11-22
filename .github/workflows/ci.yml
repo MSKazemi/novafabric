@@ -37,7 +37,7 @@ jobs:
   # suite so a lint or lockfile failure is reported without waiting for it.
   # --------------------------------------------------------------------------
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -98,7 +98,7 @@ jobs:
   # --------------------------------------------------------------------------
   unit:
     name: unit (${{ matrix.shard }}/${{ strategy.job-total }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -224,7 +224,7 @@ jobs:
   # manifests is compared with a fresh collection of the same scope.
   # --------------------------------------------------------------------------
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: unit
     # Runs even when a shard failed, so a red run still gets its summary and
     # the completeness check; skipped only when the run was cancelled.
@@ -312,7 +312,7 @@ jobs:
   # 92.75% once --all-extras was added.)
   # --------------------------------------------------------------------------
   typecheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -350,7 +350,7 @@ jobs:
   # the coverage-measurement run.
   # --------------------------------------------------------------------------
   seal-latency-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -402,7 +402,7 @@ jobs:
   # benchmark overhead does not inflate the coverage-measurement run.
   # --------------------------------------------------------------------------
   capture-overhead-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -451,7 +451,7 @@ jobs:
   # e2e tests require a running server so are not run here.
   # --------------------------------------------------------------------------
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -509,7 +509,10 @@ jobs:
   # automatically enabled via the env var.
   # --------------------------------------------------------------------------
   integration:
-    runs-on: ubuntu-latest
+    # Pinned with the postgres service image below: ubuntu-24.04 ships pg_dump/pg_restore 16;
+    # ubuntu-latest (26.04) ships 17+, whose pg_restore a 16 server rejects (#207).
+    # tests/docs/test_workflow_runner_images_are_pinned.py enforces the pairing.
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.

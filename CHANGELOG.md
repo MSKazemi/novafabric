@@ -267,6 +267,9 @@ longer forwards the submitting shell's environment (ADR-0270).
   an entry can pin the scheme and host. Every existing entry keeps the substring behaviour, and an
   invalid regex in an explicitly chosen registry file fails to load like any other malformed entry. See the
   operator guide.
+- **Audit profiles: `tool_calls` evidence type.** A requirement with `evidence_type: tool_calls` is met
+  when the capsule recorded at least one tool call (a non-empty `tool-calls.jsonl`; every capture creates
+  the file empty, so its presence alone does not count). Links and FIFOs are never followed or opened.
 - **Example:** [`examples/smolagents-capture/`](examples/smolagents-capture/), a credential-free,
   model-free `smolagents` capture (it skips cleanly when `smolagents` is not installed).
 - **Mocked replay says what its network observation covers and counts child processes** (works today, ADR-0319).
@@ -444,6 +447,66 @@ longer forwards the submitting shell's environment (ADR-0270).
   now marks a pair holding a placeholder (`replay_placeholder_a` / `replay_placeholder_b`,
   and `(replay placeholder: live, not recorded)` in text output). The pair still counts as
   changed, so `--assert-no-regressions` still fails on it.
+
+### Changed
+
+- **Built-in SOC 2 and ISO/IEC 42001 audit profiles cite control identifiers, not standard text.**
+  The control descriptions in `soc2-type2` and `iso42001` reproduced or closely paraphrased AICPA and
+  ISO wording; they are now short summaries of the NovaFabric records each control looks at.
+  Evidence requirements are unchanged. To audit against the publisher's wording, load your own licensed
+  catalog with `nova audit map --profile path/to/catalog.yaml`. A guard test keeps the built-ins this way.
+- **Custom audit profiles: an unknown `evidence_type` is refused at load (breaking for broken files).**
+  A typo such as `model_cals` used to load and leave its control permanently uncovered, with only a log
+  warning. Loading now fails with `ProfileValidationError` naming the token and listing the known ones
+  (`nova audit map` exits 2). A control with no evidence requirements is refused the same way: the
+  engine scored such a control as covered, so a catalog could claim coverage with nothing checked.
+
+### Fixed
+
+- **`nova restore` (pg profile) names a Postgres version mismatch instead of a bare error (#207).**
+  A newer `pg_restore` than the target server (17+ against 16 fails on `SET transaction_timeout`),
+  or an archive written by a newer `pg_dump` than `pg_restore`, now fails with both versions and
+  the fix. CI jobs pin `ubuntu-24.04` instead of the moving `ubuntu-latest` (26.04 ships client
+  tools 17+); a test keeps every job pinned and each Postgres service on its runner's client major.
+- **`iso42001` audit profile: two control IDs named the wrong clause.** `ISO42-8.5-RESPONSIBLE-AI`
+  pointed at a clause ISO/IEC 42001:2023 does not have (clause 8 ends at 8.4); it is replaced by
+  `ISO42-7.5-DOCUMENTED-INFORMATION`, with the same evidence. `ISO42-10.2-CONTINUAL-IMPROVEMENT` is now
+  `ISO42-10.1-CONTINUAL-IMPROVEMENT` (10.2 is nonconformity and corrective action). Reports and scripts
+  keyed on the old IDs must use the new ones.
+- **`nova audit map --capsule ID` hid the controls that capsule failed (behaviour change: a CI job that
+  passed may now fail).** The report was computed over every capsule and then filtered to controls the
+  named capsule had evidence for, so a control with no evidence from it disappeared from the table and
+  the JSON; the documented exit 1 fired only when a missing control still listed that capsule through an
+  optional requirement, and the summary counts described every capsule. It now scans only that capsule:
+  its gaps are reported `missing` and exit 1. An ID that names no capsule directory, or is not a single
+  path segment, exits 2.
+- **`nova export-compliance iso42001` reported evidence it had not read (breaking).** With `--capsule-id`,
+  every `evidenced` control carried an all-zero placeholder digest and a fresh `verified_at` time, and
+  no capsule was opened — an id that names no capsule was accepted. The command now takes
+  `--capsule DIR` and computes the reference from it: the capsule id, a SHA-256 digest over
+  `capsule.yaml` and its model-call, tool-call and tool-permission streams, and the seal path when the
+  NovaSeal seal verifies. `--capsule-id` alone is refused (exit 2); with `--capsule` it must match the
+  capsule's id. A repeated `control_id` is refused, and a
+  catalog entry that is not an object with a `control_id`, or a `capsule.yaml` that is not valid YAML or
+  not a mapping, is reported as an error (exit 2) instead of a traceback. New
+  `--standard LABEL` names the catalog's framework in the report (default `ISO/IEC 42001:2023`).
+  `--evidence` is still operator-declared, so evidenced controls remain `operator_asserted`.
+- **`soc2-type2` audit profile: `CC6.6` was described with the malicious-software criterion**, which is
+  CC6.8. It is now titled and described for CC6.6's topic, protection against threats from outside the
+  system boundary; the control ID and its evidence are unchanged.
+
+### Security
+
+- **Locked Python dependencies clear four HIGH advisories that turned the pip-audit gate red** (Dependabot
+  #201, #202). `pyasn1` 0.6.4 -> 0.6.5 (CVE-2026-119194, -119195, -119196, -119197) and `dnspython` 2.9.0 -> 2.9.2
+  (CVE-2026-128089); `joserfc` 1.7.5 -> 1.8.0 also clears the moderate CVE-2026-119284.
+- **The showcase site's dev-only Lighthouse CI is on `@lhci/cli` 0.16.1, which clears four expired npm-audit
+  waivers** (issue #208). Lighthouse 12.6.1 -> 13.6.0 drops `extract-zip` (GHSA-jmr9-qjv8-65gv,
+  GHSA-7pqw-9j4j-h8q3; no patched release exists) and moves `basic-ftp` to 6.2.6 (GHSA-c475-qrg2-pj4r, patched
+  in 6.2.1) and the nested `zod` 3.x onto 4.6.7 (GHSA-mrhx-c7xc-m3w5, patched in 4.6.6). `.npm-audit-waivers.toml`
+  now holds no waivers. `astro` moves 7.4.2 -> 7.4.13 within its range, clearing two non-blocking advisories
+  (GHSA-mh32-jxcr-mh9f, GHSA-r3h5-4585-7x3w), and the same Lighthouse upgrade clears three moderate ones (`basic-ftp`
+  GHSA-5pm8-86m8-9m6r and GHSA-r4jh-29pc-gfqr, `ip-address` GHSA-rxp7-6hxx-x8q5). `npm audit` reports 0 vulnerabilities in all three npm trees.
 
 ## [0.108.0] - 2026-10-25
 

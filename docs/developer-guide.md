@@ -910,20 +910,45 @@ controls:
 requirement. A missing field or wrong type raises `ProfileValidationError` naming the file
 and field. `evidence_type` must be one of the tokens the engine has a checker for
 (`_EVIDENCE_CHECKERS` in `compliance/audit/engine.py`): `model_calls`, `tool_permissions`,
-`pii_scan`, `policy_events`, `seal_signature`, `lineage`. An unknown token is logged as a
-warning and treated as **absent**, so the control can never be covered.
+`pii_scan`, `policy_events`, `seal_signature`, `lineage`, `tool_calls` (the set is
+`KNOWN_EVIDENCE_TYPES` in `compliance/audit/engine.py`). An unknown token is refused when the
+profile loads, with a `ProfileValidationError` that lists the known ones, so a typo cannot leave
+a control silently uncovered. A control must list at least one requirement: the engine scores a
+control with nothing to check as covered, so the loader refuses one. `tool_calls` needs a non-empty `tool-calls.jsonl`: every capture creates
+that file, empty, so its existence alone is not evidence. Note that `tool_permissions` and
+`policy_events` read `tool-permission-events.jsonl`, which `nova capture` does not write
+today. When no scanned capsule carries that file, those requirements are listed under
+`evidence_not_captured` instead of `evidence_missing`: a control made only of them is reported
+`not_applicable` and excluded from the score, and a control that also has captured evidence is at
+most `partial`.
 
 To ship the profile as a built-in ID, add it to `_PROFILE_FILENAMES` in
 `compliance/audit/loader.py`. That map is what `--profile <id>`, `list_profiles()` and
 `nova serve` resolve, and the `--profile` help text in `src/novafabric/cli/audit.py` is built
 from it (`BUILT_IN_PROFILES`), so there is no second list to edit. Without the map entry the file is still usable by path:
-`nova audit map --profile path/to/my-standard.yaml`. Run
+`nova audit map --profile path/to/my-standard.yaml` (walk-through:
+[Map evidence to your own control framework](tutorials/map-evidence-to-your-control-framework.md)). Run
 `nova audit map --profile my-standard` (or the path) to confirm it loads.
 
 > **Compliance-honesty reminder.** Audit profiles and exporters produce *evidence that
 > supports* a compliance workflow. NovaFabric attests only that a capsule is unmodified
 > since signing; it does not certify or guarantee compliance with any regulation
 > (EU AI Act, NIST AI RMF, ISO/IEC 42001, GDPR, HIPAA, FDA 21 CFR Part 11, SOC 2, etc.).
+
+**Standards text: identifiers and our own words only.** Many frameworks are copyrighted by
+their publishers — ISO/IEC standards, the AICPA Trust Services Criteria (SOC 2), CIS
+Benchmarks, the CSA control matrices and AIUC-1 among them. A profile or exporter in this
+repository may cite their control identifiers, but every `title` and `description` must be
+a short summary written for NovaFabric — never the publisher's wording, verbatim or
+lightly edited. Users who need the full text load their own licensed catalog by path
+(`--profile path/to/catalog.yaml`). Public-law texts (the EU AI Act, GDPR) and US
+government works (NIST) are not restricted this way. The built-in SOC 2 and ISO/IEC 42001
+profiles are held to this rule by
+`tests/compliance/audit/test_profiles_no_copied_standard_text.py` (no publisher sentence
+openers, descriptions of at most 160 characters). Wherever the docs name a proprietary
+framework, they carry this disclaimer: *"NovaFabric is not affiliated with, endorsed by, or
+certified by the publishers of these frameworks. A mapping shows which recorded evidence exists;
+it does not certify that a control is met."*
 
 ## Compliance exporters — adding a new format
 
