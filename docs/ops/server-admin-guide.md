@@ -203,6 +203,17 @@ is **no** organization/workspace/team hierarchy yet — that is
 [ADR-0206](../decisions.md). The normative contract is
 specified in the maintainers' private `design/` tree and is not published.
 
+**Ingest indexing failures (experimental):** after a capsule ZIP has been
+published, metadata registration and the runs-cache update are best-effort.
+Failure does **not** roll back a valid upload. Server logs now emit
+`capsule_metadata_index_failed` or `capsule_runs_cache_index_failed` with the
+run ID and exception *type* (never exception text, tokens or SQL). A
+runs-cache miss is repaired by the next `GET /v0/capsules` list-time
+reconciliation; a MetadataStore registration failure is **not** repaired by
+that SQLite reconciliation and requires investigation of the configured
+MetadataStore and an explicit rebuild/re-registration process. Do not treat
+HTTP 201 as proof that all derived indexes were updated successfully.
+
 **Keyset pagination on `GET /v0/capsules`:**
 
 - List order is pinned to `created_at DESC, run_id DESC`; `next_cursor` is
