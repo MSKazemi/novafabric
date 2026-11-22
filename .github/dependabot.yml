@@ -63,6 +63,17 @@ updates:
         versions: [">=0.64b0"]
       - dependency-name: "fastapi"
         versions: [">=0.142"]
+      # pytest 9.2.0 is held: with it the CI shard `unit (2/6)` hangs or is killed
+      # (job cancelled at the cap, or "The runner has received a shutdown signal" about
+      # five minutes in), every time, on four runs. Bisected on 2026-11-22 against
+      # the same lock: the runtime-library half of the bump, the plugin pair
+      # (pytest-testmon, pytest-benchmark) and the other test tools all pass, and the
+      # full lock with only pytest held at 9.1.1 passes all six shards. It does not
+      # reproduce locally, so the mechanism is unknown. pytest-benchmark 5.3.0 also
+      # breaks on 9.2.0 (it reads the renamed Node._nodeid); 5.3.1 fixes that.
+      # Drop this entry after re-running the CI with pytest 9.2.x on a branch.
+      - dependency-name: "pytest"
+        versions: [">=9.2"]
     open-pull-requests-limit: 10
 
   # GitHub Actions used by the workflows in .github/workflows/.
