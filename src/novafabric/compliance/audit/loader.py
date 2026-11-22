@@ -21,6 +21,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from .engine import KNOWN_EVIDENCE_TYPES
 from .models import Control, ControlProfile, EvidenceRequirement
 
 # Built-in profiles shipped with the package
@@ -145,12 +146,24 @@ def _build_profile(raw: object) -> ControlProfile:
         for req_index, raw_req in enumerate(raw_reqs):
             req_where = f"{where}.evidence_requirements[{req_index}]"
             req_data = _mapping(raw_req, req_where)
+            evidence_type = _required(req_data, "evidence_type", req_where)
+            if isinstance(evidence_type, str) and evidence_type not in KNOWN_EVIDENCE_TYPES:
+                raise _ProfileShapeError(
+                    f"{req_where}.evidence_type {evidence_type!r} is not a known evidence type "
+                    f"(known: {', '.join(sorted(KNOWN_EVIDENCE_TYPES))})"
+                )
             requirements.append(
                 EvidenceRequirement(
-                    evidence_type=_required(req_data, "evidence_type", req_where),
+                    evidence_type=evidence_type,
                     required=req_data.get("required", True),
                     description=_required(req_data, "description", req_where),
                 )
+            )
+        if not requirements:
+            raise _ProfileShapeError(
+                f"{where} ({ctrl_data.get('id')!r}) has no evidence_requirements: a control "
+                "with nothing to check would be scored covered. Leave it out of the profile, "
+                "or map it to evidence that bears on it"
             )
         controls.append(
             Control(

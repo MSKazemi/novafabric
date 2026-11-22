@@ -26,6 +26,7 @@ from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
 from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
 from novafabric.capture.hooks import ConcurrentCaptureRefused
+from novafabric.capture.process_invocation import attach_facet, begin_adapter_run
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
 
@@ -52,11 +53,14 @@ _MAX_LIVE_INVOCATIONS = 64
 class _Run:
     """State of ONE in-flight invocation (never shared between invocations)."""
 
-    __slots__ = ("writer", "run_id", "span_id", "created_at", "t0", "hook_token")
+    __slots__ = ("writer", "run_id", "span_id", "created_at", "t0", "hook_token", "invocation")
 
     def __init__(
-        self, writer: Any, run_id: str, span_id: str, created_at: str, t0: float, hook_token: str
+        self, writer: Any, run_id: str, span_id: str, created_at: str, t0: float, hook_token: str,
+        invocation: dict[str, Any] | None = None,
     ) -> None:
+        #: ADR-0306 Q7: the process_invocation facet, so replay can re-run it.
+        self.invocation = invocation
         self.writer = writer
         self.run_id = run_id
         self.span_id = span_id
@@ -99,10 +103,14 @@ class NovaAdkPlugin:
     async def before_run_callback(
         self, ctx: Any = None, *, invocation_context: Any = None, **kwargs: Any
     ) -> None:
+        from novafabric.replay._errors import ReplayDivergenceError
+
         try:
             self._begin(_invocation_key(_pick(ctx, invocation_context)))
-        except ConcurrentCaptureRefused:
-            raise  # strict mode is an explicit operator request to refuse
+        except (ConcurrentCaptureRefused, ReplayDivergenceError):
+            # strict mode is an explicit operator request to refuse; a replay
+            # divergence (ADR-0306 Q7) fails closed like every dispatcher's
+            raise
         except Exception:
             _log.debug("google_adk: could not begin a capture", exc_info=True)
 
@@ -116,6 +124,13 @@ class NovaAdkPlugin:
             # Reserve the slot so a racing duplicate or the cap check sees it.
             self._runs[key] = None  # type: ignore[assignment]
         try:
+            # ADR-0306 Q7: counted before the store is opened; under mocked
+            # replay the invocation is not captured.
+            adapter_run = begin_adapter_run("google-adk")
+            if adapter_run.replaying:
+                with self._lock:
+                    self._runs.pop(key, None)
+                return
             run_id, span_id = new_ulid(), new_span_id()
             writer = open_capsule_writer(self._data_dir, run_id, hook="adapter-google_adk")
             if writer is None:  # an unusable capsule store: this invocation runs uncaptured
@@ -124,7 +139,7 @@ class NovaAdkPlugin:
                 return
             created_at, t0 = _now(), time.monotonic()
             token = install_all_or_discard(writer=writer, parent_span_id=span_id)
-            run = _Run(writer, run_id, span_id, created_at, t0, token)
+            run = _Run(writer, run_id, span_id, created_at, t0, token, adapter_run.facet)
         except BaseException:
             with self._lock:
                 self._runs.pop(key, None)
@@ -241,6 +256,7 @@ class NovaAdkPlugin:
                 "message": str(error)[:500],
                 "traceback_ref": None,
             }
+        attach_facet(manifest, run.invocation)
         # Main scan (after replay.yaml), manifest redaction, lineage, residual
         # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
         # uses. Never raises; a failure — or a failed step above — leaves the capsule

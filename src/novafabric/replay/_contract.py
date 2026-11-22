@@ -25,18 +25,35 @@ from typing import Any, Literal
 
 from novafabric.capture import _tool_codec
 from novafabric.capture._tool_codec import normalized_arg_hash as normalized_arg_hash
+from novafabric.capture.hooks._bedrock import (
+    BEDROCK_CONVERSE_STREAM_SURFACE,
+    BEDROCK_CONVERSE_SURFACE,
+    BEDROCK_SYSTEM,
+)
+from novafabric.capture.hooks._ollama import (
+    OLLAMA_CHAT_SURFACE,
+    OLLAMA_GENERATE_SURFACE,
+)
 from novafabric.capture.hooks._sdk_streams import (
     ANTHROPIC_MESSAGES_SURFACE,
     API_SURFACE_EXT,
     OPENAI_CHAT_SURFACE,
     OPENAI_RESPONSES_SURFACE,
 )
+from novafabric.capture.hooks._wire_body import GENERIC_WIRE_SURFACE, has_wire_response
 from novafabric.capture.record_roles import (
     ROLE_LOGICAL,
     classify_model_calls,
     is_transport_record,
 )
 from novafabric.replay._model_errors import is_recorded_model_error
+from novafabric.replay._unserved_network import (
+    MAX_LISTED_UNSERVED_DESTINATIONS,
+    UNSERVED_NETWORK_AFTER_CAP_EVENT,
+    is_loopback_host,
+    policy_for,
+    unserved_network_divergence,
+)
 
 #: Model API surfaces mocked replay serves from the capsule, keyed by replay
 #: queue (``model_queue_key``). Each is served sync and async, with and without
@@ -46,6 +63,15 @@ MODEL_SURFACES: dict[str, str] = {
     "openai": "openai.chat.completions.create",
     "openai.responses": "openai.responses.create",
     "anthropic": "anthropic.messages.create",
+    # ADR-0320 (experimental): served at the httpx transport, not an SDK method.
+    OLLAMA_CHAT_SURFACE: "ollama /api/chat",
+    OLLAMA_GENERATE_SURFACE: "ollama /api/generate",
+    # Experimental: served at urllib3 (botocore's transport), not an SDK method.
+    BEDROCK_CONVERSE_SURFACE: "aws.bedrock converse",
+    BEDROCK_CONVERSE_STREAM_SURFACE: "aws.bedrock converse-stream",
+    # ADR-0324 (experimental): any registry model host no dedicated server claims,
+    # served at the httpx transport and urllib3 from the recorded wire response.
+    GENERIC_WIRE_SURFACE: "generic wire (registry model hosts)",
 }
 
 #: The provider (``gen_ai.system``) behind each replay queue.
@@ -53,10 +79,27 @@ QUEUE_PROVIDER: dict[str, str] = {
     "openai": "openai",
     "openai.responses": "openai",
     "anthropic": "anthropic",
+    OLLAMA_CHAT_SURFACE: "ollama",
+    OLLAMA_GENERATE_SURFACE: "ollama",
+    BEDROCK_CONVERSE_SURFACE: BEDROCK_SYSTEM,
+    BEDROCK_CONVERSE_STREAM_SURFACE: BEDROCK_SYSTEM,
+    GENERIC_WIRE_SURFACE: GENERIC_WIRE_SURFACE,
 }
 
 #: How each served model surface may be called during a mocked replay.
 MODEL_CALL_MODES = "sync and async; stream=True and non-streaming"
+#: The same for the surfaces served at the httpx transport (ADR-0320).
+HTTP_MODEL_CALL_MODES = "httpx/httpx2 transport, sync and async; NDJSON-streamed and JSON"
+_HTTP_QUEUES = frozenset({OLLAMA_CHAT_SURFACE, OLLAMA_GENERATE_SURFACE})
+#: The same for the AWS Bedrock surfaces served at urllib3 (boto3 is sync only).
+URLLIB3_MODEL_CALL_MODES = "urllib3 transport (boto3/botocore), sync; JSON and AWS event stream"
+_URLLIB3_QUEUES = frozenset({BEDROCK_CONVERSE_SURFACE, BEDROCK_CONVERSE_STREAM_SURFACE})
+#: The same for generic-wire calls (ADR-0324).
+WIRE_MODEL_CALL_MODES = (
+    "httpx/httpx2 transport (sync and async) and urllib3 (incl. requests); recorded bytes, "
+    "buffered and streamed"
+)
+_WIRE_QUEUES = frozenset({GENERIC_WIRE_SURFACE})
 
 #: The tool surfaces mocked replay intercepts (ADR-0300, ADR-0306).
 TOOL_SURFACE_MCP = "mcp.ClientSession.call_tool"
@@ -67,12 +110,16 @@ TOOL_SURFACE_ADK = "google.adk.tools.BaseTool"
 #: OpenAI Agents SDK function tools, through ``wrap_tools``' replacement of the
 #: tool's ``on_invoke_tool`` (ADR-0306 slice 3, experimental; an undocumented seam).
 TOOL_SURFACE_OPENAI_AGENTS = "agents.FunctionTool"
+#: LangChain / LangGraph tools, through ``langchain_tools.wrap_tools``' generated
+#: subclass of each tool (ADR-0306 slice 3, experimental; not a LangChain API).
+TOOL_SURFACE_LANGCHAIN = "langchain_core.tools.BaseTool"
 TOOL_SURFACES: tuple[str, ...] = (
     TOOL_SURFACE_MCP, TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS,
+    TOOL_SURFACE_LANGCHAIN,
 )
 #: Surfaces recorded with the ``record.tool`` codec (JSON results, digests).
 CODEC_TOOL_SURFACES: tuple[str, ...] = (
-    TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS,
+    TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS, TOOL_SURFACE_LANGCHAIN,
 )
 
 #: ``transport: "python"`` surface marker -> intercepted surface. Both use the
@@ -81,6 +128,7 @@ _PYTHON_TRANSPORT_SURFACES: dict[str, str] = {
     _tool_codec.TOOL_SURFACE_PYTHON_FUNCTION: TOOL_SURFACE_PYTHON,
     _tool_codec.TOOL_SURFACE_ADK_TOOL: TOOL_SURFACE_ADK,
     _tool_codec.TOOL_SURFACE_OPENAI_AGENTS_TOOL: TOOL_SURFACE_OPENAI_AGENTS,
+    _tool_codec.TOOL_SURFACE_LANGCHAIN_TOOL: TOOL_SURFACE_LANGCHAIN,
 }
 
 DivergencePolicy = Literal["fail", "warn"]
@@ -88,8 +136,29 @@ DivergencePolicy = Literal["fail", "warn"]
 #: Most divergences listed individually in a result; the rest are counted.
 MAX_LISTED_DIVERGENCES = 50
 
+#: Most distinct (surface, tool name) pairs listed in ``tool_calls_live_by_tool``.
+MAX_LISTED_LIVE_TOOLS = 50
+
 #: Most distinct ``host:port`` network destinations listed in a result.
 MAX_LISTED_NETWORK_DESTINATIONS = 20
+
+#: What ``NetworkObserver`` sees (ADR-0319): sockets of the replayed Python
+#: process -- and of Python children that load the replay dispatcher or the
+#: child observer -- never those of a non-Python child process.
+NETWORK_OBSERVATION_SCOPE = "python-process"
+
+#: ``network_connect_outcomes``: an attempt whose outcome was never logged.
+CONNECT_OUTCOME_UNKNOWN = "unknown"
+
+#: ``network_observation_coverage`` (ADR-0319, #52 part 2): whether every process
+#: of the replayed tree was observed. ``partial`` makes ``network_connections_live``
+#: a lower bound; ``none`` means no network observer was installed at all.
+COVERAGE_COMPLETE = "complete"
+COVERAGE_PARTIAL = "partial"
+COVERAGE_NONE = "none"
+
+#: Most distinct child-process program names listed in a result.
+MAX_LISTED_CHILD_PROCESSES = 10
 
 
 # ── model calls ──────────────────────────────────────────────────────────────
@@ -103,12 +172,16 @@ def model_queue_key(record: dict[str, Any]) -> str | None:
     ``extensions["io.novafabric.api_surface"] = "openai.responses"``. A record
     marked with any other surface is not servable.
     """
-    system = record.get("gen_ai.system")
-    if system not in ("openai", "anthropic"):
-        return None
     surface = _surface_marker(record)
+    if surface == GENERIC_WIRE_SURFACE:  # ADR-0324: any gen_ai.system
+        return GENERIC_WIRE_SURFACE
+    system = record.get("gen_ai.system")
+    if system not in ("openai", "anthropic", "ollama", BEDROCK_SYSTEM):
+        return None
     if surface is None:
-        return str(system)
+        # An unmarked Ollama or Bedrock record is a wire record captured before its
+        # response was recorded (or a non-model endpoint such as /api/tags).
+        return None if system in ("ollama", BEDROCK_SYSTEM) else str(system)
     return _MARKER_QUEUE.get((str(system), surface))
 
 
@@ -117,6 +190,10 @@ _MARKER_QUEUE: dict[tuple[str, str], str] = {
     ("openai", OPENAI_CHAT_SURFACE): "openai",
     ("openai", OPENAI_RESPONSES_SURFACE): "openai.responses",
     ("anthropic", ANTHROPIC_MESSAGES_SURFACE): "anthropic",
+    ("ollama", OLLAMA_CHAT_SURFACE): OLLAMA_CHAT_SURFACE,
+    ("ollama", OLLAMA_GENERATE_SURFACE): OLLAMA_GENERATE_SURFACE,
+    (BEDROCK_SYSTEM, BEDROCK_CONVERSE_SURFACE): BEDROCK_CONVERSE_SURFACE,
+    (BEDROCK_SYSTEM, BEDROCK_CONVERSE_STREAM_SURFACE): BEDROCK_CONVERSE_STREAM_SURFACE,
 }
 
 
@@ -137,7 +214,12 @@ def records_async_and_streamed_calls(model_calls: list[dict[str, Any]]) -> bool:
     exactly as before ADR-0304. A capsule with no servable record is not legacy:
     any call simply finds its queue empty.
     """
-    servable = served_model_records(model_calls)
+    # Only the SDK surfaces ever had unrecorded async/streamed calls; an Ollama
+    # (ADR-0320) or Bedrock record is always marked and says nothing about them.
+    servable = [
+        r for r in served_model_records(model_calls)
+        if model_queue_key(r) not in _HTTP_QUEUES | _URLLIB3_QUEUES | _WIRE_QUEUES
+    ]
     return not servable or any(_surface_marker(r) is not None for r in servable)
 
 
@@ -156,8 +238,12 @@ def is_replayable_model_call(record: dict[str, Any]) -> bool:
     """
     if is_transport_record(record):
         return False
-    if model_queue_key(record) is None:
+    queue = model_queue_key(record)
+    if queue is None:
         return False
+    if queue == GENERIC_WIRE_SURFACE:
+        # ADR-0324: the recorded bytes are served as recorded, an HTTP error included.
+        return has_wire_response(record)
     if record.get("status", "success") != "success":
         return False
     choices = record.get("gen_ai.response.choices")
@@ -177,7 +263,7 @@ def is_replayable_model_error(record: dict[str, Any]) -> bool:
     """
     if is_transport_record(record):
         return False
-    if model_queue_key(record) is None:
+    if model_queue_key(record) in (None, GENERIC_WIRE_SURFACE):
         return False
     return is_recorded_model_error(record)
 
@@ -243,6 +329,9 @@ def tool_surface(record: dict[str, Any]) -> str | None:
     * ``TOOL_SURFACE_OPENAI_AGENTS``: an OpenAI Agents SDK function-tool call
       recorded through ``wrap_tools`` -- ``transport: "python"`` and the
       ``"openai.agents.tool"`` marker (ADR-0306 slice 3).
+    * ``TOOL_SURFACE_LANGCHAIN``: a LangChain ``BaseTool`` call recorded through
+      ``langchain_tools.wrap_tools`` -- ``transport: "python"`` and the
+      ``"langchain.tool"`` marker (ADR-0306 slice 3).
 
     A record is matchable only on the surface it was recorded on.
     """
@@ -284,9 +373,79 @@ def not_servable_reason(record: dict[str, Any]) -> str | None:
             return "the record holds no result value"
         return None
     reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
+    stripped = False
+    if is_observed_tool_record(record):
+        reason = _without_legacy_not_wrapped(reason)
+        stripped = reason is None
+    subject = SEAM_NESTED_SUBJECTS.get(str(tool_surface(record)))
+    if not stripped and subject is not None:
+        # ADR-0306 r3b (LangChain), r3c (ADK, Agents SDK): nesting no longer
+        # blocks a framework tool call; the text an earlier capture wrote for it
+        # is policy, not data.
+        without = _without_legacy_seam_nested(ext, reason, subject)
+        stripped, reason = without is None, without
+    if stripped:
+        # The only obstacle was policy (round 2, or nesting); the value was kept.
+        if record.get("status", "success") == "success":
+            result = record.get("result")
+            if not (isinstance(result, dict) and "value" in result):
+                return "the record holds no result value"
+        return None
     if _only_nested(record, ext, reason):
         return None
     return str(reason) if reason else "the record was not marked servable at capture"
+
+
+def _without_legacy_not_wrapped(reason: Any) -> str | None:
+    """*reason* without round 2's "not passed through wrap_tools" policy text
+    (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``); ``None`` when nothing else is left.
+
+    Only applied to observed LangChain records (ADR-0306 r3 amendment)."""
+    if not isinstance(reason, str) or not reason:
+        return None if reason in (None, "") else str(reason)
+    legacy = _tool_codec.LEGACY_NOT_WRAPPED_REASON
+    if reason == legacy:
+        return None
+    if reason.startswith(legacy + "; "):
+        return reason[len(legacy) + 2:] or None
+    return reason
+
+
+def _without_part(reason: str, part: str) -> str | None:
+    """*reason* (``"; "``-joined reasons) without one occurrence of *part*;
+    ``None`` when nothing else is left. Unchanged when *part* is not one of them."""
+    if reason == part:
+        return None
+    sep = "; "
+    if reason.startswith(part + sep):
+        return reason[len(part) + len(sep):] or None
+    if reason.endswith(sep + part):
+        return reason[: -len(part) - len(sep)] or None
+    middle = sep + part + sep
+    if middle in reason:
+        return reason.replace(middle, sep, 1)
+    return reason
+
+
+#: Framework seam surface -> the ``SUBJECT`` its capture named in
+#: ``_tool_codec.seam_nested_reason`` (``AdkToolHook`` and subclasses).
+SEAM_NESTED_SUBJECTS: dict[str, str] = {
+    TOOL_SURFACE_ADK: "ADK tool",
+    TOOL_SURFACE_OPENAI_AGENTS: "Agents SDK tool",
+    TOOL_SURFACE_LANGCHAIN: "LangChain tool",
+}
+
+
+def _without_legacy_seam_nested(ext: dict[str, Any], reason: Any, subject: str) -> Any:
+    """*reason* without the nesting text an earlier capture of this seam wrote
+    (``_tool_codec.seam_nested_reason(subject, n)``, *n* the record's
+    ``nested_records``); ``None`` when nothing else is left. Any other reason
+    is kept: only the policy text is removed (the slice-4 ``_only_nested`` rule).
+    """
+    nested = ext.get(_tool_codec.NESTED_RECORDS_EXT)
+    if type(nested) is not int or nested <= 0 or not isinstance(reason, str) or not reason:
+        return reason
+    return _without_part(reason, _tool_codec.seam_nested_reason(subject, nested))
 
 
 def _only_nested(record: dict[str, Any], ext: dict[str, Any], reason: Any) -> bool:
@@ -339,6 +498,247 @@ def nested_boundary_ids(boundary_id: str, tool_calls: list[dict[str, Any]]) -> s
                 ids.add(child)
                 frontier.append(child)
     return ids
+
+
+#: Surfaces whose replay server, when it serves a call, consumes the records its
+#: body wrote as *covered* (``MockToolDispatcher._cover_nested`` passed as
+#: ``on_served``). A guard test pins this set against the dispatcher wiring.
+COVERING_TOOL_SURFACES: frozenset[str] = frozenset({
+    TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS, TOOL_SURFACE_LANGCHAIN,
+})
+
+
+def serves_on_match(record: dict[str, Any]) -> bool:
+    """A matched replayed call would be served from *record*, covering what its body
+    wrote: a covering surface, servable, with a positive ``nested_records`` count
+    (the dispatcher covers nothing without one), and -- off the python surface,
+    whose server re-raises a recorded failure -- a success."""
+    surface = tool_surface(record)
+    if surface not in COVERING_TOOL_SURFACES or not_servable_reason(record) is not None:
+        return False
+    ext = record.get("extensions")
+    nested = ext.get(_tool_codec.NESTED_RECORDS_EXT) if isinstance(ext, dict) else None
+    if type(nested) is not int or nested <= 0:
+        return False
+    return surface == TOOL_SURFACE_PYTHON or record.get("status", "success") == "success"
+
+
+@dataclass(frozen=True)
+class NestedCoverage:
+    """Which recorded calls a strict mocked replay never requests, because an
+    ancestor call will be served (ADR-0306 r3c).
+
+    Built by :func:`nested_coverage` and shared by every up-front classifier --
+    the engine's refusals (``not_served_tool_calls``, ``_servability``), the
+    ``--dry-run`` policy report (``PolicyEvaluator.check_all``) and the capture-
+    time summary (``_replayability_summary``) -- so they cannot disagree.
+    """
+
+    #: ``tool_call_id`` -> record, for ids held by exactly one tool record.
+    by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: ids of tool records certain to be served when the replayed call is made.
+    served: frozenset[str] = frozenset()
+
+    def covering(self, record: Any) -> dict[str, Any] | None:
+        """The outermost ancestor of *record* that will be served, or ``None``.
+
+        Fails closed: a record whose ancestry is missing (an id no tool record
+        holds), ambiguous (an id two records hold) or cyclic is not covered,
+        whatever lies above the break."""
+        if not isinstance(record, dict):
+            return None
+        found: dict[str, Any] | None = None
+        seen: set[str] = set()
+        within = nested_within(record)
+        while within is not None:
+            parent = self.by_id.get(within)
+            if parent is None or within in seen:
+                return None
+            seen.add(within)
+            if within in self.served:
+                found = parent
+            within = nested_within(parent)
+        return found
+
+    def is_covered(self, record: Any) -> bool:
+        return self.covering(record) is not None
+
+
+#: No record is covered (a replay that serves nothing, or no tool records).
+NO_COVERAGE = NestedCoverage()
+
+
+def nested_coverage(
+    tool_calls: list[dict[str, Any]], served: Any = serves_on_match,
+) -> NestedCoverage:
+    """The coverage of a capsule's tool records, given *served*: a predicate
+    saying a tool record is certain to be served at replay (the engine and the
+    summary pass ``PolicyEvaluator.certainly_served``, which also applies the
+    flags and ``replay.yaml``). Pure; reads no file."""
+    counts: dict[str, int] = {}
+    for rec in tool_calls:
+        tool_call_id = rec.get("tool_call_id") if isinstance(rec, dict) else None
+        if isinstance(tool_call_id, str) and tool_call_id:
+            counts[tool_call_id] = counts.get(tool_call_id, 0) + 1
+    by_id = {
+        str(rec["tool_call_id"]): rec
+        for rec in tool_calls
+        if isinstance(rec, dict) and counts.get(str(rec.get("tool_call_id")), 0) == 1
+    }
+    return NestedCoverage(
+        by_id=by_id,
+        served=frozenset(i for i, rec in by_id.items() if served(rec)),
+    )
+
+
+#: Surfaces with an observer for tools not passed through ``wrap_tools``, and
+#: the record extension that marks such a record ``observed``.
+OBSERVED_SEAM_EXTS: dict[str, str] = {
+    TOOL_SURFACE_LANGCHAIN: _tool_codec.LANGCHAIN_SEAM_EXT,
+    TOOL_SURFACE_OPENAI_AGENTS: _tool_codec.OPENAI_AGENTS_SEAM_EXT,
+}
+#: How each such surface is named in refusals and ``--dry-run`` lines.
+OBSERVED_SURFACE_LABELS: dict[str, str] = {
+    TOOL_SURFACE_LANGCHAIN: "LangChain",
+    TOOL_SURFACE_OPENAI_AGENTS: "OpenAI Agents",
+}
+
+
+def is_observed_tool_record(record: dict[str, Any]) -> bool:
+    """A LangChain or OpenAI Agents record of a tool the workload did not pass
+    through ``wrap_tools`` (recorded by that seam's observer)."""
+    ext_key = OBSERVED_SEAM_EXTS.get(str(tool_surface(record)))
+    if ext_key is None:
+        return False
+    ext = record.get("extensions")
+    return isinstance(ext, dict) and ext.get(ext_key) == _tool_codec.LANGCHAIN_SEAM_OBSERVED
+
+
+def upgrade_legacy_seam_record(record: dict[str, Any]) -> dict[str, Any]:
+    """*record* as current capture would write it, when it is a framework seam
+    record an earlier capture marked not servable by policy only -- round 2's
+    "not passed through wrap_tools" (``_tool_codec.LEGACY_NOT_WRAPPED_REASON``,
+    observed LangChain records) and/or the nesting text
+    (``_tool_codec.seam_nested_reason``, before ADR-0306 r3b for LangChain and
+    r3c for ADK and the Agents SDK) -- and whose value was kept: a copy marked
+    ``json-v1``. Any other record is returned unchanged (the same object)."""
+    if (
+        tool_surface(record) not in SEAM_NESTED_SUBJECTS
+        or record.get("status", "success") != "success"
+    ):
+        return record
+    ext = record.get("extensions")
+    if not isinstance(ext, dict) or ext.get(_tool_codec.RESULT_CODEC_EXT) == _tool_codec.CODEC_JSON:
+        return record
+    reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
+    if not isinstance(reason, str) or not reason or not_servable_reason(record) is not None:
+        return record
+    upgraded_ext = {k: v for k, v in ext.items() if k != _tool_codec.NOT_SERVABLE_REASON_EXT}
+    upgraded_ext[_tool_codec.RESULT_CODEC_EXT] = _tool_codec.CODEC_JSON
+    return {**record, "extensions": upgraded_ext}
+
+
+#: The r3b name, kept for callers of the LangChain-only version.
+upgrade_legacy_langchain_record = upgrade_legacy_seam_record
+
+
+def observed_not_served_reason(record: dict[str, Any]) -> str | None:
+    """Why mocked replay cannot serve this *observed* record, else ``None``.
+
+    Also ``None`` for any record that is not observed. A recorded failure is
+    never served (the LangChain server's rule)."""
+    if not is_observed_tool_record(record):
+        return None
+    reason = not_servable_reason(record)
+    if reason is None and record.get("status", "success") != "success":
+        label = OBSERVED_SURFACE_LABELS.get(str(tool_surface(record)), "tool")
+        reason = f"the record is a failure, and {label} tool failures are not served"
+    return reason
+
+
+def is_not_served_tool_record(record: dict[str, Any]) -> bool:
+    """An observed LangChain or OpenAI Agents record (a tool not passed through
+    ``wrap_tools``) mocked replay cannot serve -- the capsule shows, before anything runs, that
+    the call would be refused (strict) or need ``--allow-unknown-mutation``
+    (``--permissive``). Observed records that *can* be served are served by
+    default (ADR-0306 r3 amendment) and are not "not served"."""
+    return observed_not_served_reason(record) is not None
+
+
+#: Most tool names listed per surface in ``tool_calls_not_served_by_surface``.
+MAX_LISTED_NOT_SERVED_TOOLS = 10
+#: Most distinct reasons listed per surface there.
+MAX_LISTED_NOT_SERVED_REASONS = 5
+
+
+def not_served_tool_calls(
+    tool_calls: list[dict[str, Any]], coverage: NestedCoverage = NO_COVERAGE,
+) -> dict[str, dict[str, Any]]:
+    """Recorded observed calls mocked replay cannot serve, as ``{surface:
+    {"count", "tools", "reasons"}}`` (distinct tool names, sorted, at most
+    :data:`MAX_LISTED_NOT_SERVED_TOOLS`; distinct reasons in first-seen order,
+    at most :data:`MAX_LISTED_NOT_SERVED_REASONS`); empty when there are none.
+
+    A record *coverage* covers is left out: a served ancestor's body never runs,
+    so the call is never made (ADR-0306 r3c)."""
+    counts: dict[str, int] = {}
+    names: dict[str, set[str]] = {}
+    reasons: dict[str, list[str]] = {}
+    for record in tool_calls:
+        if not isinstance(record, dict) or coverage.is_covered(record):
+            continue
+        reason = observed_not_served_reason(record)
+        if reason is None:
+            continue
+        surface = str(tool_surface(record))
+        counts[surface] = counts.get(surface, 0) + 1
+        names.setdefault(surface, set()).add(str(record.get("tool_name")))
+        listed = reasons.setdefault(surface, [])
+        if reason not in listed:
+            listed.append(reason)
+    return {
+        surface: {
+            "count": n,
+            "tools": sorted(names[surface])[:MAX_LISTED_NOT_SERVED_TOOLS],
+            "reasons": reasons[surface][:MAX_LISTED_NOT_SERVED_REASONS],
+        }
+        for surface, n in counts.items()
+    }
+
+
+def not_served_dry_run_lines(
+    tool_calls: list[dict[str, Any]], coverage: NestedCoverage = NO_COVERAGE,
+) -> list[str]:
+    """One ``--dry-run`` line per recorded observed call replay cannot serve
+    (records *coverage* covers are left out, as in :func:`not_served_tool_calls`)."""
+    lines = []
+    for record in tool_calls:
+        reason = (
+            observed_not_served_reason(record)
+            if isinstance(record, dict) and not coverage.is_covered(record) else None
+        )
+        if reason is not None:
+            label = OBSERVED_SURFACE_LABELS.get(str(tool_surface(record)), "tool")
+            lines.append(
+                f"  [NOT SERVED] {label} tool call ({record.get('tool_name')}) -- "
+                f"observed (not passed through wrap_tools): {reason}\n"
+            )
+    return lines
+
+
+def describe_not_served(by_surface: dict[str, dict[str, Any]]) -> str:
+    """``observed LangChain tool calls (...) without a servable record: 2 (read_log, ...)``."""
+    parts = []
+    for surface, entry in sorted(by_surface.items()):
+        label = OBSERVED_SURFACE_LABELS.get(surface)
+        what = (
+            f"observed {label} tool calls (not passed through wrap_tools) without a "
+            "servable record"
+            if label is not None else surface
+        )
+        tools = ", ".join(entry.get("tools") or [])
+        parts.append(f"{what}: {int(entry.get('count', 0))}" + (f" ({tools})" if tools else ""))
+    return "; ".join(parts)
 
 
 def is_servable_tool_record(record: dict[str, Any]) -> bool:
@@ -615,7 +1015,9 @@ def tool_result_messages(messages: Any) -> dict[str, Any] | None:
     * Chat Completions: a ``role: "tool"`` message -> its ``content``;
     * Anthropic Messages: a ``tool_result`` block in a ``user`` message ->
       ``{"content", "is_error"}``, keyed by ``tool_use_id``;
-    * Responses API: a ``function_call_output`` input item -> its ``output``.
+    * Responses API: a ``function_call_output`` input item -> its ``output``;
+    * AWS Bedrock Converse: a ``toolResult`` block in a ``user`` message ->
+      ``{"content", "status"}``, keyed by ``toolUseId``.
 
     ``None`` when *messages* is not a non-empty list: a request with no message
     list (or a record that kept none) has nothing to compare, which is never
@@ -642,6 +1044,12 @@ def tool_result_messages(messages: Any) -> dict[str, Any] | None:
                         put(_field(block, "tool_use_id"), {
                             "content": _field(block, "content"),
                             "is_error": bool(_field(block, "is_error")),
+                        })
+                    elif isinstance(_field(block, "toolResult"), dict):
+                        result = _field(block, "toolResult")
+                        put(result.get("toolUseId"), {
+                            "content": result.get("content"),
+                            "status": result.get("status"),
                         })
     return out
 
@@ -719,10 +1127,30 @@ class ReplayContractReport:
     tool_calls_unconsumed: int = 0
     tool_calls_refused: int = 0
     tool_calls_by_surface: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: Live tool calls by (surface, tool name), in first-seen order: what the
+    #: ``[LIVE] tool call`` lines name.
+    tool_calls_live_by_tool: dict[tuple[str, str], int] = field(default_factory=dict)
+    #: ADR-0306 r3: served tool calls whose result did not come from the record
+    #: itself, by source (``model-request-echo``); empty -> omitted.
+    tool_calls_mocked_by_source: dict[str, int] = field(default_factory=dict)
+    #: Recorded tool calls replay does not serve by policy (LangChain tools
+    #: that were not passed through ``wrap_tools``), by surface
+    #: (``{"count", "tools"}``); they run live if made (``--permissive``).
+    tool_calls_not_served_by_surface: dict[str, dict[str, Any]] = field(default_factory=dict)
     network_observed: bool = False
     network_connections_live: int = 0
     network_connections_capped: bool = False
     network_destinations: list[str] = field(default_factory=list)
+    #: Per ``host:port``, the attempts logged (``network_live``) and how
+    #: they ended (``network_connect_outcome``), first-seen order.
+    network_connect_attempts: dict[str, int] = field(default_factory=dict)
+    network_connect_outcomes: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: W0 (ADR-0319 amendment): connect attempts past loopback -- none of them is a
+    #: served surface, which answers in-process -- and their distinct destinations;
+    #: a strict replay diverges on any (``unserved_network``).
+    network_connections_unserved: int = 0
+    network_connections_unserved_children: int = 0
+    network_destinations_unserved: list[str] = field(default_factory=list)
     divergences: list[dict[str, Any]] = field(default_factory=list)
     #: ``replay.yaml`` overrides and whether this replay honours each
     #: (ADR-0306 D11); written only when the capsule has overrides.
@@ -735,6 +1163,65 @@ class ReplayContractReport:
     echo_matched: int = 0
     echo_not_checked: dict[str, int] = field(default_factory=dict)
     echo_mismatches: list[dict[str, Any]] = field(default_factory=list)
+    #: ADR-0319: recorded model calls mocked replay cannot serve, by
+    #: ``gen_ai.system`` (``{"count", "hosts"}``); they run live if made.
+    model_calls_not_servable_by_system: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
+    #: ADR-0319: child processes the observed processes started (audit hook);
+    #: their file activity is not observed, their network only when they report in.
+    child_processes_observed: bool = False
+    child_processes_spawned: int = 0
+    child_processes_capped: bool = False
+    child_processes_argv0: list[str] = field(default_factory=list)
+    #: #52 part 2: started children that reported their own connections
+    #: (``observer_started`` from a process whose parent was observed), and the
+    #: connections made by observed processes other than the root.
+    child_processes_network_observed: int = 0
+    network_connections_live_children: int = 0
+
+    def connect_outcomes_listed(self) -> list[dict[str, Any]]:
+        """``network_connect_outcomes``: per destination (first
+        :data:`MAX_LISTED_NETWORK_DESTINATIONS`), its attempts and their outcomes;
+        an attempt with no outcome event (the process ended inside the call) is
+        ``unknown``, so the outcomes always sum to the attempts."""
+        listed: list[dict[str, Any]] = []
+        for destination, attempts in list(self.network_connect_attempts.items())[
+            :MAX_LISTED_NETWORK_DESTINATIONS
+        ]:
+            seen = dict(sorted(self.network_connect_outcomes.get(destination, {}).items()))
+            unknown = attempts - sum(seen.values())
+            if unknown > 0:
+                seen[CONNECT_OUTCOME_UNKNOWN] = unknown
+            listed.append({"destination": destination, "attempts": attempts, "outcomes": seen})
+        return listed
+
+    @property
+    def child_processes_unobserved(self) -> int:
+        """Started children whose network activity is unknown."""
+        return max(0, self.child_processes_spawned - self.child_processes_network_observed)
+
+    @property
+    def network_observation_coverage(self) -> str:
+        if not self.network_observed:
+            return COVERAGE_NONE
+        if (
+            self.child_processes_unobserved
+            or self.child_processes_capped
+            or not self.child_processes_observed
+        ):
+            return COVERAGE_PARTIAL
+        return COVERAGE_COMPLETE
+    #: ADR-0306 Q7: framework-adapter runs the re-run process made, against the
+    #: runs the adapter capsule recorded (``None``: not an adapter capsule).
+    adapter_runs_expected: int | None = None
+    adapter_runs_observed: int = 0
+
+    @property
+    def model_calls_not_servable(self) -> int:
+        return sum(
+            int(v.get("count", 0)) for v in self.model_calls_not_servable_by_system.values()
+        )
 
     @property
     def queues_fully_consumed(self) -> bool:
@@ -787,29 +1274,83 @@ class ReplayContractReport:
             "tool_calls_unconsumed": self.tool_calls_unconsumed,
             "tool_calls_refused": self.tool_calls_refused,
             "tool_calls_by_surface": {k: dict(v) for k, v in self.tool_calls_by_surface.items()},
+            "tool_calls_live_by_tool": [
+                {"surface": surface, "tool_name": name, "count": count}
+                for (surface, name), count in list(self.tool_calls_live_by_tool.items())[
+                    :MAX_LISTED_LIVE_TOOLS
+                ]
+            ],
             "model_calls_covered": self.model_calls_covered,
             "tool_calls_covered": self.tool_calls_covered,
             "tool_result_echo": self.tool_result_echo(),
             "network_observed": self.network_observed,
             "network_connections_live": self.network_connections_live,
             "network_destinations": self.network_destinations[:MAX_LISTED_NETWORK_DESTINATIONS],
+            "network_observation_scope": NETWORK_OBSERVATION_SCOPE,
+            "network_connections_unserved": self.network_connections_unserved,
+            "network_destinations_unserved": self.network_destinations_unserved[
+                :MAX_LISTED_UNSERVED_DESTINATIONS
+            ],
+            "unserved_network_policy": policy_for(self.divergence_policy),
+            "model_calls_not_servable_by_system": {
+                k: {"count": int(v.get("count", 0)), "hosts": list(v.get("hosts") or [])}
+                for k, v in self.model_calls_not_servable_by_system.items()
+            },
+            "child_processes_observed": self.child_processes_observed,
+            "child_processes_spawned": self.child_processes_spawned,
+            "child_processes_argv0": self.child_processes_argv0[:MAX_LISTED_CHILD_PROCESSES],
+            "child_processes_network_observed": self.child_processes_network_observed,
+            "child_processes_unobserved": self.child_processes_unobserved,
+            "network_connections_live_children": self.network_connections_live_children,
+            "network_observation_coverage": self.network_observation_coverage,
             "divergences": listed,
         }
+        if self.network_connect_attempts:
+            out["network_connect_outcomes"] = self.connect_outcomes_listed()
         if self.network_connections_capped:
             out["network_connections_capped"] = True
+        if self.child_processes_capped:
+            out["child_processes_capped"] = True
+        if len(self.tool_calls_live_by_tool) > MAX_LISTED_LIVE_TOOLS:
+            out["tool_calls_live_by_tool_not_listed"] = (
+                len(self.tool_calls_live_by_tool) - MAX_LISTED_LIVE_TOOLS
+            )
+        if self.tool_calls_not_served_by_surface:
+            out["tool_calls_not_served_by_surface"] = {
+                k: {
+                    "count": int(v.get("count", 0)), "tools": list(v.get("tools") or []),
+                    **({"reasons": list(v["reasons"])} if v.get("reasons") else {}),
+                }
+                for k, v in self.tool_calls_not_served_by_surface.items()
+            }
+        if self.tool_calls_mocked_by_source:
+            out["tool_calls_mocked_by_source"] = dict(self.tool_calls_mocked_by_source)
         if self.tool_overrides:
             out["tool_overrides"] = [dict(o) for o in self.tool_overrides]
+        if self.adapter_runs_expected is not None:
+            out["adapter_runs_expected"] = self.adapter_runs_expected
+            out["adapter_runs_observed"] = self.adapter_runs_observed
         if len(self.divergences) > len(listed):
             out["divergences_not_listed"] = len(self.divergences) - len(listed)
         return out
 
 
 def surfaces_for(substitute_tools: bool) -> list[str]:
-    surfaces = [f"{name} ({MODEL_CALL_MODES})" for name in MODEL_SURFACES.values()]
+    def modes(queue: str) -> str:
+        if queue in _HTTP_QUEUES:
+            return HTTP_MODEL_CALL_MODES
+        if queue in _WIRE_QUEUES:
+            return WIRE_MODEL_CALL_MODES
+        return URLLIB3_MODEL_CALL_MODES if queue in _URLLIB3_QUEUES else MODEL_CALL_MODES
+
+    surfaces = [f"{name} ({modes(queue)})" for queue, name in MODEL_SURFACES.items()]
     if substitute_tools:
         surfaces.extend(TOOL_SURFACES)
     return surfaces
 
+
+#: ADR-0306 Q7: the re-run process made more or fewer adapter runs than recorded.
+ADAPTER_RUN_COUNT_MISMATCH = "adapter_run_count_mismatch"
 
 #: Divergence kinds counted as a refused/unmatched *tool* call.
 _TOOL_DIVERGENCE_KINDS = frozenset({"tool_call_unmatched", "tool_result_not_servable"})
@@ -820,6 +1361,57 @@ _SURFACE_COUNTERS = (
 )
 
 
+def _count_unserved(report: ReplayContractReport, destination: str, *, child: bool) -> None:
+    """One connect attempt past loopback (W0, ``_unserved_network``)."""
+    report.network_connections_unserved += 1
+    if child:
+        report.network_connections_unserved_children += 1
+    if destination not in report.network_destinations_unserved:
+        report.network_destinations_unserved.append(destination)
+
+
+def _fold_connect_outcome(ev: dict[str, Any], report: ReplayContractReport) -> None:
+    """Count one attempt's outcome under its destination -- never more outcomes
+    than the destination has logged attempts: an outcome adds no attempt."""
+    destination = f"{ev.get('host')}:{ev.get('port')}"
+    attempts = report.network_connect_attempts.get(destination, 0)
+    outcomes = report.network_connect_outcomes.get(destination, {})
+    if sum(outcomes.values()) >= attempts:
+        return
+    report.network_connect_outcomes[destination] = outcomes
+    outcome = str(ev.get("outcome") or CONNECT_OUTCOME_UNKNOWN)
+    outcomes[outcome] = outcomes.get(outcome, 0) + 1
+
+
+def _fold_observer_started(
+    ev: dict[str, Any],
+    observed_pids: set[Any],
+    fork_instances: set[Any],
+    report: ReplayContractReport,
+    root_pid: Any,
+) -> Any:
+    """Count one observed process; return the root's pid.
+
+    A child counts as observed when its parent was observed (it is then one of the
+    ``child_processes_spawned`` its parent counted), or when it is an observed
+    process that exec'd a Python program which reported in again. A Python
+    grandchild behind an unobserved program (``sh -c python ...``) is observed
+    itself -- its connections are counted -- but leaves that program unobserved.
+    """
+    pid, role = ev.get("pid"), ev.get("role")
+    if role == "root":
+        observed_pids.add(pid)
+        return pid if root_pid is None else root_pid
+    if ev.get("ppid") in observed_pids or pid in observed_pids:
+        report.child_processes_network_observed += 1
+        if role == "fork":
+            fork_instances.add(pid)
+        else:
+            fork_instances.discard(pid)
+    observed_pids.add(pid)
+    return root_pid
+
+
 def summarize(
     model_calls: list[dict[str, Any]],
     tool_calls: list[dict[str, Any]],
@@ -827,8 +1419,14 @@ def summarize(
     *,
     divergence_policy: str,
     substitute_tools: bool,
+    adapter_runs_expected: int | None = None,
 ) -> ReplayContractReport:
-    """Fold the dispatchers' event log into a :class:`ReplayContractReport`."""
+    """Fold the dispatchers' event log into a :class:`ReplayContractReport`.
+
+    *adapter_runs_expected* (an adapter capsule re-run from its recorded
+    process invocation, ADR-0306 Q7): a process that made a different number
+    of adapter runs diverged (``adapter_run_count_mismatch``).
+    """
     queues = model_queues(model_calls)
     tools = interceptable_tool_calls(tool_calls)
     by_surface: dict[str, dict[str, int]] = {
@@ -858,6 +1456,9 @@ def summarize(
     served: dict[str, int] = dict.fromkeys(queues, 0)
     covered: dict[str, int] = dict.fromkeys(queues, 0)
     serving_pids: set[Any] = set()
+    root_pid: Any = None
+    observed_pids: set[Any] = set()
+    fork_instances: set[Any] = set()
     for ev in events:
         kind = ev.get("event")
         if kind == "installed":
@@ -917,17 +1518,56 @@ def summarize(
             report.network_observed = True
         elif kind == "network_live":
             report.network_connections_live += 1
+            child = root_pid is not None and ev.get("pid") != root_pid
+            if child:
+                report.network_connections_live_children += 1
             destination = f"{ev.get('host')}:{ev.get('port')}"
             if destination not in report.network_destinations:
                 report.network_destinations.append(destination)
+            if not is_loopback_host(ev.get("host")):
+                _count_unserved(report, destination, child=child)
+            attempts = report.network_connect_attempts
+            attempts[destination] = attempts.get(destination, 0) + 1
+        elif kind == "network_connect_outcome":
+            _fold_connect_outcome(ev, report)
         elif kind == "network_live_capped":
             report.network_connections_capped = True
+        elif kind == UNSERVED_NETWORK_AFTER_CAP_EVENT:
+            # Past the per-process cap: not in network_connections_live (capped),
+            # but never hidden from the unserved count.
+            child = root_pid is not None and ev.get("pid") != root_pid
+            _count_unserved(report, f"{ev.get('host')}:{ev.get('port')}", child=child)
+        elif kind == "process_observer_installed":
+            report.child_processes_observed = True
+        elif kind == "observer_started":
+            root_pid = _fold_observer_started(ev, observed_pids, fork_instances, report, root_pid)
+        elif kind in ("child_process", "child_process_exec"):
+            if kind == "child_process":
+                report.child_processes_spawned += 1
+            elif ev.get("pid") in fork_instances:
+                # A fork child became another program: no longer observed.
+                fork_instances.discard(ev.get("pid"))
+                report.child_processes_network_observed -= 1
+            name = ev.get("argv0")
+            if isinstance(name, str) and name and name not in report.child_processes_argv0:
+                report.child_processes_argv0.append(name)
+        elif kind == "child_process_capped":
+            report.child_processes_capped = True
+        elif kind == "adapter_run":
+            report.adapter_runs_observed += 1
         elif kind == "tool_mocked":
             report.tool_calls_mocked += 1
             _surface_of(ev)["mocked"] += 1
+            source = ev.get("source")
+            if isinstance(source, str) and source:
+                report.tool_calls_mocked_by_source[source] = (
+                    report.tool_calls_mocked_by_source.get(source, 0) + 1
+                )
         elif kind == "tool_live":
             report.tool_calls_live += 1
             _surface_of(ev)["live"] += 1
+            key = (str(ev.get("surface") or TOOL_SURFACE_MCP), str(ev.get("tool_name") or "?"))
+            report.tool_calls_live_by_tool[key] = report.tool_calls_live_by_tool.get(key, 0) + 1
             if ev.get("consumed"):
                 # ADR-0306 D8: an honoured `allow: true` re-executes a call
                 # whose record it consumed -- requested, so not left over.
@@ -1008,6 +1648,34 @@ def summarize(
                 "message": message,
                 "unconsumed": {s: n for s, n, _ in leftover},
             })
+    unserved = unserved_network_divergence(
+        divergence_policy=divergence_policy,
+        connections=report.network_connections_unserved,
+        connections_children=report.network_connections_unserved_children,
+        destinations=report.network_destinations_unserved,
+        lower_bound=(
+            report.network_connections_capped
+            or report.network_observation_coverage == COVERAGE_PARTIAL
+        ),
+    )
+    if unserved is not None:
+        report.divergences.append(unserved)
+    report.adapter_runs_expected = adapter_runs_expected
+    if (
+        adapter_runs_expected is not None
+        and report.adapter_runs_observed != adapter_runs_expected
+        and not any(d.get("kind") == ADAPTER_RUN_COUNT_MISMATCH for d in report.divergences)
+    ):
+        report.divergences.append({
+            "kind": ADAPTER_RUN_COUNT_MISMATCH,
+            "message": (
+                f"the replayed process made {report.adapter_runs_observed} framework-"
+                f"adapter run(s); the capsule recorded adapter run #{adapter_runs_expected} "
+                "of its process, so the replay did not re-run the recorded call"
+            ),
+            "recorded": adapter_runs_expected,
+            "observed": report.adapter_runs_observed,
+        })
     if len({p for p in serving_pids if p is not None}) > 1:
         report.divergences.append({
             "kind": "multiple_interpreters",

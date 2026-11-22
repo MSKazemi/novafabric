@@ -16,7 +16,9 @@ every tool call to whichever handler is registered here:
   "google.adk.tool"``), with the ``record.tool`` codec: canonical JSON
   arguments, after-redaction digests, payloads only at the ``forensic`` /
   ``air_gapped`` capture level (``_tool_codec``), nested-record marking
-  (``_tool_scope``);
+  (``_tool_scope``): a call whose body made model or tool calls -- an
+  ``AgentTool`` running a sub-agent -- is served at replay and what its body
+  recorded is consumed as covered (ADR-0306 r3c);
 * **mocked replay** -- ``replay._adk_tool_server.AdkToolServer``, registered by
   ``MockToolDispatcher.install``, answers the call from the capsule *before*
   the tool body runs, or refuses it (fail closed).
@@ -331,6 +333,12 @@ class AdkToolHook:
     SUBJECT = "ADK tool"
     FAILURE_REASON = ERROR_NOT_SERVED_REASON
     LONG_RUNNING = LONG_RUNNING_REASON
+    #: Whether replay serves a call of this seam whose body made nested
+    #: model/tool records (covering them, ADR-0306 slice 4). ``False``: such a
+    #: record is marked not servable with ``codec.seam_nested_reason``. ``True``
+    #: for every seam since ADR-0306 r3c (ADK ``AgentTool``, Agents SDK
+    #: ``Agent.as_tool``); LangChain since r3b.
+    SERVES_NESTED = True
 
     # The handler registry and in-flight variable of this hook's seam.
     _get_handler = staticmethod(lambda: _get_handler())
@@ -421,12 +429,8 @@ class AdkToolHook:
             ext[codec.ARGUMENTS_DIGEST_EXT] = call.digest
         if not payloads:
             reasons.append(PAYLOADS_OFF_REASON)
-        if nested:
-            reasons.append(
-                f"{nested} model/tool record(s) were written inside this {self.SUBJECT} call; "
-                "serving it would leave them unrequested (nested-call coverage is not "
-                "implemented)"
-            )
+        if nested and not self.SERVES_NESTED:
+            reasons.append(codec.seam_nested_reason(self.SUBJECT, nested))
         if call.long_running:
             reasons.append(self.LONG_RUNNING)
         changed = _changed_actions(call.tool_context, pending.actions)

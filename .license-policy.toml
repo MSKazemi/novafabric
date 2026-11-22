@@ -76,6 +76,12 @@ tier = "B"
 justification = "Tier B under ADR-0024 (MPL-2.0). Development/test-only dependency (property-based testing); never imported by shipped runtime code and never redistributed in a wheel. Used unmodified, so MPL-2.0's file-level copyleft attaches to nothing we author."
 
 [[declaration]]
+package = "orjson"
+license = "MPL-2.0 AND (Apache-2.0 OR MIT)"
+tier = "B"
+justification = "Tier B under ADR-0024 (MPL-2.0 portion). Development/test-only and transitive: langsmith, a dependency of langchain-core, pulls it; langchain-core and langgraph are in the dev group only, for the LangChain tool-seam e2e tests (ADR-0306 slice 3, issue #54). Never imported by shipped runtime code and never redistributed in a wheel; used unmodified, so MPL-2.0's file-level copyleft attaches to nothing we author."
+
+[[declaration]]
 package = "pathspec"
 license = "MPL-2.0"
 tier = "B"

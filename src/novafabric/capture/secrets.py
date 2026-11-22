@@ -168,6 +168,9 @@ ARTIFACT_SCAN_TARGETS: list[tuple[str, str]] = [
     ("env.lock", "env-lock"),
     ("assets.jsonl", "assets"),
     ("lineage.jsonl", "lineage"),
+    # ADR-0321 amendment: written paths (never contents) and their digests. The
+    # generic kind, so the secret-redaction schema's closed enum is unchanged.
+    ("file-effects.json", "capsule-file"),
 ]
 # Directories walked recursively (symlinks are never followed).
 ARTIFACT_SCAN_DIRS: list[tuple[str, str]] = [
