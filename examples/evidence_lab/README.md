@@ -10,7 +10,7 @@ model and two genuine read-only tool calls, so the resulting capsule holds real
 > scenario (`service-incident-v1`) with two controlled variants. Replay *fidelity* is
 > **not evaluated** (only read-only forensic inspection runs), and the signed profile is
 > a **self-asserted local identity**, not external identity validation. `record.tool` and
-> `nova seal init` are **experimental** (ADR-0306 slice 1; see
+> `nova seal init` are **experimental** (ADR-0306 slice 1 and ADR-0301; see
 > [replay modes](../../docs/architecture/replay-modes.md)).
 
 ## Run it — the walkthrough (D2)
@@ -55,7 +55,7 @@ harness verdict PASS** — not every check being `PASS`: the unsafe task is expe
 | Axis | unsafe | corrected | How it is decided |
 |---|---|---|---|
 | `task` | `FAIL` (expected) | `PASS` (expected) | the fixed policy oracle over the recorded decision; `reduce_max_connections` must be an integer in 100..900 |
-| `capture` | `PASS` | `PASS` | 1 logical model call, 2 read-only tool calls, decision digest = the fixture reply's; the run's lineage is exactly the registered dataset (never empty); `nova diff` names the one changed model call (request and response) and two unchanged tool calls |
+| `capture` | `PASS` | `PASS` | 1 logical model call, 2 read-only tool calls, decision digest = the fixture reply's; the run's lineage is exactly the registered dataset (never empty; the agent *declares* this consumption through the SDK call `record_asset_consumption`, and nothing reads the asset back, so it is declared, not observed); `nova diff` names the one changed model call (request and response) and two unchanged tool calls |
 | `integrity` | `NOT_EVALUATED` | `NOT_EVALUATED` | `nova verify --json` reports `sealed: false`; `nova validate` passing does not change that |
 | `replay` | `NOT_EVALUATED` | `NOT_EVALUATED` | forensic inspection ran (read-only); no fidelity claim |
 
@@ -314,4 +314,6 @@ isolation, no production-scale or throughput claim, no regulatory certification,
 statement that a capsule's decision is *correct* — a valid seal proves the records were not
 changed after sealing, not that the decision was right. What is shown is that the
 capsules' model and tool records match a description of what was supposed to happen that
-is computed from the fixtures alone.
+is computed from the fixtures alone. Dataset consumption is declared by the agent
+through `record_asset_consumption`, not observed: the lineage check proves the declaration
+was recorded and links to the registered asset, not that the agent read that asset.
