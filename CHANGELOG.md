@@ -25,6 +25,12 @@ longer forwards the submitting shell's environment (ADR-0270).
   29th value, so two noisy rounds on a shared runner failed it: on 2026-11-22 a docs-only commit read
   p95 2.71 s (median 270 ms) and passed on re-run. p95 of 60 absorbs three such rounds; the 2 s limit
   and the statistic are unchanged.
+- **The BlackBox demo's mock model is strict and loopback-only.** `examples/blackbox_demo/mock_llm_server.py` now
+  answers only the two pinned synthetic requests (model `novafabric-mock-v1`, fixed messages, `X-Demo-Mode` of
+  `bad` or `fixed`), returns a deterministic completion, and rejects anything else (changed scenario, streaming,
+  bad JSON or content type, oversized body, unknown route). `agent.py` refuses any `OPENAI_BASE_URL` that is not
+  an `http` loopback address with an explicit port, so the demo cannot reach a real model. Negative controls are
+  in `tests/test_example_blackbox_mock_server.py`.
 - **Collector CI on Go 1.26.11.** GO-2026-6859 (`net/http`) is fixed only in Go 1.26.11 and failed
   the v0.109.0 tag's collector vulnerability scan on 1.26.10 (lint, unit tests and the build passed).
   The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
