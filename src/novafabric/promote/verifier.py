@@ -242,7 +242,15 @@ def verify_sod(
     # ------------------------------------------------------------------
     # Check 3: proposal_digest match
     # ------------------------------------------------------------------
-    canonical = jcs.canonicalize(json.loads(proposal_envelope_bytes))
+    try:
+        canonical = jcs.canonicalize(json.loads(proposal_envelope_bytes))
+    except ValueError as exc:
+        # RFC 8785 cannot represent every JSON number (jcs refuses an integer above
+        # 2**53). An envelope that cannot be canonicalized cannot match any digest, so
+        # it fails the digest check; it must not raise out of the verifier.
+        msg = f"proposal envelope is not canonicalizable (RFC 8785): {exc}"
+        log.warning(msg)
+        return VerifyResult(passed=False, exit_code=5, message=msg)
     expected_digest = hashlib.sha256(canonical).hexdigest()
     actual_digest = approval_predicate.get("proposal_digest", {}).get("sha256", "")
 
