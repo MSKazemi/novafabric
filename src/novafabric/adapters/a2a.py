@@ -26,6 +26,7 @@ import yaml
 from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
 from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.finalize import finalize_in_process_capsule
+from novafabric.capture.process_invocation import attach_facet, begin_adapter_run
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.teardown import TeardownSteps, novafabric_version, open_capsule_writer
 
@@ -98,6 +99,8 @@ class NovaA2AInterceptor:
         self._pending: dict[
             str, tuple[Any, str, str, str, float, str, str]
         ] = {}
+        # method_key -> the process_invocation facet (ADR-0306 Q7)
+        self._invocations: dict[str, dict[str, Any] | None] = {}
 
     async def before(self, args: Any) -> None:
         """A2A ``before`` hook. Never raises: capture must not break the user's call.
@@ -107,10 +110,13 @@ class NovaA2AInterceptor:
         error, and it is raised before anything is written or installed.
         """
         from novafabric.capture.hooks import ConcurrentCaptureRefused
+        from novafabric.replay._errors import ReplayDivergenceError
 
         try:
             await self._before(args)
-        except ConcurrentCaptureRefused:
+        except (ConcurrentCaptureRefused, ReplayDivergenceError):
+            # A replay divergence (ADR-0306 Q7) fails closed like every
+            # dispatcher's: only a mocked replay raises it.
             raise
         except Exception as exc:  # noqa: BLE001 — fail-open (I-3)
             from novafabric.capture.hooks._fail_open import note_capture_failure
@@ -133,6 +139,11 @@ class NovaA2AInterceptor:
         from novafabric.capture._ulid import new_span_id, new_ulid
         from novafabric.capture.hooks import install_all_or_discard
 
+        # ADR-0306 Q7: counted before the store is opened; under mocked replay
+        # the call is not captured.
+        adapter_run = begin_adapter_run("a2a")
+        if adapter_run.replaying:
+            return
         run_id = new_ulid()
         span_id = new_span_id()
         key = f"{args.method}:{run_id}"
@@ -166,6 +177,7 @@ class NovaA2AInterceptor:
         self._pending[key] = (
             writer, run_id, span_id, created_at, t0, agent_name, hook_token,
         )
+        self._invocations[key] = adapter_run.facet
         # after() receives a *different* args object, so the key travels in the
         # task-local ContextVar, not on args. Also stamped on args for the
         # benefit of callers that do reuse one object across both hooks.
@@ -187,6 +199,7 @@ class NovaA2AInterceptor:
             key = outstanding[0]
 
         entry = self._pending.pop(key, None)
+        invocation = self._invocations.pop(key, None)
         if entry is None:
             return
         _CALL_KEY.set(None)
@@ -287,6 +300,7 @@ class NovaA2AInterceptor:
                 "wire_capture": _wire_state,
             },
         }
+        attach_facet(manifest, invocation)
         # Main scan (after replay.yaml), manifest redaction, lineage, residual
         # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
         # uses. Never raises; a failure — or a failed step above — leaves the capsule

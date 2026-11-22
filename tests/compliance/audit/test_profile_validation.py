@@ -96,3 +96,54 @@ def test_cli_unknown_profile_id_still_exits_1(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1, result.output
     assert isinstance(result.exception, SystemExit)
+
+
+def test_unknown_evidence_type_is_rejected_at_load(tmp_path: Path) -> None:
+    # A typo used to load fine and make the control permanently "not covered".
+    path = _write(tmp_path, _GOOD.replace("evidence_type: model_calls", "evidence_type: model_cals"))
+    with pytest.raises(ProfileValidationError) as info:
+        load_profile(str(path))
+    message = str(info.value)
+    assert "model_cals" in message
+    assert "model_calls" in message  # the known tokens are listed
+    assert str(path) in message
+
+
+def test_known_evidence_types_match_the_engine_checkers() -> None:
+    from novafabric.compliance.audit import engine
+
+    assert set(engine.KNOWN_EVIDENCE_TYPES) == set(engine._EVIDENCE_CHECKERS)
+    assert "tool_calls" in engine.KNOWN_EVIDENCE_TYPES
+
+
+def test_a_non_string_evidence_type_is_a_named_error_not_a_traceback(tmp_path: Path) -> None:
+    path = _write(tmp_path, _GOOD.replace("evidence_type: model_calls", "evidence_type: [model_calls]"))
+    with pytest.raises(ProfileValidationError) as info:
+        load_profile(str(path))
+    assert str(path) in str(info.value)
+
+
+def test_cli_unknown_evidence_type_exits_2(tmp_path: Path) -> None:
+    path = _write(tmp_path, _GOOD.replace("evidence_type: model_calls", "evidence_type: model_cals"))
+    result = runner.invoke(
+        app, ["audit", "map", "--profile", str(path), "--data-dir", str(tmp_path)],
+        env={"COLUMNS": "300"},
+    )
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "model_cals" in result.output
+
+
+def test_a_control_with_no_evidence_requirements_is_refused(tmp_path: Path) -> None:
+    # The engine scores a control with nothing to check as covered; a catalog
+    # must not be able to claim coverage that way.
+    text = _GOOD.replace(
+        "    evidence_requirements:\n      - evidence_type: model_calls\n"
+        "        description: model-calls.jsonl present\n",
+        "",
+    )
+    path = _write(tmp_path, text)
+    with pytest.raises(ProfileValidationError) as info:
+        load_profile(str(path))
+    assert "C-1" in str(info.value)
+    assert "evidence_requirements" in str(info.value)

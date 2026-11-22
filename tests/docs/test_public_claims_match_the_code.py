@@ -83,6 +83,12 @@ BANNED: dict[str, re.Pattern[str]] = {
     "MCP tool serving stated without its release": re.compile(
         r"only\s+MCP\s+tool\s+calls\s+are\s+substituted", re.I
     ),
+    # A model call on a surface the engine cannot serve (e.g. a local Ollama server) runs
+    # live while the report can still say "0 live" (reproduced 2026-11-22), so the unscoped
+    # claim is false. Scope it to the supported surfaces instead.
+    "an unscoped 'no live model call' replay claim": re.compile(
+        r'(?<!")\bno\s+live\s+model\s+calls?\b', re.I
+    ),
 }
 
 
@@ -118,6 +124,9 @@ def test_the_banned_patterns_match_the_phrasings_they_exist_to_catch() -> None:
         "MCP tool serving stated without its release": (
             "**Only MCP tool calls are substituted:** every other tool runs live"
         ),
+        "an unscoped 'no live model call' replay claim": (
+            "served from the capsule, so no live model call is made and the original model"
+        ),
     }
     assert set(shipped) == set(BANNED)
     for label, phrase in shipped.items():
@@ -131,6 +140,8 @@ def test_the_banned_patterns_leave_true_statements_alone() -> None:
         "the four single-capsule modes of",
         "It is not proof that no secret remains.",
         "Run Capsules can be sealed with the user's own key",
+        "a model call on any other surface runs live, and the report may not count it",
+        'the wording not to use is "no live model call"',
     ):
         for label, pattern in BANNED.items():
             assert not pattern.search(legitimate), f"{label!r} over-matched {legitimate!r}"

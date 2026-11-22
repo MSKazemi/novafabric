@@ -28,6 +28,21 @@ TOOL_SURFACE_ADK_TOOL = "google.adk.tool"
 #: Surface marker of an OpenAI Agents SDK function-tool call recorded through
 #: ``wrap_tools`` (ADR-0306 slice 3, ``adapters/_oai_tool_seam``).
 TOOL_SURFACE_OPENAI_AGENTS_TOOL = "openai.agents.tool"
+#: Surface marker of a LangChain ``BaseTool`` call recorded through
+#: ``langchain_tools.wrap_tools`` (ADR-0306 slice 3, ``adapters/_langchain_tool_seam``)
+#: -- or by the seam's observer, for a tool that was not wrapped.
+TOOL_SURFACE_LANGCHAIN_TOOL = "langchain.tool"
+#: How a LangChain record was captured: ``"wrap_tools"`` (a declared tool) or
+#: ``"observed"`` (not wrapped: recorded by the seam's observer and, since the
+#: ADR-0306 r3 amendment, served like a wrapped record, gated as mutation class
+#: ``unknown``). Absent on older records.
+LANGCHAIN_SEAM_EXT = "io.novafabric.langchain_tool_seam"
+LANGCHAIN_SEAM_WRAPPED = "wrap_tools"
+LANGCHAIN_SEAM_OBSERVED = "observed"
+#: The same for an OpenAI Agents SDK record: ``"wrap_tools"`` or ``"observed"``
+#: (a ``FunctionTool`` not passed through ``openai_agents.wrap_tools``, seen by
+#: the seam's observer; ADR-0306 r3 amendment). Absent on older records.
+OPENAI_AGENTS_SEAM_EXT = "io.novafabric.openai_agents_tool_seam"
 QUALNAME_EXT = "io.novafabric.tool_qualname"
 RESULT_CODEC_EXT = "io.novafabric.result_codec"
 NOT_SERVABLE_REASON_EXT = "io.novafabric.not_servable_reason"
@@ -201,6 +216,38 @@ def legacy_nested_reason(nested: int) -> str:
         "serving it would leave them unrequested (nested boundaries are "
         "served from slice 3)"
     )
+
+
+def seam_nested_reason(subject: str, nested: int) -> str:
+    """The not-servable reason a framework tool seam writes for a call whose body
+    made *nested* model/tool records (``_adk_tool_seam.AdkToolHook.build_record``).
+
+    *subject* is the hook's ``SUBJECT`` (``"ADK tool"``, ``"Agents SDK tool"``,
+    ``"LangChain tool"``). No seam writes it any more (ADR-0306 r3b for
+    LangChain, r3c for ADK and the Agents SDK): replay serves such a call and
+    covers its nested records, as slice 4 does for ``record.tool``. A record
+    captured before that carries this exact text, and replay strips it
+    (``_contract.not_servable_reason``). Do not change the text.
+    """
+    return (
+        f"{nested} model/tool record(s) were written inside this {subject} call; "
+        "serving it would leave them unrequested (nested-call coverage is not "
+        "implemented)"
+    )
+
+
+#: The not-servable reason round-2 capture wrote on every *observed* LangChain
+#: record (ADR-0306 r2 amendment, D-LC2), alone or followed by ``"; "`` and the
+#: record's real reasons. It was policy ("declared tools only"), not data: the
+#: ADR-0306 r3 amendment serves observed records, so replay strips this text
+#: (``_contract.not_servable_reason``) and a record whose only reason it was is
+#: servable without a re-capture. Do not change the text.
+LEGACY_NOT_WRAPPED_REASON = (
+    "the LangChain tool was not passed through "
+    "novafabric.adapters.langchain_tools.wrap_tools: mocked replay serves only "
+    "declared tools (ADR-0306 D1) and re-executes this one live, counted in "
+    "tool_calls_live"
+)
 
 
 def echo_digest(value: Any) -> str:

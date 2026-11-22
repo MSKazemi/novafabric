@@ -291,3 +291,108 @@ class TestVerifyRlsChecksTheRoleSplit:
         result = restore._verify_pg_rls("postgresql://x/y")
         assert result.ok is True, result.detail
         assert "without BYPASSRLS" in result.detail
+
+
+# --- #207: client/server major-version skew --------------------------------
+# Measured 2026-11-20 against a postgres:16 server with the postgres:16/17/18
+# client images: pg_restore 17+ fails on `SET transaction_timeout = 0` whatever
+# pg_dump wrote the set, and pg_restore 16 cannot read a 17+ archive
+# ("unsupported version (1.16) in file header"). Restore must succeed or say so.
+
+_TT_ERROR = (
+    'pg_restore: error: could not execute query: ERROR:  unrecognized configuration '
+    'parameter "transaction_timeout"'
+)
+
+
+def _fake_tool(path: Path, version: str, *, stderr: str = "", rc: int = 0) -> None:
+    path.write_text(
+        "#!/bin/sh\n"
+        f'if [ "$1" = "--version" ]; then echo "{version}"; exit 0; fi\n'
+        + (f"echo '{stderr}' >&2\n" if stderr else "")
+        + f"exit {rc}\n"
+    )
+    path.chmod(0o755)
+
+
+@pytest.mark.parametrize(
+    ("text", "major"),
+    [
+        ("pg_restore (PostgreSQL) 17.12 (Debian 17.12-1.pgdg13+1)", 17),
+        ("pg_dump (PostgreSQL) 16.10 (Ubuntu 16.10-0ubuntu0.24.04.1)", 16),
+        ("pg_dump (PostgreSQL) 18.7", 18),
+        ("", None),
+        (None, None),
+        ("not a version", None),
+    ],
+)
+def test_pg_major_parses_tool_version_output(text: str | None, major: int | None) -> None:
+    assert restore._pg_major(text) == major
+
+
+def test_newer_pg_restore_than_server_names_both_versions(
+    pg_set: Path, fake_bin: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_tool(
+        fake_bin / "pg_restore", "pg_restore (PostgreSQL) 17.12", stderr=_TT_ERROR, rc=1
+    )
+    _fake_psycopg(monkeypatch, table_count=0)
+    _stub_pg_verifies(monkeypatch)
+    monkeypatch.setattr(restore, "_pg_server_major", lambda dsn: 16)
+    out = restore_backup(pg_set, home=tmp_path / "target-home", dsn=FAKE_DSN)
+    assert out.ok is False
+    step = next(s for s in out.steps if s.name == "pg-restore")
+    assert "transaction_timeout" in step.detail  # the real cause stays visible
+    assert "pg_restore 17 is newer than the target server (PostgreSQL 16)" in step.detail
+    assert "postgresql-client-16" in step.detail
+    assert "rolled back" in step.detail
+    assert FAKE_DSN not in step.detail
+
+
+def test_archive_newer_than_pg_restore_names_both_versions(
+    home: Path, fake_bin: Path, tmp_path: Path, _no_signing: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dump = fake_bin / "pg_dump"
+    dump.write_text(dump.read_text().replace("16.3", "18.7"))
+    pg_set = create_backup(
+        tmp_path / "pg18-set.tar.gz", home=home, profile="pg", dsn=FAKE_DSN
+    ).archive_path
+    _fake_tool(
+        fake_bin / "pg_restore",
+        "pg_restore (PostgreSQL) 16.3",
+        stderr="pg_restore: error: unsupported version (1.16) in file header",
+        rc=1,
+    )
+    _fake_psycopg(monkeypatch, table_count=0)
+    _stub_pg_verifies(monkeypatch)
+    monkeypatch.setattr(restore, "_pg_server_major", lambda dsn: 16)
+    out = restore_backup(pg_set, home=tmp_path / "target-home", dsn=FAKE_DSN)
+    step = next(s for s in out.steps if s.name == "pg-restore")
+    assert step.ok is False
+    assert "dumped by pg_dump 18" in step.detail
+    assert "pg_restore 16 cannot read a newer archive" in step.detail
+    assert "newer than the target server" not in step.detail  # 16 vs 16 is fine
+
+
+def test_skewed_restore_that_succeeds_carries_no_mismatch_hint(
+    pg_set: Path, fake_bin: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newer client is not refused up front: if pg_restore succeeds, so does the step."""
+    _fake_tool(fake_bin / "pg_restore", "pg_restore (PostgreSQL) 18.7")
+    _fake_psycopg(monkeypatch, table_count=0)
+    _stub_pg_verifies(monkeypatch)
+
+    def _no_probe(dsn: str) -> int:
+        raise AssertionError("server version is probed only to explain a failure")
+
+    monkeypatch.setattr(restore, "_pg_server_major", _no_probe)
+    out = restore_backup(pg_set, home=tmp_path / "target-home", dsn=FAKE_DSN)
+    step = next(s for s in out.steps if s.name == "pg-restore")
+    assert step.ok is True
+    assert "version mismatch" not in step.detail
+
+
+def test_server_major_probe_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_psycopg(monkeypatch, table_count=0)  # fake connection has no .info
+    assert restore._pg_server_major(FAKE_DSN) is None
