@@ -28,7 +28,10 @@ env:
   # 1.26.10 (2026-10-22): GO-2026-6809 (crypto/x509: distrust compromised
   # intermediate certificates) is fixed only in stdlib 1.26.10; it failed the
   # v0.106.0 tag's vulnerability scan on 1.26.9.
-  GO_VERSION: "1.26.10"
+  # 1.26.11 (2026-11-22): GO-2026-6859 (net/http) is fixed only in stdlib 1.26.11; it
+  # failed the v0.109.0 tag's vulnerability scan on 1.26.10. Kept on the 1.26 line
+  # (go.mod `go 1.26.5`): 1.27 is a minor-version move the collector is not tested on.
+  GO_VERSION: "1.26.11"
   GOPATH: ${{ github.workspace }}/.gopath
 
 # Least privilege: every job here only reads the repository. Without this the
@@ -39,7 +42,7 @@ permissions:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -74,7 +77,7 @@ jobs:
 
   vuln:
     name: Vulnerability Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -112,7 +115,7 @@ jobs:
 
   unit:
     name: Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -139,7 +142,7 @@ jobs:
 
   spec:
     name: Spec Corpus Validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -169,7 +172,7 @@ jobs:
 
   build:
     name: Build Artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -195,7 +198,7 @@ jobs:
 
   security:
     name: Security Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.

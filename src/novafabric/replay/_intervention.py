@@ -315,9 +315,8 @@ def write_intervention_capsule(
     Hard-marked: ``replay_mode: intervention`` + an ``intervention`` block so
     the output can never be mistaken for an original run.
     """
-    import json
+    from novafabric.replay._replay_capsule import write_capsule_streams
 
-    result_dir.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, Any] = {
         "run_id": replay_id,
         "replay_mode": "intervention",
@@ -329,12 +328,4 @@ def write_intervention_capsule(
             "checks": [o.model_dump() for o in check_outcomes],
         },
     }
-    (result_dir / "capsule.yaml").write_text(
-        yaml.dump(manifest, allow_unicode=True)
-    )
-    (result_dir / "model-calls.jsonl").write_text(
-        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in model_calls)
-    )
-    (result_dir / "tool-calls.jsonl").write_text(
-        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in tool_calls)
-    )
+    write_capsule_streams(result_dir, manifest, model_calls, tool_calls)

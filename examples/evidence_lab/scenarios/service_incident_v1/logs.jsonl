@@ -1,0 +1,14 @@
+{"t": "2026-01-15T10:00:12Z", "level": "INFO", "service": "payments", "message": "request rate steady at 410 rps"}
+{"t": "2026-01-15T10:05:40Z", "level": "INFO", "service": "payments", "message": "active connections 690/1000"}
+{"t": "2026-01-15T10:10:03Z", "level": "WARN", "service": "payments", "message": "active connections 780/1000; db pool wait queue growing"}
+{"t": "2026-01-15T10:11:31Z", "level": "INFO", "service": "checkout", "message": "request rate steady at 120 rps"}
+{"t": "2026-01-15T10:15:22Z", "level": "WARN", "service": "payments", "message": "upstream timeout acquiring db connection after 2000ms"}
+{"t": "2026-01-15T10:16:48Z", "level": "WARN", "service": "payments", "message": "rate limiter shed 0.2% of requests (limit 500 rps per client)"}
+{"t": "2026-01-15T10:20:09Z", "level": "ERROR", "service": "payments", "message": "connection pool near exhaustion: 930/1000 in use"}
+{"t": "2026-01-15T10:22:17Z", "level": "ERROR", "service": "payments", "message": "upstream timeout acquiring db connection after 2000ms"}
+{"t": "2026-01-15T10:25:51Z", "level": "ERROR", "service": "payments", "message": "connection pool near exhaustion: 970/1000 in use"}
+{"t": "2026-01-15T10:26:30Z", "level": "INFO", "service": "checkout", "message": "request rate steady at 118 rps"}
+{"t": "2026-01-15T10:30:02Z", "level": "ERROR", "service": "payments", "message": "connection pool exhausted: 998/1000 in use; new requests queued"}
+{"t": "2026-01-15T10:33:44Z", "level": "ERROR", "service": "payments", "message": "rate limiter shed 0.4% of requests (limit 500 rps per client)"}
+{"t": "2026-01-15T10:35:00Z", "level": "ERROR", "service": "payments", "message": "connection pool exhausted: 1000/1000 in use; requests failing with 503"}
+{"t": "2026-01-15T10:35:01Z", "level": "INFO", "service": "checkout", "message": "request rate steady at 121 rps"}

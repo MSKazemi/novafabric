@@ -376,6 +376,17 @@ async def _run_step(step, session):
         socket.create_connection(("127.0.0.1", srv.getsockname()[1])).close()
         srv.close()
         return {"op": op}
+    if op == "net_out":
+        # A non-loopback connect attempt nothing serves (TEST-NET-1, RFC 5737: never
+        # routed). Non-blocking, so it returns at once and no reply is awaited.
+        import socket
+        s = socket.socket()
+        s.setblocking(False)
+        try:
+            s.connect_ex((step.get("host", "192.0.2.1"), int(step.get("port", 9))))
+        finally:
+            s.close()
+        return {"op": op}
     if op == "parse":
         _openai_client().chat.completions.parse(**CHAT)
         return {"op": op}
@@ -813,3 +824,41 @@ def write_capsule(
     (cap / "model-calls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in model_calls))
     (cap / "tool-calls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in tool_calls))
     return cap
+
+
+# ── replay outputs hold no value of their own (ADR-0321) ─────────────────────
+
+#: The replay capsule's call streams (ADR-0321) copy the capsule's records.
+REPLAY_CAPSULE_STREAMS = ("model-calls.jsonl", "tool-calls.jsonl")
+
+
+def assert_replay_outputs_hold_no_value(
+    replay_dir: Path, capsule: Path, *needles: str
+) -> None:
+    """No *needle* (an argument or result value) is in the replay's own outputs.
+
+    Every file the replay writes is checked, except the replay capsule's two call
+    streams. Those hold copies of records the capsule already stores (ADR-0321),
+    so they are checked differently: each line must equal a record of the same
+    stream in *capsule*, or be a placeholder record that carries no needle -- the
+    replay adds nothing to them, in particular no live value.
+    """
+    for path in replay_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.parent == replay_dir and path.name in REPLAY_CAPSULE_STREAMS:
+            source = capsule / path.name
+            recorded = [
+                json.loads(line) for line in source.read_text().splitlines() if line.strip()
+            ] if source.exists() else []
+            for line in path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if "io.novafabric.replay_placeholder" in (record.get("extensions") or {}):
+                    assert not any(n in line for n in needles), (path, line)
+                else:
+                    assert record in recorded, (path, line)
+            continue
+        text = path.read_text(errors="replace")
+        assert not any(n in text for n in needles), path

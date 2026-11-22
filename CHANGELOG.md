@@ -13,12 +13,275 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
-- **Audit profiles: `tool_calls` evidence type.** A requirement with `evidence_type: tool_calls` is met
-  when the capsule recorded at least one tool call (a non-empty `tool-calls.jsonl`; every capture creates
-  the file empty, so its presence alone does not count). Links and FIFOs are never followed or opened.
+- **`examples/evidence_lab/`: EvidenceLab D1, one deterministic incident captured for real (example only).** `python examples/evidence_lab/run.py --scenario service-incident-v1 --output-dir PATH` starts a strict loopback fixture model, runs the actual `nova capture` around a small agent (two declared read-only `record.tool` calls and one genuine OpenAI SDK call) and checks the capsule against the scenario's own fixtures: one logical model call, two tool calls in order, digest-only tool records, matching result digests. It reports the task verdict (`FAIL` here: the scenario is deliberately unsafe) separately from the harness verdict, and `NOT_EVALUATED` for integrity and replay. No change to `src/novafabric`, schemas, the CLI or dependencies; the BlackBox demo is untouched. Skips with exit 77 when `openai` is missing.
+
+### Documentation
+
+- **SECURITY.md says what a capsule stores.** A new section states that capsules hold model prompts and
+  responses by default, that v0.109.0 stores response bodies for every model host in the URL registry
+  (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
+- **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
+  v0.109.0 ships.
+
+### Fixed
+
+- **The capture-overhead CI gate takes 60 rounds instead of 30.** Its nearest-rank p95 of 30 was the
+  29th value, so two noisy rounds on a shared runner failed it: on 2026-11-22 a docs-only commit read
+  p95 2.71 s (median 270 ms) and passed on re-run. p95 of 60 absorbs three such rounds; the 2 s limit
+  and the statistic are unchanged.
+- **The BlackBox demo's mock model is strict and loopback-only.** `examples/blackbox_demo/mock_llm_server.py` now
+  answers only the two pinned synthetic requests (model `novafabric-mock-v1`, fixed messages, `X-Demo-Mode` of
+  `bad` or `fixed`), returns a deterministic completion, and rejects anything else (changed scenario, streaming,
+  bad JSON or content type, oversized body, unknown route). `agent.py` refuses any `OPENAI_BASE_URL` that is not
+  an `http` loopback address with an explicit port, so the demo cannot reach a real model. Negative controls are
+  in `tests/test_example_blackbox_mock_server.py`.
+- **Collector CI on Go 1.26.11.** GO-2026-6859 (`net/http`) is fixed only in Go 1.26.11 and failed
+  the v0.109.0 tag's collector vulnerability scan on 1.26.10 (lint, unit tests and the build passed).
+  The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
+  chart), so the release is unaffected; anyone building the collector from source should use Go 1.26.11.
+
+## [0.109.0] - 2026-11-22
+
+**Replay that refuses rather than pretends: what it cannot serve, it names.**
+A replay-fidelity release. Before it, a mocked replay could end `status: success` while a model call, a
+framework tool body or a network connection ran live and was not counted. Now a strict mocked replay serves
+such a call from the capsule or stops and names it, and `--permissive` counts each one that runs live. Capture
+records more of what replay needs: response bodies for any model-provider host in the URL registry (Google
+Gemini API and Vertex AI included), LangChain / LangGraph and OpenAI Agents SDK tools you did not wrap, Ollama
+and AWS Bedrock `Converse` calls. New: a fidelity verdict, a replay capsule, `replayability.json` at capture,
+`nova replay --hermetic`, replay of framework-adapter capsules and Hugging Face capture (experimental unless
+marked otherwise). **Many entries below change behaviour** — read *Changed — BREAKING* before upgrading. Full
+notes: [docs/releases/v0.109.0.md](docs/releases/v0.109.0.md).
+
+### Changed — BREAKING
+
+The behaviour changes most likely to affect a script, a CI job or an integration. Each is described in full in
+the entries after this list, or under *Changed*, *Added* or *Fixed* below:
+
+- **A strict mocked replay stops instead of running something live.** A capsule holding a model call that replay
+  cannot serve is refused before anything runs (`status: aborted`, `ModelSurfaceNotServable`, exit `1`, also
+  under `--dry-run`). So is a capsule holding a LangChain / LangGraph or OpenAI Agents SDK tool record (including
+  an `Agent.as_tool` call) that cannot be served (`ToolSurfaceNotServed`). In a capsule captured before this
+  release, which holds no record of a tool you did not wrap, each such call is refused before its body runs.
+  `--permissive` runs them and counts them; for tools only with `--allow-unknown-mutation`.
+- **A strict mocked replay fails when the replayed process connects past loopback** (divergence
+  `unserved_network`, `status: failure`, exit `1`): a gRPC transport, a raw-HTTP tool, an MCP server child's own
+  network check. A Bedrock replay with no AWS credentials in its environment fails this way (set any credentials
+  or `AWS_EC2_METADATA_DISABLED=true`). `--permissive` only counts the connections.
+- **More model-call response bodies are stored, at every capture level.** A call through `httpx`/`httpx2` or
+  `requests` to a host the URL registry classifies as a model provider stores its response body (completion
+  text) in `model-calls.jsonl`, and mocked replay serves it; Google Gemini API and Vertex AI hosts are now in the
+  registry. `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` stores none (a strict replay then refuses those calls). A
+  replayed request that differs from the recorded one is the new divergence `wire_request_mismatch`.
+- **Tools you did not wrap are recorded and served.** With no code change, `nova capture` writes a
+  `tool-calls.jsonl` record for each LangChain / LangGraph tool and each OpenAI Agents SDK function tool, and a
+  mocked replay serves a servable record instead of running the tool body (results are kept only at
+  `NOVA_CAPTURE_LEVEL=forensic`/`air_gapped`; below that, only when a later model request echoes them).
+- **Framework-adapter capsules are re-run by `nova replay`.** A capsule written by a framework adapter or the
+  `@agent` decorator was refused; when every guard passes, a mocked or intervention replay now re-runs its
+  recorded invocation in the recorded working directory (an older adapter capsule is still refused). Adapters
+  running inside a mocked replay write no capsule.
+- **Replay results can read differently.** The fidelity verdict compares tool calls per model turn, so parallel
+  calls served in another order are `faithful`. An observed Python child gets the replay's site directory
+  prepended to `PYTHONPATH`, and a child that was not observed keeps the verdict from `faithful`. Under
+  `--permissive`, an unservable model call that ran live is counted in `model_calls_live` (it read `0`), and an
+  unservable tool call is one `tool_call_sequence` entry and one placeholder record, not two. Replay-capsule
+  placeholder records carry a ULID and say what happened in
+  `extensions["io.novafabric.replay_placeholder"]`, not in `status`.
+- **Audit and compliance commands.** `nova audit map --capsule ID` scans only that capsule and exits `1` for its
+  gaps (`2` for an ID that names no capsule). `nova export-compliance iso42001` needs `--capsule DIR`
+  (`--capsule-id` alone exits `2`). The `iso42001` control IDs `ISO42-8.5-RESPONSIBLE-AI` and
+  `ISO42-10.2-CONTINUAL-IMPROVEMENT` are now `ISO42-7.5-DOCUMENTED-INFORMATION` and
+  `ISO42-10.1-CONTINUAL-IMPROVEMENT`. A custom audit profile with an unknown `evidence_type`, or a control with
+  no evidence requirements, fails to load (`nova audit map` exits `2`).
+
+The entries in full:
+
+- **A strict mocked replay fails when the replayed process tree connects past loopback** (works today, ADR-0319
+  amendment). Before, an IPv4/IPv6 connection that no served surface answered was only counted
+  (`network_connections_live`) and the replay could still end `status: success`: a model provider replay does not
+  know, a gRPC transport, a raw-HTTP tool or an MCP server child's own package-index check ran live with no
+  divergence. Served surfaces answer in-process and never open a socket, so a strict `nova replay` now turns every
+  connect attempt to a destination other than loopback (127.0.0.0/8, `::1`, `localhost`) by the replayed process
+  or a Python child that reported in into the divergence `unserved_network` (`connections`, `destinations`): `status:
+  failure`, `error.type: ReplayDivergence`, exit 1, and a `✗ unserved network: …` line naming the destinations. The
+  connection itself is observed, not blocked (`--hermetic` blocks). New additive fields
+  `replay_contract.network_connections_unserved`, `network_destinations_unserved` and `unserved_network_policy`
+  (`divergence` | `reported`). `--permissive` keeps the old behaviour: counted and reported, no divergence. Loopback
+  and AF_UNIX connections are unaffected (still counted in `network_connections_live`). A Bedrock replay with no AWS
+  credentials in its environment now fails strict too: botocore asks the EC2 metadata service (169.254.169.254)
+  before any request — set any credentials or `AWS_EC2_METADATA_DISABLED=true`.
+- **Google Gemini API and Vertex AI calls over HTTP are recorded** (works today). Before, neither host was in the
+  URL registry, so a `google-genai` call (REST over `httpx`) left no model-call record and mocked replay neither
+  served nor refused it. The vendored registry now classifies `generativelanguage.googleapis.com` as `gcp.gemini`
+  and `aiplatform.googleapis.com` / `<region>-aiplatform.googleapis.com` as `gcp.vertex_ai` (anchored regexes,
+  https only), so these calls are recorded with their response and served by the generic wire layer below
+  (experimental). With `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` the record is request only and a strict
+  `nova replay` stops before anything runs (`ModelSurfaceNotServable`); `--permissive` counts them in
+  `model_calls_not_servable`. A workload that sends through its own `httpx` transport is served too (entry
+  below). The whole host is matched, so Vertex control-plane
+  requests are recorded as model calls too. A gRPC transport is not recorded; a strict replay fails on its
+  connection (`unserved_network`).
+- **Mocked replay serves a model call whichever `httpx` transport the client uses** (experimental, ADR-0324
+  amendment). Before, Ollama and generic-wire calls were served only at `httpx.HTTPTransport` /
+  `AsyncHTTPTransport` (and `httpx2`), while capture records at `Client.send`: a client built with
+  `httpx.MockTransport`, a `BaseTransport` that delegates to `HTTPTransport` (proxy, retry and caching
+  libraries) or an `HTTPTransport` subclass overriding `handle_request` was recorded with its response but never
+  served. Its record stayed unconsumed (strict failed with `model_calls_unconsumed`) and `--permissive` reported
+  success with `model_calls_live: 0` for a call that ran live. Replay now wraps the transport the client picks
+  for each request (`Client._transport_for_url`), so these calls are served from the capsule or refused before
+  the workload's transport runs; under `--permissive` a call that runs live is counted once in
+  `model_calls_live` and named with its `gen_ai.system` in the replay capsule. A request is served or counted
+  once, at the outermost seam: a delegating transport's inner `HTTPTransport` does not claim it again. Fixed on
+  the way: an SDK call replay refuses and `--permissive` runs live (e.g. `openai.completions.create`) was counted
+  at the SDK method **and again** by the generic wire engine, which also consumed another call's recorded
+  answer (`wire_request_mismatch`); it is now counted once. Not covered: a `requests` adapter that does not send
+  through `urllib3` (e.g. `requests-mock`).
+- **Model calls to any registry host are now recorded with their response and served by mocked replay —
+  generic wire** (experimental, ADR-0324). Storage change: a call made through `httpx`/`httpx2` or `requests`
+  to a host the URL registry classifies as a model provider (Mistral, Cohere, Together, Replicate, Hugging Face
+  Inference, OpenAI-compatible local servers you register, Ollama endpoints other than `/api/chat` and
+  `/api/generate`, raw HTTP to OpenAI or Anthropic), outside an SDK call, now stores the response body in
+  `model-calls.jsonl` (`io.novafabric.wire.response`: status, allowlisted headers, the body as UTF-8 text
+  chunks) plus a request digest (`io.novafabric.wire.request`) — **completion text**, at every capture level,
+  exactly as OpenAI responses are stored and redacted. `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` stores none.
+  Behaviour change: a strict `nova replay` of a new capsule serves these calls at the `httpx` transport and at
+  `urllib3` (how `requests` sends) instead of refusing them (`ModelSurfaceNotServable`); a request whose method,
+  path or canonical query/body differs from the recorded one is the new divergence `wire_request_mismatch` (strict:
+  refused, never live; `--permissive`: runs live, counted); recorded HTTP errors and retries are served as
+  recorded; `Set-Cookie`, `Location` and auth headers are never recorded or served. In new capsules Ollama
+  `/api/tags`, `/api/show`, `/api/version`, `/api/ps` are served rather than run live. Capsules recorded before
+  are replayed exactly as before. Not covered yet: `aiohttp`, `urllib3` used directly (Bedrock `InvokeModel`),
+  gRPC, binary bodies, streamed bodies with a `content-encoding`.
+- **Mocked replay refuses a capsule whose recorded model calls it cannot serve** (works today, ADR-0319). Before,
+  a model call recorded by the wire hook on a surface replay does not serve (Ollama, Hugging Face `InferenceClient`,
+  other providers' raw HTTP; or a served surface with no recorded response) was ignored: the replay said
+  "model calls: 0 of 0 served" and `status: success` while the call ran live. A strict `nova replay` now stops
+  before anything runs: `status: aborted`, `error.type: ModelSurfaceNotServable` (count and endpoint hosts per
+  `gen_ai.system`), exit 1, also under `--dry-run`, which lists each as `[LIVE] model call (<system>, <host>)`.
+  `--permissive` runs it and reports `model_calls_not_servable`,
+  `replay_contract.model_calls_not_servable_by_system` and a `model_surface_not_servable` divergence (a warning).
+  Capsules whose calls are all served, and ADR-0305 transport records, are unaffected; Ollama requests that run no
+  model (`/api/tags`, `/api/show`, `/api/version`, `/api/ps`) are not refused either (they run live and their
+  connections are reported).
+- **LangChain / LangGraph tools you did not pass through `wrap_tools` are recorded and served by mocked replay,
+  and never run uncounted** (experimental; ADR-0306 r3 amendment, owner decision 2026-11-21). Before, `nova
+  capture` recorded no call of a plain `@tool` / `StructuredTool` / `BaseTool` subclass, and a mocked replay ran
+  their bodies live while reporting `tool_calls_live: 0` and a `faithful` verdict (a real LangGraph agent read a
+  log file and wrote a JSON file during "mocked" replay). Now, with no code change, capture writes one
+  `tool-calls.jsonl` record per tool body execution (`langchain.tool` marker,
+  `io.novafabric.langchain_tool_seam: observed`, `mutation_class: unknown`), under the same payload rules as a
+  `wrap_tools` tool: the result is kept at `NOVA_CAPTURE_LEVEL=forensic`/`air_gapped` only. A strict mocked
+  replay **serves** a matched, servable record before the tool body runs, exactly like a `wrap_tools` tool
+  declared `unknown` (`tool_calls_mocked`). A capsule whose observed records cannot be served (captured at the
+  default level, so no result was kept; a recorded failure; a non-JSON result) is refused before anything runs:
+  `status: aborted`, `error.type: ToolSurfaceNotServed` (count, tool names and `reasons` in
+  `error.tool_calls_not_served_by_surface`; the message says to capture again), exit 1, also under `--dry-run`,
+  which lists each as `[NOT SERVED] LangChain tool call (<name>) -- … <reason>`. An unwrapped tool call that
+  matches no record (for instance in a capsule captured before this change, which has no tool records) is
+  refused before its body runs. Under `--permissive` such calls run live **only with `--allow-unknown-mutation`**
+  (as MCP calls): each is counted in `tool_calls_live` and `replay_contract.tool_calls_live_by_tool`, a
+  `tool_surface_not_served` warning heads the divergences, and the CLI prints a `[LIVE] tool call (<surface>:
+  <name>)` line per tool (for every surface). A `replay.yaml` `allow: false` override refuses an unservable such
+  call before its body runs. Tools passed through `wrap_tools` are unaffected (their records now also carry
+  `io.novafabric.langchain_tool_seam: wrap_tools`).
+- **A LangChain tool that returns a `ToolMessage` itself is served** (experimental; ADR-0306 r3 amendment). Before,
+  such a result (the shape `deepagents`' `ls` / `read_file` return) was recorded as "the result is a ToolMessage, not
+  a JSON value" and never served, even at `forensic`. Capture now records it as a JSON envelope (`content`,
+  `status`, `name`, `artifact`, non-empty `additional_kwargs` / `response_metadata`;
+  `io.novafabric.langchain_result_kind: tool_message`) and mocked replay rebuilds a real `ToolMessage` answering
+  the replayed call's `tool_call_id`. A field that is not a JSON value (an object `artifact`) keeps the record not
+  servable, with a reason naming the field.
+- **The last-call echo gap is named instead of left generic** (experimental; ADR-0306 r3b). Below `forensic` a
+  tool result is served only from a later recorded model request that echoes it under the recorded digest; the
+  result of a run's last tool call never went back to a model, so it cannot be recovered, and nothing else in the
+  capsule is a digest-checked source (the final graph state is kept only as a digest; stdout holds it only if the
+  workload printed it verbatim). Nothing new is served. Such a record's reason now says `result never sent to a
+  model: …` with what works (capture at `NOVA_CAPTURE_LEVEL=forensic`, or `--permissive
+  --allow-unknown-mutation`) — in the `ToolSurfaceNotServed` refusal and its
+  `tool_calls_not_served_by_surface.reasons`, the `--dry-run` `[NOT SERVED]` line, a `tool_result_not_servable`
+  divergence, and `replayability.json` (new optional `result_never_sent_to_a_model` tool list on the
+  `tool_surface_not_served` reason; new `cause` `result_never_sent_to_a_model`). An echo whose digest does not
+  match, and a capsule whose model calls hold no request messages, get their own reason text too.
+- **A LangChain tool that returns a LangGraph `Command` is served** (experimental; ADR-0306 r3b). Before, a tool
+  returning `langgraph.types.Command(update=..., goto=...)` (a state update) was recorded as "not a JSON value" and
+  never served, even at `forensic`. Capture now records a JSON envelope (`graph`, `goto`, `resume`, the `update`
+  entries; `io.novafabric.langchain_result_kind: langgraph_command`) and mocked replay rebuilds a real `Command`
+  whose `ToolMessage`s answer the replayed call's `tool_call_id`, so `ToolNode` and the graph apply the same update
+  and route (tested: the final graph state equals the captured one). Served only when it can be rebuilt exactly:
+  a `Send` in `goto`, an update that is not a `dict`, an update value that is neither JSON nor a list of
+  `ToolMessage`s answering the call, or a non-JSON message field keeps the record not servable, with a reason
+  naming the field. Below `forensic` only the envelope's digest is kept and nothing the model saw can reproduce
+  it, so such a capsule is refused with the re-capture hint. A record with a result kind this version does not
+  know is now refused instead of being served as plain JSON.
+- **A LangChain tool whose body made model or tool calls is served** (experimental; ADR-0306 r3b). Before, a
+  sub-agent tool (the shape of `deepagents`' `task`: a `@tool` whose body runs a chat model and more tools) was
+  recorded with `io.novafabric.nested_records` and marked "nested-call coverage is not implemented", so a strict
+  replay refused it — up front for a tool not passed through `wrap_tools`. Capture no longer marks it, and mocked
+  replay serves it like a nested `record.tool` boundary (ADR-0306 slice 4): its body never runs, and the model and
+  tool calls recorded inside it are consumed as covered (`replay_contract.model_calls_covered` /
+  `tool_calls_covered`, `covered` in `tool_calls_by_surface`, also for ADK, Agents SDK and LangChain records inside
+  any served boundary), never counted unconsumed; the fidelity verdict stays `faithful`. A record captured earlier
+  with that text and its value kept is served without a re-capture (replay strips the text, as it does for
+  slice 1); a payloads-off one is served from the model-request echo when its digest matches. A nested call capture
+  could not mark stays unconsumed and the strict replay fails. (Both limits named here at r3b are lifted by r3c,
+  below.)
+- **A call recorded inside a served tool call refuses nothing up front** (experimental; ADR-0306 r3c). Before, an
+  unservable record written inside a servable outer call — an inner tool whose result was not kept, an inner model
+  call on a surface replay does not serve — made a strict replay refuse to start (`ToolSurfaceNotServed`,
+  `ModelSurfaceNotServable`), although the replay never asks for it: the served outer call's body does not run.
+  Now such a record is *covered*: it is left out of those refusals and of `model_calls_not_servable`, `--dry-run`
+  lists it as `[COVERED by <tool>]` (not `[MOCK]`/`[LIVE]`/`[DENY]`), and `replayability.json` counts it under a
+  new `covered` key in `model_calls` and `tool_calls` (in no other bucket). One function decides it for the
+  engine, `--dry-run` and the capture-time summary. Fails closed: missing, ambiguous or cyclic
+  `within_tool_call_id` ancestry covers nothing, and neither does an outer call that may run live in this replay
+  (`allow: true` with a ladder flag; `--permissive` when an unmatched call could run live). When the outer call is
+  not served, its inner calls are made and accounted as before.
+- **Google ADK `AgentTool` and OpenAI Agents SDK `Agent.as_tool` calls are served** (experimental; ADR-0306 r3c).
+  Before, the ADK and Agents SDK seams marked a call whose body made model or tool calls "nested-call coverage is
+  not implemented", and the Agents SDK observer skipped agents used as tools. Now both follow the LangChain model:
+  the outer call is recorded servable, served at replay, and the sub-agent's model and tool calls are consumed as
+  covered. **Behaviour change (Agents SDK):** an agent used as a tool without `wrap_tools` is now recorded
+  (`observed`); when its record cannot be served, a strict replay refuses up front instead of running the
+  sub-agent with its own calls served. An `Agent.as_tool` call whose sub-run has an effect beyond its value —
+  `on_stream`, `hooks`, `session`, `previous_response_id`, `conversation_id`, or a nested approval — is recorded
+  not servable with a reason naming it; these are read from the SDK's private `_run_agent_impl` closure and
+  agent-tool state store (checked against `openai-agents` 0.24.0 only), and unreadable options fail closed. Records
+  an earlier capture marked not servable for nesting alone are served without a re-capture.
+- **Tool results captured below `forensic` are served from the next recorded model request** (experimental; ADR-0306
+  r3 amendment). A default-level tool record keeps only a digest of its result, but the result also went back to the
+  model in the next request, which the capsule keeps. Mocked replay now serves that echo (Chat Completions, Responses,
+  Anthropic and Bedrock Converse shapes) for LangChain, OpenAI Agents and ADK records, **only** when the capture
+  codec gives it exactly the recorded `result_digest`; otherwise the record stays unservable with its re-capture
+  hint. Nothing new is stored. Counted in `tool_calls_mocked` and the new optional
+  `replay_contract.tool_calls_mocked_by_source` (`model-request-echo`). Checked on a set of real Bedrock agent capsules
+  captured at the default level: a dry run now predicts every recorded tool call served.
+- **OpenAI Agents SDK function tools you did not pass through `wrap_tools` are recorded and served too, and never
+  run uncounted** (experimental; ADR-0306 r3 amendment). Before, an unwrapped `@function_tool` was invisible to
+  capture and replay: its body ran live in every mocked replay and the report said `tool_calls_live: 0`. Now an
+  observer (the SDK's private `agents.tool._invoke_function_tool_with_metadata`, checked against `openai-agents`
+  0.24.0 only) records each call (`io.novafabric.openai_agents_tool_seam: observed`, `mutation_class: unknown`) and
+  mocked replay serves, refuses or — under `--permissive --allow-unknown-mutation` — runs and counts it exactly as
+  for unwrapped LangChain tools above (including the up-front `ToolSurfaceNotServed` and the
+  `[NOT SERVED] OpenAI Agents tool call` dry-run line). Agents used as tools (`Agent.as_tool`) are not recorded;
+  their model calls and tools are. **Behaviour change:** a strict replay of a capsule captured before this (no
+  Agents tool records) now refuses each unwrapped function-tool call before its body runs.
 
 ### Changed
 
+- **The fidelity verdict compares tool calls per model turn** (experimental, ADR-0321). Before, `tool_call_sequence`
+  needed the exact recorded order. Parallel tool calls that answer one model response can be served in another
+  order, so a replay with every call served was `diverged`; a real MCP workload whose model asked for three, then
+  four, calls at once reported "first difference at position 2". Now the calls between two consecutive model calls
+  are compared as a multiset, and turns stay in strict order: a call in another turn is still a difference. The
+  check gains `comparison: per-model-turn-multiset`, and its `note` says when the order within a turn differed.
+  If the recording gives no usable turn boundaries (a missing `started_at`, overlapping model calls), the check
+  falls back to strict order (`comparison: strict-order`).
+- **Adapters write no capsule inside a mocked replay** (ADR-0306 open question 7). A framework adapter or the
+  `@agent` decorator running in a process that `nova replay --mode mocked` (or `intervention`) re-runs — including
+  a `nova capture` workload that also uses an adapter — used to open a new capsule in the live capsule home on
+  every replay. It now writes nothing and reports its runs to the replay's event log instead (the replay writes its
+  own replay capsule, ADR-0321).
 - **Built-in SOC 2 and ISO/IEC 42001 audit profiles cite control identifiers, not standard text.**
   The control descriptions in `soc2-type2` and `iso42001` reproduced or closely paraphrased AICPA and
   ISO wording; they are now short summaries of the NovaFabric records each control looks at.
@@ -30,8 +293,283 @@ longer forwards the submitting shell's environment (ADR-0270).
   (`nova audit map` exits 2). A control with no evidence requirements is refused the same way: the
   engine scored such a control as covered, so a catalog could claim coverage with nothing checked.
 
+### Added
+
+- **The replay report lists each network connection attempt's outcome** (works today). New in the replay contract:
+  `replay_contract.network_connect_outcomes`, per `host:port`, with `attempts` and their `outcomes` (`ok`,
+  `in_progress`, `timeout`, `error`, `unknown` or an errno name such as `ENETUNREACH`). Python children that report
+  in are covered too. The docs now say exactly what `network_connections_live` counts: every `connect` /
+  `connect_ex` call on an IPv4/IPv6 Python socket, before the call, whatever its outcome. A syscall tracer counts
+  more. In one MCP workload `strace -f` saw 9 `connect()` calls where the report said 1: eight were glibc
+  `getaddrinfo` ordering the host's addresses on datagram sockets, which sends no packet.
+- **`--hermetic` platform note** (docs). On Ubuntu 23.10 and later, AppArmor's
+  `apparmor_restrict_unprivileged_userns=1` stops bwrap from creating user namespaces. `--hermetic` is then refused
+  with exit 5 and never downgraded. `docs/architecture/replay-modes.md` shows the AppArmor profile an administrator
+  can add to allow it.
+- **Capsules say at capture time whether they can be replayed** (experimental). Before, a user learned that a
+  capsule would not replay only by replaying it (`ModelSurfaceNotServable`, `ToolSurfaceNotServed`,
+  `CapsuleNotReplayable`, or a `tool_result_not_servable` divergence mid-run). Every capsule finalized by
+  `nova capture`, a framework adapter, the `@agent` decorator or OpenTelemetry import now carries an additive
+  `replayability.json` (scanned and listed in `evidence_digests`): `replayable` (`full` · `partial` · `none`),
+  `strict_mocked` (`start` · `refuse`), the refusal a strict mocked replay would record, per-surface counts and
+  reason codes (`model_surface_not_servable` per `gen_ai.system`, `tool_result_not_servable` with cause
+  `payload_not_recorded`, `capsule_not_reexecutable` with its guard, …). It is classified by the replay's own
+  functions, and a test requires it to agree with `nova replay --dry-run`. `nova capture` prints one `replay:` line
+  after `Capsule written`; new `nova capture --require-replayable` exits `4` after writing the capsule unless the
+  capsule is fully replayable (the workload is never stopped; a failing workload keeps its exit code). Replay does
+  not read the file; older capsules without it replay as before. Calls the capture did not record (non-Python
+  children, raw sockets) cannot be predicted.
+- **Framework-adapter capsules can be replayed (experimental, ADR-0306 open question 7, issue #56).** Every
+  framework adapter (LangGraph, Google ADK, OpenAI Agents SDK, A2A and the shared core used by CrewAI, AutoGen,
+  DSPy, LlamaIndex, smolagents, Haystack, Pydantic AI and Bedrock AgentCore) and the `@agent` decorator now record
+  how their process was started in a new, additive capsule facet `process_invocation`: the interpreter and
+  arguments (home as `~`, through the existing manifest redaction), the entry script / `-m` module / `-c` code,
+  the entry file's SHA-256, the working directory, whether stdin was a terminal, the run's ordinal in its process,
+  and loaded harness-host modules. No environment-variable names or values are added. `command` keeps the
+  `@framework:name` label and `capture_mode` stays `sdk-decorator`. `nova replay --mode mocked` (and
+  `intervention`) re-run that invocation in the recorded working directory, with stdin closed and the same
+  model/tool serving as a `nova capture` capsule, **only when every guard passes**; otherwise the capsule is
+  refused up front (`CapsuleNotReplayable`, exit 1) and the new `error.guard` names the guard
+  (`facet_malformed`, `entry_not_reproducible`, `long_lived_host`, `argv_redacted`, `not_first_adapter_run`,
+  `entry_file_missing`, `entry_changed`, `entry_not_verifiable`). `--dry-run` prints the command it would run.
+  In the re-run process adapters write no capsule; a process making more or fewer adapter runs than recorded
+  diverges (`adapter_run_count_mismatch`; new `replay_contract.adapter_runs_expected` / `adapter_runs_observed`).
+  The fidelity verdict's `exit_code` check compares the framework call's recorded outcome, not the process exit
+  code; an adapter capsule records no process output, so its verdict is at best `not_compared`. Tested end to end
+  with real LangGraph (including `langchain_tools.wrap_tools` tools served inside the adapter capsule); the other
+  adapters record the facet but are not replayed end to end in the tests. An adapter capsule written before this
+  change has no facet and is refused with the unchanged message. Limits: model calls outside the adapter run
+  diverge (fail closed); only the entry file is digested; a script that starts a server in-process is not
+  recognised (600 s timeout); a low-entropy secret in an argument is not detected by redaction.
+- **Hugging Face evidence (experimental, opt-in).** Nothing here changes a capture that does not use it.
+  `novafabric.adapters.smolagents.wrap_agent` (alias `novafabric.adapters.wrap_smolagents`) writes one
+  Run Capsule per `smolagents` `run()`, with a span per step and a tool-call record per call at step
+  granularity; a `CodeAgent` step is one `python_interpreter` call, and the tools its generated code calls
+  are not individually visible. Requests to the Inference Providers router (auto-routed or through an
+  explicit provider) and to dedicated Endpoints are recorded as model calls whose reported model and
+  served provider are `null` (not observed), never guessed; the match pins the https scheme and the whole
+  host, so a URL that merely contains one of those hosts in a path or query is not recorded. `novafabric.interop.hf_hub` records Hub revision references with an
+  explicit evidence strength (`declared_only`, `hub_resolved`, `local_bytes_verified`), and
+  `novafabric.eval.hf_receipt` binds a finalized experiment to them and can write a validated local
+  `.eval_results` file (it never writes `verifyToken`; the Hub format is a work in progress). Mocked replay
+  serves Hugging Face model calls through the generic wire layer (entry above; experimental, not tested end to
+  end through the real `InferenceClient`); a capsule recorded without their response is refused by a strict
+  replay (ADR-0319), and `smolagents` tools are never served (capture only). Prompts are stored by
+  default for every provider, as before. No new dependency: `smolagents` and `huggingface_hub` are
+  optional. See [docs/integrations/huggingface.md](docs/integrations/huggingface.md).
+- **URL registry: optional `match_kind: regex`.** A `url_registry.yaml` entry may set
+  `match_kind: regex`, matched from the start of the URL (case-insensitive) instead of as a substring, so
+  an entry can pin the scheme and host. Every existing entry keeps the substring behaviour, and an
+  invalid regex in an explicitly chosen registry file fails to load like any other malformed entry. See the
+  operator guide.
+- **Audit profiles: `tool_calls` evidence type.** A requirement with `evidence_type: tool_calls` is met
+  when the capsule recorded at least one tool call (a non-empty `tool-calls.jsonl`; every capture creates
+  the file empty, so its presence alone does not count). Links and FIFOs are never followed or opened.
+- **Example:** [`examples/smolagents-capture/`](examples/smolagents-capture/), a credential-free,
+  model-free `smolagents` capture (it skips cleanly when `smolagents` is not installed).
+- **Mocked replay says what its network observation covers and counts child processes** (works today, ADR-0319).
+  `replay_contract.network_observation_scope: python-process`; `child_processes_spawned` and
+  `child_processes_argv0` (program basenames only, never arguments) from a CPython audit hook on
+  `subprocess.Popen`, `os.system`, `os.posix_spawn`, `os.fork`/`os.forkpty` and `os.exec`. When a replayed
+  workload started any, `nova replay` warns that their network and file activity is not observed. Report-only:
+  the replay outcome is unchanged. All new result fields are additive and optional.
+- **Mocked replay observes the network of its Python child processes, and says when a child was not observed**
+  (works today, ADR-0319, #52 part 2). Found on a real workload: an agent whose MCP stdio server child made 9
+  connections replayed with `child_processes_spawned: 8, network_connections_live: 0` — `mcp`'s `stdio_client`
+  starts the server with an allowlisted environment, so the child lost the replay's `PYTHONPATH` and variables.
+  `subprocess.Popen` in an observed process now hands such a child (a copy of) its environment with the replay's
+  site directory prepended to `PYTHONPATH` (the child's own entries and `sitecustomize` keep working); the child
+  runs a standard-library-only observer that reports its connections and children to the replay's event log and
+  serves nothing. New, additive `replay_contract` fields: `child_processes_network_observed`,
+  `child_processes_unobserved` (non-Python programs, Python with `-I`/`-E`, `os.posix_spawn`/`os.execve` with an
+  explicit environment), `network_connections_live_children` and `network_observation_coverage`
+  (`complete`/`partial`/`none`). With an unobserved child, `nova replay` says the network count is a lower bound,
+  and the fidelity verdict cannot be `faithful` (it now reads `child_processes_unobserved`, not
+  `child_processes_spawned`: an observed child's connections are already counted).
+- **`nova replay --hermetic`** (experimental, Linux, ADR-0322). Mocked replay of the whole process tree inside a
+  bubblewrap sandbox: no network beyond its own loopback (host loopback services included), the host filesystem
+  read-only with `/run`, `/tmp`, `/var/tmp` and `$XDG_RUNTIME_DIR` masked, writable only in the working directory
+  (the workload's outputs reach the host) and the replay result directory, host-socket variables not passed in;
+  served model/tool calls keep working. The result gains an additive `hermetic` block listing the writable
+  paths. When `bwrap` is missing, the platform is not Linux, the preflight cannot create namespaces, or the
+  working directory would expose the host (`/`, a masked directory, `/run`), the replay is refused before
+  anything runs (`error.type: HermeticUnavailable`, exit 5, also under `--dry-run`) — never run un-isolated.
+  Not yet: counting blocked attempts from outside the process (the counts are `null`), a copy-on-write overlay
+  of the working directory.
+- **`nova replay --hermetic` works without user namespaces** (experimental, Linux, ADR-0322 amendment). A second
+  backend, Landlock + seccomp, needs no privilege and no new dependency: stock Ubuntu 24.04
+  (`kernel.apparmor_restrict_unprivileged_userns=1`) refused the bubblewrap backend, so `--hermetic` was unavailable
+  there. `--hermetic` now tries bwrap, then Landlock (Linux >= 6.7, ABI >= 4); `--hermetic-backend
+  auto|bwrap|landlock` names one. Under Landlock every TCP connect and bind is denied (loopback included), and seccomp
+  denies UDP, raw, ICMP, SCTP, MPTCP and Unix socket creation, `listen()`, TCP Fast Open sends and `io_uring_setup`;
+  writes outside the working directory and the result directory fail. Host `/tmp` and `/run` stay readable (`TMPDIR`
+  points into the replay's temp dir) and a daemonised grandchild can outlive the replay -- both listed in the result's
+  new `hermetic.not_enforced`. The `hermetic` block gains additive `landlock_abi`, `enforced` and `not_enforced`;
+  `error` gains `mechanism` and, for the new `check: no-backend`, `attempts`. Relative to the bwrap-only `--hermetic`
+  above (also unreleased): on a host where bwrap cannot start, `--hermetic` now runs under Landlock instead of exiting
+  5; `--hermetic-backend bwrap` keeps that refusal.
+- **Mocked replay reports whether it reproduced the recorded run** (experimental, ADR-0321). A new, additive
+  `fidelity` block in `replay_result.yaml` compares the replay with the capsule: the exit code, the stdout
+  digest after a declared volatile-token rule set, the end state of every file the recorded workload wrote, the
+  model and tool call sequence, the divergence state and any live or unintercepted call. The raw stdout and
+  stderr SHA-256 digests are **advisory** (reported with `advisory: true`, never in the verdict): workloads
+  print ids they generate and write timestamped logs to stderr. `verdict` is `faithful`, `diverged` (the
+  differing checks are named), `failed` (refused, timed out, not launched, dispatcher not installed) or
+  `not_compared` (the capsule did not record the exit code or the output streams, as in a capsule from before
+  ADR-0251 evidence digests, or its file-effects record is present but unusable) — never `faithful` by
+  default. `status` keeps its meaning (how the replayed
+  process ended), so a faithful replay of a run that failed is `status: failure` with `verdict: faithful`, and a
+  replay that exited 0 but printed something else is `status: success` with `verdict: diverged`. `nova replay`
+  prints the verdict, the checks that differ and the files that differ.
+  - **stdout is compared after the rule set `volatile-ids/1`** (works today): every RFC 4122 UUID becomes
+    `<uuid:N>` by order of first appearance, and nothing else is masked. A LangChain + MCP workload whose every
+    call was served read `diverged` because LangChain prints `lc_<uuid4>` ids; it is now `faithful`, with the
+    raw byte difference still reported. The result's `fidelity.normalization` names the rule set (additive enum
+    value), and the check carries `normalizer`.
+  - **File effects** (works today for the local runner): `nova capture` records in `file-effects.json` the
+    paths the workload's Python processes opened for writing (a CPython audit hook on `open`) and each file's
+    SHA-256 after the run — paths and digests, never contents; NovaFabric's own files are left out. The replay
+    dispatcher observes the replayed process's writes the same way — and, on both sides, so does a stdlib-only,
+    observe-only bootstrap in a Python child whose environment dropped NovaFabric's variables (an MCP stdio
+    server): `nova capture` (local runner) records the child's writes in `file-effects.json` through the same
+    hand-off files, and replay judges its re-append to a recorded file; a child that dies without handing off makes
+    the record incomplete at capture and the writes unknown at replay (`not_compared`). The child's stdout and its
+    own `sitecustomize` are untouched; no model, tool or network records are made for it — and replay digests each recorded file the
+    replay wrote again, so a replay that appends to a file again or writes something else into it is
+    `diverged` with the paths listed (`differences`); a recorded file the replay did not touch is not judged. A capsule without the
+    record (older capsules, non-Python workloads, container and batch runners) keeps the verdict of its other
+    checks and lists `file_effects` in the additive `fidelity.unchecked`; `nova replay` says the verdict does not
+    cover files the run wrote. A record that is present but incomplete (a process that ended through
+    `os._exit`), redacted or not matching its evidence digest makes the verdict `not_compared`. A file written
+    only at a path the recording never wrote is listed in the advisory `file_writes_not_recorded` (with its path),
+    never in the verdict; a recorded write the replay did not repeat is not judged (it cannot be told apart from a
+    tool served from the capsule).
+- **A mocked replay writes a replay capsule** beside its result (`capsule.yaml` with `replay_mode: mocked` and
+  `replay_of_run_id`, the served call streams with a placeholder for each call not served from the capsule,
+  `outputs/stdout.txt` / `stderr.txt` after the built-in secret scanner, `env.lock`), so
+  `nova diff <capsule> <replay-dir>` compares the two runs. The result names it in `replay_capsule_ref`.
+- **`nova replay --require-faithful`** (mocked mode only, experimental): exit `4` unless the verdict is
+  `faithful`, `0` when it is, also for a faithful replay of a run that failed.
+- **AWS Bedrock `Converse` / `ConverseStream` calls are recorded with their response and served by mocked
+  replay** (experimental). The `urllib3` wire hook classified `bedrock-runtime.*` calls from `boto3` as model calls
+  but recorded `gen_ai.request.model: "unknown"` and no response, so a strict replay refused them and a permissive
+  one ran them live. Capture now records the model id from the URL, `inferenceConfig`, `system`/`toolConfig`, the
+  text and `toolUse` blocks (canonical `tool_calls`), `stopReason` and `usage`, marked
+  `io.novafabric.api_surface: aws.bedrock.converse` / `aws.bedrock.converse_stream`; the body is copied as botocore
+  reads it, never read ahead, and SigV4 headers are never recorded. `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` /
+  `AWS_ENDPOINT_URL_BEDROCK` classify their host at call time. Mocked replay answers those requests at
+  `urllib3`'s `HTTPConnectionPool.urlopen` (botocore parses the served bytes, so the workload gets botocore's own
+  objects; `ConverseStream` as a re-encoded AWS event stream); recorded HTTP errors are served back, so a
+  throttled call botocore retried replays the same way; exhaustion and a `Converse`/`ConverseStream` mismatch fail
+  closed; the echo check reads Bedrock `toolResult` blocks. `InvokeModel` is recorded without a response and
+  refused; control-plane (`bedrock`) calls are not refused. Tested with real `boto3` against a fake local server
+  only. See [docs/architecture/replay-modes.md](docs/architecture/replay-modes.md).
+- **Ollama calls are recorded with their response and served by mocked replay** (experimental, ADR-0320,
+  issue #51). The `httpx` wire hook recorded `/api/chat` and `/api/generate` calls with `gen_ai.response.choices:
+  []`, and mocked replay had no Ollama surface, so every Ollama call ran live while the replay reported none.
+  Capture now records the text, `tool_calls` (canonical `{id, name, arguments}`), finish reason (from
+  `done`/`done_reason`), `prompt_eval_count`/`eval_count` usage and the response model, marked
+  `io.novafabric.api_surface: ollama.chat` / `ollama.generate`, for JSON and streamed NDJSON bodies; a streamed body
+  is copied as the workload reads it, never read ahead. Mocked replay answers those requests at the `httpx`/`httpx2`
+  transport for registry-matched Ollama hosts (including `OLLAMA_BASE_URL`/`OLLAMA_HOST` at call time) and hosts the
+  capsule recorded, one queue per endpoint in recorded order, streamed requests as NDJSON in the recorded chunks;
+  exhaustion and endpoint mismatch fail closed, and records without a response (every capsule captured before this)
+  are never served. Covered for raw `httpx` (sync, async), the `ollama` SDK and `langchain_ollama`. See
+  [docs/architecture/replay-modes.md](docs/architecture/replay-modes.md).
+- **LangChain / LangGraph tool calls are captured and served by mocked replay
+  (experimental, ADR-0306 slice 3).** `novafabric.adapters.langchain_tools.wrap_tools([...],
+  {"tool": "read-only"})` returns a copy of each LangChain `BaseTool` (`@tool` functions,
+  `StructuredTool`, `BaseTool` subclasses); pass the copies to `bind_tools` and LangGraph's
+  `ToolNode`. Under `nova capture python …` each call is one `tool-calls.jsonl` record
+  (`transport: "python"`, `io.novafabric.tool_surface: "langchain.tool"`, the model's
+  `io.novafabric.langchain_tool_call_id`; arguments are the ones the model sent, with
+  injected state, store, runtime and call id listed in `io.novafabric.ignored_arguments`;
+  no schema change, `record.tool` codec), and in a mocked `nova replay` the recorded body
+  result is returned before the tool body runs, so LangChain still builds the
+  `ToolMessage` and fires its callbacks. Matching, fail-closed refusals
+  (`tool_call_unmatched` / `tool_result_not_servable`), `--permissive` gated by the class
+  declared in `wrap_tools` (default `unknown`) and `replay.yaml` `tool_overrides` are the
+  same as for the ADK and Agents SDK surfaces (shared code). New intercepted surface
+  `langchain_core.tools.BaseTool`. A call that raised, made nested model/tool calls, or
+  returned a non-JSON value (a LangGraph `Command`, a `ToolMessage`, a
+  `content_and_artifact` tuple) is recorded but not served. **Caveat:** LangChain documents
+  no hook that can answer a call for every caller (callbacks only observe; `ToolNode`'s
+  `wrap_tool_call` covers `ToolNode` only), so the copy's class is a generated subclass
+  overriding `run`/`arun` and the body hooks `_run`/`_arun` — NovaFabric's construction,
+  checked against `langchain-core` 1.8.3 and `langgraph` 1.2.23 (`langgraph-prebuilt`
+  1.1.3) only; another release can bypass it. Tools from `langchain_mcp_adapters` stay on
+  the MCP surface; tools not passed through `wrap_tools`, and capsules written by the
+  LangGraph adapter (pseudo-command, open question 7), are unchanged. LangChain is not a
+  NovaFabric dependency.
+
 ### Fixed
 
+- **A permissive replay counted an unservable model call that ran live as 0 live calls**
+  (works today). Under `nova replay --mode mocked --permissive`, a recorded model call that
+  replay cannot serve still runs, and goes to the network. Examples are a generic-wire call
+  (ADR-0324) captured with `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` or by an older build, and
+  an Ollama `/api/embed` call. If no serving seam claimed the request, the replay reported
+  `model_calls_live: 0` and showed the call only in `model_calls_not_servable`, which is a
+  count of the recording, not of what was sent. An independent request counter at the server
+  saw one request per call while the replay's counter read 0. Now each such request the `httpx`/`httpx2` transport (any
+  client transport) or urllib3 sees going out is counted in `model_calls_live`, retries
+  included, and named `live:generic wire …` in the fidelity sequence. Only requests to a
+  `gen_ai.system` the capsule holds unservable calls for are counted, and metadata requests
+  (Ollama `/api/tags`, the Bedrock control plane) are not. A request already counted above
+  the seam is never counted twice. `model_calls_not_servable` and the verdict (`diverged`)
+  are unchanged. A strict replay still refuses up front (`ModelSurfaceNotServable`).
+- **A served non-streamed Chat Completion or Anthropic Message was not the SDK's type**
+  (works today). Mocked replay returned a non-streamed `chat.completions.create` result and
+  an Anthropic `messages.create` result as plain attribute objects, so an `isinstance` check
+  or an SDK helper (`model_dump()`, `to_dict()`) failed on the first served call. The OpenAI
+  Agents SDK's `OpenAIChatCompletionsModel` crashed this way. Both are now the SDK's own
+  `ChatCompletion` / `Message`, with the same recorded values, when the SDK is installed, and
+  attribute objects otherwise. `created` is not recorded; a served Chat Completion carries
+  `created: 0`, as streamed chunks already did, so it validates.
+- **A permissive replay counted one unservable tool call as two replayed calls** (works
+  today). Under `nova replay --permissive`, an intercepted tool call that the capsule could
+  not serve (`tool_call_unmatched` or `tool_result_not_servable`) and that then ran live
+  (`--allow-unknown-mutation`) or was refused appeared twice in the fidelity
+  `tool_call_sequence`, once as `…:unmatched` and once as `…:live` (or `…:refused`). The
+  replay capsule's `tool-calls.jsonl` held two placeholder records for it as well, so
+  `nova diff` read a doubled tool stream. A real re-replay of a LangGraph workload whose four
+  calls were not servable reported "4 recorded, 8 replayed". Each call is now one entry and
+  one placeholder record, carrying what finally happened to it (`live` or `refused`). The fix
+  covers every intercepted surface: LangChain/LangGraph (wrapped and unwrapped), Google ADK,
+  OpenAI Agents, `record.tool` and MCP `tools/call`. The verdict was already `diverged` and
+  is unchanged, as are the counters (`tool_calls_live`, `tool_calls_refused`,
+  `tool_calls_unmatched`, `tool_calls_by_surface`). A strict replay, which stops at the
+  divergence, still lists the call as `…:unmatched`.
+- **A mocked replay capsule's placeholder records failed schema validation** (works
+  today). For each call it did not serve, a mocked replay writes a placeholder record into
+  its capsule's `tool-calls.jsonl` or `model-calls.jsonl`. Those records (`replay-live-2`
+  and the like) had no ULID id, a `status` outside the enum (`live`, `refused`) and were
+  missing most required fields, so no schema-checking reader could load the replay capsule.
+  A placeholder now holds only what the replay observed: a fresh ULID, `schema_version`, the
+  tool name or model provider, the mutation class when known, and the surface. Its status is
+  `denied` when the replay stopped the call before it ran, and absent when the call ran live,
+  because the replay never saw how it ended. It has no timing, span, arguments or result.
+  What it is stays in `extensions["io.novafabric.replay_placeholder"]` (`live`, `refused`,
+  `unmatched`). The `tool-call` and `model-call` schemas (packaged and dashboard copies) gain
+  an additive placeholder branch: only a record carrying that extension may omit the
+  unobserved fields, and every other record is validated exactly as before. `nova diff`
+  now marks a pair holding a placeholder (`replay_placeholder_a` / `replay_placeholder_b`,
+  and `(replay placeholder: live, not recorded)` in text output). The pair still counts as
+  changed, so `--assert-no-regressions` still fails on it.
+- **Public replay wording no longer says "no live model call" without scope.** `docs/comparison.md` and
+  the "prove a run to an auditor" tutorial now say which recorded model calls are served from the capsule
+  (the supported surfaces in the support matrix); that a strict replay refuses, before anything runs, a
+  capsule holding a recorded model call it cannot serve; that under `--permissive` such a call runs live
+  and is counted in `model_calls_live` when it goes through `httpx`, `requests` or `urllib3`; that a call
+  the capture never recorded (a raw socket, gRPC) in the replayed Python process or a Python child is seen
+  only as a network connection (`unserved_network` past loopback in a strict replay); and that a
+  non-Python child process is not observed (`child_processes_unobserved`; `--hermetic` contains it). A claims-guard pattern now
+  rejects the unscoped phrase.
+- **`nova restore` (pg profile) names a Postgres version mismatch instead of a bare error (#207).**
+  A newer `pg_restore` than the target server (17+ against 16 fails on `SET transaction_timeout`),
+  or an archive written by a newer `pg_dump` than `pg_restore`, now fails with both versions and
+  the fix. CI jobs pin `ubuntu-24.04` instead of the moving `ubuntu-latest` (26.04 ships client
+  tools 17+); a test keeps every job pinned and each Postgres service on its runner's client major.
 - **`iso42001` audit profile: two control IDs named the wrong clause.** `ISO42-8.5-RESPONSIBLE-AI`
   pointed at a clause ISO/IEC 42001:2023 does not have (clause 8 ends at 8.4); it is replaced by
   `ISO42-7.5-DOCUMENTED-INFORMATION`, with the same evidence. `ISO42-10.2-CONTINUAL-IMPROVEMENT` is now
@@ -58,6 +596,19 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **`soc2-type2` audit profile: `CC6.6` was described with the malicious-software criterion**, which is
   CC6.8. It is now titled and described for CC6.6's topic, protection against threats from outside the
   system boundary; the control ID and its evidence are unchanged.
+
+### Security
+
+- **Locked Python dependencies clear four HIGH advisories that turned the pip-audit gate red** (Dependabot
+  #201, #202). `pyasn1` 0.6.4 -> 0.6.5 (CVE-2026-119194, -119195, -119196, -119197) and `dnspython` 2.9.0 -> 2.9.2
+  (CVE-2026-128089); `joserfc` 1.7.5 -> 1.8.0 also clears the moderate CVE-2026-119284.
+- **The showcase site's dev-only Lighthouse CI is on `@lhci/cli` 0.16.1, which clears four expired npm-audit
+  waivers** (issue #208). Lighthouse 12.6.1 -> 13.6.0 drops `extract-zip` (GHSA-jmr9-qjv8-65gv,
+  GHSA-7pqw-9j4j-h8q3; no patched release exists) and moves `basic-ftp` to 6.2.6 (GHSA-c475-qrg2-pj4r, patched
+  in 6.2.1) and the nested `zod` 3.x onto 4.6.7 (GHSA-mrhx-c7xc-m3w5, patched in 4.6.6). `.npm-audit-waivers.toml`
+  now holds no waivers. `astro` moves 7.4.2 -> 7.4.13 within its range, clearing two non-blocking advisories
+  (GHSA-mh32-jxcr-mh9f, GHSA-r3h5-4585-7x3w), and the same Lighthouse upgrade clears three moderate ones (`basic-ftp`
+  GHSA-5pm8-86m8-9m6r and GHSA-r4jh-29pc-gfqr, `ip-address` GHSA-rxp7-6hxx-x8q5). `npm audit` reports 0 vulnerabilities in all three npm trees.
 
 ## [0.108.0] - 2026-10-25
 

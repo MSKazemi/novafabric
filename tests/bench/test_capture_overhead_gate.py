@@ -1,6 +1,6 @@
 """Capture-overhead benchmark — p95 CI gate (ROADMAP W1; ADR-0021 §6, ADR-0092).
 
-Benchmark: 30 full captured runs of a trivial ``python -c pass`` workload
+Benchmark: 60 full captured runs of a trivial ``python -c pass`` workload
 through ``CaptureOrchestrator(fast_emit=True)`` (the ADR-0092 slice-B path).
 CI gate:   p95 wall-clock per captured run must stay below 2000 ms.
 
@@ -8,6 +8,12 @@ Why p95 (the NovaSeal gate uses p99): at 30 samples the nearest-rank p99
 equals the single worst round, which on shared CI runners is dominated by
 scheduler noise (one observed 2.08 s outlier against a 342 ms median).
 p95 excludes exactly that one round while still bounding tail latency.
+
+Why 60 rounds (was 30): nearest-rank p95 of 30 is the 29th value, so two noisy rounds
+fail the gate. That happened on 2026-11-22 (CI run 45053837914, a docs-only commit whose
+code had passed the gate the run before): median 270 ms, max 3.66 s, p95 2.71 s; the
+re-run passed. p95 of 60 is the 57th value and absorbs three such rounds. The limit and
+the statistic are unchanged; a real regression moves the median, not three rounds.
 
 Budget rationale: v0.54 measured ~464 ms for a compute-only workload with
 fast-emit on a warm laptop (docs/releases/v0.54.0.md). The 2000 ms ceiling is
@@ -37,7 +43,7 @@ from novafabric.capture.orchestrator import CaptureOrchestrator
 # CI-safe ceiling over the ~464 ms warm baseline; the number lives in the
 # SLO catalog (ADR-0248) so the published claim and the gate cannot disagree.
 _P95_LIMIT_S = slo_value("capture.trivial-run.p95")
-_ROUNDS = 30
+_ROUNDS = 60
 _WARMUP_ROUNDS = 2
 
 

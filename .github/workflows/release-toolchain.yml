@@ -69,7 +69,7 @@ permissions:
 jobs:
   image-toolchain:
     name: Image build toolchain (no push)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -129,7 +129,12 @@ jobs:
           provenance: mode=max
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          # Pinned: cosign-installer v4.1.3 changed its default to cosign v3.1.4. Keep the
+          # signing tool unchanged until a tag run has verified the new one (the signature
+          # layout moved once before, with cosign v3).
+          cosign-release: 'v3.0.6'
 
       - name: Prove cosign runs
         # The signing call itself needs a tag run's OIDC identity, so this
@@ -139,7 +144,7 @@ jobs:
 
   chart-toolchain:
     name: Helm chart toolchain (no push)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -152,7 +157,7 @@ jobs:
           fetch-depth: 1
 
       - name: Set up Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
           version: v3.16.4
 
