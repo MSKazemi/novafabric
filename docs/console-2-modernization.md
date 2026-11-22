@@ -6,7 +6,7 @@
 
 ## Intent
 
-Make NovaFabric easier to use as a local-first **AI execution investigation and verifiable-evidence platform**. Preserve the existing dashboard instead of rewriting it. A first-class workflow is **find run → inspect trace → examine replay → compare runs → verify/export evidence**.
+Make NovaFabric easier to use as a local-first **AI execution investigation and verifiable-evidence platform**. Until the architecture decision at the top of this note is made, the existing dashboard stays the baseline; this note does not commit to a rewrite. A first-class workflow is **find run → inspect trace → examine replay → compare runs → verify/export evidence**.
 
 One console, three optional layout/navigation presets:
 - **Developer Studio (default):** dense run exploration, trace, replay, diff, keyboard shortcuts.
@@ -34,7 +34,7 @@ Sources: [dashboard README](../ui/dashboard/README.md), [user guide](dashboard.m
 
 | Area | Decision | Notes |
 |---|---|---|
-| Core | retain Astro + React + TypeScript + Vite-under-Astro | do not create a second SPA |
+| Core | retain Astro + React + TypeScript + Vite-under-Astro (baseline until the architecture decision) | no second SPA is created before that decision |
 | Styling | retain Tailwind v4 + existing CSS tokens | extend, no blanket reskin |
 | Graph | retain React Flow | compare heavy graph approach only after benchmark |
 | Icons/fonts | retain Lucide and bundled Inter / JetBrains Mono | no CDN |
@@ -128,7 +128,7 @@ For affected repository code: `make test-fast`, `make lint`, `make typecheck`, `
 
 ## GitHub implementation policy
 
-Work from existing issues and existing Project V2 if available; deduplicate before creating additional epic/issue records. Each issue needs outcome, paths/scope, prior evidence, dependencies, acceptance checklist, test command and owner role. Use focused draft PRs. Preserve existing files, migration gates, security posture and human approval.
+Work from existing issues and the existing project board if available; deduplicate before creating additional epic/issue records. Each issue needs outcome, paths/scope, prior evidence, dependencies, acceptance checklist, test command and owner role. Use focused draft PRs. Preserve existing files, migration gates, security posture and human approval.
 
 ### First Claude Code work packet (audit, not implementation)
 
@@ -154,10 +154,10 @@ This public roadmap is in draft PR #251. **Canonical umbrella:** [#252](https://
 | [#281 Operations](https://github.com/MSKazemi/novafabric/issues/281) | #276 | Console 2.2 |
 | [#284 Release quality](https://github.com/MSKazemi/novafabric/issues/284) | #261, #264, #278, #280, #282 | Every release |
 
-**Shared cross-workstream #256** stays under root #252 to coordinate W4/W5 without double implementation. **Optional P3 research #285** stays in backlog. External #250 (native Project #14), #260 scale harness and #211/#220/#225 existing release work are linked dependencies, not new Console-owned replicas.
+**Shared cross-workstream #256** stays under root #252 to coordinate W4/W5 without double implementation. **Optional P3 research #285** stays in backlog. External #250 (native project-board linkage), #260 scale harness and #211/#220/#225 existing release work are linked dependencies, not new Console-owned replicas.
 
 **Important correction to the earlier technology table above:** retaining Astro is a *baseline option*, **not** an accepted decision. Strong architecture changes are explicitly authorized for comparative research under [architecture and versioning](console-2-architecture-and-versioning.md) and #262. Any major app replacement still preserves the Python backend, offline wheel and immutable evidence contract and needs an accepted ADR.
 
 **Release identity:** Python package is installable product release; Console 2.0/2.1/2.2 are experience labels; UI bundle uses source SHA/digest and explicit API capabilities; no untested standalone frontend↔backend compatibility promise. Preserve N/N+1 database migration contract and independently versioned Run Capsules/Evidence Bundles.
 
-**Board status:** all epics/issues and issue-body mappings exist, but GitHub connector cannot write native Project V2 parent/dependency edges, priorities or milestones. [#250](https://github.com/MSKazemi/novafabric/issues/250) contains the exact requested hierarchy to reconcile **existing** [Project #14](https://github.com/users/MSKazemi/projects/14), without making a new Project or claiming unverified native links.
+**Board status:** all epics/issues and issue-body mappings exist, but native parent/dependency edges, priorities and milestones are reconciled on the maintainer's existing project board, not by this document. [#250](https://github.com/MSKazemi/novafabric/issues/250) holds the requested hierarchy; no new project is created and no unverified native link is claimed.

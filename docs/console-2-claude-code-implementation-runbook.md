@@ -2,7 +2,7 @@
 
 **Status:** actionable handoff for an **existing** programme, not evidence of completed code. **Updated:** 2026-11-22.
 **Canonical programme:** [#252](https://github.com/MSKazemi/novafabric/issues/252).
-**Workstreams:** [W1 #275](https://github.com/MSKazemi/novafabric/issues/275) UX; [W2 #272](https://github.com/MSKazemi/novafabric/issues/272) architecture; [W3 #277](https://github.com/MSKazemi/novafabric/issues/277) Developer Studio; [W4 #279](https://github.com/MSKazemi/novafabric/issues/279) evidence; [W5 #281](https://github.com/MSKazemi/novafabric/issues/281) operations; [W6 #284](https://github.com/MSKazemi/novafabric/issues/284) quality. Project: [existing #14](https://github.com/users/MSKazemi/projects/14), governance [#250](https://github.com/MSKazemi/novafabric/issues/250).
+**Workstreams:** [W1 #275](https://github.com/MSKazemi/novafabric/issues/275) UX; [W2 #272](https://github.com/MSKazemi/novafabric/issues/272) architecture; [W3 #277](https://github.com/MSKazemi/novafabric/issues/277) Developer Studio; [W4 #279](https://github.com/MSKazemi/novafabric/issues/279) evidence; [W5 #281](https://github.com/MSKazemi/novafabric/issues/281) operations; [W6 #284](https://github.com/MSKazemi/novafabric/issues/284) quality. Project board: the maintainer's existing board (not linked here), governance [#250](https://github.com/MSKazemi/novafabric/issues/250).
 
 ## How to use
 
@@ -22,7 +22,7 @@ A separate agent operating the **private** repository may read its design docume
 | Cross-cutting release and performance | #284 (W6) | #261, #264, #278, #280, #282 | browser, accessibility, security, packaging and rollback |
 | Future only, not a blocker | #252 (umbrella) | #285 P3 research | opt-in source-grounded assistance, NO default external model |
 
-**Do not duplicate** the three existing research prototypes or the existing 14 task issues. This Markdown mapping is **not** GitHub native parent/blocked-by linkage; [#250](https://github.com/MSKazemi/novafabric/issues/250) owns the read-before-write Project #14 reconciliation.
+**Do not duplicate** the three existing research prototypes or the existing 14 task issues. This Markdown mapping is **not** GitHub native parent/blocked-by linkage; [#250](https://github.com/MSKazemi/novafabric/issues/250) owns the read-before-write project-board reconciliation.
 
 ## Exact implementation path and decision gates
 
@@ -106,9 +106,9 @@ evidence-safety reviewer and disciplined Claude Code implementation lead.
 
 REPOSITORY AND PROJECT
 - Public engineering repo: MSKazemi/novafabric (this working checkout).
-- Private design context: MSKazemi/novafabric-private, READ ONLY if
-  authorized, never copy its internal content into public artifacts.
-- Existing project: https://github.com/users/MSKazemi/projects/14
+- Private design material exists outside this repository; never reference
+  or copy it into public artifacts.
+- Existing project board: maintainer-managed, not linked here.
 - Master epic: https://github.com/MSKazemi/novafabric/issues/252
 - Workstream epics: W1 #275; W2 #272; W3 #277; W4 #279;
   W5 #281; W6 #284. Project/native sync issue #250.
@@ -198,7 +198,7 @@ IMPLEMENTATION AND TEST DISCIPLINE
   mega-PR; do not modify release/security policy without review.
 - Update the owning child issue and matching W1-W6 epic with links
   to exact PR, tested SHA, results, risk and rollback.
-- Native Project #14 parent/blocker/field work belongs to #250:
+- Native project-board parent/blocker/field work belongs to #250:
   inspect live objects, show dry-run diff, apply only authorized
   missing links and verify. Issue-body links aren't native parents.
 

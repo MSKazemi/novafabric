@@ -57,14 +57,14 @@ Reject blanket rewrites, mandatory hosted SSR/Node, full adoption of Next.js wit
 
 | Layer | Observed | Recommended policy (not yet implemented) |
 |---|---|---|
-| **Python distribution and bundled Console** | `pyproject.toml: version=0.108.0`, installed metadata `novafabric.__version__` | The **shipped wheel** is the authoritative end-user version; its bundled UI is an exact build from that release. |
+| **Python distribution and bundled Console** | `pyproject.toml: version=0.109.0` (as of `main` at v0.109.0; the earlier reviewed base was 0.108.0), installed metadata `novafabric.__version__` | The **shipped wheel** is the authoritative end-user version; its bundled UI is an exact build from that release. |
 | **Console UX generation** | Console 2.0 is a proposed design name | `Console 2.0` means **experience generation**, not `pip install novafabric==2.0.0`. Do not force Python major bump. |
 | **Embedded frontend package.json** | `novafabric-showcase@0.1.0`, `private:true` | Treat `0.1.0` as internal package metadata, never a public release badge. Consider renaming to `novafabric-console` in a focused PR after package audit. |
 | **Topology frontend package.json** | `nova-dashboard@0.1.0`, `private:true` | Internal build identity until independently shipped; reuse distribution release or embed separate source/digest revision as appropriate. |
 | **Frontend build identity** | Assets are content-hashed by build tooling; no explicit user-facing UI version contract verified | Generate a reproducible build manifest including commit revision, distribution version, asset digest and frontend build kind, with no private data. |
 | **Local serve API** | `/api/*` unversioned; `GET /api/health` returns backend version | Preserve endpoint compatibility, extend authenticated capability metadata as necessary after API/security review; no silent rename to `/v1`. |
 | **Multi-user server API** | `/v0/*`, and `/v0/version` already reports version, git SHA, schema revision, extras, features | Reuse existing structured identity; different API families must not be conflated. Govern breaking changes with current deprecation policy. |
-| **Dashboard API schema** | `api/openapi-dashboard.yaml` has OpenAPI `version: 0.108.0` | CI compare generated OpenAPI spec/hash; track incompatible route changes independently of marketing UX label. |
+| **Dashboard API schema** | `api/openapi-dashboard.yaml` has OpenAPI `version: 0.109.0` | CI compare generated OpenAPI spec/hash; track incompatible route changes independently of marketing UX label. |
 | **Persistent database revision** | Two Alembic universes, accepted N/N+1 expand–contract contract | Keep existing migration contract; do not bump DB schema simply because UI design changes. |
 | **Portable evidence formats** | Versioned Run Capsule / Evidence Bundle schemas | Independent canonical format versions; a visual redesign must not rewrite immutable capsule/evidence artifacts. |
 | **Dashboard widgets & saved views** | Existing user-authored dashboard files and saved view/filter semantics | Additive parser; migration/rollback must keep existing user data and old URLs. |
@@ -73,7 +73,7 @@ Reject blanket rewrites, mandatory hosted SSR/Node, full adoption of Next.js wit
 ### Recommended About / diagnostics display (example values illustrative)
 
 ```text
-NovaFabric 0.108.0                  # from installed backend distribution
+NovaFabric 0.109.0                  # from installed backend distribution
 Console experience: 2.0 preview    # design generation / visible label, not PyPI version
 Console build: abc1234             # actual built source SHA, no invented fallback
 Console assets: sha256:...         # computed from shipped static manifest
