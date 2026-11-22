@@ -173,7 +173,7 @@ modified fixture (`E_FIXTURE_DIGEST_MISMATCH`), so keep line endings as committe
 `run.py` exits `0` (harness PASS), `2` (a named failure: `evidence_lab: FAIL code=E_…` on
 stderr and in the report), or `77` (**SKIPPED**: the optional `openai` SDK is not
 installed — no evidence was produced). Failures include `E_MOCK_PORT_IN_USE`,
-`E_CAPTURE_TIMEOUT`, `E_CAPTURE_FAILED`, `E_RUN_ID_MISSING`, `E_CAPSULE_MISSING`,
+`E_CAPTURE_TIMEOUT`, `E_CAPTURE_OUTPUT_TOO_LARGE` (a command printed more than 1 MiB and was stopped), `E_CAPTURE_FAILED`, `E_RUN_ID_MISSING`, `E_CAPSULE_MISSING`,
 `E_COUNT_MISMATCH`, `E_TOOL_ORDER_MISMATCH`, `E_PRIVACY_VIOLATION`,
 `E_MODEL_RECORD_MISMATCH`, `E_OBSERVATION_MISMATCH`, `E_UNEXPECTED_OUTCOME`, `E_INTERRUPTED`
 and `E_HARNESS_INTERNAL`. The mock names every refused request (`E_MODEL_MISMATCH`,
@@ -196,7 +196,11 @@ and a real-looking credential in the environment.
 
 ## Not claimed
 
-No replay fidelity (replay was not run), no signature or timestamp, no hermetic network
+No replay fidelity (replay was not run). Since NovaFabric 0.109.0 `nova capture` also writes
+`replayability.json`; for this run it classifies the one model call as servable and the two
+tool calls as `tool_result_not_servable`, because tool arguments and results are digest-only below
+the `forensic` capture level. That is a statement about the capsule, **not** a replay result,
+and this example neither reads nor asserts it. No signature or timestamp, no hermetic network
 isolation, no production-scale or throughput claim, and no statement that the capsule's
 decision is *correct* — only that the capsule's model and tool records match a description
 of what was supposed to happen that is computed from the fixtures alone. Planned follow-up (D2, tracked in the public issue tracker): a

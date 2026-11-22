@@ -1322,6 +1322,32 @@ def test_harness_kills_a_hung_capture_and_cleans_up(
     assert "partial-output" in (tmp_path / "out" / "capture-output.txt").read_text()
 
 
+def test_harness_stops_a_command_that_floods_its_output(
+    tmp_path: Path,
+    guard_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A runaway child must not grow memory or disk until the wall-clock timeout."""
+    pytest.importorskip("openai")
+    cap = 64 * 1024
+    monkeypatch.setattr(run, "MAX_CAPTURE_OUTPUT_BYTES", cap)
+    marker = tmp_path / "flood-pid"
+    nova = _fake_nova(tmp_path, f"echo $$ > {marker}; exec yes 0123456789abcdef")
+    started = time.monotonic()
+    exit_code, (report, captured) = _harness(
+        tmp_path, "--nova-bin", str(nova), "--timeout-seconds", "60", capsys=capsys
+    )
+    assert time.monotonic() - started < 30, "the size cap did not stop the flood"
+    assert exit_code == 2
+    assert report["error"]["code"] == "E_CAPTURE_OUTPUT_TOO_LARGE"
+    assert "PASS" not in captured.out
+    _assert_clean(report, tmp_path)
+    assert _wait_dead(int(marker.read_text())), "flooding command leaked"
+    kept = (tmp_path / "out" / "capture-output.txt").stat().st_size
+    assert 0 < kept <= cap, f"kept {kept} bytes; the cap is {cap}"
+
+
 def test_harness_names_a_missing_nova_binary(
     tmp_path: Path, guard_env: None, capsys: pytest.CaptureFixture[str]
 ) -> None:

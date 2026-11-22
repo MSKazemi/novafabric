@@ -30,6 +30,7 @@ import importlib.util
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -54,6 +55,9 @@ EXIT_OK = 0
 EXIT_FAILED = 2
 EXIT_SKIPPED = 77
 MAX_TIMEOUT_SECONDS = 600
+# `nova capture` / `nova validate` print a few hundred bytes; a command that prints
+# more than this is runaway, and is stopped instead of buffered until the timeout.
+MAX_CAPTURE_OUTPUT_BYTES = 1024 * 1024
 
 _RUN_ID = re.compile(r"run_id=([0-9A-HJKMNP-TV-Z]{26})")
 _ERROR_CODE = re.compile(r"code=(E_[A-Z_]+)")
@@ -157,31 +161,61 @@ def _run_bounded(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
             start_new_session=True,
         )
     except (FileNotFoundError, PermissionError) as exc:
         raise lab.EvidenceLabError(
             "E_NOVA_NOT_FOUND", f"cannot execute {argv[0]!r}: {exc}"
         ) from exc
+    assert proc.stdout is not None
+    fd = proc.stdout.fileno()
+    cap = MAX_CAPTURE_OUTPUT_BYTES
+    deadline = time.monotonic() + timeout
+    chunks: list[bytes] = []
+    size = 0
+    failure: lab.EvidenceLabError | None = None
     try:
-        output, _ = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        _kill_group(proc)
-        try:  # keep what the command had already printed: it is evidence of the hang
-            partial, _ = proc.communicate(timeout=5)
-        except (subprocess.TimeoutExpired, ValueError):
-            partial = ""
-        if save_to is not None:
-            save_to.write_text(partial or "", encoding="utf-8")
-        raise lab.EvidenceLabError(
-            "E_CAPTURE_TIMEOUT", f"{Path(argv[0]).name} did not finish within {timeout:g}s"
-        ) from exc
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                failure = lab.EvidenceLabError(
+                    "E_CAPTURE_TIMEOUT",
+                    f"{Path(argv[0]).name} did not finish within {timeout:g}s",
+                )
+                break
+            ready, _, _ = select.select([fd], [], [], min(remaining, 0.5))
+            if not ready:
+                continue
+            chunk = os.read(fd, 65536)
+            if not chunk:  # EOF: every holder of the pipe has closed it
+                break
+            size += len(chunk)
+            chunks.append(chunk[: max(0, cap - (size - len(chunk)))])
+            if size > cap:
+                failure = lab.EvidenceLabError(
+                    "E_CAPTURE_OUTPUT_TOO_LARGE",
+                    f"{Path(argv[0]).name} printed more than {cap} bytes; stopped",
+                )
+                break
+        if failure is None:
+            try:
+                proc.wait(timeout=max(1.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                failure = lab.EvidenceLabError(
+                    "E_CAPTURE_TIMEOUT",
+                    f"{Path(argv[0]).name} did not finish within {timeout:g}s",
+                )
+        if failure is not None:
+            _kill_group(proc)
     finally:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(proc.pid, signal.SIGKILL)  # stragglers of a command that did exit
-    if save_to is not None:
+        proc.stdout.close()
+    output = b"".join(chunks).decode("utf-8", errors="replace")
+    if save_to is not None:  # kept even on failure: it is evidence of what went wrong
         save_to.write_text(output, encoding="utf-8")
+    if failure is not None:
+        raise failure
     return proc.returncode, output
 
 
