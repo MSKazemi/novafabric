@@ -147,8 +147,8 @@ This public roadmap is in draft PR #251. **Canonical umbrella:** [#252](https://
 
 | Epic | Existing implementation issues | Gate |
 |---|---|---|
-| [#275 UX research / onboarding](https://github.com/MSKazemi/novafabric/issues/275) | #253, #254, #265 | D0 user/design acceptance |
-| [#272 Frontend platform / architecture / versioning](https://github.com/MSKazemi/novafabric/issues/272) | #262, #263, #266, #267, #283 | D1 accepted ADR + API/capability contract |
+| [#275 UX research / onboarding](https://github.com/MSKazemi/novafabric/issues/275) | #253, #254, #265, #266 | D0 user/design acceptance |
+| [#272 Frontend platform / architecture / versioning](https://github.com/MSKazemi/novafabric/issues/272) | #262, #263, #267, #283 (#266 is related W1 navigation) | D1 accepted ADR + API/capability contract |
 | [#277 Developer Studio](https://github.com/MSKazemi/novafabric/issues/277) | #255, #268, #269, #270 | Console 2.0 core |
 | [#279 Evidence and lineage](https://github.com/MSKazemi/novafabric/issues/279) | #271, #274 | 2.0 trust / 2.1 lineage |
 | [#281 Operations](https://github.com/MSKazemi/novafabric/issues/281) | #276 | Console 2.2 |
