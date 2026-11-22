@@ -22,7 +22,10 @@ each section records whether it was capsule-sourced or operator-declared.
 
 from __future__ import annotations
 
+import pytest
+
 from novafabric.compliance.export.iso42001 import (
+    DuplicateControlIdError,
     Iso42001ControlStatus,
     build_iso42001_mapping,
     build_iso42005_impact_assessment,
@@ -39,7 +42,7 @@ _REF = EvidenceSourceRef(
 class TestIso42001Mapping:
     def test_evidenced_control_is_marked_and_carries_ref(self) -> None:
         report = build_iso42001_mapping(
-            catalog=[{"control_id": "ISO42-8.5-RESPONSIBLE-AI", "evidence_kind": "eval_gate"}],
+            catalog=[{"control_id": "ISO42-8.4-AI-SYSTEM-IMPACT", "evidence_kind": "eval_gate"}],
             present_evidence={"eval_gate"},
             capsule_ref=_REF,
         )
@@ -75,7 +78,7 @@ class TestIso42001Mapping:
     def test_evidenced_requires_a_ref_else_unverifiable(self) -> None:
         # Evidence present but no re-performable ref supplied → cannot claim evidenced.
         report = build_iso42001_mapping(
-            catalog=[{"control_id": "ISO42-8.5-RESPONSIBLE-AI", "evidence_kind": "eval_gate"}],
+            catalog=[{"control_id": "ISO42-8.4-AI-SYSTEM-IMPACT", "evidence_kind": "eval_gate"}],
             present_evidence={"eval_gate"},
             capsule_ref=None,
         )
@@ -86,7 +89,7 @@ class TestIso42001Mapping:
     def test_standard_label_and_counts(self) -> None:
         report = build_iso42001_mapping(
             catalog=[
-                {"control_id": "ISO42-8.5-RESPONSIBLE-AI", "evidence_kind": "eval_gate"},
+                {"control_id": "ISO42-8.4-AI-SYSTEM-IMPACT", "evidence_kind": "eval_gate"},
                 {"control_id": "ISO42-9.1-MONITORING-EVAL", "evidence_kind": "monitoring"},
             ],
             present_evidence={"eval_gate"},
@@ -96,6 +99,19 @@ class TestIso42001Mapping:
         assert len(report.controls) == 2
         assert report.evidenced_count == 1
 
+
+    def test_duplicate_control_id_is_rejected(self) -> None:
+        with pytest.raises(DuplicateControlIdError, match="ISO42-4.1-CONTEXT"):
+            build_iso42001_mapping(
+                catalog=[{"control_id": "ISO42-4.1-CONTEXT"}, {"control_id": "ISO42-4.1-CONTEXT"}],
+                present_evidence=set(),
+            )
+
+    def test_standard_label_can_name_the_users_catalog(self) -> None:
+        report = build_iso42001_mapping(
+            catalog=[{"control_id": "X-1"}], present_evidence=set(), standard="My catalog v2"
+        )
+        assert report.standard == "My catalog v2"
 
 class TestIso42005ImpactAssessment:
     def test_sections_default_to_operator_declared(self) -> None:

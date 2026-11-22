@@ -133,8 +133,9 @@ wrote every call into `capsule_dir` itself, so a second call overwrote
 > `nova capture` — you can `nova validate`, `nova diff`, and `nova replay
 > --mode forensic|semantic` it the same way. It records `capture_mode:
 > sdk-decorator` and an `@agent:<name>@<version>` label instead of a command,
-> so `nova replay --mode mocked` refuses it (`CapsuleNotReplayable`): there is
-> no command to re-run.
+> so `nova replay --mode mocked` re-runs it only from the process invocation it
+> also records (`facets.process_invocation`), when every replay guard passes
+> (experimental, ADR-0306 Q7); otherwise it refuses it (`CapsuleNotReplayable`).
 
 ---
 
@@ -399,7 +400,7 @@ class ReplayFlags:
 | Mode | What it does | Typical use |
 |---|---|---|
 | `forensic` | Read-only inspection. No subprocess, no network. | Audit / post-incident |
-| `mocked` | Re-spawns the command (Python workloads). Serves recorded responses for OpenAI `chat.completions.create` and `responses.create` / Anthropic `messages.create` — **sync or async, streamed or not** (ADR-0304) — and recorded **MCP** `ClientSession.call_tool` results, one per call, plus — experimental — results of functions declared with [`record.tool`](#extended-event-recording-experimental) and of Google ADK tools run with `novafabric.adapters.google_adk.make_tool_plugin()` and OpenAI Agents function tools passed through `novafabric.adapters.openai_agents.wrap_tools()` (both shipped in v0.106.0; the latter relies on an undocumented SDK seam). **Other tools run live** (HTTP, shell, files, other framework-native tools, undeclared functions); `replay_contract.network_connections_live` reports their connections. **Fails closed** (ADR-0300): an extra or unmatched call, an unsupported model surface (`parse`, legacy completions, `with_raw_response`), or an unconsumed recording makes the result `failure` with a `divergence_reason`; `permissive=True` only reports them. | CI / regression |
+| `mocked` | Re-spawns the command (Python workloads). Serves recorded responses for OpenAI `chat.completions.create` and `responses.create` / Anthropic `messages.create` — **sync or async, streamed or not** (ADR-0304) — and recorded **MCP** `ClientSession.call_tool` results, one per call, plus — experimental — results of functions declared with [`record.tool`](#extended-event-recording-experimental) and of Google ADK tools run with `novafabric.adapters.google_adk.make_tool_plugin()` and OpenAI Agents function tools passed through `novafabric.adapters.openai_agents.wrap_tools()` (both shipped in v0.106.0; the latter relies on an undocumented SDK seam), and — new in v0.109.0 — LangChain / LangGraph tools passed through `novafabric.adapters.langchain_tools.wrap_tools()` (a generated subclass of each tool, not a LangChain API; other LangChain tools are recorded and, when the capsule holds their results — capture level `forensic` — served too; a strict replay of a capsule whose observed records cannot be served refuses to start, `ToolSurfaceNotServed`, and each one that runs live is counted in `tool_calls_live`). **Other tools run live** (HTTP, shell, files, other framework-native tools, undeclared functions); `replay_contract.network_connections_live` reports their connections. **Fails closed** (ADR-0300): an extra or unmatched call, an unsupported model surface (`parse`, legacy completions, `with_raw_response`), or an unconsumed recording makes the result `failure` with a `divergence_reason`; `permissive=True` only reports them. | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called; returns `similarity_score`. | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift. | Local / on-prem / compliance |
 | `intervention` | Re-executes with a spec-driven intervention overlay (experimental, ADR-0086). | What-if / counterfactual analysis |
@@ -468,13 +469,17 @@ The replayed process raises a `ReplayDivergenceError` subclass
 `ReplayUnsupportedSurfaceError`, `ReplayRecordMalformedError`,
 `ReplayToolUnmatchedError`) at the call that diverged.
 
-**Example — semantic replay against a drifting remote LLM**
+**Example — how alike a capsule's recorded responses are (`semantic`)**
+
+`semantic` executes nothing and calls no model: it scores the recorded responses
+within the capsule against one another (mean pairwise `difflib` ratio), a text
+similarity, not a comparison with a live model.
 
 ```python
 flags = ReplayFlags(mode="semantic")
 result = ReplayEngine(capsule_dir=cap, flags=flags).run()
 if result.similarity_score is not None and result.similarity_score < 0.9:
-    print(f"semantic drift detected: {result.similarity_score:.3f}")
+    print(f"recorded responses differ from one another: {result.similarity_score:.3f}")
 ```
 
 **Example — exact-replay eligibility gate for a compliance run**

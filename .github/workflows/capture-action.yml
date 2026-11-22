@@ -29,7 +29,7 @@ concurrency:
 jobs:
   success-path:
     name: captures a successful command
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -69,7 +69,7 @@ jobs:
 
   failure-path:
     name: a failing command still yields a capsule
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -116,7 +116,7 @@ jobs:
 
   artifact-survives-failure:
     name: the failing run's capsule is downloadable
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: failure-path
     # always() so it runs even when failure-path fails, but still public-only.
     if: always() && github.repository == 'MSKazemi/novafabric'

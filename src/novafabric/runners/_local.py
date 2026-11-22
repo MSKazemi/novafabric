@@ -18,6 +18,7 @@ import tempfile
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from importlib import resources
 from pathlib import Path
 from types import FrameType
 from typing import Any
@@ -29,6 +30,22 @@ from novafabric.runners._types import (
     attach_interrupted_result,
     interrupted_job_result,
 )
+
+#: Name of the stdlib-only child observer's copy beside the hook loader.
+_CHILD_OBSERVER_MODULE = "_nf_child_observer"
+
+
+def write_capture_site(site_dir: Path) -> None:
+    """Write the capture ``sitecustomize.py`` and the child observer it loads for
+    stripped-environment Python children (``replay/_child_observer.py``'s own
+    source, stdlib only). Inert in a process without the capture variables."""
+    (site_dir / "sitecustomize.py").write_text(_HOOK_LOADER)
+    source = (
+        resources.files("novafabric").joinpath("replay", "_child_observer.py")
+        .read_text(encoding="utf-8")
+    )
+    (site_dir / f"{_CHILD_OBSERVER_MODULE}.py").write_text(source, encoding="utf-8")
+
 
 #: Wall-clock deadline when the caller passes none (``nova capture`` without
 #: ``--timeout``; the GitHub Action's empty ``timeout`` input).
@@ -266,7 +283,7 @@ class LocalRunner:
         # ends up on PYTHONPATH. We materialize it in a tmpdir for the
         # lifetime of the subprocess.
         with tempfile.TemporaryDirectory(prefix="nf_site_") as site_dir:
-            (Path(site_dir) / "sitecustomize.py").write_text(_HOOK_LOADER)
+            write_capture_site(Path(site_dir))
 
             env = dict(spec.env)
             existing = env.get("PYTHONPATH", "")
