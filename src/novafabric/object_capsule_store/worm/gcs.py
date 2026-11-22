@@ -74,7 +74,7 @@ class GcsWormAdapter(WormAdapter):
         if client is not None:
             self._client: Any = client
         else:
-            from google.cloud import storage as gcs  # type: ignore[attr-defined]
+            from google.cloud import storage as gcs  # type: ignore[attr-defined,unused-ignore]
 
             kwargs: dict[str, Any] = {}
             if project:
