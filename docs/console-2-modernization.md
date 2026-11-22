@@ -1,6 +1,6 @@
 # NovaFabric Console 2.0 — GUI/UX modernization plan
 
-**Architecture decision reopened 2026-11-22:** the owner welcomes a major frontend redesign. `Astro + React` is a measured baseline, **not a mandatory final architecture**. Compare a React/Vite replacement shell and unified topology experience under [architecture/versions spec](console-2-architecture-and-versioning.md) and issues #262/#263/#264; retain Python runtime, CLI and evidence contracts. This note supersedes any categorical “do not rewrite Astro” language below.
+**Architecture decision reopened 2026-11-22:** the owner welcomes a major frontend redesign. `Astro + React` is a measured baseline, **not a mandatory final architecture**. Compare a React/Vite replacement shell and unified topology experience in the maintainers' architecture and versioning study (tracked in issues #262/#263/#264); retain Python runtime, CLI and evidence contracts. This note supersedes any categorical “do not rewrite Astro” language below.
 
 **Status:** proposed, design-only. **Reviewed:** 2026-11-21, Europe/Rome. **Base reviewed:** `main` at `4f89480c2de83f0f51003cb096db58b9904a4ce5`. Refresh the base and re-audit before implementing. Not a release commitment.
 
@@ -130,7 +130,7 @@ For affected repository code: `make test-fast`, `make lint`, `make typecheck`, `
 
 Work from existing issues and the existing project board if available; deduplicate before creating additional epic/issue records. Each issue needs outcome, paths/scope, prior evidence, dependencies, acceptance checklist, test command and owner role. Use focused draft PRs. Preserve existing files, migration gates, security posture and human approval.
 
-### First Claude Code work packet (audit, not implementation)
+### First work packet (audit, not implementation)
 
 **Goal:** review current `ui/dashboard` and `docs/dashboard.md` against the proposed UX; capture a real frontend baseline and three design alternatives, map implementation gaps and open a scoped draft PR with evidence. Read `AGENTS.md`, `CONTRIBUTING.md` and applicable ADRs first. Do not rewrite frontend, change backend/security, merge, deploy, add external telemetry or publish confidential information. Attach screenshots, audit matrix, actual test logs and open questions. The first implementation issue should be approved only after the design and security gates are understood.
 
@@ -143,7 +143,7 @@ Every change must be reversible by reverting its focused PR/bundle. Preserve exi
 <!-- console2-live-epic-reconciliation-20261122 -->
 ## Live GitHub execution structure (2026-11-22)
 
-This public roadmap is in draft PR #251. **Canonical umbrella:** [#252](https://github.com/MSKazemi/novafabric/issues/252). Instead of multiple competing Console programs, execution is organized into six public **workstream epic issues** with specific Claude Code prompts, acceptance gates and task links:
+This is the proposed public Console 2.0 roadmap. **Canonical umbrella:** [#252](https://github.com/MSKazemi/novafabric/issues/252). Instead of multiple competing Console programs, execution is organized into six public **workstream epic issues** with specific work prompts, acceptance gates and task links:
 
 | Epic | Existing implementation issues | Gate |
 |---|---|---|
@@ -156,7 +156,7 @@ This public roadmap is in draft PR #251. **Canonical umbrella:** [#252](https://
 
 **Shared cross-workstream #256** stays under root #252 to coordinate W4/W5 without double implementation. **Optional P3 research #285** stays in backlog. External #250 (native project-board linkage), #260 scale harness and #211/#220/#225 existing release work are linked dependencies, not new Console-owned replicas.
 
-**Important correction to the earlier technology table above:** retaining Astro is a *baseline option*, **not** an accepted decision. Strong architecture changes are explicitly authorized for comparative research under [architecture and versioning](console-2-architecture-and-versioning.md) and #262. Any major app replacement still preserves the Python backend, offline wheel and immutable evidence contract and needs an accepted ADR.
+**Important correction to the earlier technology table above:** retaining Astro is a *baseline option*, **not** an accepted decision. Strong architecture changes are explicitly authorized for comparative research in the architecture and versioning study and #262. Any major app replacement still preserves the Python backend, offline wheel and immutable evidence contract and needs an accepted ADR.
 
 **Release identity:** Python package is installable product release; Console 2.0/2.1/2.2 are experience labels; UI bundle uses source SHA/digest and explicit API capabilities; no untested standalone frontend↔backend compatibility promise. Preserve N/N+1 database migration contract and independently versioned Run Capsules/Evidence Bundles.
 
