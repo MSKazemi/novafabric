@@ -17,7 +17,9 @@ signed evidence is produced.
 - How **zero-code-change capture** works via a `sitecustomize.py` loader and
   per-SDK plus wire-level hooks.
 - The **five replay modes** — `forensic`, `mocked`, `semantic`, `exact`, and experimental
-  `intervention` — and what each one honestly promises.
+  `intervention` — and what each one honestly promises. Only `mocked` and `intervention`
+  re-execute the workload; `forensic`, `semantic` and `exact` are checks over the capsule
+  that execute nothing.
 - How **structural diff** becomes a CI regression gate, and how **lineage**
   answers provenance and blast-radius questions.
 - How the **Asset Registry lifecycle** works and why promotion is governance
@@ -354,7 +356,7 @@ were missing under capture (**works today**). It patches:
 - **httpx2** — `httpx2.Client.send` / `httpx2.AsyncClient.send`, same classification and records as `httpx` (network events carry `library: "httpx2"`). `openai` 3.x builds its default client on `httpx2`, so without this hook an OpenAI call left no transport record and no network event. Installed only when `httpx2` is importable — never a NovaFabric dependency. Under an SDK call each attempt is still a `transport` record (ADR-0305), so one call counts once. **Works today.**
 - **requests** — `requests.Session.send`, same URL-registry classification (v0.5; RFC-0001 Option C wire-level layer). Covers LangChain HTTP adapters, LlamaIndex REST clients, and any SDK that ships over `requests`.
 - **aiohttp** — `aiohttp.ClientSession._request`, async wire-level capture (v0.6 / C-3.1). Catches LangChain async paths, FastAPI agents, streaming-first SDKs.
-- **urllib3** — `urllib3.connectionpool.HTTPConnectionPool.urlopen`, lowest-tier wire-level capture (v0.6 / C-3.2). Sits below `requests` and `boto3`; transitively covers AWS Bedrock and any SDK that uses `urllib3` directly. Layered with the higher hooks via a context-local guard so a single `requests` call records exactly once.
+- **urllib3** — `urllib3.connectionpool.HTTPConnectionPool.urlopen`, lowest-tier wire-level capture (v0.6 / C-3.2). Sits below `requests` and `boto3`; transitively covers AWS Bedrock and any SDK that uses `urllib3` directly. Layered with the higher hooks via a context-local guard so a single `requests` call records exactly once. For Bedrock `Converse` / `ConverseStream` it also records the response (copied as botocore reads it), and mocked replay serves those calls back at this layer (**experimental**; see [replay modes](architecture/replay-modes.md)). A Bedrock endpoint set with `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` / `AWS_ENDPOINT_URL_BEDROCK` is detected at call time.
 - **MCP (Model Context Protocol)** — `mcp.client.session.ClientSession.call_tool`, recording every tool invocation as a `tool-calls.jsonl` entry with `transport=mcp` and a synthesized JSON-RPC envelope (v0.5; ADR-0015 §Primary). A result the server marks `isError: true` — how MCP reports a failing tool — is recorded as `status: error` with `error.type: McpToolError` and the result kept; mocked replay returns that result, as the original call did (releases up to v0.107.0 recorded it as a success). The same holds for `nova mcp-proxy`. **Works today — fail-open:** the hooked call returns, or raises, exactly what the un-hooked call would have. If the record cannot be built or written (a full disk, a removed capsule directory, a response object whose attributes raise), the record is dropped — never reported as a tool error — and the workload continues. The loss is counted (`MCPHook.dropped_records` and the capture's in-process drop counter) and logged once as a structured warning (`nova_event=capture.record_dropped`, exception type only). Under `nova capture` the hook runs in the workload's own process; that process hands its drop counts to `nova capture` when it exits, and they land in the capsule's `capture-health.json` under `sources.workload` (a process that ends with `os._exit` or is killed hands off nothing).
 - **Third-party plugins** — any class registered under the `novafabric.hooks` entry-point group is auto-discovered alongside the built-ins (v0.5.x experimental; RFC-0001 §Detailed design — Option C). Plugin authors: see [`docs/integrations/writing-a-hook-plugin.md`](integrations/writing-a-hook-plugin.md).
 
@@ -592,7 +594,9 @@ streamed and Responses API calls, the fail-closed contract — is listed under
 [Release scope](architecture/replay-modes.md)). A capsule that records **no command to re-run** — written
 by a framework adapter or the `@agent` decorator (`novafabric.sdk.agent`; `capture_mode: sdk-decorator`, a
 `@framework:name` label) or imported from OpenTelemetry spans — is refused
-before anything is spawned (`CapsuleNotReplayable`, exit 1; since v0.105.0).
+before anything is spawned (`CapsuleNotReplayable`, exit 1; since v0.105.0). An
+adapter capsule that also records its process invocation is re-run from it when
+every replay guard passes (experimental, new in v0.109.0, ADR-0306 Q7).
 Inside the re-spawned process:
 
 - `MockModelDispatcher` serves the recorded responses, in order, for OpenAI
@@ -628,12 +632,32 @@ Inside the re-spawned process:
   `novafabric.adapters.openai_agents.wrap_tools()`, by replacing the tool's
   `on_invoke_tool` — an **undocumented SDK seam**, checked against
   `openai-agents` 0.17.x — again for `nova capture python …` workloads only.
+  Function tools **not** passed through `wrap_tools` are recorded and served the
+  same way when the capsule holds their results (capture level `forensic`;
+  experimental, new in v0.109.0, through a private SDK helper checked against
+  `openai-agents` 0.24.0).
+- **Experimental (ADR-0306 slice 3, new in v0.109.0):** it also serves
+  **LangChain / LangGraph** tools (`@tool`, `StructuredTool`, `BaseTool`
+  subclasses, including through LangGraph's `ToolNode`) passed through
+  `novafabric.adapters.langchain_tools.wrap_tools()`, by returning each tool's
+  recorded body result from a generated subclass of the tool — NovaFabric's
+  construction, not a LangChain extension point, checked against
+  `langchain-core` 1.8.3 and `langgraph` 1.2.23 — for `nova capture python …`
+  workloads only. LangChain tools **not** passed through `wrap_tools` are
+  recorded too and, when the capsule holds their results (capture level
+  `forensic`), served the same way (experimental, new in v0.109.0); a strict replay
+  of a capsule whose observed records cannot be served refuses to start
+  (`ToolSurfaceNotServed`), an unmatched call is refused before its body runs,
+  and under `--permissive --allow-unknown-mutation` every one whose body runs is
+  counted in `tool_calls_live` and named in a `[LIVE] tool call` line.
 - **Every other tool runs live**: HTTP requests, shell commands, file writes,
   other framework-native tools, undeclared functions and other providers' SDKs are not
   intercepted. The
   result reports them as `tool_calls_not_interceptable`, and the outbound
   connections the replayed process opened as `network_connections_live`
-  (observed, not blocked). *Since v0.106.0 (slice 4, experimental):*
+  (observed, not blocked). A strict replay fails when one of them goes past
+  loopback (divergence `unserved_network`; works today, new in v0.109.0) — after the
+  fact, so the side effect has happened; `--hermetic` blocks instead. *Since v0.106.0 (slice 4, experimental):*
   the result an undeclared function sends back to the model is compared with the
   recorded one and a difference is reported in `replay_contract.tool_result_echo`
   — report-only, never a failure.
@@ -659,7 +683,7 @@ level. It drives the `--dry-run` report, and every write-permitting rung
 (`--allow-mutating`, `--allow-external-side-effects`, `--allow-unknown-mutation`)
 triggers a policy-engine gate (an audited allow/deny) before the replay starts. In
 `mocked` mode the run-time rule is fixed by ADR-0300: an intercepted call (MCP
-`call_tool`, a `record.tool` function, an ADK tool through the tool plugin, or an Agents SDK tool through `wrap_tools`) is served from the capsule or refused,
+`call_tool`, a `record.tool` function, an ADK tool through the tool plugin, or an Agents SDK or LangChain tool through its `wrap_tools`) is served from the capsule or refused,
 and every other tool runs live (the `--dry-run` report marks those `[LIVE]`). The
 rungs gate the intercepted surfaces in two places only (ADR-0306, experimental):
 under `--permissive` an unmatched call runs live only if a rung permits its class,

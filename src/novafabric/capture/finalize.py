@@ -71,6 +71,9 @@ class FinalizeResult:
     manifest: dict[str, Any]
     sealed: bool
     unsealed_reason: str | None = None
+    #: The ``replayability.json`` document written into the capsule (what a strict
+    #: mocked replay would do with it); ``None`` when it could not be computed.
+    replayability: dict[str, Any] | None = None
 
 
 def _sha256(data: bytes) -> str:
@@ -328,6 +331,11 @@ def finalize_capsule(
     if before_residual is not None:
         before_residual()
 
+    # Replayability at capture: what a strict mocked replay would do, classified now
+    # from the redacted streams by the replay's own predicates. Written before the
+    # residual pass and the digest map, so it is scanned and bound like any file.
+    replayability = write_replayability(capsule_dir, manifest, writer)
+
     # ADR-0009 residual pass: the LAST write to any evidence file is done, so
     # rescan the whole finished capsule (late files such as replay.yaml and the
     # C2PA marker, and anything a masker rewrote) with the built-in rules, which
@@ -365,6 +373,7 @@ def finalize_capsule(
             manifest=manifest,
             sealed=False,
             unsealed_reason=f"manifest gate refused to seal: {exc}",
+            replayability=replayability,
         )
 
     writer.write_text("capsule.yaml", manifest_text)
@@ -376,7 +385,34 @@ def finalize_capsule(
         manifest=manifest,
         sealed=sealed,
         unsealed_reason=None if sealed else reason,
+        replayability=replayability,
     )
+
+
+def write_replayability(
+    capsule_dir: Path, manifest: dict[str, Any], writer: Any
+) -> dict[str, Any] | None:
+    """Write ``replayability.json`` and return it; ``None`` when it could not be made.
+
+    Fail-open, like every capture-side report: a failure is logged and leaves no
+    file (readers treat an absent summary as unknown), and never fails the capture.
+    """
+    from novafabric.replay._replayability_summary import (  # noqa: PLC0415
+        REPLAYABILITY_REF,
+        assess_capsule,
+        render,
+    )
+
+    try:
+        summary = assess_capsule(capsule_dir, manifest, operation="replayability summary")
+        writer.write_text(REPLAYABILITY_REF, render(summary))
+    except Exception as exc:  # noqa: BLE001 -- a report never fails the capture
+        logger.warning(
+            "novafabric: %s not written: %s", REPLAYABILITY_REF,
+            redact_secrets_in_text(f"{type(exc).__name__}: {exc}"),
+        )
+        return None
+    return summary.as_dict()
 
 
 def _redact_mapping(value: Any) -> Any:
@@ -473,5 +509,6 @@ def finalize_in_process_capsule(
         logger.exception("novafabric: could not record why the capsule is unsealed")
         recorded = result.manifest
     return FinalizeResult(
-        manifest=recorded, sealed=False, unsealed_reason=result.unsealed_reason
+        manifest=recorded, sealed=False, unsealed_reason=result.unsealed_reason,
+        replayability=result.replayability,
     )

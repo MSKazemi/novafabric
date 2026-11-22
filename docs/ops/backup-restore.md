@@ -100,6 +100,15 @@ Home members in the set (registry snapshot, capsules) are restored only when
 you pass `--home PATH` — a pg restore never writes the local
 `~/.novafabric` implicitly.
 
+**Client and server versions (works today).** Restore with a `pg_restore` whose major
+version matches the target server. A newer `pg_restore` can send settings an older
+server rejects — `pg_restore` 17 or later against PostgreSQL 16 fails on
+`SET transaction_timeout`, whatever `pg_dump` wrote the set — and `pg_restore` cannot
+read an archive written by a newer `pg_dump`. The restore is a single transaction, so
+either case leaves the target unchanged, and the failed step names both versions and
+the fix (for example, install `postgresql-client-16`, or run `pg_restore` inside the
+server's container). The set records the `pg_dump` version used at backup time.
+
 **Manual fallback (works today, standard Postgres):**
 
 - `pg_restore --clean --if-exists` into a freshly created database.

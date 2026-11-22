@@ -8,21 +8,36 @@
   "additionalProperties": false,
   "required": [
     "schema_version",
-    "semconv_version",
-    "model_call_id",
-    "parent_span_id",
-    "started_at",
-    "finished_at",
-    "duration_ms",
-    "gen_ai.system",
-    "gen_ai.request.model",
-    "gen_ai.response.model",
-    "gen_ai.operation.name",
-    "gen_ai.request.messages",
-    "gen_ai.response.choices",
-    "gen_ai.usage.input_tokens",
-    "gen_ai.usage.output_tokens",
-    "status"
+    "model_call_id"
+  ],
+  "allOf": [
+    {
+      "$comment": "ADR-0321 (additive, optional). A record marked extensions['io.novafabric.replay_placeholder'] is a replay capsule placeholder for a call a mocked replay did not serve (it ran live, was refused, or matched nothing): it carries only what the replay observed, so the fields it could not observe are not required. Every record without the mark needs every field, exactly as before.",
+      "if": {
+        "required": ["extensions"],
+        "properties": {"extensions": {"required": ["io.novafabric.replay_placeholder"]}}
+      },
+      "else": {
+        "required": [
+          "schema_version",
+          "semconv_version",
+          "model_call_id",
+          "parent_span_id",
+          "started_at",
+          "finished_at",
+          "duration_ms",
+          "gen_ai.system",
+          "gen_ai.request.model",
+          "gen_ai.response.model",
+          "gen_ai.operation.name",
+          "gen_ai.request.messages",
+          "gen_ai.response.choices",
+          "gen_ai.usage.input_tokens",
+          "gen_ai.usage.output_tokens",
+          "status"
+        ]
+      }
+    }
   ],
   "properties": {
     "schema_version": {
@@ -481,6 +496,16 @@
       "type": "object",
       "description": "Vendor extensions. Keys must be reverse-DNS-prefixed.",
       "properties": {
+        "io.novafabric.replay_placeholder": {
+          "type": "string",
+          "enum": ["live", "refused", "unmatched"],
+          "description": "ADR-0321 (additive, optional). Only in a replay capsule (replay_mode set): this record is a placeholder for a call the mocked replay did not serve from the original capsule. 'live': it ran live (its outcome was not observed, so status is absent); 'refused': the replay refused it before it ran (status denied); 'unmatched': a strict replay stopped at it (status denied). The original run's record is never copied into a placeholder: it has no timing, request, arguments or result."
+        },
+        "io.novafabric.replay_surface": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ADR-0321 (additive, optional). On a replay capsule placeholder: the intercepted surface the call was made on, e.g. 'mcp.ClientSession.call_tool'."
+        },
         "io.novafabric.record_role": {
           "type": "string",
           "enum": ["logical", "transport"],

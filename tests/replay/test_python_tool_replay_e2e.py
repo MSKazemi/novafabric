@@ -19,6 +19,7 @@ from typing import Any
 import jsonschema
 import pytest
 import yaml
+from _mocked_replay_agent import assert_replay_outputs_hold_no_value
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -326,17 +327,33 @@ def test_a_capsule_captured_before_the_decorator_existed_fails_closed(env: Env) 
     assert "tool_call_unmatched" in _kinds(result)
 
 
+def _replayed_tool_tails(result: dict[str, Any], replay_dir: Path) -> list[str]:
+    """What the replay did with each tool call, one entry per call: the last
+    field of each ``tool_call_sequence`` entry (a record id, or ``live`` /
+    ``refused`` / ``unmatched``). The replay capsule's ``tool-calls.jsonl`` must
+    hold exactly as many records."""
+    (check,) = [c for c in result["fidelity"]["checks"] if c["name"] == "tool_call_sequence"]
+    tails = [str(entry).rsplit(":", 1)[1] for entry in check["replayed"]]
+    path = replay_dir / "tool-calls.jsonl"
+    lines = [ln for ln in path.read_text().splitlines() if ln.strip()] if path.exists() else []
+    assert len(lines) == len(tails), (lines, tails)
+    return tails
+
+
 # ── AC 6: --permissive keeps the safety ladder ──────────────────────────────
 
 
 def test_permissive_runs_an_unmatched_none_call_live(env: Env) -> None:
     capsule, _ = env.capture([_call("add", 1)])
-    result, replayed, _ = env.replay(
+    result, replayed, replay_dir = env.replay(
         capsule, "--permissive", plan=[_call("add", 1), _call("pure", 5)]
     )
     assert env.side_effects == ["pure 5"]
     assert replayed[1]["value"]["live"] == "live-in-replay"
     assert result["tool_calls_live"] == 1
+    # One entry per call: the unmatched `pure` is `live`, not `unmatched` + `live`.
+    tails = _replayed_tool_tails(result, replay_dir)
+    assert len(tails) == 2 and tails[1] == "live", tails
     assert result["status"] == "success"
     assert "tool_call_unmatched" in _kinds(result)
 
@@ -346,10 +363,12 @@ def test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag(
 ) -> None:
     capsule, _ = env.capture([_call("add", 1)])
     plan = [_call("add", 1), _call("unknown_tool", 5)]
-    result, replayed, _ = env.replay(capsule, "--permissive", plan=plan)
+    result, replayed, replay_dir = env.replay(capsule, "--permissive", plan=plan)
     assert env.side_effects == []
     assert result["tool_calls_live"] == 0
     assert result["replay_contract"]["tool_calls_refused"] == 1
+    tails = _replayed_tool_tails(result, replay_dir)
+    assert len(tails) == 2 and tails[1] == "refused", tails
     assert replayed[1]["error"] == "ReplayToolUnmatchedError"
     assert "--allow-unknown-mutation" in replayed[1]["message"]
 
@@ -537,9 +556,7 @@ def test_no_argument_or_result_value_reaches_the_event_log_or_result(env: Env) -
         capsule, plan=[_call("sentinel", SENTINEL), _call("sentinel", SENTINEL)]
     )
     assert result["status"] == "failure"
-    for path in replay_dir.rglob("*"):
-        if path.is_file():
-            assert SENTINEL not in path.read_text(errors="replace"), path
+    assert_replay_outputs_hold_no_value(replay_dir, capsule, SENTINEL)
 
 
 def test_a_secret_in_a_tool_result_is_stored_and_served_redacted(env: Env) -> None:

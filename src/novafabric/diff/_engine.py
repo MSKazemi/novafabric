@@ -32,6 +32,22 @@ class CapsuleFileError(ValueError):
         self.reason = reason
 
 
+#: ``_replay_capsule.PLACEHOLDER_EXT``: a replay capsule record for a call the
+#: mocked replay did not serve (``live``, ``refused``, ``unmatched``). The replay
+#: never recorded that call, so a pair holding one says so.
+_REPLAY_PLACEHOLDER = "io.novafabric.replay_placeholder"
+
+
+def _placeholders(a: dict[str, Any] | None, b: dict[str, Any] | None) -> dict[str, str]:
+    """``replay_placeholder_a`` / ``_b`` for whichever side is a placeholder."""
+    out: dict[str, str] = {}
+    for side, record in (("a", a), ("b", b)):
+        kind = _extension(record, _REPLAY_PLACEHOLDER) if record is not None else None
+        if isinstance(kind, str):
+            out[f"replay_placeholder_{side}"] = kind
+    return out
+
+
 def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
     """Records of a capsule JSONL file, and how many non-blank lines were skipped.
 
@@ -260,12 +276,14 @@ class DiffEngine:
                     "added": True,
                     "span_id": b.get("parent_span_id"),
                     "model_call_id_b": b.get("model_call_id"),
+                    **_placeholders(None, b),
                 })
             elif b is None and a is not None:
                 report.model_call_pairs.append({
                     "removed": True,
                     "span_id": a.get("parent_span_id"),
                     "model_call_id_a": a.get("model_call_id"),
+                    **_placeholders(a, None),
                 })
             elif a is not None and b is not None:
                 # Compare request (provider, model, messages) and response (choices).
@@ -300,6 +318,7 @@ class DiffEngine:
                     "provider_changed": provider_changed,
                     "params_changed": bool(changed_params),
                     "changed_params": changed_params,
+                    **_placeholders(a, b),
                 })
 
     def _diff_tool_calls(
@@ -319,12 +338,14 @@ class DiffEngine:
                     "added": True,
                     "tool_name": b.get("tool_name"),
                     "tool_call_id_b": b.get("tool_call_id"),
+                    **_placeholders(None, b),
                 })
             elif b is None and a is not None:
                 report.tool_call_pairs.append({
                     "removed": True,
                     "tool_name": a.get("tool_name"),
                     "tool_call_id_a": a.get("tool_call_id"),
+                    **_placeholders(a, None),
                 })
             elif a is not None and b is not None:
                 # Review replay-lineage-registry-06: at the default capture level a
@@ -352,6 +373,7 @@ class DiffEngine:
                     "status_changed": status_changed,
                     "status_a": a.get("status"),
                     "status_b": b.get("status"),
+                    **_placeholders(a, b),
                 })
 
     def _diff_outputs(

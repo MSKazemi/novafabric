@@ -2,14 +2,14 @@ id: soc2-type2-v1
 name: SOC 2 Type 2 — AI System Controls
 framework: SOC 2 Type 2
 version: "2017"
+# Criterion identifiers only. Titles and descriptions are NovaFabric's own summaries,
+# not AICPA text; load your licensed catalog with `--profile path.yaml` for the wording.
 controls:
   - id: CC6.1-LOGICAL-ACCESS
     title: Logical access security (CC6.1)
     description: >
-      The entity implements logical access security measures to protect
-      against threats from sources outside its system boundaries.
-      Access to information assets is restricted to authorised users,
-      internal processes, and authorised external parties.
+      Tool-permission and policy-decision records showing which tools agents were
+      allowed or denied during a run.
     evidence_requirements:
       - evidence_type: tool_permissions
         required: true
@@ -19,21 +19,19 @@ controls:
         description: Policy decision events documenting access control decisions
 
   - id: CC6.6-THREAT-MITIGATION
-    title: Vulnerability and threat mitigation (CC6.6)
+    title: Protection against threats from outside the system boundary (CC6.6)
     description: >
-      The entity implements controls to prevent or detect and act upon the
-      introduction of unauthorised or malicious software.
+      Policy-decision records showing requests that were blocked by policy during a run.
     evidence_requirements:
       - evidence_type: policy_events
         required: true
         description: Policy enforcement events documenting threat detection and mitigation
 
   - id: CC6.7-DATA-TRANSMISSION
-    title: Transmission of confidential information (CC6.7)
+    title: Protecting information in transmission (CC6.7)
     description: >
-      The entity restricts the transmission of confidential information to
-      authorised internal and external users and protects it during
-      transmission.
+      A personal-data redaction manifest for the run and, optionally, a seal that
+      makes later changes to the recorded data detectable.
     evidence_requirements:
       - evidence_type: pii_scan
         required: true
@@ -45,9 +43,8 @@ controls:
   - id: CC7.1-MONITORING
     title: Detection and monitoring procedures (CC7.1)
     description: >
-      To meet its objectives, the entity uses detection and monitoring
-      procedures to identify changes to configurations or the environment
-      or system components.
+      A per-run record of model calls and, optionally, lineage records that help
+      trace what changed between runs.
     evidence_requirements:
       - evidence_type: model_calls
         required: true
@@ -59,10 +56,8 @@ controls:
   - id: CC7.2-ANOMALY-MONITORING
     title: Monitoring for anomalies (CC7.2)
     description: >
-      The entity monitors system components and the operation of those
-      components for anomalies that are indicative of malicious acts,
-      natural disasters, and errors affecting the entity's ability to
-      meet its objectives.
+      A per-run record of model calls, and optionally policy decisions, that a
+      reviewer can examine for unusual behaviour.
     evidence_requirements:
       - evidence_type: model_calls
         required: true
@@ -72,20 +67,19 @@ controls:
         description: Policy events capturing anomaly responses
 
   - id: CC9.1-RISK-ASSESSMENT
-    title: Risk assessment (CC9.1)
+    title: Risk mitigation (CC9.1)
     description: >
-      The entity identifies, selects, and develops risk mitigation activities
-      for risks arising from potential business disruptions.
+      Policy-decision records that document how risky actions were handled during a run.
     evidence_requirements:
       - evidence_type: policy_events
         required: true
         description: Policy decision events documenting risk assessment outcomes
 
   - id: CC9.2-VENDOR-RISK
-    title: Vendor and business partner risk management (CC9.2)
+    title: Vendor and business partner risk (CC9.2)
     description: >
-      The entity assesses and manages risks associated with vendors and
-      business partners.
+      Records of which third-party models a run called and, optionally, lineage
+      showing where models and data came from.
     evidence_requirements:
       - evidence_type: model_calls
         required: true

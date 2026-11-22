@@ -23,7 +23,7 @@ from pathlib import Path
 
 from ulid import ULID
 
-from novafabric._capsule_fs import read_capsule_member_or_none
+from novafabric._capsule_fs import is_capsule_regular_file, read_capsule_member_or_none
 from novafabric.compliance.capture_coverage import evidence_is_uncaptured, not_captured_note
 
 from .models import AuditReport, Control, ControlCoverage, ControlProfile, EvidenceRequirement
@@ -102,6 +102,20 @@ def _check_seal_signature(capsule_dir: Path) -> bool:
     return capsule_seal_verifies(capsule_dir)
 
 
+def _check_tool_calls(capsule_dir: Path) -> bool:
+    """At least one recorded tool call.
+
+    ``nova capture`` creates an empty ``tool-calls.jsonl`` for every run, so only a
+    non-empty regular file counts; a link or FIFO is never followed or opened.
+    """
+    if not is_capsule_regular_file(capsule_dir, "tool-calls.jsonl"):
+        return False
+    try:
+        return (capsule_dir / "tool-calls.jsonl").lstat().st_size > 0
+    except OSError:
+        return False
+
+
 def _check_lineage(capsule_dir: Path) -> bool:
     p = capsule_dir / "lineage.jsonl"
     return p.exists() and p.stat().st_size > 0
@@ -114,7 +128,11 @@ _EVIDENCE_CHECKERS: dict[str, _EvidenceChecker] = {
     "policy_events": _check_policy_events,
     "seal_signature": _check_seal_signature,
     "lineage": _check_lineage,
+    "tool_calls": _check_tool_calls,
 }
+
+#: Every ``evidence_type`` token a profile may use (one checker each).
+KNOWN_EVIDENCE_TYPES: frozenset[str] = frozenset(_EVIDENCE_CHECKERS)
 
 
 def _has_evidence(capsule_dir: Path, evidence_type: str) -> bool:

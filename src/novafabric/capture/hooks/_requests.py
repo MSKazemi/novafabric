@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder, get_current_writer
+from novafabric.capture.hooks._bedrock import bedrock_surface
 from novafabric.capture.hooks._fail_open import (
     MODEL_CALLS_STREAM,
     fail_open,
@@ -33,11 +34,20 @@ from novafabric.capture.hooks._otel_genai import (
     extract_request_attributes,
     safe_response_size,
 )
+from novafabric.capture.hooks._sdk_streams import CaptureBinding, _StreamState
 from novafabric.capture.hooks._url_registry import (
     UrlRegistry,
     load_url_registry,
 )
-from novafabric.capture.record_roles import stamp_wire_record
+from novafabric.capture.hooks._wire_body import (
+    WireBodySink,
+    content_encoding,
+    mark_generic,
+    recording_off_reason,
+    records_body,
+)
+from novafabric.capture.hooks._wire_body import apply_response as apply_wire_response
+from novafabric.capture.record_roles import current_sdk_call_id, stamp_wire_record
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
@@ -136,12 +146,12 @@ class RequestsHook:
             raise
         finally:
             self._record(prepared_request, response, url, started,
-                         int((time.monotonic() - t0) * 1000), error_status)
+                         int((time.monotonic() - t0) * 1000), error_status, t0)
         return response
 
     def _record(
         self, prepared_request: Any, response: Any, url: str, started: str,
-        duration_ms: int, error_status: int | None,
+        duration_ms: int, error_status: int | None, t0: float | None = None,
     ) -> None:
         """Write the model-call record and the network event. Never raises:
         the response or the transport's exception passes through unchanged."""
@@ -162,18 +172,21 @@ class RequestsHook:
                 if error_status is not None
                 else getattr(response, "status_code", 200) if response is not None else 0
             )
-            record = build_record_envelope(
-                model_call_id=new_ulid(),
-                parent_span_id=self._parent_span_id,
-                started_at=started,
-                finished_at=_now(),
-                duration_ms=duration_ms,
-                status="success" if 0 < status_code < 400 else "error",
+            system = self._registry.gen_ai_system(url)
+            generic = records_body(
+                system, in_sdk_call=current_sdk_call_id() is not None,
+                dedicated=bedrock_surface(url, system) is not None,
             )
-            record.update(extract_request_attributes(
-                body, url=url, gen_ai_system=self._registry.gen_ai_system(url),
-            ))
-            get_current_writer(self._writer).append_model_call(stamp_wire_record(record))
+            if not generic:
+                self._write_record(prepared_request, url, body, status_code, started,
+                                   duration_ms)
+            elif not self._defer_wire_record(
+                prepared_request, url, body, response, status_code, started, t0
+            ):
+                self._write_record(
+                    prepared_request, url, body, status_code, started, duration_ms,
+                    wire=_buffered_wire(response, error_status),
+                )
 
         # Record a NetworkEvent in the active capsule (fail-open).
         with fail_open(_LIBRARY, NETWORK_EVENTS_STREAM):
@@ -191,3 +204,93 @@ class RequestsHook:
                     library=_LIBRARY,
                     is_ai_api=_is_ai_api(url),
                 )
+
+
+    # ── records ──────────────────────────────────────────────────────────
+
+    def _write_record(
+        self, prepared_request: Any, url: str, body: dict[str, Any], status_code: int,
+        started: str, duration_ms: int, *, wire: dict[str, Any] | None = None,
+    ) -> None:
+        """One model-call record; ``wire`` (ADR-0324): ``apply_response`` keywords of a
+        generic-wire call, whose record also carries the match key."""
+        record = build_record_envelope(
+            model_call_id=new_ulid(),
+            parent_span_id=self._parent_span_id,
+            started_at=started,
+            finished_at=_now(),
+            duration_ms=duration_ms,
+            status="success" if 0 < status_code < 400 else "error",
+        )
+        record.update(extract_request_attributes(
+            body, url=url, gen_ai_system=self._registry.gen_ai_system(url),
+        ))
+        if wire is not None:
+            mark_generic(record, str(getattr(prepared_request, "method", "") or ""), url,
+                         getattr(prepared_request, "body", None))
+            apply_wire_response(record, status=status_code, **wire)
+        get_current_writer(self._writer).append_model_call(stamp_wire_record(record))
+
+    def _defer_wire_record(
+        self, prepared_request: Any, url: str, body: dict[str, Any], response: Any,
+        status_code: int, started: str, t0: float | None,
+    ) -> bool:
+        """Copy a ``stream=True`` body as the workload reads it; record when the read ends.
+
+        True when the record is now deferred; False to record now (no response, a body
+        already read, recording off, a content encoding, or a raw body whose reads cannot
+        be shadowed)."""
+        from novafabric.capture.hooks._urllib3 import _shadow_body_reads
+
+        if response is None or recording_off_reason() is not None:
+            return False
+        if isinstance(vars(response).get("_content"), (bytes, bytearray)):
+            return False
+        raw = getattr(response, "raw", None)
+        if raw is None:
+            return False
+        headers = getattr(response, "headers", None)
+        sink = WireBodySink(encoding=content_encoding(headers))
+        if sink.not_recorded is not None:
+            return False
+        start_t = t0 if t0 is not None else time.monotonic()
+        reason = str(getattr(response, "reason", "") or "")
+
+        def done(
+            folded: WireBodySink, _count: int, _first_ms: int | None, complete: bool,
+            error: BaseException | None = None,
+        ) -> None:
+            with fail_open(_LIBRARY, MODEL_CALLS_STREAM):
+                self._write_record(
+                    prepared_request, url, body, status_code, started,
+                    int((time.monotonic() - start_t) * 1000),
+                    wire={
+                        "reason": reason, "headers": headers, "sink": folded,
+                        "streamed": True, "complete": complete,
+                        "not_recorded": (
+                            f"the response stream failed part-way ({type(error).__name__})"
+                            if error is not None else None
+                        ),
+                    },
+                )
+
+        state = _StreamState(sink, done, CaptureBinding.capture())
+        return _shadow_body_reads(raw, state.add, state.finish)
+
+
+def _buffered_wire(response: Any, error_status: int | None) -> dict[str, Any]:
+    """``apply_response`` keywords for a response whose body requests already read."""
+    if response is None or error_status is not None:
+        return {"reason": "", "headers": None, "sink": None, "streamed": False,
+                "complete": False, "not_recorded": "the request raised before a response"}
+    content = vars(response).get("_content")
+    sink: WireBodySink | None = None
+    why: str | None = None
+    if isinstance(content, (bytes, bytearray)):
+        sink = WireBodySink()
+        sink.add(content)
+    else:
+        why = "the response body was not read"
+    return {"reason": str(getattr(response, "reason", "") or ""),
+            "headers": getattr(response, "headers", None), "sink": sink,
+            "streamed": False, "complete": True, "not_recorded": why}
