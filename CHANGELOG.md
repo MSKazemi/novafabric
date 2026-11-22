@@ -11,6 +11,10 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Added
+
+- **`examples/evidence_lab/`: EvidenceLab D1, one deterministic incident captured for real (example only).** `python examples/evidence_lab/run.py --scenario service-incident-v1 --output-dir PATH` starts a strict loopback fixture model, runs the actual `nova capture` around a small agent (two declared read-only `record.tool` calls and one genuine OpenAI SDK call) and checks the capsule against the scenario's own fixtures: one logical model call, two tool calls in order, digest-only tool records, matching result digests. It reports the task verdict (`FAIL` here: the scenario is deliberately unsafe) separately from the harness verdict, and `NOT_EVALUATED` for integrity and replay. No change to `src/novafabric`, schemas, the CLI or dependencies; the BlackBox demo is untouched. Skips with exit 77 when `openai` is missing.
+
 ### Documentation
 
 - **SECURITY.md says what a capsule stores.** A new section states that capsules hold model prompts and
