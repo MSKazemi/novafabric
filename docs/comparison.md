@@ -51,9 +51,11 @@ Use something else if:
   key) is signed, can carry an RFC 3161 timestamp, and verifies with no server and no
   network. A seal proves the record is unchanged since signing; it does not prove the
   record is complete.
-- **Replaying a run against its recorded model responses** — no live model call and no
-  model tokens spent. OpenAI and Anthropic model calls (sync or async, streamed or
-  not) and MCP tool results are served from the capsule; every other tool runs live.
+- **Replaying a run against its recorded model responses** — OpenAI and Anthropic model
+  calls (sync or async, streamed or not) are served from the capsule, so those calls are
+  never sent live and spend no model tokens; MCP tool results are served from the capsule
+  too. Every other tool runs live, and a model call on any other surface is not served: it
+  runs live, and the replay report may not count it yet (a known issue).
 - **Structural diff between two runs** — not "metric A went up", but *what changed
   in the execution*.
 - **Air-gapped and regulated environments.** No telemetry, no update checks, no
