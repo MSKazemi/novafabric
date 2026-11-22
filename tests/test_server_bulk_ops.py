@@ -694,7 +694,8 @@ class TestDeleteCoreEdges:
         assert worm_locked_until(capsule_dir, "any-run") is None
 
     def test_upload_index_failure_never_blocks_upload(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         import io
         import zipfile
@@ -718,6 +719,51 @@ class TestDeleteCoreEdges:
             files={"capsule": ("c.zip", buf, "application/zip")},
         )
         assert resp.status_code == 201  # fail-open: upload unaffected
+        assert any(
+            "capsule_runs_cache_index_failed" in record.message
+            and rid in record.message
+            and "error_type=RuntimeError" in record.message
+            for record in caplog.records
+        ), "a failed derived-index write must be visible to operators"
+
+
+def test_upload_metadata_store_failure_warns_without_leaking_exception_text(
+    capsule_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from novafabric.server.routes import capsules
+
+    class BrokenStore:
+        def begin_tenant_context(self, tenant_id: Any) -> Any:
+            raise RuntimeError("db password secret-example")
+
+    monkeypatch.setattr(capsules, "get_metadata_store_dep", lambda: BrokenStore())
+    monkeypatch.setattr(capsules, "_record_usage_capsule_created", lambda *args: None)
+    monkeypatch.setattr(capsules, "_notify_webhooks_capsule_created", lambda *args: None)
+    run_id = str(uuid4())
+    manifest = {"run_id": run_id, "status": "success"}
+    dest = capsule_dir / run_id
+    dest.mkdir()
+    (dest / "capsule.yaml").write_text(yaml.safe_dump(manifest))
+    request = SimpleNamespace()
+    auth = SimpleNamespace(tenant_id=str(uuid4()))
+
+    response = capsules._index_and_meter(
+        request, run_id, manifest, dest, tmp_path / "runs.db", capsule_dir, auth
+    )
+
+    assert response["run_id"] == run_id
+    warnings = [
+        record.message for record in caplog.records
+        if "capsule_metadata_index_failed" in record.message
+    ]
+    assert len(warnings) == 1
+    assert run_id in warnings[0]
+    assert "error_type=RuntimeError" in warnings[0]
+    assert "secret-example" not in caplog.text
 
 
 # --------------------------------------------------------------------------- #
