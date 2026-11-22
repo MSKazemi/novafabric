@@ -47,6 +47,7 @@ from novafabric.replay._model_errors import (
     UnreconstructableError,
     rebuild_sdk_error,
 )
+from novafabric.replay._servability import NOT_SERVABLE, classify
 
 pytest.importorskip("openai")
 pytest.importorskip("mcp")
@@ -412,11 +413,30 @@ def test_legacy_capsule_serves_no_wire_record_as_an_error() -> None:
     assert all("error" in r for r in served if r["status"] == "error")
 
 
+def test_the_legacy_fixtures_unserved_calls_make_strict_replay_refuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0319: the fixture also records a ``with_raw_response`` call and a
+    pre-ADR-0304 async call, both with no response. A strict replay refuses the
+    whole capsule up front rather than let either run live."""
+    result, obs = _synthetic_replay(tmp_path, monkeypatch, _legacy_records(), [{"op": "chat"}])
+    assert result.status == "aborted" and obs == []
+    assert result.error["type"] == "ModelSurfaceNotServable"
+    assert result.error["model_calls_not_servable_by_system"] == {
+        "openai": {"count": 2, "hosts": ["api.openai.com"]}
+    }
+
+
 def test_legacy_capsule_replays_until_its_unrebuildable_error_then_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # ADR-0319: without the fixture's two unservable records (raw, async), which
+    # make a strict replay refuse up front (test above).
+    records = [
+        r for r, c in zip(_legacy_records(), classify(_legacy_records())) if c != NOT_SERVABLE
+    ]
     result, obs = _synthetic_replay(
-        tmp_path, monkeypatch, _legacy_records(),
+        tmp_path, monkeypatch, records,
         [{"op": "chat"}, {"op": "stream_chat"}, {"op": "chat"}, {"op": "chat", "catch": True}],
     )
     # The retried call's 500 wire attempt was not served: call 3 got its success.

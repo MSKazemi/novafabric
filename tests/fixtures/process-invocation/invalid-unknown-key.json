@@ -1,0 +1,10 @@
+{
+  "schema_version": "0.1.0",
+  "argv": ["python", "agent.py"],
+  "entry_kind": "script",
+  "entry": "agent.py",
+  "cwd": "~/project",
+  "adapter_run_ordinal": 1,
+  "host_modules": [],
+  "env": {"OPENAI_API_KEY": "sk-should-never-be-recorded"}
+}

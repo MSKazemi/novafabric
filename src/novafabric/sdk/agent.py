@@ -18,6 +18,7 @@ from opentelemetry import trace
 from novafabric._capsule_fs import read_capsule_member_or_none
 from novafabric._capsule_version import CAPSULE_SCHEMA_VERSION
 from novafabric.capture.hooks._fail_open import note_capture_failure
+from novafabric.capture.process_invocation import attach_facet, begin_adapter_run
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.teardown import TeardownSteps, novafabric_version
 
@@ -170,6 +171,8 @@ class _SdkCapture:
     created_at: str
     t0: float
     manifest_tags: dict[str, Any]
+    #: ADR-0306 Q7: how this process was started, so replay can re-run it.
+    invocation: dict[str, Any] | None = None
 
     @classmethod
     def start(
@@ -185,6 +188,11 @@ class _SdkCapture:
         # workload runs; an invalid ambient env var warns and is ignored.
         manifest_tags = _resolve_tags(tags)
 
+        # ADR-0306 Q7: counted before the store is opened; under mocked replay
+        # the call runs uncaptured (the replay's dispatchers serve its calls).
+        adapter_run = begin_adapter_run("agent")
+        if adapter_run.replaying:
+            return None
         run_id = new_ulid()
         # M13: ``store`` is a capsule *store*, exactly like ``nova capture
         # --output-dir``: every call gets its own fresh ``<store>/<run_id>/``.
@@ -219,6 +227,7 @@ class _SdkCapture:
             created_at=_now(),
             t0=time.monotonic(),
             manifest_tags=manifest_tags,
+            invocation=adapter_run.facet,
         )
 
     def finish(self, exc: BaseException | None) -> None:
@@ -279,6 +288,7 @@ class _SdkCapture:
         }
         if error:
             manifest["error"] = error
+        attach_facet(manifest, self.invocation)
 
         # Main scan (after replay.yaml), manifest redaction, lineage, residual pass,
         # evidence_digests, gate and opt-in seal: the path `nova capture` uses.

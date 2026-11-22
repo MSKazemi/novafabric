@@ -238,7 +238,7 @@
         "network_connections_live": {
           "type": "integer",
           "minimum": 0,
-          "description": "ADR-0304: IPv4/IPv6 connection attempts the replayed Python process made (observed, never blocked). A lower bound when network_connections_capped is true."
+          "description": "ADR-0304: IPv4/IPv6 connection attempts the observed Python processes of the replayed tree made (the replayed process and the children that reported in; observed, never blocked). A lower bound when network_connections_capped is true or network_observation_coverage is partial."
         },
         "network_connections_capped": {
           "type": "boolean",
@@ -250,8 +250,198 @@
             "type": "string"
           },
           "description": "ADR-0304: distinct host:port destinations, first 20."
+        },
+        "network_connect_outcomes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "destination",
+              "attempts",
+              "outcomes"
+            ],
+            "properties": {
+              "destination": {
+                "type": "string"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "outcomes": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "description": "Additive: per host:port destination (first 20, first-seen order), the connection attempts counted in network_connections_live and how each ended -- ok (connect returned, connect_ex 0), in_progress (a non-blocking connect was started; its completion is not observed), timeout, error (any other exception), unknown (no outcome logged: the process ended inside the call), or the errno name (ENETUNREACH, ECONNREFUSED, ...). Outcomes sum to attempts. Python socket calls only: connects made inside C code -- glibc getaddrinfo's RFC 6724 address-ordering probes (a datagram connect that sends nothing), C-extension sockets, non-Python children -- are not seen, so a syscall tracer counts more. Absent when no attempt was observed."
+        },
+        "network_observation_scope": {
+          "type": "string",
+          "enum": [
+            "python-process"
+          ],
+          "description": "ADR-0319: what network_connections_live counts -- sockets of the replayed Python process (and of Python children that load the replay dispatcher or the child observer), never those of a non-Python child process."
+        },
+        "network_observation_coverage": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "none"
+          ],
+          "description": "ADR-0319 (#52 part 2): complete -- every child process started through the audited calls reported its own connections (within network_observation_scope); partial -- at least one did not (child_processes_unobserved), the child count was capped, or children were not counted, so network_connections_live is a lower bound; none -- no network observer was installed."
+        },
+        "network_connections_live_children": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "ADR-0319 (#52 part 2): the part of network_connections_live made by observed child processes."
+        },
+        "network_connections_unserved": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "W0 (ADR-0319 amendment): the IPv4/IPv6 connect attempts in network_connections_live to a destination other than loopback (127.0.0.0/8, ::1, localhost), plus at most one per process past the event cap. Served surfaces answer in-process and never open a socket, so none of these was served. Under divergence_policy fail any of them is the divergence unserved_network. A lower bound when network_observation_coverage is partial."
+        },
+        "network_destinations_unserved": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "W0 (ADR-0319 amendment): distinct host:port destinations of network_connections_unserved, first 20."
+        },
+        "unserved_network_policy": {
+          "type": "string",
+          "enum": [
+            "divergence",
+            "reported"
+          ],
+          "description": "W0 (ADR-0319 amendment): what an unserved non-loopback connect attempt does -- divergence (strict replay, the default: divergence unserved_network, the replay fails) or reported (--permissive: counted only)."
+        },
+        "model_calls_not_servable_by_system": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "description": "ADR-0319: recorded model calls mocked replay cannot serve, by gen_ai.system: their count and up to 10 endpoint host[:port]. Non-empty only under --permissive (a strict replay refuses to start); they ran live if the workload made them."
+        },
+        "child_processes_observed": {
+          "type": "boolean",
+          "description": "ADR-0319: the replayed process reported the child processes it started (audit hook installed)."
+        },
+        "child_processes_spawned": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "ADR-0319: processes the observed Python processes started (subprocess, os.system, posix_spawn, fork, exec); see child_processes_network_observed / child_processes_unobserved for which reported their network activity. File activity is never observed. A lower bound when child_processes_capped is true."
+        },
+        "child_processes_network_observed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "ADR-0319 (#52 part 2): started children that reported their own connections (Python children, including those whose environment dropped the replay variables, such as MCP stdio servers)."
+        },
+        "child_processes_unobserved": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "ADR-0319 (#52 part 2): child_processes_spawned minus child_processes_network_observed -- children whose network activity is unknown (non-Python programs, Python started with -I/-E or without the replay environment)."
+        },
+        "child_processes_argv0": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "ADR-0319: distinct basenames of the programs started, first 10 (never arguments)."
+        },
+        "child_processes_capped": {
+          "type": "boolean",
+          "description": "ADR-0319: more child processes were started than the observer logs per process."
+        },
+        "tool_calls_mocked_by_source": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "ADR-0306 r3 amendment: served tool calls whose result did not come from the tool record itself, by source. `model-request-echo`: a record captured without its result, served from the tool result the next recorded model request sent back, only when it matches the recorded result_digest. Also counted in tool_calls_mocked. Additive and optional; omitted when empty."
+        },
+        "tool_calls_live_by_tool": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "surface": {
+                "type": "string"
+              },
+              "tool_name": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "description": "Intercepted or observed tool calls that ran live, by surface and tool name (first 50 pairs); the CLI names each as a [LIVE] tool call line."
+        },
+        "tool_calls_live_by_tool_not_listed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Distinct (surface, tool name) pairs left out of tool_calls_live_by_tool."
+        },
+        "tool_calls_not_served_by_surface": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "description": "ADR-0306 r3 amendment, under --permissive: recorded observed tool calls (LangChain tools not passed through wrap_tools) mocked replay cannot serve, by surface; each one made was refused before its body ran, or ran live under --allow-unknown-mutation and is counted in tool_calls_live. Observed calls with a servable record are served and not listed. `reasons` (optional, additive) lists up to 5 distinct reasons."
+        },
+        "adapter_runs_expected": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "ADR-0306 Q7: an adapter capsule re-run from its recorded process invocation -- the adapter runs the capsule recorded for its process (the replay re-runs run #1, so 1). Present only for such a replay. Additive and optional."
+        },
+        "adapter_runs_observed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "ADR-0306 Q7: framework-adapter runs the re-run process made. Any difference from adapter_runs_expected is an adapter_run_count_mismatch divergence. Additive and optional."
         }
       }
+    },
+    "model_calls_not_servable": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mocked mode (ADR-0319): recorded model calls on a surface mocked replay cannot serve (an unserved provider, or a served surface with no recorded response). A strict replay refuses to start when this is non-zero (error.type ModelSurfaceNotServable). Additive and optional."
     },
     "exit_code": {
       "type": [
@@ -268,6 +458,115 @@
         },
         "message": {
           "type": "string"
+        },
+        "guard": {
+          "type": "string",
+          "enum": [
+            "facet_malformed",
+            "entry_not_reproducible",
+            "long_lived_host",
+            "argv_redacted",
+            "not_first_adapter_run",
+            "entry_file_missing",
+            "entry_changed",
+            "entry_not_verifiable"
+          ],
+          "description": "ADR-0306 Q7, on error.type CapsuleNotReplayable: the guard that refused an adapter capsule's recorded process invocation. Absent when the capsule records no invocation at all. Additive and optional."
+        },
+        "model_calls_not_servable_by_system": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "description": "ADR-0319, on error.type ModelSurfaceNotServable: the unservable recorded model calls by gen_ai.system."
+        },
+        "tool_calls_not_served_by_surface": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "description": "On error.type ToolSurfaceNotServed: the recorded observed tool calls (LangChain tools not passed through wrap_tools) mocked replay cannot serve, by surface (ADR-0306 r3 amendment). `reasons` (optional, additive) lists up to 5 distinct reasons, e.g. payload capture off."
+        },
+        "check": {
+          "type": "string",
+          "enum": [
+            "platform",
+            "bwrap-missing",
+            "landlock-abi",
+            "preflight",
+            "writable-path",
+            "no-backend"
+          ],
+          "description": "ADR-0322, on error.type HermeticUnavailable: the precondition that failed (writable-path: the working directory or the result directory would make the host root, a masked directory or a socket directory writable; landlock-abi: Landlock absent or older than ABI 4; no-backend: --hermetic-backend auto found neither bwrap nor Landlock usable, see attempts)."
+        },
+        "stderr": {
+          "type": "string",
+          "description": "ADR-0322, on error.type HermeticUnavailable with check preflight: the preflight's stderr (first 2000 characters)."
+        },
+        "mechanism": {
+          "type": "string",
+          "enum": [
+            "bwrap",
+            "landlock"
+          ],
+          "description": "ADR-0322 amendment, on error.type HermeticUnavailable: the backend whose precondition failed (absent for writable-path and no-backend)."
+        },
+        "attempts": {
+          "type": "array",
+          "description": "ADR-0322 amendment, on check no-backend: every backend --hermetic-backend auto tried, in order, and why it failed.",
+          "items": {
+            "type": "object",
+            "required": [
+              "mechanism",
+              "check",
+              "message"
+            ],
+            "properties": {
+              "mechanism": {
+                "type": "string",
+                "enum": [
+                  "bwrap",
+                  "landlock"
+                ]
+              },
+              "check": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
         }
       },
       "description": "Error details if status is failure or aborted."
@@ -307,6 +606,281 @@
         }
       },
       "description": "Tool calls whose stored arguments/result no longer conform to their declared *_schema_ref (ADR-0128). Additive, optional; recorded in every mode, gating only in exact."
+    },
+    "fidelity": {
+      "type": "object",
+      "description": "Mocked mode, experimental (ADR-0321): outcome equivalence of the replay with the recorded run. `status` keeps its meaning (how the replayed process ended), so a faithful replay of a run that failed has status failure and verdict faithful. Additive and optional.",
+      "required": [
+        "verdict",
+        "checks"
+      ],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "faithful",
+            "diverged",
+            "failed",
+            "not_compared"
+          ],
+          "description": "faithful: every computed check equal, no divergence, no live or unintercepted call. diverged: a computed check is unequal. failed: the replayed command did not run to completion (refused, timed out, not launched, dispatcher not installed). not_compared: the capsule lacks the recorded exit code or output streams, or its file-effects record is present but unusable (incomplete, redacted, not matching its evidence digest) or names a file that could not be compared. A capsule with no file-effects record at all (captured before it existed, a non-Python workload, a container or batch runner) is not not_compared on that account: file_effects is listed in unchecked and the verdict does not cover it. Never faithful by default."
+        },
+        "normalization": {
+          "type": "string",
+          "enum": [
+            "none",
+            "volatile-ids/1"
+          ],
+          "description": "The declared, versioned volatile-token rule set the normalised checks used (ADR-0321 amendment): volatile-ids/1 masks RFC 4122 UUIDs in stdout_normalized_sha256 and nothing else. none: no check normalised anything (a replay refused before it ran)."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why the verdict is failed."
+        },
+        "unchecked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Required checks the capsule holds no record for at all (today only file_effects): each is equal null, the verdict is decided by the other checks and does not cover it. Additive (ADR-0321 amendment)."
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "equal"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "exit_code, stdout_normalized_sha256, stdout_sha256, stderr_sha256, file_effects, file_writes_not_recorded, model_call_sequence, tool_call_sequence, divergence, live_calls, tool_result_echo; more may be added."
+              },
+              "equal": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "null when the check could not be computed."
+              },
+              "recorded": {
+                "description": "The recorded value (an exit code, a sha256:<hex> digest, a call sequence, a count; for file_effects the number of recorded written files)."
+              },
+              "replayed": {
+                "description": "The replayed value, in the same form (for file_effects the number of those files the replay wrote again, and so compared)."
+              },
+              "note": {
+                "type": "string"
+              },
+              "normalizer": {
+                "type": "string",
+                "description": "The rule set this check's values went through (stdout_normalized_sha256 only)."
+              },
+              "differences": {
+                "type": "array",
+                "description": "file_effects: the recorded written files the replay wrote again whose state after the replay differs; file_writes_not_recorded: files only the replay wrote (recorded: not written). First 50. A state is a sha256:<hex> digest or absent, not_regular, too_large(<n> bytes), unreadable.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "recorded",
+                    "replayed"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "Relative to the working directory, ~/... under the home directory, else absolute."
+                    },
+                    "recorded": {
+                      "type": "string"
+                    },
+                    "replayed": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "comparison": {
+                "type": "string",
+                "enum": [
+                  "per-model-turn-multiset",
+                  "strict-order"
+                ],
+                "description": "tool_call_sequence only, additive: per-model-turn-multiset -- the tool calls between two consecutive model calls (one model turn; recorded turns from started_at) are compared as a multiset, the turns in order, so parallel calls served in another order are equal; strict-order -- the recording gives no usable turn boundaries (a missing or unreadable started_at, model calls not started in recorded order) and the whole sequence is compared in order."
+              },
+              "advisory": {
+                "type": "boolean",
+                "description": "true: reported but never decides the verdict (stdout_sha256 and stderr_sha256, the raw byte comparisons, and file_writes_not_recorded, ADR-0321)."
+              }
+            }
+          }
+        }
+      }
+    },
+    "replay_capsule_ref": {
+      "type": "string",
+      "description": "Mocked mode (ADR-0321): the replay capsule's manifest, relative to the replay result directory; `nova diff <capsule> <replay-dir>` compares the two runs. Additive and optional."
+    },
+    "hermetic": {
+      "type": "object",
+      "description": "Mocked mode with --hermetic, experimental (ADR-0322): how the replayed process tree was isolated. Absent without the flag. Additive and optional.",
+      "required": [
+        "enabled",
+        "mechanism",
+        "network",
+        "filesystem",
+        "counting"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "const": true
+        },
+        "mechanism": {
+          "type": "string",
+          "enum": [
+            "bwrap",
+            "landlock"
+          ]
+        },
+        "bwrap_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "landlock_abi": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "ADR-0322 amendment, mechanism landlock: the kernel's Landlock ABI version."
+        },
+        "network": {
+          "type": "string",
+          "enum": [
+            "none"
+          ],
+          "description": "No network beyond the sandbox. bwrap: a private network namespace with only its own loopback; host services, host loopback included, are unreachable. landlock: every TCP bind and connect is denied (loopback included) and UDP, raw/ICMP, SCTP, MPTCP and Unix socket creation fails (seccomp)."
+        },
+        "filesystem": {
+          "type": "string",
+          "enum": [
+            "read-only"
+          ],
+          "description": "Host tree read-only except writable_paths. bwrap: /run, /tmp, /var/tmp and XDG_RUNTIME_DIR masked. landlock: nothing is masked (those stay readable, not writable); TMPDIR points into the replay's temp dir."
+        },
+        "writable_paths": {
+          "type": "array",
+          "description": "The directories bound read-write: the replayed process's working directory and the replay result directory (which also holds the replay's temp dir during the run). Writes anywhere else fail.",
+          "items": {
+            "type": "object",
+            "required": [
+              "role",
+              "path"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "working_directory",
+                  "replay_result_dir"
+                ]
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "enforced": {
+          "type": "array",
+          "description": "ADR-0322 amendment: the controls this mechanism enforces, and by what (bwrap, landlock or seccomp).",
+          "items": {
+            "type": "object",
+            "required": [
+              "control",
+              "by"
+            ],
+            "properties": {
+              "control": {
+                "type": "string",
+                "enum": [
+                  "network.tcp",
+                  "network.udp",
+                  "network.other_inet",
+                  "network.unix",
+                  "network.unix_abstract",
+                  "network.unix_visible_paths",
+                  "filesystem.write",
+                  "filesystem.read_hidden_dirs",
+                  "processes.signal",
+                  "processes.ptrace",
+                  "processes.lifetime"
+                ]
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "bwrap",
+                  "landlock",
+                  "seccomp"
+                ]
+              }
+            }
+          }
+        },
+        "not_enforced": {
+          "type": "array",
+          "description": "ADR-0322 amendment: the controls this mechanism does not enforce (docs/architecture/replay-modes.md, Hermetic replay).",
+          "items": {
+            "type": "string",
+            "enum": [
+              "network.tcp",
+              "network.udp",
+              "network.other_inet",
+              "network.unix",
+              "network.unix_abstract",
+              "network.unix_visible_paths",
+              "filesystem.write",
+              "filesystem.read_hidden_dirs",
+              "processes.signal",
+              "processes.ptrace",
+              "processes.lifetime"
+            ]
+          }
+        },
+        "counting": {
+          "type": "string",
+          "enum": [
+            "none"
+          ],
+          "description": "Blocked attempts counted from outside the process: not implemented, so the counts below are null (not measured), never 0."
+        },
+        "connections_blocked": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "unix_connects_outside": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "writes_blocked": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
     }
   }
 }

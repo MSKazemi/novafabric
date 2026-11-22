@@ -1700,6 +1700,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--pii-subject"
       },
       {
+        "key": "require-replayable",
+        "label": "--require-replayable",
+        "type": "toggle",
+        "hint": "EXPERIMENTAL: after the capsule is written, exit 4 unless a strict mocked replay would serve every recorded call (replayability.json `replayable: full`). Never stops the workload: it runs and the capsule is written first; a workload that exited non-zero keeps its own exit code.",
+        "flag": "--require-replayable"
+      },
+      {
         "key": "daemon",
         "label": "--daemon",
         "type": "toggle",
@@ -11338,8 +11345,29 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "permissive",
         "label": "--permissive",
         "type": "toggle",
-        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces run LIVE, an unmatched intercepted tool call runs live only if an --allow-* flag permits its mutation class (MCP: --allow-unknown-mutation; record.tool, Google ADK and OpenAI Agents tools: their declared class), never if replay.yaml says `allow: false`, and unconsumed recordings are only reported. Default is fail-closed.",
+        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces run LIVE, an unmatched intercepted tool call runs live only if an --allow-* flag permits its mutation class (MCP: --allow-unknown-mutation; record.tool, Google ADK, OpenAI Agents and LangChain tools: their declared class, LangChain and Agents tools not passed through wrap_tools: unknown), never if replay.yaml says `allow: false`, and unconsumed recordings are only reported. Default is fail-closed.",
         "flag": "--permissive"
+      },
+      {
+        "key": "require-faithful",
+        "label": "--require-faithful",
+        "type": "toggle",
+        "hint": "mocked mode only, experimental (ADR-0321): exit 4 unless the replay's fidelity verdict is `faithful` -- the replay reproduced the recorded exit code, stdout (UUIDs masked), the files it wrote and the call sequence, with no divergence and no live call -- and exit 0 when it is, even for a faithful replay of a run that failed. A replay refused before it ran keeps its refusal code.",
+        "flag": "--require-faithful"
+      },
+      {
+        "key": "hermetic",
+        "label": "--hermetic",
+        "type": "toggle",
+        "hint": "mocked mode only, experimental, Linux (ADR-0322): run the replayed process tree in a sandbox -- no network beyond its own loopback (host services included), host filesystem read-only except the working directory and the replay result directory; served model/tool calls still work. Uses bubblewrap (host socket dirs masked) or, where user namespaces are restricted (stock Ubuntu 24.04), Landlock + seccomp (no TCP at all, loopback included; no UDP or Unix sockets); the result names the mechanism and what it enforces. Refused with exit 5 (error.type HermeticUnavailable), before anything runs, if no backend can be set up here; never run un-isolated.",
+        "flag": "--hermetic"
+      },
+      {
+        "key": "hermetic-backend",
+        "label": "--hermetic-backend",
+        "type": "text",
+        "hint": "with --hermetic, experimental (ADR-0322): `auto` (default) tries bwrap, then Landlock + seccomp; `bwrap` or `landlock` is the only one tried (refused, exit 5, if it is unavailable).",
+        "flag": "--hermetic-backend"
       }
     ],
     "docsPath": "/docs/cli-reference/",

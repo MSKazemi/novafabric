@@ -28,7 +28,7 @@ jobs:
 
   github-release:
     needs: ci-green
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       # Required to create the release. No write access to code.
       contents: write

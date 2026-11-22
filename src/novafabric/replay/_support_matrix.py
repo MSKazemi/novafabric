@@ -54,6 +54,34 @@ _SLICE4 = "tests/replay/test_slice4_matching_and_echo_contract.py"
 _ECHO = "tests/replay/test_echo_and_nested_coverage_e2e.py"
 _ADK = "tests/replay/test_adk_tool_replay_e2e.py"
 _OAI = "tests/replay/test_openai_agents_tool_replay_e2e.py"
+_HF = "tests/capture/test_hf_inference_capture.py"
+_SMOL = "tests/adapters/test_smolagents.py"
+_UNSERVED = "tests/replay/test_unservable_model_surfaces_e2e.py"
+_OLLAMA = "tests/replay/test_ollama_replay_e2e.py"
+_BEDROCK = "tests/replay/test_bedrock_replay_e2e.py"
+_BEDROCK_WIRE = "tests/capture/test_bedrock_wire_capture.py"
+_BEDROCK_SERVE = "tests/replay/test_bedrock_serving.py"
+_LC = "tests/replay/test_langchain_tool_replay_e2e.py"
+_LC_OBSERVED = "tests/replay/test_langchain_unwrapped_tool_accounting_e2e.py"
+_OAI_OBSERVED = "tests/replay/test_openai_agents_unwrapped_tool_e2e.py"
+_LC_MESSAGE = "tests/replay/test_langchain_tool_message_results_e2e.py"
+_LC_NESTED = "tests/replay/test_langchain_nested_tool_serving_e2e.py"
+_ADK_NESTED = "tests/replay/test_adk_nested_tool_serving_e2e.py"
+_OAI_NESTED = "tests/replay/test_openai_agents_nested_tool_serving_e2e.py"
+_OAI_GUARDS = "tests/adapters/test_openai_agents_agent_tool_guards.py"
+_COVERAGE = "tests/replay/test_nested_coverage_upfront.py"
+_LG_COMMAND = "tests/replay/test_langgraph_command_results_e2e.py"
+_LAST_CALL = "tests/replay/test_tool_result_last_call_gap_e2e.py"
+_ECHO_RECOVERY = "tests/replay/test_tool_result_echo_recovery.py"
+_CHILDNET = "tests/replay/test_child_process_network.py"
+_HERMETIC = "tests/replay/test_hermetic_replay.py"
+_LG_ADAPTER = "tests/replay/test_langgraph_adapter_replay_e2e.py"
+_GEMINI = "tests/replay/test_gemini_vertex_not_servable_e2e.py"
+_UNSERVED_NET = "tests/replay/test_unserved_network.py"
+_WIRE = "tests/replay/test_generic_wire_replay_e2e.py"
+_WIRE_UNIT = "tests/replay/test_wire_serving.py"
+_WIRE_CLIENT = "tests/replay/test_wire_custom_transport_e2e.py"
+_CLIENT_UNIT = "tests/replay/test_client_transport_serving.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -310,15 +338,278 @@ ROWS: tuple[SurfaceRow, ...] = (
         evidence=("`tests/test_api_proxy.py`",),
     ),
     SurfaceRow(
-        surface="Other providers' SDKs, raw HTTP to a model API",
-        capture="wire hook: request only",
+        surface="Hugging Face `InferenceClient` / `AsyncInferenceClient` (router, Endpoints)",
+        capture=(
+            "wire hook, the router and Endpoints hosts (any provider route): request, requested "
+            "model and selector, status, timing; since ADR-0324 the response too, as generic "
+            "wire bytes copied as the workload reads them (never read ahead); reported model, "
+            "served provider and token counts are not parsed (no decoder)"
+        ),
+        replay="served",
+        replay_note=(
+            "by the generic wire engine (ADR-0324) at the httpx/httpx2 transport, like any "
+            "registry model host; not tested end to end through the real `InferenceClient`; "
+            "a capsule recorded before ADR-0324 holds no response, so a strict replay "
+            "refuses it (`ModelSurfaceNotServable`, ADR-0319)"
+        ),
+        streaming="served as the recorded chunks",
+        asynchronous="served (httpx transport)",
+        status="experimental",
+        evidence=(
+            f"{_HF}::test_a_hugging_face_record_is_a_generic_wire_call_with_its_response",
+            f"{_HF}::test_only_the_two_hugging_face_inference_hosts_are_classified",
+            f"{_HF}::test_a_streamed_response_is_not_read_by_the_hook",
+            f"{_HF}::test_real_inference_client_sync_chat_is_recorded_once_with_honest_identity",
+            f"{_WIRE}::test_a_mistral_chat_completion_round_trips",
+        ),
+        patches=(
+            ("httpx", "HTTPTransport", "handle_request"),
+            ("httpx", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx2", "HTTPTransport", "handle_request"),
+            ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx", "Client", "_transport_for_url"),
+            ("httpx", "AsyncClient", "_transport_for_url"),
+            ("httpx2", "Client", "_transport_for_url"),
+            ("httpx2", "AsyncClient", "_transport_for_url"),
+        ),
+    ),
+    SurfaceRow(
+        surface=(
+            "Google Gemini API and Vertex AI over HTTP (`google-genai` REST: "
+            "`generativelanguage.googleapis.com`, `[<region>-]aiplatform.googleapis.com`)"
+        ),
+        capture=(
+            "wire hook (`gcp.gemini`, `gcp.vertex_ai`): recorded with its response by the "
+            "generic wire layer (row below); `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off`: request, "
+            "status, timing only"
+        ),
+        replay="served",
+        replay_note=(
+            "served by the generic wire layer at the `httpx` transport (row below); with "
+            "responses off a strict replay **refuses to start** (`ModelSurfaceNotServable`, "
+            "ADR-0319) and `--permissive` runs it **live**, reported in "
+            "`model_calls_not_servable`; a client using its own `httpx` transport "
+            "(`MockTransport`, a delegating `BaseTransport`) is served the same way "
+            "(ADR-0324 amendment); a gRPC transport is not recorded and a strict replay fails "
+            "on its connection (`unserved_network`)"
+        ),
+        streaming="as the generic wire row",
+        asynchronous="as the generic wire row",
+        status="experimental",
+        evidence=(
+            f"{_GEMINI}::test_by_default_the_response_is_recorded_and_the_record_is_servable",
+            f"{_GEMINI}::test_without_wire_responses_strict_replay_refuses_it_up_front",
+            f"{_GEMINI}::test_without_wire_responses_permissive_runs_it_and_counts_it_not_servable",
+            f"{_GEMINI}::test_a_call_through_a_custom_transport_is_served_from_the_capsule",
+            f"{_WIRE}::"
+            "test_gemini_generate_content_and_an_openai_compatible_local_server_are_served",
+            f"{_GEMINI}::test_look_alikes_and_other_google_apis_are_not_gemini_or_vertex",
+        ),
+    ),
+    SurfaceRow(
+        surface="Hugging Face `smolagents` tool calls (`novafabric.adapters.smolagents`)",
+        capture=(
+            "observed per agent step: tool name, argument digest, step outcome; the framework "
+            "reports no per-call result, and a `CodeAgent` step is one `python_interpreter` call"
+        ),
         replay="not intercepted",
-        replay_note="runs **live**; its connections are reported (`network_connections_live`)",
+        replay_note="runs **live**; the record carries a surface marker replay does not intercept",
+        streaming="run stream preserved; capsule closes when it ends or is abandoned",
+        asynchronous="—",
+        status="capture only",
+        evidence=(
+            f"{_SMOL}::test_tool_records_are_observe_only_and_never_a_replay_surface",
+            f"{_SMOL}::test_a_real_code_agent_records_one_python_interpreter_call_and_never_the_code",
+        ),
+    ),
+    SurfaceRow(
+        surface=(
+            "Ollama `/api/chat`, `/api/generate` over `httpx`/`httpx2` (raw HTTP, the "
+            "`ollama` SDK, `langchain_ollama`; ADR-0320)"
+        ),
+        capture=(
+            "wire hook: the response too -- text, `tool_calls`, `done_reason`, "
+            "`prompt_eval_count`/`eval_count`, marked `io.novafabric.api_surface: "
+            "ollama.chat` / `ollama.generate`; a streamed (NDJSON) body is copied as "
+            "the workload reads it and recorded when the read ends"
+        ),
+        replay="served",
+        replay_note=(
+            "at the httpx transport -- also for a client with its own transport "
+            "(`MockTransport`, a delegating `BaseTransport`; ADR-0324 amendment) -- for "
+            "registry-matched Ollama hosts (incl. "
+            "`OLLAMA_BASE_URL`/`OLLAMA_HOST` at call time) and hosts the capsule "
+            "recorded; one queue per endpoint, in order; exhaustion and endpoint "
+            "mismatch fail closed; records captured before ADR-0320 (no response) are "
+            "never served; every other Ollama endpoint (`/api/embed`, `/v1/...`, `/api/tags`) "
+            "is a generic wire call (ADR-0324) in a capsule recorded since; in an older "
+            "capsule `/api/embed` is refused like any unserved model call and `/api/tags`, "
+            "`/api/show`, `/api/version`, `/api/ps` run no model, so they run live and "
+            "their connections are reported (ADR-0319)"
+        ),
+        streaming=(
+            "served as NDJSON in the recorded chunks, ending with the `done` object; "
+            "without it when the capture never received one"
+        ),
+        asynchronous="served",
+        status="experimental",
+        evidence=(
+            f"{_OLLAMA}::test_ollama_chat_and_generate_round_trip_streamed_and_not",
+            f"{_OLLAMA}::test_a_tool_calling_ollama_response_round_trips",
+            f"{_OLLAMA}::test_an_abandoned_stream_is_recorded_as_such_and_replayed_as_delivered",
+            f"{_OLLAMA}::test_ollama_queue_exhaustion_fails_closed",
+            f"{_OLLAMA}::test_a_surface_mismatch_fails_closed",
+            f"{_OLLAMA}::test_a_record_without_a_response_is_never_served_empty",
+            f"{_OLLAMA}::test_the_ollama_sdk_round_trips",
+            f"{_OLLAMA}::test_langchain_ollama_round_trips",
+            f"{_CLIENT_UNIT}::test_an_ollama_call_through_a_mock_transport_is_served",
+        ),
+        patches=(
+            ("httpx", "HTTPTransport", "handle_request"),
+            ("httpx", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx2", "HTTPTransport", "handle_request"),
+            ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx", "Client", "_transport_for_url"),
+            ("httpx", "AsyncClient", "_transport_for_url"),
+            ("httpx2", "Client", "_transport_for_url"),
+            ("httpx2", "AsyncClient", "_transport_for_url"),
+        ),
+    ),
+    SurfaceRow(
+        surface=(
+            "AWS Bedrock `Converse` / `ConverseStream` through `boto3`/botocore "
+            "(`bedrock-runtime` client, `langchain_aws.ChatBedrockConverse`)"
+        ),
+        capture=(
+            "urllib3 wire hook: the response too -- text and `toolUse` blocks (canonical "
+            "`tool_calls`), `stopReason`, `usage`, the block layout and the rest of the "
+            "body; `modelId` from the URL, `inferenceConfig`, `system`/`toolConfig`; marked "
+            "`io.novafabric.api_surface: aws.bedrock.converse` / `.converse_stream`; the body "
+            "is copied as botocore reads it and recorded when the read ends; SigV4 headers "
+            "are never recorded"
+        ),
+        replay="served",
+        replay_note=(
+            "at urllib3 `HTTPConnectionPool.urlopen`, for `bedrock-runtime.*` hosts, "
+            "`AWS_ENDPOINT_URL_BEDROCK_RUNTIME`/`AWS_ENDPOINT_URL_BEDROCK` at call time and "
+            "hosts the capsule recorded; botocore parses the served bytes; one queue per "
+            "API, in order, signatures ignored; a recorded HTTP error (e.g. a throttle "
+            "botocore retried) is served back as recorded; exhaustion and Converse/"
+            "ConverseStream mismatch fail closed; `InvokeModel` is recorded without a "
+            "response and refused; control-plane (`bedrock`) calls run no model: not "
+            "refused, they run live"
+        ),
+        streaming=(
+            "`ConverseStream`: the recorded events re-encoded as an AWS event stream; an "
+            "abandoned stream is flagged `stream_complete: false` and served as delivered"
+        ),
+        asynchronous="— (boto3 is sync; aiobotocore over aiohttp is not served)",
+        status="experimental",
+        evidence=(
+            f"{_BEDROCK}::test_converse_and_converse_stream_round_trip",
+            f"{_BEDROCK}::test_a_tool_use_turn_and_its_tool_result_round_trip",
+            f"{_BEDROCK}::test_a_different_tool_result_is_reported_by_the_echo_check",
+            f"{_BEDROCK}::test_an_abandoned_stream_is_recorded_as_such_and_replayed_as_delivered",
+            f"{_BEDROCK}::test_a_recorded_http_error_and_a_throttled_retry_are_served_as_recorded",
+            f"{_BEDROCK}::test_bedrock_queue_exhaustion_fails_closed",
+            f"{_BEDROCK}::test_converse_stream_where_converse_was_recorded_fails_closed",
+            f"{_BEDROCK}::test_invoke_model_is_recorded_without_a_response_and_refused",
+            f"{_BEDROCK}::test_a_control_plane_call_runs_no_model_and_is_not_refused",
+            f"{_BEDROCK}::test_langchain_chat_bedrock_converse_with_tools_round_trips",
+            f"{_BEDROCK_WIRE}::test_an_unread_body_is_not_read_ahead_and_is_recorded_when_read",
+            f"{_BEDROCK_SERVE}::test_a_converse_stream_record_is_served_back_event_for_event",
+        ),
+        patches=(("urllib3.connectionpool", "HTTPConnectionPool", "urlopen"),),
+    ),
+    SurfaceRow(
+        surface=(
+            "Any registry model host over `httpx`/`httpx2` or `requests` that no dedicated "
+            "server claims: Mistral, Cohere, Together, Gemini REST, OpenAI-compatible local "
+            "servers, raw HTTP (generic wire, ADR-0324)"
+        ),
+        capture=(
+            "wire hook: the request, a match key (method, path, digest of the canonical "
+            "query and body, credentials excluded) and the response: status, allowlisted "
+            "headers (never `set-cookie`/`location`), the body as UTF-8 text chunks in read "
+            "order, copied as the workload reads it; marked `io.novafabric.api_surface: "
+            "generic-wire`; not under an SDK call (the SDK hook records those); "
+            "`NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` records no body"
+        ),
+        replay="served",
+        replay_note=(
+            "at the httpx/httpx2 transport and urllib3 `HTTPConnectionPool.urlopen` (how "
+            "`requests` sends), only when the capsule holds such a record; an httpx client "
+            "with its own transport (`MockTransport`, a delegating `BaseTransport`, an "
+            "`HTTPTransport` subclass overriding `handle_request`) is served before that "
+            "transport runs, each request served or counted once; one ordered "
+            "queue; a request that differs in method, `gen_ai.system`, path or canonical "
+            "query/body is the `wire_request_mismatch` divergence (strict: refused, never "
+            "live; `--permissive`: runs live, counted); headers are ignored; a recorded HTTP "
+            "error (e.g. a 429 the client retried) is served back as recorded"
+        ),
+        streaming=(
+            "served as the recorded chunks (SSE, NDJSON or any text framing); a streamed "
+            "body with a `content-encoding` or a binary body is not recorded (refused)"
+        ),
+        asynchronous="served (httpx `AsyncClient`); `aiohttp`: not served (planned)",
+        status="experimental",
+        evidence=(
+            f"{_WIRE}::test_a_mistral_chat_completion_round_trips",
+            f"{_WIRE}::test_a_streamed_sse_response_is_replayed_with_identical_chunks",
+            f"{_WIRE}::"
+            "test_gemini_generate_content_and_an_openai_compatible_local_server_are_served",
+            f"{_WIRE}::test_a_changed_request_body_at_replay_is_a_divergence_never_live",
+            f"{_WIRE}::test_a_changed_request_body_under_permissive_runs_live_and_is_counted",
+            f"{_WIRE}::test_changed_volatile_headers_and_credentials_still_match",
+            f"{_WIRE}::test_a_recorded_http_error_and_its_retry_are_served_as_recorded",
+            f"{_WIRE_UNIT}::test_a_served_record_never_carries_a_header_outside_the_allowlist",
+            f"{_WIRE_UNIT}::"
+            "test_capture_stores_a_body_only_for_a_logical_call_no_dedicated_server_claims",
+            f"{_WIRE_CLIENT}::test_a_call_through_a_custom_transport_is_served_from_the_capsule",
+            f"{_WIRE_CLIENT}::"
+            "test_a_changed_request_through_a_custom_transport_is_refused_before_it_runs",
+            f"{_WIRE_CLIENT}::"
+            "test_permissive_counts_a_live_call_through_a_custom_transport_once_and_names_it",
+            f"{_CLIENT_UNIT}::"
+            "test_a_refused_sdk_call_run_live_is_counted_once_and_never_served_on_the_wire",
+        ),
+        patches=(
+            ("httpx", "HTTPTransport", "handle_request"),
+            ("httpx", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx2", "HTTPTransport", "handle_request"),
+            ("httpx2", "AsyncHTTPTransport", "handle_async_request"),
+            ("httpx", "Client", "_transport_for_url"),
+            ("httpx", "AsyncClient", "_transport_for_url"),
+            ("httpx2", "Client", "_transport_for_url"),
+            ("httpx2", "AsyncClient", "_transport_for_url"),
+            ("urllib3.connectionpool", "HTTPConnectionPool", "urlopen"),
+        ),
+    ),
+    SurfaceRow(
+        surface=(
+            "Registry model calls over `aiohttp` or `urllib3` directly (e.g. Bedrock "
+            "`InvokeModel`), other providers' gRPC SDKs, a generic-wire body not recorded "
+            "(recording off, streamed with a `content-encoding`, binary, over the cap, the "
+            "request raised), or a served surface whose response was not recorded"
+        ),
+        capture="wire hook: request only (and why the response was not recorded)",
+        replay="refused",
+        replay_note=(
+            "not served, so a strict replay **refuses to start** "
+            "(`ModelSurfaceNotServable`, exit 1, also under `--dry-run`, which lists "
+            "each as `[LIVE] model call (<system>, <host>)`); `--permissive` runs it "
+            "**live** and reports `model_calls_not_servable` per `gen_ai.system` "
+            "(ADR-0319); gRPC is not recorded at all"
+        ),
         streaming="—",
         asynchronous="—",
-        status="not controlled",
+        status="not controlled; refused by default",
         evidence=(
-            f"{_CONTRACT}::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked",
+            f"{_UNSERVED}::test_p7_strict_replay_refuses_before_spawning",
+            f"{_UNSERVED}::test_p7_permissive_runs_live_and_reports_it",
+            f"{_UNSERVED}::test_p7_dry_run_lists_the_live_model_call",
+            f"{_UNSERVED}::test_mixed_capsule_names_only_the_unserved_system",
+            f"{_WIRE}::test_recording_off_stores_no_body_and_strict_replay_refuses_as_before",
         ),
     ),
     SurfaceRow(
@@ -360,7 +651,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "(`--permissive` runs it live only if a ladder flag permits its declared "
             "mutation class); `replay.yaml` `tool_overrides` enforced in-process; a "
             "boundary that called a model or tool is served too, and the records it "
-            "wrote are consumed as covered (`*_calls_covered`, slice 4)"
+            "wrote are consumed as covered (`*_calls_covered`, slice 4); a record "
+            "written inside a call certain to be served refuses nothing up front and "
+            "`--dry-run` lists it `[COVERED by <tool>]` (ADR-0306 r3c)"
         ),
         streaming="refused at decoration (generator functions)",
         asynchronous="served (`async def`)",
@@ -375,6 +668,8 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_PY_TOOL}::test_a_nested_boundary_is_served_and_its_inner_records_are_covered",
             f"{_ECHO}::test_a_nested_boundary_is_served_and_its_nested_model_call_is_covered",
             f"{_ECHO}::test_an_unmarked_nested_call_fails_closed",
+            f"{_COVERAGE}::test_engine_dry_run_policy_report_and_summary_agree",
+            f"{_COVERAGE}::test_missing_ambiguous_or_unservable_ancestry_covers_nothing",
         ),
         servers=("novafabric.capture.record.tool",),
     ),
@@ -393,12 +688,16 @@ ROWS: tuple[SurfaceRow, ...] = (
             "through ADK's documented `before_tool_callback` short-circuit, before the "
             "tool body runs; one-to-one by the model's `function_call_id` (same name "
             "and arguments) or by name and canonical arguments; JSON-native results up "
-            "to 1 MiB; a call that failed, changed `tool_context.actions`, is "
-            "long-running or made nested model/tool calls is not served; an unmatched "
+            "to 1 MiB; a call that failed, changed `tool_context.actions` or is "
+            "long-running is not served; a call whose body made model/tool calls (an "
+            "`AgentTool` running a sub-agent, which inherits the plugin) is served and "
+            "the records it wrote are consumed as covered (ADR-0306 r3c); an unmatched "
             "or unservable call is refused (`--permissive` runs it live only if a "
             "ladder flag permits the class the plugin declares); `replay.yaml` "
-            "`tool_overrides` enforced; `nova capture python …` capsules only "
-            "(adapter capsules are refused by replay)"
+            "`tool_overrides` enforced; `nova capture python …` capsules (a "
+            "`make_google_adk_plugin()` capsule is re-run only from a recorded process "
+            "invocation that passes every guard, ADR-0306 Q7, experimental -- not tested "
+            "end to end for ADK)"
         ),
         streaming="not served (long-running tools)",
         asynchronous="served (ADK runs every tool on its event loop)",
@@ -409,7 +708,11 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_ADK}::test_the_function_call_id_pairs_identical_calls_by_id",
             f"{_ADK}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
             f"{_ADK}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
-            f"{_ADK}::test_a_nested_record_makes_the_adk_call_unservable",
+            f"{_ADK}::test_a_adk_call_with_a_nested_record_is_served_and_covers_it",
+            f"{_ADK_NESTED}::test_strict_replay_serves_the_agent_tool_and_covers_the_sub_agent",
+            f"{_ADK_NESTED}::test_an_unservable_inner_tool_inside_a_served_agent_tool_does_not_refuse",
+            f"{_ADK_NESTED}::test_a_record_captured_before_r3c_is_served_without_a_recapture",
+            f"{_ADK_NESTED}::test_an_agent_tool_that_is_not_served_runs_nothing_and_fails_closed",
         ),
         servers=("google.adk.tools.BaseTool",),
     ),
@@ -429,13 +732,19 @@ ROWS: tuple[SurfaceRow, ...] = (
             "**undocumented SDK seam**, checked against `openai-agents` 0.17.x only -- so "
             "the recorded result is returned before the tool body runs; one-to-one by the "
             "model's `call_id` (same name and arguments) or by name and canonical "
-            "arguments; JSON-native results up to 1 MiB; a call that raised, or made "
-            "nested model/tool calls (including `Agent.as_tool`), is not served; an "
+            "arguments; JSON-native results up to 1 MiB; a call that raised is not "
+            "served; a call whose body made model/tool calls (`Agent.as_tool`) is served "
+            "and the records it wrote are consumed as covered (ADR-0306 r3c), unless the "
+            "agent tool sets `on_stream`, `hooks`, `session`, `previous_response_id` or "
+            "`conversation_id`, or its sub-run paused for approval (read from the SDK's "
+            "private `_run_agent_impl` closure and agent-tool state, `openai-agents` "
+            "0.24.0; unreadable options are not served); an "
             "unmatched or unservable call is refused (`--permissive` runs it live only if "
             "a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
-            "`tool_overrides` enforced; only tools passed through `wrap_tools` are "
-            "covered, and `nova capture python …` capsules only (adapter capsules are "
-            "refused by replay)"
+            "`tool_overrides` enforced; tools not passed through `wrap_tools`: next "
+            "row; `nova capture python …` capsules (a `register()` capsule is re-run "
+            "only from a recorded process invocation that passes every guard, ADR-0306 Q7, "
+            "experimental -- not tested end to end for the Agents SDK)"
         ),
         streaming="served (`Runner.run_streamed` reaches the same seam)",
         asynchronous="served (the SDK awaits every tool on its event loop)",
@@ -446,9 +755,192 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_OAI}::test_the_call_id_pairs_identical_calls_by_id",
             f"{_OAI}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
             f"{_OAI}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
-            f"{_OAI}::test_a_nested_record_makes_the_agents_call_unservable",
+            f"{_OAI}::test_a_agents_call_with_a_nested_record_is_served_and_covers_it",
+            f"{_OAI_NESTED}::test_strict_replay_serves_the_agent_tool_and_covers_the_sub_run",
+            f"{_OAI_NESTED}::test_a_record_captured_before_r3c_is_served_without_a_recapture",
+            f"{_OAI_GUARDS}::test_an_option_with_an_effect_beyond_the_value_is_an_obstacle",
+            f"{_OAI_GUARDS}::test_options_that_cannot_be_read_are_an_obstacle",
         ),
         servers=("agents.FunctionTool",),
+    ),
+    SurfaceRow(
+        surface=(
+            "OpenAI Agents SDK function tool **not** passed through `wrap_tools` "
+            "(`@function_tool`, `FunctionTool`)"
+        ),
+        capture=(
+            "recorded automatically when `agents` is imported (no code change): one "
+            "`transport: python` record per call (`openai.agents.tool` marker, "
+            "`io.novafabric.openai_agents_tool_seam: observed`, `mutation_class: "
+            "unknown`), same payload and codec rules as `wrap_tools`; agents used as "
+            "tools (`Agent.as_tool`) are recorded too since ADR-0306 r3c, their sub-run's "
+            "model and tool calls marked inside the call"
+        ),
+        replay="served",
+        replay_note=(
+            "**served by default** when the record holds a servable result (ADR-0306 r3 "
+            "amendment, owner decision 2026-11-21; before, these tools were neither "
+            "recorded nor counted and ran live): the same matcher, codec and refusals "
+            "as a `wrap_tools` tool declared `unknown`; a capsule whose observed records "
+            "cannot be served makes a strict replay **refuse to start** "
+            "(`ToolSurfaceNotServed`, also under `--dry-run`); an unmatched call (e.g. a "
+            "capsule captured before this, with no tool records) is refused before its "
+            "body runs; under `--permissive` it runs **live** only with "
+            "`--allow-unknown-mutation`, counted in `tool_calls_live`; an `Agent.as_tool` "
+            "call is served like a wrapped one and its sub-run's calls are covered "
+            "(ADR-0306 r3c; an unservable one refuses a strict replay up front, where "
+            "before r3c the sub-agent ran with its own calls served); the seam patches "
+            "the SDK's private `agents.tool._invoke_function_tool_with_metadata` -- "
+            "**not an SDK extension point**, checked against `openai-agents` 0.24.0 only"
+        ),
+        streaming="— (not exercised by the e2e: `Runner.run` only)",
+        asynchronous="served (the SDK awaits every tool on its event loop)",
+        status="experimental",
+        evidence=(
+            f"{_OAI_OBSERVED}::test_capture_records_unwrapped_function_tools_as_observed",
+            f"{_OAI_OBSERVED}::test_an_agent_used_as_a_tool_is_a_served_boundary_its_inner_tool_is_covered",
+            f"{_OAI_NESTED}::test_a_default_level_capsule_whose_outer_result_is_lost_covers_nothing",
+            f"{_OAI_NESTED}::test_an_unservable_observed_agent_tool_refuses_up_front_and_runs_nothing",
+            f"{_OAI_OBSERVED}::test_strict_replay_serves_unwrapped_function_tools_and_never_runs_their_bodies",
+            f"{_OAI_OBSERVED}::test_strict_replay_refuses_to_start_when_unwrapped_results_were_not_recorded",
+            f"{_OAI_OBSERVED}::test_a_capsule_without_tool_records_refuses_strict_and_counts_permissive",
+            f"{_OAI_OBSERVED}::test_wrapped_and_unwrapped_function_tools_one_record_per_call",
+        ),
+        servers=("agents.FunctionTool",),
+    ),
+    SurfaceRow(
+        surface=(
+            "LangChain / LangGraph tool (`BaseTool`: `@tool`, `StructuredTool`, "
+            "subclasses), through the NovaFabric tool seam "
+            "(`novafabric.adapters.langchain_tools.wrap_tools`, ADR-0306 slice 3)"
+        ),
+        capture=(
+            "one `transport: python` record per tool call (`langchain.tool` marker, the "
+            "model's `tool_call_id`); arguments the model sent (injected state, store, "
+            "runtime and call id left out) and the tool body's result kept only at the "
+            "`forensic`/`air_gapped` capture level, digests otherwise"
+        ),
+        replay="served",
+        replay_note=(
+            "by a generated subclass of each tool's class, on a copy, that overrides "
+            "`run`/`arun` and the body hooks `_run`/`_arun` -- **not a LangChain "
+            "extension point**, checked against `langchain-core` 1.8.3 and `langgraph` "
+            "1.2.23 only -- so the recorded body result is returned before the body runs "
+            "and LangChain still builds the `ToolMessage`; direct `invoke`/`ainvoke` and "
+            "LangGraph `ToolNode`; one-to-one by the model's `tool_call_id` (same name "
+            "and arguments) or by name and canonical arguments; JSON-native results up "
+            "to 1 MiB, and a `ToolMessage` the tool returned itself when every field is "
+            "JSON (rebuilt with the replayed call's `tool_call_id`, ADR-0306 r3), and a "
+            "LangGraph `Command` whose `graph`, `goto` (node names) and `resume` are JSON "
+            "and whose `update` values are JSON or lists of `ToolMessage`s answering the "
+            "call (rebuilt the same way, ADR-0306 r3b; a `Send` in `goto` or any other "
+            "update value is not); a `content_and_artifact` tuple is not; a call that "
+            "raised is not "
+            "served; a call whose body made model/tool calls (a sub-agent tool, e.g. "
+            "deepagents' `task`) is served and the records it wrote are consumed as "
+            "covered (`*_calls_covered`, ADR-0306 r3b, the slice-4 rule); an "
+            "unmatched or unservable call is refused (`--permissive` runs it live only "
+            "if a ladder flag permits the class declared in `wrap_tools`); `replay.yaml` "
+            "`tool_overrides` enforced; tools not passed through `wrap_tools`: next "
+            "row (`langchain_mcp_adapters` tools are left to the MCP surface); "
+            "`nova capture python …` capsules, and LangGraph "
+            "`wrap()` capsules re-run from their recorded process invocation when every "
+            "guard passes (ADR-0306 Q7, experimental)"
+        ),
+        streaming="— (tools are not streamed)",
+        asynchronous="served (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph)",
+        status="experimental",
+        evidence=(
+            f"{_LC}::test_langchain_tool_calls_are_served_and_their_bodies_never_run",
+            f"{_LC}::test_a_langgraph_agent_with_a_served_openai_model_replays_faithfully",
+            f"{_LC}::test_an_unmatched_langchain_call_fails_closed_before_the_tool_runs",
+            f"{_LC}::test_the_tool_call_id_pairs_identical_calls_by_id",
+            f"{_LC}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
+            f"{_LC}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
+            f"{_LC}::test_a_langchain_call_with_a_nested_record_is_served_and_covers_it",
+            f"{_LG_ADAPTER}::test_wrapped_langchain_tools_are_recorded_and_served_in_an_adapter_capsule",
+        ),
+        servers=("langchain_core.tools.BaseTool",),
+    ),
+    SurfaceRow(
+        surface=(
+            "LangChain / LangGraph tool **not** passed through `wrap_tools` (`@tool`, "
+            "`StructuredTool`, `BaseTool` subclasses run by `invoke`/`ainvoke`/`run`/"
+            "`arun` or LangGraph `ToolNode`)"
+        ),
+        capture=(
+            "recorded automatically when `langchain_core` is imported (no code "
+            "change): one `transport: python` record per tool body execution "
+            "(`langchain.tool` marker, `io.novafabric.langchain_tool_seam: observed`, "
+            "`mutation_class: unknown`), same payload and codec rules as `wrap_tools` "
+            "(values at `forensic`/`air_gapped` only, digests otherwise)"
+        ),
+        replay="served",
+        replay_note=(
+            "**served by default** when the record holds a servable result (ADR-0306 "
+            "r3 amendment, owner decision 2026-11-21; round 2 never served these): the "
+            "same one-to-one matcher, codec and refusals as a `wrap_tools` tool "
+            "declared `unknown` -- the body never runs; a capsule whose observed "
+            "records cannot be served (captured below `forensic`, so no result was "
+            "kept; a failure; a non-JSON result) makes a strict replay **refuse to "
+            "start** (`ToolSurfaceNotServed`, exit 1, also under `--dry-run`, which "
+            "lists each as `[NOT SERVED] LangChain tool call` with its reason, and "
+            "says to capture again); an unmatched call (e.g. a capsule that recorded "
+            "no tool calls) is refused before its body runs; under `--permissive` an "
+            "unservable or unmatched call runs **live** only with "
+            "`--allow-unknown-mutation`, counted in `tool_calls_live` and "
+            "`replay_contract.tool_calls_live_by_tool`; a round-2 observed record "
+            "that kept its value is served without a re-capture; `allow: false` "
+            "refuses an unservable call before its body runs; a record captured "
+            "without its result is served from the next recorded model request's echo "
+            "when it has exactly the recorded `result_digest` (`model-request-echo`) -- "
+            "the result of a run's last tool call never went back to a model, so it "
+            "is refused with a reason that says so (`result never sent to a model`, "
+            "also in `replayability.json`, ADR-0306 r3b); "
+            "a tool whose body made model/tool calls (a sub-agent tool) is served "
+            "like a nested `record.tool` boundary and what it did is covered, never "
+            "requested (ADR-0306 r3b), and an unservable record it wrote refuses "
+            "nothing up front (`[COVERED by <tool>]` in `--dry-run`, ADR-0306 r3c); "
+            "the seam patches "
+            "`BaseTool.run`/`arun` and the class defining `_run`/`_arun` -- **not a "
+            "LangChain extension point**, checked against `langchain-core` 1.8.3 and "
+            "`langgraph` 1.2.23 only"
+        ),
+        streaming="— (tools are not streamed)",
+        asynchronous="served (`ainvoke`/`arun`, async tools, `ToolNode` in an async graph)",
+        status="experimental",
+        evidence=(
+            f"{_LC_OBSERVED}::test_capture_records_langchain_tools_that_were_not_wrapped",
+            f"{_LC_OBSERVED}::test_a_forensic_capture_makes_an_unwrapped_tool_record_servable",
+            f"{_LC_OBSERVED}::test_strict_replay_serves_recorded_unwrapped_tool_calls_and_never_runs_their_bodies",
+            f"{_LC_OBSERVED}::test_an_unmatched_unwrapped_call_is_refused_strict_before_its_body_runs",
+            f"{_LC_OBSERVED}::test_strict_replay_refuses_to_start_when_unwrapped_tool_results_were_not_recorded",
+            f"{_LC_OBSERVED}::test_permissive_runs_unservable_unwrapped_tools_live_only_with_allow_unknown_mutation",
+            f"{_LC_OBSERVED}::test_an_r2_observed_record_with_its_payload_is_served",
+            f"{_LC_OBSERVED}::test_a_capsule_without_tool_records_refuses_strict_and_counts_permissive",
+            f"{_LC_OBSERVED}::test_wrapped_and_unwrapped_tools_are_both_served_one_record_per_call",
+            f"{_LC_OBSERVED}::test_an_allow_false_override_stops_an_unwrapped_tool_before_its_body_runs",
+            f"{_LG_ADAPTER}::test_an_unwrapped_tool_in_an_adapter_capsule_is_served_strict",
+            f"{_LC_MESSAGE}::test_strict_replay_serves_a_real_tool_message_and_never_runs_the_tool",
+            f"{_LC_MESSAGE}::test_a_tool_message_with_a_non_json_artifact_is_not_servable_and_says_why",
+            f"{_LC_OBSERVED}::test_a_default_level_capsule_is_served_from_the_model_request_echo",
+            f"{_LC_OBSERVED}::test_an_echo_that_does_not_match_the_recorded_digest_is_never_served",
+            f"{_ECHO_RECOVERY}::test_a_digest_mismatch_leaves_the_record_unservable",
+            f"{_LC_NESTED}::test_strict_replay_serves_the_outer_tool_and_covers_the_sub_agent_calls",
+            f"{_LC_NESTED}::test_a_default_level_capsule_serves_the_outer_tool_from_the_echo",
+            f"{_LC_NESTED}::test_a_record_captured_before_nested_serving_is_served_without_a_recapture",
+            f"{_LC_NESTED}::test_an_unmarked_inner_model_call_fails_closed",
+            f"{_LC_NESTED}::test_an_unservable_inner_tool_inside_a_served_sub_agent_does_not_refuse",
+            f"{_LC_NESTED}::test_an_unservable_inner_model_call_inside_a_served_sub_agent_does_not_refuse",
+            f"{_LC_NESTED}::test_an_outer_call_that_may_run_live_covers_nothing_strict_refuses",
+            f"{_LC_NESTED}::test_an_outer_call_run_live_makes_its_inner_calls_and_counts_them",
+            f"{_LG_COMMAND}::test_strict_replay_serves_the_command_and_reaches_the_same_final_state",
+            f"{_LG_COMMAND}::test_a_command_that_cannot_be_rebuilt_is_not_servable_and_says_why",
+            f"{_LG_COMMAND}::test_a_default_level_command_is_digested_and_refused_with_the_recapture_hint",
+            f"{_LAST_CALL}::test_strict_replay_refuses_and_names_the_last_call",
+            f"{_LAST_CALL}::test_the_capture_time_summary_names_the_last_call_gap",
+        ),
+        servers=("langchain_core.tools.BaseTool",),
     ),
     SurfaceRow(
         surface="MCP session set-up (server start, `initialize`, `list_tools`)",
@@ -489,16 +981,26 @@ ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
         surface=(
             "HTTP, shell, filesystem, framework-native tools "
-            "(other than Google ADK tools through the tool plugin and OpenAI Agents "
-            "function tools through `wrap_tools`)"
+            "(other than Google ADK tools through the tool plugin, OpenAI Agents "
+            "function tools, and LangChain tools)"
         ),
         capture="network/file events, not tool records",
         replay="not intercepted",
         replay_note=(
-            "runs **live**; outbound connections are reported "
-            "(`network_connections_live`), files and processes are not; a "
-            "`replay.yaml` `allow: false` override on one makes a strict replay refuse "
-            "to start (`ToolOverrideUnenforceable`, exit 3)"
+            "runs **live**; outbound connections of the replayed Python process and "
+            "of its Python children -- also those whose environment drops the replay's "
+            "variables, such as MCP stdio servers -- are reported "
+            "(`network_connections_live`, `network_observation_scope: python-process`), "
+            "and in a strict replay any connection past loopback **fails the replay** "
+            "(divergence `unserved_network`; `--permissive` counts it in "
+            "`network_connections_unserved`); files are not; child processes are counted and named "
+            "(`child_processes_spawned`, `child_processes_argv0`), and one that is not "
+            "observed (a non-Python program) is counted in `child_processes_unobserved` "
+            "with `network_observation_coverage: partial` (ADR-0319); `--hermetic` "
+            "(experimental, Linux, ADR-0322) blocks the network of the whole process "
+            "tree instead (bubblewrap, or Landlock + seccomp where user namespaces are "
+            "restricted); a `replay.yaml` `allow: false` override on one makes a strict "
+            "replay refuse to start (`ToolOverrideUnenforceable`, exit 3)"
         ),
         streaming="—",
         asynchronous="—",
@@ -507,6 +1009,15 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_CONTRACT}::test_s13_network_tool_refused_and_uncontrolled_transports_reported",
             f"{_CONTRACT}::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked",
             f"{_OVERRIDES}::test_strict_replay_refuses_to_start_on_an_unenforceable_override",
+            f"{_UNSERVED}::test_a_child_process_is_counted_and_named_with_a_warning",
+            f"{_CHILDNET}::test_an_mcp_stdio_server_child_is_observed",
+            f"{_CHILDNET}::"
+            "test_a_non_python_child_is_counted_unobserved_and_the_count_is_a_lower_bound",
+            f"{_HERMETIC}::test_hermetic_replay_reaches_no_host_service_from_any_process",
+            f"{_UNSERVED_NET}::test_e2e_strict_replay_fails_on_an_unserved_non_loopback_connection",
+            f"{_UNSERVED_NET}::test_e2e_permissive_replay_counts_it_and_does_not_diverge",
+            f"{_UNSERVED_NET}::test_a_child_process_connection_is_unserved_network_too",
+            f"{_HERMETIC}::test_landlock_replay_reaches_no_host_service_from_any_process",
         ),
     ),
 )
