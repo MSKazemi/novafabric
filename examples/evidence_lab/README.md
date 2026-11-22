@@ -136,7 +136,9 @@ workload; it is the *harness* that refuses to call a run good without the record
   removed — on success, failure, timeout, an unexpected internal error and `SIGTERM`/
   `SIGHUP`/`SIGINT` (`E_INTERRUPTED`). `SIGKILL` cannot be handled: the mock then stops
   itself after its capped lifetime, but a hung `nova capture` is only stopped by its own
-  timeout.
+  timeout. The mock is single-threaded: a stalled client is dropped after its per-read
+  timeout and any one connection after twice that, so a client dripping one byte at a time
+  cannot hold it indefinitely.
 
 ## Layout
 

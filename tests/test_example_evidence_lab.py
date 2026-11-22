@@ -1718,6 +1718,43 @@ def test_judge_reads_the_committed_golden_transcript_not_only_the_builder(
     assert "golden" in str(exc.value)
 
 
+def test_judge_compares_the_golden_transcript_by_canonical_bytes(tmp_path: Path) -> None:
+    """42 and 42.0 are equal in Python but hash differently; the golden is a hashed artefact."""
+    copy = _scenario_copy(tmp_path)
+    golden_path = copy / "golden" / "model_request.json"
+    golden = json.loads(golden_path.read_text())
+    golden["seed"] = float(golden["seed"])
+    golden_path.write_text(json.dumps(golden))
+    (tmp_path / "run").mkdir()
+    with pytest.raises(lab.EvidenceLabError) as exc:
+        _judge(
+            tmp_path / "run", lab.load_scenario(copy),
+            models=[_model_record()],
+            tools=[_tool_record(n) for n in GOOD_TOOLS],
+        )  # fmt: skip
+    assert exc.value.code == "E_MODEL_RECORD_MISMATCH"
+
+
+def test_a_deeply_nested_golden_is_a_named_fixture_error(tmp_path: Path) -> None:
+    copy = _scenario_copy(tmp_path)
+    (copy / "golden" / "model_request.json").write_text("[" * 100_000 + "]" * 100_000)
+    with pytest.raises(lab.EvidenceLabError) as exc:
+        lab.load_golden_request(lab.load_scenario(copy))
+    assert exc.value.code == "E_FIXTURE_INVALID"
+
+
+def test_a_golden_that_is_not_a_regular_file_is_refused(tmp_path: Path) -> None:
+    """A symlink to a directory (or a device) must not be read; st_size cannot bound it."""
+    copy = _scenario_copy(tmp_path)
+    golden_path = copy / "golden" / "model_request.json"
+    golden_path.unlink()
+    golden_path.symlink_to(tmp_path)
+    with pytest.raises(lab.EvidenceLabError) as exc:
+        lab.load_golden_request(lab.load_scenario(copy))
+    assert exc.value.code == "E_FIXTURE_INVALID"
+    assert "regular file" in str(exc.value)
+
+
 def test_judge_names_a_missing_golden_transcript(tmp_path: Path) -> None:
     copy = _scenario_copy(tmp_path)
     (copy / "golden" / "model_request.json").unlink()

@@ -291,19 +291,24 @@ GOLDEN_REQUEST = Path("golden") / "model_request.json"
 def load_golden_request(scn: Scenario) -> dict[str, Any]:
     """The committed golden request transcript, read from the scenario directory."""
     path = scn.directory / GOLDEN_REQUEST
+    if not path.is_file():  # follows symlinks: a directory, device or FIFO is not a transcript
+        if path.exists():
+            raise EvidenceLabError("E_FIXTURE_INVALID", f"{GOLDEN_REQUEST} is not a regular file")
+        raise EvidenceLabError("E_FIXTURE_MISSING", f"{GOLDEN_REQUEST} is missing")
     try:
-        if path.stat().st_size > MAX_FIXTURE_BYTES:
-            raise EvidenceLabError("E_FIXTURE_TOO_LARGE", f"{GOLDEN_REQUEST} is too large")
-        data = path.read_bytes()
+        with path.open("rb") as handle:
+            data = handle.read(MAX_FIXTURE_BYTES + 1)  # bounded whatever st_size claims
     except OSError as exc:
         raise EvidenceLabError(
             "E_FIXTURE_MISSING", f"{GOLDEN_REQUEST} is unreadable: {exc.strerror}"
         ) from exc
+    if len(data) > MAX_FIXTURE_BYTES:
+        raise EvidenceLabError("E_FIXTURE_TOO_LARGE", f"{GOLDEN_REQUEST} is too large")
     try:
         golden = json.loads(data)
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, RecursionError) as exc:  # deep nesting raises RecursionError
         raise EvidenceLabError(
-            "E_FIXTURE_INVALID", f"{GOLDEN_REQUEST} is not valid JSON/UTF-8: {exc}"
+            "E_FIXTURE_INVALID", f"{GOLDEN_REQUEST} is not valid JSON/UTF-8"
         ) from exc
     if not isinstance(golden, dict):
         raise EvidenceLabError("E_FIXTURE_INVALID", f"{GOLDEN_REQUEST} is not a JSON object")

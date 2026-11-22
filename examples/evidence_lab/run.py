@@ -361,8 +361,9 @@ def _evaluate(
     expected_obs = lab.expected_observations(scn)
     expected_body = lab.build_request_body(scn, expected_obs)
     # The committed golden transcript is read here, so the check named after it compares
-    # with the file, not only with what this code builds.
-    if lab.load_golden_request(scn) != expected_body:
+    # with the file, not only with what this code builds. Compared as canonical bytes: 42 and
+    # 42.0 are equal in Python but hash differently.
+    if lab.canonical_json(lab.load_golden_request(scn)) != lab.canonical_json(expected_body):
         raise lab.EvidenceLabError(
             "E_MODEL_RECORD_MISMATCH",
             f"{lab.GOLDEN_REQUEST} differs from the request this scenario builds",
