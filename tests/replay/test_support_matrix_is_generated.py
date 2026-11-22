@@ -15,8 +15,11 @@ import importlib.util
 import re
 from pathlib import Path
 
+from novafabric.replay._bedrock_serve import SERVED_URLLIB3_SURFACE
+from novafabric.replay._client_transport import SERVED_CLIENT_SURFACES, TRANSPORT_FOR_URL
 from novafabric.replay._contract import TOOL_SURFACE_MCP
 from novafabric.replay._dispatcher import SERVED_MODEL_SURFACES, UNSUPPORTED_MODEL_SURFACES
+from novafabric.replay._ollama_serve import SERVED_TRANSPORT_SURFACES
 from novafabric.replay._support_matrix import BEGIN_MARKER, END_MARKER, ROWS, render_block
 
 REPO = Path(__file__).resolve().parents[2]
@@ -46,6 +49,12 @@ def test_the_docs_page_carries_the_generated_matrix() -> None:
 def test_rows_match_the_dispatcher_patch_tables() -> None:
     served = {(m, c, a) for _, m, c, a, _ in SERVED_MODEL_SURFACES}
     served.add(("mcp.client.session", "ClientSession", "call_tool"))
+    # ADR-0320: Ollama calls are served at the httpx/httpx2 transport.
+    served |= {(m, c, a) for m, c, a, _ in SERVED_TRANSPORT_SURFACES}
+    # ADR-0324 amendment: and through a client's own transport, at the client.
+    served |= {(m, c, TRANSPORT_FOR_URL) for m, c, _ in SERVED_CLIENT_SURFACES}
+    # AWS Bedrock Converse calls are served at urllib3 (botocore's transport).
+    served.add(SERVED_URLLIB3_SURFACE)
     refused = {(m, c, a) for _, m, c, a, _ in UNSUPPORTED_MODEL_SURFACES}
     claimed_served = {p for r in ROWS if r.replay == "served" for p in r.patches}
     claimed_refused = {p for r in ROWS if r.replay == "refused" for p in r.patches}
@@ -62,10 +71,11 @@ def test_rows_match_the_dispatcher_patch_tables() -> None:
 def test_registered_server_rows_match_what_the_dispatcher_registers() -> None:
     """ADR-0306: a surface served by a registered server (not a patch) is claimed
     by exactly the rows that say so -- checked against a real install."""
-    from novafabric.adapters import _adk_tool_seam, _oai_tool_seam
+    from novafabric.adapters import _adk_tool_seam, _langchain_tool_seam, _oai_tool_seam
     from novafabric.capture import record
     from novafabric.replay._contract import (
         TOOL_SURFACE_ADK,
+        TOOL_SURFACE_LANGCHAIN,
         TOOL_SURFACE_MCP,
         TOOL_SURFACE_OPENAI_AGENTS,
         TOOL_SURFACE_PYTHON,
@@ -80,14 +90,17 @@ def test_registered_server_rows_match_what_the_dispatcher_registers() -> None:
         assert record._get_tool_handler() is not None
         assert _adk_tool_seam._get_handler() is not None
         assert _oai_tool_seam._get_handler() is not None
+        assert _langchain_tool_seam._get_handler() is not None
     finally:
         dispatcher.uninstall()
     assert record._get_tool_handler() is None
     assert _adk_tool_seam._get_handler() is None
     assert _oai_tool_seam._get_handler() is None
+    assert _langchain_tool_seam._get_handler() is None
     claimed = {s for r in ROWS if r.replay == "served" for s in r.servers}
     assert claimed == registered == {
         TOOL_SURFACE_PYTHON, TOOL_SURFACE_ADK, TOOL_SURFACE_OPENAI_AGENTS,
+        TOOL_SURFACE_LANGCHAIN,
     }
     for row in ROWS:
         if row.servers:

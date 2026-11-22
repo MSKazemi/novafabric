@@ -2,24 +2,22 @@ id: iso42001-v1
 name: ISO/IEC 42001 — AI Management System
 framework: ISO/IEC 42001
 version: "2023"
+# Clause numbers only. Titles and descriptions are NovaFabric's own summaries, not
+# ISO text; load your licensed catalog with `--profile path.yaml` for the wording.
 controls:
   - id: ISO42-4.1-CONTEXT
-    title: Understanding the organisation and its context (§4.1)
+    title: Organisational context (§4.1)
     description: >
-      The organisation shall determine external and internal issues that are
-      relevant to its purpose and that affect its ability to achieve the
-      intended outcome(s) of its AI management system.
+      Per-run records of the model calls each AI system made.
     evidence_requirements:
       - evidence_type: model_calls
         required: true
         description: Run capsules documenting AI system context and operational environment
 
   - id: ISO42-6.1-RISK-OPPORTUNITIES
-    title: Actions to address risks and opportunities (§6.1)
+    title: Addressing risks and opportunities (§6.1)
     description: >
-      When planning for the AI management system, the organisation shall
-      consider issues and requirements and determine the risks and
-      opportunities that need to be addressed.
+      Policy-decision records showing actions taken in response to risky requests.
     evidence_requirements:
       - evidence_type: policy_events
         required: true
@@ -28,19 +26,31 @@ controls:
   - id: ISO42-7.4-COMMUNICATION
     title: Communication (§7.4)
     description: >
-      The organisation shall determine the internal and external communications
-      relevant to the AI management system.
+      A per-run record of model interactions that can support reporting on AI
+      system behaviour.
     evidence_requirements:
       - evidence_type: model_calls
         required: true
         description: Run capsules providing communication audit trail for AI system
 
-  - id: ISO42-8.1-OPERATIONAL-PLANNING
-    title: Operational planning and control (§8.1)
+  - id: ISO42-7.5-DOCUMENTED-INFORMATION
+    title: Documented information (§7.5)
     description: >
-      The organisation shall plan, implement, control, monitor and review
-      the processes needed to meet requirements, and implement actions
-      determined in accordance with Clause 6.
+      Per-run records and, optionally, a seal that makes later changes to those
+      records detectable.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules as the documented record of AI system operation
+      - evidence_type: seal_signature
+        required: false
+        description: Cryptographic seals ensuring integrity of AI system records
+
+  - id: ISO42-8.1-OPERATIONAL-PLANNING
+    title: Operating AI processes under control (§8.1)
+    description: >
+      Run records, tool-permission decisions and, optionally, lineage showing how AI
+      processes were executed and constrained.
     evidence_requirements:
       - evidence_type: model_calls
         required: true
@@ -55,8 +65,8 @@ controls:
   - id: ISO42-8.4-AI-SYSTEM-IMPACT
     title: AI system impact assessment (§8.4)
     description: >
-      The organisation shall assess the impact of the AI system on
-      individuals, groups and society.
+      Policy decisions and, optionally, a personal-data redaction manifest that can
+      feed an assessment of impacts on people.
     evidence_requirements:
       - evidence_type: policy_events
         required: true
@@ -65,25 +75,11 @@ controls:
         required: false
         description: PII scan evidence showing assessment of personal data impact
 
-  - id: ISO42-8.5-RESPONSIBLE-AI
-    title: Responsible AI system development (§8.5)
-    description: >
-      The organisation shall ensure that the AI system is developed and
-      deployed responsibly, with appropriate safeguards.
-    evidence_requirements:
-      - evidence_type: model_calls
-        required: true
-        description: Run capsules as evidence of responsible development practice
-      - evidence_type: seal_signature
-        required: false
-        description: Cryptographic seals ensuring integrity of AI system records
-
   - id: ISO42-9.1-MONITORING-EVAL
-    title: Monitoring, measurement, analysis and evaluation (§9.1)
+    title: Monitoring and evaluating performance (§9.1)
     description: >
-      The organisation shall evaluate the AI management system performance
-      and determine the methods for monitoring, measurement, analysis and
-      evaluation, as applicable.
+      Per-run records of model calls and, optionally, lineage that can feed the
+      monitoring of AI system performance.
     evidence_requirements:
       - evidence_type: model_calls
         required: true
@@ -92,11 +88,11 @@ controls:
         required: false
         description: Lineage for tracing evaluation history
 
-  - id: ISO42-10.2-CONTINUAL-IMPROVEMENT
-    title: Continual improvement (§10.2)
+  - id: ISO42-10.1-CONTINUAL-IMPROVEMENT
+    title: Continual improvement (§10.1)
     description: >
-      The organisation shall continually improve the suitability, adequacy
-      and effectiveness of the AI management system.
+      Historical run records and, optionally, policy decisions that support analysis
+      of improvement over time.
     evidence_requirements:
       - evidence_type: model_calls
         required: true

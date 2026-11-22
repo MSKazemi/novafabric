@@ -36,6 +36,9 @@ class ReplayResult:
     # ADR-0300, additive and optional, `mocked` mode only.
     model_calls_available: int | None = None  # servable recorded responses
     model_calls_unmatched: int | None = None  # calls with no recorded answer
+    # ADR-0319, additive and optional, `mocked` mode only: recorded model calls
+    # on a surface mocked replay cannot serve (they would run live).
+    model_calls_not_servable: int | None = None
     tool_calls_live: int | None = None  # intercepted-surface calls run live
     tool_calls_unmatched: int | None = None  # intercepted-surface calls refused
     queues_fully_consumed: bool | None = None
@@ -54,6 +57,16 @@ class ReplayResult:
     exact_reasons: list[str] | None = None
     # tool-call schema drift findings (ADR-0128; additive, optional)
     schema_drift: list[dict[str, Any]] | None = None
+    # ADR-0321, additive and optional, `mocked` mode: outcome equivalence with
+    # the recorded run (`verdict` + `checks`). `status` keeps its meaning (how
+    # the replayed process ended): a faithful replay of a run that failed is
+    # `status: failure` with `fidelity.verdict: faithful`.
+    fidelity: dict[str, Any] | None = None
+    # ADR-0321: the replay capsule beside this result (`nova diff` input).
+    replay_capsule_ref: str | None = None
+    # ADR-0322, additive and optional, `mocked --hermetic` only: how the replayed
+    # process tree was isolated. Absent (never `enabled: false`) without the flag.
+    hermetic: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -75,6 +88,7 @@ class ReplayResult:
             "tool_calls_recorded",
             "model_calls_available",
             "model_calls_unmatched",
+            "model_calls_not_servable",
             "tool_calls_live",
             "tool_calls_unmatched",
             "queues_fully_consumed",
@@ -102,6 +116,12 @@ class ReplayResult:
             d["exact_reasons"] = self.exact_reasons
         if self.schema_drift is not None:
             d["schema_drift"] = self.schema_drift
+        if self.fidelity is not None:
+            d["fidelity"] = self.fidelity
+        if self.replay_capsule_ref is not None:
+            d["replay_capsule_ref"] = self.replay_capsule_ref
+        if self.hermetic is not None:
+            d["hermetic"] = self.hermetic
         return d
 
 

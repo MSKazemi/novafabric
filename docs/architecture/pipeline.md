@@ -142,7 +142,8 @@ exception) and the recorded MCP tool results served from the capsule; other tool
 run live, and outbound connections are reported. A capsule that records no
 command to re-run (a framework-adapter or `@agent`-decorator (`novafabric.sdk.agent`) capsule, or one
 imported from OpenTelemetry) is refused before anything is spawned
-(`CapsuleNotReplayable`). What v0.104.0 served versus v0.105.0 is in
+(`CapsuleNotReplayable`) — unless it is an adapter capsule whose recorded process
+invocation passes every guard (experimental, ADR-0306 Q7). What v0.104.0 served versus v0.105.0 is in
 [Replay modes › Release scope](replay-modes.md). `forensic`, `semantic` and `exact` analyse the capsule
 without re-running it. Every mode writes
 `$NOVAFABRIC_HOME/replays/<ulid>/replay_result.yaml` (or under `-o <dir>`). `intervention` is the only mode

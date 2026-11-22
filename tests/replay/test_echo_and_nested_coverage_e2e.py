@@ -30,7 +30,7 @@ from typing import Any
 import jsonschema
 import pytest
 import yaml
-from _mocked_replay_agent import openai_body
+from _mocked_replay_agent import assert_replay_outputs_hold_no_value, openai_body
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -209,10 +209,7 @@ def test_a_changed_tool_result_is_reported_but_never_fails_the_replay(
     assert "differs from the recorded one" in mismatch["message"]
     assert "1 mismatched (report-only)" in replay["_cli_output"]
     # Never a value: neither the live nor the recorded tool result is written.
-    for path in replay_dir.rglob("*"):
-        if path.is_file():
-            text = path.read_text(errors="replace")
-            assert "SENTINEL-41c7" not in text and "sunny" not in text, path
+    assert_replay_outputs_hold_no_value(replay_dir, capsule, "SENTINEL-41c7", "sunny")
 
 
 def test_a_tool_result_the_replay_no_longer_sends_is_reported(
@@ -239,9 +236,7 @@ def test_a_redacted_secret_in_a_tool_result_still_echoes_as_matched(
     replay, _, replay_dir = env.replay(capsule)
     echo = _echo(replay)
     assert (echo["matched"], echo["mismatched"]) == (1, 0)
-    for path in replay_dir.rglob("*"):
-        if path.is_file():
-            assert GITHUB_TOKEN not in path.read_text(errors="replace"), path
+    assert_replay_outputs_hold_no_value(replay_dir, capsule, GITHUB_TOKEN)
 
 
 def test_a_capsule_without_request_messages_reports_not_checked_never_matched(

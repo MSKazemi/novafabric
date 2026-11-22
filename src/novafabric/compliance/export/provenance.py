@@ -99,6 +99,10 @@ class UnmarkedFieldGroupError(ProvenanceError):
     """A field-group carries no ``evidence_source`` where one is required (I-1)."""
 
 
+class CapsuleManifestError(ProvenanceError):
+    """``capsule.yaml`` is not valid YAML or not a mapping, so no reference can be built."""
+
+
 class MissingReperformableRefError(ProvenanceError):
     """A ``capsule_verified`` marker lacks its re-performable reference (I-3)."""
 
@@ -152,7 +156,12 @@ def build_capsule_ref(
     capsule_text = (
         read_required_capsule_member(manifest_path, operation="compliance export") or ""
     )
-    manifest = yaml.safe_load(capsule_text) or {}
+    try:
+        manifest = yaml.safe_load(capsule_text) or {}
+    except yaml.YAMLError as exc:
+        raise CapsuleManifestError(f"{manifest_path} is not valid YAML") from exc
+    if not isinstance(manifest, dict):
+        raise CapsuleManifestError(f"{manifest_path} is not a YAML mapping")
     capsule_id = (
         manifest.get("capsule_id") or manifest.get("run_id") or capsule_dir.name
     )

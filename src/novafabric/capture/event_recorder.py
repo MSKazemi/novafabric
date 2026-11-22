@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 import threading
 from collections.abc import Mapping
@@ -78,14 +79,29 @@ _AI_API_HOSTS: tuple[str, ...] = (
 )
 
 
+#: Anchored (``re.match``) like the URL registry's ``match_kind: regex`` entries: never a bare
+#: "huggingface.co", which would flag Hub metadata and file downloads as AI traffic.
+_AI_API_ANCHORED: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^https://router\.huggingface\.co(:443)?/", re.IGNORECASE),
+    re.compile(
+        r"^https://[a-z0-9][a-z0-9.-]*\.endpoints\.huggingface\.cloud(:443)?/", re.IGNORECASE
+    ),
+    # Vertex AI, global and regional (the Gemini API host is a substring entry above).
+    re.compile(r"^https://([a-z0-9-]+-)?aiplatform\.googleapis\.com(:443)?/", re.IGNORECASE),
+)
+
+
 def _is_ai_api(url: str) -> bool:
     """Return True if *url* matches a known AI API endpoint.
 
     Uses the same substring-match strategy as the URL registry to avoid
-    importing the registry here (which would create a circular dependency).
+    importing the registry here (which would create a circular dependency); the anchored
+    patterns mirror the registry's regex entries.
     """
     url_lower = url.lower()
-    return any(fragment in url_lower for fragment in _AI_API_HOSTS)
+    return any(fragment in url_lower for fragment in _AI_API_HOSTS) or any(
+        pattern.match(url) for pattern in _AI_API_ANCHORED
+    )
 
 
 # ---------------------------------------------------------------------------

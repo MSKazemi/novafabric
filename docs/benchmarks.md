@@ -25,7 +25,8 @@ uv run pytest tests/bench/test_capture_overhead_gate.py \
 ```
 
 Measured over 30 full captured runs of a trivial command through
-`CaptureOrchestrator(fast_emit=True)`:
+`CaptureOrchestrator(fast_emit=True)` (the CI gate now takes 60 rounds, so two noisy rounds
+on a shared runner no longer decide its p95):
 
 | | ms |
 |---|---|

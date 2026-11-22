@@ -346,6 +346,14 @@ class TestCli:
         (capsule / "capsule.yaml").write_text(
             yaml.dump({"run_id": "run-int-1", "command": ["true"]})
         )
+        # ADR-0319: a default (mocked) replay refuses a capsule whose recorded
+        # model calls it cannot serve, and these fixture records carry no
+        # gen_ai.system. Mark them as served-surface records, as capture writes
+        # them, so this keeps testing only that the default mode is unchanged.
+        (capsule / "model-calls.jsonl").write_text("".join(
+            json.dumps({**r, "gen_ai.system": "openai", "status": "success"}) + "\n"
+            for r in _model_calls()
+        ))
         runner = CliRunner()
         result = runner.invoke(
             app,

@@ -351,6 +351,19 @@ def capture_cmd(
             ),
         ),
     ] = None,
+    require_replayable: Annotated[
+        bool,
+        typer.Option(
+            "--require-replayable",
+            help=(
+                "EXPERIMENTAL: after the capsule is written, exit 4 unless a "
+                "strict mocked replay would serve every recorded call "
+                "(replayability.json `replayable: full`). Never stops the workload: "
+                "it runs and the capsule is written first; a workload that exited "
+                "non-zero keeps its own exit code."
+            ),
+        ),
+    ] = False,
     daemon: Annotated[
         bool,
         typer.Option(
@@ -401,6 +414,9 @@ def capture_cmd(
 
       # Encrypt a data subject's PII under its DEK (ADR-0314, experimental)
       NOVA_PII_PEPPER=... nova capture --pii-subject user-42 -- python agent.py
+
+      # Exit 4 unless a strict mocked replay would serve every call (experimental)
+      nova capture --require-replayable -- python agent.py
     """
     # Collect args: explicit Argument list + any extra args captured via context
     cmd = list(command) + list(ctx.args)
@@ -448,6 +464,7 @@ def capture_cmd(
         and not capture_media
         and output_dir is None
         and pipeline is None
+        and not require_replayable
     )
     if daemon and _is_plain:
         from novafabric._paths import daemon_socket_path
@@ -568,6 +585,10 @@ def capture_cmd(
             soft_wrap=True,
         )
 
+    # Replayability at capture: what a strict mocked replay would do with it.
+    replay_line, fully_replayable = _replayability_line(result.replayability)
+    console.print(replay_line, soft_wrap=True)
+
     # NF-032/033: opt-in OTel GenAI span emission alongside the capsule.
     if emit_otel_genai:
         import json as _json
@@ -595,6 +616,35 @@ def capture_cmd(
         _print_first_capsule_invite(result.capsule_dir)
     if result.exit_code != 0:
         raise typer.Exit(code=result.exit_code)
+    if require_replayable and not fully_replayable:
+        console.print(
+            "[red]✗[/red] --require-replayable: the capsule is not fully replayable "
+            f"(exit {REQUIRE_REPLAYABLE_EXIT}); the workload ran and the capsule was "
+            "written",
+            soft_wrap=True,
+        )
+        raise typer.Exit(code=REQUIRE_REPLAYABLE_EXIT)
+
+
+#: ``nova capture --require-replayable`` exit status when the capsule is not fully
+#: replayable (free in capture's own table: 1 setup, 2 usage, 3 PII scan, 124, 127,
+#: 130/128+n; the same value as ``nova replay --require-faithful``).
+REQUIRE_REPLAYABLE_EXIT = 4
+
+
+def _replayability_line(summary: dict[str, Any] | None) -> tuple[str, bool]:
+    """The ``replay: ...`` line ``nova capture`` prints, and whether it is ``full``."""
+    from novafabric.replay._replayability_summary import describe
+
+    if summary is None:
+        return (
+            "[yellow]![/yellow] replay: replayability was not assessed for this capsule "
+            "(see nova replay --dry-run)",
+            False,
+        )
+    full = summary.get("replayable") == "full"
+    icon = "[green]✓[/green]" if full else "[yellow]![/yellow]"
+    return f"{icon} {escape(describe(summary))}", full
 
 
 def _add_pii_envelope_stage(pipeline: Any, subject_id: str) -> Any:

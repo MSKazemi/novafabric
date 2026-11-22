@@ -8,7 +8,10 @@ file or directory: '@langgraph:demo'``. Adapter capsules (and the
 and the engine handed that label to ``subprocess.run`` as if it were a program.
 
 Now one helper (``replay/_replayability.py``) decides, before anything is
-spawned: ``mocked`` aborts with ``error.type: CapsuleNotReplayable`` and a
+spawned. Since ADR-0306 Q7 an adapter capsule that records its process
+invocation (the ``process_invocation`` facet) and passes every guard is re-run
+instead (``test_adapter_capsule_replayability.py``); the capsules below record
+none, or fail a guard. For them: ``mocked`` aborts with ``error.type: CapsuleNotReplayable`` and a
 message naming the modes that do work; ``--dry-run`` says the same and exits 1;
 ``intervention`` emits the counterfactual streams without re-running and says
 so; ``exact`` reports the capsule ineligible; ``forensic`` and ``semantic`` are
@@ -47,9 +50,7 @@ _SCHEMA = json.loads(
 runner = CliRunner()
 
 
-@pytest.fixture
-def adapter_capsule(tmp_path: Path) -> Path:
-    """A real capsule written by the shared framework-adapter core."""
+def _adapter_capsule(tmp_path: Path) -> Path:
     from novafabric.adapters._capsule import begin_capture
 
     cap = begin_capture(framework="langgraph", run_name="demo", data_dir=tmp_path / "caps")
@@ -58,6 +59,19 @@ def adapter_capsule(tmp_path: Path) -> Path:
     assert manifest["command"] == ["@langgraph:demo"]
     assert manifest["capture_mode"] == "sdk-decorator"
     return cap.cap_dir
+
+
+@pytest.fixture
+def adapter_capsule(tmp_path: Path) -> Path:
+    """A real capsule written by the shared framework-adapter core, as every
+    adapter wrote it before ADR-0306 Q7: without the ``process_invocation``
+    facet, so it records no command at all."""
+    cap_dir = _adapter_capsule(tmp_path)
+    path = cap_dir / "capsule.yaml"
+    manifest = yaml.safe_load(path.read_text())
+    del manifest["facets"]
+    path.write_text(yaml.safe_dump(manifest))
+    return cap_dir
 
 
 @pytest.fixture
@@ -179,6 +193,23 @@ def test_mocked_refuses_an_adapter_capsule_before_spawning(
     )
     assert written["status"] == "aborted"
     assert written["error"]["type"] == "CapsuleNotReplayable"
+
+
+def test_an_adapter_capsule_written_inside_pytest_is_refused_as_a_harness_host(
+    tmp_path: Path, no_spawn: list[Any]
+) -> None:
+    """ADR-0306 Q7: the facet is recorded, and its long-lived-host guard refuses it
+    (re-running the process would re-run the test session)."""
+    cap_dir = _adapter_capsule(tmp_path)
+    manifest = yaml.safe_load((cap_dir / "capsule.yaml").read_text())
+    assert "_pytest" in manifest["facets"]["process_invocation"]["host_modules"]
+    result = _run(cap_dir, tmp_path, mode="mocked")
+    assert no_spawn == []
+    assert result.status == "aborted"
+    assert result.error is not None
+    assert result.error["type"] == "CapsuleNotReplayable"
+    assert result.error["guard"] == "long_lived_host"
+    assert "@langgraph:demo" in result.error["message"]
 
 
 def test_mocked_refuses_an_sdk_agent_capsule(

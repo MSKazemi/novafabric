@@ -22,6 +22,7 @@ workload swallows it.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
 
 from novafabric.adapters._adk_tool_seam import FUNCTION_CALL_ID_EXT, AdkToolCall
@@ -33,6 +34,7 @@ from novafabric.replay._contract import (
     ToolMatch,
     not_servable_reason,
     record_arguments_digest,
+    upgrade_legacy_seam_record,
 )
 from novafabric.replay._errors import (
     ReplayDivergenceError,
@@ -40,11 +42,20 @@ from novafabric.replay._errors import (
     ReplayToolUnmatchedError,
 )
 from novafabric.replay._policy import decide_intercepted
+from novafabric.replay._tool_call_outcomes import AFTER_DIVERGENCE
 
 #: Served in place of a recorded ``None``: ADK would have turned ``None`` into
 #: exactly this function response (``_caller.py`` ``_normalize_tool_result``),
 #: and a plugin answer of ``None`` means "run the tool".
 _NONE_RESPONSE: dict[str, Any] = {"result": None}
+
+
+#: ``_echo_recovery.SOURCE_EXT``: where a served record's result came from.
+_RESULT_SOURCE_EXT = "io.novafabric.result_source"
+
+
+class RecordNotDecodable(Exception):
+    """A matched, servable record whose value a server cannot rebuild."""
 
 
 def _function_call_id(record: dict[str, Any], ext_key: str = FUNCTION_CALL_ID_EXT) -> str | None:
@@ -78,7 +89,12 @@ class AdkToolServer:
         events: ReplayEventLog,
         permitted: frozenset[str],
         overrides: dict[str, bool] | None = None,
+        on_served: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
+        # A record an earlier capture marked not servable for nesting alone (or,
+        # LangChain, for round 2's "not wrapped"), its value kept, is served as
+        # current capture would have marked it (ADR-0306 r3b/r3c).
+        records = [upgrade_legacy_seam_record(r) for r in records]
         counts = Counter(_function_call_id(r, self.CALL_ID_EXT) for r in records)
         #: unique recorded function_call_id -> (tool name, argument digest).
         self._by_call_id: dict[str, tuple[Any, str]] = {}
@@ -102,6 +118,16 @@ class AdkToolServer:
         self._events = events
         self._permitted = permitted
         self._overrides = dict(overrides or {})
+        #: Called with each served record (as stored in the capsule) before its
+        #: value is returned, so the records nested inside it are covered
+        #: (ADR-0306 slice 4; LangChain since r3b).
+        self._on_served = on_served
+
+    def cover(self, boundary_ids: set[str]) -> list[dict[str, Any]]:
+        """Consume, without serving, every unconsumed record written inside one
+        of *boundary_ids*; return them as stored in the capsule (the matcher
+        holds views whose ``tool_call_id`` may be the model's call id)."""
+        return [self._originals.get(id(v), v) for v in self._matcher.cover(boundary_ids)]
 
     # ── handler protocol (adapters._adk_tool_seam.AdkToolHandler) ────────────
 
@@ -138,15 +164,33 @@ class AdkToolServer:
                 call, ReplayToolRecordNotServableError, call.digest,
                 "matched a recorded call that cannot be served", reason, consumed=True,
             )
+        try:
+            value = self._decode(record, call)
+        except RecordNotDecodable as exc:
+            return self._diverge(
+                call, ReplayToolRecordNotServableError, call.digest,
+                "matched a recorded call that cannot be served", str(exc), consumed=True,
+            )
+        ext = record.get("extensions")
+        source = ext.get(_RESULT_SOURCE_EXT) if isinstance(ext, dict) else None
         self._events.emit(
             "tool_mocked",
             tool_name=call.tool_name,
             record_id=record.get("tool_call_id"),
             how=match.how,
             surface=self.SURFACE,
+            # ADR-0306 r3: e.g. `model-request-echo` for a recovered result.
+            **({"source": source} if isinstance(source, str) else {}),
         )
-        _ok, value = _tool_codec.decode_result(record)
+        if self._on_served is not None:
+            self._on_served(record)
         return self._answer(value)
+
+    def _decode(self, record: dict[str, Any], call: AdkToolCall) -> Any:
+        """The value to serve for a servable *record*; raises
+        :class:`RecordNotDecodable` to refuse it (a subclass hook)."""
+        _ok, value = _tool_codec.decode_result(record)
+        return value
 
     def _answer(self, value: Any) -> Any:
         """What the seam hands back for a served *value* (non-``None`` = served)."""
@@ -208,12 +252,12 @@ class AdkToolServer:
         if live:
             self._events.emit(
                 "tool_live", tool_name=call.tool_name, surface=self.SURFACE,
-                mutation_class=call.mutation_class,
+                mutation_class=call.mutation_class, **{AFTER_DIVERGENCE: True},
             )
             return None
         self._events.emit(
             "tool_refused", tool_name=call.tool_name, surface=self.SURFACE,
-            mutation_class=call.mutation_class,
+            mutation_class=call.mutation_class, **{AFTER_DIVERGENCE: True},
             **({"override": label} if label is not None else {}),
         )
         raise error

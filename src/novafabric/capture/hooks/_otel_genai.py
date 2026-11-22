@@ -142,6 +142,14 @@ def extract_request_attributes(
         "endpoint": url,
     }
 
+    # Hugging Face only: say what the request does and does not establish about identity
+    # (response.model above is a mirror, not an observation). No other system is touched.
+    from novafabric.capture.hooks._hf_identity import IDENTITY_EXT, identity_extension
+
+    identity = identity_extension(gen_ai_system, body.get("model"))
+    if identity is not None:
+        attrs["extensions"] = {IDENTITY_EXT: identity}
+
     # Optional/conditional fields per OTel semconv "Required when applicable".
     for body_key, attr_name, expected_type in _REQUEST_FIELD_MAP:
         if body_key in body:
