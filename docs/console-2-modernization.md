@@ -137,3 +137,27 @@ Work from existing issues and existing Project V2 if available; deduplicate befo
 ## Backout
 
 Every change must be reversible by reverting its focused PR/bundle. Preserve existing saved views and user-authored dashboard widget files. Changes to authorization, schema or persistence need a separate approved migration and rollback plan rather than an ordinary visual redesign.
+
+---
+
+<!-- console2-live-epic-reconciliation-20261122 -->
+## Live GitHub execution structure (2026-11-22)
+
+This public roadmap is in draft PR #251. **Canonical umbrella:** [#252](https://github.com/MSKazemi/novafabric/issues/252). Instead of multiple competing Console programs, execution is organized into six public **workstream epic issues** with specific Claude Code prompts, acceptance gates and task links:
+
+| Epic | Existing implementation issues | Gate |
+|---|---|---|
+| [#275 UX research / onboarding](https://github.com/MSKazemi/novafabric/issues/275) | #253, #254, #265 | D0 user/design acceptance |
+| [#272 Frontend platform / architecture / versioning](https://github.com/MSKazemi/novafabric/issues/272) | #262, #263, #266, #267, #283 | D1 accepted ADR + API/capability contract |
+| [#277 Developer Studio](https://github.com/MSKazemi/novafabric/issues/277) | #255, #268, #269, #270 | Console 2.0 core |
+| [#279 Evidence and lineage](https://github.com/MSKazemi/novafabric/issues/279) | #271, #274 | 2.0 trust / 2.1 lineage |
+| [#281 Operations](https://github.com/MSKazemi/novafabric/issues/281) | #276 | Console 2.2 |
+| [#284 Release quality](https://github.com/MSKazemi/novafabric/issues/284) | #261, #264, #278, #280, #282 | Every release |
+
+**Shared cross-workstream #256** stays under root #252 to coordinate W4/W5 without double implementation. **Optional P3 research #285** stays in backlog. External #250 (native Project #14), #260 scale harness and #211/#220/#225 existing release work are linked dependencies, not new Console-owned replicas.
+
+**Important correction to the earlier technology table above:** retaining Astro is a *baseline option*, **not** an accepted decision. Strong architecture changes are explicitly authorized for comparative research under [architecture and versioning](console-2-architecture-and-versioning.md) and #262. Any major app replacement still preserves the Python backend, offline wheel and immutable evidence contract and needs an accepted ADR.
+
+**Release identity:** Python package is installable product release; Console 2.0/2.1/2.2 are experience labels; UI bundle uses source SHA/digest and explicit API capabilities; no untested standalone frontend↔backend compatibility promise. Preserve N/N+1 database migration contract and independently versioned Run Capsules/Evidence Bundles.
+
+**Board status:** all epics/issues and issue-body mappings exist, but GitHub connector cannot write native Project V2 parent/dependency edges, priorities or milestones. [#250](https://github.com/MSKazemi/novafabric/issues/250) contains the exact requested hierarchy to reconcile **existing** [Project #14](https://github.com/users/MSKazemi/projects/14), without making a new Project or claiming unverified native links.
