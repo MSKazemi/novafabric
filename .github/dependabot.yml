@@ -33,36 +33,6 @@ updates:
           - "minor"
           - "patch"
     ignore:
-      # The OpenTelemetry API/SDK pair is held by google-adk, not by us. uv.lock is
-      # ONE universal resolution over every extra, and novafabric[google-adk]
-      # (google-adk>=2.6.2) caps opentelemetry-api/-sdk at <=1.43 (2.7.0) and at
-      # <=1.42.1 (2.7.1 and later, incl. 2.11.0). Any newer OpenTelemetry is
-      # therefore unresolvable for the lock, so Dependabot's update job failed with
-      # `dependency_file_not_resolvable` (2026-10-08, otel 1.45.0 / 0.66b0) — and
-      # resolving 1.43 instead silently DOWNGRADES google-adk to 2.7.0.
-      # fastapi is held for the same reason: fastapi>=0.142 requires
-      # opentelemetry-api>=1.44.
-      # opentelemetry-proto is independent of this cap and keeps flowing.
-      #
-      # GHSA-xcq7-p3pf-p88h (opentelemetry-api <=1.45.0, unbounded tracestate
-      # parsing; fixed in 1.45.1) is held open by the same cap, so its security
-      # update fails too (2026-10-22). Exposure is limited to the lock and to
-      # novafabric[google-adk] installs: the core requirement has no upper bound,
-      # the published image resolves 1.45.1, and NovaFabric never parses an
-      # inbound tracestate. The Dependabot alert is dismissed as tolerable risk.
-      #
-      # Drop these four entries when google-adk lifts its OpenTelemetry ceiling.
-      # Check with:  uv lock --dry-run -P opentelemetry-sdk -P fastapi
-      # — the cap is gone when that moves opentelemetry-sdk past 1.42.1 WITHOUT
-      # a "google-adk v2.x -> v2.7.0" downgrade line.
-      - dependency-name: "opentelemetry-api"
-        versions: [">=1.43"]
-      - dependency-name: "opentelemetry-sdk"
-        versions: [">=1.43"]
-      - dependency-name: "opentelemetry-semantic-conventions"
-        versions: [">=0.64b0"]
-      - dependency-name: "fastapi"
-        versions: [">=0.142"]
       # pytest 9.2.0 is held: with it the CI shard `unit (2/6)` hangs or is killed
       # (job cancelled at the cap, or "The runner has received a shutdown signal" about
       # five minutes in), every time, on four runs. Bisected on 2026-11-22 against
