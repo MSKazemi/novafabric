@@ -37,7 +37,7 @@ concurrency:
 jobs:
   audit:
     name: pip-audit (locked deps)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
 

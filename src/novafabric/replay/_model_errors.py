@@ -124,6 +124,8 @@ def is_returned_failed_response(record: dict[str, Any]) -> bool:
     """
     if not is_recorded_model_error(record) or isinstance(_ext(record, SDK_ERROR_EXT), dict):
         return False
+    if record.get("gen_ai.system") == "aws.bedrock":
+        return _bedrock_served_failure(record)
     status = _ext(record, RESPONSE_STATUS_EXT)
     if isinstance(status, dict) and status.get("status") == "failed":
         return True
@@ -132,6 +134,19 @@ def is_returned_failed_response(record: dict[str, Any]) -> bool:
         isinstance(event, dict)
         and isinstance(event.get("message"), str)
         and isinstance(record.get("nova.streaming"), dict)
+    )
+
+
+def _bedrock_served_failure(record: dict[str, Any]) -> bool:
+    """A failed Bedrock call whose failure was recorded as wire bytes: an HTTP error
+    response (status and body), or a stream that delivered an exception frame.
+    Served back as recorded -- botocore raises (or retries) as it did at capture."""
+    error = _ext(record, "io.novafabric.bedrock.http_error")
+    if isinstance(error, dict):
+        return isinstance(error.get("status"), int) and isinstance(error.get("body"), str)
+    events = _ext(record, "io.novafabric.bedrock.events")
+    return isinstance(events, list) and any(
+        isinstance(e, list) and e[:1] == ["exception"] for e in events
     )
 
 
@@ -211,6 +226,23 @@ def rebuild_sdk_error(record: dict[str, Any]) -> BaseException:
     done faithfully. Never imports a name taken from the record: the SDK is one
     of :data:`ALLOWED_SDK_ERRORS`' keys and the class one of its values.
     """
+    if record.get("gen_ai.system") == "aws.bedrock":
+        # A Bedrock call is recorded at the wire (urllib3), with no SDK exception
+        # to rebuild. A recorded HTTP error or in-stream exception is served back as
+        # bytes (``is_returned_failed_response``); anything else -- the request
+        # raised before a response, or the body failed part-way -- is refused, in order.
+        raise UnreconstructableError(
+            "the recorded Bedrock call failed without a response mocked replay can "
+            "serve back (the request raised, or its body failed part-way), so it is "
+            "refused rather than answered"
+        )
+    if record.get("gen_ai.system") == "ollama":
+        # ADR-0320: an Ollama call is recorded at the wire, with no SDK exception
+        # to rebuild; it holds its position and is refused, in order.
+        raise UnreconstructableError(
+            "recorded Ollama failures are not replayed (ADR-0320); the call failed "
+            "at capture, so it is refused rather than answered"
+        )
     detail = _detail(record)
     sdk = record.get("gen_ai.system")
     allowed = ALLOWED_SDK_ERRORS.get(str(sdk))

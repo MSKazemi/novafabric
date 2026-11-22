@@ -11,6 +11,10 @@ engine writes (see :func:`install_from_env`):
   same SDK exception class at its position (``_model_errors``, issue #16) --
   after the delivered chunks when it was raised mid-stream; a Responses API
   response the SDK *returned* with ``status: failed`` is returned as recorded;
+  it also answers Ollama ``/api/chat`` / ``/api/generate`` requests at the
+  ``httpx``/``httpx2`` transport (``_ollama_serve``, ADR-0320, experimental) and
+  AWS Bedrock ``Converse`` / ``ConverseStream`` requests at ``urllib3``'s
+  ``HTTPConnectionPool.urlopen`` (``_bedrock_serve``, experimental);
 * :class:`MockToolDispatcher` serves recorded tool results on the intercepted
   tool surfaces: MCP ``tools/call`` through ``mcp.ClientSession.call_tool``
   (ADR-0300), functions the workload declared with
@@ -43,11 +47,35 @@ from pathlib import Path
 from typing import Any
 
 from novafabric.capture import _tool_codec
+from novafabric.capture.file_effects import install_replay_write_observer
 from novafabric.capture.hooks._mcp import MCP_TOOL_ERROR
 from novafabric.capture.hooks._sdk_streams import (
     RESPONSE_STATUS_EXT,
     STREAM_ERROR_EVENT_EXT,
     is_raw_response_call,
+)
+from novafabric.replay._bedrock_serve import (
+    BEDROCK_QUEUES,
+    SERVED_URLLIB3_SURFACE,
+    ServedHttp,
+    recorded_bedrock_hosts,
+    served_response,
+    unservable_reason,
+)
+from novafabric.replay._bedrock_serve import request_json as bedrock_request_json
+from novafabric.replay._bedrock_serve import request_queue as bedrock_request_queue
+from novafabric.replay._child_observer import (
+    ConnectCounter,
+    observe_connect,
+    start_tree_observation,
+)
+from novafabric.replay._client_transport import (
+    SERVED_CLIENT_SURFACES,
+    TRANSPORT_FOR_URL,
+    covered,
+    handled_upstream,
+    is_handled_upstream,
+    serving_transport,
 )
 from novafabric.replay._contract import (
     ECHO_DIFFERS,
@@ -57,6 +85,7 @@ from novafabric.replay._contract import (
     MODEL_SURFACES,
     QUEUE_PROVIDER,
     TOOL_SURFACE_ADK,
+    TOOL_SURFACE_LANGCHAIN,
     TOOL_SURFACE_MCP,
     TOOL_SURFACE_OPENAI_AGENTS,
     TOOL_SURFACE_PYTHON,
@@ -86,6 +115,7 @@ from novafabric.replay._errors import (
     ReplayToolRecordNotServableError,
     ReplayToolUnmatchedError,
     ReplayUnsupportedSurfaceError,
+    ReplayWireRequestMismatchError,
 )
 from novafabric.replay._flags import LADDER_FLAG, ladder_flag
 from novafabric.replay._model_errors import (
@@ -96,12 +126,32 @@ from novafabric.replay._model_errors import (
     rebuild_sdk_error,
     recorded_error_type,
 )
+from novafabric.replay._ollama_serve import (
+    SERVED_TRANSPORT_SURFACES,
+    encode_objects,
+    ollama_response_objects,
+    recorded_ollama_hosts,
+    request_json,
+    request_queue,
+)
 from novafabric.replay._policy import (
     INSTALL_REQUIRED_ENV,
     TOOL_POLICY_ENV,
     decide_intercepted,
     gating_mutation_class,
 )
+from novafabric.replay._process_observer import ProcessObserver
+from novafabric.replay._servability import UNKNOWN_SYSTEM, is_metadata_call, not_servable_by_system
+from novafabric.replay._tool_call_outcomes import AFTER_DIVERGENCE
+from novafabric.replay._wire_serve import (
+    GENERIC_WIRE_QUEUE,
+    WireResponse,
+    recorded_streamed,
+    request_mismatch,
+)
+from novafabric.replay._wire_serve import httpx_response as _wire_transport_response
+from novafabric.replay._wire_serve import served_response as wire_served_response
+from novafabric.replay._wire_serve import unservable_reason as wire_unservable_reason
 
 #: Exit status of a strict replay whose dispatcher could not be installed: the
 #: process is stopped before the workload runs, because running it would send
@@ -229,52 +279,66 @@ def _unfinished(stored: dict[str, Any]) -> bool:
     return any(_delivered_finish(c) is None for c in _choices(stored))
 
 
-def _openai_tool_calls(message: dict[str, Any]) -> list[Any] | None:
+def _openai_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]] | None:
     refs = message.get("tool_calls")
     if not isinstance(refs, list) or not refs:
         return None
     calls = [
-        types.SimpleNamespace(
-            id=ref.get("id", ""),
-            type="function",
-            function=types.SimpleNamespace(
-                name=ref["name"],
-                arguments=_arguments_json(ref.get("arguments")),
-            ),
-        )
+        {
+            "id": ref.get("id", ""),
+            "type": "function",
+            "function": {
+                "name": ref["name"],
+                "arguments": _arguments_json(ref.get("arguments")),
+            },
+        }
         for ref in refs
         if _well_formed_ref(ref)
     ]
     return calls or None
 
 
-def _mock_openai_response(stored: dict[str, Any]) -> Any:
+def _openai_chat_payload(stored: dict[str, Any]) -> dict[str, Any]:
+    """The Chat Completion body a recorded call stands for.
+
+    Recorded values only, except ``created``, which capture does not record: it
+    is ``0``, as in the streamed chunks (``created: 0``) and Responses
+    (``created_at: 0``), so the served object validates (``model_dump`` →
+    ``model_validate`` round-trips).
+    """
     choices = []
     for c in stored.get("gen_ai.response.choices", []):
         message = c.get("message", {})
-        msg = types.SimpleNamespace(
-            role=message.get("role", "assistant"),
-            content=message.get("content", ""),
-            tool_calls=_openai_tool_calls(message),
-        )
-        choices.append(types.SimpleNamespace(
-            index=c.get("index", 0),
-            message=msg,
-            finish_reason=_delivered_finish(c),
-        ))
-    usage = types.SimpleNamespace(
-        prompt_tokens=stored.get("gen_ai.usage.input_tokens", 0),
-        completion_tokens=stored.get("gen_ai.usage.output_tokens", 0),
-        total_tokens=(
-            stored.get("gen_ai.usage.input_tokens", 0)
-            + stored.get("gen_ai.usage.output_tokens", 0)
-        ),
-    )
-    return types.SimpleNamespace(
-        id=stored.get("gen_ai.response.id", "replay-mocked"),
-        model=stored.get("gen_ai.response.model", ""),
-        choices=choices,
-        usage=usage,
+        choices.append({
+            "index": c.get("index", 0),
+            "message": {
+                "role": message.get("role", "assistant"),
+                "content": message.get("content", ""),
+                "tool_calls": _openai_tool_calls(message),
+            },
+            "finish_reason": _delivered_finish(c),
+        })
+    prompt = stored.get("gen_ai.usage.input_tokens", 0)
+    completion = stored.get("gen_ai.usage.output_tokens", 0)
+    return {
+        "id": stored.get("gen_ai.response.id", "replay-mocked"),
+        "object": "chat.completion",
+        "created": 0,
+        "model": stored.get("gen_ai.response.model", ""),
+        "choices": choices,
+        "usage": {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": prompt + completion,
+        },
+    }
+
+
+def _mock_openai_response(stored: dict[str, Any]) -> Any:
+    # The SDK's own ChatCompletion: code that checks isinstance (the Agents SDK's
+    # OpenAIChatCompletionsModel) or calls model_dump() works on a served call.
+    return _construct(
+        "openai", "openai.types.chat", "ChatCompletion", _openai_chat_payload(stored)
     )
 
 
@@ -543,38 +607,52 @@ def _anthropic_stop_reason(stored: dict[str, Any], finish_reason: str | None) ->
     return _ANTHROPIC_STOP_REASON.get(finish_reason, finish_reason)
 
 
-def _mock_anthropic_response(stored: dict[str, Any]) -> Any:
+def _anthropic_payload(stored: dict[str, Any]) -> dict[str, Any]:
+    """The Messages API ``Message`` body a recorded call stands for."""
     choices = stored.get("gen_ai.response.choices", [])
     message = choices[0].get("message", {}) if choices else {}
     content_text = message.get("content", "") or ""
     finish_reason = _delivered_finish(choices[0]) if choices else "end_turn"
-    blocks: list[Any] = []
+    blocks: list[dict[str, Any]] = []
     if content_text:
-        blocks.append(types.SimpleNamespace(type="text", text=content_text))
+        blocks.append({"type": "text", "text": content_text})
     for ref in message.get("tool_calls") or []:
         if _well_formed_ref(ref):
             arguments = ref.get("arguments")
-            blocks.append(types.SimpleNamespace(
-                type="tool_use",
-                id=ref.get("id", ""),
-                name=ref["name"],
-                input=arguments if isinstance(arguments, dict) else {},
-            ))
+            blocks.append({
+                "type": "tool_use",
+                "id": ref.get("id", ""),
+                "name": ref["name"],
+                "input": arguments if isinstance(arguments, dict) else {},
+            })
     if not blocks:
-        blocks.append(types.SimpleNamespace(type="text", text=""))
-    usage = types.SimpleNamespace(
-        input_tokens=stored.get("gen_ai.usage.input_tokens", 0),
-        output_tokens=stored.get("gen_ai.usage.output_tokens", 0),
-    )
-    return types.SimpleNamespace(
-        id=stored.get("gen_ai.response.id", "replay-mocked"),
-        model=stored.get("gen_ai.response.model", ""),
-        content=blocks,
-        stop_reason=_anthropic_stop_reason(stored, finish_reason),
-        usage=usage,
-        type="message",
-        role="assistant",
-    )
+        blocks.append({"type": "text", "text": ""})
+    return {
+        "id": stored.get("gen_ai.response.id", "replay-mocked"),
+        "type": "message",
+        "role": "assistant",
+        "model": stored.get("gen_ai.response.model", ""),
+        "content": blocks,
+        "stop_reason": _anthropic_stop_reason(stored, finish_reason),
+        "usage": {
+            "input_tokens": stored.get("gen_ai.usage.input_tokens", 0),
+            "output_tokens": stored.get("gen_ai.usage.output_tokens", 0),
+        },
+    }
+
+
+def _mock_anthropic_response(stored: dict[str, Any]) -> Any:
+    # The SDK's own Message (isinstance checks, model_dump()); attribute objects
+    # without the SDK.
+    payload = _anthropic_payload(stored)
+    built = _construct("anthropic", "anthropic.types", "Message", payload)
+    if isinstance(built, types.SimpleNamespace):
+        # A tool_use block's input is a JSON object (a dict in the SDK too),
+        # not an attribute object.
+        for block, raw in zip(built.content, payload["content"], strict=True):
+            if raw["type"] == "tool_use":
+                block.input = raw["input"]
+    return built
 
 
 def _anthropic_events(stored: dict[str, Any], *, partial: bool = False) -> list[Any]:
@@ -762,6 +840,81 @@ def build_served_response(
     return _ReplayStream(items, error)
 
 
+def _transport_response(
+    module_name: str, served: tuple[list[bytes], bool], request: Any
+) -> Any:
+    """The ``Response`` a patched httpx/httpx2 transport returns for a served
+    Ollama call (ADR-0320): status 200, the recorded body as NDJSON lines (one
+    stream chunk per line) or one JSON body."""
+    chunks, ndjson = served
+    module = importlib.import_module(module_name)
+
+    class _ServedBody(module.SyncByteStream, module.AsyncByteStream):  # type: ignore[misc, name-defined]
+        def __iter__(self) -> Iterator[bytes]:
+            yield from chunks
+
+        async def __aiter__(self) -> Any:
+            for chunk in chunks:
+                yield chunk
+
+    headers = {
+        "content-type": "application/x-ndjson" if ndjson
+        else "application/json; charset=utf-8",
+    }
+    if not ndjson:
+        headers["content-length"] = str(sum(len(c) for c in chunks))
+    return module.Response(200, headers=headers, stream=_ServedBody(), request=request)
+
+
+def _urllib3_url(pool: Any, url: str) -> str:
+    """The full URL of a ``HTTPConnectionPool.urlopen`` request (as capture builds it)."""
+    from novafabric.capture.hooks._urllib3 import _build_url
+
+    return _build_url(pool, url)
+
+
+def _urlopen_arguments(
+    original: Any, pool: Any, method: Any, url: Any, args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """``urlopen``'s arguments by name (urllib3 calls itself back positionally)."""
+    try:
+        bound = inspect.signature(original).bind(pool, method, url, *args, **kwargs)
+    except (TypeError, ValueError):
+        return dict(kwargs)
+    named = dict(bound.arguments)
+    named.update(named.pop("response_kw", None) or {})
+    return named
+
+
+def _urllib3_response(
+    served: ServedHttp, named: dict[str, Any], method: str, url: str
+) -> Any:
+    """A real ``urllib3.HTTPResponse`` over the served bytes, built the way the
+    caller asked for it (``preload_content`` / ``decode_content``), so botocore's
+    ``stream()`` / ``read()`` and its parsers run exactly as on a network body."""
+    import io
+
+    from urllib3 import HTTPResponse
+    from urllib3._collections import HTTPHeaderDict
+
+    headers = HTTPHeaderDict()
+    for name, value in served.headers:
+        headers.add(name, value)
+    return HTTPResponse(
+        body=io.BytesIO(served.body),
+        headers=headers,
+        status=served.status,
+        version=11,
+        reason=served.reason,
+        preload_content=bool(named.get("preload_content", True)),
+        decode_content=bool(named.get("decode_content", True)),
+        enforce_content_length=bool(named.get("enforce_content_length", True)),
+        request_method=method,
+        request_url=url,
+    )
+
+
 #: Pre-ADR-0304 name: the non-streaming builder per provider queue.
 _BUILDERS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "openai": _mock_openai_response,
@@ -860,6 +1013,28 @@ class MockModelDispatcher:
         self._events = events or ReplayEventLog(None)
         self._patcher = _Patcher()
         self.installed_surfaces: list[str] = []
+        #: ADR-0320: hosts the capsule recorded Ollama calls to, and the URL
+        #: registry (loaded at install) that classifies a transport request.
+        self._ollama_hosts = recorded_ollama_hosts(
+            [r for r in model_calls if isinstance(r, dict)]
+        )
+        #: Hosts the capsule recorded AWS Bedrock calls to (served at urllib3).
+        self._bedrock_hosts = recorded_bedrock_hosts(
+            [r for r in model_calls if isinstance(r, dict)]
+        )
+        self._registry: Any = None
+        #: ADR-0324: the generic wire engine claims registry requests only when the
+        #: capsule holds a servable generic-wire record (older capsules: unchanged).
+        self._wire_active = bool(self._queues.get(GENERIC_WIRE_QUEUE))
+        #: ADR-0319: the ``gen_ai.system`` of each recorded model call replay cannot
+        #: serve. A request to one that no seam serves runs live, and is counted
+        #: live where it is seen (:meth:`_count_unserved_live`).
+        self._unserved_systems = frozenset(
+            not_servable_by_system(model_calls if isinstance(model_calls, list) else [])
+        ) - {UNKNOWN_SYSTEM}
+        #: The patched transport request methods (``HTTPTransport.handle_request``
+        #: and friends): a client transport that resolves to one needs no wrapper.
+        self._seam_functions: tuple[Any, ...] = ()
 
     # Kept for introspection by existing callers/tests.
     @property
@@ -891,9 +1066,334 @@ class MockModelDispatcher:
                 module_name, class_name, attr,
                 functools.partial(self._make_guard, provider, surface),
             )
+        self._install_transports()
+
+    def _install_transports(self) -> None:
+        """ADR-0320: serve Ollama ``/api/chat`` / ``/api/generate`` at the httpx
+        transport. A malformed explicit URL registry raises (install fails, and a
+        strict replay stops before the workload runs)."""
+        from novafabric.capture.hooks._url_registry import load_url_registry
+
+        if self._registry is None:
+            self._registry = load_url_registry()
+        installed: set[str] = set()
+        for module_name, class_name, attr, is_async in SERVED_TRANSPORT_SURFACES:
+            if self._patcher.patch(
+                module_name, class_name, attr,
+                functools.partial(self._make_transport, module_name, is_async),
+            ):
+                installed.add(module_name)
+                owner = getattr(importlib.import_module(module_name), class_name)
+                self._seam_functions += (getattr(owner, attr),)
+        clients: set[str] = set()
+        for module_name, class_name, is_async in SERVED_CLIENT_SURFACES:
+            if module_name in installed and self._patcher.patch(
+                module_name, class_name, TRANSPORT_FOR_URL,
+                functools.partial(self._make_transport_for_url, module_name, is_async),
+            ):
+                clients.add(module_name)
+        for module_name in sorted(clients):
+            # Named only when patched: a client library without ``_transport_for_url``
+            # serves ``HTTPTransport`` clients only, and the report says so by omission.
+            self.installed_surfaces.append(f"{module_name} client transports (any transport)")
+        for module_name in sorted(installed):
+            for queue in ("ollama.chat", "ollama.generate"):
+                self.installed_surfaces.append(
+                    f"{MODEL_SURFACES[queue]} ({module_name} transport)"
+                )
+        for module_name in sorted(installed):
+            self.installed_surfaces.append(
+                f"{MODEL_SURFACES[GENERIC_WIRE_QUEUE]} ({module_name} transport)"
+            )
+        module_name, class_name, attr = SERVED_URLLIB3_SURFACE
+        if self._patcher.patch(module_name, class_name, attr, self._make_urlopen):
+            for queue in BEDROCK_QUEUES:
+                self.installed_surfaces.append(f"{MODEL_SURFACES[queue]} (urllib3 transport)")
+            self.installed_surfaces.append(
+                f"{MODEL_SURFACES[GENERIC_WIRE_QUEUE]} (urllib3 transport)"
+            )
+
+    def _transport_queue(self, request: Any) -> str | None:
+        """The Ollama queue a transport request is served from; ``None`` = live."""
+        url = str(request.url)
+        method = str(getattr(request, "method", "") or "")
+        return request_queue(
+            method, url, self._registry.gen_ai_system(url), self._ollama_hosts
+        )
+
+    def transport_target(self, request: Any) -> str | None:
+        """The queue that claims an httpx request -- an Ollama queue, else the generic
+        wire queue -- or ``None`` (pass through). A request replay already handled
+        above this seam (``handled_upstream``) is never claimed again. A request
+        passed through to a system whose recorded calls are not servable is counted
+        live here (:meth:`_count_unserved_live`)."""
+        if is_handled_upstream():
+            return None
+        queue = self._transport_queue(request)
+        if queue is not None:
+            return queue
+        url = str(request.url)
+        if self._wire_claims(url):
+            return GENERIC_WIRE_QUEUE
+        self._count_unserved_live(url)
+        return None
+
+    def transport_answer(
+        self, module_name: str, target: str, request: Any, content: bytes,
+        *, asynchronous: bool,
+    ) -> Any | None:
+        """The served ``Response`` for a claimed request, or ``None`` when a tolerated
+        divergence (``warn``) lets it run live (already counted)."""
+        if target == GENERIC_WIRE_QUEUE:
+            wire = self._serve_wire(
+                str(request.method), str(request.url), content, asynchronous=asynchronous
+            )
+            return None if wire is None else _wire_transport_response(module_name, wire, request)
+        served = self._serve_transport(target, request_json(content), asynchronous=asynchronous)
+        return None if served is None else _transport_response(module_name, served, request)
+
+    def _make_transport(self, module_name: str, is_async: bool, original: Any) -> Any:
+        dispatcher = self
+
+        if is_async:
+
+            @functools.wraps(original)
+            async def handle_async_request(transport: Any, request: Any) -> Any:
+                target = dispatcher.transport_target(request)
+                if target is not None:
+                    response = dispatcher.transport_answer(
+                        module_name, target, request, await request.aread(), asynchronous=True
+                    )
+                    if response is not None:
+                        return response
+                return await original(transport, request)
+
+            return handle_async_request
+
+        @functools.wraps(original)
+        def handle_request(transport: Any, request: Any) -> Any:
+            target = dispatcher.transport_target(request)
+            if target is not None:
+                response = dispatcher.transport_answer(
+                    module_name, target, request, request.read(), asynchronous=False
+                )
+                if response is not None:
+                    return response
+            return original(transport, request)
+
+        return handle_request
+
+    def _make_transport_for_url(self, module_name: str, is_async: bool, original: Any) -> Any:
+        """ADR-0324 amendment: a client whose transport is not a serving seam itself
+        (``MockTransport``, a delegating ``BaseTransport``, an ``HTTPTransport``
+        subclass overriding ``handle_request``) gets that transport wrapped, so its
+        model calls are served -- or refused, or counted live -- like any other."""
+        dispatcher = self
+
+        @functools.wraps(original)
+        def transport_for_url(client: Any, url: Any) -> Any:
+            transport = original(client, url)
+            if covered(transport, dispatcher._seam_functions, asynchronous=is_async):
+                return transport
+            return serving_transport(module_name, transport, dispatcher, asynchronous=is_async)
+
+        return transport_for_url
+
+    def _serve_transport(
+        self, queue: str, body: dict[str, Any], *, asynchronous: bool
+    ) -> tuple[list[bytes], bool] | None:
+        """The served body chunks and whether they are NDJSON, or ``None`` when a
+        tolerated divergence (``warn``) lets the request go live."""
+        stream = body.get("stream") is not False
+        record, error = self._take(
+            queue, stream=stream, asynchronous=asynchronous, request=body
+        )
+        if error is not None:  # a recorded failure is never served as a success
+            raise error
+        if not record:
+            self._events.emit(
+                "model_live", provider=QUEUE_PROVIDER[queue], surface=MODEL_SURFACES[queue]
+            )
+            return None
+        objects = ollama_response_objects(queue, record, stream=stream)
+        return encode_objects(objects, stream=stream), stream
+
+    def _bedrock_queue(self, pool: Any, method: Any, url: Any) -> tuple[str, str] | None:
+        """``(queue, full URL)`` of a urllib3 request served from the capsule, or
+        ``None`` (pass through). Never raises: an unclassifiable request goes live
+        exactly as it would without the dispatcher."""
+        try:
+            full_url = _urllib3_url(pool, str(url))
+            queue = bedrock_request_queue(
+                str(method or ""), full_url, self._registry.gen_ai_system(full_url),
+                self._bedrock_hosts,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        return (queue, full_url) if queue is not None else None
+
+    def _make_urlopen(self, original: Any) -> Any:
+        dispatcher = self
+
+        @functools.wraps(original)
+        def urlopen(pool: Any, method: Any, url: Any, *args: Any, **kwargs: Any) -> Any:
+            target = dispatcher._bedrock_queue(pool, method, url)
+            if target is None:
+                wire_url = dispatcher._wire_urllib3_url(pool, url)
+                if wire_url is not None:
+                    named = _urlopen_arguments(original, pool, method, url, args, kwargs)
+                    wire = dispatcher._serve_wire(
+                        str(method or ""), wire_url, named.get("body"), asynchronous=False
+                    )
+                    if wire is not None:
+                        return _urllib3_response(
+                            ServedHttp(wire.status, wire.reason, wire.framed_headers(),
+                                       wire.body),
+                            named, str(method), wire_url,
+                        )
+                elif dispatcher._unserved_systems:
+                    try:
+                        dispatcher._count_unserved_live(_urllib3_url(pool, str(url)))
+                    except Exception:  # noqa: BLE001 -- counting never stops a request
+                        pass
+                return original(pool, method, url, *args, **kwargs)
+            queue, full_url = target
+            named = _urlopen_arguments(original, pool, method, url, args, kwargs)
+            served = dispatcher._serve_bedrock(queue, bedrock_request_json(named.get("body")))
+            if served is None:
+                return original(pool, method, url, *args, **kwargs)
+            return _urllib3_response(served, named, str(method), full_url)
+
+        return urlopen
+
+    def _serve_bedrock(self, queue: str, body: dict[str, Any]) -> ServedHttp | None:
+        """The served HTTP response, or ``None`` when a tolerated divergence
+        (``warn``) lets the request go live."""
+        record, error = self._take(
+            queue, stream=queue == BEDROCK_QUEUES[1], asynchronous=False, request=body,
+            unservable=unservable_reason,
+        )
+        if error is not None:  # a recorded failure is never served as a success
+            raise error
+        if not record:
+            self._events.emit(
+                "model_live", provider=QUEUE_PROVIDER[queue], surface=MODEL_SURFACES[queue]
+            )
+            return None
+        return served_response(queue, record)
+
+    # ── generic wire calls (ADR-0324) ────────────────────────────────────
+
+    def _wire_claims(self, url: str) -> bool:
+        """The generic engine serves this request: the capsule holds generic-wire
+        records and the URL is a registry model host. Never raises."""
+        if not self._wire_active:
+            return False
+        try:
+            return bool(self._registry.is_known(url))
+        except Exception:  # noqa: BLE001 -- an unclassifiable request is not claimed
+            return False
+
+    def _count_unserved_live(self, url: str) -> None:
+        """Count a request no seam serves as a live model call when it goes to a
+        ``gen_ai.system`` whose recorded calls replay cannot serve (ADR-0319): a
+        generic-wire record captured without its response, an Ollama ``/api/embed``.
+        Under ``--permissive`` such a call runs live; before, it reached only
+        ``model_calls_not_servable`` -- a count of the recording, not of what was sent
+        (c09, ``model_calls_live_undercount``). Every request is counted, retries
+        included; a metadata request (Ollama ``/api/tags``, the Bedrock control
+        plane) runs no model and is not. A request already counted above this seam
+        (``handled_upstream``) is never counted again. Never raises."""
+        if not self._unserved_systems or is_handled_upstream():
+            return
+        try:
+            system = str(self._registry.gen_ai_system(url))
+            if system not in self._unserved_systems or is_metadata_call(
+                {"gen_ai.system": system, "endpoint": url}
+            ):
+                return
+        except Exception:  # noqa: BLE001 -- an unclassifiable request is not counted
+            return
+        self._events.emit(
+            "model_live", provider=QUEUE_PROVIDER[GENERIC_WIRE_QUEUE],
+            surface=MODEL_SURFACES[GENERIC_WIRE_QUEUE], system=system,
+        )
+
+    def _wire_urllib3_url(self, pool: Any, url: Any) -> str | None:
+        if not self._wire_active:
+            return None
+        try:
+            full_url = _urllib3_url(pool, str(url))
+        except Exception:  # noqa: BLE001
+            return None
+        return full_url if self._wire_claims(full_url) else None
+
+    def _serve_wire(
+        self, method: str, url: str, body: Any, *, asynchronous: bool
+    ) -> WireResponse | None:
+        """The recorded response for this request, or ``None`` when a tolerated
+        divergence (``warn``) lets it go live. Raises under ``fail``."""
+        queue = GENERIC_WIRE_QUEUE
+        provider = QUEUE_PROVIDER[queue]
+        surface = MODEL_SURFACES[queue]
+        payload = body if isinstance(body, (bytes, bytearray, str)) or body is None else None
+        system = str(self._registry.gen_ai_system(url))
+        records = self._queues[queue]
+        self._skip_covered(queue)
+        idx = self._index[queue]
+        stream = False
+        if idx < len(records):
+            record = records[idx]
+            stream = recorded_streamed(record)
+            if payload is None and body is not None:
+                differs: dict[str, Any] | None = {
+                    "method": method.upper(), "system": system, "path": "",
+                    "differs": ["body"],
+                }
+            else:
+                differs = request_mismatch(
+                    record, method=method, url=url,
+                    body=bytes(payload) if isinstance(payload, bytearray) else payload,
+                    system=system,
+                )
+            if differs is not None:
+                _report_divergence(self._events, self._policy, ReplayWireRequestMismatchError(
+                    f"call #{idx + 1} to {surface} ({differs['method']} {system} "
+                    f"{differs['path']}) differs from the recorded request "
+                    f"({', '.join(differs['differs'])} differ"
+                    f"{'s' if len(differs['differs']) == 1 else ''}); "
+                    + ("running the call live" if self._policy == "warn"
+                       else "refusing to serve it"),
+                    provider=provider,
+                    call_index=idx,
+                    model_call_id=record.get("model_call_id"),
+                    **differs,
+                ))
+                self._index[queue] += 1
+                self._global_index += 1
+                self._events.emit(
+                    "model_live", provider=provider, surface=surface, system=system
+                )
+                return None
+        record, error = self._take(
+            queue, stream=stream, asynchronous=asynchronous,
+            request=request_json(
+                payload.encode() if isinstance(payload, str) else bytes(payload or b"")
+            ) or None,
+            unservable=wire_unservable_reason,
+        )
+        if error is not None:  # never the case for a wire record; fail closed anyway
+            raise error
+        if not record:
+            self._events.emit(
+                "model_live", provider=provider, surface=surface, system=system
+            )
+            return None
+        return wire_served_response(record)
 
     def uninstall(self) -> None:
         self._patcher.restore()
+        self._seam_functions = ()
         self.installed_surfaces = []
 
     def _make_create(self, queue: str, is_async: bool, original: Any) -> Any:
@@ -907,7 +1407,8 @@ class MockModelDispatcher:
                 refused = dispatcher._refusal(queue, kwargs, asynchronous=True)
                 if refused:
                     dispatcher._unsupported(provider, refused)
-                    return await original(inner_self, *args, **kwargs)
+                    with handled_upstream():  # counted here, never again on the wire
+                        return await original(inner_self, *args, **kwargs)
                 return dispatcher._serve(queue, kwargs, asynchronous=True)
 
             return mock_create_async
@@ -917,7 +1418,8 @@ class MockModelDispatcher:
             refused = dispatcher._refusal(queue, kwargs, asynchronous=False)
             if refused:
                 dispatcher._unsupported(provider, refused)
-                return original(inner_self, *args, **kwargs)
+                with handled_upstream():  # counted here, never again on the wire
+                    return original(inner_self, *args, **kwargs)
             return dispatcher._serve(queue, kwargs, asynchronous=False)
 
         return mock_create
@@ -929,14 +1431,16 @@ class MockModelDispatcher:
             @functools.wraps(original)
             async def async_guard(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
                 dispatcher._unsupported(provider, surface)
-                return await original(inner_self, *args, **kwargs)
+                with handled_upstream():
+                    return await original(inner_self, *args, **kwargs)
 
             return async_guard
 
         @functools.wraps(original)
         def guard(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
             dispatcher._unsupported(provider, surface)
-            return original(inner_self, *args, **kwargs)
+            with handled_upstream():
+                return original(inner_self, *args, **kwargs)
 
         return guard
 
@@ -1089,6 +1593,7 @@ class MockModelDispatcher:
     def _take(
         self, queue: str, *, stream: bool = False, asynchronous: bool = False,
         request: dict[str, Any] | None = None,
+        unservable: Callable[[dict[str, Any]], str | None] | None = None,
     ) -> tuple[dict[str, Any], BaseException | None]:
         """The next recorded response on ``queue``; ``{}`` once a divergence is
         tolerated (``warn``). Raises under ``fail``.
@@ -1100,7 +1605,13 @@ class MockModelDispatcher:
         exception, to be raised after its delivered chunks. A Responses API
         response the SDK returned with ``status: failed``, or a Responses
         stream that delivered an ``error`` event, is served as recorded, never
-        raised (issue #16; ADR-0304 follow-on)."""
+        raised (issue #16; ADR-0304 follow-on).
+
+        ``unservable(record)``: why the surface cannot serve this record back (a
+        reason, or ``None``), checked before the record is consumed. Under ``fail``
+        the call is refused (``malformed_recorded_response``) and the record stays
+        queued; under ``warn`` its position is consumed and ``{}`` is returned, so
+        the caller runs the call live."""
         provider = QUEUE_PROVIDER[queue]
         surface = MODEL_SURFACES[queue]
         records = self._queues[queue]
@@ -1161,6 +1672,18 @@ class MockModelDispatcher:
                 call_index=idx,
                 model_call_id=record.get("model_call_id"),
             ))
+        reason = unservable(record) if unservable is not None else None
+        if reason is not None:
+            _report_divergence(self._events, self._policy, ReplayRecordMalformedError(
+                f"recorded {surface} response #{idx + 1} cannot be served: {reason}; "
+                + ("running the call live" if self._policy == "warn" else "refusing to serve it"),
+                provider=provider,
+                call_index=idx,
+                model_call_id=record.get("model_call_id"),
+            ))
+            self._index[queue] += 1
+            self._global_index += 1
+            return {}, None
         self._index[queue] += 1
         self._global_index += 1
         self._events.emit(
@@ -1517,12 +2040,12 @@ class _PythonToolServer:
         if live:
             self._events.emit(
                 "tool_live", tool_name=spec.name, surface=TOOL_SURFACE_PYTHON,
-                mutation_class=mutation_class,
+                mutation_class=mutation_class, **{AFTER_DIVERGENCE: True},
             )
             return False, None
         self._events.emit(
             "tool_refused", tool_name=spec.name, surface=TOOL_SURFACE_PYTHON,
-            mutation_class=mutation_class,
+            mutation_class=mutation_class, **{AFTER_DIVERGENCE: True},
             **({"override": label} if label is not None else {}),
         )
         raise error
@@ -1590,6 +2113,8 @@ class MockToolDispatcher:
             events=self._events,
             permitted=permitted_mutation_classes,
             overrides=self._overrides,
+            # ADR-0306 r3c: a served ADK tool (an AgentTool) covers its body's calls.
+            on_served=self._cover_nested,
         )
         from novafabric.replay._oai_tool_server import OaiToolServer
 
@@ -1599,9 +2124,23 @@ class MockToolDispatcher:
             events=self._events,
             permitted=permitted_mutation_classes,
             overrides=self._overrides,
+            # ADR-0306 r3c: a served Agents SDK tool (Agent.as_tool) covers its body's calls.
+            on_served=self._cover_nested,
+        )
+        from novafabric.replay._langchain_tool_server import LangChainToolServer
+
+        self._langchain = LangChainToolServer(
+            [r for r in intercepted if tool_surface(r) == TOOL_SURFACE_LANGCHAIN],
+            divergence_policy=divergence_policy,
+            events=self._events,
+            permitted=permitted_mutation_classes,
+            overrides=self._overrides,
+            # ADR-0306 r3b: a served sub-agent tool covers what its body did.
+            on_served=self._cover_nested,
         )
         self._previous_adk_handler: Any = None
         self._previous_oai_handler: Any = None
+        self._previous_langchain_handler: Any = None
         self._previous_handler: Any = None
         self._handler_registered = False
         self._patcher = _Patcher()
@@ -1611,8 +2150,11 @@ class MockToolDispatcher:
         """Consume as covered every record written inside a served boundary.
 
         ADR-0306 slice 4 (D3's nested coverage): a served ``record.tool``
-        boundary never runs its body, so the model calls, MCP calls and inner
-        boundaries it made at capture are never requested. Records marked
+        boundary -- or a served framework tool whose body made calls (a sub-agent
+        tool: LangChain since r3b, ADK and the Agents SDK since r3c) -- never
+        runs its body, so the model calls, MCP calls,
+        framework tool calls and inner boundaries it made at capture are never
+        requested. Records marked
         ``within_tool_call_id`` (transitively) are consumed as ``covered``
         instead of being reported unconsumed. A nested call capture could not
         mark (made from a raw thread) stays unconsumed: the replay fails closed.
@@ -1623,10 +2165,15 @@ class MockToolDispatcher:
         if type(nested) is not int or nested <= 0 or not isinstance(boundary, str):
             return
         ids = nested_boundary_ids(boundary, self._all_tool_calls)
-        for surface, matcher in (
-            (TOOL_SURFACE_MCP, self._matcher), (TOOL_SURFACE_PYTHON, self._python._matcher),
-        ):
-            for rec in matcher.cover(ids):
+        covers: tuple[tuple[str, Callable[[set[str]], list[dict[str, Any]]]], ...] = (
+            (TOOL_SURFACE_MCP, self._matcher.cover),
+            (TOOL_SURFACE_PYTHON, self._python._matcher.cover),
+            (TOOL_SURFACE_ADK, self._adk.cover),
+            (TOOL_SURFACE_OPENAI_AGENTS, self._oai.cover),
+            (TOOL_SURFACE_LANGCHAIN, self._langchain.cover),
+        )
+        for surface, cover in covers:
+            for rec in cover(ids):
                 self._events.emit(
                     "tool_covered", tool_name=rec.get("tool_name"),
                     record_id=rec.get("tool_call_id"), surface=surface,
@@ -1646,21 +2193,28 @@ class MockToolDispatcher:
             "mcp.client.session", "ClientSession", "call_tool", self._make_call_tool
         ):
             self.installed_surfaces.append(TOOL_SURFACE_MCP)
-        from novafabric.adapters import _adk_tool_seam, _oai_tool_seam
+        from novafabric.adapters import _adk_tool_seam, _langchain_tool_seam, _oai_tool_seam
         from novafabric.capture import record
 
         self._previous_handler = record._set_tool_handler(self._python)
         self._previous_adk_handler = _adk_tool_seam._set_handler(self._adk)
         self._previous_oai_handler = _oai_tool_seam._set_handler(self._oai)
+        self._previous_langchain_handler = _langchain_tool_seam._set_handler(self._langchain)
+        # LangChain and Agents SDK tools the workload did not pass through
+        # wrap_tools reach the same servers, gated as `unknown` (ADR-0306 r3
+        # amendment): served when recorded, never run live uncounted.
+        _langchain_tool_seam.install_observer()
+        _oai_tool_seam.install_observer()
         self._handler_registered = True
         self.installed_surfaces.append(TOOL_SURFACE_PYTHON)
         self.installed_surfaces.append(TOOL_SURFACE_ADK)
         self.installed_surfaces.append(TOOL_SURFACE_OPENAI_AGENTS)
+        self.installed_surfaces.append(TOOL_SURFACE_LANGCHAIN)
 
     def uninstall(self) -> None:
         self._patcher.restore()
         if self._handler_registered:
-            from novafabric.adapters import _adk_tool_seam, _oai_tool_seam
+            from novafabric.adapters import _adk_tool_seam, _langchain_tool_seam, _oai_tool_seam
             from novafabric.capture import record
 
             if record._get_tool_handler() is self._python:
@@ -1669,9 +2223,14 @@ class MockToolDispatcher:
                 _adk_tool_seam._set_handler(self._previous_adk_handler)
             if _oai_tool_seam._get_handler() is self._oai:
                 _oai_tool_seam._set_handler(self._previous_oai_handler)
+            if _langchain_tool_seam._get_handler() is self._langchain:
+                _langchain_tool_seam._set_handler(self._previous_langchain_handler)
+            _langchain_tool_seam.uninstall_observer()
+            _oai_tool_seam.uninstall_observer()
             self._previous_handler = None
             self._previous_adk_handler = None
             self._previous_oai_handler = None
+            self._previous_langchain_handler = None
             self._handler_registered = False
         self.installed_surfaces = []
 
@@ -1737,10 +2296,12 @@ class MockToolDispatcher:
         if live:
             self._events.emit(
                 "tool_live", tool_name=name, surface=TOOL_SURFACE_MCP, mutation_class=gating,
+                **{AFTER_DIVERGENCE: True},
             )
             return await original(inner_self, name, arguments, *args, **kwargs)
         self._events.emit(
             "tool_refused", tool_name=name, surface=TOOL_SURFACE_MCP, mutation_class=gating,
+            **{AFTER_DIVERGENCE: True},
             **({"override": label} if label is not None else {}),
         )
         raise error
@@ -1760,16 +2321,22 @@ class NetworkObserver:
     Patches ``socket.socket.connect`` / ``connect_ex`` (the methods
     ``socket.create_connection``, ``httpx``/``requests`` and ``asyncio`` call)
     and logs one ``network_live`` event per IPv4/IPv6 connection attempt with its
-    host and port -- never a payload. A mocked replay can therefore say whether
-    anything outside the intercepted surfaces reached the network (ADR-0304).
+    host and port -- never a payload -- before the call, then one
+    ``network_connect_outcome`` with how it ended (``_child_observer.ConnectCounter``,
+    ``observe_connect``). A mocked
+    replay can therefore say whether anything outside the intercepted surfaces
+    reached the network (ADR-0304); a strict one fails when it reached past loopback
+    (``unserved_network``, ``_unserved_network``).
     Connections made by C extensions that bypass the Python ``socket`` methods,
-    and by non-Python child processes, are not seen.
+    and by non-Python child processes, are not seen: the result says so
+    (``network_observation_scope: python-process``) and counts the children
+    (``_process_observer.ProcessObserver``, ADR-0319); Python children report
+    their own connections (``_child_observer``, #52 part 2), and those that do
+    not are counted as ``child_processes_unobserved``.
     """
 
     def __init__(self, events: ReplayEventLog, *, cap: int = NETWORK_EVENT_CAP) -> None:
-        self._events = events
-        self._cap = cap
-        self._count = 0
+        self._counter = ConnectCounter(events, cap=cap)
         self._patcher = _Patcher()
 
     def install(self) -> bool:
@@ -1781,30 +2348,11 @@ class NetworkObserver:
         self._patcher.restore()
 
     def _wrap(self, original: Any) -> Any:
-        observer = self
+        # Each logged attempt also gets a `network_connect_outcome` event.
+        return observe_connect(original, self._counter)
 
-        @functools.wraps(original)
-        def observed(sock: Any, address: Any, *args: Any, **kwargs: Any) -> Any:
-            observer.seen(sock, address)
-            return original(sock, address, *args, **kwargs)
-
-        return observed
-
-    def seen(self, sock: Any, address: Any) -> None:
-        try:
-            import socket
-
-            if getattr(sock, "family", None) not in (socket.AF_INET, socket.AF_INET6):
-                return
-            if not isinstance(address, tuple) or len(address) < 2:
-                return
-            self._count += 1
-            if self._count <= self._cap:
-                self._events.emit("network_live", host=str(address[0]), port=int(address[1]))
-            elif self._count == self._cap + 1:
-                self._events.emit("network_live_capped", cap=self._cap)
-        except Exception:  # noqa: BLE001 -- observation must never break the workload
-            pass
+    def seen(self, sock: Any, address: Any) -> bool:
+        return self._counter.seen(sock, address)
 
 
 # ── subprocess entry point ───────────────────────────────────────────────────
@@ -1847,6 +2395,21 @@ def install_from_env() -> None:
             surfaces.extend(tool_dispatcher.installed_surfaces)
         if NetworkObserver(events).install():
             events.emit("network_observer_installed")
+        # ADR-0319: the network observer sees this process only; say which
+        # child processes it started, whose activity it cannot see.
+        if ProcessObserver(events).install():
+            events.emit("process_observer_installed")
+        # ADR-0321 amendment: which files this process writes, so the fidelity
+        # verdict compares the recorded files the replay wrote again.
+        events_path = os.environ.get("NOVAFABRIC_REPLAY_EVENTS_PATH")
+        install_replay_write_observer(
+            events.emit,
+            skip_roots=[Path(events_path).parent] if events_path else [],
+        )
+        # ADR-0319 (#52 part 2): say this process is observed, and make the
+        # Python children it starts report in -- even those whose environment
+        # drops the replay's variables (an MCP stdio client does).
+        start_tree_observation(events, observer="dispatcher")
         events.emit("installed", policy=policy, surfaces=surfaces)
     except Exception as exc:  # noqa: BLE001 -- reported, then fail-closed below
         events.emit("install_failed", error=f"{type(exc).__name__}: {exc}")

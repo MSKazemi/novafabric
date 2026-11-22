@@ -33,6 +33,12 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 #: The public repository. Anything else — notably the private mirror — must not run.
 PUBLIC_REPO_GUARD = "github.repository == 'MSKazemi/novafabric'"
 
+#: A workflow whose file name starts with ``private-`` is a deliberate private-repository
+#: workflow (never published; see .dualgit/private.deny). Its jobs must be confined to the
+#: private repository instead, so they can never run - or hold a secret - in the public repo.
+PRIVATE_ONLY_PREFIX = "private-"
+PRIVATE_REPO_GUARD = "github.repository == 'MSKazemi/novafabric-private'"
+
 
 def _jobs() -> list[tuple[str, str, dict]]:
     found: list[tuple[str, str, dict]] = []
@@ -63,7 +69,8 @@ def test_every_workflow_job_is_confined_to_the_public_repo() -> None:
     offenders = []
     for wf, name, job in _jobs():
         cond = str(job.get("if") or "")
-        if PUBLIC_REPO_GUARD not in cond:
+        guard = PRIVATE_REPO_GUARD if wf.startswith(PRIVATE_ONLY_PREFIX) else PUBLIC_REPO_GUARD
+        if guard not in cond:
             offenders.append(f"{wf}::{name}  MISSING  if: {cond[:60] or '(none)'}")
         elif _top_level_or(cond):
             offenders.append(

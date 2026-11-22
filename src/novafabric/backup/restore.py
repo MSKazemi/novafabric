@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tarfile
@@ -852,14 +853,13 @@ def _run_pg_restore(
         )
 
     skew = ""
+    proc = subprocess.run(  # noqa: S603
+        [pg_restore, "--version"], capture_output=True, text=True
+    )
+    local_version = proc.stdout.strip()
     if manifest.pg_client_version:
-        proc = subprocess.run(  # noqa: S603
-            [pg_restore, "--version"], capture_output=True, text=True
-        )
-        local_version = proc.stdout.strip()
-        if local_version and local_version.split()[-1].split(".")[0] != (
-            manifest.pg_client_version.split()[-1].split(".")[0]
-        ):
+        dump_major = _pg_major(manifest.pg_client_version)
+        if local_version and dump_major != _pg_major(local_version):
             skew = (
                 f" [WARNING: version skew — dump made with "
                 f"{manifest.pg_client_version!r}, restoring with "
@@ -904,6 +904,7 @@ def _run_pg_restore(
             detail=(
                 f"pg_restore exited {proc.returncode} (single transaction rolled "
                 f"back — target unchanged): {detail[:500]}{skew}"
+                f"{_version_skew_hint(local_version, manifest.pg_client_version, dsn)}"
             ),
         )
     return RestoreStepResult(
@@ -911,6 +912,61 @@ def _run_pg_restore(
         ok=True,
         detail=f"dump restored into {_redact_dsn(dsn)} (single transaction){skew}",
     )
+
+
+_PG_VERSION_RE = re.compile(r"\(PostgreSQL\)\s+(\d+)")
+
+
+def _pg_major(version_text: Optional[str]) -> Optional[int]:
+    """Major version from ``pg_dump --version`` / ``pg_restore --version`` output.
+
+    ``"pg_restore (PostgreSQL) 17.12 (Debian 17.12-1.pgdg13+1)"`` → ``17``.
+    """
+    if not version_text:
+        return None
+    match = _PG_VERSION_RE.search(version_text)
+    return int(match.group(1)) if match else None
+
+
+def _pg_server_major(dsn: str) -> Optional[int]:
+    """The target server's major version, or None when it cannot be read."""
+    try:
+        import psycopg
+
+        with psycopg.connect(dsn) as conn:
+            return int(conn.info.server_version) // 10000
+    except Exception:  # noqa: BLE001 — diagnostics only; never mask the real failure
+        return None
+
+
+def _version_skew_hint(
+    restore_client: Optional[str], dump_client: Optional[str], dsn: str
+) -> str:
+    """Name both versions when a failed restore is explained by a version mismatch.
+
+    Measured against a postgres:16 server (#207): pg_restore 17+ sends
+    ``SET transaction_timeout``, which 16 rejects — whatever pg_dump wrote the
+    set — and pg_restore cannot read an archive written by a newer pg_dump.
+    """
+    client_major = _pg_major(restore_client)
+    if client_major is None:
+        return ""
+    hints = []
+    dump_major = _pg_major(dump_client)
+    if dump_major is not None and dump_major > client_major:
+        hints.append(
+            f"the set was dumped by pg_dump {dump_major} and pg_restore {client_major} "
+            f"cannot read a newer archive — restore with pg_restore {dump_major} or newer"
+        )
+    server_major = _pg_server_major(dsn)
+    if server_major is not None and client_major > server_major:
+        hints.append(
+            f"pg_restore {client_major} is newer than the target server "
+            f"(PostgreSQL {server_major}) and can send settings it rejects — restore "
+            f"with pg_restore {server_major} (e.g. postgresql-client-{server_major}, or "
+            f"pg_restore inside the server's container), or upgrade the server"
+        )
+    return "".join(f" [version mismatch: {h}]" for h in hints)
 
 
 def _run_pg_migrations(dsn: str) -> RestoreStepResult:

@@ -401,6 +401,18 @@ def test_a_replay_with_no_network_reports_zero_connections(agent: Agent) -> None
     assert result.replay_contract["network_destinations"] == []
 
 
+def _replayed_tool_tails(agent: Agent, result: ReplayResult) -> list[str]:
+    """The last field of each replayed ``tool_call_sequence`` entry, one per
+    call; the replay capsule's ``tool-calls.jsonl`` holds as many records."""
+    checks = result.as_dict()["fidelity"]["checks"]
+    (check,) = [c for c in checks if c["name"] == "tool_call_sequence"]
+    tails = [str(entry).rsplit(":", 1)[1] for entry in check["replayed"]]
+    path = agent.root / "replays" / str(result.replay_id) / "tool-calls.jsonl"
+    lines = [ln for ln in path.read_text().splitlines() if ln.strip()] if path.exists() else []
+    assert len(lines) == len(tails), (lines, tails)
+    return tails
+
+
 def test_s13_permissive_runs_an_unmatched_tool_live_and_counts_it(agent: Agent) -> None:
     """ADR-0306 Q3 (owner decision 2026-10-09): under --permissive an unmatched MCP
     call runs live only with the ladder flag for its class -- always `unknown`."""
@@ -413,6 +425,8 @@ def test_s13_permissive_runs_an_unmatched_tool_live_and_counts_it(agent: Agent) 
     assert result.status == "success"
     assert (result.tool_calls_live, result.tool_calls_unmatched) == (1, 1)
     assert "tool_call_unmatched" in str(result.divergence_reason)
+    # One entry per call: `live`, not `unmatched` + `live`.
+    assert _replayed_tool_tails(agent, result) == ["live"]
 
 
 def test_s13_permissive_refuses_an_unmatched_mcp_call_without_the_ladder_flag(
@@ -434,6 +448,7 @@ def test_s13_permissive_refuses_an_unmatched_mcp_call_without_the_ladder_flag(
     assert (result.tool_calls_live, result.tool_calls_unmatched) == (0, 1)
     assert contract["tool_calls_refused"] == 1
     assert contract["tool_calls_by_surface"]["mcp.ClientSession.call_tool"]["refused"] == 1
+    assert _replayed_tool_tails(agent, result) == ["refused"]
 
 
 # ── scenario 17: unsupported surfaces are refused, not run live ──────────────
@@ -702,6 +717,8 @@ def test_network_observer_reports_inet_connections_and_restores_socket() -> None
         observer.uninstall()
     assert events.items == [
         ("network_live", {"host": "127.0.0.1", "port": port}),
+        # How the logged attempt ended (an attempt over the cap logs no outcome).
+        ("network_connect_outcome", {"host": "127.0.0.1", "port": port, "outcome": "ok"}),
         ("network_live_capped", {"cap": 1}),
     ]
     assert socket.socket.connect is original
@@ -738,7 +755,12 @@ def test_summary_counts_network_events_and_caps_destinations() -> None:
     assert out["network_observed"] is True
     assert len(out["network_destinations"]) == 20
     assert out["network_connections_capped"] is True
-    assert not report.diverged  # observation alone is never a divergence
+    # W0 (ADR-0319 amendment): in a strict replay a connection past loopback is the
+    # divergence unserved_network; under --permissive it is only counted.
+    assert [d["kind"] for d in report.divergences] == ["unserved_network"]
+    permissive = summarize([], [], events, divergence_policy="warn", substitute_tools=True)
+    assert permissive.network_connections_live == 40
+    assert not permissive.diverged
 
 
 # ── ADR-0306 slice 1: per-surface counters, the not-servable kind ───────────
