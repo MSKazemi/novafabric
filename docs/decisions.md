@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**299 decisions recorded** — **282** accepted · **14** proposed · **3** superseded.
+**300 decisions recorded** — **283** accepted · **14** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -332,3 +332,4 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0315` | Promote signatures require a pinned trust root; a seal bypass counts only from a trusted policy approver, for its own capsule, by its signed expiry | accepted | 2026-10-22 |
 | `ADR-0316` | CI runs the unit suite as duration-balanced file shards with a proven partition; releases publish only from a commit whose CI passed | accepted | 2026-10-22 |
 | `ADR-0317` | Each Alembic track keeps its own version table | proposed | 2026-10-23 |
+| `ADR-0318` | Deletion fails closed when configured local WORM state cannot be read | accepted | 2026-10-23 |

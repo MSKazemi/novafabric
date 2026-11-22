@@ -380,7 +380,7 @@ from novafabric.adapters import wrap_llamaindex, wrap_pydantic_ai, wrap_haystack
 engine = wrap_llamaindex(index.as_query_engine())   # LlamaIndex
 agent  = wrap_pydantic_ai(agent, run_name="support-bot")  # Pydantic AI
 pipe   = wrap_haystack(pipe, run_name="rag-qa")     # Haystack
-smol   = wrap_smolagents(smol, run_name="stock-bot")  # Hugging Face smolagents (experimental, unreleased)
+smol   = wrap_smolagents(smol, run_name="stock-bot")  # Hugging Face smolagents (experimental, new in v0.109.0)
 ```
 
 Each wrapper patches the entry point **in place** and returns the same object, so
@@ -395,7 +395,7 @@ llama-index` / `pydantic-ai` / `haystack-ai` / `smolagents`) — these are not N
 and the `wrap_*` call raises `ImportError` naming the command if the framework is
 absent.
 
-Adapters exist for twelve frameworks (the `smolagents` one is unreleased). Each is importable by name from
+Adapters exist for twelve frameworks (the `smolagents` one is new in v0.109.0). Each is importable by name from
 `novafabric.adapters`:
 
 | Framework | Entry point | Wraps |
@@ -407,7 +407,7 @@ Adapters exist for twelve frameworks (the `smolagents` one is unreleased). Each 
 | LlamaIndex | `wrap_llamaindex(engine)` | a query/chat engine or agent |
 | Pydantic AI | `wrap_pydantic_ai(agent)` | an `Agent` |
 | Haystack | `wrap_haystack(pipeline)` | a `Pipeline` |
-| Hugging Face smolagents (experimental, unreleased) | `wrap_smolagents(agent)` | a `CodeAgent` / `ToolCallingAgent` (`run`); see [Hugging Face](integrations/huggingface.md) |
+| Hugging Face smolagents (experimental, new in v0.109.0) | `wrap_smolagents(agent)` | a `CodeAgent` / `ToolCallingAgent` (`run`); see [Hugging Face](integrations/huggingface.md) |
 | OpenAI Agents SDK | `register_openai_agents()` | registers a trace processor |
 | Google ADK | `make_google_adk_plugin()` | returns a plugin |
 | AWS Bedrock AgentCore | `wrap_bedrock_agentcore(client)` | a boto3 `bedrock-agent-runtime` client (returns a wrapped client) |
@@ -440,7 +440,7 @@ naming the directory the capsule was found in, and fail with an error listing bo
 paths if the same id exists in two of them. Passing `--capsule-dir` to a command
 that has it searches only that directory.
 
-**Replaying an adapter capsule** (experimental, unreleased — ADR-0306 open question 7).
+**Replaying an adapter capsule** (experimental, new in v0.109.0 — ADR-0306 open question 7).
 An adapter capsule is captured inside a framework call, so it records `capture_mode:
 sdk-decorator` and a `@framework:name` label, not a command. Every adapter (and
 `@agent`) now also records how its process was started — the `process_invocation`
@@ -489,7 +489,7 @@ replaces `FunctionTool.on_invoke_tool` — an undocumented seam, checked against
 capsules from `register()` stay non-replayable (pseudo-command). Details:
 [`cli-reference.md`](cli-reference.md) §Agents SDK tool seam.
 
-**LangChain / LangGraph tools in a mocked replay (experimental, unreleased).**
+**LangChain / LangGraph tools in a mocked replay (experimental, new in v0.109.0).**
 For a LangChain or LangGraph workload captured with `nova capture -- python agent.py`,
 pass the tools through `novafabric.adapters.langchain_tools.wrap_tools([...], {"tool": "read-only"})`
 and give the result to both `bind_tools` and `ToolNode`. Under capture each tool call is
@@ -501,9 +501,9 @@ that gates `--permissive` and `replay.yaml` `allow: true` is declared in `wrap_t
 class is a generated subclass of the tool's class — NovaFabric's construction, checked
 against `langchain-core` 1.8.3 and `langgraph` 1.2.23 only; a tool that returns a LangGraph
 `Command` (state update) is served only when it can be rebuilt exactly (no `Send`, JSON
-values and `ToolMessage`s only; experimental, unreleased) and only from a `forensic`
+values and `ToolMessage`s only; experimental, new in v0.109.0) and only from a `forensic`
 capture; tools you do not pass through `wrap_tools` are observed and served the same
-way, gated as mutation class `unknown` (ADR-0306 r3, unreleased); and capsules from
+way, gated as mutation class `unknown` (ADR-0306 r3, new in v0.109.0); and capsules from
 `wrap_langgraph()` are re-run only from a recorded process invocation that passes every
 guard. Details: [`cli-reference.md`](cli-reference.md) §LangChain / LangGraph
 tool seam.
@@ -824,7 +824,7 @@ The result lists the outbound connections the replay made
 strict replay (the default) a connection past loopback fails the replay with the
 divergence `unserved_network`, since nothing served opens a socket
 (`replay_contract.network_connections_unserved`; `--permissive` only counts it;
-works today, unreleased).
+works today, new in v0.109.0).
 Since v0.105.0 (experimental), a recorded call that failed (a rate limit, a 4xx, a 5xx
 after the SDK's retries, a timeout) is replayed by raising the same SDK exception class at the same
 position, so the workload's error handling runs again.

@@ -47,7 +47,7 @@ STORY_END = "/* END generated story */"
 MATURITY = ("works today", "experimental", "planned", "future design")
 # The last tagged release. Steps marked ``unreleased`` describe behaviour on main
 # after it; bump this (and clear those flags) when the next release is cut.
-LAST_RELEASE = "v0.108.0"
+LAST_RELEASE = "v0.109.0"
 
 WIDTH = 980
 SLOT_SECONDS = 3.4  # how long each step stays lit
@@ -1186,8 +1186,7 @@ STORY = Flow(
             "invocation and is still refused (ADR-0306, open question 7).</p>",
             "capture/process_invocation.py:begin_adapter_run · "
             "replay/_replayability.py:require_reexecution_plan",
-            "experimental", "replay", "rep", "$ python agent.py && nova replay <run-id>",
-            unreleased=True),
+            "experimental", "replay", "rep", "$ python agent.py && nova replay <run-id>"),
         _ss("replay", "Replay a recorded failure", ("replay", "wl"), ("replay_wl",),
             ("RateLimitError 429",),
             "A recorded rate limit or 5xx is raised again as the SDK's own exception class; "

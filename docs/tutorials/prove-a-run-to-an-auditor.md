@@ -203,18 +203,28 @@ nova replay 01KZ9VZPFQB95A63AAMD2TC7XD --mode forensic
 reconstructs what happened from the record. Use it when the environment must not
 be touched.
 
-`mocked` goes further — it **re-runs the command** with the recorded OpenAI and Anthropic
-model responses served from the capsule, so those calls are never sent live and the
-original model need not exist any more. Two limits matter for this question. **Tools run live**,
-against today's systems. Since **v0.105.0** recorded MCP `call_tool` results are served
+`mocked` goes further — it **re-runs the command** with the recorded model responses on
+the supported surfaces served from the capsule, so those calls are never sent live and the
+original model need not exist any more. Two limits matter for this question. **Tools run live**
+unless replay serves their surface, against today's systems. Since **v0.105.0** recorded MCP
+`call_tool` results and functions declared with the experimental `record.tool` are served
 from the capsule and the replay reports the network connections it made
-([ADR-0300](../architecture/replay-modes.md#the-mocked-replay-contract-adr-0300-adr-0304)),
-but every tool that is not an MCP call (or a function declared with the experimental
-`record.tool`) runs live; in v0.104.0 and earlier every tool call ran live. And only the
-supported OpenAI and Anthropic model surfaces are served from the capsule; a model call on
-any other surface runs live, and the replay report may not count it yet (a known issue) — see the
+([ADR-0300](../architecture/replay-modes.md#the-mocked-replay-contract-adr-0300-adr-0304));
+since v0.106.0 so are Google ADK and OpenAI Agents SDK tools passed through NovaFabric's
+tool seams, and since v0.109.0 LangChain / LangGraph tools and Agents SDK function tools
+you did not wrap (all experimental). Every other tool runs live; in v0.104.0 and earlier
+every tool call ran live. And only the supported model surfaces are served from the
+capsule: OpenAI and Anthropic SDK calls and, experimental, Ollama, AWS Bedrock `Converse`
+and other model-provider hosts in the URL registry — see the
 [release scope](../architecture/replay-modes.md) and
-[support matrix](../architecture/replay-modes.md#support-matrix).
+[support matrix](../architecture/replay-modes.md#support-matrix). A strict replay refuses,
+before anything runs, a capsule holding a recorded model call it cannot serve; under
+`--permissive` such a call runs live and is counted in `model_calls_live` when it goes
+through `httpx`, `requests` or `urllib3`. A call the capture never recorded (a raw
+socket, gRPC) in the replayed Python process or a Python child is seen only as a network
+connection: past loopback it fails a strict replay (`unserved_network`), to loopback it is
+only counted. A non-Python child process is not observed: the replay reports it in
+`child_processes_unobserved`, and `--hermetic` contains it.
 So `mocked` answers "given the same model replies, does the code take the same
 path?" — only as far as its tools behave as they did in September.
 

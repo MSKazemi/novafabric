@@ -596,7 +596,7 @@ by a framework adapter or the `@agent` decorator (`novafabric.sdk.agent`; `captu
 `@framework:name` label) or imported from OpenTelemetry spans — is refused
 before anything is spawned (`CapsuleNotReplayable`, exit 1; since v0.105.0). An
 adapter capsule that also records its process invocation is re-run from it when
-every replay guard passes (experimental, unreleased, ADR-0306 Q7).
+every replay guard passes (experimental, new in v0.109.0, ADR-0306 Q7).
 Inside the re-spawned process:
 
 - `MockModelDispatcher` serves the recorded responses, in order, for OpenAI
@@ -634,9 +634,9 @@ Inside the re-spawned process:
   `openai-agents` 0.17.x — again for `nova capture python …` workloads only.
   Function tools **not** passed through `wrap_tools` are recorded and served the
   same way when the capsule holds their results (capture level `forensic`;
-  experimental, unreleased, through a private SDK helper checked against
+  experimental, new in v0.109.0, through a private SDK helper checked against
   `openai-agents` 0.24.0).
-- **Experimental (ADR-0306 slice 3, unreleased):** it also serves
+- **Experimental (ADR-0306 slice 3, new in v0.109.0):** it also serves
   **LangChain / LangGraph** tools (`@tool`, `StructuredTool`, `BaseTool`
   subclasses, including through LangGraph's `ToolNode`) passed through
   `novafabric.adapters.langchain_tools.wrap_tools()`, by returning each tool's
@@ -645,7 +645,7 @@ Inside the re-spawned process:
   `langchain-core` 1.8.3 and `langgraph` 1.2.23 — for `nova capture python …`
   workloads only. LangChain tools **not** passed through `wrap_tools` are
   recorded too and, when the capsule holds their results (capture level
-  `forensic`), served the same way (experimental, unreleased); a strict replay
+  `forensic`), served the same way (experimental, new in v0.109.0); a strict replay
   of a capsule whose observed records cannot be served refuses to start
   (`ToolSurfaceNotServed`), an unmatched call is refused before its body runs,
   and under `--permissive --allow-unknown-mutation` every one whose body runs is
@@ -656,7 +656,7 @@ Inside the re-spawned process:
   result reports them as `tool_calls_not_interceptable`, and the outbound
   connections the replayed process opened as `network_connections_live`
   (observed, not blocked). A strict replay fails when one of them goes past
-  loopback (divergence `unserved_network`; works today, unreleased) — after the
+  loopback (divergence `unserved_network`; works today, new in v0.109.0) — after the
   fact, so the side effect has happened; `--hermetic` blocks instead. *Since v0.106.0 (slice 4, experimental):*
   the result an undeclared function sends back to the model is compared with the
   recorded one and a difference is reported in `replay_contract.tool_result_echo`
