@@ -130,6 +130,11 @@ jobs:
 
       - name: Install cosign
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          # Pinned: cosign-installer v4.1.3 changed its default to cosign v3.1.4. Keep the
+          # signing tool unchanged until a tag run has verified the new one (the signature
+          # layout moved once before, with cosign v3).
+          cosign-release: 'v3.0.6'
 
       - name: Prove cosign runs
         # The signing call itself needs a tag run's OIDC identity, so this
