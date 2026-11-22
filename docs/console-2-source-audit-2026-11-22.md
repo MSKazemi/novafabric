@@ -8,7 +8,7 @@
 
 **Recommendation at the audited base: do not rebuild the frontend from scratch.** (The architecture choice is open and compared in the Console 2.0 roadmap; this audit gives the evidence for the baseline, not the decision.) The existing application is substantial and already contains most core technical panels. Best next investment: simplify information architecture, connect previously isolated workflows, improve clarity of replay/evidence semantics, and validate performance/accessibility using actual users.
 
-**Baseline stack at the audited base (not a final decision):** Astro 7 + React 19 + TypeScript + Tailwind CSS 4 + React Flow; retain bundled font/assets and wheel-packaged dashboard. Three experience variants should be design/nav presets over one application: Developer Studio (default), Evidence Workbench and Operations Console. All proposals are subject to usability pilot and maintainer review.
+**Baseline stack at the audited base (not a final decision):** Astro 7 + React 19 + TypeScript + Tailwind CSS 4 + React Flow; retain bundled font/assets and wheel-packaged dashboard. Three experience variants should be design and navigation presets over one application: Developer Studio (default), Evidence Workbench and Operations Console. All proposals are subject to usability pilot and maintainer review.
 
 **Do not call this a live UX baseline:** no locally running NovaFabric server, captured task timings, screenshots of the shipped dashboard, Lighthouse results, browser network measurements, or CI pass evidence were obtained. These are explicit outstanding acceptance items for #253.
 
