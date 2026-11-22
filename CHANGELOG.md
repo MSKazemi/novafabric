@@ -87,6 +87,9 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **Locked Python dependencies clear four HIGH advisories that turned the pip-audit gate red** (Dependabot
+  #201, #202). `pyasn1` 0.6.4 -> 0.6.5 (CVE-2026-119194, -119195, -119196, -119197) and `dnspython` 2.9.0 -> 2.9.2
+  (CVE-2026-128089); `joserfc` 1.7.5 -> 1.8.0 also clears the moderate CVE-2026-119284.
 - **The showcase site's dev-only Lighthouse CI is on `@lhci/cli` 0.16.1, which clears four expired npm-audit
   waivers** (issue #208). Lighthouse 12.6.1 -> 13.6.0 drops `extract-zip` (GHSA-jmr9-qjv8-65gv,
   GHSA-7pqw-9j4j-h8q3; no patched release exists) and moves `basic-ftp` to 6.2.6 (GHSA-c475-qrg2-pj4r, patched
