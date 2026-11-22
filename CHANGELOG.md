@@ -11,6 +11,35 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Added
+
+- **`examples/evidence_lab/`: EvidenceLab D1, one deterministic incident captured for real (example only).** `python examples/evidence_lab/run.py --scenario service-incident-v1 --output-dir PATH` starts a strict loopback fixture model, runs the actual `nova capture` around a small agent (two declared read-only `record.tool` calls and one genuine OpenAI SDK call) and checks the capsule against the scenario's own fixtures: one logical model call, two tool calls in order, digest-only tool records, matching result digests. It reports the task verdict (`FAIL` here: the scenario is deliberately unsafe) separately from the harness verdict, and `NOT_EVALUATED` for integrity and replay. No change to `src/novafabric`, schemas, the CLI or dependencies; the BlackBox demo is untouched. Skips with exit 77 when `openai` is missing.
+
+### Documentation
+
+- **SECURITY.md says what a capsule stores.** A new section states that capsules hold model prompts and
+  responses by default, that v0.109.0 stores response bodies for every model host in the URL registry
+  (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
+- **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
+  v0.109.0 ships.
+
+### Fixed
+
+- **The capture-overhead CI gate takes 60 rounds instead of 30.** Its nearest-rank p95 of 30 was the
+  29th value, so two noisy rounds on a shared runner failed it: on 2026-11-22 a docs-only commit read
+  p95 2.71 s (median 270 ms) and passed on re-run. p95 of 60 absorbs three such rounds; the 2 s limit
+  and the statistic are unchanged.
+- **The BlackBox demo's mock model is strict and loopback-only.** `examples/blackbox_demo/mock_llm_server.py` now
+  answers only the two pinned synthetic requests (model `novafabric-mock-v1`, fixed messages, `X-Demo-Mode` of
+  `bad` or `fixed`), returns a deterministic completion, and rejects anything else (changed scenario, streaming,
+  bad JSON or content type, oversized body, unknown route). `agent.py` refuses any `OPENAI_BASE_URL` that is not
+  an `http` loopback address with an explicit port, so the demo cannot reach a real model. Negative controls are
+  in `tests/test_example_blackbox_mock_server.py`.
+- **Collector CI on Go 1.26.11.** GO-2026-6859 (`net/http`) is fixed only in Go 1.26.11 and failed
+  the v0.109.0 tag's collector vulnerability scan on 1.26.10 (lint, unit tests and the build passed).
+  The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
+  chart), so the release is unaffected; anyone building the collector from source should use Go 1.26.11.
+
 ## [0.109.0] - 2026-11-22
 
 **Replay that refuses rather than pretends: what it cannot serve, it names.**
