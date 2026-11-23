@@ -5,7 +5,7 @@ An offline, zero-key incident-investigation agent run under the **actual**
 model and two genuine read-only tool calls, so the resulting capsule holds real
 `model-calls.jsonl` and `tool-calls.jsonl` records — none are injected or painted.
 
-> **Status — D1 and D2 of the EvidenceLab plan.** Everything described here is
+> **Status — EvidenceLab D1 and D2 (issues #287 and #288).** Everything described here is
 > **works today** for this example except where a label says otherwise. It is one
 > scenario (`service-incident-v1`) with two controlled variants. Replay *fidelity* is
 > **not evaluated** (only read-only forensic inspection runs), and the signed profile is
@@ -278,10 +278,12 @@ The corrected variant's canonical request (`golden/model_request-corrected.json`
 decisions hash to `2e810ef9…184c` (unsafe) and `0654b0be…c336` (corrected).
 
 The canonical request body (`golden/model_request.json`, canonical JSON) hashes to
-`a2d3ab9c3f24d3a9961a44ec3349a5fa3fe241073ab6fdaf955f2804efab0226`. Two runs share every
-canonical hash in the report (`fixture_sha256`, `request_sha256`, `tool_sequence_sha256`,
-`decision_sha256`); only run ids, timestamps, paths, `elapsed_seconds` and the mock's
-`mock_pid` differ. The loader refuses a
+`a2d3ab9c3f24d3a9961a44ec3349a5fa3fe241073ab6fdaf955f2804efab0226`. Two runs of the same
+variant share every canonical hash in the report (`fixture_sha256`, `request_sha256`,
+`tool_sequence_sha256`, `decision_sha256`); only run ids, timestamps, paths,
+`elapsed_seconds` and the mock's `mock_pid` differ. The unsafe and corrected variants
+differ by design: the corrected variant uses a different prompt revision and a different
+recorded decision, so its `request_sha256` and `decision_sha256` are not the unsafe ones. The loader refuses a
 modified fixture (`E_FIXTURE_DIGEST_MISMATCH`), so keep line endings as committed.
 
 ## Exit codes and failure names
