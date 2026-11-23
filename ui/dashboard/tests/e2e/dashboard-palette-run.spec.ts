@@ -55,6 +55,33 @@ test('live run result changes the mounted Runs inspector, not just the URL', asy
   await expect.poll(() => urlParam(page, 'view')).toBeNull();
 });
 
+test('palette selection never displays the previous capsule while a new run loads', async ({ page }) => {
+  await mockApi(page, {
+    '/api/runs/run-001': { body: capsule('run-001') },
+  });
+  let releaseRequest: (() => void) | null = null;
+  // Hold the B response so the stale-A visibility window is deterministic.
+  await page.route((url) => url.pathname === '/api/runs/run-002', async (route) => {
+    await new Promise<void>((resolve) => { releaseRequest = resolve; });
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(capsule('run-002')) });
+  });
+  await gotoDashboard(page, 'tab=runs&run=run-001');
+  await expect(inspectorRun(page)).toHaveText('run-001');
+
+  await page.keyboard.press('Control+k');
+  const palette = page.getByRole('dialog', { name: 'Command palette' });
+  await palette.getByRole('textbox', { name: 'Search commands' }).fill('run-002');
+  await palette.getByRole('button', { name: /^Run run-002\\b/ }).click();
+
+  await expect.poll(() => urlParam(page, 'run')).toBe('run-002');
+  await expect.poll(() => releaseRequest !== null).toBe(true);
+  // No A data may remain visible during B's pending API request.
+  await expect(inspectorRun(page)).toHaveCount(0);
+  if (!releaseRequest) throw new Error('B request not observed');
+  releaseRequest();
+  await expect(inspectorRun(page)).toHaveText('run-002');
+});
+
 test('a denied run result never reuses the previous run inspector', async ({ page }) => {
   await mockApi(page, {
     '/api/runs/run-001': { body: capsule('run-001') },
