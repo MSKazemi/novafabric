@@ -32,6 +32,17 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova export-compliance iso42001 --capsule DIR` refuses a capsule whose seal fails verification
+  (behaviour change: such a capsule used to export).** A capsule that had been sealed and then edited
+  was exported exactly like one that was never sealed — `seal_envelope_path: null`, with its evidenced
+  controls bound to a fresh digest of the edited bytes — because the seal check answered "not sealed"
+  for both. A `.seal` that exists but does not verify (including a symlinked or non-directory `.seal`)
+  now exits 2 and writes no report; run `nova verify DIR` for the reasons. So does a sealed capsule to
+  which a digested stream (`tool-calls.jsonl`, `tool-permission-events.jsonl`) was added after sealing:
+  the seal never covered it, yet the export would have hashed it into a reference carrying the seal path.
+  Unsealed and validly sealed capsules export as before; a derived file next to a sealed capsule is still
+  not a tamper (ADR-0251 §5). New helper `capsule_seal_status()` (`absent`, `valid` or `invalid`);
+  `capsule_seal_verifies()` is unchanged. The other exporters still use the Boolean helper.
 - **The declared FastAPI floor is the patched release.** FastAPI before 0.163.2 is affected by GHSA-f56c-v883-vx8r (a
   high-severity denial of service from quadratic request-parameter processing). The lock already resolves 0.165.0; the
   `serve`, `server` and `federation` extras and the dev group now require `fastapi>=0.163.2` (was `>=0.115`), so an install

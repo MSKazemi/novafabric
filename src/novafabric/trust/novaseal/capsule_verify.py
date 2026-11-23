@@ -23,9 +23,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import stat
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Literal
 
 from novafabric._capsule_fs import (
     CapsuleEntryError,
@@ -49,7 +52,9 @@ __all__ = [
     "AnchorCheck",
     "CapsuleBinding",
     "CapsuleVerification",
+    "SealStatus",
     "capsule_binding",
+    "capsule_seal_status",
     "derive_capsule_id",
     "read_capsule_tsr",
     "signer_chain_check",
@@ -831,3 +836,48 @@ def capsule_seal_verifies(capsule_dir: Path) -> bool:
     except Exception:  # noqa: BLE001 — evidence is absent, never a crash
         logger.debug("seal verification failed for %s", capsule_dir, exc_info=True)
         return False
+
+
+SealStatus = Literal["absent", "valid", "invalid"]
+
+
+def capsule_seal_status(capsule_dir: Path, *, must_cover: Sequence[str] = ()) -> SealStatus:
+    """Tell an unsealed capsule apart from one whose seal is broken. Never raises.
+
+    :func:`capsule_seal_verifies` answers False for both, which is right for a
+    check that only counts positive evidence, and wrong for an exporter that
+    would otherwise label a tampered capsule "unsealed" and still attach a fresh
+    digest of the edited bytes. A broken seal is evidence of
+    tampering, so a caller that must fail closed uses this instead:
+
+    * ``"absent"`` — nothing named ``.seal`` exists in *capsule_dir* (or
+      *capsule_dir* itself does not exist; the caller reports that separately);
+    * ``"valid"`` — ``.seal/`` is a real directory and :func:`verify_capsule`
+      (from the capsule alone, no anchors) reports the capsule valid;
+    * ``"invalid"`` — anything else named ``.seal``: a symlink (never followed,
+      whatever it points at), a regular or special file, an unreadable entry, or a
+      directory whose seal fails verification.
+
+    *must_cover* names capsule-relative files a caller is about to digest under the
+    seal's name. A file that is on disk but not named by the seal is "unlisted"
+    (ADR-0251 §5: reported, never fatal, for derived artifacts) — but a caller that
+    hashes it into a reference carrying the seal path would be vouching for bytes the
+    seal never saw. If any *must_cover* file is unlisted the status is ``"invalid"``.
+    """
+    try:
+        mode = os.lstat(capsule_dir / ".seal").st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return "absent"
+    except OSError:
+        logger.debug("could not lstat %s/.seal", capsule_dir, exc_info=True)
+        return "invalid"
+    if not stat.S_ISDIR(mode):
+        return "invalid"
+    try:
+        result = verify_capsule(capsule_dir)
+        if not result.valid or set(must_cover) & set(result.binding.unlisted):
+            return "invalid"
+        return "valid"
+    except Exception:  # noqa: BLE001 — a seal that cannot be verified is not valid
+        logger.debug("seal verification failed for %s", capsule_dir, exc_info=True)
+        return "invalid"

@@ -49,7 +49,11 @@ from novafabric.compliance.export.iso42001 import (
 )
 from novafabric.compliance.export.nist_rmf import NISTAIRMFReporter
 from novafabric.compliance.export.pmm import PmmFinding, build_pmm_report
-from novafabric.compliance.export.provenance import CapsuleManifestError, build_capsule_ref
+from novafabric.compliance.export.provenance import (
+    CAPSULE_REF_FILES,
+    CapsuleManifestError,
+    build_capsule_ref,
+)
 
 console = Console()
 
@@ -160,18 +164,30 @@ def iso42001_cmd(
     ref = None
     if capsule is not None:
         from novafabric.trust.novaseal.capsule_verify import (  # noqa: PLC0415 — seal path only
-            capsule_seal_verifies,
+            capsule_seal_status,
         )
 
+        # Tri-state, not capsule_seal_verifies: a seal that exists but does not
+        # verify is evidence of tampering, and must not be exported as if the
+        # capsule had never been sealed.
+        seal = capsule_seal_status(capsule, must_cover=CAPSULE_REF_FILES)
         try:
-            sealed = capsule_seal_verifies(capsule)
             ref = build_capsule_ref(
-                capsule, _now_iso(), seal_envelope_path=".seal/manifest.dsse" if sealed else None
+                capsule,
+                _now_iso(),
+                seal_envelope_path=".seal/manifest.dsse" if seal == "valid" else None,
             )
         except (CapsuleEntryError, CapsuleManifestError) as exc:
             raise typer.BadParameter(f"{capsule}: {exc}") from exc
         if ref is None:
             raise typer.BadParameter(f"{capsule} is not a capsule directory (no capsule.yaml)")
+        if seal == "invalid":
+            raise typer.BadParameter(
+                f"{capsule}: the capsule carries a .seal that failed seal verification "
+                "(edited after sealing, a digested stream the seal does not cover, or a "
+                "damaged or substituted seal); refusing to "
+                f"export evidence from it — run `nova verify {capsule}` for the reasons"
+            )
         if capsule_id is not None and capsule_id != ref.capsule_id:
             raise typer.BadParameter(
                 f"--capsule-id {capsule_id!r} does not match the capsule's id {ref.capsule_id!r}"
