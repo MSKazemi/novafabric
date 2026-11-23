@@ -1077,6 +1077,46 @@ def test_a_lineage_artifact_lost_after_capture_is_a_named_check(tmp_path: Path) 
 
 
 @needs_nova
+def test_mocked_replay_of_a_default_level_capsule_never_reports_success(tmp_path: Path) -> None:
+    """#225 honest limitation: a capsule captured at the default level records tool digests,
+    not payloads, so mocked replay cannot serve the tools. The capsule must say so, and the
+    replay must diverge with no live call — never a success or a "faithful" verdict.
+
+    A fresh walk is used because replay re-executes the agent, which rewrites that walk's
+    own ``agent-result.json`` (recorded as a file effect).
+    """
+    walked = _walk(tmp_path, "replay-src")
+    assert walked["done"].returncode == 0, walked["done"].stderr[-2000:]
+    capsule = Path(walked["report"]["runs"]["unsafe"]["capsule_path"])
+
+    replayability = json.loads((capsule / "replayability.json").read_text())
+    assert replayability["replayable"] == "partial"
+    assert replayability["tool_calls"]["not_servable"] == 2
+    reasons = {r["code"]: r for r in replayability["reasons"]}
+    assert reasons["tool_result_not_servable"]["cause"] == "payload_not_recorded"
+    assert sorted(reasons["tool_result_not_servable"]["tools"]) == ["read_metrics", "search_logs"]
+
+    home = tmp_path / "replay-home"
+    home.mkdir()
+    env = {"PATH": f"{BIN_DIR}:/usr/bin:/bin", "HOME": str(home),
+           "NOVAFABRIC_AUDIT_LOG_PATH": str(home / "audit.log")}  # fmt: skip
+    out = tmp_path / "replays"
+    done = subprocess.run([str(NOVA), "replay", str(capsule), "--mode", "mocked",
+                           "--output-dir", str(out)], capture_output=True, text=True, env=env,
+                          cwd=tmp_path, timeout=300)  # fmt: skip
+    assert done.returncode == 2, done.stdout[-2000:] + done.stderr[-2000:]
+    (result_path,) = out.glob("*/replay_result.yaml")
+    result = yaml.safe_load(result_path.read_text())
+    assert result["status"] == "failure"
+    assert result["fidelity"]["verdict"] == "diverged"
+    contract = result["replay_contract"]
+    assert (result["tool_calls_live"], contract["model_calls_live"],
+            contract["network_connections_live"]) == (0, 0, 0)  # fmt: skip
+    kinds = {d["kind"] for d in contract["divergences"]}
+    assert {"model_calls_unconsumed", "tool_calls_unconsumed"} <= kinds
+
+
+@needs_nova
 def test_tool_capture_stays_digest_only_in_both_runs(zero_key: dict[str, Any]) -> None:
     for info in zero_key["report"]["runs"].values():
         capsule = Path(info["capsule_path"])
