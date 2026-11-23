@@ -653,6 +653,35 @@ def test_19c_dispatch_evidence_from_a_non_release_branch_is_ignored() -> None:
     assert decide(ev=ev, waited=TIMEOUT).state == "FAIL"
 
 
+@pytest.mark.parametrize(
+    "branch",
+    ["feature/x", "release/0.109", "master", "refs/heads/main", "dependabot/uv/x", "v0.108.0"],
+)
+def test_19d_push_evidence_from_a_branch_other_than_main_or_the_release_tag_is_not_evidence(
+    branch: str,
+) -> None:
+    """Same SHA, canonical repo, right workflow, all green: still not release evidence."""
+    ev = world(POLICY, ci=replace_run("ci", branch=branch))
+    assert decide(ev=ev, waited=1).state == "PENDING"
+    final = decide(ev=ev, waited=TIMEOUT)
+    assert final.state == "FAIL"
+    assert any(r.startswith("ci:") and "no eligible run" in r for r in final.reasons)
+
+
+def test_19e_a_scheduled_run_on_another_branch_is_not_evidence_either() -> None:
+    ev = world(
+        POLICY, **{"pip-audit": replace_run("pip-audit", event="schedule", branch="feature/x")}
+    )
+    assert decide(ev=ev, waited=TIMEOUT).state == "FAIL"
+
+
+@pytest.mark.parametrize("branch", ["main", TAG])
+def test_19f_the_same_push_run_on_main_or_the_release_tag_does_count(branch: str) -> None:
+    ev = world(POLICY, ci=replace_run("ci", branch=branch))
+    v = decide(ev=ev)
+    assert v.state == "PASS", v.reasons
+
+
 def test_20_an_informational_failure_never_blocks_and_never_substitutes() -> None:
     info = next(s for s in POLICY if s.level == "informational")
     ev = world(POLICY, **{info.key: replace_run(info.key, conclusion="failure")})
