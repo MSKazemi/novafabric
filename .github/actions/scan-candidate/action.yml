@@ -1,0 +1,83 @@
+name: Scan candidate image
+description: >-
+  The release image gate (ADR-0186 policy, issue #218). Scans ONE image digest
+  once per shipped platform and fails the job on any fixable CRITICAL finding,
+  crash, timeout or missing platform. Used by publish-image.yml (the real
+  candidate) and release-toolchain.yml (fixtures), so the pull-request run
+  executes the gate that a release uses.
+inputs:
+  image-ref:
+    description: "REPO@sha256:<digest> -- a digest, never a tag"
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Refuse anything that is not a digest reference
+      shell: bash
+      env:
+        REF: ${{ inputs.image-ref }}
+      run: |
+        if ! [[ "$REF" =~ @sha256:[0-9a-f]{64}$ ]]; then
+          echo "::error::scan target must be REPO@sha256:<64 hex>, got '$REF'"
+          exit 1
+        fi
+
+    # Informational, all severities, both platforms. These never fail on findings
+    # (exit-code 0) but still fail on a crash. They run BEFORE the gates so that
+    # both platforms' reports exist even when the first gate stops the job. The
+    # first step installs the pinned trivy and fills the vulnerability DB cache;
+    # every later step reuses both.
+    - name: Report (trivy, all severities, linux/amd64 - informational)
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        TRIVY_PLATFORM: linux/amd64
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        format: table
+        output: trivy-report-amd64.txt
+        exit-code: "0"
+        version: v0.76.2
+    - name: Report (trivy, all severities, linux/arm64 - informational)
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        TRIVY_PLATFORM: linux/arm64
+        TRIVY_SKIP_DB_UPDATE: true
+        TRIVY_SKIP_JAVA_DB_UPDATE: true
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        format: table
+        output: trivy-report-arm64.txt
+        exit-code: "0"
+        skip-setup-trivy: true
+
+    # The gate: one step per shipped platform, fixable CRITICAL only (ADR-0186).
+    # Unfixable criticals appear in the reports above but do not wedge a release
+    # behind upstream base-image lag; if they persist they enter the waiver
+    # discipline. trivy scans the runner's platform (amd64) unless told
+    # otherwise, so each platform needs its own step.
+    - name: Gate (trivy, fixable CRITICAL, linux/amd64)
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        TRIVY_PLATFORM: linux/amd64
+        TRIVY_SKIP_DB_UPDATE: true
+        TRIVY_SKIP_JAVA_DB_UPDATE: true
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        severity: CRITICAL
+        ignore-unfixed: true
+        exit-code: "1"
+        timeout: 8m
+        skip-setup-trivy: true
+    - name: Gate (trivy, fixable CRITICAL, linux/arm64)
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        TRIVY_PLATFORM: linux/arm64
+        TRIVY_SKIP_DB_UPDATE: true
+        TRIVY_SKIP_JAVA_DB_UPDATE: true
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        severity: CRITICAL
+        ignore-unfixed: true
+        exit-code: "1"
+        timeout: 8m
+        skip-setup-trivy: true

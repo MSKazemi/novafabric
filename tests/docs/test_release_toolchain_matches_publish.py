@@ -44,7 +44,11 @@ yaml = pytest.importorskip("yaml")
 
 _ROOT = Path(__file__).resolve().parents[2]
 _WORKFLOWS = _ROOT / ".github" / "workflows"
-_PUBLISH = (_WORKFLOWS / "publish-image.yml", _WORKFLOWS / "publish-chart.yml")
+_PUBLISH = (
+    _WORKFLOWS / "publish-image.yml",
+    _WORKFLOWS / "publish-chart.yml",
+    _ROOT / ".github" / "actions" / "scan-candidate" / "action.yml",
+)
 _SMOKE = _WORKFLOWS / "release-toolchain.yml"
 
 #: Actions in the publish workflows that the smoke test deliberately does NOT
@@ -59,7 +63,10 @@ _EXEMPT: dict[str, str] = {
         "needs the OIDC identity of a tag run to attest a published digest"
     ),
     "aquasecurity/trivy-action": (
-        "scans the image after it is pushed; there is no published image on a pull request"
+        "scans the release candidate by digest before anything is published; there is no "
+        "candidate on a pull request. The `image-gate` job runs the same composite action "
+        "(.github/actions/scan-candidate) on fixtures, but through a `uses: ./...` step that "
+        "this textual parity check does not expand"
     ),
     "actions/upload-artifact": (
         "uploads the trivy report for the release record; reporting only, it cannot break a release"

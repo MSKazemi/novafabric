@@ -11,6 +11,12 @@ name: Release toolchain
 # real workflows do minus the publishing: build the image without pushing,
 # install cosign and helm and prove they run, lint and package the chart.
 #
+# The `image-gate` job additionally runs the release scan gate
+# (.github/actions/scan-candidate) and the promotion script
+# (scripts/release_image.py) against synthetic fixtures and two local registries, so a
+# pull request proves both that a clean image is promoted and that a vulnerable one
+# (on either platform) leaves the stand-in production registry empty.
+#
 # Keep the action versions below IDENTICAL to publish-image.yml and
 # publish-chart.yml. Dependabot's `actions` group bumps every workflow together,
 # so a version that would break a release now surfaces here, on a pull request,
@@ -42,6 +48,9 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".dockerignore"
+      - ".github/actions/scan-candidate/action.yml"
+      - "scripts/release_image.py"
+      - "tests/fixtures/release_gate/**"
   push:
     branches: [main]
     paths:
@@ -61,6 +70,9 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".dockerignore"
+      - ".github/actions/scan-candidate/action.yml"
+      - "scripts/release_image.py"
+      - "tests/fixtures/release_gate/**"
   workflow_dispatch:
 
 permissions:
@@ -173,3 +185,98 @@ jobs:
             --app-version 0.0.0-ci \
             --destination "$RUNNER_TEMP"
           test -f "$RUNNER_TEMP/novafabric-0.0.0-ci.tgz"
+
+  image-gate:
+    name: Image gate on fixtures (candidate scan, local registries only)
+    runs-on: ubuntu-24.04
+    # Runs the SAME composite gate and promotion script a release uses, against
+    # synthetic fixtures, with a second local registry standing in for GHCR. It
+    # proves the negative path on every pull request: a failing candidate leaves
+    # the "production" registry empty.
+    if: github.repository == 'MSKazemi/novafabric'
+    timeout-minutes: 20
+    services:
+      candidate:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports:
+          - 127.0.0.1:5000:5000
+      production:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports:
+          - 127.0.0.1:5001:5000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: network=host
+
+      - name: Build the three fixtures into the candidate registry
+        id: fixtures
+        run: |
+          for f in clean vulnerable mixed; do
+            docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --sbom=false \
+              --metadata-file "$RUNNER_TEMP/$f.json" --push \
+              -t "localhost:5000/gate-$f:candidate" "tests/fixtures/release_gate/$f"
+            echo "$f=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/$f.json")" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Gate - clean fixture must pass
+        uses: ./.github/actions/scan-candidate
+        with:
+          image-ref: localhost:5000/gate-clean@${{ steps.fixtures.outputs.clean }}
+
+      - name: Clean fixture was really scanned on both platforms and has no finding
+        run: |
+          for arch in amd64 arm64; do
+            test -f "trivy-report-$arch.txt" || { echo "::error::no $arch report"; exit 1; }
+            ! grep -q "CVE-2024-45491" "trivy-report-$arch.txt" || { echo "::error::clean fixture has a finding on $arch"; exit 1; }
+          done
+
+      - name: Promote the clean fixture
+        run: |
+          python3 scripts/release_image.py promote \
+            --src-repo localhost:5000/gate-clean --dest-repo localhost:5001/gate-clean \
+            --digest "${{ steps.fixtures.outputs.clean }}" --stage-tag scanned \
+            --platform linux/amd64 --platform linux/arm64
+
+      - name: Gate - vulnerable fixture must FAIL
+        id: vulnerable
+        continue-on-error: true
+        uses: ./.github/actions/scan-candidate
+        with:
+          image-ref: localhost:5000/gate-vulnerable@${{ steps.fixtures.outputs.vulnerable }}
+
+      - name: Vulnerable fixture failed because of the finding, on both platforms
+        # A gate that fails for any other reason (registry unreachable, scanner crash)
+        # would pass the "must FAIL" check above for the wrong reason.
+        run: |
+          for arch in amd64 arm64; do
+            grep -q "CVE-2024-45491" "trivy-report-$arch.txt" || { echo "::error::no finding on $arch"; exit 1; }
+          done
+
+      - name: Gate - arm64-only vulnerable fixture must FAIL
+        id: mixed
+        continue-on-error: true
+        uses: ./.github/actions/scan-candidate
+        with:
+          image-ref: localhost:5000/gate-mixed@${{ steps.fixtures.outputs.mixed }}
+
+      - name: Mixed fixture is vulnerable on arm64 only
+        run: |
+          grep -q "CVE-2024-45491" trivy-report-arm64.txt || { echo "::error::no arm64 finding"; exit 1; }
+          ! grep -q "CVE-2024-45491" trivy-report-amd64.txt || { echo "::error::unexpected amd64 finding"; exit 1; }
+
+      - name: Assert the negative path - failed gates, nothing promoted
+        env:
+          VULNERABLE: ${{ steps.vulnerable.outcome }}
+          MIXED: ${{ steps.mixed.outcome }}
+        run: |
+          test "$VULNERABLE" = failure || { echo "::error::vulnerable fixture passed the gate"; exit 1; }
+          test "$MIXED" = failure || { echo "::error::arm64-only fixture passed the gate"; exit 1; }
+          repos=$(curl -fsS http://localhost:5001/v2/_catalog | jq -r '.repositories | sort | join(",")')
+          test "$repos" = "gate-clean" || { echo "::error::production registry holds: $repos"; exit 1; }
