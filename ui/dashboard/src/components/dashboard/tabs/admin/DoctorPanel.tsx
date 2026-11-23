@@ -14,6 +14,8 @@ export default function DoctorPanel() {
   const run = useCallback(async () => {
     setLoading(true);
     setErr(null);
+    // Clear previous results so a stale failure is not shown as the new check runs.
+    setChecks(null);
     try {
       const r = await api.doctor();
       setChecks(r.checks);
