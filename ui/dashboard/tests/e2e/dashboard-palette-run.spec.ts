@@ -82,6 +82,15 @@ test('palette selection never displays the previous capsule while a new run load
   await expect(inspectorRun(page)).toHaveText('run-002');
 });
 
+test('a mismatched backend run ID fails closed instead of displaying another run', async ({ page }) => {
+  await mockApi(page, {
+    '/api/runs/run-002': { body: capsule('run-001') },
+  });
+  await gotoDashboard(page, 'tab=runs&run=run-002');
+  await expect(page.getByRole('alert')).toContainText('Run detail does not match the requested run ID.');
+  await expect(inspectorRun(page)).toHaveCount(0);
+});
+
 test('a denied run result never reuses the previous run inspector', async ({ page }) => {
   await mockApi(page, {
     '/api/runs/run-001': { body: capsule('run-001') },
