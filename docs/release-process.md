@@ -67,7 +67,10 @@ locally as below:
 - **`golden-capsule`** — builds the wheel, installs it into a clean venv and runs from it
   the EvidenceLab walkthrough (zero-key, then `--profile signed-offline --require-verified`),
   the replay-fidelity oracles in `tests/replay/fidelity`, and one test that mocked replay of
-  a default-level capsule never reports success. Synthetic fixtures and a loopback model only.
+  a default-level capsule never reports success; any skipped or xfailed test fails the job, and
+  every `force-include` target must be present in the installed wheel. The wheel is built
+  from the checkout, not the one `publish-pypi.yml` uploads. Synthetic fixtures and a
+  loopback model only.
 - **`web`** — the Astro site + dashboard build and typecheck (`make site`).
 - **`integration`** — the testcontainers tier (`uv run pytest tests/integration` with
   Docker available; CI installs with `--all-extras`).

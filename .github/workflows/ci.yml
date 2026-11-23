@@ -379,6 +379,17 @@ jobs:
             openai pytest pytest-timeout pyyaml
           "$RUNNER_TEMP/golden-venv/bin/python" -c \
             "import novafabric; assert 'site-packages' in novafabric.__file__, novafabric.__file__"
+          # The walkthrough still exits 0 without some packaged data, so check every
+          # force-include target from pyproject.toml is present in the installed wheel.
+          "$RUNNER_TEMP/golden-venv/bin/python" - <<'PY'
+          import pathlib, tomllib, novafabric
+          root = pathlib.Path(novafabric.__file__).parent.parent
+          cfg = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          targets = cfg["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"].values()
+          missing = [t for t in targets if not (root / t).exists()]
+          assert not missing, f"force-include targets missing from the installed wheel: {missing}"
+          print(f"{len(targets)} force-include targets present in the installed wheel")
+          PY
 
       - name: EvidenceLab walkthrough from the wheel (zero-key, then signed-offline --require-verified)
         run: |
@@ -394,14 +405,22 @@ jobs:
 
       - name: Replay fidelity oracles and the default-level replay limitation, from the wheel
         # pyproject's pythonpath includes src/; override it so the wheel is what is tested.
+        # The fidelity modules importorskip optional clients, so a dependency drift would
+        # skip the oracles and still pass: any skip or xfail fails this step.
         run: |
+          set -o pipefail
           V="$RUNNER_TEMP/golden-venv/bin"
           mkdir -p "$RUNNER_TEMP/fidelity-home"
           env -i PATH="$V:/usr/bin:/bin" HOME="$RUNNER_TEMP/fidelity-home" \
             NOVAFABRIC_AUDIT_LOG_PATH="$RUNNER_TEMP/fidelity-home/audit.log" \
-            "$V/python" -m pytest -q -p no:cacheprovider -o pythonpath=tests -o addopts="" \
+            "$V/python" -m pytest -q -rsx -p no:cacheprovider -o pythonpath=tests -o addopts="" \
             tests/replay/fidelity \
-            "tests/test_example_evidence_lab_walkthrough.py::test_mocked_replay_of_a_default_level_capsule_never_reports_success"
+            "tests/test_example_evidence_lab_walkthrough.py::test_mocked_replay_of_a_default_level_capsule_never_reports_success" \
+            | tee "$RUNNER_TEMP/fidelity.log"
+          if grep -qE '[0-9]+ (skipped|xfailed|xpassed)' "$RUNNER_TEMP/fidelity.log"; then
+            echo "::error::golden-capsule oracles must all run; a test was skipped or xfailed"
+            exit 1
+          fi
 
       - name: Upload the golden-capsule reports (synthetic only)
         if: always()
