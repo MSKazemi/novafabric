@@ -64,7 +64,7 @@ contacted only if `tsa_url` or `tsa_urls` is configured (see
 | Metadata store | SQLite (default) or Postgres via `--backend postgres`; Postgres applies row-level security per transaction (`metadata_store/postgres.py`, `metadata_store/rls.py`) | experimental |
 | Capsule bytes | A filesystem directory on the server (`server/deps.py:get_capsule_dir`), filled by `POST /v0/capsules` (`server/ingest.py`) or by indexing a directory | experimental |
 | Tenancy | **Single-tenant today.** The server refuses to start with more than one organization unless the operator explicitly accepts a shared capsule store (`server/config.py`). | experimental |
-| Packaging | `deploy/docker/` (Compose; the container runs the `nova serve` dashboard by default, and `NOVA_MODE=server` runs the API server) and `deploy/helm/novafabric` | experimental |
+| Packaging | `deploy/docker/` (Compose defaults to `nova serve`; `NOVA_MODE=server` selects the API server) and `deploy/helm/novafabric` (Helm defaults to authenticated `server` mode) | experimental |
 
 **Object storage.** `object_capsule_store/` implements an S3-compatible,
 content-addressed capsule store with a write-once put protocol. Backends: S3,
@@ -99,6 +99,14 @@ and consumer path builds query and lineage indexes alongside the capsules.
 For the step-by-step version with SLURM prolog and epilog scripts, see the
 [cluster-scale tutorial](../tutorials/cluster-scale.md) and the
 [operator guide](../operator-guide.md).
+
+For the five **user-facing installation profiles** (Light, Desktop, Team,
+Enterprise and Factory), the component-by-component installation matrix and
+optional database inventory, see
+[Installation options and software stack](../installation.md).
+The profiles are deployment choices, not new software editions: Desktop is
+Local plus an experimental dashboard, and Enterprise adds regulated controls
+to the experimental Server tier.
 
 ## Choosing a tier
 
