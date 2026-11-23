@@ -75,8 +75,14 @@ call `record_asset_consumption`; the capsule's `assets.jsonl` and the `consumed`
 watches the agent read the dataset. Because the edge is built from the capsule alone and
 never consults the registry, the check also reads the asset back with `nova inspect`: a
 `nova register` that reported success without writing anything fails the check
-(`asset-not-in-registry`). A capsule whose `lineage.jsonl` cannot be read is a named
-lineage FAIL (`lineage-artifact-unreadable`) and the remaining checks still run. The
+(`asset-not-in-registry`). A name, version and type do not say *which* dataset was
+registered, so the check also reads back the fixture digest stored with the asset
+(`nova inspect` does not print tags, so the harness reads it through the same
+`get_asset` call, in the disposable registry) and compares it with the digest computed
+from the scenario's own files; another dataset under the same name fails as
+`asset-content-mismatch`. This ties the declared name to the data the tools served. It
+is still not an observation that the agent read that data. A capsule whose
+`lineage.jsonl` cannot be read is a named lineage FAIL (`lineage-artifact-unreadable`) and the remaining checks still run. The
 registered asset's `spec.path` is the scenario directory the walkthrough actually loaded.
 
 A capture that breaks a D1 check (a missing or extra call, a changed digest, a payload in
