@@ -142,7 +142,14 @@ export default function RunsTab({
     setCapsule(null);
     setDetailError(null);
     api.getRun(selectedId)
-      .then(c => { if (!cancelled) setCapsule(c); })
+      .then(c => {
+        if (cancelled) return;
+        if (c.run_id !== selectedId) {
+          setDetailError({ runId: selectedId, message: 'Run detail does not match the requested run ID.' });
+          return;
+        }
+        setCapsule(c);
+      })
       .catch(e => { if (!cancelled) setDetailError({ runId: selectedId, message: (e as Error).message }); });
     return () => { cancelled = true; };
   }, [selectedId]);
