@@ -67,6 +67,30 @@ describe('local support handoff', () => {
     expect(screen.getByText('access denied')).toBeInTheDocument();
   });
 
+  it('does not show troubleshooting on an idle connection form', () => {
+    render(<ConnectPanel bootError={null} setBootError={vi.fn()} onConnected={vi.fn()} />);
+    expect(screen.queryByRole('region', { name: 'Local troubleshooting' })).not.toBeInTheDocument();
+  });
+
+  it('clears stale failed-check guidance while refreshing the doctor result', async () => {
+    const failed = { checks: [{ name: 'registry', ok: false, detail: 'unavailable' }] };
+    const recovered = { checks: [{ name: 'registry', ok: true, detail: 'ready' }] };
+    let resolveRecheck: (value: typeof recovered) => void = () => {};
+    const recheck = new Promise<typeof recovered>((resolve) => { resolveRecheck = resolve; });
+    doctorMock.mockResolvedValueOnce(failed).mockReturnValueOnce(recheck);
+
+    render(<DoctorPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'nova doctor' }));
+    expect(await screen.findByRole('region', { name: 'Local troubleshooting' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'nova doctor' }));
+    expect(screen.getByRole('button', { name: 'running…' })).toBeDisabled();
+    expect(screen.queryByRole('region', { name: 'Local troubleshooting' })).not.toBeInTheDocument();
+    resolveRecheck(recovered);
+    await screen.findByText('ready');
+    expect(screen.queryByRole('region', { name: 'Local troubleshooting' })).not.toBeInTheDocument();
+  });
+
   it('does not show a failure handoff when doctor reports all checks healthy', async () => {
     doctorMock.mockResolvedValue({ checks: [{ name: 'registry', ok: true, detail: 'ready' }] });
     render(<DoctorPanel />);
