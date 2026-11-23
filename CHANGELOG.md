@@ -71,6 +71,24 @@ longer forwards the submitting shell's environment (ADR-0270).
   The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
   chart), so the release is unaffected; anyone building the collector from source should use Go 1.26.11.
 
+### Security
+
+- **Experimental: the release image is scanned on both platforms before any production tag exists (#218).**
+  `publish-image.yml` used to push the image to GHCR and Docker Hub under its release tags, sign and attest it, and
+  only then run trivy, so a failing gate failed a job whose image was already public (run `45046197296` for v0.109.0:
+  the gate ran about 28 s after the signed image was live). The trivy scan also covered only the runner's platform,
+  so the `linux/arm64` half of the image was never scanned. The job now builds once into a loopback-only registry
+  that exists for the job, scans that digest on `linux/amd64` and `linux/arm64` (a finding, crash, timeout or missing
+  platform fails the job), and only then logs in, copies the same digest to GHCR and Docker Hub with a byte-for-byte
+  check (`scripts/release_image.py`), signs and attests the promoted digest, and moves `X.Y.Z`, `X.Y` and `latest`
+  last. `X.Y.Z` is never moved to a different digest. The Docker Hub token is no longer in the job environment of
+  the build and scan steps. The scanner is pinned to trivy v0.76.2. A new `image-gate` job in `release-toolchain.yml`
+  runs the real gate and promotion on fixtures (clean, vulnerable, arm64-only vulnerable) and two local registries on
+  every pull request that touches the publish path. **Experimental:** the copy to GHCR and Docker Hub, cosign on the
+  promoted digest and `TRIVY_PLATFORM` through trivy-action are first executed by the next tag run. The release job
+  timeout is 60 minutes (was 30). Tests: `tests/docs/test_publish_image_gates_promotion_on_scan.py`,
+  `tests/test_release_image.py`, `tests/test_release_image_registry.py`.
+
 ## [0.109.0] - 2026-11-22
 
 **Replay that refuses rather than pretends: what it cannot serve, it names.**

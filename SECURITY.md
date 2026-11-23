@@ -37,8 +37,11 @@ when a complete fix needs longer than the window.
 - CI runs `npm audit` against every tracked npm lockfile (`ui/dashboard/`,
   `packages/nova-dashboard/`, `packages/nova-sdk-ts/`) on lockfile changes
   and weekly, behind the same severity gate; HIGH/CRITICAL advisories block.
-- Release container images are scanned with trivy; CRITICAL findings with an
-  available fix block the release.
+- Release container images are built into a throw-away local registry and scanned with
+  trivy on each platform (linux/amd64 and linux/arm64) before any tag is pushed to GHCR
+  or Docker Hub; CRITICAL findings with an available fix block the release. This
+  ordering is **experimental** until a tag run has executed it (see
+  [release process](docs/release-process.md), "The image gate").
 - Exceptions go through the checked-in waiver files
   [`.pip-audit-waivers.toml`](.pip-audit-waivers.toml) and
   [`.npm-audit-waivers.toml`](.npm-audit-waivers.toml) — one schema, parsed

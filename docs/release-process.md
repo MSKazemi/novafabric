@@ -92,15 +92,54 @@ release step passes, cosign installed and run, chart linted and packaged. Its ac
 held identical to the publish workflows by `tests/docs/test_release_toolchain_matches_publish.py`,
 because a smoke test pinned to different versions is a green check that proves nothing.
 
-Three things it still cannot cover, so a tag run is their first execution:
+Things it still cannot cover, so a tag run is their first execution:
 
 - **`docker/login-action`** — needs real registry credentials, which must never be exposed to a
   pull request. A login failure is at least loud and immediate.
 - **`cosign sign` and `actions/attest-build-provenance`** — both need the OIDC identity of a tag
   run. The installer is proven; the signing call is not.
 - **arm64** — the smoke build is `linux/amd64`, so emulation is exercised only at release.
+- **The copy to GHCR and Docker Hub** (see below) — `release-toolchain.yml` runs the real scan
+  gate and the real promotion script against fixtures and two local registries, never against
+  GHCR or Docker Hub.
 
-After a release, check those three in the run log rather than assuming them.
+After a release, check those in the run log rather than assuming them.
+
+### The image gate: scan the candidate before any production tag exists (experimental)
+
+*Status: experimental. The ordering below is implemented and covered by tests, but no tag run has
+executed it yet; the first tag run after it lands is its first real execution.*
+
+`publish-image.yml` no longer pushes the image to a production registry and scans it afterwards.
+Within the one `image` job, in this order:
+
+1. **Build once** (`linux/amd64` + `linux/arm64`, SBOM and provenance) into a throw-away registry
+   that lives only for the job, bound to loopback. No GHCR or Docker Hub login exists yet.
+2. **Scan that digest on each platform** with the pinned trivy
+   (`.github/actions/scan-candidate`). Fixable CRITICAL findings (ADR-0186), a scanner crash, a
+   timeout or a missing platform fail the job. trivy scans only the runner's platform unless told
+   otherwise, so each platform has its own gate step.
+3. **Only then** log in, copy **that digest** to GHCR (and to Docker Hub when `DOCKERHUB_TOKEN` is
+   set) with `scripts/release_image.py promote`, and verify the destination bytes. A rebuild never
+   happens after the scan.
+4. **Sign and attest** the promoted digest. A signature does not follow a copy between registries,
+   so it is made on the production digest.
+5. **Last, move the release tags** (`X.Y.Z`, `X.Y`, `latest`) with `scripts/release_image.py tag`.
+   `X.Y.Z` is immutable: it refuses to point at a different digest.
+
+A failed scan therefore leaves no release tag, signature or attestation in any registry. The copy
+in step 3 is addressed by a digest-derived staging tag `scanned-<12 hex>` (a registry needs a tag to
+create a manifest); it is not a release tag and is created only for an image that passed the gate.
+
+If the job fails *after* step 3 and before step 5, the scanned digest sits in the registry under its
+staging tag, unsigned or signed but untagged, and a re-run is safe. If it fails *during* step 5 some
+tags may have moved. Re-running the same workflow rebuilds the image, which gives a different digest,
+and the immutable `X.Y.Z` check then refuses it by design; resolve that by tagging the already-scanned
+digest by hand (`docker buildx imagetools create -t <repo>:<tag> <repo>@<digest>`) or by cutting the
+next patch version.
+
+`publish-chart.yml` is a separate workflow: a failed image gate does not stop the Helm chart for the
+same tag from publishing.
 
 ## 2. Run ruff
 
@@ -159,6 +198,12 @@ A tag on a commit whose CI is red, cancelled or missing publishes **nothing**: t
 for CI on that exact commit and fails closed otherwise. Fix CI (or re-run it if it was
 cancelled), then re-run the failed tag workflows from the Actions tab — the gate
 re-checks and the publish proceeds.
+
+The image job also fails closed on the vulnerability scan: when `publish-image.yml` fails in its
+scan step, **no image tag for that version exists** in GHCR or Docker Hub (see §1c, "The image
+gate"). Fix the finding, then cut a new tag; a re-run of the failed tag run rebuilds the image and
+re-scans it, so it only helps if the finding came from the scanner database or a transient error. The trivy reports for both platforms are attached to the run as
+`trivy-report-<sha>`.
 
 GitHub runs push CI only on the head of a push. If the tagged commit was not a head (it was
 pushed together with later commits), it has no CI run: start one with
