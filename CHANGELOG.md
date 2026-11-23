@@ -25,6 +25,10 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **The declared FastAPI floor is the patched release.** FastAPI before 0.163.2 is affected by GHSA-f56c-v883-vx8r (a
+  high-severity denial of service from quadratic request-parameter processing). The lock already resolves 0.165.0; the
+  `serve`, `server` and `federation` extras and the dev group now require `fastapi>=0.163.2` (was `>=0.115`), so an install
+  from PyPI cannot resolve a vulnerable version either.
 - **`nova promote` verification fails closed on an envelope RFC 8785 cannot canonicalize.** `jcs` 0.3 refuses an integer
   above 2^53 instead of rounding it silently. A proposal envelope carrying such a number in an unsigned, extra top-level
   field passed every signature check and then raised out of `verify_sod` at the digest check; it now returns a failing
