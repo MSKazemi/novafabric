@@ -9,6 +9,7 @@ import SupportHandoff from '../../SupportHandoff';
 export default function DoctorPanel() {
   const [checks, setChecks] = useState<Array<{ name: string; ok: boolean; detail: string }> | null>(null);
   const [loading, setLoading] = useState(false);
+  const [doctorOk, setDoctorOk] = useState<boolean | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const run = useCallback(async () => {
@@ -16,8 +17,10 @@ export default function DoctorPanel() {
     setErr(null);
     // Clear previous results so a stale failure is not shown as the new check runs.
     setChecks(null);
+    setDoctorOk(null);
     try {
       const r = await api.doctor();
+      setDoctorOk(r.ok ?? null);
       setChecks(r.checks);
     } catch (e) {
       setErr((e as Error).message);
@@ -42,6 +45,11 @@ export default function DoctorPanel() {
         Check all NovaFabric subsystems: capsule dir, registry DB, lineage store, OPA binary, NovaSeal, KG store, and Python version.
       </p>
       {err && <p className="text-xs text-[var(--color-status-failure)] font-mono">{err}</p>}
+      {doctorOk === false && (
+        <p role="alert" className="text-xs text-[var(--color-status-failure)]">
+          The overall diagnostic check reported a failure, even if no individual check is listed as failed.
+        </p>
+      )}
       {checks !== null && (
         <div className="rounded border border-[var(--color-border)] overflow-hidden">
           <table className="w-full text-xs">
@@ -73,7 +81,7 @@ export default function DoctorPanel() {
           </table>
         </div>
       )}
-      {(err !== null || checks?.some((c) => !c.ok) === true) && <SupportHandoff context="health" />}
+      {(err !== null || doctorOk === false || checks?.some((c) => !c.ok) === true) && <SupportHandoff context="health" />}
     </Panel>
   );
 }
