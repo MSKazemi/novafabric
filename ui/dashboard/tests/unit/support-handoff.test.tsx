@@ -91,6 +91,14 @@ describe('local support handoff', () => {
     expect(screen.queryByRole('region', { name: 'Local troubleshooting' })).not.toBeInTheDocument();
   });
 
+  it('does not hide a failed overall doctor verdict when individual checks are empty', async () => {
+    doctorMock.mockResolvedValue({ ok: false, checks: [] });
+    render(<DoctorPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'nova doctor' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('overall diagnostic check reported a failure');
+    expect(screen.getByRole('region', { name: 'Local troubleshooting' })).toBeInTheDocument();
+  });
+
   it('does not show a failure handoff when doctor reports all checks healthy', async () => {
     doctorMock.mockResolvedValue({ checks: [{ name: 'registry', ok: true, detail: 'ready' }] });
     render(<DoctorPanel />);
