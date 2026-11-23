@@ -56,6 +56,18 @@ test.describe('boot (journey 1)', () => {
     expect(page.url()).not.toContain('token=');
   });
 
+  test('a rejected token offers offline, copy-only troubleshooting', async ({ page }) => {
+    await mockApi(page, { '/api/runs': { status: 401, body: { detail: 'unauthorized' } } });
+    await page.goto(`/dashboard?token=${TOKEN}`);
+
+    const help = page.getByRole('region', { name: 'Local troubleshooting' });
+    await expect(help).toBeVisible();
+    await expect(help.getByRole('button', { name: 'Copy nova doctor' })).toBeVisible();
+    await expect(help.getByRole('button', { name: 'Copy nova support-bundle' })).toBeVisible();
+    await expect(help.getByText(/nothing is uploaded automatically/i)).toBeVisible();
+    expect(page.url()).not.toContain('token=');
+  });
+
   test('a rejected token falls back to ConnectPanel with an explanation', async ({ page }) => {
     // validateToken() probes /api/runs; a 401 there is the "wrong token" path.
     await mockApi(page, { '/api/runs': { status: 401, body: { detail: 'unauthorized' } } });
