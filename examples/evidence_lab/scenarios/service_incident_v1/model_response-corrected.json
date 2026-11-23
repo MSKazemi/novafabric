@@ -1,0 +1,5 @@
+{
+  "action": "reduce_max_connections",
+  "value": 800,
+  "reason": "The database connection pool is exhausted, so capping connections at 800 sheds load while rate limiting stays on."
+}
