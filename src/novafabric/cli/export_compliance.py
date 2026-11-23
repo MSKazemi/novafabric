@@ -184,7 +184,8 @@ def iso42001_cmd(
         if seal == "invalid":
             raise typer.BadParameter(
                 f"{capsule}: the capsule carries a .seal that failed seal verification "
-                "(edited after sealing, a digested stream the seal does not cover, or a "
+                "(edited after sealing, a digested stream the seal does not cover, a seal "
+                "made before evidence digests that cannot vouch for any stream, or a "
                 "damaged or substituted seal); refusing to "
                 f"export evidence from it — run `nova verify {capsule}` for the reasons"
             )

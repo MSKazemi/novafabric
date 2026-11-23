@@ -863,6 +863,12 @@ def capsule_seal_status(capsule_dir: Path, *, must_cover: Sequence[str] = ()) ->
     (ADR-0251 §5: reported, never fatal, for derived artifacts) — but a caller that
     hashes it into a reference carrying the seal path would be vouching for bytes the
     seal never saw. If any *must_cover* file is unlisted the status is ``"invalid"``.
+
+    A seal made before ADR-0251 carries no ``evidence_digests`` at all: it signs the
+    manifest only, so nothing it holds can tell an untouched stream from an edited or
+    injected one, and :func:`verify_capsule` stays valid either way. When *must_cover*
+    is given such a seal cannot vouch for any of those files, so the status is
+    ``"invalid"`` rather than a seal path attached to digested but unbound bytes.
     """
     try:
         mode = os.lstat(capsule_dir / ".seal").st_mode
@@ -876,6 +882,8 @@ def capsule_seal_status(capsule_dir: Path, *, must_cover: Sequence[str] = ()) ->
     try:
         result = verify_capsule(capsule_dir)
         if not result.valid or set(must_cover) & set(result.binding.unlisted):
+            return "invalid"
+        if must_cover and not result.binding.digests_present:
             return "invalid"
         return "valid"
     except Exception:  # noqa: BLE001 — a seal that cannot be verified is not valid

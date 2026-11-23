@@ -40,6 +40,10 @@ longer forwards the submitting shell's environment (ADR-0270).
   now exits 2 and writes no report; run `nova verify DIR` for the reasons. So does a sealed capsule to
   which a digested stream (`tool-calls.jsonl`, `tool-permission-events.jsonl`) was added after sealing:
   the seal never covered it, yet the export would have hashed it into a reference carrying the seal path.
+  A seal made before evidence digests (ADR-0251) signs the manifest only, so it cannot vouch for any
+  stream and is refused too, untouched or not (behaviour change; `nova verify DIR` prints "Evidence binding: NOT PRESENT
+  (sealed before evidence_digests)"). A valid seal does not identify the signer: a re-seal with another key verifies unless `nova verify --ca-bundle`
+  pins the trust root, which this exporter does not take.
   Unsealed and validly sealed capsules export as before; a derived file next to a sealed capsule is still
   not a tamper (ADR-0251 §5). New helper `capsule_seal_status()` (`absent`, `valid` or `invalid`);
   `capsule_seal_verifies()` is unchanged. The other exporters still use the Boolean helper.

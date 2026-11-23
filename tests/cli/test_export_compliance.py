@@ -19,6 +19,7 @@ its input (a capsule directory or a JSON file) and writes a report JSON.
 
 from __future__ import annotations
 
+import base64
 import datetime
 import hashlib
 import json
@@ -38,7 +39,7 @@ from typer.testing import CliRunner
 
 from novafabric.capture.finalize import evidence_digests
 from novafabric.cli.export_compliance import export_compliance_app
-from novafabric.compliance.export.provenance import build_capsule_ref
+from novafabric.compliance.export.provenance import CAPSULE_REF_FILES, build_capsule_ref
 from novafabric.trust.novaseal import KeyConfig, NovaSeal
 from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
 
@@ -224,13 +225,17 @@ def test_iso42001_standard_label(tmp_path: Path) -> None:
     assert json.loads(out.read_text())["standard"] == "ISO/IEC 42001:2023"
 
 
-def _sealed_capsule(tmp_path: Path) -> Path:
-    """A capsule with a genuine NovaSeal ``.seal/`` (local key, no TSA)."""
+def _sealed_capsule(tmp_path: Path, *, bind_evidence: bool = True) -> Path:
+    """A capsule with a genuine NovaSeal ``.seal/`` (local key, no TSA).
+
+    ``bind_evidence=False`` seals a manifest without ``evidence_digests``, the shape of a
+    seal made before ADR-0251: it signs the manifest only, not the evidence streams."""
     cap = tmp_path / "sealed"
     cap.mkdir()
     (cap / "model-calls.jsonl").write_text('{"model":"m"}\n', encoding="utf-8")
     manifest: dict[str, Any] = {"run_id": "r-sealed", "status": "success"}
-    manifest["evidence_digests"] = evidence_digests(cap)
+    if bind_evidence:
+        manifest["evidence_digests"] = evidence_digests(cap)
     (cap / "capsule.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "export-test")])
@@ -360,6 +365,64 @@ def test_iso42001_any_change_to_a_digested_member_after_sealing_is_refused(
         (cap / "tool-calls.jsonl").write_text('{"tool":"injected"}\n', encoding="utf-8")
     else:
         (cap / "tool-permission-events.jsonl").write_text('{"ev":"injected"}\n', encoding="utf-8")
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+@pytest.mark.parametrize("mutate", ["untouched", "edit-model-calls", "add-tool-calls"])
+def test_iso42001_a_seal_that_never_bound_the_evidence_is_refused(
+    tmp_path: Path, mutate: str
+) -> None:
+    """A seal made without ``evidence_digests`` (before ADR-0251) signs the manifest only.
+
+    Whatever happens to the streams, it still verifies, so the exporter cannot attach its
+    path to a digest of those streams: an edited capsule would read as sealed. Even an
+    untouched one is refused, because nothing the seal holds can tell the two apart."""
+    cap = _sealed_capsule(tmp_path, bind_evidence=False)
+    if mutate == "edit-model-calls":
+        (cap / "model-calls.jsonl").write_text('{"model":"EDITED"}\n', encoding="utf-8")
+    elif mutate == "add-tool-calls":
+        (cap / "tool-calls.jsonl").write_text('{"tool":"injected"}\n', encoding="utf-8")
+    assert capsule_seal_status(cap) == "valid"  # the bare question is unchanged
+    assert capsule_seal_status(cap, must_cover=CAPSULE_REF_FILES) == "invalid"
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+def _resign_free_edit(env: dict[str, Any], how: str, other_root: Path) -> bytes:
+    """Damage the signing material of a real envelope without touching the capsule files."""
+    sig = env["signatures"][0]
+    if how == "flip-signature-byte":
+        raw = bytearray(base64.b64decode(sig["sig"]))
+        raw[-1] ^= 0x01
+        sig["sig"] = base64.b64encode(bytes(raw)).decode()
+    elif how == "modify-signed-payload":
+        payload = json.loads(base64.b64decode(env["payload"]))
+        payload["run_id"] = "r-forged"
+        env["payload"] = base64.b64encode(json.dumps(payload).encode()).decode()
+    elif how == "swap-certificate":
+        other_root.mkdir()
+        other = _sealed_capsule(other_root)
+        other_env = json.loads((other / ".seal" / "manifest.dsse").read_text())
+        sig["cert"] = other_env["signatures"][0]["cert"]
+    elif how == "drop-signatures":
+        env["signatures"] = []
+    return json.dumps(env).encode()
+
+
+@pytest.mark.parametrize(
+    "how",
+    ["flip-signature-byte", "modify-signed-payload", "swap-certificate",
+     "drop-signatures", "truncated-envelope"],
+)  # fmt: skip
+def test_iso42001_changed_signing_material_is_refused(tmp_path: Path, how: str) -> None:
+    cap = _sealed_capsule(tmp_path)
+    seal = cap / ".seal" / "manifest.dsse"
+    if how == "truncated-envelope":
+        seal.write_bytes(seal.read_bytes()[: len(seal.read_bytes()) // 2])
+    else:
+        seal.write_bytes(_resign_free_edit(json.loads(seal.read_text()), how, tmp_path / "other"))
+    assert capsule_seal_status(cap) == "invalid"
     result, out = _iso_capsule(tmp_path, cap)
     _assert_refused_for_seal(result, out, cap)
 

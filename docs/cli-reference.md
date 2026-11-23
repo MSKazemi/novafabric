@@ -5503,8 +5503,12 @@ Subcommands and key options:
   exported unsealed (`seal_envelope_path: null`); a capsule whose `.seal` exists but fails
   verification — edited after sealing, a digested stream added after sealing, a damaged or
   substituted seal, or a `.seal` that is a symlink or a file — is refused (exit 2, no report
-  written); `nova verify DIR` gives the reasons. A valid seal means the bytes are unchanged
-  since sealing; it does not identify the signer. Without `--capsule`, evidenced
+  written); `nova verify DIR` gives the reasons. A seal made before evidence digests
+  (ADR-0251) signs the manifest only, so it cannot vouch for the streams and is refused
+  the same way. A valid seal means the bytes it names are unchanged since sealing; it does
+  not identify the signer, and anyone who can edit a capsule can re-seal it with their own
+  key, which verifies unless the verifier is given a pinned CA bundle (`nova verify
+  --ca-bundle`; this exporter takes none). Without `--capsule`, evidenced
   controls honestly degrade to `not_evidenced`. `--capsule-id` is optional and must match
   the capsule's own id; given alone it is refused (exit 2). `--evidence` lists the evidence
   kinds you assert are present: they are not read from the capsule, so an evidenced
