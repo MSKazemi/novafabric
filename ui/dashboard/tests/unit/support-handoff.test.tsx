@@ -29,7 +29,7 @@ describe('local support handoff', () => {
       render(<SupportHandoff context="disconnected" />);
       fireEvent.click(screen.getByRole('button', { name: 'Copy nova support-bundle' }));
       await waitFor(() => expect(writeText).toHaveBeenCalledWith('nova support-bundle'));
-      expect(screen.getByRole('status')).toHaveTextContent('nova support-bundle copied.');
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('nova support-bundle copied.'));
       expect(fetchMock).not.toHaveBeenCalled();
       expect(screen.getByText(/nothing is uploaded automatically/i)).toBeInTheDocument();
     } finally {
@@ -57,6 +57,14 @@ describe('local support handoff', () => {
     fireEvent.click(screen.getByRole('button', { name: 'nova doctor' }));
     expect(await screen.findByRole('region', { name: 'Local troubleshooting' })).toBeInTheDocument();
     expect(screen.getByText('unavailable')).toBeInTheDocument();
+  });
+
+  it('shows the troubleshooting handoff when the doctor request is refused', async () => {
+    doctorMock.mockRejectedValue(new Error('access denied'));
+    render(<DoctorPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'nova doctor' }));
+    expect(await screen.findByRole('region', { name: 'Local troubleshooting' })).toBeInTheDocument();
+    expect(screen.getByText('access denied')).toBeInTheDocument();
   });
 
   it('does not show a failure handoff when doctor reports all checks healthy', async () => {
