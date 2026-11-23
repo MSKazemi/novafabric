@@ -23,6 +23,16 @@ stale `?sub=` when you leave the hub), so any view you reach by keyboard is shar
 survives a reload. Tab ids have not changed since before the v0.97.0 regrouping, so existing
 links still resolve.
 
+**Live run lookup in the command palette (experimental).** Press Ctrl/⌘+K and
+search for a recorded run ID. Selecting a returned **Run** result opens that exact
+run's inspector, even when it is outside the currently loaded Runs page. The
+URL stores only the run ID and opens the Inspect view by default; selecting a
+run does **not** execute replay, verify evidence or fetch secret payloads.
+Changing runs within the open Runs tab replaces its selected-run URL state;
+it does not create a browser-history entry for every selection. Results for
+assets and incidents currently navigate to their sections and do not claim to
+open a specific selected record.
+
 **Runs view state in the URL** *(experimental, since v0.103.0 — ADR-0232 D2)*. The whole Runs
 view is in the URL, so a pasted link reproduces exactly what you were looking at:
 
