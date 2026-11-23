@@ -12,8 +12,15 @@ const inspectorRun = (page: import('@playwright/test').Page) =>
 
 test('live run result from Home opens that run, including an ID outside the initial list', async ({ page }) => {
   await mockApi(page, {
-    '/api/runs/search': { body: runSearchPage({ items: [makeRun(42)] }) },
     '/api/runs/run-042': { body: capsule('run-042') },
+  });
+  // Search results can include a run outside the Runs page already loaded.
+  await page.route((url) => url.pathname === '/api/runs/search', async (route) => {
+    const q = new URL(route.request().url()).searchParams.get('q');
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(q ? runSearchPage({ items: [makeRun(42)] }) : runSearchPage()),
+    });
   });
   await gotoDashboard(page);
 
