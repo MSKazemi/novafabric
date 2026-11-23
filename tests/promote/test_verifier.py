@@ -234,6 +234,44 @@ def test_verify_check3_digest_mismatch(
     assert result.exit_code == 5
 
 
+def test_verify_check3_non_canonicalizable_envelope_fails_closed_with_exit_5(
+    tmp_path: Path,
+    proposer_key_path: Path,
+    proposer_cert_path: Path,
+    approver_key_path: Path,
+    approver_cert_path: Path,
+) -> None:
+    """RFC 8785 cannot represent an integer above 2**53; jcs 0.3 refuses it.
+
+    DSSE signs the payload only, so an envelope can carry an extra, unsigned top-level
+    number and still pass every signature check. The digest check must then return a
+    failing VerifyResult (exit 5), never raise out of verify_sod.
+    """
+    policy_store = PolicyStore(tmp_path / "merkle.db")
+    bundle_store = PromoteBundleStore(tmp_path)
+    version = policy_store.put(_policy_json(["proposer"], ["approver"]))
+
+    proposal_env = _make_proposal_envelope(
+        CAPSULE_ID, str(version), proposer_key_path, proposer_cert_path, "proposer"
+    )
+    envelope = json.loads(proposal_env)
+    envelope["unsigned_extra"] = 2**60  # outside the signed payload
+    hostile = json.dumps(envelope).encode()
+    proposal_uuid = bundle_store.put_proposal(CAPSULE_ID, hostile)
+
+    time.sleep(0.05)
+
+    approval_env = _make_approval_envelope(
+        proposal_env, approver_key_path, approver_cert_path, "approver"
+    )
+    bundle_store.put_approval(CAPSULE_ID, approval_env, proposal_uuid)
+
+    result = verify_sod(CAPSULE_ID, policy_store, bundle_store)
+    assert result.passed is False
+    assert result.exit_code == 5
+    assert "canonical" in result.message.lower()
+
+
 # ---------------------------------------------------------------------------
 # Check 4 failure: self-approval → exit 6
 # ---------------------------------------------------------------------------
