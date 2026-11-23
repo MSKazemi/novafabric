@@ -25,6 +25,10 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova promote` verification fails closed on an envelope RFC 8785 cannot canonicalize.** `jcs` 0.3 refuses an integer
+  above 2^53 instead of rounding it silently. A proposal envelope carrying such a number in an unsigned, extra top-level
+  field passed every signature check and then raised out of `verify_sod` at the digest check; it now returns a failing
+  result with exit code 5 and says why. Test: `tests/promote/test_verifier.py`.
 - **The capture-overhead CI gate takes 60 rounds instead of 30.** Its nearest-rank p95 of 30 was the
   29th value, so two noisy rounds on a shared runner failed it: on 2026-11-22 a docs-only commit read
   p95 2.71 s (median 270 ms) and passed on re-run. p95 of 60 absorbs three such rounds; the 2 s limit
