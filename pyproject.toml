@@ -194,7 +194,7 @@ serve = [
     # Experimental local dashboard, gated behind `nova serve --experimental`.
     # Per ADR-0027 — opt-in install: `pip install novafabric[serve]`.
     # Both Tier A under ADR-0024 (FastAPI: MIT, uvicorn: BSD-3-Clause).
-    "fastapi>=0.115",
+    "fastapi>=0.163.2",  # GHSA-f56c-v883-vx8r (quadratic request-parameter DoS) is fixed in 0.163.2
     "uvicorn[standard]>=0.52.1",
     # --- Live Topology Dashboard backing stores (moved out of core by ADR-0222) ---
     # duckdb (MIT) — the in-process ClusterStore behind
@@ -215,12 +215,12 @@ federation = [
     # httpx is NOT re-listed: it is a core dependency, so it is always present.
     # (ADR-0222 OQ-2 — declare each dependency once, in the lowest tier that
     # actually needs it.)
-    "fastapi>=0.115",
+    "fastapi>=0.163.2",  # GHSA-f56c-v883-vx8r (quadratic request-parameter DoS) is fixed in 0.163.2
 ]
 server = [
     # Multi-user server mode (v0.7). Optional install: `pip install novafabric[server]`.
     # FastAPI (MIT) + uvicorn (BSD-3-Clause) — Tier A under ADR-0024.
-    "fastapi>=0.115",
+    "fastapi>=0.163.2",  # GHSA-f56c-v883-vx8r (quadratic request-parameter DoS) is fixed in 0.163.2
     "uvicorn[standard]>=0.52.1",
     # python-multipart (Apache-2.0) — Tier A under ADR-0024.  Required by FastAPI
     # for multipart/form-data upload endpoints (capsule upload).
@@ -433,7 +433,7 @@ dev = [
     "openapi-spec-validator>=0.8.5",
     # Phase 6 Track C — federation endpoint tests need FastAPI + httpx TestClient.
     # fastapi (MIT) + httpx (BSD-3-Clause) — Tier A under ADR-0024.
-    "fastapi>=0.115",
+    "fastapi>=0.163.2",  # GHSA-f56c-v883-vx8r (quadratic request-parameter DoS) is fixed in 0.163.2
     "httpx>=0.28",
     # Phase 4 — Object Capsule Store testing
     # boto3 (Apache-2.0) — S3/MinIO/Ceph WORM adapter + conformance suite.
