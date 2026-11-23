@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 /** Internal URL writes do not produce browser popstate events. Notify mounted
  * useUrlState consumers when a cross-component navigation changes the query. */
-const URL_STATE_CHANGED = 'novafabric:urlstatechange';
+export const URL_STATE_CHANGED = 'novafabric:urlstatechange';
 
 export function notifyUrlStateChanged(): void {
   if (typeof window !== 'undefined') {
