@@ -50,7 +50,10 @@ It took 24.0 s on a laptop (measured once; not a benchmark).
 
 Each line is one check on one of four separate axes. **`as expected` is what makes the
 harness verdict PASS** — not every check being `PASS`: the unsafe task is expected to
-`FAIL`, and an unsealed capsule's integrity is expected to be `NOT_EVALUATED`.
+`FAIL`, and an unsealed capsule's integrity is expected to be `NOT_EVALUATED`. The harness
+verdict also needs **every** required check to be present — 11 for zero-key, 16 for
+signed-offline — so a step that never ran (say `nova diff`) is a `FAIL`, listed under
+`missing_checks` in the report, not a quiet PASS of the checks that did run.
 
 | Axis | unsafe | corrected | How it is decided |
 |---|---|---|---|
@@ -63,7 +66,7 @@ The two variants read **the same observations** from the same two tools. Only th
 differs — the corrected one adds a corrective policy (`prompt-v2-corrective`) — and the
 mock answers each variant's exact request with that variant's fixture reply. The mock is a
 fixture, so the corrected decision is a *recorded fixture*, not model reasoning; what the
-walkthrough shows is that capture, diff and lineage record the change faithfully.
+walkthrough shows is that capture and diff record the change faithfully, while lineage records the same declared input for both runs.
 
 **Lineage is declared, not observed.** The agent declares its input with NovaFabric's SDK
 call `record_asset_consumption`; the capsule's `assets.jsonl` and the `consumed` edge in
@@ -103,7 +106,7 @@ under `out/negative/`. The CA's public certificate is copied to
 `out/trust/local-seal-ca.crt.pem` so you can re-verify later; private keys never leave the
 temporary home, which is deleted. Measured trust semantics, as `nova verify` reports them:
 `identity_trust: local-ca-pinned` (continuity with this installation — **not** who the
-signer is) and `timestamp_trust: absent` (no timestamp authority is used or contacted).
+signer is) and `timestamp_trust: absent` (this profile configures no timestamp authority; outbound connections are not monitored).
 An extra unsigned file added to a sealed capsule still verifies; that is the current
 verifier contract, so it is not reported as tampering.
 

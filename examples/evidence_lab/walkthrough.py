@@ -178,12 +178,20 @@ def judge_diff(diff: Any, *, run_a: str, run_b: str, call_a: str | None, call_b:
         "model_pairs": [{"changed": True, "request_changed": True, "response_changed": True,
                          "provider_changed": False, "params_changed": False,
                          "model_call_id_a": call_a, "model_call_id_b": call_b}],
+        # the counts alone cannot tell a correct pairing from a crossed one
+        "tool_pairs": [{"tool_name": name, "changed": False, "arguments_changed": False,
+                        "result_changed": False, "status_changed": False}
+                       for name in ("read_metrics", "search_logs")],
+        "skipped_malformed_lines": {"a": {"model_calls": 0, "tool_calls": 0},
+                                    "b": {"model_calls": 0, "tool_calls": 0}},
         "environment_changes": [],
         "output_changes": [{"path": "outputs/stdout.txt", "before_hash": f"sha256:{stdout_a}",
                             "after_hash": f"sha256:{stdout_b}"}],
     }  # fmt: skip
     pair_keys = ("changed", "request_changed", "response_changed", "provider_changed",
                  "params_changed", "model_call_id_a", "model_call_id_b")  # fmt: skip
+    tool_pair_keys = ("tool_name", "changed", "arguments_changed", "result_changed",
+                      "status_changed")  # fmt: skip
     if not call_a or not call_b:
         return Check("capture", None, "nova_diff_names_the_change", "FAIL", "diff-no-call-ids",
                      want, {"call_a": call_a, "call_b": call_b}, "capsule logical records",
@@ -208,6 +216,11 @@ def judge_diff(diff: Any, *, run_a: str, run_b: str, call_a: str | None, call_b:
             for p in (model.get("pairs") or [])
             if isinstance(p, dict) and p.get("changed")
         ],
+        "tool_pairs": [
+            {k: p.get(k) for k in tool_pair_keys}
+            for p in (tools.get("pairs") or []) if isinstance(p, dict)
+        ],
+        "skipped_malformed_lines": diff.get("skipped_malformed_lines"),
         # a missing section is None, never the empty list a clean diff reports
         "environment_changes": environment.get("changes")
         if isinstance(environment, dict) else None,
@@ -338,7 +351,8 @@ def judge_integrity(variant: str, profile: str, verify: Any, *, exit_code: int,
         artifact, "PASS",
         notes=["identity is self-asserted (nova seal init); a pinned local CA proves continuity "
                "with this disposable installation, not who the signer is",
-               "no timestamp authority was used (timestamp_trust reported as observed)"],
+               "this profile configures no timestamp authority; timestamp_trust is reported "
+               "as nova verify gives it"],
     )  # fmt: skip
 
 
@@ -437,8 +451,46 @@ def axis_summary(checks: list[Check]) -> dict[str, Any]:
     return out
 
 
-def harness_verdict(checks: list[Check]) -> Verdict:
-    return "PASS" if checks and all(c.as_expected for c in checks) else "FAIL"
+CheckKey = tuple[str, str | None, str]
+NEGATIVE_CASES = ("tampered-member", "missing-member", "corrupt-signature", "wrong-ca")
+
+
+def required_checks(profile: str) -> frozenset[CheckKey]:
+    """Every (axis, variant, name) a COMPLETE walkthrough of ``profile`` reports.
+
+    The harness verdict needs all of them: a step that was skipped (say, ``nova diff``
+    never ran) leaves a gap, and a gap is a FAIL, not a quiet PASS of the checks that ran.
+    """
+    per_variant = (
+        ("task", "policy_oracle_verdict"),
+        ("capture", "logical_calls_and_decision"),
+        ("capture", "run_declared_registered_asset"),
+        ("integrity", "native_seal_verification"),
+        ("replay", "replay_fidelity"),
+    )
+    keys: set[CheckKey] = {(a, v, n) for v in RUN_VARIANTS for a, n in per_variant}
+    keys.add(("capture", None, "nova_diff_names_the_change"))
+    if profile == "signed-offline":
+        keys |= {("integrity", f"negative:{c}", "broken_copy_is_refused") for c in NEGATIVE_CASES}
+        keys.add(("integrity", "control:pristine-copy", "untouched_copy_verifies"))
+    return frozenset(keys)
+
+
+def missing_checks(checks: list[Check], required: frozenset[CheckKey]) -> list[CheckKey]:
+    present = {(c.axis, c.variant, c.name) for c in checks}
+    return sorted(required - present, key=str)
+
+
+def harness_verdict(checks: list[Check], required: frozenset[CheckKey] | None = None) -> Verdict:
+    """PASS only when every check matches its expected verdict — and, given ``required``,
+    when exactly the required checks are present (none missing, none duplicated)."""
+    if not checks or not all(c.as_expected for c in checks):
+        return "FAIL"
+    if required is not None:
+        keys = [(c.axis, c.variant, c.name) for c in checks]
+        if len(keys) != len(set(keys)) or set(keys) != required:
+            return "FAIL"
+    return "PASS"
 
 
 def proof_requirement_met(checks: list[Check], variants: tuple[str, ...] = RUN_VARIANTS) -> bool:

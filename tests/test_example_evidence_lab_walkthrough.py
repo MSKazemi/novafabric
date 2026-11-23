@@ -306,16 +306,41 @@ def _good_diff() -> dict[str, Any]:
     pair = {"changed": True, "request_changed": True, "response_changed": True,
             "provider_changed": False, "params_changed": False, "changed_params": [],
             "model_call_id_a": "CA", "model_call_id_b": "CB"}  # fmt: skip
+    tool_pairs = [{"changed": False, "tool_name": name, "tool_call_id_a": f"TA{i}",
+                   "tool_call_id_b": f"TB{i}", "result_changed": False,
+                   "arguments_changed": False, "status_changed": False,
+                   "status_a": "success", "status_b": "success"}
+                  for i, name in enumerate(("read_metrics", "search_logs"))]  # fmt: skip
     return {
         "run_a_id": "A", "run_b_id": "B", "has_changes": True,
+        "skipped_malformed_lines": {"a": {"model_calls": 0, "tool_calls": 0},
+                                    "b": {"model_calls": 0, "tool_calls": 0}},
         "sections": {
             "model_calls": {"aligned": 1, "changed": 1, "added": 0, "removed": 0, "pairs": [pair]},
-            "tool_calls": {"aligned": 2, "changed": 0, "added": 0, "removed": 0, "pairs": []},
+            "tool_calls": {"aligned": 2, "changed": 0, "added": 0, "removed": 0,
+                           "pairs": tool_pairs},
             "environment": {"changes": []},
             "outputs": {"changes": [{"path": "outputs/stdout.txt", "before_hash": "sha256:OA",
                                      "after_hash": "sha256:OB"}]},
         },
     }  # fmt: skip
+
+
+def _tool_pairs_swapped(d: dict[str, Any]) -> None:  # counts still say "2 aligned, 0 changed"
+    pairs = d["sections"]["tool_calls"]["pairs"]
+    pairs[0]["tool_name"], pairs[1]["tool_name"] = "search_logs", "read_metrics"
+
+
+def _tool_result_changed_in_a_pair(d: dict[str, Any]) -> None:
+    d["sections"]["tool_calls"]["pairs"][1]["result_changed"] = True
+
+
+def _tool_pairs_missing(d: dict[str, Any]) -> None:
+    d["sections"]["tool_calls"]["pairs"] = []
+
+
+def _malformed_lines_skipped(d: dict[str, Any]) -> None:
+    d["skipped_malformed_lines"]["b"]["tool_calls"] = 1
 
 
 def _env_changed(d: dict[str, Any]) -> None:
@@ -392,6 +417,10 @@ DIFF_ARGS = {"run_a": "A", "run_b": "B", "call_a": "CA", "call_b": "CB", "exit_c
         _output_hash_wrong,
         _extra_output_changed,
         _outputs_section_missing,
+        _tool_pairs_swapped,
+        _tool_result_changed_in_a_pair,
+        _tool_pairs_missing,
+        _malformed_lines_skipped,
     ],  # fmt: skip
 )
 def test_judge_diff_fails_on_any_unexpected_change_set(mutate: Any) -> None:
@@ -633,6 +662,70 @@ def test_proof_requirement_needs_a_verified_integrity_check_for_every_variant() 
     assert wt.proof_requirement_met([check("unsafe"), check("corrected")])
 
 
+#: Every check a complete walkthrough must report, written here as literals (axis, variant,
+#: name) — not read from walkthrough.required_checks, which is under test.
+_PER_VARIANT = [("task", "policy_oracle_verdict"), ("capture", "logical_calls_and_decision"),
+                ("capture", "run_declared_registered_asset"),
+                ("integrity", "native_seal_verification"), ("replay", "replay_fidelity")]  # fmt: skip
+ZERO_KEY_CHECKS = {(a, v, n) for v in ("unsafe", "corrected") for a, n in _PER_VARIANT} | {
+    ("capture", None, "nova_diff_names_the_change")
+}
+SIGNED_CHECKS = ZERO_KEY_CHECKS | {
+    ("integrity", f"negative:{case}", "broken_copy_is_refused")
+    for case in ("tampered-member", "missing-member", "corrupt-signature", "wrong-ca")
+} | {("integrity", "control:pristine-copy", "untouched_copy_verifies")}
+
+
+def _complete(required: set[tuple[str, str | None, str]]) -> list[Any]:
+    return [wt.Check(axis, variant, name, "PASS", "r", 1, 1, "m", None, "PASS")  # type: ignore[arg-type]
+            for axis, variant, name in sorted(required, key=str)]  # fmt: skip
+
+
+@pytest.mark.parametrize(("profile", "required"), [("zero-key", ZERO_KEY_CHECKS),
+                                                   ("signed-offline", SIGNED_CHECKS)])  # fmt: skip
+def test_the_harness_verdict_needs_every_required_check(
+    profile: str, required: set[tuple[str, str | None, str]]
+) -> None:  # fmt: skip
+    """A skipped step (say the diff never ran) must not leave a PASS behind."""
+    assert set(wt.required_checks(profile)) == required
+    assert (len(ZERO_KEY_CHECKS), len(SIGNED_CHECKS)) == (11, 16)
+    full = _complete(required)
+    assert wt.harness_verdict(full, wt.required_checks(profile)) == "PASS"
+    for dropped in range(len(full)):
+        partial = full[:dropped] + full[dropped + 1 :]
+        assert wt.harness_verdict(partial, wt.required_checks(profile)) == "FAIL", full[dropped]
+        assert wt.missing_checks(partial, wt.required_checks(profile)) == [
+            (full[dropped].axis, full[dropped].variant, full[dropped].name)
+        ]
+    assert wt.harness_verdict([*full, full[0]], wt.required_checks(profile)) == "FAIL"  # dup
+
+
+def test_a_failed_walkthrough_never_reports_the_proof_requirement_met(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # fmt: skip
+    """Both runs verified, then a later step failed: the report must not say 'proven'."""
+    pytest.importorskip("openai")
+
+    def verified_then_failed(*_: Any, **__: Any) -> None:
+        report = _[-1]
+        report["checks_objects"] = [
+            wt.Check("integrity", v, "native_seal_verification", "PASS", "r", 1, 1, "m", None,
+                     "PASS") for v in ("unsafe", "corrected")
+        ]  # fmt: skip
+        raise lab.EvidenceLabError("E_SEAL_INIT_FAILED", "the wrong-CA home could not be made")
+
+    monkeypatch.setattr(run, "_walkthrough", verified_then_failed)
+    (tmp_path / "home").mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    out = tmp_path / "out"
+    code = run.main(["--scenario", "service-incident-v1", "--output-dir", str(out),
+                     "--profile", "signed-offline", "--require-verified"])  # fmt: skip
+    report = json.loads((out / "evidence-lab-report.json").read_text())
+    assert code == 2 and report["status"] == "error"
+    assert report["harness_verdict"] == "FAIL"
+    assert report["proof_requirement_met"] is False
+
+
 # ── agent and CLI guards ─────────────────────────────────────────────────────
 
 
@@ -868,6 +961,17 @@ def test_the_expected_stdout_is_computed_from_the_fixtures() -> None:
     for variant, line in zip(("unsafe", "corrected"), STDOUT_LINES, strict=True):
         scn = lab.load_scenario(SCENARIO_DIR, variant)
         assert run._expected_stdout_sha256(scn) == hashlib.sha256(line.encode()).hexdigest()
+
+
+@needs_nova
+def test_each_real_report_holds_exactly_the_required_checks(
+    zero_key: dict[str, Any], signed: dict[str, Any]
+) -> None:  # fmt: skip
+    for walked, required in ((zero_key, ZERO_KEY_CHECKS), (signed, SIGNED_CHECKS)):
+        report = walked["report"]
+        keys = [(c["axis"], c["variant"], c["name"]) for c in report["checks"]]
+        assert sorted(keys, key=str) == sorted(required, key=str)
+        assert report["missing_checks"] == []
 
 
 @needs_nova

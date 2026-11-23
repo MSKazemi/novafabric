@@ -1,8 +1,14 @@
-"""EvidenceLab D1 harness: one real ``nova capture`` of the incident agent.
+"""EvidenceLab harness: real ``nova capture`` runs of the incident agent.
 
     python examples/evidence_lab/run.py --scenario service-incident-v1 --output-dir PATH
 
-What it does, in order, all bounded and cleaned up on every exit path:
+With no ``--variant`` this runs the D2 walkthrough (``_main_walkthrough``): the unsafe and
+corrected variants, then ``nova inspect``, ``nova lineage provenance``, ``nova verify``,
+``nova replay --mode forensic`` and ``nova diff``, judged on four axes by ``walkthrough.py``
+(see the README). ``--variant unsafe|corrected`` runs ONE variant, the D1 single run
+described below.
+
+What the single run does, in order, all bounded and cleaned up on every exit path:
 
 1. starts the strict loopback mock model (``mock_llm_server.py``) on an
    OS-chosen ephemeral port;
@@ -500,7 +506,7 @@ def _evaluate(
         )
 
     observed = {
-        "logical_model_calls": 1,
+        "logical_model_calls": len(model_records) - transport_count,  # 1, else raised above
         "transport_model_records": transport_count,
         "tool_calls": len(tools),
         "tool_sequence": tool_names,
@@ -1013,8 +1019,13 @@ def _main_walkthrough(args: argparse.Namespace, scenario_dir: Path, out_dir: Pat
         checks: list[wt.Check] = report.pop("checks_objects", [])
         report["checks"] = [c.as_dict() for c in checks]
         report["axes"] = wt.axis_summary(checks)
-        report["harness_verdict"] = wt.harness_verdict(checks) if failure is None else "FAIL"
-        report["proof_requirement_met"] = wt.proof_requirement_met(checks)
+        required = wt.required_checks(args.profile)
+        report["missing_checks"] = [list(k) for k in wt.missing_checks(checks, required)]
+        report["harness_verdict"] = (
+            wt.harness_verdict(checks, required) if failure is None else "FAIL"
+        )
+        # a run that stopped with an error is never "proven", whatever checks it reached
+        report["proof_requirement_met"] = failure is None and wt.proof_requirement_met(checks)
         if failure is not None:
             report["error"] = {"code": failure.code, "message": failure.message}
         shutil.rmtree(home, ignore_errors=True)
@@ -1029,7 +1040,10 @@ def _main_walkthrough(args: argparse.Namespace, scenario_dir: Path, out_dir: Pat
     if report["harness_verdict"] != "PASS":
         bad = [f"{c['axis']}/{c['variant']}/{c['name']}={c['verdict']}"
                for c in report["checks"] if not c["as_expected"]]  # fmt: skip
-        return _fail("E_CHECK_UNEXPECTED", "unexpected verdicts: " + ", ".join(bad))
+        bad += [f"{axis}/{variant}/{name}=MISSING" for axis, variant, name
+                in report["missing_checks"]]  # fmt: skip
+        detail = ", ".join(bad or ["a check is duplicated"])
+        return _fail("E_CHECK_UNEXPECTED", "unexpected verdicts: " + detail)
     if args.require_verified and not report["proof_requirement_met"]:
         return _fail("E_PROOF_REQUIRED",
                      "--require-verified: integrity is not PASS for every run "
@@ -1082,7 +1096,7 @@ def _fail(code: str, message: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="EvidenceLab D1: run one deterministic incident scenario under real capture"
+        description="EvidenceLab: the D2 two-variant walkthrough, or one D1 run with --variant"
     )
     parser.add_argument("--scenario", required=True, help="scenario id, e.g. service-incident-v1")
     parser.add_argument("--output-dir", required=True, type=Path, help="must not exist or be empty")
