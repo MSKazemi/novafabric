@@ -10,6 +10,16 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
+/** Internal URL writes do not produce browser popstate events. Notify mounted
+ * useUrlState consumers when a cross-component navigation changes the query. */
+const URL_STATE_CHANGED = 'novafabric:urlstatechange';
+
+export function notifyUrlStateChanged(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(URL_STATE_CHANGED));
+  }
+}
+
 function readParam(key: string): string | null {
   if (typeof window === 'undefined') return null;
   return new URLSearchParams(window.location.search).get(key);
@@ -54,7 +64,11 @@ export function useUrlState(
   useEffect(() => {
     function onPop() { setValue(readParam(key) ?? defaultValue); }
     window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
+    window.addEventListener(URL_STATE_CHANGED, onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      window.removeEventListener(URL_STATE_CHANGED, onPop);
+    };
   }, [key, defaultValue]);
 
   return [value, set];
