@@ -26,7 +26,7 @@ import { CapsuleTreePanel, RunSpoolLineagePanel, ScanSecretsPanel } from './runs
 import FilterBar from './runs/FilterBar';
 import AggregateStrip from './runs/AggregateStrip';
 import { useFilteredRuns } from './runs/useFilteredRuns';
-import { useUrlState } from '../../../lib/useUrlState';
+import { useUrlState, URL_STATE_CHANGED } from '../../../lib/useUrlState';
 import {
   LINKABLE_VIEWS, parseDate, parseScope, parseSort, parseStatus, parseView, type FilterScope,
 } from './runs/viewState';
@@ -91,6 +91,13 @@ export default function RunsTab({
   // A palette/deep-link run change must not retain a transient replay pane
   // from the previously selected run.
   useEffect(() => { setTransientView(null); }, [runParam]);
+  // Reopening the same run from global search must exit a transient replay view
+  // even when its URL ID is unchanged (the hook would otherwise see no change).
+  useEffect(() => {
+    const onExternalNavigation = () => setTransientView(null);
+    window.addEventListener(URL_STATE_CHANGED, onExternalNavigation);
+    return () => window.removeEventListener(URL_STATE_CHANGED, onExternalNavigation);
+  }, []);
 
   // ADR-0239 — session evidence cart (references only; resolved at export).
   const cart = useEvidenceCart();
