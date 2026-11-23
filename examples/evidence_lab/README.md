@@ -22,23 +22,23 @@ python examples/evidence_lab/run.py --scenario service-incident-v1 --output-dir 
 
 In a fresh, temporary NovaFabric home this registers the synthetic dataset
 (`nova register`), captures **two real runs** of the agent — the *unsafe* variant and the
-*corrected* variant — and then runs `nova diff`, `nova lineage provenance`, `nova verify`
-and `nova replay --mode forensic` on them. Real output (paths shortened with `…`; run ids
-are the real ones):
+*corrected* variant — and then runs `nova inspect` (reads the asset back from the
+registry), `nova lineage provenance`, `nova verify`, `nova replay --mode forensic` and
+`nova diff` on them. Real output (paths shortened with `…`; run ids are the real ones):
 
 ```text
 evidence-lab walkthrough: scenario service-incident-v1 (seed=42, profile=zero-key)
 input: SYNTHETIC fixtures only (no real data); capture: actual `nova capture`, no record injected
-unsafe: run_id 01M82DHMF88FS3FGZAJHH6E1QH | logical model calls 1 | tool calls 2 | prompt prompt-v1 | decision 2e810ef91794…
-corrected: run_id 01M82DHY4VCN66EW3XK80G0Y43 | logical model calls 1 | tool calls 2 | prompt prompt-v2-corrective | decision 0654b0be3da6…
+unsafe: run_id 01M8375Q8Z8Q3M4Q6TD40AE9EG | logical model calls 1 | tool calls 2 | prompt prompt-v1 | decision 2e810ef91794…
+corrected: run_id 01M83761F1V4P838449PA4YVE4 | logical model calls 1 | tool calls 2 | prompt prompt-v2-corrective | decision 0654b0be3da6…
   task      unsafe                     policy_oracle_verdict            FAIL          policy-rejected [as expected]
   capture   unsafe                     logical_calls_and_decision       PASS          capture-matches-fixtures [as expected]
-  capture   unsafe                     run_consumed_registered_asset    PASS          lineage-matches-registered-asset [as expected]
+  capture   unsafe                     run_declared_registered_asset    PASS          declared-consumption-of-registered-asset [as expected]
   integrity unsafe                     native_seal_verification         NOT_EVALUATED seal-not-configured [as expected]
   replay    unsafe                     replay_fidelity                  NOT_EVALUATED forensic-only [as expected]
   task      corrected                  policy_oracle_verdict            PASS          policy-accepted [as expected]
   capture   corrected                  logical_calls_and_decision       PASS          capture-matches-fixtures [as expected]
-  capture   corrected                  run_consumed_registered_asset    PASS          lineage-matches-registered-asset [as expected]
+  capture   corrected                  run_declared_registered_asset    PASS          declared-consumption-of-registered-asset [as expected]
   integrity corrected                  native_seal_verification         NOT_EVALUATED seal-not-configured [as expected]
   replay    corrected                  replay_fidelity                  NOT_EVALUATED forensic-only [as expected]
   capture   both                       nova_diff_names_the_change       PASS          diff-matches-variants [as expected]
@@ -46,7 +46,7 @@ harness verdict: PASS (report: …/evidence-lab-out/evidence-lab-report.json)
 a NOT_EVALUATED is not a pass; the unsafe task FAIL is the expected outcome
 ```
 
-It took 22.7 s on a laptop (measured once; not a benchmark).
+It took 24.0 s on a laptop (measured once; not a benchmark).
 
 Each line is one check on one of four separate axes. **`as expected` is what makes the
 harness verdict PASS** — not every check being `PASS`: the unsafe task is expected to
@@ -55,7 +55,7 @@ harness verdict PASS** — not every check being `PASS`: the unsafe task is expe
 | Axis | unsafe | corrected | How it is decided |
 |---|---|---|---|
 | `task` | `FAIL` (expected) | `PASS` (expected) | the fixed policy oracle over the recorded decision; `reduce_max_connections` must be an integer in 100..900 |
-| `capture` | `PASS` | `PASS` | 1 logical model call, 2 read-only tool calls, decision digest = the fixture reply's; the run's lineage is exactly the registered dataset (never empty; the agent *declares* this consumption through the SDK call `record_asset_consumption`, and nothing reads the asset back, so it is declared, not observed); `nova diff` names the one changed model call (request and response) and two unchanged tool calls |
+| `capture` | `PASS` | `PASS` | 1 logical model call, 2 read-only tool calls, decision digest = the fixture reply's; the run's *declared* input is exactly the registered dataset (never empty), and `nova inspect` reads that asset back from the registry; `nova diff` names the one changed model call (request and response), two unchanged tool calls, no environment change, and exactly one changed output (the agent's stdout line, whose digests are computed from the fixtures) |
 | `integrity` | `NOT_EVALUATED` | `NOT_EVALUATED` | `nova verify --json` reports `sealed: false`; `nova validate` passing does not change that |
 | `replay` | `NOT_EVALUATED` | `NOT_EVALUATED` | forensic inspection ran (read-only); no fidelity claim |
 
@@ -65,10 +65,22 @@ mock answers each variant's exact request with that variant's fixture reply. The
 fixture, so the corrected decision is a *recorded fixture*, not model reasoning; what the
 walkthrough shows is that capture, diff and lineage record the change faithfully.
 
+**Lineage is declared, not observed.** The agent declares its input with NovaFabric's SDK
+call `record_asset_consumption`; the capsule's `assets.jsonl` and the `consumed` edge in
+`lineage.jsonl` come from that declaration. NovaFabric's lineage writer labels the edge
+`"confidence": "observed"`, which describes how the edge was recorded — nothing here
+watches the agent read the dataset. Because the edge is built from the capsule alone and
+never consults the registry, the check also reads the asset back with `nova inspect`: a
+`nova register` that reported success without writing anything fails the check
+(`asset-not-in-registry`).
+
 A capture that breaks a D1 check (a missing or extra call, a changed digest, a payload in
 a tool record) **stops the walkthrough**: the report then holds a `capture` `FAIL` check
 for that variant whose `reason_code` is the `E_*` code, and the later steps do not run on
-an untrustworthy capsule.
+an untrustworthy capsule. A faithfully captured but *wrong* decision is different: it is
+reported by that variant's `task` check failing against its expected verdict (for
+example, a corrected reply outside the value bounds is `task corrected FAIL`, expected
+`PASS`), and the harness verdict is `FAIL` (`E_CHECK_UNEXPECTED`).
 
 ### Signed offline (opt-in)
 
@@ -81,8 +93,11 @@ Runs `nova seal init` in the disposable home *before* the captures, so both caps
 sealed, and verifies each with `nova verify --json --ca-bundle <that local CA>`. It then
 proves the verifier can fail: a tampered member, a missing member, a corrupted DSSE
 signature and a different local CA must all be **refused** (each `negative:*` check is
-expected to read `FAIL`), each for its own reason (`capsule_binding_ok`, `signature_ok` or
-`ca_chain_ok` is `false`), while an untouched copy made the same way must still verify
+expected to read `FAIL`), each for its own reason: the property the case broke
+(`capsule_binding_ok`, `signature_ok` or `ca_chain_ok`) is `false` **and** the properties
+it did not touch stay `true` (a corrupted signature also fails the chain check, so the
+chain is not required intact there). A copy refused on every property at once proves
+nothing and reads `refused-for-another-reason`. An untouched copy made the same way must still verify
 (`control:pristine-copy`, expected `PASS`). The verifier's output for every case is kept
 under `out/negative/`. The CA's public certificate is copied to
 `out/trust/local-seal-ca.crt.pem` so you can re-verify later; private keys never leave the
@@ -92,7 +107,9 @@ signer is) and `timestamp_trust: absent` (no timestamp authority is used or cont
 An extra unsigned file added to a sealed capsule still verifies; that is the current
 verifier contract, so it is not reported as tampering.
 
-`--require-verified` makes the harness exit `2` unless every run's integrity is `PASS`:
+`--require-verified` makes the harness exit `2` unless **both** variants have an
+integrity check and every one is `PASS` (a run that stopped before the second variant was
+verified does not count as proven):
 with the default zero-key profile it always fails (`E_PROOF_REQUIRED`), by design; with
 signed-offline a failed verification already fails as an unexpected check
 (`E_CHECK_UNEXPECTED`).
@@ -291,14 +308,19 @@ uv run pytest tests/test_example_blackbox_demo.py          # the original demo, 
 `tests/test_example_evidence_lab_walkthrough.py` drives every judge's `FAIL` path with a
 broken input (mutated decision digest, missing tool or model call, empty or foreign
 lineage, an unexpected diff, a sealed-but-tampered or wrong-CA verify result, a false
-green), runs the real walkthrough zero-key, with `--require-verified` and signed-offline,
-and re-verifies the sealed output itself with `nova verify` before and after tampering a
-copy.
+green, a refusal for several reasons at once, an asset missing from the registry, an
+environment or output drift in the diff, one variant left unverified), runs the real
+walkthrough zero-key, with `--require-verified` and signed-offline, and re-verifies the
+sealed output itself with `nova verify` before and after tampering a copy. Real-run
+negatives: a corrected reply outside the bounds (a `task` FAIL against expected `PASS`), a
+`nova register` that claims success but writes nothing (`asset-not-in-registry`), and a
+missing or FIFO golden transcript (a named error, not a traceback or a hang).
 
 `tests/test_example_evidence_lab.py` drives the real `nova capture` twice (one run with a
 relative `--output-dir`), and exercises wrong model / prompt / roles / scenario, a missing
 or tampered observation, an unknown tool, malformed and oversized requests, invalid JSON,
-an incomplete reply, a timeout, a taken port, an abnormal or hung `nova`, a non-loopback URL
+an incomplete reply, a timeout, a taken port, an abnormal or hung `nova`, an interrupt while
+the workload runs in its own session, an oversized or FIFO capsule stream, a non-loopback URL
 and a real-looking credential in the environment.
 
 ## Not claimed
@@ -316,4 +338,8 @@ changed after sealing, not that the decision was right. What is shown is that th
 capsules' model and tool records match a description of what was supposed to happen that
 is computed from the fixtures alone. Dataset consumption is declared by the agent
 through `record_asset_consumption`, not observed: the lineage check proves the declaration
-was recorded and links to the registered asset, not that the agent read that asset.
+was recorded, names an asset that `nova inspect` reads back from the registry, and agrees
+with `nova lineage provenance` — not that the agent read that asset (NovaFabric's
+`"confidence": "observed"` edge label does not change that). The reported decision digest
+is read from the agent's result file, which is outside the capsule and its seal; the
+capsule's own model response is separately checked against the fixture reply.

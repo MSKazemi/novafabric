@@ -17,6 +17,7 @@ derived independently of the code under test; the literal digests below pin it.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import http.client
 import http.server
@@ -1501,6 +1502,60 @@ def test_harness_cleans_up_when_it_is_killed_mid_capture(tmp_path: Path, signum:
     assert report["error"]["code"] == "E_INTERRUPTED"
     _assert_clean(report, tmp_path)
     assert _wait_dead(int(child.read_text())), "the capture's child outlived the harness"
+
+
+def test_an_interrupt_lets_nova_capture_stop_a_workload_in_its_own_session(
+    tmp_path: Path,
+) -> None:  # fmt: skip
+    """`nova capture` runs the workload in its own process group, so killing capture's group
+    cannot reach it: capture must get a SIGTERM it can forward, not an immediate SIGKILL.
+    The fake capture models that: its workload is in a NEW session and only the fake's TERM
+    handler stops it."""
+    pytest.importorskip("openai")
+    started, child = tmp_path / "started", tmp_path / "child-pid"
+    nova = _fake_nova(
+        tmp_path,
+        f"trap 'kill -TERM \"$(cat {child})\"; exit 143' TERM\n"
+        f"setsid sleep 300 & echo $! > {child}\ntouch {started}\nwait",
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(LAB / "run.py"), "--scenario", "service-incident-v1", "--variant", "unsafe",
+         "--output-dir", str(tmp_path / "out"), "--nova-bin", str(nova)],
+        env=_isolated_env(tmp_path), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )  # fmt: skip
+    pid = None
+    try:
+        deadline = time.monotonic() + 60
+        while not (started.exists() and child.exists()) and time.monotonic() < deadline:
+            assert proc.poll() is None, proc.communicate()
+            time.sleep(0.05)
+        assert started.exists(), "the harness never reached the capture step"
+        pid = int(child.read_text())
+        proc.send_signal(signal.SIGTERM)
+        _, err = proc.communicate(timeout=30)
+        assert proc.returncode == 2 and "code=E_INTERRUPTED" in err
+        assert _wait_dead(pid), "the workload in its own session outlived the harness"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        if pid is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+
+
+@pytest.mark.parametrize("kind", ["oversized", "fifo"])
+def test_capsule_streams_are_read_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:  # fmt: skip
+    path = tmp_path / "model-calls.jsonl"
+    if kind == "fifo":
+        os.mkfifo(path)  # an unbounded read of this would block forever
+    else:
+        path.write_text('{"a": 1}\n' * 10)
+        monkeypatch.setattr(run, "MAX_CAPSULE_FILE_BYTES", 32)
+    with pytest.raises(run.lab.EvidenceLabError) as exc:
+        run._jsonl(path)
+    assert exc.value.code == "E_CAPSULE_INVALID"
 
 
 def test_harness_never_writes_bytecode_next_to_the_scripts(tmp_path: Path) -> None:

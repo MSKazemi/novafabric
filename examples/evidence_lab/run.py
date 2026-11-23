@@ -33,6 +33,7 @@ import re
 import select
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -59,6 +60,9 @@ MAX_TIMEOUT_SECONDS = 600
 # `nova capture` / `nova validate` print a few hundred bytes; a command that prints
 # more than this is runaway, and is stopped instead of buffered until the timeout.
 MAX_CAPTURE_OUTPUT_BYTES = 1024 * 1024
+# Capsule streams, the agent's result and the mock's ready file are a few KiB here; a
+# file past this cap is refused rather than read into memory.
+MAX_CAPSULE_FILE_BYTES = 16 * 1024 * 1024
 
 _RUN_ID = re.compile(r"run_id=([0-9A-HJKMNP-TV-Z]{26})")
 _ERROR_CODE = re.compile(r"code=(E_[A-Z_]+)")
@@ -209,6 +213,11 @@ def _run_bounded(
         if failure is not None:
             _kill_group(proc)
     finally:
+        if proc.poll() is None:
+            # Still running: we are unwinding from an interrupt (or an error). SIGTERM first,
+            # so `nova capture` can stop its workload, which runs in a process group of its
+            # own that a signal to this group never reaches; SIGKILL only after the grace.
+            _kill_group(proc)
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(proc.pid, signal.SIGKILL)  # stragglers of a command that did exit
         proc.stdout.close()
@@ -253,10 +262,19 @@ def _await_mock(proc: subprocess.Popen[Any], files: Mapping[str, Path]) -> dict[
     deadline = time.monotonic() + _MOCK_START_SECONDS
     while time.monotonic() < deadline:
         if files["ready"].exists():
-            info: dict[str, Any] = json.loads(files["ready"].read_text())
+            try:
+                info = json.loads(_read_bounded(files["ready"], code="E_MOCK_START_FAILED"))
+            except ValueError as exc:  # written atomically, so a partial file is not expected
+                raise lab.EvidenceLabError(
+                    "E_MOCK_START_FAILED", "the mock's ready file is not valid JSON"
+                ) from exc
+            if not isinstance(info, dict):
+                raise lab.EvidenceLabError(
+                    "E_MOCK_START_FAILED", "the mock's ready file is not a JSON object"
+                )
             return info
         if proc.poll() is not None:
-            text = files["stderr"].read_text(errors="replace")
+            text = _read_bounded(files["stderr"], code="E_MOCK_START_FAILED")
             match = _ERROR_CODE.search(text)
             code = match.group(1) if match else "E_MOCK_START_FAILED"
             raise lab.EvidenceLabError(
@@ -269,16 +287,32 @@ def _await_mock(proc: subprocess.Popen[Any], files: Mapping[str, Path]) -> dict[
 # ── evidence ─────────────────────────────────────────────────────────────────
 
 
+def _read_bounded(path: Path, *, code: str, errors: str = "replace") -> str:
+    """Read a small file the harness did not write itself, bounded and regular-file only.
+
+    A FIFO or device would block or never end, and a runaway file would be read into
+    memory whole; both are refused by name instead.
+    """
+    try:
+        if not stat.S_ISREG(path.stat().st_mode):  # follows symlinks, like open() would
+            raise lab.EvidenceLabError(code, f"{path.name} is not a regular file")
+        with path.open("rb") as handle:
+            data = handle.read(MAX_CAPSULE_FILE_BYTES + 1)
+    except OSError as exc:
+        raise lab.EvidenceLabError(code, f"cannot read {path.name}: {exc.strerror}") from exc
+    if len(data) > MAX_CAPSULE_FILE_BYTES:
+        raise lab.EvidenceLabError(code, f"{path.name} is larger than {MAX_CAPSULE_FILE_BYTES} B")
+    return data.decode("utf-8", errors=errors)
+
+
 def _jsonl(path: Path, *, code: str = "E_CAPSULE_INVALID") -> list[dict[str, Any]]:
     """Every line of ``path`` as a JSON object, or a named failure — never a traceback.
 
     A truncated last line is a real possibility: NovaFabric's recorder is fail-open.
     """
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = _read_bounded(path, code=code, errors="strict").splitlines()
         records = [json.loads(line) for line in lines if line.strip()]
-    except OSError as exc:
-        raise lab.EvidenceLabError(code, f"cannot read {path.name}: {exc.strerror}") from exc
     except (ValueError, RecursionError) as exc:  # JSONDecodeError and UnicodeDecodeError
         raise lab.EvidenceLabError(code, f"{path.name} is not valid JSON Lines: {exc}") from exc
     if not all(isinstance(r, dict) for r in records):
@@ -357,8 +391,16 @@ def _evaluate(
     agent_result: dict[str, Any],
     mock_log: Path,
     base_url: str,
+    *,
+    strict_outcome: bool = True,
 ) -> tuple[dict[str, Any], dict[str, bool]]:
-    """Compare the capsule and the agent's result with the scenario's own contract."""
+    """Compare the capsule and the agent's result with the scenario's own contract.
+
+    ``strict_outcome`` (the D1 single run): a decision other than the scenario's expected one
+    stops the run with ``E_UNEXPECTED_OUTCOME``. The walkthrough passes ``False``: the capture
+    is judged on its own, and the decision is reported by the task check against its expected
+    verdict, so a wrong decision is a TASK failure, not a capture failure.
+    """
     manifest = scn.manifest
     expected_obs = lab.expected_observations(scn)
     expected_body = lab.build_request_body(scn, expected_obs)
@@ -448,7 +490,9 @@ def _evaluate(
         raise lab.EvidenceLabError(
             "E_AGENT_RESULT_INVALID", "agent policy verdict differs from the oracle"
         )
-    if decision.action != scn.expected_action or verdict.result != scn.expected_policy_result:
+    if strict_outcome and (
+        decision.action != scn.expected_action or verdict.result != scn.expected_policy_result
+    ):
         raise lab.EvidenceLabError(
             "E_UNEXPECTED_OUTCOME",
             f"expected {scn.expected_action!r} -> {scn.expected_policy_result} "
@@ -543,7 +587,7 @@ def _version(dist: str) -> str | None:
 
 def _pipeline(
     args: argparse.Namespace, scn: lab.Scenario, out_dir: Path, work: Path, home: Path,
-    report: dict[str, Any], agent_extra: Sequence[str] = (),
+    report: dict[str, Any], agent_extra: Sequence[str] = (), *, strict_outcome: bool = True,
 ) -> None:  # fmt: skip
     manifest = scn.manifest
     parent_env = dict(os.environ)
@@ -597,14 +641,18 @@ def _pipeline(
         )
 
     try:
-        agent_result = json.loads(result_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        agent_result = json.loads(
+            _read_bounded(result_path, code="E_AGENT_RESULT_MISSING", errors="strict")
+        )
+    except ValueError as exc:
         raise lab.EvidenceLabError(
             "E_AGENT_RESULT_MISSING", "the agent wrote no readable result"
         ) from exc
-    if agent_result.get("status") != "completed":
+    if not isinstance(agent_result, dict) or agent_result.get("status") != "completed":
         raise lab.EvidenceLabError("E_AGENT_RESULT_INVALID", "agent result is not 'completed'")
-    evaluated, checks = _evaluate(scn, capsule, agent_result, mock_log, base_url)
+    evaluated, checks = _evaluate(
+        scn, capsule, agent_result, mock_log, base_url, strict_outcome=strict_outcome
+    )
     report.update(evaluated)
     report["checks"] = checks
 
@@ -656,6 +704,19 @@ def _fixture_decision_sha256(scn: lab.Scenario) -> str:
     """The decision digest the fixture reply implies — computed from the fixture, not the run."""
     return lab.sha256_hex(lab.canonical_json(lab.Decision.model_validate(scn.model_response)
                                              .model_dump()))  # fmt: skip
+
+
+def _expected_stdout_sha256(scn: lab.Scenario) -> str:
+    """The digest of the agent's one stdout line, from the fixture reply and the oracle alone.
+
+    ``agent.py`` prints exactly this line; ``nova capture`` stores it as
+    ``outputs/stdout.txt``, and ``nova diff`` reports the change of its digest.
+    """
+    decision = lab.Decision.model_validate(scn.model_response)
+    verdict = lab.evaluate_policy(scn, decision)
+    line = (f"agent: decision={decision.action} policy={verdict.result} ({verdict.rule}) "
+            f"task_verdict={'PASS' if verdict.result == 'accept' else 'FAIL'}\n")  # fmt: skip
+    return lab.sha256_hex(line.encode("utf-8"))
 
 
 def _break_copy(capsule: Path, dest_root: Path, case: str) -> Path:
@@ -744,6 +805,7 @@ def _walkthrough(
                 home,
                 vreport,
                 agent_extra=("--asset-ref", wt.ASSET_REF, "--asset-status", "development"),
+                strict_outcome=False,  # a wrong decision is judged by the task check below
             )
         except lab.EvidenceLabError as exc:
             checks.append(wt.judge_capture_aborted(variant, exc.code, exc.message))
@@ -754,7 +816,8 @@ def _walkthrough(
                 _kill_group(proc)
                 vreport["cleanup"]["mock_exit_code"] = proc.returncode  # fmt: skip
         capsule = Path(vreport["capsule_path"])
-        result = json.loads((vdir / "agent-result.json").read_text(encoding="utf-8"))
+        result = json.loads(_read_bounded(vdir / "agent-result.json",
+                                          code="E_AGENT_RESULT_MISSING"))  # fmt: skip
         vreport.update(
             prompt_revision=scn.prompt_revision,
             model_logical_count=vreport["observed"]["logical_model_calls"],
@@ -776,9 +839,15 @@ def _walkthrough(
                             [nova, "lineage", "provenance", vreport["run_id"], "--output", "json"],
                             env=env, cwd=work)  # fmt: skip
         edges = _jsonl(capsule / "lineage.jsonl")
+        # The edge comes from the capsule alone, so read the asset back from the registry.
+        reg_code, reg_output = _cli(report, f"registry_inspect_{variant}",
+                                    [nova, "inspect", wt.ASSET_REF], env=env,
+                                    cwd=work)  # fmt: skip
         checks.append(wt.judge_lineage(variant, _json_from_output(output), edges,
                                        run_id=vreport["run_id"], exit_code=code,
-                                       artifact=str(capsule / "lineage.jsonl")))  # fmt: skip
+                                       artifact=str(capsule / "lineage.jsonl"),
+                                       registry_exit_code=reg_code,
+                                       registry_output=reg_output))  # fmt: skip
 
         verify_argv = [nova, "verify", "--json"]
         if ca_bundle is not None:
@@ -825,6 +894,9 @@ def _walkthrough(
                                 run_b=runs["corrected"]["run_id"],
                                 call_a=runs["unsafe"]["model_call_id"],
                                 call_b=runs["corrected"]["model_call_id"], exit_code=code,
+                                stdout_a=_expected_stdout_sha256(base),
+                                stdout_b=_expected_stdout_sha256(
+                                    lab.load_scenario(scenario_dir, "corrected")),
                                 artifact=str(out_dir / "diff.json")))  # fmt: skip
 
     if ca_bundle is not None:  # negative proofs: broken copies must not verify
@@ -865,8 +937,16 @@ def _harness_revision() -> str:
 
 
 def _main_walkthrough(args: argparse.Namespace, scenario_dir: Path, out_dir: Path) -> int:
-    base = lab.load_scenario(scenario_dir)
-    corrected = lab.load_scenario(scenario_dir, "corrected")
+    try:  # every read here is bounded and named: a missing golden or a FIFO is not a crash
+        base = lab.load_scenario(scenario_dir)
+        corrected = lab.load_scenario(scenario_dir, "corrected")
+        scenario_yaml_sha256 = lab.sha256_hex(lab.read_scenario_file(scenario_dir, "scenario.yaml"))
+        golden_sha256 = {
+            v: lab.sha256_hex(lab.read_scenario_file(scenario_dir, s.golden_path))
+            for v, s in (("unsafe", base), ("corrected", corrected))
+        }
+    except lab.EvidenceLabError as exc:
+        return _fail(exc.code, exc.message)
     started = time.monotonic()
     report: dict[str, Any] = {
         "schema_revision": 2,
@@ -878,11 +958,8 @@ def _main_walkthrough(args: argparse.Namespace, scenario_dir: Path, out_dir: Pat
             "schema_version": base.manifest.schema_version,
             "fixture_manifest_sha256": base.fixture_manifest_sha256,
             # the oracle itself: policy, bounds and expected outcomes live in scenario.yaml
-            "scenario_yaml_sha256": lab.sha256_hex((scenario_dir / "scenario.yaml").read_bytes()),
-            "golden_sha256": {
-                v: lab.sha256_hex((scenario_dir / s.golden_path).read_bytes())
-                for v, s in (("unsafe", base), ("corrected", corrected))
-            },
+            "scenario_yaml_sha256": scenario_yaml_sha256,
+            "golden_sha256": golden_sha256,
         },
         "seed": base.manifest.seed,
         "profile": args.profile,

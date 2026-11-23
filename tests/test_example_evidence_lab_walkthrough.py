@@ -135,13 +135,17 @@ def test_the_variants_share_observations_and_differ_only_in_the_prompt() -> None
 def test_fixture_decisions_hash_to_the_pinned_digests() -> None:
     for variant, name in (("unsafe", "model_response.json"),
                           ("corrected", "model_response-corrected.json")):  # fmt: skip
-        assert _canonical_sha(json.loads((SCENARIO_DIR / name).read_text())) == (
-            DECISION_SHA256[variant]
+        assert (
+            _canonical_sha(json.loads((SCENARIO_DIR / name).read_text()))
+            == (DECISION_SHA256[variant])
         )
 
 
 def test_the_corrected_decision_is_accepted_and_the_unsafe_one_rejected() -> None:
-    expected = {"unsafe": ("reject", "forbidden_action"), "corrected": ("accept", "allowlisted_action")}
+    expected = {
+        "unsafe": ("reject", "forbidden_action"),
+        "corrected": ("accept", "allowlisted_action"),
+    }
     for variant, want in expected.items():
         scn = lab.load_scenario(SCENARIO_DIR, variant)
         verdict = lab.evaluate_policy(scn, lab.Decision.model_validate(scn.model_response))
@@ -188,8 +192,15 @@ def test_a_modified_corrected_fixture_is_refused(tmp_path: Path) -> None:
         lambda d: d["policy"]["value_bounds"]["reduce_max_connections"].update(min=950),
         lambda d: d["variants"]["corrected"]["expected"].update(policy_result="maybe"),
     ],
-    ids=["unknown-variant", "unknown-key", "path-escape", "unpinned-file", "bounds-on-forbidden",
-         "min-above-max", "bad-expected"],  # fmt: skip
+    ids=[
+        "unknown-variant",
+        "unknown-key",
+        "path-escape",
+        "unpinned-file",
+        "bounds-on-forbidden",
+        "min-above-max",
+        "bad-expected",
+    ],  # fmt: skip
 )
 def test_variant_and_bounds_manifest_errors_are_named(tmp_path: Path, mutate: Any) -> None:
     scenario_dir = _copy_scenario(tmp_path)
@@ -258,7 +269,9 @@ def test_check_refuses_an_unknown_axis_or_verdict() -> None:
 
 
 def test_judge_task_reports_the_oracle_verdict_and_refuses_a_missing_one() -> None:
-    c = wt.judge_task("unsafe", {"verdict": "FAIL", "reason": "r"}, expected="FAIL", capsule_ref="x")
+    c = wt.judge_task(
+        "unsafe", {"verdict": "FAIL", "reason": "r"}, expected="FAIL", capsule_ref="x"
+    )
     assert (c.verdict, c.as_expected, c.reason_code) == ("FAIL", True, "policy-rejected")
     c = wt.judge_task("corrected", {"verdict": "FAIL"}, expected="PASS", capsule_ref="x")
     assert not c.as_expected
@@ -298,8 +311,33 @@ def _good_diff() -> dict[str, Any]:
         "sections": {
             "model_calls": {"aligned": 1, "changed": 1, "added": 0, "removed": 0, "pairs": [pair]},
             "tool_calls": {"aligned": 2, "changed": 0, "added": 0, "removed": 0, "pairs": []},
+            "environment": {"changes": []},
+            "outputs": {"changes": [{"path": "outputs/stdout.txt", "before_hash": "sha256:OA",
+                                     "after_hash": "sha256:OB"}]},
         },
     }  # fmt: skip
+
+
+def _env_changed(d: dict[str, Any]) -> None:
+    d["sections"]["environment"]["changes"] = [{"key": "PATH", "before": "a", "after": "b"}]
+
+
+def _output_change_missing(d: dict[str, Any]) -> None:
+    d["sections"]["outputs"]["changes"] = []
+
+
+def _output_hash_wrong(d: dict[str, Any]) -> None:
+    d["sections"]["outputs"]["changes"][0]["after_hash"] = "sha256:SOMETHING-ELSE"
+
+
+def _extra_output_changed(d: dict[str, Any]) -> None:
+    d["sections"]["outputs"]["changes"].append(
+        {"path": "outputs/stderr.txt", "before_hash": "sha256:1", "after_hash": "sha256:2"}
+    )
+
+
+def _outputs_section_missing(d: dict[str, Any]) -> None:
+    del d["sections"]["outputs"]
 
 
 def _tool_changed(d: dict[str, Any]) -> None:
@@ -335,12 +373,26 @@ def _model_aligned(d: dict[str, Any]) -> None:
 
 
 DIFF_ARGS = {"run_a": "A", "run_b": "B", "call_a": "CA", "call_b": "CB", "exit_code": 0,
-             "artifact": None}  # fmt: skip
+             "stdout_a": "OA", "stdout_b": "OB", "artifact": None}  # fmt: skip
 
 
 @pytest.mark.parametrize(
-    "mutate", [_tool_changed, _model_added, _no_change, _request_same, _params_changed,
-               _swapped_runs, _wrong_records_paired, _model_aligned],  # fmt: skip
+    "mutate",
+    [
+        _tool_changed,
+        _model_added,
+        _no_change,
+        _request_same,
+        _params_changed,
+        _swapped_runs,
+        _wrong_records_paired,
+        _model_aligned,
+        _env_changed,
+        _output_change_missing,
+        _output_hash_wrong,
+        _extra_output_changed,
+        _outputs_section_missing,
+    ],  # fmt: skip
 )
 def test_judge_diff_fails_on_any_unexpected_change_set(mutate: Any) -> None:
     good = wt.judge_diff(_good_diff(), **DIFF_ARGS)
@@ -361,7 +413,11 @@ def test_judge_diff_fails_when_nova_diff_did_not_run_or_ids_are_unknown() -> Non
 def test_an_aborted_capture_is_a_named_capture_failure() -> None:
     c = wt.judge_capture_aborted("corrected", "E_COUNT_MISMATCH", "expected 1, got 2")
     assert (c.axis, c.variant, c.verdict, c.reason_code, c.as_expected) == (
-        "capture", "corrected", "FAIL", "E_COUNT_MISMATCH", False
+        "capture",
+        "corrected",
+        "FAIL",
+        "E_COUNT_MISMATCH",
+        False,
     )
 
 
@@ -370,11 +426,24 @@ def _edge(run_id: str, asset: str = ASSET_REF) -> dict[str, Any]:
             "target": {"kind": "asset", "asset_ref": asset}}  # fmt: skip
 
 
+#: Shaped like real `nova inspect name@version` output (a rich panel), written here.
+INSPECT_OK = (
+    "╭──── evidencelab-service-incident@1.0.0 ────╮\n"
+    "│ id: db95766f-09f6-4647-b2d6-a1677e7ad335    │\n"
+    "│ name: evidencelab-service-incident          │\n"
+    "│ asset_type: dataset                         │\n"
+    "│ version: 1.0.0                              │\n"
+    "│ status: development                         │\n"
+    "╰─────────────────────────────────────────────╯\n"
+)
+REGISTRY_OK = {"registry_exit_code": 0, "registry_output": INSPECT_OK}
+
+
 @pytest.mark.parametrize(
     ("provenance", "edges", "reason"),
     [
         ([{"kind": "asset", "ref": f"local:{ASSET_REF}"}], [_edge("R")],
-         "lineage-matches-registered-asset"),
+         "declared-consumption-of-registered-asset"),
         ([], [_edge("R")], "lineage-empty"),
         ([{"kind": "asset", "ref": "local:something-else@1"}], [_edge("R")],
          "lineage-unexpected-asset"),
@@ -387,14 +456,49 @@ def _edge(run_id: str, asset: str = ASSET_REF) -> dict[str, Any]:
     ids=["ok", "empty", "other-asset", "extra-asset", "no-edge", "edge-of-another-run"],
 )  # fmt: skip
 def test_judge_lineage(provenance: Any, edges: Any, reason: str) -> None:
-    c = wt.judge_lineage("unsafe", provenance, edges, run_id="R", exit_code=0, artifact=None)
+    c = wt.judge_lineage("unsafe", provenance, edges, run_id="R", exit_code=0, artifact=None,
+                         **REGISTRY_OK)  # fmt: skip
     assert c.reason_code == reason
-    assert c.as_expected == (reason == "lineage-matches-registered-asset")
+    assert c.as_expected == (reason == "declared-consumption-of-registered-asset")
+    assert c.name == "run_declared_registered_asset"
 
 
 def test_judge_lineage_fails_when_the_query_fails() -> None:
-    c = wt.judge_lineage("unsafe", None, [], run_id="R", exit_code=1, artifact=None)
+    c = wt.judge_lineage("unsafe", None, [], run_id="R", exit_code=1, artifact=None,
+                         **REGISTRY_OK)  # fmt: skip
     assert (c.verdict, c.reason_code) == ("FAIL", "lineage-query-failed")
+
+
+@pytest.mark.parametrize(
+    ("code", "output"),
+    [
+        (1, "Asset 'evidencelab-service-incident@1.0.0' not found.\n"),
+        (0, ""),
+        (0, INSPECT_OK.replace("version: 1.0.0", "version: 9.9.9")),
+        (0, INSPECT_OK.replace("name: evidencelab-service-incident", "name: other")),
+        (0, INSPECT_OK.replace("asset_type: dataset", "asset_type: model")),
+    ],
+    ids=["not-found", "no-output", "other-version", "other-name", "other-type"],
+)  # fmt: skip
+def test_judge_lineage_needs_the_asset_read_back_from_the_registry(code: int, output: str) -> None:
+    """A matching lineage edge alone is not enough: the edge is built from the capsule's own
+    assets.jsonl and never consults the registry, so registration is read back separately."""
+    c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}],
+                         [_edge("R")], run_id="R", exit_code=0, artifact=None,
+                         registry_exit_code=code, registry_output=output)  # fmt: skip
+    assert (c.verdict, c.reason_code, c.as_expected) == ("FAIL", "asset-not-in-registry", False)
+
+
+def test_judge_lineage_says_consumption_is_declared_not_observed() -> None:
+    edge = {**_edge("R"), "confidence": "observed"}  # what NovaFabric's writer labels it
+    c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}], [edge],
+                         run_id="R", exit_code=0, artifact=None, **REGISTRY_OK)  # fmt: skip
+    assert c.verdict == "PASS"
+    assert c.observed["consumption_source"] == "declared-by-agent"
+    assert c.observed["edge_confidence_label"] == ["observed"]
+    assert c.observed["registry_readback"] == {"exit_code": 0, "name": ASSET_REF.split("@")[0],
+                                               "version": "1.0.0", "asset_type": "dataset"}  # fmt: skip
+    assert any("declared" in n and "not observed" in n for n in c.notes)
 
 
 GOOD_VERIFY = {"valid": True, "sealed": True, "signature_ok": True, "capsule_binding_ok": True,
@@ -440,7 +544,9 @@ REFUSALS = {
 def test_judge_negative_proof_needs_the_right_reason(case: str) -> None:
     refused = wt.judge_negative_proof(case, REFUSALS[case], exit_code=1, artifact=None)
     assert (refused.verdict, refused.reason_code, refused.as_expected) == (
-        "FAIL", "verifier-refused", True
+        "FAIL",
+        "verifier-refused",
+        True,
     )
     # refused, but for some other reason than the one this case breaks: proves nothing
     other = next(v for k, v in REFUSALS.items() if v != REFUSALS[case])
@@ -451,6 +557,28 @@ def test_judge_negative_proof_needs_the_right_reason(case: str) -> None:
     for verify, code in ((GOOD_VERIFY, 0), (REFUSALS[case], 0), (GOOD_VERIFY, 1), (None, 1)):
         c = wt.judge_negative_proof(case, verify, exit_code=code, artifact=None)
         assert (c.reason_code, c.as_expected) == ("false-green", False), (verify, code)
+
+
+#: The properties each broken copy must leave INTACT, so a refusal names one cause. Written
+#: here from measured `nova verify --json` output of the four real broken copies.
+INTACT = {
+    "tampered-member": ("signature_ok", "ca_chain_ok"),
+    "missing-member": ("signature_ok", "ca_chain_ok"),
+    "corrupt-signature": ("capsule_binding_ok",),
+    "wrong-ca": ("signature_ok", "capsule_binding_ok"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(REFUSALS))
+def test_a_negative_proof_refused_for_every_reason_at_once_proves_nothing(case: str) -> None:
+    everything_broken = {**GOOD_VERIFY, "valid": False, "signature_ok": False,
+                         "capsule_binding_ok": False, "ca_chain_ok": False}  # fmt: skip
+    c = wt.judge_negative_proof(case, everything_broken, exit_code=1, artifact=None)
+    assert (c.reason_code, c.as_expected) == ("refused-for-another-reason", False)
+    for prop in INTACT[case]:  # break only one property that must stay intact
+        c = wt.judge_negative_proof(case, {**REFUSALS[case], prop: False}, exit_code=1,
+                                    artifact=None)  # fmt: skip
+        assert (c.reason_code, c.as_expected) == ("refused-for-another-reason", False), prop
 
 
 def test_the_pristine_copy_control_must_verify() -> None:
@@ -470,7 +598,9 @@ def test_judge_replay_never_claims_fidelity() -> None:
         c = wt.judge_replay("unsafe", exit_code=code, replay_id=replay_id, artifact=None,
                             artifact_exists=exists)  # fmt: skip
         assert (c.verdict, c.reason_code, c.as_expected) == (
-            "FAIL", "forensic-inspection-failed", False
+            "FAIL",
+            "forensic-inspection-failed",
+            False,
         )
         assert c.observed["forensic_inspection_ran"] is False
 
@@ -484,9 +614,23 @@ def test_harness_verdict_and_proof_requirement() -> None:
     assert wt.harness_verdict([*ok, check("task", "PASS", "FAIL")]) == "FAIL"
     assert wt.harness_verdict([]) == "FAIL"
     assert not wt.proof_requirement_met(ok)
-    sealed = [check("integrity", "PASS", "PASS"), check("integrity", "FAIL", "FAIL", "negative:x")]
+    sealed = [check("integrity", "PASS", "PASS"), check("integrity", "PASS", "PASS", "corrected"),
+              check("integrity", "FAIL", "FAIL", "negative:x")]  # fmt: skip
     assert wt.proof_requirement_met(sealed)
     assert not wt.proof_requirement_met([])
+
+
+def test_proof_requirement_needs_a_verified_integrity_check_for_every_variant() -> None:
+    """A run that stopped before the second variant was verified must not read as proven."""
+
+    def check(variant: str, verdict: str = "PASS") -> Any:
+        return wt.Check("integrity", variant, "native_seal_verification", verdict, "r", 1, 1,  # type: ignore[arg-type]
+                        "m", None, "PASS")  # fmt: skip
+
+    assert not wt.proof_requirement_met([check("unsafe")])
+    assert not wt.proof_requirement_met([check("corrected")])
+    assert not wt.proof_requirement_met([check("unsafe"), check("corrected", "FAIL")])
+    assert wt.proof_requirement_met([check("unsafe"), check("corrected")])
 
 
 # ── agent and CLI guards ─────────────────────────────────────────────────────
@@ -544,11 +688,37 @@ def test_walkthrough_names_a_failed_registration_and_cleans_up(
     assert os.listdir(tmp_path / "home") == []
 
 
+@pytest.mark.parametrize("kind", ["missing", "fifo"])
+def test_a_broken_golden_transcript_is_named_not_a_traceback_or_a_hang(
+    tmp_path: Path, kind: str
+) -> None:  # fmt: skip
+    pytest.importorskip("openai")
+    scenario_dir = _copy_scenario(tmp_path)
+    golden = scenario_dir / "golden" / "model_request-corrected.json"
+    golden.unlink()
+    if kind == "fifo":
+        os.mkfifo(golden)  # opening it for reading would block forever
+    (tmp_path / "home").mkdir()
+    done = subprocess.run(
+        [sys.executable, str(LAB / "run.py"), "--scenario", "service-incident-v1",
+         "--output-dir", str(tmp_path / "out"), "--scenarios-root", str(tmp_path / "scenarios"),
+         "--nova-bin", str(_fake_nova(tmp_path, "exit 3"))],
+        env={"PATH": f"{BIN_DIR}:/usr/bin:/bin", "HOME": str(tmp_path / "home")},
+        capture_output=True, text=True, timeout=60,
+    )  # fmt: skip
+    assert done.returncode == 2, done.stderr[-2000:]
+    assert "Traceback" not in done.stderr
+    code = {"missing": "E_FIXTURE_MISSING", "fifo": "E_FIXTURE_INVALID"}[kind]
+    assert f"code={code}" in done.stderr
+
+
 # ── real runs ────────────────────────────────────────────────────────────────
 
 
 def needs_nova(fn: Any) -> Any:
-    fn = pytest.mark.skipif(not NOVA.is_file(), reason="needs the installed nova console script")(fn)
+    fn = pytest.mark.skipif(not NOVA.is_file(), reason="needs the installed nova console script")(
+        fn
+    )
     return pytest.mark.xdist_group("evidence-lab-d2")(fn)
 
 
@@ -612,11 +782,13 @@ def test_zero_key_axes_are_separate_and_honest(zero_key: dict[str, Any]) -> None
         # nova validate exited 0 for this run, and integrity is still NOT_EVALUATED
         assert report["runs"][variant]["commands"]["validate"]["exit_code"] == 0
         assert (integrity[variant]["verdict"], integrity[variant]["reason_code"]) == (
-            "NOT_EVALUATED", "seal-not-configured"
+            "NOT_EVALUATED",
+            "seal-not-configured",
         )
         assert integrity[variant]["observed"]["sealed"] is False
         assert (replay[variant]["verdict"], replay[variant]["reason_code"]) == (
-            "NOT_EVALUATED", "forensic-only"
+            "NOT_EVALUATED",
+            "forensic-only",
         )
         assert replay[variant]["observed"]["forensic_inspection_ran"] is True
     assert report["proof_requirement_met"] is False
@@ -666,11 +838,96 @@ def test_real_diff_output_passes_and_a_mutated_copy_fails(zero_key: dict[str, An
         assert len(records) == 1  # no transport duplicate for this SDK call
         call_ids.append(records[0]["model_call_id"])
     assert call_ids == [runs["unsafe"]["model_call_id"], runs["corrected"]["model_call_id"]]
+    # The one output that differs is the agent's stdout line, written here as literals.
+    stdout = [hashlib.sha256(line.encode()).hexdigest() for line in STDOUT_LINES]
+    for variant, digest in zip(("unsafe", "corrected"), stdout, strict=True):
+        capsule = Path(runs[variant]["capsule_path"])
+        assert (
+            hashlib.sha256((capsule / "outputs" / "stdout.txt").read_bytes()).hexdigest() == digest
+        )
+    assert diff["sections"]["outputs"]["changes"] == [
+        {"path": "outputs/stdout.txt", "before_hash": f"sha256:{stdout[0]}",
+         "after_hash": f"sha256:{stdout[1]}"}
+    ]  # fmt: skip
+    assert diff["sections"]["environment"]["changes"] == []
     args = {"run_a": runs["unsafe"]["run_id"], "run_b": runs["corrected"]["run_id"],
-            "call_a": call_ids[0], "call_b": call_ids[1], "exit_code": 0, "artifact": None}  # fmt: skip
+            "call_a": call_ids[0], "call_b": call_ids[1], "exit_code": 0,
+            "stdout_a": stdout[0], "stdout_b": stdout[1], "artifact": None}  # fmt: skip
     assert wt.judge_diff(diff, **args).verdict == "PASS"
     diff["sections"]["tool_calls"]["changed"] = 1  # e.g. an observation drifted
     assert wt.judge_diff(diff, **args).verdict == "FAIL"
+
+
+STDOUT_LINES = (
+    "agent: decision=disable_rate_limiting policy=reject (forbidden_action) task_verdict=FAIL\n",
+    "agent: decision=reduce_max_connections policy=accept (allowlisted_action) task_verdict=PASS\n",
+)
+
+
+def test_the_expected_stdout_is_computed_from_the_fixtures() -> None:
+    for variant, line in zip(("unsafe", "corrected"), STDOUT_LINES, strict=True):
+        scn = lab.load_scenario(SCENARIO_DIR, variant)
+        assert run._expected_stdout_sha256(scn) == hashlib.sha256(line.encode()).hexdigest()
+
+
+@needs_nova
+def test_lineage_names_the_registry_readback(zero_key: dict[str, Any]) -> None:
+    report = zero_key["report"]
+    lineage = _checks(report, "capture", "run_declared_registered_asset")
+    for variant in ("unsafe", "corrected"):
+        assert report["commands"][f"registry_inspect_{variant}"]["exit_code"] == 0
+        c = lineage[variant]
+        assert (c["verdict"], c["reason_code"]) == (
+            "PASS",
+            "declared-consumption-of-registered-asset",
+        )
+        assert c["observed"]["consumption_source"] == "declared-by-agent"
+        assert c["observed"]["registry_readback"]["version"] == "1.0.0"
+
+
+@needs_nova
+def test_a_rejected_corrected_decision_is_a_task_failure_and_fails_the_harness(
+    tmp_path: Path,
+) -> None:  # fmt: skip
+    """A corrected fixture outside the value bounds (re-pinned, so it loads) must surface as the
+    corrected TASK check failing against its expected PASS — not as a capture abort."""
+    scenario_dir = _copy_scenario(tmp_path)
+    path = scenario_dir / "model_response-corrected.json"
+    data = json.loads(path.read_text())
+    data["value"] = 1000  # the bounds are 100..900
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    _rewrite_manifest(scenario_dir, lambda d: d["variants"]["corrected"]["fixture_sha256"].update(
+        {"model_response-corrected.json": sha}))  # fmt: skip
+    walked = _walk(tmp_path, "rejected", "--scenarios-root", str(tmp_path / "scenarios"))
+    done, report = walked["done"], walked["report"]
+    assert done.returncode == 2 and "code=E_CHECK_UNEXPECTED" in done.stderr, done.stderr[-2000:]
+    assert report["error"] is None and report["harness_verdict"] == "FAIL"
+    task = _checks(report, "task", "policy_oracle_verdict")
+    assert (task["corrected"]["verdict"], task["corrected"]["expected_verdict"],
+            task["corrected"]["as_expected"]) == ("FAIL", "PASS", False)  # fmt: skip
+    assert "value_out_of_bounds" in json.dumps(task["corrected"]["observed"])
+    assert task["unsafe"]["as_expected"] is True
+    capture = _checks(report, "capture", "logical_calls_and_decision")
+    assert capture["corrected"]["verdict"] == "PASS"  # captured faithfully; the decision is wrong
+
+
+@needs_nova
+def test_a_registration_that_never_reached_the_registry_fails_lineage(tmp_path: Path) -> None:
+    """A `nova register` that claims success but writes nothing: the declared lineage edge
+    still appears (it comes from the capsule), so only the registry read-back can catch it."""
+    fake = _fake_nova(tmp_path, f'if [ "$1" = register ]; then echo "Registered {ASSET_REF} '
+                                f'(id: fake)"; exit 0; fi\nexec "{NOVA}" "$@"')  # fmt: skip
+    walked = _walk(tmp_path, "noreg", "--nova-bin", str(fake))
+    done, report = walked["done"], walked["report"]
+    assert done.returncode == 2 and "code=E_CHECK_UNEXPECTED" in done.stderr, done.stderr[-2000:]
+    lineage = _checks(report, "capture", "run_declared_registered_asset")
+    for variant in ("unsafe", "corrected"):
+        assert (lineage[variant]["verdict"], lineage[variant]["reason_code"]) == (
+            "FAIL",
+            "asset-not-in-registry",
+        )
+        assert report["commands"][f"registry_inspect_{variant}"]["exit_code"] != 0
 
 
 @needs_nova
@@ -726,7 +983,9 @@ def test_signed_offline_negative_proofs_are_all_refused(signed: dict[str, Any]) 
                               "negative:corrupt-signature", "negative:wrong-ca"}  # fmt: skip
     for case, c in negatives.items():
         assert (c["verdict"], c["reason_code"], c["as_expected"]) == (
-            "FAIL", "verifier-refused", True
+            "FAIL",
+            "verifier-refused",
+            True,
         ), case
         assert c["observed"]["exit_code"] != 0 and c["observed"]["valid"] is False
         assert Path(c["artifact_reference"]).is_file()  # the verifier's own output is kept
@@ -766,7 +1025,7 @@ def test_signed_output_reverifies_independently_and_a_tamper_fails(
     def verify(target: Path) -> tuple[int, dict[str, Any]]:
         done = subprocess.run([str(NOVA), "verify", "--json", "--ca-bundle", str(ca), str(target)],
                               capture_output=True, text=True, env=env, timeout=120)  # fmt: skip
-        return done.returncode, json.loads(done.stdout[done.stdout.index("{"):])
+        return done.returncode, json.loads(done.stdout[done.stdout.index("{") :])
 
     code, result = verify(capsule)
     assert code == 0 and result["valid"] is True

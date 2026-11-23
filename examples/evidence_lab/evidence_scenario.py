@@ -389,23 +389,33 @@ def build_request_body(scn: Scenario, observations: Mapping[str, Any]) -> dict[s
 GOLDEN_REQUEST = Path("golden") / "model_request.json"
 
 
-def load_golden_request(scn: Scenario) -> dict[str, Any]:
-    """The committed golden request transcript, read from the scenario directory."""
-    name = scn.golden_path
-    path = scn.directory / name
-    if not path.is_file():  # follows symlinks: a directory, device or FIFO is not a transcript
+def read_scenario_file(directory: Path, name: str | Path) -> bytes:
+    """A file of the scenario directory: regular files only, and bounded.
+
+    A directory, device or FIFO is refused by name (a FIFO would block the read forever),
+    as is anything past ``MAX_FIXTURE_BYTES`` whatever ``st_size`` claims.
+    """
+    path = directory / name
+    if not path.is_file():  # follows symlinks
         if path.exists():
             raise EvidenceLabError("E_FIXTURE_INVALID", f"{name} is not a regular file")
         raise EvidenceLabError("E_FIXTURE_MISSING", f"{name} is missing")
     try:
         with path.open("rb") as handle:
-            data = handle.read(MAX_FIXTURE_BYTES + 1)  # bounded whatever st_size claims
+            data = handle.read(MAX_FIXTURE_BYTES + 1)
     except OSError as exc:
         raise EvidenceLabError(
             "E_FIXTURE_MISSING", f"{name} is unreadable: {exc.strerror}"
         ) from exc
     if len(data) > MAX_FIXTURE_BYTES:
         raise EvidenceLabError("E_FIXTURE_TOO_LARGE", f"{name} is too large")
+    return data
+
+
+def load_golden_request(scn: Scenario) -> dict[str, Any]:
+    """The committed golden request transcript, read from the scenario directory."""
+    name = scn.golden_path
+    data = read_scenario_file(scn.directory, name)
     try:
         golden = json.loads(data)
     except (ValueError, RecursionError) as exc:  # deep nesting raises RecursionError
