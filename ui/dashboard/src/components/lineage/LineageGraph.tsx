@@ -114,7 +114,7 @@ function LineageGraphInner({
   useEffect(() => {
     if (prevMode.current === mode) return;
     prevMode.current = mode;
-    const t = setTimeout(() => fitView({ padding: 0.2, duration: 400 }), 60);
+    const t = setTimeout(() => fitView({ padding: '8%', duration: 400 }), 60);
     return () => clearTimeout(t);
   }, [mode, fitView]);
 
@@ -258,13 +258,13 @@ function LineageGraphInner({
           onPaneClick={onPaneClick}
           zoomOnDoubleClick={false}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
+          fitViewOptions={{ padding: '8%' }}
           proOptions={{ hideAttribution: true }}
           minZoom={0.05}
           maxZoom={2}
           nodesDraggable={false}
           nodesConnectable={false}
-          colorMode="dark"
+          forceColorMode="dark"
         >
           <Background
             variant={BackgroundVariant.Dots}
