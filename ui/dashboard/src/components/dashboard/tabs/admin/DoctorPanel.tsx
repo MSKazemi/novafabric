@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { clsx } from 'clsx';
 import { api } from '../../../../lib/api';
 import { Panel, SectionHeading } from './helpers';
+import SupportHandoff from '../../SupportHandoff';
 
 export default function DoctorPanel() {
   const [checks, setChecks] = useState<Array<{ name: string; ok: boolean; detail: string }> | null>(null);
@@ -70,6 +71,7 @@ export default function DoctorPanel() {
           </table>
         </div>
       )}
+      {(err !== null || checks?.some((c) => !c.ok) === true) && <SupportHandoff context="health" />}
     </Panel>
   );
 }
