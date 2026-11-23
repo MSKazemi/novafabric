@@ -75,7 +75,9 @@ call `record_asset_consumption`; the capsule's `assets.jsonl` and the `consumed`
 watches the agent read the dataset. Because the edge is built from the capsule alone and
 never consults the registry, the check also reads the asset back with `nova inspect`: a
 `nova register` that reported success without writing anything fails the check
-(`asset-not-in-registry`).
+(`asset-not-in-registry`). A capsule whose `lineage.jsonl` cannot be read is a named
+lineage FAIL (`lineage-artifact-unreadable`) and the remaining checks still run. The
+registered asset's `spec.path` is the scenario directory the walkthrough actually loaded.
 
 A capture that breaks a D1 check (a missing or extra call, a changed digest, a payload in
 a tool record) **stops the walkthrough**: the report then holds a `capture` `FAIL` check
@@ -318,8 +320,9 @@ environment or output drift in the diff, one variant left unverified), runs the 
 walkthrough zero-key, with `--require-verified` and signed-offline, and re-verifies the
 sealed output itself with `nova verify` before and after tampering a copy. Real-run
 negatives: a corrected reply outside the bounds (a `task` FAIL against expected `PASS`), a
-`nova register` that claims success but writes nothing (`asset-not-in-registry`), and a
-missing or FIFO golden transcript (a named error, not a traceback or a hang).
+`nova register` that claims success but writes nothing (`asset-not-in-registry`), a
+capsule that loses `lineage.jsonl` after capture (`lineage-artifact-unreadable`, with every
+required check still reported), and a missing or FIFO golden transcript (a named error, not a traceback or a hang).
 
 `tests/test_example_evidence_lab.py` drives the real `nova capture` twice (one run with a
 relative `--output-dir`), and exercises wrong model / prompt / roles / scenario, a missing

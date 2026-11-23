@@ -247,9 +247,9 @@ _LINEAGE_NOTES = [
 ]
 
 
-def judge_lineage(variant: str, provenance: Any, edges: list[dict[str, Any]], *, run_id: str,
-                  exit_code: int, artifact: str | None, registry_exit_code: int,
-                  registry_output: str) -> Check:  # fmt: skip
+def judge_lineage(variant: str, provenance: Any, edges: list[dict[str, Any]] | None, *,
+                  run_id: str, exit_code: int, artifact: str | None, registry_exit_code: int,
+                  registry_output: str, edges_error: str | None = None) -> Check:  # fmt: skip
     """The run's *declared* input must be exactly the registered dataset — never empty.
 
     Three views must agree: the capsule's own ``lineage.jsonl`` (a ``consumed`` edge from
@@ -257,7 +257,9 @@ def judge_lineage(variant: str, provenance: Any, edges: list[dict[str, Any]], *,
     of the asset from the registry (``nova inspect``). The read-back is needed because the
     edge is built from the capsule's ``assets.jsonl`` alone and never consults the registry.
     The edge records the agent's own declaration (``record_asset_consumption``); it is not
-    an observation that the agent read the data. An empty answer is a FAIL.
+    an observation that the agent read the data. An empty answer is a FAIL, and so is a
+    capsule whose ``lineage.jsonl`` could not be read (``edges`` is ``None``, the reason in
+    ``edges_error``): the check is still reported rather than the run stopping.
     """
     name = "run_declared_registered_asset"
     registered = parse_registry_inspect(registry_output) if registry_exit_code == 0 else {}
@@ -269,6 +271,10 @@ def judge_lineage(variant: str, provenance: Any, edges: list[dict[str, Any]], *,
     if exit_code != 0 or not isinstance(provenance, list):
         return Check("capture", variant, name, "FAIL", "lineage-query-failed", want,
                      {"exit_code": exit_code}, method, artifact, "PASS")  # fmt: skip
+    if edges is None:
+        return Check("capture", variant, name, "FAIL", "lineage-artifact-unreadable", want,
+                     {"edges_error": edges_error}, method, artifact, "PASS",
+                     notes=list(_LINEAGE_NOTES))  # fmt: skip
     refs = sorted(str(n.get("ref")) for n in provenance if isinstance(n, dict))
     consumed_records = [
         e for e in edges if isinstance(e, dict) and e.get("edge_type") == "consumed"

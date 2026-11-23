@@ -492,6 +492,24 @@ def test_judge_lineage(provenance: Any, edges: Any, reason: str) -> None:
     assert c.name == "run_declared_registered_asset"
 
 
+def test_an_unreadable_lineage_artifact_is_a_named_lineage_failure() -> None:
+    """A capsule whose lineage.jsonl cannot be read after capture is judged, not aborted."""
+    c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}], None,
+                         run_id="R", exit_code=0, artifact=None,
+                         edges_error="E_CAPSULE_INVALID: cannot read lineage.jsonl",
+                         **REGISTRY_OK)  # fmt: skip
+    assert (c.verdict, c.reason_code, c.as_expected) == ("FAIL", "lineage-artifact-unreadable",
+                                                         False)  # fmt: skip
+    assert c.observed["edges_error"] == "E_CAPSULE_INVALID: cannot read lineage.jsonl"
+
+
+def test_the_registered_asset_path_is_the_scenario_actually_used(tmp_path: Path) -> None:
+    """--scenarios-root must reach the asset spec: the registered path is the loaded scenario."""
+    scenario_dir = _copy_scenario(tmp_path)
+    spec = yaml.safe_load(run._asset_spec(lab.load_scenario(scenario_dir), scenario_dir))
+    assert spec["spec"]["path"] == str(scenario_dir.resolve())
+
+
 def test_judge_lineage_fails_when_the_query_fails() -> None:
     c = wt.judge_lineage("unsafe", None, [], run_id="R", exit_code=1, artifact=None,
                          **REGISTRY_OK)  # fmt: skip
@@ -670,10 +688,14 @@ _PER_VARIANT = [("task", "policy_oracle_verdict"), ("capture", "logical_calls_an
 ZERO_KEY_CHECKS = {(a, v, n) for v in ("unsafe", "corrected") for a, n in _PER_VARIANT} | {
     ("capture", None, "nova_diff_names_the_change")
 }
-SIGNED_CHECKS = ZERO_KEY_CHECKS | {
-    ("integrity", f"negative:{case}", "broken_copy_is_refused")
-    for case in ("tampered-member", "missing-member", "corrupt-signature", "wrong-ca")
-} | {("integrity", "control:pristine-copy", "untouched_copy_verifies")}
+SIGNED_CHECKS = (
+    ZERO_KEY_CHECKS
+    | {
+        ("integrity", f"negative:{case}", "broken_copy_is_refused")
+        for case in ("tampered-member", "missing-member", "corrupt-signature", "wrong-ca")
+    }
+    | {("integrity", "control:pristine-copy", "untouched_copy_verifies")}
+)
 
 
 def _complete(required: set[tuple[str, str | None, str]]) -> list[Any]:
@@ -1032,6 +1054,26 @@ def test_a_registration_that_never_reached_the_registry_fails_lineage(tmp_path: 
             "asset-not-in-registry",
         )
         assert report["commands"][f"registry_inspect_{variant}"]["exit_code"] != 0
+
+
+@needs_nova
+def test_a_lineage_artifact_lost_after_capture_is_a_named_check(tmp_path: Path) -> None:
+    """A capsule that loses lineage.jsonl after capture: the walkthrough still runs every check
+    and names the lineage failure, instead of stopping with an error and fewer checks."""
+    fake = _fake_nova(tmp_path, f'if [ "$1" = capture ]; then "{NOVA}" "$@"; rc=$?\n'
+                                f'  find "$3" -name lineage.jsonl -delete; exit $rc; fi\n'
+                                f'exec "{NOVA}" "$@"')  # fmt: skip
+    walked = _walk(tmp_path, "nolineage", "--nova-bin", str(fake))
+    done, report = walked["done"], walked["report"]
+    assert done.returncode == 2 and "code=E_CHECK_UNEXPECTED" in done.stderr, done.stderr[-2000:]
+    assert report["error"] is None and report["missing_checks"] == []
+    assert report["harness_verdict"] == "FAIL"
+    lineage = _checks(report, "capture", "run_declared_registered_asset")
+    for variant in ("unsafe", "corrected"):
+        assert (lineage[variant]["verdict"], lineage[variant]["reason_code"]) == (
+            "FAIL",
+            "lineage-artifact-unreadable",
+        )
 
 
 @needs_nova
