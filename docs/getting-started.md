@@ -93,6 +93,10 @@ nova --version
 Both `nova` and `novafabric` are the same binary. The examples throughout this
 guide use `nova`.
 
+> **Choose a deployment profile?** The [Installation options and software stack](installation.md)
+> guide compares Light CLI, Desktop dashboard, Team server, Enterprise controls and
+> experimental Factory collection, with required databases and optional services.
+>
 > **Optional extras.** The base install covers everything in this guide.
 > Narrow extras exist for optional integrations (e.g. `pip install
 > "novafabric[serve]"` for the experimental dashboard, or `"novafabric[all]"`
