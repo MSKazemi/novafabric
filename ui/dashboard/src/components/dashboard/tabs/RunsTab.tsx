@@ -88,6 +88,10 @@ export default function RunsTab({
     if (LINKABLE_VIEWS.includes(v)) { setTransientView(null); setViewParam(v); }
     else setTransientView(v);
   }, [setViewParam]);
+  // A palette/deep-link run change must not retain a transient replay pane
+  // from the previously selected run.
+  useEffect(() => { setTransientView(null); }, [runParam]);
+
   // ADR-0239 — session evidence cart (references only; resolved at export).
   const cart = useEvidenceCart();
   const [replayResult, setReplayResult] = useState<{ runId: string; result: ReplayResult } | null>(null);
