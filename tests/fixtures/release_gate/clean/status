@@ -1,0 +1,12 @@
+Package: libexpat1
+Status: install ok installed
+Priority: optional
+Section: libs
+Source: expat
+Installed-Size: 400
+Maintainer: Synthetic Fixture <fixture@example.invalid>
+Architecture: amd64
+Multi-Arch: same
+Version: 2.5.0-1+deb12u1
+Description: synthetic fixture entry for the release-gate tests
+

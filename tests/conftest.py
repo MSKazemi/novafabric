@@ -40,6 +40,7 @@ CONTAINER_FIXTURES = frozenset(
         "age_compose_dsn",  # tests/deploy/test_age_compose_integration.py
         "janusgraph_endpoint",  # tests/lineage/test_janusgraph_backend.py
         "restore_target_dsn",  # tests/metadata_store/test_backup_pg_restore.py
+        "oci_registries",  # tests/test_release_image_registry.py (two registry:2 containers)
     }
 )
 
