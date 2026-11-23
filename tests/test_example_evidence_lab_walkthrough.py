@@ -465,7 +465,11 @@ INSPECT_OK = (
     "│ status: development                         │\n"
     "╰─────────────────────────────────────────────╯\n"
 )
-REGISTRY_OK = {"registry_exit_code": 0, "registry_output": INSPECT_OK}
+#: The fixture digest the scenario's own files hash to (computed here, not read from a run).
+FIXTURE_DIGEST = "ab" * 32
+REGISTRY_OK = {"registry_exit_code": 0, "registry_output": INSPECT_OK,
+               "expected_fixture_sha256": FIXTURE_DIGEST,
+               "registered_fixture_sha256": FIXTURE_DIGEST}
 
 
 @pytest.mark.parametrize(
@@ -514,8 +518,32 @@ def test_judge_lineage_needs_the_asset_read_back_from_the_registry(code: int, ou
     assets.jsonl and never consults the registry, so registration is read back separately."""
     c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}],
                          [_edge("R")], run_id="R", exit_code=0, artifact=None,
-                         registry_exit_code=code, registry_output=output)  # fmt: skip
+                         registry_exit_code=code, registry_output=output,
+                         expected_fixture_sha256=FIXTURE_DIGEST,
+                         registered_fixture_sha256=FIXTURE_DIGEST)  # fmt: skip
     assert (c.verdict, c.reason_code, c.as_expected) == ("FAIL", "asset-not-in-registry", False)
+
+
+@pytest.mark.parametrize(
+    "registered",
+    ["cd" * 32, None, "", FIXTURE_DIGEST.upper() + "0"],
+    ids=["other-dataset", "unreadable", "empty", "not-the-digest"],
+)
+def test_judge_lineage_binds_the_registered_asset_to_the_fixtures(registered: str | None) -> None:
+    """The asset's name, version and type say nothing about WHICH dataset was registered.
+
+    The run declared a name; only the fixture digest stored with the asset (``nova register``
+    keeps it under ``tags``; ``nova inspect`` does not print tags) ties that name to the
+    files the tools served. A registry entry with the right name but another digest must not
+    pass as the scenario's dataset."""
+    c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}],
+                         [_edge("R")], run_id="R", exit_code=0, artifact=None,
+                         registry_exit_code=0, registry_output=INSPECT_OK,
+                         expected_fixture_sha256=FIXTURE_DIGEST,
+                         registered_fixture_sha256=registered)  # fmt: skip
+    assert (c.verdict, c.reason_code, c.as_expected) == ("FAIL", "asset-content-mismatch", False)
+    assert c.expected["registry_readback"]["fixture_manifest_sha256"] == FIXTURE_DIGEST
+    assert c.observed["registry_readback"]["fixture_manifest_sha256"] == registered
 
 
 def test_judge_lineage_says_consumption_is_declared_not_observed() -> None:
@@ -526,7 +554,8 @@ def test_judge_lineage_says_consumption_is_declared_not_observed() -> None:
     assert c.observed["consumption_source"] == "declared-by-agent"
     assert c.observed["edge_confidence_label"] == ["observed"]
     assert c.observed["registry_readback"] == {"exit_code": 0, "name": ASSET_REF.split("@")[0],
-                                               "version": "1.0.0", "asset_type": "dataset"}  # fmt: skip
+                                               "version": "1.0.0", "asset_type": "dataset",
+                                               "fixture_manifest_sha256": FIXTURE_DIGEST}  # fmt: skip
     assert any("declared" in n and "not observed" in n for n in c.notes)
 
 
@@ -1032,6 +1061,56 @@ def test_a_registration_that_never_reached_the_registry_fails_lineage(tmp_path: 
             "asset-not-in-registry",
         )
         assert report["commands"][f"registry_inspect_{variant}"]["exit_code"] != 0
+
+
+@needs_nova
+def test_a_registered_asset_of_another_dataset_fails_lineage(tmp_path: Path) -> None:
+    """Right name, version and type, wrong content: the registration is rewritten on its way
+    to the real `nova register` so the stored fixture digest differs from the scenario's."""
+    fake = _fake_nova(
+        tmp_path,
+        'if [ "$1" = register ]; then\n'
+        '  sed -i -E "s/(fixture_manifest_sha256: \\")[0-9a-f]{64}/\\1$(printf %064d 0)/" "$2"\n'
+        "fi\n"
+        f'exec "{NOVA}" "$@"',
+    )  # fmt: skip
+    walked = _walk(tmp_path, "otherdata", "--nova-bin", str(fake))
+    done, report = walked["done"], walked["report"]
+    assert done.returncode == 2 and "code=E_CHECK_UNEXPECTED" in done.stderr, done.stderr[-2000:]
+    lineage = _checks(report, "capture", "run_declared_registered_asset")
+    for variant in ("unsafe", "corrected"):
+        assert (lineage[variant]["verdict"], lineage[variant]["reason_code"]) == (
+            "FAIL",
+            "asset-content-mismatch",
+        )
+    assert report["harness_verdict"] == "FAIL"
+
+
+@needs_nova
+def test_the_registered_asset_carries_the_digest_of_the_fixtures_read(
+    zero_key: dict[str, Any],
+) -> None:
+    """Positive control: in the honest run the digest read back from the registry equals the
+    one computed from the scenario files, and it is the one the report pins."""
+    import hashlib
+
+    import yaml
+
+    report = zero_key["report"]
+    lineage = _checks(report, "capture", "run_declared_registered_asset")
+    # derived here from the scenario files with the standard library, not from the harness
+    scenario = LAB / "scenarios" / "service_incident_v1"
+    pins = yaml.safe_load((scenario / "scenario.yaml").read_text())["fixture_sha256"]
+    for name, pinned in pins.items():
+        assert hashlib.sha256((scenario / name).read_bytes()).hexdigest() == pinned
+    expected = hashlib.sha256(
+        json.dumps(pins, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert report["scenario_revision"]["fixture_manifest_sha256"] == expected
+    for variant in ("unsafe", "corrected"):
+        readback = lineage[variant]["observed"]["registry_readback"]
+        assert readback["fixture_manifest_sha256"] == expected
+        assert lineage[variant]["verdict"] == "PASS"
 
 
 @needs_nova

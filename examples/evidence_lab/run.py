@@ -690,6 +690,24 @@ def _cli(
     return code, output
 
 
+def _registered_fixture_digest(nova_home: Path) -> str | None:
+    """The fixture digest ``nova register`` stored with the asset, read back from the registry.
+
+    ``nova inspect`` prints the asset's name, version, type and ``spec`` but not its tags, so
+    the digest is read through the same ``get_asset`` that command uses, against the
+    disposable registry only. Anything unreadable is ``None``; the lineage check then fails.
+    """
+    try:
+        from novafabric.registry.service import get_asset
+
+        asset = get_asset(wt.ASSET_NAME, wt.ASSET_VERSION, nova_home / "registry.db")
+        tags = json.loads(asset["spec_json"]).get("tags")
+        digest = tags.get("fixture_manifest_sha256") if isinstance(tags, dict) else None
+    except Exception:  # noqa: BLE001 - an unreadable registry is a named FAIL, not a crash
+        return None
+    return digest if isinstance(digest, str) else None
+
+
 def _asset_spec(scn: lab.Scenario) -> str:
     return (
         'novafabric_spec_version: "1"\n'
@@ -853,7 +871,10 @@ def _walkthrough(
                                        run_id=vreport["run_id"], exit_code=code,
                                        artifact=str(capsule / "lineage.jsonl"),
                                        registry_exit_code=reg_code,
-                                       registry_output=reg_output))  # fmt: skip
+                                       registry_output=reg_output,
+                                       expected_fixture_sha256=base.fixture_manifest_sha256,
+                                       registered_fixture_sha256=_registered_fixture_digest(
+                                           nova_home)))  # fmt: skip
 
         verify_argv = [nova, "verify", "--json"]
         if ca_bundle is not None:
