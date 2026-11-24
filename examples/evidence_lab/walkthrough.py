@@ -281,9 +281,23 @@ def judge_lineage(variant: str, provenance: Any, edges: list[dict[str, Any]] | N
     if exit_code != 0 or not isinstance(provenance, list):
         return Check("capture", variant, name, "FAIL", "lineage-query-failed", want,
                      {"exit_code": exit_code}, method, artifact, "PASS")  # fmt: skip
+    readback = {"exit_code": registry_exit_code,
+                **{k: registered.get(k) for k in ("name", "version", "asset_type")},
+                "fixture_manifest_sha256": registered_fixture_sha256}  # fmt: skip
+    named = {k: v for k, v in readback.items() if k != "fixture_manifest_sha256"}
+    named_want = {k: v for k, v in want["registry_readback"].items()
+                  if k != "fixture_manifest_sha256"}  # fmt: skip
+    registry_reason: str | None = None
+    if named != named_want:
+        registry_reason = "asset-not-in-registry"
+    elif registered_fixture_sha256 != expected_fixture_sha256:
+        registry_reason = "asset-content-mismatch"
     if edges is None:
+        # The unreadable capsule artifact stays the named reason, but a registration that is
+        # also wrong is reported beside it rather than hidden by the early return.
         return Check("capture", variant, name, "FAIL", "lineage-artifact-unreadable", want,
-                     {"edges_error": edges_error}, method, artifact, "PASS",
+                     {"edges_error": edges_error, "registry_readback": readback,
+                      "registry_reason": registry_reason}, method, artifact, "PASS",
                      notes=list(_LINEAGE_NOTES))  # fmt: skip
     refs = sorted(str(n.get("ref")) for n in provenance if isinstance(n, dict))
     consumed_records = [
@@ -293,19 +307,11 @@ def judge_lineage(variant: str, provenance: Any, edges: list[dict[str, Any]] | N
         [str((e.get("source") or {}).get("run_id")), str((e.get("target") or {}).get("asset_ref"))]
         for e in consumed_records
     ]
-    readback = {"exit_code": registry_exit_code,
-                **{k: registered.get(k) for k in ("name", "version", "asset_type")},
-                "fixture_manifest_sha256": registered_fixture_sha256}  # fmt: skip
     got = {"provenance_refs": refs, "consumed_edges": consumed, "registry_readback": readback,
            "consumption_source": "declared-by-agent",
            "edge_confidence_label": [e.get("confidence") for e in consumed_records]}  # fmt: skip
-    named = {k: v for k, v in readback.items() if k != "fixture_manifest_sha256"}
-    named_want = {k: v for k, v in want["registry_readback"].items()
-                  if k != "fixture_manifest_sha256"}  # fmt: skip
-    if named != named_want:
-        reason = "asset-not-in-registry"
-    elif registered_fixture_sha256 != expected_fixture_sha256:
-        reason = "asset-content-mismatch"
+    if registry_reason is not None:
+        reason = registry_reason
     elif not refs:
         reason = "lineage-empty"
     elif refs != want["provenance_refs"]:

@@ -327,8 +327,9 @@ walkthrough zero-key, with `--require-verified` and signed-offline, and re-verif
 sealed output itself with `nova verify` before and after tampering a copy. Real-run
 negatives: a corrected reply outside the bounds (a `task` FAIL against expected `PASS`), a
 `nova register` that claims success but writes nothing (`asset-not-in-registry`), a
+registered asset whose fixture digest is another dataset's (`asset-content-mismatch`), a
 capsule that loses `lineage.jsonl` after capture (`lineage-artifact-unreadable`, with every
-required check still reported), and a missing or FIFO golden transcript (a named error, not a traceback or a hang).
+required check still reported and the registry-side reason kept beside it), and a missing or FIFO golden transcript (a named error, not a traceback or a hang). Unit tests also pin that a warning line containing a bracket before a command's JSON does not hide that JSON.
 
 `tests/test_example_evidence_lab.py` drives the real `nova capture` twice (one run with a
 relative `--output-dir`), and exercises wrong model / prompt / roles / scenario, a missing
