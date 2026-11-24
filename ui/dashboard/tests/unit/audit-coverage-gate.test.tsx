@@ -73,4 +73,11 @@ describe('AuditCoveragePanel gate verdict', () => {
     expect(score.className).toContain('status-failure');
     expect(screen.queryByText(/seal_invalid/)).toBeNull();
   });
+
+  it('falls back to a pass when the server sends no gate_passed and threshold_met is true', async () => {
+    auditCoverage.mockResolvedValue({ ...base, threshold_met: true });
+    const score = await runPanel();
+    expect(score.className).toContain('status-success');
+    expect(score.className).not.toContain('status-failure');
+  });
 });
