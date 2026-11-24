@@ -14,7 +14,11 @@ scans that exact digest per platform, and only then calls this script:
   ``DEST@DIGEST`` (no tag; ``--stage-tag`` adds a non-release staging tag for a
   registry that refuses a tagless copy), verify the destination.  Never rebuilds.
 * ``tag``     - verify, then move release tags to a digest that is already
-  verified, signed and attested.  ``--immutable`` tags refuse to move.
+  verified, signed and attested.  ``--immutable`` tags refuse to move; a run with no
+  immutable tag (a branch dispatch) may not write a name in the release namespace
+  (``latest`` or anything starting with a digit, optionally after ``v``).
+* ``check-tags`` - the tag-set rules of ``tag`` with no registry and no credential, so
+  an unusable tag set fails before the build.
 
 Every failure path exits non-zero (1 = gate refused, 2 = usage); there is no
 "warn and continue".  Only ``docker buildx imagetools`` is used, so no tool beyond
@@ -33,6 +37,9 @@ from collections.abc import Sequence
 from pathlib import Path
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+TAG_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
+RELEASE_NAME = re.compile(r"^(latest|v?\d.*)$")
+ATTESTATION = "attestation-manifest"
 TIMEOUT_S = 300
 
 
@@ -109,8 +116,8 @@ def check_report(path: Path, digest: str, platform: str) -> None:
         )
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise GateError(f"{path.name}: unreadable report: {exc}") from exc
+    except (OSError, ValueError, RecursionError) as exc:
+        raise GateError(f"{path.name}: unreadable report: {type(exc).__name__}: {exc}") from exc
     check_report_data(data, digest, platform, source=path.name)
 
 
@@ -137,6 +144,61 @@ def _need_digest(digest: str) -> str:
     return digest
 
 
+def _platform_key(os_: str, arch: str, variant: str = "") -> str:
+    """``os/arch[/variant]``; arm64/v8 is arm64 (containerd normalises the variant away)."""
+    if arch == "arm64" and variant == "v8":
+        variant = ""
+    return f"{os_}/{arch}" + (f"/{variant}" if variant else "")
+
+
+def _required_key(platform: str) -> str:
+    parts = platform.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise GateError(f"not a platform (os/arch): {platform!r}")
+    return _platform_key(*parts)
+
+
+def _index_platforms(repo: str, digest: str, children: list[object]) -> tuple[set[str], list[str]]:
+    """Image platforms and child digests of an index; every child must be accounted for.
+
+    Only two kinds of child may sit in a scanned index: an image manifest with a real,
+    unique platform, and a BuildKit attestation manifest (``unknown/unknown`` carrying the
+    ``vnd.docker.reference.type`` annotation). Anything else would ship under the scanned
+    digest without anyone having looked at it.
+    """
+    where = f"{repo}@{digest}"
+    have: set[str] = set()
+    child_digests: list[str] = []
+    for child in children:
+        if not isinstance(child, dict):
+            raise GateError(f"{where}: manifest is not a well-formed image index")
+        child_digests.append(_need_digest(str(child.get("digest"))))
+        platform = child.get("platform")
+        if not isinstance(platform, dict):
+            raise GateError(f"{where}: child {child.get('digest')} has no platform")
+        os_, arch = str(platform["os"]), str(platform["architecture"])
+        if os_ == "unknown" and arch == "unknown":
+            annotations = child.get("annotations")
+            kind = (
+                annotations.get("vnd.docker.reference.type")
+                if isinstance(annotations, dict)
+                else None
+            )
+            if kind != ATTESTATION:
+                raise GateError(
+                    f"{where}: child {child.get('digest')} is unknown/unknown but not an "
+                    f"{ATTESTATION}"
+                )
+            continue
+        if "unknown" in (os_, arch):
+            raise GateError(f"{where}: child {child.get('digest')} has platform {os_}/{arch}")
+        key = _platform_key(os_, arch, str(platform.get("variant") or ""))
+        if key in have:
+            raise GateError(f"{where}: duplicate child for platform {key}")
+        have.add(key)
+    return have, child_digests
+
+
 def verify(repo: str, digest: str, platforms: Sequence[str]) -> None:
     _need_digest(digest)
     body = _imagetools("inspect", "--raw", f"{repo}@{digest}")
@@ -144,20 +206,16 @@ def verify(repo: str, digest: str, platforms: Sequence[str]) -> None:
         raise GateError(f"{repo}@{digest}: manifest bytes hash to {_digest_of(body)}")
     try:
         children = json.loads(body).get("manifests") or []
-        have = {
-            f"{c['platform']['os']}/{c['platform']['architecture']}"
-            for c in children
-            if c.get("platform") and c["platform"].get("os") != "unknown"
-        }
-        child_digests = [_need_digest(c["digest"]) for c in children]
-    except (ValueError, AttributeError, KeyError, TypeError) as exc:
+        have, child_digests = _index_platforms(repo, digest, children)
+    except (ValueError, AttributeError, KeyError, TypeError, RecursionError) as exc:
         raise GateError(f"{repo}@{digest}: manifest is not a well-formed image index") from exc
     if not children:
         raise GateError(f"{repo}@{digest}: not an image index (multi-arch is required)")
-    missing = sorted(set(platforms) - have)
+    required = {_required_key(p) for p in platforms}
+    missing = sorted(required - have)
     if missing:
         raise GateError(f"{repo}@{digest}: index lacks platforms {missing}; has {sorted(have)}")
-    extra = sorted(have - set(platforms))
+    extra = sorted(have - required)
     if extra:
         raise GateError(f"{repo}@{digest}: index carries unscanned platform(s) {extra}")
     for cdig in child_digests:  # attestation manifests are children too
@@ -200,6 +258,35 @@ def tag(
             raise GateError(f"{repo}:{name} does not resolve to {digest} after tagging")
 
 
+def plan_tags(
+    meta_tags: str, repo: str, extra: Sequence[str], immutable: Sequence[str]
+) -> tuple[list[str], list[str]]:
+    """The tag names to move (immutable first) and the immutable subset. No registry access.
+
+    Rules, all fail-closed: at least one tag; every name a valid tag; every immutable tag
+    among the names; and without an immutable tag (a run that is not a ``v*`` tag push)
+    no name in the release namespace, so a branch called ``0.109.0`` cannot re-point it.
+    """
+    names = list(extra) + (tags_from_meta(meta_tags, repo) if meta_tags else [])
+    if not names:
+        raise GateError("no tags to move")
+    for name in names:
+        if not TAG_NAME.match(name):
+            raise GateError(f"not a valid image tag: {name!r}")
+    imm = [i for i in immutable if i]
+    if not imm:
+        release_like = [n for n in names if RELEASE_NAME.match(n)]
+        if release_like:
+            raise GateError(
+                f"{release_like}: a run without an immutable release tag (a branch dispatch) "
+                "may not write a name in the release namespace (latest, or starting with a digit)"
+            )
+    for i in imm:
+        if i not in names:
+            raise GateError(f"immutable tag {i!r} is not among the tags to move {names}")
+    return sorted(names, key=lambda n: n not in imm), imm
+
+
 def tags_from_meta(meta_tags: str, repo: str) -> list[str]:
     """Tag names that docker/metadata-action derived for ``repo`` (newline list of refs)."""
     prefix = repo.lower() + ":"
@@ -213,14 +300,20 @@ def tags_from_meta(meta_tags: str, repo: str) -> list[str]:
     return names
 
 
+def _annotation(message: str) -> str:
+    """GitHub workflow-command data escaping: a message must stay on one line."""
+    return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("verify", "check-reports", "promote", "tag"):
+    for name in ("verify", "check-reports", "promote", "tag", "check-tags"):
         s = sub.add_parser(name)
-        s.add_argument("--digest", required=True)
-        s.add_argument("--platform", action="append", required=True)
-        if name == "verify":
+        if name != "check-tags":
+            s.add_argument("--digest", required=True)
+            s.add_argument("--platform", action="append", required=True)
+        if name in ("verify", "tag", "check-tags"):
             s.add_argument("--repo", required=True)
         if name in ("check-reports", "promote"):
             s.add_argument("--report-dir", type=Path, required=True)
@@ -228,8 +321,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             s.add_argument("--src-repo", required=True)
             s.add_argument("--dest-repo", required=True)
             s.add_argument("--stage-tag", default="")
-        if name == "tag":
-            s.add_argument("--repo", required=True)
+        if name in ("tag", "check-tags"):
             s.add_argument("--tag", action="append", default=[])
             s.add_argument("--meta-tags", default="")
             s.add_argument("--immutable", action="append", default=[])
@@ -243,17 +335,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             promote(
                 a.src_repo, a.dest_repo, a.digest, a.stage_tag or None, a.platform, a.report_dir
             )
+        elif a.cmd == "check-tags":
+            plan_tags(a.meta_tags, a.repo, a.tag, a.immutable)
         else:
-            names = list(a.tag) + (tags_from_meta(a.meta_tags, a.repo) if a.meta_tags else [])
-            if not names:
-                raise GateError("no tags to move")
-            imm = [i for i in a.immutable if i]
-            names.sort(key=lambda n: n not in imm)  # immutable first, stable otherwise
+            names, imm = plan_tags(a.meta_tags, a.repo, a.tag, a.immutable)
             tag(a.repo, a.digest, names, imm, a.platform)
     except GateError as exc:
-        print(f"::error title=Release image gate::{exc}", file=sys.stderr)
+        print(f"::error title=Release image gate::{_annotation(str(exc))}", file=sys.stderr)
         return 1
-    print(f"release_image {a.cmd}: ok {a.digest}")
+    print(f"release_image {a.cmd}: ok" + (f" {a.digest}" if a.cmd != "check-tags" else ""))
     return 0
 
 

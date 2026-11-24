@@ -344,7 +344,7 @@ def test_checkout_does_not_leave_the_token_in_the_workspace() -> None:
     checkouts = [s for s in steps if str(s.get("uses") or "").startswith("actions/checkout")]
     assert checkouts
     for s in checkouts:
-        assert s["with"].get("persist-credentials") in (False, "false"), (
+        assert str(s["with"].get("persist-credentials")).lower() == "false", (
             f"{_name(s)!r} persists the GITHUB_TOKEN in .git/config; nothing in this job pushes"
         )
 

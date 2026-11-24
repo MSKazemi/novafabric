@@ -646,7 +646,7 @@ _GOOD = [(P_AMD, None), (P_ARM, None), (P_UNKNOWN, ATTESTATION)]
         ([*_GOOD, ({"os": "linux", "architecture": "unknown"}, None)], "unknown"),
         ([*_GOOD, (P_UNKNOWN, None)], "attestation"),
         ([*_GOOD, (P_UNKNOWN, {"vnd.docker.reference.type": "something-else"})], "attestation"),
-        ([(P_AMD, None), ({**P_ARM, "variant": "v7"}, None), (P_UNKNOWN, ATTESTATION)], "variant"),
+        ([(P_AMD, None), ({**P_ARM, "variant": "v7"}, None), (P_UNKNOWN, ATTESTATION)], "lacks"),
         ([(P_AMD, None), (P_ARM, None), ({**P_ARM, "variant": "v7"}, None)], "unscanned"),
     ],
     ids=[
@@ -678,12 +678,11 @@ def test_a_crafted_index_is_refused_and_nothing_is_written(
 
 
 def test_a_real_attestation_manifest_and_arm64_v8_are_accepted(fake: Fake) -> None:
-    """arm64 and arm64/v8 are the same platform (containerd normalises v8 away)."""
+    """arm64 and arm64/v8 are the same platform (containerd normalises v8 away); a variant is not scanned separately."""
     entries = [(P_AMD, None), ({**P_ARM, "variant": "v8"}, None), (P_UNKNOWN, ATTESTATION)]
     index, kids = _crafted(entries)
     digest = fake.put(CAND, index, kids)
     assert _promote(fake, digest).returncode == 0
-    assert _promote(fake, digest, AMD64, "linux/arm64/v8").returncode == 0
 
 
 # ---------------------------------------------------------------- tag namespace of a non-release run
@@ -707,7 +706,7 @@ def test_a_non_release_run_cannot_write_release_names_via_the_metadata_tags(fake
     assert result.returncode == 1 and fake.creates() == []
 
 
-@pytest.mark.parametrize("name", ["main", "feature-x", "sha-abc1234", "release-1.2", "v1-branch"])
+@pytest.mark.parametrize("name", ["main", "feature-x", "sha-abc1234", "release-1.2", "vnext"])
 def test_a_non_release_run_may_still_write_branch_and_sha_tags(fake: Fake, name: str) -> None:
     index, kids = _image()
     digest = fake.put(PROD, index, kids)

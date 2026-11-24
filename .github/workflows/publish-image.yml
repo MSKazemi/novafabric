@@ -82,6 +82,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          # Nothing in this job pushes to the repository; do not leave the token in
+          # .git/config for every later (third-party) step to read.
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -115,6 +118,21 @@ jobs:
             type=ref,event=branch,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=sha,format=short,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=semver,pattern={{major}}.{{minor}}
+
+      - name: Check the release tag set (fails before any build, copy or signature)
+        # A v* tag that is not semver, or a run that derived no tag for GHCR, must stop
+        # here in seconds, not after the copy. Also refuses, for a run that is not a tag
+        # push, any name in the release namespace (X.Y.Z, X.Y, latest): a branch called
+        # 0.109.0 must not be able to re-point a release tag. No registry, no credential.
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+          # Only a real tag push has an immutable X.Y.Z; a branch dispatch does not.
+          IMMUTABLE: ${{ github.ref_type == 'tag' && steps.meta.outputs.version || '' }}
+        run: |
+          # An OCI repository name must be lowercase (see "Resolve the lowercase image reference").
+          repo=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          python3 scripts/release_image.py check-tags \
+            --repo "$repo" --meta-tags "$META_TAGS" --immutable "$IMMUTABLE"
 
       - name: Build candidate (local registry only)
         id: build
