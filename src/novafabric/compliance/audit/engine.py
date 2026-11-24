@@ -26,7 +26,14 @@ from ulid import ULID
 from novafabric._capsule_fs import is_capsule_regular_file, read_capsule_member_or_none
 from novafabric.compliance.capture_coverage import evidence_is_uncaptured, not_captured_note
 
-from .models import AuditReport, Control, ControlCoverage, ControlProfile, EvidenceRequirement
+from .models import (
+    AuditFinding,
+    AuditReport,
+    Control,
+    ControlCoverage,
+    ControlProfile,
+    EvidenceRequirement,
+)
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +107,32 @@ def _check_seal_signature(capsule_dir: Path) -> bool:
     from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies  # noqa: PLC0415
 
     return capsule_seal_verifies(capsule_dir)
+
+
+SEAL_INVALID_MESSAGE = (
+    "the capsule carries a .seal that failed seal verification (for example a member or "
+    "the manifest edited after sealing, a damaged or substituted seal, or a .seal that is "
+    "not a plain directory); its seal is not evidence — run `nova verify <capsule>` for "
+    "the reasons. A seal made before evidence digests, or a stream the seal does not "
+    "list, cannot show edits to that stream, so the absence of this finding is not proof "
+    "that nothing was edited."
+)
+
+
+def _seal_findings(capsule_dirs: Sequence[Path]) -> list[AuditFinding]:
+    """One ``seal_invalid`` finding per capsule whose ``.seal`` exists but fails.
+
+    ``_check_seal_signature`` answers False for this and for a capsule that was never
+    sealed, which is right for scoring (only a verifying seal is evidence) and says
+    nothing about tampering. A capsule with no ``.seal`` is not a finding.
+    """
+    from novafabric.trust.novaseal.capsule_verify import capsule_seal_status  # noqa: PLC0415
+
+    return [
+        AuditFinding(code="seal_invalid", capsule_id=cd.name, message=SEAL_INVALID_MESSAGE)
+        for cd in capsule_dirs
+        if capsule_seal_status(cd) == "invalid"
+    ]
 
 
 def _check_tool_calls(capsule_dir: Path) -> bool:
@@ -223,6 +256,7 @@ class AuditEngine:
         seal_verified = any(
             _has_evidence(cd, "seal_signature") for cd in capsule_dirs
         )
+        findings = _seal_findings(capsule_dirs)
 
         return AuditReport(
             report_id=str(ULID()),
@@ -240,6 +274,7 @@ class AuditEngine:
             overall_score=round(overall_score, 4),
             coverages=coverages,
             evidence_seal_verified=seal_verified,
+            findings=findings,
         )
 
     # ------------------------------------------------------------------

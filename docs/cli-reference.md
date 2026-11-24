@@ -3671,6 +3671,17 @@ Options:
 
 Without `--certify`/`--anchor`, `attest-replay` behavior is unchanged (including exit 2 on mismatch).
 
+`bind` cites a seal only when it verifies. A capsule whose `.seal` exists but fails (edited
+after sealing, a damaged or substituted seal, a linked or non-directory `.seal`) gets an
+additive, optional `findings: [{code: "seal_invalid", message}]` on each binding whose control
+asks for seal evidence, and `nova evidence bind` prints a finding line; a capsule that was
+never sealed gets no finding (the binding is just unsatisfied for that evidence). A binding
+with no finding serialises exactly as before. The same limits apply as for `nova audit map`:
+a seal made before evidence digests, or a stream the seal does not list, cannot show edits to
+that stream, and a valid seal means the bytes it names are unchanged since sealing, not who
+signed them (a capsule re-sealed with another key also verifies, and the signer is never
+anchored here).
+
 ---
 
 ### nova verify \<capsule\>
@@ -9546,6 +9557,27 @@ The `pii_scan` evidence type is the PII redaction manifest `redaction_manifest.j
 `nova capture --pii-subject` writes (it must parse); every capture's `redaction-proof.json` is
 the *secret* scanner's proof and no longer makes GDPR Art.17 / Art.5 / Art.25 "covered".
 
+**A tampered seal is a finding, not just missing evidence.** A capsule with no `.seal` is only
+missing seal evidence. A capsule whose `.seal` exists but fails verification (for example a
+member or the manifest edited after sealing, a damaged or substituted seal, or a `.seal` that is
+a link or not a directory) is reported as a `seal_invalid` finding naming the capsule: in the
+summary (replacing the `Seals: verified` line), in `--json` as `findings[]` (additive and
+optional; `[]` when there is none), and in `nova audit report` (text and JSON-LD).
+`nova audit map` and `nova audit coverage` also exit 1 on such a finding, even when every
+control is covered or the threshold is met. The coverage scores are unchanged: the finding is
+reported beside them and fails the gate, but is not subtracted from them, so the edited
+capsule's other evidence still counts toward coverage. This is the plain seal check: a seal made
+before evidence digests, or a stream the seal does not list, cannot show edits to that stream,
+so no finding is not proof that nothing was edited. `evidence_seal_verified` keeps its meaning
+(at least one capsule's seal verified). A valid seal means the bytes it names are unchanged
+since sealing; it does not say who signed them.
+
+`GET /api/compliance/audit/coverage` returns the same decision additively: `findings` (the
+list above) and `gate_passed` (score at or above the threshold **and** no finding, the CLI's
+exit decision). `threshold_met` keeps its meaning (score at or above the threshold only), so
+read `gate_passed` to gate on it. `POST /api/compliance/audit/report` returns the whole report,
+`findings` included; `GET /api/compliance/audit/map` lists checkers and scans nothing.
+
 **Not captured by this version.** The `tool_permissions` and `policy_events` evidence types
 read `tool-permission-events.jsonl`, which no NovaFabric producer writes today. When no scanned
 capsule carries that file, those requirements are listed under `evidence_not_captured` instead
@@ -9620,6 +9652,10 @@ nova audit coverage --profile eu-ai-act-high-risk --threshold 0.9
 ```
 
 **Options:** `--threshold FLOAT` — minimum required coverage score, 0.0–1.0 (default: `0.8`).
+
+Also exits 1, even at or above the threshold, when a scanned capsule carries a `.seal` that
+fails verification (a `seal_invalid` finding, see [`nova audit map`](#nova-audit-map)); a capsule
+with no `.seal` is unchanged.
 
 **Reference:** `src/novafabric/compliance/audit/`, `src/novafabric/cli/audit.py`.
 
@@ -10160,6 +10196,27 @@ every `call_count` unchanged. Two copies of one capsule are one contributor. `--
 nats` streams events across capsules and still adds. A graph built before this change
 holds no contribution records, so its first re-ingest of an old capsule adds once more;
 for exact counts, rebuild it (remove the `--path` store and run `nova kg ingest --all`).
+
+**A tampered seal is not the same as no seal (`nova serve`).** `POST /api/kg/ingest`, `POST
+/api/kg/ingest-all` and the auto-ingest loop read the capsule's own `.seal` (never a caller's
+flag) as one of `absent` (never sealed), `valid` or `invalid` (a `.seal` that exists and fails:
+edited after sealing, a damaged or substituted seal, or a `.seal` that is not a plain
+directory). Edges count as NovaSeal-verified only for `valid`; both `absent` and `invalid` are
+ingested as unverified, so the graph's `confidence` does not tell them apart. They are told
+apart in the response and the log: `POST /api/kg/ingest` adds `seal_status` and `tampered`
+(additive, next to the existing `novaseal_verified`) and a note; `ingest-all` adds
+`tampered_capsules`; auto-ingest logs a warning naming the capsule. The graph itself records no
+per-edge tamper marker (an aggregate edge cannot carry one without a schema change). A valid
+seal means the bytes it names are unchanged since sealing; it does not say who signed them.
+For ingest a seal counts as `valid` only if it also names the event streams about to be read
+(`model-calls.jsonl`, `tool-calls.jsonl` or `events.jsonl`): a stream added after sealing, or a
+legacy seal made before evidence digests, is `invalid` (the note says the seal "does not cover
+its event streams"; that is not a claim the stream was edited). `ingest-all` skips capsules
+an earlier ingest already tracked, so `tampered_capsules` lists only those ingested in that
+call; a capsule tampered after its first ingest is not re-checked there.
+`POST /api/kg/ingest` already refuses (HTTP error) a capsule holding a top-level symlink,
+a linked `.seal` included. `nova kg ingest` itself takes its verified flag from the
+command line and does not read the seal.
 
 ```bash
 # Single capsule
