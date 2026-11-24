@@ -149,6 +149,30 @@ def _invariant_4(path: Path) -> str:
     return " ".join(match.group(1).split())
 
 
+def _says_not_met(invariant: str) -> bool:
+    """True only for the bold statement ``**not met**`` that the invariant is unmet.
+
+    A bare substring would also accept "**satisfied** (it was once not met)", which says the
+    opposite, so the statement must be the bold phrase and nothing may say it is satisfied.
+    """
+    return re.search(r"\*\*not met\*\*", invariant) is not None and "satisfied" not in invariant
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("As built this invariant is **not met**: model calls are stored.", True),
+        ("This invariant is **satisfied** (it was once not met).", False),
+        ("It was once not met and is now **satisfied**; the **not met** note is gone.", False),
+        ("Capture is opt-in.", False),
+        ("", False),
+    ],
+    ids=["unmet", "satisfied-mentioning-not-met", "both-words", "no-statement", "empty"],
+)
+def test_says_not_met_reads_the_statement_not_the_substring(text: str, expected: bool) -> None:
+    assert _says_not_met(text) is expected
+
+
 @pytest.mark.parametrize("path", _INVARIANT_4_TEXTS)
 def test_invariant_4_matches_what_the_default_level_stores(path: Path) -> None:
     """The privacy invariant may only be stated as met when the default stores no content.
@@ -160,7 +184,7 @@ def test_invariant_4_matches_what_the_default_level_stores(path: Path) -> None:
     from novafabric.policies.capture_level import LEVEL_EFFECTS, CaptureLevel
 
     stores_content = "full prompts and responses" in LEVEL_EFFECTS[CaptureLevel.STANDARD]
-    says_not_met = "not met" in _invariant_4(path).lower()
+    says_not_met = _says_not_met(_invariant_4(path))
     assert says_not_met == stores_content, (
         f"{path.name} invariant 4 and LEVEL_EFFECTS[standard] disagree "
         f"(default stores content: {stores_content}; text says not met: {says_not_met}). "
