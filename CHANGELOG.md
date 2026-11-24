@@ -83,12 +83,24 @@ longer forwards the submitting shell's environment (ADR-0270).
   architecture (a report that silently covered another platform is a failure, not a pass), and only then logs in,
   copies the same digest to GHCR and Docker Hub with a byte-for-byte check (`scripts/release_image.py`), signs and
   attests the promoted digest, and moves `X.Y.Z`, `X.Y` and `latest` last. The copy is by digest alone, so no staging
-  tag is visible (a one-line `--stage-tag` fallback is documented in `docs/release-process.md`). `X.Y.Z` is never
-  moved to a different digest, and an image index that carries a platform nobody scanned is refused. The Docker Hub
+  tag is visible (a one-line `--stage-tag` fallback is documented in `docs/release-process.md`). Before it moves `X.Y.Z`
+  the tag step reads where that tag points and refuses to move it to a different digest; that check is a read-then-write
+  in the script, not a registry-side guarantee, and no tag immutability is configured at GHCR or Docker Hub. The index
+  that is promoted may contain only image children with a unique real platform and BuildKit attestation manifests
+  (a duplicate, platform-less, `unknown/<arch>` or unannotated `unknown/unknown` child, or a platform nobody scanned, is
+  refused). A run that is not a `v*` tag push (`workflow_dispatch` from a branch) may not write `latest` or any tag that
+  starts with a digit, so a branch named `0.109.0` cannot re-point a release tag; it still publishes `:<branch>` and
+  `:sha-<short>` after the scan. Whether a dispatch should instead be scan-only is an undecided owner choice (A2).
+  The tag set is validated before the build, the checkout no longer persists the token, and registry error text is
+  escaped so it cannot forge workflow commands. The Docker Hub
   token is no longer in the job environment of the build and scan steps. The scanner is pinned to trivy v0.76.2. A
   new `image-gate` job in `release-toolchain.yml` runs the real gate, evidence check and promotion on fixtures (clean,
   vulnerable, arm64-only vulnerable) and two local registries on every pull request that touches the publish path.
   The trivy report artifact is now JSON (`trivy-report-linux-<arch>.json`) instead of a text table.
+  A fixable CRITICAL finding blocks **container image publication** only: the PyPI package, the GitHub Release and
+  the Helm chart run as independent workflows. A tag run uses the workflow file of its own tag, so nothing in the
+  repository prevents a tag on a commit that removes the gate; a protected GitHub Environment with required reviewers
+  would (owner decision A5, not configured).
   **Experimental:** the copy to GHCR and Docker Hub, cosign on the promoted digest and `TRIVY_PLATFORM` through
   trivy-action are first executed by the next tag run. The release job timeout is 60 minutes (was 30). Tests:
   `tests/docs/test_publish_image_gates_promotion_on_scan.py`, `tests/test_release_image.py`,

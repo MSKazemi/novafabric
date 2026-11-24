@@ -111,7 +111,8 @@ After a release, check those in the run log rather than assuming them.
 executed it yet; the first tag run after it lands is its first real execution.*
 
 `publish-image.yml` no longer pushes the image to a production registry and scans it afterwards.
-Within the one `image` job, in this order:
+Within the one `image` job, in this order (a credential-free `check-tags` step first fails a
+non-semver `v*` tag or an empty tag set in seconds, before the build):
 
 1. **Build once** (`linux/amd64` + `linux/arm64`, SBOM and provenance) into a throw-away registry
    that lives only for the job, bound to loopback. No GHCR or Docker Hub login exists yet.
@@ -132,7 +133,8 @@ Within the one `image` job, in this order:
 5. **Sign and attest** the promoted digest. A signature does not follow a copy between registries,
    so it is made on the production digest.
 6. **Last, move the release tags** (`X.Y.Z`, `X.Y`, `latest`) with `scripts/release_image.py tag`.
-   `X.Y.Z` is immutable: it refuses to point at a different digest.
+   Before moving `X.Y.Z` the script reads where it points and refuses a different digest (a
+   script check, not a registry setting; no tag immutability is configured at GHCR or Docker Hub).
 
 A failed scan therefore leaves no release tag, signature or attestation in any registry. The copy
 in step 4 is by digest alone (`DEST@sha256:...`), so no staging tag is visible. **Fallback, if the
@@ -148,6 +150,35 @@ the image, which gives a different digest, and the immutable `X.Y.Z` check then 
 design; resolve that by tagging the already-scanned digest by hand
 (`docker buildx imagetools create -t <repo>:<tag> <repo>@<digest>`) or by cutting the next patch
 version.
+
+#### What a manual dispatch does
+
+`workflow_dispatch` runs the same `image` job as a tag push, with no inputs and no way to skip the
+scan, from whatever ref it is started on:
+
+- **From a `v*` tag ref** (`gh workflow run publish-image.yml --ref vX.Y.Z`): identical to the tag
+  push, including the immutable `X.Y.Z`.
+- **From a branch**: the image is built from that commit, scanned, promoted, signed and attested,
+  then tagged `:<branch>` and `:sha-<short>` on GHCR (and Docker Hub when configured). Because the
+  run has no immutable release tag, `release_image.py` refuses to write `latest` or any tag that
+  starts with a digit (optionally after `v`), so a branch named `0.109.0` or `latest` cannot
+  re-point a release tag; such a run fails in the tag-set check before the build. `:<branch>` is a
+  moving tag by nature.
+
+Making a branch dispatch **scan-only** (no production tag at all) is the recommended hardening, but
+it changes the documented "manual re-publish" behaviour and is an **undecided owner choice (A2)**;
+this branch implements only the namespace refusal above.
+
+#### If the job fails after the first tag moved
+
+The tag steps run GHCR first, then Docker Hub. If the Docker Hub step fails (token, rate limit,
+outage) the release is **half done**: GHCR carries `X.Y.Z`, `X.Y` and `latest`, the run is red, and
+Docker Hub does not have the release. The image was already scanned, signed and attested, so
+GHCR is consistent. Re-running the failed job is idempotent for the same digest (tagging is
+read-verify-write); re-running the **workflow** rebuilds, produces a different digest, and the
+`X.Y.Z` check then refuses it by design. To finish the Docker Hub half, tag the already-scanned
+digest by hand (`docker buildx imagetools create -t <hub-repo>:X.Y.Z <ghcr-repo>@<digest>`, then
+`X.Y` and `latest`) or cut the next patch version. Nothing is rolled back automatically.
 
 What is **not** yet proven (it executes for the first time in a real tag run): the copy to GHCR and
 to Docker Hub (including a tagless copy), `cosign sign` and the attestation on the promoted digest,

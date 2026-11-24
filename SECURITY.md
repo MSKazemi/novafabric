@@ -39,9 +39,13 @@ when a complete fix needs longer than the window.
   and weekly, behind the same severity gate; HIGH/CRITICAL advisories block.
 - Release container images are built into a throw-away local registry and scanned with
   trivy on each platform (linux/amd64 and linux/arm64) before any tag is pushed to GHCR
-  or Docker Hub; CRITICAL findings with an available fix block the release. This
-  ordering is **experimental** until a tag run has executed it (see
-  [release process](docs/release-process.md), "The image gate").
+  or Docker Hub; CRITICAL findings with an available fix block **container image
+  publication**. They do not block the PyPI package, the GitHub Release or the Helm chart,
+  which run as independent workflows. The gate is part of the workflow file of the tag
+  being released, so nothing in the repository prevents a tag on a commit that removes it;
+  closing that needs a protected GitHub Environment with required reviewers (an
+  owner-side setting, not configured). This ordering is **experimental** until a tag run
+  has executed it (see [release process](docs/release-process.md), "The image gate").
 - Exceptions go through the checked-in waiver files
   [`.pip-audit-waivers.toml`](.pip-audit-waivers.toml) and
   [`.npm-audit-waivers.toml`](.npm-audit-waivers.toml) — one schema, parsed
