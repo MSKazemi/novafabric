@@ -670,15 +670,23 @@ _CLI_SECONDS = 120.0
 
 
 def _json_from_output(text: str) -> Any:
-    """The first JSON value in a command's output (a warning line may precede it)."""
-    starts = [i for i in (text.find("{"), text.find("[")) if i >= 0]
-    if not starts:
-        return None
-    try:
-        value, _ = json.JSONDecoder().raw_decode(text[min(starts) :])
-    except ValueError:
-        return None
-    return value
+    """The first JSON object or array in a command's output (warning lines may precede it).
+
+    A warning such as ``[novafabric] WARNING: ...`` starts with a bracket but is not JSON, so
+    every ``{`` or ``[`` that opens a line is tried in turn, and then any other bracket; the
+    first that decodes to an object or array wins. Output with none is ``None``.
+    """
+    decoder = json.JSONDecoder()
+    line_starts = [m.end() - 1 for m in re.finditer(r"(?m)^[ \t]*[\[{]", text)]
+    others = [i for i, ch in enumerate(text) if ch in "{[" and i not in line_starts]
+    for start in (*line_starts, *others):
+        try:
+            value, _ = decoder.raw_decode(text[start:])
+        except ValueError:
+            continue
+        if isinstance(value, (dict, list)):
+            return value
+    return None
 
 
 def _cli(

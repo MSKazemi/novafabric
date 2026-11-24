@@ -386,7 +386,9 @@ jobs:
           root = pathlib.Path(novafabric.__file__).parent.parent
           cfg = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
           targets = cfg["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"].values()
-          missing = [t for t in targets if not (root / t).exists()]
+          def present(p):  # a directory must hold a file, so an empty one is not "present"
+              return p.is_file() or (p.is_dir() and any(f.is_file() for f in p.rglob("*")))
+          missing = [t for t in targets if not present(root / t)]
           assert not missing, f"force-include targets missing from the installed wheel: {missing}"
           print(f"{len(targets)} force-include targets present in the installed wheel")
           PY

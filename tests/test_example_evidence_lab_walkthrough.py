@@ -467,9 +467,12 @@ INSPECT_OK = (
 )
 #: The fixture digest the scenario's own files hash to (computed here, not read from a run).
 FIXTURE_DIGEST = "ab" * 32
-REGISTRY_OK = {"registry_exit_code": 0, "registry_output": INSPECT_OK,
-               "expected_fixture_sha256": FIXTURE_DIGEST,
-               "registered_fixture_sha256": FIXTURE_DIGEST}
+REGISTRY_OK = {
+    "registry_exit_code": 0,
+    "registry_output": INSPECT_OK,
+    "expected_fixture_sha256": FIXTURE_DIGEST,
+    "registered_fixture_sha256": FIXTURE_DIGEST,
+}
 
 
 @pytest.mark.parametrize(
@@ -505,6 +508,47 @@ def test_an_unreadable_lineage_artifact_is_a_named_lineage_failure() -> None:
     assert (c.verdict, c.reason_code, c.as_expected) == ("FAIL", "lineage-artifact-unreadable",
                                                          False)  # fmt: skip
     assert c.observed["edges_error"] == "E_CAPSULE_INVALID: cannot read lineage.jsonl"
+    assert c.observed["registry_reason"] is None
+
+
+@pytest.mark.parametrize(
+    ("registry", "registry_reason"),
+    [
+        (REGISTRY_OK, None),
+        ({**REGISTRY_OK, "registered_fixture_sha256": "cd" * 32}, "asset-content-mismatch"),
+        ({**REGISTRY_OK, "registered_fixture_sha256": None}, "asset-content-mismatch"),
+        ({**REGISTRY_OK, "registry_exit_code": 1, "registry_output": ""}, "asset-not-in-registry"),
+    ],
+    ids=["registry-ok", "other-dataset", "no-digest", "not-in-registry"],
+)  # fmt: skip
+def test_an_unreadable_lineage_artifact_still_reports_the_registry_side(
+    registry: dict[str, Any], registry_reason: str | None
+) -> None:
+    """The unreadable-lineage reason stays first, but a bad registration is not hidden by it."""
+    c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}], None,
+                         run_id="R", exit_code=0, artifact=None, edges_error="unreadable",
+                         **registry)  # fmt: skip
+    assert (c.verdict, c.reason_code) == ("FAIL", "lineage-artifact-unreadable")
+    assert c.observed["registry_reason"] == registry_reason
+    assert "registry_readback" in c.observed
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('{"a": 1}', {"a": 1}),
+        ('warning, no brackets\n{"a": 1}\n', {"a": 1}),
+        ('[novafabric] WARNING: dev-only backend\n{"a": 1}\n', {"a": 1}),
+        ('WARNING [novafabric] dev-only backend\n[1, 2]\n', [1, 2]),
+        ('{"msg": "a [b] c"}', {"msg": "a [b] c"}),
+        ("[novafabric] WARNING: nothing structured follows\n", None),
+        ("", None),
+    ],
+    ids=["plain", "plain-warning", "bracket-prefix-warning", "bracket-inside-warning",
+         "bracket-inside-json", "only-a-warning", "empty"],
+)  # fmt: skip
+def test_json_from_output_skips_a_warning_that_contains_a_bracket(text: str, expected: Any) -> None:
+    assert run._json_from_output(text) == expected
 
 
 def test_the_registered_asset_path_is_the_scenario_actually_used(tmp_path: Path) -> None:

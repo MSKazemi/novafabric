@@ -33,6 +33,8 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **EvidenceLab D2 walkthrough: lineage check follow-ups (example only).** The lineage check binds the registered asset to the fixtures the tools served: the digest stored at `nova register` must equal the digest of the scenario's own files, or the check fails `asset-content-mismatch`. A capsule whose `lineage.jsonl` cannot be read after capture is a named `lineage-artifact-unreadable` FAIL, and the report now also carries the registry-side reason (`registry_reason`) so a wrong registration is not hidden behind it. The registered asset's `spec.path` is the scenario directory actually loaded. A warning line that starts with or contains a bracket no longer makes the lineage query read as failed: the JSON parser skips any bracketed text that is not JSON. In CI, the `golden-capsule` wheel check requires every `force-include` directory to contain a file, not merely exist.
+
 - **`nova export-compliance iso42001 --capsule DIR` refuses a capsule whose seal fails verification
   (behaviour change: such a capsule used to export).** A capsule that had been sealed and then edited
   was exported exactly like one that was never sealed — `seal_envelope_path: null`, with its evidenced
