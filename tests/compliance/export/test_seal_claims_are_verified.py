@@ -30,7 +30,7 @@ def test_a_decoy_seal_file_is_not_tamper_evidence(minimal_capsule_dir: Path) -> 
 def test_a_verifying_seal_is_tamper_evidence(
     minimal_capsule_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(euaiact_art12, "capsule_seal_verifies", lambda _d: True)
+    monkeypatch.setattr(euaiact_art12, "seal_for_log_claims", lambda _d: "bound")
     assert "seal verifies against its files" in _art12(minimal_capsule_dir)
 
 
@@ -42,7 +42,7 @@ def test_ropa_lists_signing_only_for_a_verifying_seal(
     entry = exporter.build_ropa_entry(minimal_capsule_dir)
     assert "dsse_envelope_signing" not in json.dumps(entry.model_dump(mode="json"))
     assert "rfc3161_timestamp" not in json.dumps(entry.model_dump(mode="json"))
-    monkeypatch.setattr(gdpr_ropa, "capsule_seal_verifies", lambda _d: True)
+    monkeypatch.setattr(gdpr_ropa, "seal_is_valid_or_refuse", lambda _d: True)
     entry = exporter.build_ropa_entry(minimal_capsule_dir)
     assert "dsse_envelope_signing" in json.dumps(entry.model_dump(mode="json"))
 

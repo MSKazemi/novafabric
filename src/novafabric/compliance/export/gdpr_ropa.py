@@ -31,7 +31,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
-from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
+
+from ._seal_guard import seal_is_valid_or_refuse
 
 # ---------------------------------------------------------------------------
 # Models
@@ -113,7 +114,16 @@ class GDPRRoPAExporter:
 
         Returns:
             A populated :class:`RoPAEntry`.
+
+        Raises:
+            CapsuleSealInvalidError: the capsule carries a ``.seal`` that fails
+                verification. Refused, not listed as merely unsigned: a broken seal
+                is evidence the capsule changed after it was sealed. A capsule that
+                was never sealed still exports, without the signing measure.
         """
+        # Tri-state, not capsule_seal_verifies (which is False for both "never
+        # sealed" and "sealed, then edited").
+        sealed = seal_is_valid_or_refuse(capsule_dir)
         manifest = self._load_manifest(capsule_dir)
 
         run_id = manifest.get("run_id", "unknown")
@@ -126,7 +136,7 @@ class GDPRRoPAExporter:
         # compliance-privacy-12). Signing was listed "always", and a "seal.json"
         # nothing writes stood for an RFC 3161 timestamp.
         security: list[str] = []
-        if capsule_seal_verifies(capsule_dir):
+        if sealed:
             security.append("dsse_envelope_signing")
         if (capsule_dir / "evidence_bundle.json").exists():
             security.append("evidence_bundle_integrity")
