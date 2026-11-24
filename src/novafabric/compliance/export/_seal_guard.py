@@ -37,7 +37,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
 
-from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
+from novafabric.trust.novaseal.capsule_verify import capsule_seal_coverage, capsule_seal_status
 
 from .provenance import CAPSULE_REF_FILES
 
@@ -88,8 +88,12 @@ def seal_for_log_claims(capsule_dir: Path) -> LogSealState:
       the logs are tamper-evident.
 
     Raises :class:`CapsuleSealInvalidError` for a seal that fails verification.
+
+    The capsule is verified **once** (:func:`capsule_seal_coverage`). Asking twice, bare
+    and then with the files to cover, let a capsule edited in between turn a seal that
+    had just stopped verifying into ``"unbound"``.
     """
-    if not seal_is_valid_or_refuse(capsule_dir):
-        return "absent"
-    covered = capsule_seal_status(capsule_dir, must_cover=CAPSULE_REF_FILES)
-    return "bound" if covered == "valid" else "unbound"
+    coverage = capsule_seal_coverage(capsule_dir, must_cover=CAPSULE_REF_FILES)
+    if coverage == "invalid":
+        raise CapsuleSealInvalidError(capsule_dir)
+    return coverage
