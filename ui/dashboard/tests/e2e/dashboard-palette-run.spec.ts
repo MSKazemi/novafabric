@@ -59,7 +59,7 @@ test('palette selection never displays the previous capsule while a new run load
   await mockApi(page, {
     '/api/runs/run-001': { body: capsule('run-001') },
   });
-  let releaseRequest: (() => void) | null = null;
+  let releaseRequest = null as (() => void) | null;
   // Hold the B response so the stale-A visibility window is deterministic.
   await page.route((url) => url.pathname === '/api/runs/run-002', async (route) => {
     await new Promise<void>((resolve) => { releaseRequest = resolve; });
@@ -71,7 +71,7 @@ test('palette selection never displays the previous capsule while a new run load
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
   await palette.getByRole('textbox', { name: 'Search commands' }).fill('run-002');
-  await palette.getByRole('button', { name: /^Run run-002\\b/ }).click();
+  await palette.getByRole('button', { name: /^Run run-002\b/ }).click();
 
   await expect.poll(() => urlParam(page, 'run')).toBe('run-002');
   await expect.poll(() => releaseRequest !== null).toBe(true);
