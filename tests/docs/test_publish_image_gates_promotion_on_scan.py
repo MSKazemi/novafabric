@@ -31,6 +31,7 @@ the gate may live in one and be shared with ``release-toolchain.yml``.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,9 @@ WRITE_COMMANDS = (
     "cosign sign",
     "cosign attest",
     "docker push",
+    "docker build",
+    "docker buildx build",
+    "buildctl",
     "helm push",
     "skopeo copy",
     "crane copy",
@@ -366,6 +370,91 @@ def test_the_tag_set_is_checked_before_anything_is_built_copied_or_signed() -> N
     assert str(s["env"]["IMMUTABLE"]) == str(tag_step["env"]["IMMUTABLE"]), (
         "the early check must use the same immutable-tag rule as the tag step"
     )
+
+
+# --------------------------------------------------------------------------- one build, digest-addressed
+
+
+def test_no_shell_step_builds_or_pushes_an_image() -> None:
+    """The single build is ``docker/build-push-action``; a shell build after the gate would
+    publish bytes nobody scanned and could not be told apart by the digest checks."""
+    for s in _steps():
+        run = str(s.get("run") or "")
+        hit = re.search(
+            r"\b(docker\s+(buildx\s+)?build|docker\s+push|buildctl|kaniko|podman\s+build)\b", run
+        )
+        assert not hit, f"{_name(s)!r} builds or pushes an image from the shell ({hit.group(0)!r})"
+
+
+def test_cosign_signs_the_promoted_digest_not_a_tag() -> None:
+    """A tag can move between the scan and the signature; the signature must bind the digest."""
+    steps = _steps()
+    build_digest = "${{ steps.build.outputs.digest }}"
+    signs = [s for s in steps if re.search(r"\bcosign\s+(sign|attest)\b", str(s.get("run") or ""))]
+    assert signs, "no cosign step found"
+    for s in signs:
+        run = str(s["run"])
+        assert re.search(r"cosign\s+(sign|attest)\b[^\n]*@\$\{DIGEST\}", run), (
+            f"{_name(s)!r} does not sign REPO@${{DIGEST}}: {run!r}"
+        )
+        assert s["_env"].get("DIGEST") == build_digest, (
+            f"{_name(s)!r}: DIGEST is not the single build digest ({s['_env'].get('DIGEST')!r})"
+        )
+        assert not re.search(r"cosign\s+(sign|attest)\b[^\n]*(:\$\{\{|:latest|steps\.meta)", run)
+    for s in (s for s in steps if str(s.get("uses") or "").startswith("actions/attest-build")):
+        assert s["with"].get("subject-digest") == build_digest
+        assert "@" not in str(s["with"].get("subject-name")) and ":" not in str(
+            s["with"].get("subject-name")
+        ).replace("steps.image.outputs.ref", "")
+
+
+def _composite_guard_script() -> str:
+    comp = _load(ROOT / ".github" / "actions" / "scan-candidate" / "action.yml")
+    first = comp["runs"]["steps"][0]
+    assert "run" in first, "the composite must start with its digest-only guard"
+    return str(first["run"])
+
+
+@pytest.mark.parametrize(
+    ("ref", "ok"),
+    [
+        ("localhost:5000/x@sha256:" + "a" * 64, True),
+        ("localhost:5000/x:candidate", False),
+        ("localhost:5000/x", False),
+        ("localhost:5000/x@sha256:" + "a" * 63, False),
+        ("localhost:5000/x@sha256:" + "A" * 64, False),
+        ("localhost:5000/x@sha256:" + "a" * 64 + "0", False),
+        ("localhost:5000/x@sha256:", False),
+        ("", False),
+    ],
+)
+def test_the_scan_composite_refuses_anything_that_is_not_a_digest(ref: str, ok: bool) -> None:
+    """The guard is executed, not grepped: a tag, an empty or a short digest must exit 1."""
+    script = _composite_guard_script().replace("${{ inputs.image-ref }}", ref)
+    done = subprocess.run(  # noqa: S603
+        ["bash", "-c", script],  # noqa: S607
+        env={"REF": ref, "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert (done.returncode == 0) is ok, (ref, done.stdout, done.stderr)
+
+
+def test_permissions_are_exactly_what_the_release_needs() -> None:
+    """Nothing may widen silently: an extra ``contents: write`` lets the job push to the repo."""
+    wf = _load(WORKFLOW)
+    assert wf.get("permissions") == {"contents": "read"}
+    assert wf["jobs"][JOB]["permissions"] == {
+        "contents": "read",
+        "packages": "write",  # GHCR push with GITHUB_TOKEN
+        "id-token": "write",  # keyless cosign + attestation
+        "attestations": "write",  # actions/attest-build-provenance
+    }
+    assert wf["jobs"]["ci-green"]["permissions"] == {"actions": "read", "contents": "read"}
+    composite = _load(ROOT / ".github" / "actions" / "scan-candidate" / "action.yml")
+    assert "permissions" not in composite
 
 
 # --------------------------------------------------------------------------- bypass

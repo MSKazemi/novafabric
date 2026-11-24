@@ -286,3 +286,67 @@ def test_promote_cannot_be_run_without_scan_evidence() -> None:
 def test_report_file_names_are_one_per_platform() -> None:
     assert ri.report_name("linux/amd64") == AMD64_REPORT
     assert ri.report_name("linux/arm64") == ARM64_REPORT
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ArtifactType", "filesystem"),
+        ("ArtifactType", None),
+        ("SchemaVersion", 1),
+        ("SchemaVersion", 3),
+        ("SchemaVersion", None),
+    ],
+)
+def test_only_a_trivy_schema_2_container_image_report_is_evidence(
+    reports: Path, field: str, value: object
+) -> None:
+    """A filesystem or repository scan can name any ArtifactName; it is not a scan of this image."""
+
+    def edit(d: dict[str, Any]) -> None:
+        if value is None:
+            d.pop(field, None)
+        else:
+            d[field] = value
+
+    _edit(reports / AMD64_REPORT, edit)
+    with pytest.raises(ri.GateError, match="not a Trivy container-image report"):
+        ri.check_report(reports / AMD64_REPORT, DIGEST, "linux/amd64")
+
+
+def test_every_subprocess_call_in_the_script_has_a_timeout() -> None:
+    """A hung registry must fail the gate, not stall the job to its 60-minute cap."""
+    import ast
+
+    tree = ast.parse((REPO / "scripts" / "release_image.py").read_text(encoding="utf-8"))
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "subprocess"
+        and n.func.attr in {"run", "call", "check_call", "check_output", "Popen"}
+    ]
+    assert calls, "no subprocess call found - the detector is broken"
+    for call in calls:
+        assert any(k.arg == "timeout" for k in call.keywords), (
+            f"subprocess.{call.func.attr} at line {call.lineno} has no timeout"  # type: ignore[attr-defined]
+        )
+
+
+def test_the_imagetools_call_passes_a_positive_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    class Done:
+        returncode = 0
+        stdout = b"{}"
+        stderr = b""
+
+    def fake_run(*args: Any, **kwargs: Any) -> Done:
+        seen.update(kwargs)
+        return Done()
+
+    monkeypatch.setattr(ri.subprocess, "run", fake_run)
+    ri._imagetools("inspect", "--raw", "localhost:5000/x@sha256:" + "0" * 64)
+    assert isinstance(seen.get("timeout"), (int, float)) and 0 < seen["timeout"] <= 900

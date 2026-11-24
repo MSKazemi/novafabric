@@ -24,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -363,6 +364,39 @@ def test_rerunning_the_same_digest_is_idempotent_and_a_passing_release_moves_lat
     assert oci.tag_digest(a, _bare(dest), "1.0.0") == one.digest
 
 
+def test_the_immutable_tag_is_bound_before_any_moving_tag(
+    oci_registries: oci.Registries,
+    images: dict[str, Img],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the second tag write fails, X.Y.Z must already exist and no moving tag may have moved.
+
+    The workflow passes the tags in metadata order (``latest`` and ``X.Y`` before ``X.Y.Z``);
+    the script must reorder so the immutable tag is bound first. A half-finished release then
+    has its release tag and not a ``latest`` that points at an image without one.
+    """
+    regs, img = oci_registries, images["good"]
+    dest = _dest(regs.a)
+    assert _promote(regs, img, _reports(regs, tmp_path, img), dest) == 0
+    real: Callable[..., bytes] = ri._imagetools
+    creates: list[str] = []
+
+    def second_write_fails(*args: str) -> bytes:
+        if args[0] == "create":
+            creates.append(args[args.index("-t") + 1])
+            if len(creates) == 2:
+                raise ri.GateError("exit 1: ERROR: 503 simulated registry failure")
+        return real(*args)
+
+    monkeypatch.setattr(ri, "_imagetools", second_write_fails)
+    assert _tag(dest, img.digest, "latest", "1.0", "1.0.0", immutable="1.0.0") == 1
+    assert creates[0].endswith(":1.0.0"), creates
+    assert oci.tag_digest(regs.a, _bare(dest), "1.0.0") == img.digest
+    assert oci.tag_digest(regs.a, _bare(dest), "latest") is None
+    assert oci.tag_digest(regs.a, _bare(dest), "1.0") is None
+
+
 # ------------------------------------------------------- GHCR and Docker Hub fail independently
 
 
@@ -434,9 +468,39 @@ def test_the_cli_process_exits_1_with_an_error_annotation_and_publishes_nothing(
     _assert_nothing_published(oci_registries.a, dest, img.digest)
 
 
-# ------------------------------------------------------------- real Trivy, when it can run here
+# ------------------------------------------------------------- real Trivy
 
 TRIVY_IMAGE = "aquasec/trivy:0.76.2"
+TRIVY_TIMEOUT_S = 600  # per platform scan, DB download included
+
+
+def _trivy_cache() -> Path:
+    """A cache that survives runs, so the vulnerability DB is downloaded once, not per test.
+
+    ``NOVA_TEST_TRIVY_CACHE`` overrides the location (an offline machine can point it at a
+    directory that already holds a DB). The directory is private to the invoking user.
+    """
+    override = os.environ.get("NOVA_TEST_TRIVY_CACHE")
+    path = (
+        Path(override)
+        if override
+        else Path(tempfile.gettempdir()) / f"nf-trivy-cache-{os.getuid()}"
+    )
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return path
+
+
+def _require_trivy_image() -> None:
+    """The ONLY reason these tests skip: Docker or the trivy image is not available here.
+
+    A trivy that runs and fails (DB download, scan error, timeout) is a FAILURE of the test,
+    never a skip: a skipped scenario would let a broken scanner integration look green.
+    """
+    from _docker_image import skip_if_image_rate_limited
+
+    skip_if_image_rate_limited(TRIVY_IMAGE)  # skips if the image is absent and not pullable
+    if oci.docker("image", "inspect", TRIVY_IMAGE, check=False, timeout=60).returncode != 0:
+        pytest.skip(f"{TRIVY_IMAGE} is not available locally and could not be pulled")
 
 
 def _real_trivy_reports(regs: oci.Registries, img: Img, out: Path, cache: Path) -> None:
@@ -470,17 +534,20 @@ def _real_trivy_reports(regs: oci.Registries, img: Img, out: Path, cache: Path) 
                 "--format",
                 "json",
                 "--quiet",
+                "--timeout",
+                f"{TRIVY_TIMEOUT_S - 30}s",
                 "-o",
                 f"/out/{target.name}",
                 f"{regs.a}/{img.repo}@{img.digest}",
             ],
             capture_output=True,
             text=True,
-            timeout=900,
+            timeout=TRIVY_TIMEOUT_S,  # TimeoutExpired fails the test, it does not skip it
             check=False,
         )
-        if proc.returncode != 0 or not target.exists():
-            pytest.skip(f"trivy unavailable here (exit {proc.returncode}): {proc.stderr[-200:]}")
+        assert proc.returncode == 0 and target.exists(), (
+            f"trivy failed on {platform} (exit {proc.returncode}): {proc.stderr[-500:]}"
+        )
 
 
 def test_with_real_trivy_a_vulnerable_arm64_leg_blocks_and_a_clean_image_promotes(
@@ -489,11 +556,13 @@ def test_with_real_trivy_a_vulnerable_arm64_leg_blocks_and_a_clean_image_promote
     tmp_path_factory: pytest.TempPathFactory,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Real trivy 0.76.2 reports (TRIVY_PLATFORM per platform) through the real script."""
-    from _docker_image import skip_if_image_rate_limited
+    """Real trivy 0.76.2 reports (TRIVY_PLATFORM per platform) through the real script.
 
-    skip_if_image_rate_limited(TRIVY_IMAGE)
-    cache = tmp_path_factory.mktemp("trivy-cache")
+    Skips only when Docker or the trivy image is unavailable; a trivy error FAILS. The DB
+    cache persists between runs (see ``_trivy_cache``) and each scan is time-bounded.
+    """
+    _require_trivy_image()
+    cache = _trivy_cache()
     work = tmp_path_factory.mktemp("trivy-reports")
 
     bad, good = images["armvuln"], images["good"]
@@ -523,11 +592,11 @@ def test_real_trivy_with_the_platform_flag_ignored_is_caught_by_the_evidence_che
     This is the workflow's one unproven link (trivy-action forwarding the env var). The
     arm64-vulnerable image then yields a clean-looking arm64 report that is really amd64;
     the architecture check must refuse it instead of promoting.
-    """
-    from _docker_image import skip_if_image_rate_limited
 
-    skip_if_image_rate_limited(TRIVY_IMAGE)
-    cache = tmp_path_factory.mktemp("trivy-cache-noplat")
+    Skips only when Docker or the trivy image is unavailable; a trivy error FAILS.
+    """
+    _require_trivy_image()
+    cache = _trivy_cache()
     work = tmp_path_factory.mktemp("trivy-reports-noplat")
     bad = images["armvuln"]
     _real_trivy_reports(oci_registries, bad, work, cache)  # real arm64 report (vulnerable)
