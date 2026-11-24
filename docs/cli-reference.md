@@ -3724,10 +3724,14 @@ after sealing, a damaged or substituted seal, a linked or non-directory `.seal`)
 additive, optional `findings: [{code: "seal_invalid", message}]` on each binding whose control
 asks for seal evidence, and `nova evidence bind` prints a finding line; a capsule that was
 never sealed gets no finding (the binding is just unsatisfied for that evidence). A binding
-with no finding serialises exactly as before. The same limits apply as for `nova audit map`:
-a seal made before evidence digests, or a stream the seal does not list, cannot show edits to
-that stream, and a valid seal means the bytes it names are unchanged since sealing, not who
-signed them (a capsule re-sealed with another key also verifies, and the signer is never
+with no finding serialises exactly as before. A seal that **verifies** but does not name some
+or all of the capsule's evidence streams (the same stream set knowledge-graph ingest reads) gets
+a second, non-blocking code, `seal_unbound` (works today), on the same bindings: the seal is
+still cited, the finding only says an edit to those streams would not be detected by the seal
+(it does not say the capsule was edited), and `nova evidence bind` prints it as a `Notice`, not
+an error line; the exit code is unchanged. The same finding is carried by
+`POST /api/evidence/{run_id}/bind`. A valid seal means the bytes it names are unchanged since
+sealing, not who signed them (a capsule re-sealed with another key also verifies, and the signer is never
 anchored here).
 
 ---
@@ -9682,15 +9686,28 @@ optional; `[]` when there is none), and in `nova audit report` (text and JSON-LD
 `nova audit map` and `nova audit coverage` also exit 1 on such a finding, even when every
 control is covered or the threshold is met. The coverage scores are unchanged: the finding is
 reported beside them and fails the gate, but is not subtracted from them, so the edited
-capsule's other evidence still counts toward coverage. This is the plain seal check: a seal made
-before evidence digests, or a stream the seal does not list, cannot show edits to that stream,
-so no finding is not proof that nothing was edited. `evidence_seal_verified` keeps its meaning
+capsule's other evidence still counts toward coverage. `evidence_seal_verified` keeps its meaning
 (at least one capsule's seal verified). A valid seal means the bytes it names are unchanged
 since sealing; it does not say who signed them.
 
+**A seal that verifies but does not bind the evidence streams is a notice (`seal_unbound`,
+works today).** A seal made before ADR-0251 carries no `evidence_digests` (it signs the manifest
+only), and a stream added to a capsule after sealing is not named by its seal; either way the
+seal verifies but could not show an edit to those streams. Each such capsule gets a
+`seal_unbound` finding (the streams are the ones knowledge-graph ingest reads, and each capsule
+is verified once). It is **non-blocking**: it never changes an exit code and never changes
+`gate_passed`; only `seal_invalid` blocks. The summary prints it as a `Notice` instead of an
+error line and does not print `Seals: verified` for it, `--json` lists it in `findings[]`, and
+`nova audit report --format text` prints `NOTICE seal_unbound`. It does not say the capsule was
+edited: `nova verify <capsule>` shows what the seal covers. A capsule with no `.seal` and one
+whose seal names every evidence stream are not findings; with no finding of either kind,
+`findings` is `[]` as before. Making `seal_unbound` blocking would fail every capsule sealed
+before ADR-0251, which is a separate owner decision.
+
 `GET /api/compliance/audit/coverage` returns the same decision additively: `findings` (the
-list above) and `gate_passed` (score at or above the threshold **and** no finding, the CLI's
-exit decision). `threshold_met` keeps its meaning (score at or above the threshold only), so
+list above, `seal_invalid` and `seal_unbound`) and `gate_passed` (score at or above the
+threshold **and** no blocking finding, the CLI's exit decision; a `seal_unbound` finding does
+not change it). `threshold_met` keeps its meaning (score at or above the threshold only), so
 read `gate_passed` to gate on it. `POST /api/compliance/audit/report` returns the whole report,
 `findings` included; `GET /api/compliance/audit/map` lists checkers and scans nothing.
 
@@ -9771,7 +9788,8 @@ nova audit coverage --profile eu-ai-act-high-risk --threshold 0.9
 
 Also exits 1, even at or above the threshold, when a scanned capsule carries a `.seal` that
 fails verification (a `seal_invalid` finding, see [`nova audit map`](#nova-audit-map)); a capsule
-with no `.seal` is unchanged.
+with no `.seal` is unchanged. A `seal_unbound` finding (a valid seal that does not bind the
+evidence streams) is printed as a notice and never changes the exit code.
 
 **Reference:** `src/novafabric/compliance/audit/`, `src/novafabric/cli/audit.py`.
 

@@ -92,18 +92,35 @@ class ControlCoverage(BaseModel):
     )
 
 
+#: Finding codes that GATE: ``nova audit map|coverage`` exit 1 and the coverage route's
+#: ``gate_passed`` is false. Every consumer asks :attr:`AuditFinding.blocking` (or
+#: :attr:`AuditReport.blocking_findings`) instead of testing "is there a finding", so a new
+#: code is non-gating until it is added here on purpose.
+BLOCKING_FINDING_CODES: frozenset[str] = frozenset({"seal_invalid"})
+
+
 class AuditFinding(BaseModel):
     """Something the audit found that is not a coverage gap (additive, optional).
 
-    ``seal_invalid`` is the only code today: a capsule carries a ``.seal`` that fails
-    verification (edited after sealing, a damaged envelope, a linked or non-directory
-    ``.seal``). That is evidence of tampering, which "no seal evidence" does not say;
-    a capsule with no ``.seal`` at all is not a finding.
+    * ``seal_invalid`` (blocking): a capsule carries a ``.seal`` that fails verification
+      (edited after sealing, a damaged envelope, a linked or non-directory ``.seal``).
+      That is evidence of tampering, which "no seal evidence" does not say.
+    * ``seal_unbound`` (not blocking): the ``.seal`` verifies but does not name some or all
+      of the capsule's evidence streams (it was made before ADR-0251 and signs the manifest
+      only, or a stream was added after sealing), so the seal could not show an edit to
+      them. It does not say the capsule was edited.
+
+    A capsule with no ``.seal`` at all is not a finding.
     """
 
-    code: Literal["seal_invalid"] = Field(..., description="Finding code")
+    code: Literal["seal_invalid", "seal_unbound"] = Field(..., description="Finding code")
     capsule_id: str = Field(..., description="Name of the capsule directory the finding is about")
     message: str = Field(..., description="Human-readable explanation")
+
+    @property
+    def blocking(self) -> bool:
+        """True when this finding fails a gate (see :data:`BLOCKING_FINDING_CODES`)."""
+        return self.code in BLOCKING_FINDING_CODES
 
 
 class AuditReport(BaseModel):
@@ -146,8 +163,10 @@ class AuditReport(BaseModel):
         default_factory=list,
         description=(
             "Explicit findings beyond coverage gaps. A capsule whose .seal exists but "
-            "fails verification is reported here as seal_invalid, separately from a "
-            "capsule that was never sealed (which is only missing seal evidence)."
+            "fails verification is reported here as seal_invalid (blocking), separately "
+            "from a capsule that was never sealed (which is only missing seal evidence). "
+            "A seal that verifies but does not bind the evidence streams is reported as "
+            "seal_unbound (not blocking)."
         ),
     )
     bundle_path: str | None = Field(
@@ -168,3 +187,8 @@ class AuditReport(BaseModel):
     )
 
     model_config = {"populate_by_name": True}
+
+    @property
+    def blocking_findings(self) -> list[AuditFinding]:
+        """The findings that fail a gate; ``seal_unbound`` is listed in ``findings`` only."""
+        return [f for f in self.findings if f.blocking]

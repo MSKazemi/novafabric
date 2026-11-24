@@ -7879,10 +7879,11 @@ def create_app(
             "not_captured_controls": report.not_captured_controls,
             "coverages": [cov.model_dump(by_alias=True) for cov in report.coverages],
             # Additive. ``threshold_met`` keeps meaning "score >= threshold"; the gate a
-            # caller acts on (the CLI's exit code) is ``gate_passed``: that AND no finding,
-            # so a capsule whose .seal fails verification does not pass.
+            # caller acts on (the CLI's exit code) is ``gate_passed``: that AND no BLOCKING
+            # finding, so a capsule whose .seal fails verification does not pass. A
+            # ``seal_unbound`` finding is listed here and never gates.
             "findings": [f.model_dump() for f in report.findings],
-            "gate_passed": report.overall_score >= threshold and not report.findings,
+            "gate_passed": report.overall_score >= threshold and not report.blocking_findings,
         }
 
     @app.post("/api/compliance/audit/bundle", dependencies=[Depends(verify_token)])
