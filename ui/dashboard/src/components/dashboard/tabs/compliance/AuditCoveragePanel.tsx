@@ -19,11 +19,21 @@ type CoverageEntry = {
   score?: number;
 };
 
+type AuditFinding = {
+  code: string;
+  capsule_id: string;
+  message: string;
+};
+
 type CoverageResult = {
   profile: string;
   overall_score: number;
   threshold: number;
+  /** score >= threshold only; it says nothing about findings. */
   threshold_met: boolean;
+  /** score >= threshold AND no finding. Absent on a server older than the field. */
+  gate_passed?: boolean;
+  findings?: AuditFinding[];
   capsule_count: number;
   total_controls: number;
   covered_controls: number;
@@ -45,6 +55,10 @@ export default function AuditCoveragePanel() {
     { silentSuccess: true, silentError: true },
   );
   const result = coverage.result;
+  // The verdict is the gate (score and no finding); `threshold_met` is only the fallback
+  // for a server that does not send `gate_passed`.
+  const gatePassed = result ? (result.gate_passed ?? result.threshold_met) : false;
+  const findings = result?.findings ?? [];
 
   return (
     <PanelScaffold
@@ -90,14 +104,26 @@ export default function AuditCoveragePanel() {
           <div className="flex flex-wrap gap-4 text-[10px] font-mono">
             <span>
               <span className="text-[var(--color-text-faint)]">score </span>
-              <span className={clsx('font-bold', result.threshold_met ? 'text-[var(--color-status-success)]' : 'text-[var(--color-status-failure)]')}>
+              <span className={clsx('font-bold', gatePassed ? 'text-[var(--color-status-success)]' : 'text-[var(--color-status-failure)]')}>
                 {(result.overall_score * 100).toFixed(1)}%
               </span>
               <span className="text-[var(--color-text-faint)]"> (threshold {(result.threshold * 100).toFixed(0)}%)</span>
             </span>
             <span className="text-[var(--color-text-faint)]">{result.total_controls} controls · {result.covered_controls} covered · {result.partial_controls} partial · {result.missing_controls} missing</span>
             <span className="text-[var(--color-text-faint)]">{result.capsule_count} capsules analysed</span>
+            <span className={clsx('font-bold', gatePassed ? 'text-[var(--color-status-success)]' : 'text-[var(--color-status-failure)]')}>
+              {gatePassed ? 'gate passed' : 'gate failed'}
+            </span>
           </div>
+          {findings.length > 0 && (
+            <ul className="space-y-1 text-[10px] font-mono" aria-label="Audit findings">
+              {findings.map((f, i) => (
+                <li key={`${f.code}-${f.capsule_id}-${i}`} className="text-[var(--color-status-failure)]">
+                  <span className="font-bold">{f.code}</span> · {f.capsule_id} — {f.message}
+                </li>
+              ))}
+            </ul>
+          )}
           {result.coverages.length > 0 && (
             <div className="rounded border border-[var(--color-border)] overflow-hidden max-h-64 overflow-y-auto">
               <table className="w-full text-[10px] font-mono">
