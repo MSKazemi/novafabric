@@ -41,8 +41,10 @@ import { NON_GOALS_URL } from '../lib/links';
       <section>
         <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">What we won't do</h2>
         <p>
-          We will not capture full prompts and responses by default — too noisy, too sensitive,
-          too expensive. We will not run a hosted service in v0.x. We will not invent a third
+          Today a capture stores the model calls it records, request messages and responses
+          included, in the capsule (<code>model-calls.jsonl</code>), at every capture level. Making
+          that opt-in by default is planned (unscheduled), because full prompts and responses are
+          sensitive and noisy to keep by default. We will not run a hosted service in v0.x. We will not invent a third
           top-level format beyond Run Capsule and Evidence Bundle. We will not block the user
           workload by default if a NovaFabric component fails. The
           <a href={NON_GOALS_URL} rel="noopener" class="underline underline-offset-2 hover:text-[var(--color-text)]">non-goals doc</a>
