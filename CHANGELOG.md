@@ -38,6 +38,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   `First divergence: none in model or tool calls` next to `changed=1` when only the environment
   or outputs differ. Record ids and paths are printed on one line (non-printable characters replaced,
   80 characters at most; `nova verify` does the same for the paths it lists) in the text reports; JSON is unchanged.
+- **Docs: AIUC-1 evidence crosswalk** (`docs/aiuc-1-evidence-crosswalk.md`). For E015.1–.4, D003.3,
+  D003.4, C002.1, C002.2, C002.4, A006.1 and B001 it names the NovaFabric record or command that may be
+  relevant, rates it strong or partial and states the gap, including that a default capsule stores full
+  prompts and responses. E015.2 and E015.4 are rated partial: the catalog check for E015.2 is one
+  recorded model call (the same as E015.1), and E015.4 passes on any seal that verifies, including one
+  made before evidence digests, which signs the manifest only and does not bind the logs (`nova verify`
+  prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
+  has empty titles and descriptions for you to fill in from your licensed copy, and loads with
+  `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
 
 ### Documentation
 
