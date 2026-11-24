@@ -22,6 +22,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
   Every check reports `task`, `capture`, `integrity` or `replay` with an expected verdict. In the default zero-key profile, integrity is `NOT_EVALUATED` even though `nova validate` passes, and replay is `NOT_EVALUATED` (forensic only, no fidelity claim). The opt-in `--profile signed-offline` uses `nova seal init` and `nova verify --ca-bundle` with a disposable local CA (a self-asserted identity, no timestamp authority), and must see a tampered member, a missing member, a corrupted signature and a wrong CA refused, each for its own reason (the broken property false and the untouched ones true; a corrupted signature also fails the chain check). `--require-verified` exits 2 unless both variants verify. A wrong but faithfully captured decision fails that variant's `task` check, not `capture`. `--variant unsafe|corrected` keeps the single-run D1 report. Examples only: no change to `src/novafabric`, schemas, the CLI, dependencies or capture defaults.
 - **CI: a `golden-capsule` job (#225).** It builds the wheel, installs it into a clean Python 3.12 venv with versions from `uv.lock`, and runs from it the EvidenceLab walkthrough in both profiles (zero-key; signed-offline with `--require-verified`, including the four tamper negatives), the existing replay-fidelity oracles in `tests/replay/fidelity`, and one new test: mocked replay of a capsule captured at the default level must never report success. That capsule's `replayability.json` names `tool_result_not_servable` (`payload_not_recorded`) for both tools, and the replay ends `diverged` with no live model call, tool call or network connection. The step fails if any of those tests is skipped or xfailed, so a missing optional client cannot silently drop an oracle, and the install step checks that every `force-include` target in `pyproject.toml` is present in the installed wheel. The wheel is built from the checked-out commit; it is not the artifact `publish-pypi.yml` uploads. The reports are uploaded as a 7-day artifact; the fixtures are synthetic.
+- **Docs: AIUC-1 evidence crosswalk** (`docs/aiuc-1-evidence-crosswalk.md`). For E015.1–.4, D003.3,
+  D003.4, C002.1, C002.2, C002.4, A006.1 and B001 it names the NovaFabric record or command that may be
+  relevant, rates it strong or partial and states the gap, including that a default capsule stores full
+  prompts and responses. E015.2 and E015.4 are rated partial: the catalog check for E015.2 is one
+  recorded model call (the same as E015.1), and E015.4 passes on any seal that verifies, including one
+  made before evidence digests, which signs the manifest only and does not bind the logs (`nova verify`
+  prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
+  has empty titles and descriptions for you to fill in from your licensed copy, and loads with
+  `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
 
 ### Documentation
 
