@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -467,12 +468,9 @@ INSPECT_OK = (
 )
 #: The fixture digest the scenario's own files hash to (computed here, not read from a run).
 FIXTURE_DIGEST = "ab" * 32
-REGISTRY_OK = {
-    "registry_exit_code": 0,
-    "registry_output": INSPECT_OK,
-    "expected_fixture_sha256": FIXTURE_DIGEST,
-    "registered_fixture_sha256": FIXTURE_DIGEST,
-}
+REGISTRY_OK = {"registry_exit_code": 0, "registry_output": INSPECT_OK,
+               "expected_fixture_sha256": FIXTURE_DIGEST,
+               "registered_fixture_sha256": FIXTURE_DIGEST}
 
 
 @pytest.mark.parametrize(
@@ -533,22 +531,101 @@ def test_an_unreadable_lineage_artifact_still_reports_the_registry_side(
     assert "registry_readback" in c.observed
 
 
+PRETTY = json.dumps({"a": 1, "items": [{"x": 1}, {"y": 2}], "k": [["p", "q"], ["r"]]}, indent=2)
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
         ('{"a": 1}', {"a": 1}),
         ('warning, no brackets\n{"a": 1}\n', {"a": 1}),
         ('[novafabric] WARNING: dev-only backend\n{"a": 1}\n', {"a": 1}),
+        ('[WARN] one\n[WARN] two\n[1, 2]\n', [1, 2]),
         ('WARNING [novafabric] dev-only backend\n[1, 2]\n', [1, 2]),
         ('{"msg": "a [b] c"}', {"msg": "a [b] c"}),
         ("[novafabric] WARNING: nothing structured follows\n", None),
         ("", None),
+        # A warning that is itself valid JSON, on the same line as other text, is not the document.
+        ('[1] deprecated\n{"a": 1}\n', {"a": 1}),
+        # A warning after the document (stderr is merged into stdout) is ignored, bracketed or not.
+        ('{"a": 1}\n[novafabric] WARNING: closing\n', {"a": 1}),
+        ('{"a": 1}\nWARNING: closing\n', {"a": 1}),
+        (PRETTY + "\n[novafabric] WARNING: closing\n", json.loads(PRETTY)),
     ],
-    ids=["plain", "plain-warning", "bracket-prefix-warning", "bracket-inside-warning",
-         "bracket-inside-json", "only-a-warning", "empty"],
+    ids=["plain", "plain-warning", "bracket-prefix-warning", "two-bracket-warnings",
+         "bracket-inside-warning", "bracket-inside-json", "only-a-warning", "empty",
+         "json-valued-warning-same-line", "trailing-bracket-warning", "trailing-warning",
+         "pretty-with-trailing-warning"],
 )  # fmt: skip
 def test_json_from_output_skips_a_warning_that_contains_a_bracket(text: str, expected: Any) -> None:
     assert run._json_from_output(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        PRETTY[: PRETTY.index('"y"') + 2],  # cut inside the second list item
+        PRETTY[: PRETTY.index('"r"') + 1],  # cut inside the last nested list
+        '{\n  "a": 1,\n  "items": [\n    {"x": 1}\n',  # cut right after a complete item
+        '[\n  [1, 2]\n',  # cut right after a complete nested list
+        '{"a": 1, "b": [1, 2',  # compact, cut mid-array
+        '[novafabric] WARNING: x\n{"a": 1, "b"',  # truncated behind a warning
+    ],
+    ids=["mid-item", "mid-nested-list", "after-complete-item", "after-complete-nested-list",
+         "compact", "behind-warning"],
+)  # fmt: skip
+def test_json_from_output_never_returns_a_fragment_of_truncated_output(text: str) -> None:
+    assert run._json_from_output(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('  {"a": 1}\n', None),  # indented: the document must start the line
+        ('warning {"a": 1}\n', None),  # bracket mid-line is not a document start
+        ('[1]\n{"a": 1}\n', {"a": 1}),  # two documents: the one that ends the output wins
+        ('{"a": 1}\n{"b": 2}\n', {"b": 2}),
+        ('{"a": 1}\n[3]\nWARNING: tail\n', [3]),
+        ('{"a": 1} trailing\n', None),  # text on the document's last line: not a clean end
+        ('{"a": 1} trailing', None),  # ... also when the output has no final newline
+        ('{"a": 1} x', None),
+        (PRETTY + " trailing\n", None),  # ... also when the document spans lines
+        (PRETTY + "  \t\n", json.loads(PRETTY)),  # whitespace after it is fine
+        (PRETTY, json.loads(PRETTY)),  # ... and so is nothing
+        ("[WARN] w\n" * 19 + '{"a": 1}\n', {"a": 1}),  # 20 candidate lines: the cap
+        ("[WARN] w\n" * 20 + '{"a": 1}\n', None),  # 21: over the cap is not parseable
+    ],
+    ids=["indented", "mid-line", "list-then-dict", "two-docs", "two-docs-then-warning",
+         "text-after-doc-same-line", "text-after-doc-no-newline", "one-char-after-doc",
+         "text-after-pretty-doc", "whitespace-after-doc", "nothing-after-doc",
+         "twenty-candidates", "twenty-one-candidates"],
+)  # fmt: skip
+def test_json_from_output_document_must_start_a_line_and_end_its_line(
+    text: str, expected: Any
+) -> None:
+    assert run._json_from_output(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[x\n" * 100_000,  # 300 KB of bracket-led non-JSON lines
+        "{ " * 524_288,  # 1 MiB of nested-looking opens on one line
+        "[" * 100_000,
+        "[x\n" * 100_000 + '{"a": 1}\n',  # a document behind far too many warnings
+    ],
+    ids=["many-warning-lines", "one-huge-line", "deep-open-brackets", "document-behind-flood"],
+)  # fmt: skip
+def test_json_from_output_is_bounded_on_pathological_output(text: str) -> None:
+    started = time.monotonic()
+    assert run._json_from_output(text) is None
+    assert time.monotonic() - started < 2.0
+
+
+def test_json_from_output_survives_a_deeply_nested_valid_document() -> None:
+    deep = "[" * 100_000 + "]" * 100_000 + "\n"
+    assert run._json_from_output(deep) is None  # RecursionError is "not parseable", not a crash
+    assert run._json_from_output("[WARN] x\n" + deep) is None
 
 
 def test_the_registered_asset_path_is_the_scenario_actually_used(tmp_path: Path) -> None:

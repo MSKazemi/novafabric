@@ -46,6 +46,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Mapping, Sequence
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -669,24 +670,48 @@ _REPLAY_ID = re.compile(r"replay_id=([0-9A-HJKMNP-TV-Z]{26})")
 _CLI_SECONDS = 120.0
 
 
-def _json_from_output(text: str) -> Any:
-    """The first JSON object or array in a command's output (warning lines may precede it).
+#: A JSON document in a command's output starts at the first column of a line.
+_DOCUMENT_START = re.compile(r"(?m)^[\[{]")
+#: At most this many candidate lines are decoded; more is "not parseable", not a long scan.
+_MAX_JSON_CANDIDATES = 20
 
-    A warning such as ``[novafabric] WARNING: ...`` starts with a bracket but is not JSON, so
-    every ``{`` or ``[`` that opens a line is tried in turn, and then any other bracket; the
-    first that decodes to an object or array wins. Output with none is ``None``.
+
+def _json_from_output(text: str) -> Any:
+    """The JSON object or array a command printed, or ``None`` when there is no whole one.
+
+    ``nova ... --json`` prints its document with ``indent=2`` starting at the first column, and
+    stderr is merged into the same stream, so warnings can come before and after it. A candidate
+    is a line whose first character is ``{`` or ``[``, so a successful decode is always an
+    object or array. It is the document only when nothing but whitespace follows it on its
+    last line; a later candidate that also qualifies replaces it, so the document that ends
+    the output wins and trailing warnings (bracketed or not) are ignored. Consequences, all
+    returning ``None`` or the later document rather than a fragment:
+
+    * truncated output never yields an inner piece of the document (those start indented, and
+      a compact one has no second candidate);
+    * ``[1] deprecated`` before the document is skipped, not taken for it;
+    * an indented or mid-line bracket is not a document start;
+    * more than ``_MAX_JSON_CANDIDATES`` candidate lines, or a nesting deep enough to overflow
+      the decoder (``RecursionError``), is not parseable.
+
+    The scan is bounded: at most ``_MAX_JSON_CANDIDATES`` decodes, each at an offset into
+    ``text`` (no slicing).
     """
+    starts = [m.start() for m in islice(_DOCUMENT_START.finditer(text), _MAX_JSON_CANDIDATES + 1)]
+    if len(starts) > _MAX_JSON_CANDIDATES:
+        return None
     decoder = json.JSONDecoder()
-    line_starts = [m.end() - 1 for m in re.finditer(r"(?m)^[ \t]*[\[{]", text)]
-    others = [i for i, ch in enumerate(text) if ch in "{[" and i not in line_starts]
-    for start in (*line_starts, *others):
+    found: Any = None
+    for start in starts:
         try:
-            value, _ = decoder.raw_decode(text[start:])
-        except ValueError:
+            value, end = decoder.raw_decode(text, start)
+        except (ValueError, RecursionError):
             continue
-        if isinstance(value, (dict, list)):
-            return value
-    return None
+        line_end = text.find("\n", end)
+        if text[end : len(text) if line_end < 0 else line_end].strip():
+            continue
+        found = value
+    return found
 
 
 def _cli(
