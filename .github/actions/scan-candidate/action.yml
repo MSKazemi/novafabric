@@ -22,22 +22,25 @@ runs:
           exit 1
         fi
 
-    # Informational, all severities, both platforms. These never fail on findings
+    # Evidence, all severities, both platforms, as JSON. These never fail on findings
     # (exit-code 0) but still fail on a crash. They run BEFORE the gates so that
-    # both platforms' reports exist even when the first gate stops the job. The
-    # first step installs the pinned trivy and fills the vulnerability DB cache;
+    # both platforms' reports exist even when the first gate stops the job.
+    # `scripts/release_image.py check-reports` (and `promote`) later require, per
+    # platform, a report that names the scanned digest and the right architecture:
+    # the gate steps below prove trivy exited 0, the reports prove WHAT it scanned.
+    # The first step installs the pinned trivy and fills the vulnerability DB cache;
     # every later step reuses both.
-    - name: Report (trivy, all severities, linux/amd64 - informational)
+    - name: Report (trivy, all severities, linux/amd64 - evidence)
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       env:
         TRIVY_PLATFORM: linux/amd64
       with:
         image-ref: ${{ inputs.image-ref }}
-        format: table
-        output: trivy-report-amd64.txt
+        format: json
+        output: trivy-report-linux-amd64.json
         exit-code: "0"
         version: v0.76.2
-    - name: Report (trivy, all severities, linux/arm64 - informational)
+    - name: Report (trivy, all severities, linux/arm64 - evidence)
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       env:
         TRIVY_PLATFORM: linux/arm64
@@ -45,8 +48,8 @@ runs:
         TRIVY_SKIP_JAVA_DB_UPDATE: true
       with:
         image-ref: ${{ inputs.image-ref }}
-        format: table
-        output: trivy-report-arm64.txt
+        format: json
+        output: trivy-report-linux-arm64.json
         exit-code: "0"
         skip-setup-trivy: true
 

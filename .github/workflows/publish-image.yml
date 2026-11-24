@@ -148,8 +148,19 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: trivy-report-${{ github.sha }}
-          path: trivy-report-*.txt
+          path: trivy-report-*.json
           retention-days: 90
+
+      - name: Check the scan evidence (digest, architecture, no fixable CRITICAL)
+        # A green gate step proves trivy exited 0, not what it scanned. If
+        # TRIVY_PLATFORM never reached trivy, "arm64" would be a clean amd64 scan.
+        # This needs no credential, so it runs before any production login.
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          python3 scripts/release_image.py check-reports \
+            --digest "$DIGEST" --report-dir . \
+            --platform linux/amd64 --platform linux/arm64
 
       # ---- Nothing above this line can write to a production registry. ------
 
@@ -183,13 +194,17 @@ jobs:
           echo "ref=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Promote the scanned digest to GHCR (copy by digest, then verify)
+        # Tagless copy (DEST@digest): no staging tag is ever visible. If the first
+        # real run shows GHCR refusing a tagless manifest PUT, the one-line
+        # fallback is `--stage-tag "scanned-${DIGEST:7:12}"` here and below
+        # (owner decision A4 in the release notes).
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE: ${{ steps.image.outputs.ref }}
         run: |
           python3 scripts/release_image.py promote \
             --src-repo "$CANDIDATE_REPO" --dest-repo "$IMAGE" \
-            --digest "$DIGEST" --stage-tag "scanned-${DIGEST:7:12}" \
+            --digest "$DIGEST" --report-dir . \
             --platform linux/amd64 --platform linux/arm64
 
       - name: Promote the scanned digest to Docker Hub (optional mirror)
@@ -200,7 +215,7 @@ jobs:
         run: |
           python3 scripts/release_image.py promote \
             --src-repo "$CANDIDATE_REPO" --dest-repo "$IMAGE" \
-            --digest "$DIGEST" --stage-tag "scanned-${DIGEST:7:12}" \
+            --digest "$DIGEST" --report-dir . \
             --platform linux/amd64 --platform linux/arm64
 
       - name: Install cosign

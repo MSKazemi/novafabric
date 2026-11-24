@@ -230,18 +230,19 @@ jobs:
         with:
           image-ref: localhost:5000/gate-clean@${{ steps.fixtures.outputs.clean }}
 
-      - name: Clean fixture was really scanned on both platforms and has no finding
+      - name: Clean fixture was scanned on both platforms and the evidence checks out
+        # check-reports requires, per platform, a report for THIS digest with the
+        # right architecture and no fixable CRITICAL.
         run: |
-          for arch in amd64 arm64; do
-            test -f "trivy-report-$arch.txt" || { echo "::error::no $arch report"; exit 1; }
-            ! grep -q "CVE-2024-45491" "trivy-report-$arch.txt" || { echo "::error::clean fixture has a finding on $arch"; exit 1; }
-          done
+          python3 scripts/release_image.py check-reports \
+            --digest "${{ steps.fixtures.outputs.clean }}" --report-dir . \
+            --platform linux/amd64 --platform linux/arm64
 
       - name: Promote the clean fixture
         run: |
           python3 scripts/release_image.py promote \
             --src-repo localhost:5000/gate-clean --dest-repo localhost:5001/gate-clean \
-            --digest "${{ steps.fixtures.outputs.clean }}" --stage-tag scanned \
+            --digest "${{ steps.fixtures.outputs.clean }}" --report-dir . \
             --platform linux/amd64 --platform linux/arm64
 
       - name: Gate - vulnerable fixture must FAIL
@@ -253,10 +254,17 @@ jobs:
 
       - name: Vulnerable fixture failed because of the finding, on both platforms
         # A gate that fails for any other reason (registry unreachable, scanner crash)
-        # would pass the "must FAIL" check above for the wrong reason.
+        # would pass the "must FAIL" check above for the wrong reason, so the evidence
+        # check must refuse for the fixable CRITICAL on BOTH platforms.
         run: |
+          if python3 scripts/release_image.py check-reports \
+              --digest "${{ steps.fixtures.outputs.vulnerable }}" --report-dir . \
+              --platform linux/amd64 --platform linux/arm64 2> "$RUNNER_TEMP/vuln.err"; then
+            echo "::error::vulnerable fixture passed the evidence check"; exit 1
+          fi
           for arch in amd64 arm64; do
-            grep -q "CVE-2024-45491" "trivy-report-$arch.txt" || { echo "::error::no finding on $arch"; exit 1; }
+            grep -q "linux/$arch: .*CVE-2024-45491" "$RUNNER_TEMP/vuln.err" \
+              || { cat "$RUNNER_TEMP/vuln.err"; echo "::error::no finding on $arch"; exit 1; }
           done
 
       - name: Gate - arm64-only vulnerable fixture must FAIL
@@ -268,8 +276,24 @@ jobs:
 
       - name: Mixed fixture is vulnerable on arm64 only
         run: |
-          grep -q "CVE-2024-45491" trivy-report-arm64.txt || { echo "::error::no arm64 finding"; exit 1; }
-          ! grep -q "CVE-2024-45491" trivy-report-amd64.txt || { echo "::error::unexpected amd64 finding"; exit 1; }
+          if python3 scripts/release_image.py check-reports \
+              --digest "${{ steps.fixtures.outputs.mixed }}" --report-dir . \
+              --platform linux/amd64 --platform linux/arm64 2> "$RUNNER_TEMP/mixed.err"; then
+            echo "::error::arm64-only fixture passed the evidence check"; exit 1
+          fi
+          grep -q "linux/arm64: .*CVE-2024-45491" "$RUNNER_TEMP/mixed.err" \
+            || { cat "$RUNNER_TEMP/mixed.err"; echo "::error::no arm64 finding"; exit 1; }
+          ! grep -q "linux/amd64: .*CVE-2024-45491" "$RUNNER_TEMP/mixed.err" \
+            || { echo "::error::unexpected amd64 finding"; exit 1; }
+
+      - name: A promotion without passing evidence writes nothing
+        run: |
+          if python3 scripts/release_image.py promote \
+              --src-repo localhost:5000/gate-mixed --dest-repo localhost:5001/gate-mixed \
+              --digest "${{ steps.fixtures.outputs.mixed }}" --report-dir . \
+              --platform linux/amd64 --platform linux/arm64; then
+            echo "::error::promotion of the arm64-vulnerable fixture succeeded"; exit 1
+          fi
 
       - name: Assert the negative path - failed gates, nothing promoted
         env:
