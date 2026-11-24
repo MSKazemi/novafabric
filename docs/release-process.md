@@ -118,25 +118,49 @@ Within the one `image` job, in this order:
 2. **Scan that digest on each platform** with the pinned trivy
    (`.github/actions/scan-candidate`). Fixable CRITICAL findings (ADR-0186), a scanner crash, a
    timeout or a missing platform fail the job. trivy scans only the runner's platform unless told
-   otherwise, so each platform has its own gate step.
-3. **Only then** log in, copy **that digest** to GHCR (and to Docker Hub when `DOCKERHUB_TOKEN` is
-   set) with `scripts/release_image.py promote`, and verify the destination bytes. A rebuild never
-   happens after the scan.
-4. **Sign and attest** the promoted digest. A signature does not follow a copy between registries,
+   otherwise, so each platform has its own gate step, and each writes a JSON report
+   (`trivy-report-linux-<arch>.json`).
+3. **Check the scan evidence** (`scripts/release_image.py check-reports`, no credential needed): a
+   passing gate step proves trivy exited 0, not what it scanned. Every shipped platform must have a
+   report that names the scanned digest, names the right architecture (trivy silently scans the
+   runner's platform when it cannot honour `--platform`, which would turn an "arm64" scan into a
+   clean amd64 report) and has no fixable CRITICAL finding.
+4. **Only then** log in, copy **that digest** to GHCR (and to Docker Hub when `DOCKERHUB_TOKEN` is
+   set) with `scripts/release_image.py promote`, and verify the destination bytes. `promote`
+   re-checks the reports itself, so the copy cannot happen without them. A rebuild never happens
+   after the scan.
+5. **Sign and attest** the promoted digest. A signature does not follow a copy between registries,
    so it is made on the production digest.
-5. **Last, move the release tags** (`X.Y.Z`, `X.Y`, `latest`) with `scripts/release_image.py tag`.
+6. **Last, move the release tags** (`X.Y.Z`, `X.Y`, `latest`) with `scripts/release_image.py tag`.
    `X.Y.Z` is immutable: it refuses to point at a different digest.
 
 A failed scan therefore leaves no release tag, signature or attestation in any registry. The copy
-in step 3 is addressed by a digest-derived staging tag `scanned-<12 hex>` (a registry needs a tag to
-create a manifest); it is not a release tag and is created only for an image that passed the gate.
+in step 4 is by digest alone (`DEST@sha256:...`), so no staging tag is visible. **Fallback, if the
+first real tag run shows that GHCR or Docker Hub refuses a tagless copy:** add
+`--stage-tag "scanned-${DIGEST:7:12}"` to the two `promote` steps in `publish-image.yml`. That
+creates one digest-derived, non-release tag per promoted image; it is a one-line change but, because
+a tag run executes the workflow file of its own tag, it needs a new tag to take effect.
 
-If the job fails *after* step 3 and before step 5, the scanned digest sits in the registry under its
-staging tag, unsigned or signed but untagged, and a re-run is safe. If it fails *during* step 5 some
-tags may have moved. Re-running the same workflow rebuilds the image, which gives a different digest,
-and the immutable `X.Y.Z` check then refuses it by design; resolve that by tagging the already-scanned
-digest by hand (`docker buildx imagetools create -t <repo>:<tag> <repo>@<digest>`) or by cutting the
-next patch version.
+If the job fails *after* step 4 and before step 6, the scanned digest sits in the registry
+untagged (or under its staging tag if the fallback is in use), signed or unsigned, and a re-run is
+safe. If it fails *during* step 6 some tags may have moved. Re-running the same workflow rebuilds
+the image, which gives a different digest, and the immutable `X.Y.Z` check then refuses it by
+design; resolve that by tagging the already-scanned digest by hand
+(`docker buildx imagetools create -t <repo>:<tag> <repo>@<digest>`) or by cutting the next patch
+version.
+
+What is **not** yet proven (it executes for the first time in a real tag run): the copy to GHCR and
+to Docker Hub (including a tagless copy), `cosign sign` and the attestation on the promoted digest,
+`TRIVY_PLATFORM` reaching trivy through `aquasecurity/trivy-action` (the evidence check turns a
+silent miss into a failed run instead of a false pass), the `services:` loopback port binding of
+the candidate registry on a GitHub-hosted runner, and the run time of the copy for the real image.
+The `image-gate` job in `release-toolchain.yml` exercises the gate, the evidence check and the
+promotion on every pull request that touches the publish path, but only against fixtures and local
+registries.
+
+The release-verdict policy ([release verdict design](release-verdict-design.md), #316) must accept a
+scan that runs inside `publish-image.yml` itself, as a separate class of check or via a standalone
+candidate-scan run; that open design question is recorded there and is not decided by this change.
 
 `publish-chart.yml` is a separate workflow: a failed image gate does not stop the Helm chart for the
 same tag from publishing.
@@ -202,8 +226,8 @@ re-checks and the publish proceeds.
 The image job also fails closed on the vulnerability scan: when `publish-image.yml` fails in its
 scan step, **no image tag for that version exists** in GHCR or Docker Hub (see §1c, "The image
 gate"). Fix the finding, then cut a new tag; a re-run of the failed tag run rebuilds the image and
-re-scans it, so it only helps if the finding came from the scanner database or a transient error. The trivy reports for both platforms are attached to the run as
-`trivy-report-<sha>`.
+re-scans it, so it only helps if the finding came from the scanner database or a transient error.
+The trivy JSON reports for both platforms are attached to the run as `trivy-report-<sha>`.
 
 GitHub runs push CI only on the head of a push. If the tagged commit was not a head (it was
 pushed together with later commits), it has no CI run: start one with

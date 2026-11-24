@@ -79,15 +79,21 @@ longer forwards the submitting shell's environment (ADR-0270).
   the gate ran about 28 s after the signed image was live). The trivy scan also covered only the runner's platform,
   so the `linux/arm64` half of the image was never scanned. The job now builds once into a loopback-only registry
   that exists for the job, scans that digest on `linux/amd64` and `linux/arm64` (a finding, crash, timeout or missing
-  platform fails the job), and only then logs in, copies the same digest to GHCR and Docker Hub with a byte-for-byte
-  check (`scripts/release_image.py`), signs and attests the promoted digest, and moves `X.Y.Z`, `X.Y` and `latest`
-  last. `X.Y.Z` is never moved to a different digest. The Docker Hub token is no longer in the job environment of
-  the build and scan steps. The scanner is pinned to trivy v0.76.2. A new `image-gate` job in `release-toolchain.yml`
-  runs the real gate and promotion on fixtures (clean, vulnerable, arm64-only vulnerable) and two local registries on
-  every pull request that touches the publish path. **Experimental:** the copy to GHCR and Docker Hub, cosign on the
-  promoted digest and `TRIVY_PLATFORM` through trivy-action are first executed by the next tag run. The release job
-  timeout is 60 minutes (was 30). Tests: `tests/docs/test_publish_image_gates_promotion_on_scan.py`,
-  `tests/test_release_image.py`, `tests/test_release_image_registry.py`.
+  platform fails the job), checks that each platform's JSON report names the scanned digest and the right
+  architecture (a report that silently covered another platform is a failure, not a pass), and only then logs in,
+  copies the same digest to GHCR and Docker Hub with a byte-for-byte check (`scripts/release_image.py`), signs and
+  attests the promoted digest, and moves `X.Y.Z`, `X.Y` and `latest` last. The copy is by digest alone, so no staging
+  tag is visible (a one-line `--stage-tag` fallback is documented in `docs/release-process.md`). `X.Y.Z` is never
+  moved to a different digest, and an image index that carries a platform nobody scanned is refused. The Docker Hub
+  token is no longer in the job environment of the build and scan steps. The scanner is pinned to trivy v0.76.2. A
+  new `image-gate` job in `release-toolchain.yml` runs the real gate, evidence check and promotion on fixtures (clean,
+  vulnerable, arm64-only vulnerable) and two local registries on every pull request that touches the publish path.
+  The trivy report artifact is now JSON (`trivy-report-linux-<arch>.json`) instead of a text table.
+  **Experimental:** the copy to GHCR and Docker Hub, cosign on the promoted digest and `TRIVY_PLATFORM` through
+  trivy-action are first executed by the next tag run. The release job timeout is 60 minutes (was 30). Tests:
+  `tests/docs/test_publish_image_gates_promotion_on_scan.py`, `tests/test_release_image.py`,
+  `tests/test_release_image_scan_evidence.py`, `tests/test_release_image_registry.py`,
+  `tests/deploy/test_release_image_scenarios.py`.
 
 ## [0.109.0] - 2026-11-22
 
