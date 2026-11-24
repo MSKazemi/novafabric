@@ -53,18 +53,30 @@ DAMAGES = [
 ]
 
 
-def _sealed_capsule(root: Path, name: str = "sealed", *, bind_evidence: bool = True) -> Path:
+def _sealed_capsule(
+    root: Path,
+    name: str = "sealed",
+    *,
+    bind_evidence: bool = True,
+    late_streams: tuple[str, ...] = (),
+) -> Path:
     """A capsule with a genuine NovaSeal ``.seal/`` (local key, no TSA).
 
     ``bind_evidence=False`` seals a manifest without ``evidence_digests``: the shape of a
-    seal made before ADR-0251, which signs the manifest only."""
+    seal made before ADR-0251, which signs the manifest only. ``late_streams`` names
+    capsule files written only AFTER sealing (an evidence stream the seal does not
+    name; they are not in ``evidence_digests``, so the seal still verifies)."""
     work = root / f"_seal-{name}"
     work.mkdir(parents=True)
     cap = root / name
     cap.mkdir()
-    (cap / "model-calls.jsonl").write_text('{"model":"m"}\n', encoding="utf-8")
-    (cap / "tool-calls.jsonl").write_text('{"tool":"t"}\n', encoding="utf-8")
-    (cap / "trace.jsonl").write_text('{"span":"s"}\n', encoding="utf-8")
+    for stream, line in (
+        ("model-calls.jsonl", '{"model":"m"}\n'),
+        ("tool-calls.jsonl", '{"tool":"t"}\n'),
+        ("trace.jsonl", '{"span":"s"}\n'),
+    ):
+        if stream not in late_streams:
+            (cap / stream).write_text(line, encoding="utf-8")
     manifest: dict[str, Any] = {
         "run_id": f"r-{name}",
         "status": "success",
@@ -98,6 +110,8 @@ def _sealed_capsule(root: Path, name: str = "sealed", *, bind_evidence: bool = T
     (seal_dir / "manifest.dsse").write_bytes(bundle.dsse_envelope)
     (seal_dir / "manifest.dsse.tsr").write_bytes(bundle.tsr)
     (seal_dir / "log-entry.json").write_text(json.dumps(bundle.log_entry), encoding="utf-8")
+    for stream in late_streams:
+        (cap / stream).write_text('{"added":"after sealing"}\n', encoding="utf-8")
     return cap
 
 

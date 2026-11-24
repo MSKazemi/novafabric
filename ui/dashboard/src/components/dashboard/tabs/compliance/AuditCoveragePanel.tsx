@@ -20,10 +20,19 @@ type CoverageEntry = {
 };
 
 type AuditFinding = {
-  code: string;
+  /** `seal_invalid` blocks the gate; `seal_unbound` is a notice. A code this build does not know is shown as blocking. */
+  code: 'seal_invalid' | 'seal_unbound' | (string & {});
   capsule_id: string;
   message: string;
 };
+
+/**
+ * Findings that never gate (mirrors the server's non-blocking codes). `seal_unbound`: the
+ * `.seal` verifies but does not name the capsule's evidence streams, so it could not show an
+ * edit to them; it does not say the capsule was edited. An unknown code is treated as blocking.
+ */
+const NON_BLOCKING_FINDING_CODES: ReadonlySet<string> = new Set(['seal_unbound']);
+const isBlockingFinding = (f: AuditFinding): boolean => !NON_BLOCKING_FINDING_CODES.has(f.code);
 
 type CoverageResult = {
   profile: string;
@@ -58,7 +67,8 @@ export default function AuditCoveragePanel() {
   // The verdict is the gate (score and no finding); `threshold_met` is only the fallback
   // for a server that does not send `gate_passed`.
   const gatePassed = result ? (result.gate_passed ?? result.threshold_met) : false;
-  const findings = result?.findings ?? [];
+  const findings = (result?.findings ?? []).filter(isBlockingFinding);
+  const notices = (result?.findings ?? []).filter(f => !isBlockingFinding(f));
 
   return (
     <PanelScaffold
@@ -120,6 +130,15 @@ export default function AuditCoveragePanel() {
               {findings.map((f, i) => (
                 <li key={`${f.code}-${f.capsule_id}-${i}`} className="text-[var(--color-status-failure)]">
                   <span className="font-bold">{f.code}</span> · {f.capsule_id} — {f.message}
+                </li>
+              ))}
+            </ul>
+          )}
+          {notices.length > 0 && (
+            <ul className="space-y-1 text-[10px] font-mono" aria-label="Audit notices">
+              {notices.map((f, i) => (
+                <li key={`${f.code}-${f.capsule_id}-${i}`} className="text-[var(--color-text-faint)]">
+                  <span className="font-bold">notice</span> · {f.code} · {f.capsule_id} — {f.message}
                 </li>
               ))}
             </ul>
