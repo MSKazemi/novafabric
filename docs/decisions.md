@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**307 decisions recorded** — **290** accepted · **14** proposed · **3** superseded.
+**308 decisions recorded** — **291** accepted · **14** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -340,3 +340,4 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0323` | AWS Bedrock Converse as a served model surface — capture the response at urllib3, serve it at urllib3 | accepted | 2026-11-20 |
 | `ADR-0324` | Generic wire-level record and serve for HTTP model surfaces | accepted | 2026-11-21 |
 | `ADR-0325` | Replayability is checked when the capsule is written | accepted | 2026-11-21 |
+| `ADR-0326` | Capture content defaults | accepted | 2026-11-23 |
