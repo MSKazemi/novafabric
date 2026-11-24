@@ -238,6 +238,120 @@ def test_hostile_record_ids_cannot_forge_or_flood_the_text_report(tmp_path: Path
         assert _diff_json(a, b)["first_divergence"]["record_id_b"] == hostile
 
 
+def _stamped(record: dict, started_at: str) -> dict:
+    return {**record, "started_at": started_at}
+
+
+def test_the_earlier_side_index_wins_when_b_has_an_extra_earlier_call(tmp_path: Path) -> None:
+    """Changed model: A#1, B#2. B also gained a tool call at step 1, which ties with it.
+
+    ``index`` is the smaller of the two sides, so the model (listed first) wins the tie.
+    """
+    a = _capsule(
+        tmp_path, "a", [_model(1, "p1", "x", second=1)], [_tool(1, "s", second=0)]
+    )
+    b = _capsule(
+        tmp_path, "b",
+        [_model(1, "p1", "y", second=2)],
+        [_tool(1, "s", second=0), _tool(2, "extra", second=1)],
+    )
+    fd = _diff_json(a, b)["first_divergence"]
+    assert (fd["stream"], fd["reason"]) == ("model_calls", "changed")
+    assert (fd["index_a"], fd["index_b"], fd["index"]) == (1, 2, 1)
+
+
+def test_the_earlier_side_index_wins_when_a_has_an_extra_earlier_call(tmp_path: Path) -> None:
+    """The mirror: changed model is A#2, B#1; A had a tool call at step 1 that B lacks."""
+    a = _capsule(
+        tmp_path, "a",
+        [_model(1, "p1", "x", second=2)],
+        [_tool(1, "s", second=0), _tool(2, "extra", second=1)],
+    )
+    b = _capsule(
+        tmp_path, "b", [_model(1, "p1", "y", second=1)], [_tool(1, "s", second=0)]
+    )
+    fd = _diff_json(a, b)["first_divergence"]
+    assert (fd["stream"], fd["reason"]) == ("model_calls", "changed")
+    assert (fd["index_a"], fd["index_b"], fd["index"]) == (2, 1, 1)
+
+
+def test_a_tie_between_streams_goes_to_the_model_call(tmp_path: Path) -> None:
+    """No timestamps: model #1 and tool #1 both changed; the docs promise the model call."""
+    a = _capsule(
+        tmp_path, "a",
+        [_model(1, "p1"), _model(2, "p2", "x")], [_tool(1, "s"), _tool(2, "t", "r1")],
+    )
+    b = _capsule(
+        tmp_path, "b",
+        [_model(1, "p1"), _model(2, "p2", "y")], [_tool(1, "s"), _tool(2, "t", "r2")],
+    )
+    fd = _diff_json(a, b)["first_divergence"]
+    assert (fd["timeline"], fd["event_type"], fd["index"]) == ("per_stream", "model_call", 1)
+
+
+@pytest.mark.parametrize("unstamped_side", ["a", "b"])
+def test_one_unstamped_record_makes_the_whole_timeline_per_stream(
+    tmp_path: Path, unstamped_side: str
+) -> None:
+    def models(side: str) -> list[dict]:
+        answer = "x" if side == "a" else "y"
+        second = _model(2, "p2", answer, second=1)
+        if side == unstamped_side:
+            second.pop("started_at")
+        return [_model(1, "p1", second=0), second]
+
+    a = _capsule(tmp_path, "a", models("a"), [])
+    b = _capsule(tmp_path, "b", models("b"), [])
+    fd = _diff_json(a, b)["first_divergence"]
+    assert (fd["timeline"], fd["index"], fd["index_a"], fd["index_b"]) == (
+        "per_stream", 1, 1, 1,
+    )
+
+
+def test_naive_and_zulu_stamps_are_ordered_together_as_utc(tmp_path: Path) -> None:
+    """A naive stamp reads as UTC. Here it falls after the Z-stamped tool call."""
+    model = _stamped(_model(1, "p1"), "2026-11-21T10:00:02")  # naive
+    tool_a = _stamped(_tool(1, "s", "r1"), "2026-11-21T10:00:01.000000Z")
+    tool_b = _stamped(_tool(1, "s", "r2"), "2026-11-21T10:00:01.000000Z")
+    a = _capsule(tmp_path, "a", [model], [tool_a])
+    b = _capsule(tmp_path, "b", [model], [tool_b])
+    fd = _diff_json(a, b)["first_divergence"]
+    assert (fd["timeline"], fd["event_type"], fd["index"]) == ("started_at", "tool_call", 0)
+
+
+def test_equal_stamps_keep_file_order_and_model_before_tool(tmp_path: Path) -> None:
+    same = "2026-11-21T10:00:00.000000Z"
+    tools_a = [_stamped(_tool(n, f"t{n}", "r1"), same) for n in (1, 2, 3)]
+    tools_b = [_stamped(_tool(n, f"t{n}", "r1" if n < 3 else "r2"), same) for n in (1, 2, 3)]
+    model = _stamped(_model(1, "p1"), same)
+    a = _capsule(tmp_path, "a", [model], tools_a)
+    b = _capsule(tmp_path, "b", [model], tools_b)
+    fd = _diff_json(a, b)["first_divergence"]
+    # The model call is step 0, then tool calls in file order: the changed one is step 3.
+    assert (fd["timeline"], fd["event_type"], fd["index"]) == ("started_at", "tool_call", 3)
+
+
+def test_a_path_both_modified_and_missing_is_reported_missing() -> None:
+    fd = binding_first_divergence(
+        CapsuleBinding(digests_present=True, mismatched=("p",), missing=("p",))
+    )
+    assert fd is not None
+    assert (fd["path"], fd["reason"], fd["divergent_files"]) == ("p", "missing", 1)
+
+
+def test_an_exact_tie_keeps_the_first_listed_entry(tmp_path: Path) -> None:
+    """A removed A#1 and an added B#1 in one stream tie at (step 1, same stream).
+
+    The first entry the alignment lists (the removal) is reported, not the later add.
+    """
+    a = _capsule(tmp_path, "a", [], [_tool(1, "s"), _tool(2, "X")])
+    b = _capsule(tmp_path, "b", [], [_tool(1, "s"), _tool(3, "Y")])
+    fd = _diff_json(a, b)["first_divergence"]
+    assert (fd["reason"], fd["index"], fd["record_id_a"], fd["record_id_b"]) == (
+        "removed", 1, "TC-2", None,
+    )
+
+
 def test_engine_report_carries_the_field(tmp_path: Path) -> None:
     a = _capsule(tmp_path, "a", [], [_tool(1, "s")])
     b = _capsule(tmp_path, "b", [], [])
