@@ -597,19 +597,22 @@ def test_the_bag_carries_every_capsule_file(tmp_path: Path) -> None:
     inputs/, outputs/ and .seal/ were not, yet manifest-sha256.txt verified clean."""
     import hashlib
 
-    cap = tmp_path / "cap-full"
-    (cap / "outputs").mkdir(parents=True)
-    (cap / ".seal").mkdir()
+    from .test_seal_invalid_is_refused import _sealed_capsule
+
+    # A genuine seal: a capsule whose .seal fails verification is refused, so a stand-in
+    # ``{}`` envelope would test the refusal, not the payload. outputs/ is added after
+    # sealing; a file the seal does not name does not make the seal fail.
+    cap = _sealed_capsule(tmp_path, "cap-full")
+    (cap / "outputs").mkdir()
+    (cap / "outputs" / "stdout.txt").write_bytes(b"hello\n")
     files = {
-        "capsule.yaml": b"run_id: cap-full\n",
-        "model-calls.jsonl": b'{"model": "m"}\n',
-        "tool-calls.jsonl": b"",
-        "trace.jsonl": b'{"span": 1}\n',
-        "outputs/stdout.txt": b"hello\n",
-        ".seal/manifest.dsse": b"{}",
+        path.relative_to(cap).as_posix(): path.read_bytes()
+        for path in cap.rglob("*")
+        if path.is_file()
     }
-    for rel, data in files.items():
-        (cap / rel).write_bytes(data)
+    assert {"capsule.yaml", "model-calls.jsonl", "outputs/stdout.txt", ".seal/manifest.dsse"} <= set(
+        files
+    )
     bag = BagItExporter(capsule_id="cap-full", data_dir=cap).export(output_dir=tmp_path / "bags")
     with zipfile.ZipFile(bag) as zf:
         names = set(zf.namelist())

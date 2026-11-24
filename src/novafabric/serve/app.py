@@ -5046,6 +5046,7 @@ def create_app(
             )
 
         try:
+            from novafabric.compliance.export._seal_guard import CapsuleSealInvalidError
             from novafabric.compliance.export.examiner import (
                 BagItExporter,
                 ISO42001Exporter,
@@ -5127,6 +5128,13 @@ def create_app(
 
         except HTTPException:
             raise
+        except CapsuleSealInvalidError as exc:
+            # A capsule whose .seal fails verification is refused: the request conflicts
+            # with the capsule's state, it is not a server fault.
+            raise HTTPException(
+                status_code=409,
+                detail=f"examiner export failed: {exc}",
+            ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=500,
@@ -8345,6 +8353,9 @@ def create_app(
         controller_name: str = body.get("controller_name", "")
         controller_contact: str = body.get("controller_contact", "")
         try:
+            from novafabric.compliance.export._seal_guard import (  # noqa: PLC0415
+                CapsuleSealInvalidError,
+            )
             from novafabric.compliance.export.gdpr_ropa import GDPRRoPAExporter  # noqa: PLC0415
         except ImportError as exc:
             raise HTTPException(
@@ -8368,6 +8379,8 @@ def create_app(
                 "missing_fields": entry.missing_fields,
                 "note": "GDPR Art.30 Records of Processing Activities (RoPA)",
             }
+        except CapsuleSealInvalidError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 

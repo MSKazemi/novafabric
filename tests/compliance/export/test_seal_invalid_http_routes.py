@@ -2,13 +2,10 @@
 
 Documented in docs/api-reference.md and docs/cli-reference.md, so pinned here:
 
-* ``POST /api/compliance/export/ropa`` and ``POST /api/compliance/examiner/pccp`` refuse:
-  HTTP 500 carrying the :class:`CapsuleSealInvalidError` message (the routes' generic
-  export-failure handler), and no document;
-* a capsule that verifies, or has no seal, still exports (HTTP 200);
-* KNOWN GAP, not fixed here: ``POST /api/compliance/examiner/bagit`` (and the CLI
-  ``nova export-examiner bagit|iso42001``) run no seal check, so they still export such a
-  capsule. The last test records that so a fix has to change it on purpose.
+* ``POST /api/compliance/export/ropa`` and ``POST /api/compliance/examiner/{pccp,bagit,
+  iso42001}`` refuse: HTTP 409 (the capsule's state conflicts with the request, not a
+  server fault) carrying the :class:`CapsuleSealInvalidError` message, and no document;
+* a capsule that verifies, or has no seal, still exports (HTTP 200).
 """
 
 from __future__ import annotations
@@ -48,39 +45,54 @@ def test_ropa_route_refuses_an_invalid_seal(stack: tuple[TestClient, Path], how:
     cap = _sealed_capsule(store, "cap")
     _damage(cap, how, store.parent)
     resp = _post(client, "/api/compliance/export/ropa", "cap")
-    assert resp.status_code == 500
+    assert resp.status_code == 409
     detail = resp.json()["detail"]
     assert _REFUSAL in detail and "nova verify" in detail
     assert "document" not in resp.json()
 
 
+_EXAMINER = ["pccp", "bagit", "iso42001"]
+
+
+def _examiner_post(client: TestClient, fmt: str, run_id: str) -> Any:
+    body: dict[str, Any] = {"run_id": run_id}
+    if fmt == "iso42001":
+        body["period"] = "2023-01-01/2025-12-31"  # the fixture capsules are dated 2024
+    return client.post(f"/api/compliance/examiner/{fmt}", params=AUTH, headers=HOST, json=body)
+
+
+@pytest.mark.parametrize("fmt", _EXAMINER)
 @pytest.mark.parametrize("how", ["edit-stream", "edit-manifest", "corrupt-dsse"])
-def test_pccp_route_refuses_an_invalid_seal(stack: tuple[TestClient, Path], how: str) -> None:
+def test_examiner_routes_refuse_an_invalid_seal(
+    stack: tuple[TestClient, Path], fmt: str, how: str
+) -> None:
     client, store = stack
     cap = _sealed_capsule(store, "cap")
     _damage(cap, how, store.parent)
-    resp = _post(client, "/api/compliance/examiner/pccp", "cap")
-    assert resp.status_code == 500
+    resp = _examiner_post(client, fmt, "cap")
+    assert resp.status_code == 409
     detail = resp.json()["detail"]
     assert detail.startswith("examiner export failed:")
     assert _REFUSAL in detail and "nova verify" in detail
+    assert resp.json().get("ok") is not True
 
 
-@pytest.mark.parametrize("route", ["/api/compliance/export/ropa", "/api/compliance/examiner/pccp"])
+@pytest.mark.parametrize("fmt", _EXAMINER)
 @pytest.mark.parametrize("make", [_sealed_capsule, _unsealed_capsule])
-def test_valid_and_absent_seals_still_export(
-    stack: tuple[TestClient, Path], route: str, make: Callable[[Path, str], Path]
+def test_valid_and_absent_seals_still_export_examiner(
+    stack: tuple[TestClient, Path], fmt: str, make: Callable[[Path, str], Path]
 ) -> None:
     client, store = stack
     make(store, "cap")
-    resp = _post(client, route, "cap")
-    assert resp.status_code == 200
+    resp = _examiner_post(client, fmt, "cap")
+    assert resp.status_code == 200, resp.text
 
 
-def test_known_gap_bagit_route_does_not_check_the_seal(stack: tuple[TestClient, Path]) -> None:
-    """Known gap, not fixed here: bagit exports a capsule whose seal fails verification."""
+@pytest.mark.parametrize("make", [_sealed_capsule, _unsealed_capsule])
+def test_valid_and_absent_seals_still_export_ropa(
+    stack: tuple[TestClient, Path], make: Callable[[Path, str], Path]
+) -> None:
     client, store = stack
-    cap = _sealed_capsule(store, "cap")
-    _damage(cap, "edit-stream", store.parent)
-    resp = _post(client, "/api/compliance/examiner/bagit", "cap")
+    make(store, "cap")
+    resp = _post(client, "/api/compliance/export/ropa", "cap")
     assert resp.status_code == 200
