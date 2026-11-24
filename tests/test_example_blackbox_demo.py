@@ -154,6 +154,21 @@ def test_model_calls_hold_the_request_messages_and_response_at_every_level(
         SKIP_VERIFY="1",
         NOVA_CAPTURE_LEVEL=level,
     )
+    # Control: the level really reaches a process started with this environment, so a pass
+    # below cannot be a run where NOVA_CAPTURE_LEVEL was silently ignored. Only the payload
+    # level differs here; the demo makes no tool calls, so the capsule cannot show it.
+    control = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from novafabric.capture.record import _payloads_enabled; print(_payloads_enabled())",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    assert control.stdout.strip() == str(level == "forensic"), control.stdout + control.stderr
     result = subprocess.run(
         ["sh", str(SCRIPT)],
         capture_output=True,

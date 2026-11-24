@@ -15,14 +15,15 @@ from typing import Any
 class CaptureLevel(str, Enum):
     """Four capture levels per scale-architecture ADR-004."""
 
-    # "Today:" is what selecting the level does now; "Planned:" is not implemented.
-    # ``LEVEL_EFFECTS`` below is the full statement. Only FORENSIC and AIR_GAPPED change
-    # capture today, and SDK/wire model-call capture (``model-calls.jsonl``) stores full
-    # prompts and responses at every level.
-    MINIMAL = "minimal"       # Today: same as STANDARD. Planned: metadata only
+    # "Today:" is what selecting the level does now; "Planned (unscheduled):" is not
+    # implemented and has no release target yet. ``LEVEL_EFFECTS`` below is the full
+    # statement. Only FORENSIC and AIR_GAPPED change capture today, and SDK/wire
+    # model-call capture (``model-calls.jsonl``) stores full prompts and responses at
+    # every level by default.
+    MINIMAL = "minimal"       # Today: same as STANDARD. Planned (unscheduled): metadata only
     STANDARD = "standard"     # Today: the default; digests on adapter/tool paths
     FORENSIC = "forensic"     # Today: also keeps tool payloads, state dicts, document text
-    AIR_GAPPED = "air_gapped"  # Today: same as FORENSIC. Planned: block external calls
+    AIR_GAPPED = "air_gapped"  # Today: same as FORENSIC. Planned (unscheduled): no external calls
 
 
 # Fields allowed per capture level.  Empty set means *all* fields are allowed.
