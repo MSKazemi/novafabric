@@ -33,9 +33,16 @@ collector's Go version has since been raised, so this is a **historical** failur
 current vulnerability. The point is the process: a security workflow was red on the release
 commit and nothing could notice, because nothing asked.
 
-A second gap shows in the same record set: `npm-audit` has path filters, so it produced **no
-run at all** on that commit. A policy that requires evidence on the release SHA must be
-told how to get it (see prerequisites).
+A second gap shows in the same record set: `npm-audit` has path filters and no tag trigger,
+so it produced **no run at all** on that commit. A policy that requires evidence on the
+release SHA must be told how to get it (see prerequisites).
+
+Which workflows can produce evidence on a release SHA at all depends on their triggers.
+`collector-ci` and `metadata_store_security_gate` are path-filtered on `main`, yet both ran on
+the v0.109.0 tag push, because GitHub does not apply `paths` filters to tag pushes.
+`release-toolchain`, `npm-audit` and `pip-audit` are restricted to `main` (and, for the
+audits, schedule and manual dispatch), so they give no tag-push run. That is why the evidence
+rules below accept a manual dispatch **on the release tag**.
 
 ## What exists today versus what is proposed
 
@@ -79,15 +86,25 @@ a release. The function does no I/O: callers fetch run and job payloads, `parse_
 2. Only runs with an allowed event count: a push on `main` or on the release tag, a
    scheduled run where the manifest allows it (and then only within its age bound), or a
    manual dispatch **on the release tag**. A dispatch from any other branch is ignored.
-3. The newest eligible run decides. A later failure beats an earlier success; a later
-   successful re-run of the same SHA after a failure is eligible.
+3. The newest eligible run decides (by `created_at`, ties broken by run id). A later failure
+   beats an earlier success; a later successful re-run of the same SHA after a failure is
+   eligible. Limitation inherited from the existing gate: a re-run keeps its run's original
+   `created_at`, so if an **older** run is re-run and fails while a **newer** run succeeded,
+   the newer success still decides. That is a narrow fail-open.
 4. The run must be complete and `success`, and its jobs must have been retrieved: every
    required job present and `success`, and, for a workflow check, no other job in the run
-   failed or skipped.
+   failed or skipped. The last part is deliberate and safe, but it means a job that is
+   conditionally skipped, or one added later without updating the manifest, makes the check
+   fail and the release stop until the manifest is updated.
 5. Waivers are not an input. A waiver (for example an audit exception with an expiry date)
    lives inside the check; the verdict sees only whether the check passed. An expired waiver
    therefore fails the check and the release.
-6. An informational check never blocks and never substitutes for a mandatory one.
+6. Runs of an event the check does not accept (for example a fork's `pull_request` run whose
+   head is the release commit) are ignored entirely: they are neither evidence nor a reason to
+   distrust the evidence, so nobody can invalidate a release by opening a pull request. A run
+   of an accepted event that is bound to another SHA, a fork, an unknown repository or the
+   wrong workflow file is `INVALID`.
+7. An informational check never blocks and never substitutes for a mandatory one.
 
 ## Release identity
 
@@ -98,12 +115,16 @@ The caller supplies these facts from trusted sources (not from the candidate's f
 | repository | the canonical `MSKazemi/novafabric` |
 | event | `push` of a tag, or `workflow_dispatch` **on** that tag |
 | ref | `refs/tags/vX.Y.Z` (immutable release tag) |
-| approved SHA | full 40-hex lowercase; equals what the tag resolves to |
+| approved SHA | full 40-hex lowercase; equals the **peeled commit** the tag points at (`git rev-parse <tag>^{commit}`). `v0.109.0` is an annotated tag: its own object id is `01f2d02e…`, not the commit `9b7b31b9…`, and passing the former is `INVALID` |
 | ancestry | `compare(base=<sha>, head=main)` is `ahead` or `identical` |
 | package version | equals the tag without the leading `v` |
 | policy | its digest equals a trusted digest held outside the candidate |
-| authorization | names the same tag, SHA and policy digest, with an approver |
+| authorization | names the same tag, SHA and policy digest, with a non-empty approver (see the note below) |
 | promotion state | `none` (not in progress, published or partial) |
+
+The verdict checks that an authorization record **names** an approver; it does not
+authenticate that person or verify where the record came from. Who may authorize, how the
+approver is authenticated and where the record is stored are owner decisions (see below).
 
 Release tags stay immutable (a ruleset already forbids moving or deleting `v*` tags). Trusted
 publishing to PyPI, keyless signing, provenance and the minimal permissions of the publish
@@ -136,6 +157,23 @@ test instead of failing a release.
 
 The 24-hour bound for the two dependency audits and which informational workflows should
 become mandatory are open decisions.
+
+**Open design question for #218.** The manifest models the OCI scan as a standalone,
+completed run (`candidate-scan`) on the release SHA that exists *before* promotion. A scan
+that runs *inside* the publishing job, which is how #218 may well be built, can never be
+prior-run evidence for a verdict that has to be computed before that job starts. Either #218
+emits a standalone candidate-scan run ahead of promotion, or the verdict must accept "scan
+inside the publishing job" as a separate class of check with its own rules. This change does
+not decide between them.
+
+**What is and is not satisfiable today.** `npm-audit` has no tag-push trigger and ran on no
+commit at the v0.109.0 release. `pip-audit`'s evidence on a release SHA is its push-to-`main`
+run, and the 24-hour bound makes that stale for any release tagged more than a day after the
+merge. So, as written, the policy cannot be satisfied by a normal release without either a
+manual dispatch of each audit **on the release tag** (a real dispatch record shows
+`head_branch` equal to the tag name: run 31044026510, a `publish-image` dispatch on `v0.100.0`)
+or an age bound measured from the release-candidate time instead of the decision time. The
+failure message says which one is missing.
 
 ## Flow
 
@@ -171,7 +209,7 @@ The candidate-construction and post-publish boxes belong to other issues (#218, 
 | A security workflow that failed but is not consulted (the v0.109.0 case) | manifest of mandatory checks | the manifest itself is the control: changes need review and a new digest |
 | Skipped or missing job inside a green workflow | required jobs must exist and pass; no failed/skipped sibling | a job renamed upstream fails a drift test |
 | Stale dependency audit | per-check age bound | the bound is a policy choice |
-| Candidate edits the policy to drop a check | evaluated policy must equal a trusted digest | the trusted digest must be stored outside the candidate (prerequisite) |
+| Candidate edits the policy to drop a check | evaluated policy must equal a trusted digest | **Advisory against accidents only today.** `require-green-ci.yml` sparse-checks `scripts/require_green_ci.py` out of the **tag itself**, and the publishing jobs `needs:` that gate from the same tag. A candidate that edits the evaluator, or drops `needs: ci-green`, bypasses every check here, the digest comparison included. It becomes a real control only when the evaluator runs from a trusted ref the candidate cannot change (a required workflow, environment or ruleset: #216) |
 | Manual dispatch from an attacker-controlled branch | only an immutable release tag ref is a release | PyPI-side trusted-publisher conditions are outside this repository |
 | API timeout, truncated or malformed response | parsing rejects it; unusable evidence fails | none |
 | Waiver abuse | no waiver input; expiry lives in the audit scripts | the audit scripts' own review |
@@ -182,6 +220,11 @@ The candidate-construction and post-publish boxes belong to other issues (#218, 
 
 * **Retry before publication.** A failed or cancelled check is re-run for the **same SHA**;
   the newest attempt decides. Re-tagging is never the retry mechanism (tags are immutable).
+* **Re-running is for transient failures only.** `govulncheck` reads a database that changes
+  over time and tags are immutable, so a tag whose gate fails permanently (a new advisory, a
+  waiver that expired) cannot be fixed by re-running the same SHA. It needs a new version
+  and leaves the failed tag behind as an orphan. Re-running the same SHA only helps with
+  flakes and infrastructure failures.
 * **Timeout.** Missing evidence after the wait is a failure, never a pass.
 * **Partial publication.** If one channel published and another did not, the promotion
   state is `partial` and every later verdict is `BLOCK` with a reconciliation instruction.
@@ -199,8 +242,11 @@ the failed job); pip-audit and npm-audit failures; missing evidence turning `PEN
 jobs; arbitrary-branch dispatch; tag not on `main`; wrong repository and fork evidence;
 missing or mismatched authorization; failed or missing image, chart and golden-capsule
 gates; API errors, malformed or truncated payloads and missing job identity; duplicate,
-published and partial promotions; staleness; informational checks; severity order; and
-that no workflow references the new functions.
+published and partial promotions; staleness; informational checks; severity order; fork
+`pull_request` runs at the same SHA being ignored while an accepted-event fork run is
+`INVALID`; null `head_repository` and `head_branch` values; the run-id tie-break; digest
+sensitivity to every manifest field; the peeled-commit rule; the exact failure instructions;
+and that no workflow references the new functions.
 
 ## Owner decisions and prerequisites
 
@@ -208,7 +254,7 @@ that no workflow references the new functions.
 |---|---|---|
 | 1 | Make the verdict the release gate (replacing the CI-only question), after the prerequisites below | #219 |
 | 2 | Where the trusted policy digest and the promotion state are stored, outside the candidate | #219 |
-| 3 | `npm-audit` and any other path-filtered check must produce evidence on the release SHA (tag trigger or dispatch on the tag) | #217, #219 |
+| 3 | `npm-audit` (no tag trigger, no run on the v0.109.0 commit) and `pip-audit` (evidence is a push-to-`main` run that goes stale after 24 h) must produce evidence on the release SHA: a dispatch on the release tag, or an age bound measured from the release-candidate time. Without one of these the policy is unsatisfiable for a normal release | #217, #219 |
 | 4 | Which informational workflows become mandatory; the audit age bound | #219 |
 | 5 | Built-wheel and golden-capsule evidence | #225 |
 | 6 | Candidate image scan before any production tag exists | #218 |
@@ -217,6 +263,10 @@ that no workflow references the new functions.
 | 9 | Release manifest and post-publish verification; partial-publication visibility | #221 |
 | 10 | Required checks and review rules on `main`; restricting who can publish | #216 |
 | 11 | Restricting or removing manual dispatch of publishing workflows | #219 |
+| 12 | Where the evaluator runs from, so a candidate cannot edit it or drop its `needs:` (required workflow, environment or ruleset) | #216, #219 |
+| 13 | Who may authorize a release, how the approver is authenticated and where the authorization record is stored | #219 |
+| 14 | How a standalone-versus-in-job image scan is represented in the verdict | #218, #219 |
+| 15 | Housekeeping outside this change: link this page from the docs index, a ROADMAP and CHANGELOG entry, and whether the threat-model prose belongs in a private ADR rather than a public page | #219 |
 
 ## What this change does not do
 
