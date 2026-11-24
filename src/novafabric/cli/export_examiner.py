@@ -158,6 +158,7 @@ def export_pccp(
         --data-dir ~/.novafabric/capsules --output pccp.json
     """
     try:
+        from novafabric.compliance.export._seal_guard import CapsuleSealInvalidError
         from novafabric.compliance.export.examiner import PCCPExporter
     except ImportError as exc:
         console.print(f"[red]✗[/red] examiner module not available: {exc}")
@@ -170,6 +171,10 @@ def export_pccp(
     )
     try:
         out_path = exporter.export(output_path=output)
+    except CapsuleSealInvalidError as exc:
+        # A seal that exists but fails (in either capsule) is evidence of tampering:
+        # exit 2, no file written.
+        raise typer.BadParameter(str(exc)) from exc
     except Exception as exc:
         console.print(f"[red]✗[/red] PCCP export failed: {exc}")
         raise typer.Exit(code=1) from exc

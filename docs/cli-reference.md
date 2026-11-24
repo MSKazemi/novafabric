@@ -4561,7 +4561,14 @@ Output is a JSON-LD document with `gdpr:` and `nova:` namespaces. Fields derivab
 capsule metadata are populated automatically; operator-declared fields are stubs with
 `missing_fields` markers. Use `--controller-name` / `--controller-contact` to complete the entry.
 
-Exit codes: `0` (success), `1` (export error).
+**Seal check.** A capsule with no `.seal` exports as before, without the `dsse_envelope_signing`
+security measure. A valid `.seal` adds that measure; it means the bytes the seal names are
+unchanged since sealing, not who signed them. A `.seal` that exists but fails verification (the
+capsule was edited after sealing, or the seal is damaged, substituted or not a directory) is
+refused: exit `2`, no file written, and a message naming `nova verify <capsule>` for the reasons.
+It is never reported as merely unsigned.
+
+Exit codes: `0` (success), `1` (export error), `2` (usage error, or the capsule's seal fails verification).
 
 ---
 
@@ -9652,6 +9659,12 @@ nova export-examiner pccp --baseline 01HXBASE... --proposed 01HXPROP... \
 **Options (all required):** `--baseline ID` / `-b` (the current, approved version),
 `--proposed ID` / `-p` (the modification to evaluate), `--data-dir DIR` / `-d` (directory of
 capsule sub-directories, or the capsule directory itself), `--output PATH` / `-o` (the PCCP JSON file).
+
+**Seal check.** `risk_controls` lists `NovaSeal signing` only when *both* capsules carry a valid
+`.seal` (the bytes it names are unchanged since sealing; it does not say who signed them); with
+no seal on either, or on one of them, it is empty. If either capsule has a `.seal` that fails
+verification (edited after sealing, or damaged, substituted or not a directory), the command exits
+`2`, writes no file, and names `nova verify <capsule>`; an unsealed capsule next to it does not hide that.
 
 ### nova export-examiner iso42001
 

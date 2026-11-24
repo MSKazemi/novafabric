@@ -661,6 +661,7 @@ def export_ropa_cmd(
       nova export-ropa path/to/my-capsule/
       nova export-ropa path/to/my-capsule/ --output ropa.json
     """
+    from novafabric.compliance.export._seal_guard import CapsuleSealInvalidError
     from novafabric.compliance.export.gdpr_ropa import GDPRRoPAExporter
 
     cfg: dict[str, str] = {}
@@ -672,6 +673,9 @@ def export_ropa_cmd(
     exporter = GDPRRoPAExporter(operator_config=cfg)
     try:
         entry = exporter.build_ropa_entry(capsule_dir)
+    except CapsuleSealInvalidError as exc:
+        # A seal that exists but fails is evidence of tampering: exit 2, no file written.
+        raise typer.BadParameter(str(exc)) from exc
     except Exception as exc:
         console.print(f"[red]✗[/red] RoPA export failed: {exc}")
         raise typer.Exit(code=1) from exc

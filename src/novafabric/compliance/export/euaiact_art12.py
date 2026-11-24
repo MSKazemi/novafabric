@@ -36,8 +36,8 @@ import yaml
 from pydantic import BaseModel, Field
 
 from novafabric._capsule_fs import read_required_capsule_member
-from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
 
+from ._seal_guard import seal_is_valid_or_refuse
 from .models import (
     COMPLETENESS_COMPLETE,
     COMPLETENESS_MISSING,
@@ -131,6 +131,10 @@ def build_art12_report(
         FileNotFoundError: if ``capsule.yaml`` is absent.
         CapsuleRequiredFileError: ``capsule.yaml`` is present but unusable (a
             link, FIFO, directory). Never an Art.12 record with empty fields.
+        CapsuleSealInvalidError: the capsule carries a ``.seal`` that fails
+            verification (edited after sealing, or a damaged or substituted seal).
+            Refused rather than rendered from bytes the seal contradicts; a capsule
+            that was never sealed is still reported, as not tamper-evident.
     """
     capsule_text = read_required_capsule_member(
         capsule_dir / "capsule.yaml", operation="compliance export"
@@ -138,6 +142,9 @@ def build_art12_report(
     if capsule_text is None:
         raise FileNotFoundError(f"capsule.yaml not found in {capsule_dir}")
     manifest: dict[str, Any] = yaml.safe_load(capsule_text) or {}
+    # Tri-state, not capsule_seal_verifies: a seal that exists but does not verify is
+    # evidence of tampering, so no report is built from the edited bytes.
+    seal_verifies = seal_is_valid_or_refuse(capsule_dir)
 
     generated_at = _now()
     capsule_ref = build_capsule_ref(capsule_dir, generated_at)
@@ -198,7 +205,7 @@ def build_art12_report(
     # Tamper-evidence — a NovaSeal seal that verifies (review compliance-privacy-12):
     # this read file names NovaFabric never writes, so a hand-made file counted and
     # a genuine `.seal/` read as unsealed.
-    if capsule_seal_verifies(capsule_dir) and capsule_ref is not None:
+    if seal_verifies and capsule_ref is not None:
         entries.append(_entry(
             "tamper_evidence",
             "the capsule's NovaSeal seal verifies against its files; a change to a sealed "

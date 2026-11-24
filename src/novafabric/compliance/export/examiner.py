@@ -44,7 +44,8 @@ from novafabric._capsule_fs import (
     refuse_capsule_links,
 )
 from novafabric._hashutil import sha256_file_hex, sha256_hex
-from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
+
+from ._seal_guard import all_seals_valid_or_refuse
 
 _OPERATION = "an examiner BagIt export"
 
@@ -290,11 +291,14 @@ class PCCPExporter:
         self.data_dir = data_dir
 
     def _verified_risk_controls(self) -> list[str]:
-        """Controls the two capsules themselves show: NovaSeal signing when both seals verify."""
+        """Controls the two capsules themselves show: NovaSeal signing when both seals verify.
+
+        Raises :class:`CapsuleSealInvalidError` if *either* capsule carries a seal that
+        fails verification: a broken seal is not "unsigned", and one unsealed capsule
+        cannot hide it.
+        """
         dirs = [self.data_dir / self.baseline_capsule_id, self.data_dir / self.proposed_capsule_id]
-        if all(capsule_seal_verifies(d) for d in dirs):
-            return ["NovaSeal signing"]
-        return []
+        return ["NovaSeal signing"] if all_seals_valid_or_refuse(dirs) else []
 
     def export(self, output_path: Path) -> Path:
         """Export the PCCP document as JSON.
@@ -304,7 +308,13 @@ class PCCPExporter:
 
         Returns:
             Path to the written file.
+
+        Raises:
+            CapsuleSealInvalidError: the baseline or the proposed capsule carries a
+                ``.seal`` that fails verification; nothing is written.
         """
+        # Decided before anything is created, so a refusal leaves no output behind.
+        risk_controls = self._verified_risk_controls()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         pccp: dict[str, Any] = {
@@ -327,7 +337,7 @@ class PCCPExporter:
                 # Review compliance-privacy-12: controls this export can check are
                 # listed only when they hold; the rest are for the operator to
                 # confirm, never asserted as in place.
-                "risk_controls": self._verified_risk_controls(),
+                "risk_controls": risk_controls,
                 "risk_controls_to_confirm": [
                     "Rego policy gates",
                     "Maker-checker approval",

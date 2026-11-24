@@ -33,6 +33,11 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova export-ropa`, `nova export-examiner pccp` and the Art. 12 report refuse a capsule whose seal fails verification (behaviour change: such a capsule used to export).** Same defect and same fix as `nova export-compliance iso42001` above: the seal check answered "not sealed" both for a capsule that was never sealed and for one that was sealed and then edited, so a tampered capsule was handled as an ordinary unsigned one. A `.seal` that exists but does not verify (edited member or manifest, a damaged, substituted or unreadable seal, a symlinked or non-directory `.seal`) is now refused, per surface:
+  - `nova export-ropa` and `nova export-examiner pccp` exit 2 with no output file and a message naming `nova verify DIR`. Before, the RoPA entry silently left `dsse_envelope_signing` out of its security measures and the PCCP document left `NovaSeal signing` out of `risk_controls`, as for an unsealed capsule. For PCCP, a broken seal in *either* the baseline or the proposed capsule refuses the export, even when the other capsule is unsealed.
+  - `build_art12_report` (programmatic; no CLI command) raises `CapsuleSealInvalidError`, a `ValueError` subclass, instead of building a report whose `tamper_evidence` entry read "incomplete" while every other entry was rendered from the edited bytes.
+  - The dashboard routes `POST /api/compliance/export/ropa` and `POST /api/compliance/examiner/pccp` no longer return a document either; they answer with their generic export failure (HTTP 500) carrying the same message.
+  A capsule with no `.seal` still exports, visibly unsigned, and a valid seal keeps the current output. A valid seal means the bytes it names are unchanged since sealing; it does not say who signed them.
 - **`nova export-compliance iso42001 --capsule DIR` refuses a capsule whose seal fails verification
   (behaviour change: such a capsule used to export).** A capsule that had been sealed and then edited
   was exported exactly like one that was never sealed — `seal_envelope_path: null`, with its evidenced
