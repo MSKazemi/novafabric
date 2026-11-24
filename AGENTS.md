@@ -47,7 +47,10 @@ reverted regardless of how good the rest is.
    component fails, the workload continues and the failure is recorded.
 3. **No secrets past the redaction boundary** — never log or store prompts,
    tokens, or environment variables outside the redacted capsule.
-4. **Full prompt/response capture is opt-in**, never a default.
+4. **Full prompt/response capture should be opt-in**, never a default. As built this
+   invariant is **not met**: model-call capture stores request messages and response
+   text at every capture level (see `docs/architecture.md`, invariant 4). Do not write
+   code, docs or claims that assume otherwise; changing the default is an open decision.
 5. **No telemetry and no update checks.** Ever. Do not add one "behind a flag".
 6. **Core local-mode features must work with no internet.**
 7. **Compute-node hot paths never write to a database or a graph** — they write

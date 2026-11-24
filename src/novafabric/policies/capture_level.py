@@ -15,10 +15,13 @@ from typing import Any
 class CaptureLevel(str, Enum):
     """Four capture levels per scale-architecture ADR-004."""
 
-    MINIMAL = "minimal"       # No PII fields; only metadata
-    STANDARD = "standard"     # Standard capture; redacted PII
-    FORENSIC = "forensic"     # Full capture including prompts/responses
-    AIR_GAPPED = "air_gapped"  # Full capture, no external network calls permitted
+    # The labels below are what each level is meant to be; ``LEVEL_EFFECTS`` further down
+    # says what selecting it does today (only FORENSIC and AIR_GAPPED change capture, and
+    # model-call capture stores full prompts and responses at every level).
+    MINIMAL = "minimal"       # Intended: metadata only (planned; behaves like STANDARD)
+    STANDARD = "standard"     # Default; digests on adapter/tool paths, redaction of secrets
+    FORENSIC = "forensic"     # Also keeps tool payloads, state dicts and document text
+    AIR_GAPPED = "air_gapped"  # Like FORENSIC; blocking external calls is planned
 
 
 # Fields allowed per capture level.  Empty set means *all* fields are allowed.
