@@ -87,13 +87,18 @@ def _sha(b: bytes) -> str:
     return "sha256:" + hashlib.sha256(b).hexdigest()
 
 
-def _image(platforms: tuple[str, ...] = (AMD64, ARM64)) -> tuple[bytes, dict[str, bytes]]:
-    """A multi-arch index with one attestation child per platform. Returns (index, children)."""
+def _image(
+    platforms: tuple[str, ...] = (AMD64, ARM64), salt: str = ""
+) -> tuple[bytes, dict[str, bytes]]:
+    """A multi-arch index with one attestation child per platform. Returns (index, children).
+
+    ``salt`` makes a second, equally valid image with a different digest (a rebuild).
+    """
     children: dict[str, bytes] = {}
     entries = []
     for p in platforms:
         os_, arch = p.split("/")
-        body = json.dumps({"schemaVersion": 2, "layers": [], "x": p}).encode()
+        body = json.dumps({"schemaVersion": 2, "layers": [], "x": p, "salt": salt}).encode()
         children[_sha(body)] = body
         entries.append(
             {
@@ -103,7 +108,7 @@ def _image(platforms: tuple[str, ...] = (AMD64, ARM64)) -> tuple[bytes, dict[str
                 "platform": {"os": os_, "architecture": arch},
             }
         )
-        att = json.dumps({"schemaVersion": 2, "attestation-for": p}).encode()
+        att = json.dumps({"schemaVersion": 2, "attestation-for": p, "salt": salt}).encode()
         children[_sha(att)] = att
         entries.append(
             {
@@ -264,7 +269,8 @@ def test_the_script_only_ever_speaks_imagetools(fake: Fake) -> None:
     index, kids = _image()
     digest = fake.put(CAND, index, kids)
     assert _promote(fake, digest).returncode == 0
-    assert _tag(fake, digest, "--tag", "1.2.3", "--tag", "latest").returncode == 0
+    release = ("--immutable", "1.2.3")
+    assert _tag(fake, digest, "--tag", "1.2.3", "--tag", "latest", *release).returncode == 0
     for call in fake.reload()["log"]:
         assert call[:2] == ["buildx", "imagetools"] and call[2] in {"inspect", "create"}, call
 
@@ -513,7 +519,11 @@ def test_tags_move_only_onto_a_digest_that_verifies(fake: Fake) -> None:
 def test_tags_resolve_to_the_digest_after_moving(fake: Fake) -> None:
     index, kids = _image()
     digest = fake.put(PROD, index, kids)
-    assert _tag(fake, digest, "--tag", "1.2.3", "--tag", "1.2", "--tag", "latest").returncode == 0
+    release = ("--immutable", "1.2.3")
+    assert (
+        _tag(fake, digest, "--tag", "1.2.3", "--tag", "1.2", "--tag", "latest", *release).returncode
+        == 0
+    )
     refs = fake.reload()["refs"]
     assert all(
         refs[f"{PROD}:{t}"] == base64.b64encode(index).decode() for t in ("1.2.3", "1.2", "latest")
@@ -526,11 +536,13 @@ def test_an_immutable_tag_never_moves_to_a_different_digest_and_no_other_tag_mov
     old_index, old_kids = _image()
     old = fake.put(PROD, old_index, old_kids, tag="2.0.0")
     fake.state["refs"][f"{PROD}:latest"] = fake.state["refs"][f"{PROD}:2.0.0"]
-    new_index, new_kids = _image((AMD64, ARM64, "linux/s390x"))
+    new_index, new_kids = _image(
+        salt="rebuild"
+    )  # valid: verify passes, so the immutable check runs
     new = fake.put(PROD, new_index, new_kids)
     assert new != old
     result = _tag(fake, new, "--tag", "latest", "--tag", "2.0.0", "--immutable", "2.0.0")
-    assert result.returncode == 1
+    assert result.returncode == 1 and "immutable" in result.stderr, result.stderr
     assert fake.creates() == [], "the moving tag moved before the immutable tag was checked"
     assert fake.reload()["refs"][f"{PROD}:latest"] == base64.b64encode(old_index).decode()
 
@@ -591,3 +603,207 @@ def test_no_tags_for_this_registry_is_a_failure(fake: Fake) -> None:
     digest = fake.put(PROD, index, kids)
     result = _tag(fake, digest, "--meta-tags", "docker.io/kazemi/novafabric:1.2.3")
     assert result.returncode == 1 and fake.creates() == []
+
+
+# ---------------------------------------------------------------- a crafted index is not the scanned image
+
+INDEX_MT = "application/vnd.oci.image.index.v1+json"
+MANIFEST_MT = "application/vnd.oci.image.manifest.v1+json"
+ATTESTATION = {"vnd.docker.reference.type": "attestation-manifest"}
+P_AMD = {"os": "linux", "architecture": "amd64"}
+P_ARM = {"os": "linux", "architecture": "arm64"}
+P_UNKNOWN = {"os": "unknown", "architecture": "unknown"}
+
+
+def _crafted(
+    entries: list[tuple[dict[str, str] | None, dict[str, str] | None]],
+) -> tuple[bytes, dict[str, bytes]]:
+    """An index built from raw (platform, annotations) entries, valid or not."""
+    children: dict[str, bytes] = {}
+    manifests: list[dict[str, Any]] = []
+    for n, (platform, annot) in enumerate(entries):
+        body = json.dumps({"schemaVersion": 2, "layers": [], "crafted": n}).encode()
+        children[_sha(body)] = body
+        m: dict[str, Any] = {"mediaType": MANIFEST_MT, "digest": _sha(body), "size": len(body)}
+        if platform is not None:
+            m["platform"] = platform
+        if annot:
+            m["annotations"] = annot
+        manifests.append(m)
+    index = json.dumps({"schemaVersion": 2, "mediaType": INDEX_MT, "manifests": manifests}).encode()
+    return index, children
+
+
+_GOOD = [(P_AMD, None), (P_ARM, None), (P_UNKNOWN, ATTESTATION)]
+
+
+@pytest.mark.parametrize(
+    ("entries", "why"),
+    [
+        ([*_GOOD, (P_ARM, None)], "duplicate"),
+        ([*_GOOD, (None, None)], "platform"),
+        ([*_GOOD, ({"os": "unknown", "architecture": "arm64"}, None)], "unknown"),
+        ([*_GOOD, ({"os": "linux", "architecture": "unknown"}, None)], "unknown"),
+        ([*_GOOD, (P_UNKNOWN, None)], "attestation"),
+        ([*_GOOD, (P_UNKNOWN, {"vnd.docker.reference.type": "something-else"})], "attestation"),
+        ([(P_AMD, None), ({**P_ARM, "variant": "v7"}, None), (P_UNKNOWN, ATTESTATION)], "variant"),
+        ([(P_AMD, None), (P_ARM, None), ({**P_ARM, "variant": "v7"}, None)], "unscanned"),
+    ],
+    ids=[
+        "duplicate-arm64",
+        "platform-less-child",
+        "unknown-os-arm64",
+        "linux-unknown-arch",
+        "unknown-without-annotation",
+        "unknown-with-wrong-annotation",
+        "arm64-variant-v7-not-scanned",
+        "extra-arm64-v7-child",
+    ],
+)
+def test_a_crafted_index_is_refused_and_nothing_is_written(
+    fake: Fake, entries: list[Any], why: str
+) -> None:
+    """Only real image children and real attestation manifests may sit in the scanned index.
+
+    A child the scan never looked at (a second arm64, another variant, a platform-less
+    entry, an "unknown" child that is not an attestation) would ship under the scanned digest.
+    """
+    index, kids = _crafted(entries)
+    digest = fake.put(CAND, index, kids)
+    result = _promote(fake, digest)
+    assert result.returncode == 1, result.stdout
+    assert why in result.stderr, result.stderr
+    assert fake.creates() == []
+    assert _tag(fake, digest, "--tag", "main").returncode == 1
+
+
+def test_a_real_attestation_manifest_and_arm64_v8_are_accepted(fake: Fake) -> None:
+    """arm64 and arm64/v8 are the same platform (containerd normalises v8 away)."""
+    entries = [(P_AMD, None), ({**P_ARM, "variant": "v8"}, None), (P_UNKNOWN, ATTESTATION)]
+    index, kids = _crafted(entries)
+    digest = fake.put(CAND, index, kids)
+    assert _promote(fake, digest).returncode == 0
+    assert _promote(fake, digest, AMD64, "linux/arm64/v8").returncode == 0
+
+
+# ---------------------------------------------------------------- tag namespace of a non-release run
+
+
+@pytest.mark.parametrize("name", ["0.109.0", "1.2", "1", "latest", "v1.2.3", "2.0.0-rc.1"])
+def test_a_non_release_run_cannot_write_a_release_looking_tag(fake: Fake, name: str) -> None:
+    """A manual dispatch from a branch named like a version must not re-point X.Y.Z, X.Y or latest."""
+    index, kids = _image()
+    digest = fake.put(PROD, index, kids, tag="9.9.9")
+    result = _tag(fake, digest, "--tag", "main", "--tag", name)  # no --immutable: not a tag push
+    assert result.returncode == 1 and "release" in result.stderr, result.stderr
+    assert fake.creates() == [], "even the harmless tag must not move when one name is refused"
+
+
+def test_a_non_release_run_cannot_write_release_names_via_the_metadata_tags(fake: Fake) -> None:
+    index, kids = _image()
+    digest = fake.put(PROD, index, kids)
+    meta = "ghcr.io/MSKazemi/novafabric:0.109.0\nghcr.io/MSKazemi/novafabric:sha-abc1234"
+    result = _tag(fake, digest, "--meta-tags", meta)
+    assert result.returncode == 1 and fake.creates() == []
+
+
+@pytest.mark.parametrize("name", ["main", "feature-x", "sha-abc1234", "release-1.2", "v1-branch"])
+def test_a_non_release_run_may_still_write_branch_and_sha_tags(fake: Fake, name: str) -> None:
+    index, kids = _image()
+    digest = fake.put(PROD, index, kids)
+    assert _tag(fake, digest, "--tag", name).returncode == 0
+
+
+def test_the_immutable_tag_must_be_one_of_the_tags_being_moved(fake: Fake) -> None:
+    """A tag push whose metadata derived no X.Y.Z (a non-semver v* tag) must stop the release."""
+    index, kids = _image()
+    digest = fake.put(PROD, index, kids)
+    meta = "ghcr.io/MSKazemi/novafabric:latest"
+    result = _tag(fake, digest, "--meta-tags", meta, "--immutable", "1.2.3")
+    assert result.returncode == 1 and "1.2.3" in result.stderr
+    assert fake.creates() == []
+
+
+def _check_tags(fake: Fake, *args: str) -> subprocess.CompletedProcess[str]:
+    return fake.run("check-tags", "--repo", "ghcr.io/MSKazemi/novafabric", *args)
+
+
+def test_check_tags_passes_a_real_release_and_a_plain_branch_dispatch(fake: Fake) -> None:
+    release = "ghcr.io/MSKazemi/novafabric:1.2.3\nghcr.io/MSKazemi/novafabric:1.2\nghcr.io/MSKazemi/novafabric:latest"
+    assert _check_tags(fake, "--meta-tags", release, "--immutable", "1.2.3").returncode == 0
+    branch = "ghcr.io/MSKazemi/novafabric:main\nghcr.io/MSKazemi/novafabric:sha-abc1234"
+    assert _check_tags(fake, "--meta-tags", branch).returncode == 0
+    assert fake.reload()["log"] == [], "check-tags is a pure check: it never talks to a registry"
+
+
+@pytest.mark.parametrize(
+    ("meta", "immutable"),
+    [
+        ("", ""),
+        ("", "1.2.3"),
+        ("docker.io/other/novafabric:1.2.3", "1.2.3"),
+        ("ghcr.io/MSKazemi/novafabric:latest", "1.2.3"),
+        ("ghcr.io/MSKazemi/novafabric:0.109.0\nghcr.io/MSKazemi/novafabric:sha-abc1234", ""),
+    ],
+    ids=[
+        "no-tags",
+        "tag-push-no-tags",
+        "wrong-registry",
+        "no-semver",
+        "branch-named-like-a-version",
+    ],
+)
+def test_check_tags_fails_early_on_an_unusable_tag_set(
+    fake: Fake, meta: str, immutable: str
+) -> None:
+    """Cheap and credential-free: fail before the build, the copy and the signature."""
+    result = _check_tags(fake, "--meta-tags", meta, "--immutable", immutable)
+    assert result.returncode == 1 and "::error" in result.stderr
+    assert fake.reload()["log"] == []
+
+
+# ---------------------------------------------------------------- hostile text must not forge workflow commands
+
+
+def test_registry_error_text_cannot_forge_workflow_commands(fake: Fake) -> None:
+    """GitHub parses every stderr/stdout line starting with ``::`` as a workflow command."""
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    fake.state["errors"] = {f"{CAND}@{digest}": "boom\n::warning::forged\r::add-mask::s3cret 100%"}
+    result = _promote(fake, digest)
+    assert result.returncode == 1
+    lines = result.stderr.splitlines()
+    assert [ln for ln in lines if ln.startswith("::")] == [lines[-1]], result.stderr
+    assert lines[-1].startswith("::error title=Release image gate::")
+    assert "%0A" in lines[-1] and "%0D" in lines[-1] and "%25" in lines[-1]
+    assert "\r" not in result.stderr
+
+
+def test_tag_names_must_be_valid_tags_and_cannot_forge_workflow_commands(fake: Fake) -> None:
+    index, kids = _image()
+    digest = fake.put(PROD, index, kids)
+    result = _tag(fake, digest, "--tag", "x\n::set-output name=a::b")
+    assert result.returncode == 1 and fake.creates() == []
+    lines = result.stderr.splitlines()
+    assert [ln for ln in lines if ln.startswith("::")] == [lines[-1]]
+
+
+# ---------------------------------------------------------------- hostile JSON fails closed, cleanly
+
+
+def test_a_deeply_nested_index_is_a_clean_refusal(fake: Fake) -> None:
+    body = b"[" * 400_000 + b"]" * 400_000
+    digest = fake.put(CAND, body, {})
+    result = _promote(fake, digest)
+    assert result.returncode == 1 and "Traceback" not in result.stderr, result.stderr[-300:]
+    assert fake.creates() == []
+
+
+def test_a_deeply_nested_scan_report_is_a_clean_refusal(fake: Fake) -> None:
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    fake.write_reports(digest)
+    (fake.reports / "trivy-report-linux-arm64.json").write_text("[" * 400_000 + "]" * 400_000)
+    result = _promote(fake, digest)
+    assert result.returncode == 1 and "Traceback" not in result.stderr, result.stderr[-300:]
+    assert fake.creates() == []

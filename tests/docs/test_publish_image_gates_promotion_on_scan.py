@@ -335,6 +335,39 @@ def test_promote_always_carries_the_scan_evidence_and_covers_every_platform() ->
         assert _platform_args(s) == shipped, f"{_name(s)!r} does not cover every platform"
 
 
+# --------------------------------------------------------------------------- hygiene
+
+
+def test_checkout_does_not_leave_the_token_in_the_workspace() -> None:
+    """Every later step, including third-party actions above the gate, can read ``.git/config``."""
+    steps = _steps()
+    checkouts = [s for s in steps if str(s.get("uses") or "").startswith("actions/checkout")]
+    assert checkouts
+    for s in checkouts:
+        assert s["with"].get("persist-credentials") in (False, "false"), (
+            f"{_name(s)!r} persists the GITHUB_TOKEN in .git/config; nothing in this job pushes"
+        )
+
+
+def test_the_tag_set_is_checked_before_anything_is_built_copied_or_signed() -> None:
+    """A non-semver v* tag or an empty tag list must fail in seconds, not after the copy."""
+    steps = _steps()
+    check = _index(steps, lambda s: "release_image.py check-tags" in str(s.get("run") or ""))
+    assert len(check) == 1, "exactly one early tag-set check is expected"
+    i = check[0]
+    meta = _index(steps, lambda s: str(s.get("uses") or "").startswith("docker/metadata-action"))
+    build = _index(steps, lambda s: str(s.get("uses") or "").startswith("docker/build-push-action"))
+    assert meta and meta[0] < i < build[0], "after the metadata step, before the build"
+    s = steps[i]
+    assert not s.get("if") and not s.get("continue-on-error")
+    blob = str(s.get("env") or "") + str(s["run"])
+    assert "steps.meta.outputs.tags" in blob and "--immutable" in blob
+    tag_step = _release_image_steps(steps, "tag")[0]
+    assert str(s["env"]["IMMUTABLE"]) == str(tag_step["env"]["IMMUTABLE"]), (
+        "the early check must use the same immutable-tag rule as the tag step"
+    )
+
+
 # --------------------------------------------------------------------------- bypass
 
 

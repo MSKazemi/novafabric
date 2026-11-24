@@ -398,3 +398,32 @@ def test_an_immutable_release_tag_is_not_overwritten_by_a_rebuild(
     assert _tag(prod, "e1", rebuilt, "2.0.0", "latest", immutable="2.0.0").returncode == 1
     assert _sha(prod.manifest("e1", "2.0.0")) == released
     assert "latest" not in prod.tags("e1")
+
+
+def test_a_crafted_index_with_a_child_nobody_scanned_is_not_promoted(
+    oci_registries: tuple[Registry, Registry],
+) -> None:
+    """A second arm64 child and an unannotated "unknown" child share the scanned platforms.
+
+    The index is real (pushed through the registry API, children and all); only the
+    manifest list is doctored. Its digest is therefore a valid, different digest, and the
+    scan reports for it say clean: the structure itself must be what is refused.
+    """
+    cand, prod = oci_registries
+    base = cand.push_image("f1", salt="crafted")
+    index = json.loads(cand.manifest("f1", base))
+    victim = next(m for m in index["manifests"] if m["platform"]["architecture"] == "arm64")
+    for extra in (
+        {**victim, "platform": {"os": "linux", "architecture": "arm64"}},  # duplicate arm64
+        {**victim, "platform": {"os": "unknown", "architecture": "unknown"}},  # not an attestation
+        {**victim, "platform": {"os": "unknown", "architecture": "arm64"}},
+    ):
+        doctored = json.dumps(
+            {**index, "manifests": [*index["manifests"], extra]}, sort_keys=True
+        ).encode()
+        digest = _sha(doctored)
+        cand._req("PUT", f"/v2/f1/manifests/{digest}", doctored, INDEX)
+        done = _promote(cand, prod, "f1", digest)
+        assert done.returncode == 1, done.stdout
+        assert prod.tags("f1") == [] and not prod.has("f1", digest)
+    assert _promote(cand, prod, "f1", base).returncode == 0  # the untouched original still goes
