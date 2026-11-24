@@ -91,7 +91,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   (a duplicate, platform-less, `unknown/<arch>` or unannotated `unknown/unknown` child, or a platform nobody scanned, is
   refused). A run that is not a `v*` tag push (`workflow_dispatch` from a branch) may not write `latest` or any tag that
   starts with a digit, so a branch named `0.109.0` cannot re-point a release tag; it still publishes `:<branch>` and
-  `:sha-<short>` after the scan. Whether a dispatch should instead be scan-only is an open owner decision.
+  `:sha-<short>` after the scan. Whether a dispatch should instead be scan-only is still undecided.
   The tag set is validated before the build, the checkout no longer persists the token, and registry error text is
   escaped so it cannot forge workflow commands. The Docker Hub
   token is no longer in the job environment of the build and scan steps. The scanner is pinned to trivy v0.76.2 **by hand** in

@@ -154,7 +154,7 @@ jobs:
           provenance: mode=max
 
       - name: Scan the candidate digest on every shipped platform (trivy gate)
-        # ADR-0186 policy, applied to the exact digest that will be promoted and
+        # The release scan policy, applied to the exact digest that will be promoted and
         # to BOTH platforms: trivy scans only the runner's platform unless told
         # otherwise, so the previous single scan never looked at arm64.
         uses: ./.github/actions/scan-candidate
@@ -215,7 +215,7 @@ jobs:
         # Tagless copy (DEST@digest): no staging tag is ever visible. If the first
         # real run shows GHCR refusing a tagless manifest PUT, the one-line
         # fallback is `--stage-tag "scanned-${DIGEST:7:12}"` here and below
-        # (an open owner decision).
+        # (still undecided).
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE: ${{ steps.image.outputs.ref }}

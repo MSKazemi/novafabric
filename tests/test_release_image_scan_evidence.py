@@ -10,7 +10,7 @@ for every shipped platform that
 * names the right ARCHITECTURE (``Metadata.ImageConfig``) - Trivy silently scans the
   runner's platform (amd64) when it cannot honour ``--platform``, and a clean amd64 report
   filed under "arm64" is a false pass; and
-* carries no fixable CRITICAL finding (ADR-0186 policy).
+* carries no fixable CRITICAL finding (the release scan policy).
 
 Absence is never a pass: a scan that timed out, crashed or was cancelled leaves no report.
 
@@ -123,7 +123,7 @@ def _critical(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_an_unfixed_critical_and_a_fixable_high_do_not_block(reports: Path) -> None:
-    """ADR-0186: the gate is fixable CRITICAL only. Everything else is reported, not blocking."""
+    """The release scan policy: the gate is fixable CRITICAL only. Everything else is reported, not blocking."""
     _clean_arm64(reports)
 
     def add(data: dict[str, Any]) -> None:

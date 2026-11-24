@@ -117,7 +117,7 @@ non-semver `v*` tag or an empty tag set in seconds, before the build):
 1. **Build once** (`linux/amd64` + `linux/arm64`, SBOM and provenance) into a throw-away registry
    that lives only for the job, bound to loopback. No GHCR or Docker Hub login exists yet.
 2. **Scan that digest on each platform** with the pinned trivy
-   (`.github/actions/scan-candidate`). Fixable CRITICAL findings (ADR-0186), a scanner crash, a
+   (`.github/actions/scan-candidate`). Fixable CRITICAL findings (the release scan policy), a scanner crash, a
    timeout or a missing platform fail the job. trivy scans only the runner's platform unless told
    otherwise, so each platform has its own gate step, and each writes a JSON report
    (`trivy-report-linux-<arch>.json`).
@@ -166,8 +166,8 @@ scan, from whatever ref it is started on:
   moving tag by nature.
 
 Making a branch dispatch **scan-only** (no production tag at all) is the recommended hardening, but
-it changes the documented "manual re-publish" behaviour, so it is an open owner decision (whether a
-non-tag dispatch should scan only); this change implements only the namespace refusal above.
+it changes the documented "manual re-publish" behaviour, so whether a non-tag
+dispatch should scan only is still undecided; this change implements only the namespace refusal above.
 
 #### If the job fails after the first tag moved
 

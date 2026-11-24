@@ -1,6 +1,6 @@
 name: Scan candidate image
 description: >-
-  The release image gate (ADR-0186 policy, issue #218). Scans ONE image digest
+  The release image gate (the release scan policy, issue #218). Scans ONE image digest
   once per shipped platform and fails the job on any fixable CRITICAL finding,
   crash, timeout or missing platform. Used by publish-image.yml (the real
   candidate) and release-toolchain.yml (fixtures), so the pull-request run
@@ -53,7 +53,7 @@ runs:
         exit-code: "0"
         skip-setup-trivy: true
 
-    # The gate: one step per shipped platform, fixable CRITICAL only (ADR-0186).
+    # The gate: one step per shipped platform, fixable CRITICAL only (the release scan policy).
     # Unfixable criticals appear in the reports above but do not wedge a release
     # behind upstream base-image lag; if they persist they enter the waiver
     # discipline. trivy scans the runner's platform (amd64) unless told
