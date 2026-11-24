@@ -8179,6 +8179,8 @@ def create_app(
                 "high_risk": cfg.high_risk,
                 "provider_mode": cfg.provider_mode,
                 "retention_months": cfg.retention_months,
+                "log_retention_floor_months": cfg.log_retention_floor_months,
+                "documentation_retention_months": cfg.documentation_retention_months,
                 "deadline": "2026-08-02",
                 "note": "ADR-0076 — EU AI Act Art.12 compliance mode",
             }
@@ -8224,6 +8226,8 @@ def create_app(
                 "records": records,
                 "count": len(records),
                 "retention_months": cfg.retention_months,
+                "log_retention_floor_months": cfg.log_retention_floor_months,
+                "documentation_retention_months": cfg.documentation_retention_months,
                 "mode": "provider" if cfg.provider_mode else "deployer",
             }
         except Exception as exc:  # noqa: BLE001
