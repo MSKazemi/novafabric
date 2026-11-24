@@ -1544,6 +1544,54 @@ that keeps `diff.json` reaches the same answer as `--assert-no-regressions` with
 it from the counts. Each model-call pair also carries `provider_changed`, `params_changed` and
 `changed_params` (the sorted `gen_ai.request.*` parameter names that differ).
 
+**First divergent step (works today).** When the two runs differ, the `text` report names the
+earliest model or tool call where they stop agreeing, right under the counts, and the `json`
+report carries it as an additive top-level `first_divergence` (`null` when the call streams
+agree; the key is always present):
+
+```text
+Diff: run-a → run-b
+  changed=1  added=0  removed=0
+  First divergence: step 2 model_call changed (response) [A #2 MC-2; B #2 MC-2]
+    (step counts model and tool calls, by started_at)
+```
+
+```json
+"first_divergence": {
+  "index": 2, "index_a": 2, "index_b": 2,
+  "stream": "model_calls", "event_type": "model_call",
+  "reason": "changed", "aspects": ["response"],
+  "record_id_a": "MC-2", "record_id_b": "MC-2",
+  "timeline": "started_at"
+}
+```
+
+- `index` is a 0-based **step**: the smaller of `index_a` (the call's position in run A) and
+  `index_b` (in run B). A call added in B has `index_a: null`; one removed has `index_b: null`.
+- `timeline: started_at` — every compared call in both runs recorded a parseable
+  `started_at`, so model and tool calls are merged chronologically per run and the step counts
+  both. `timeline: per_stream` — some call lacks `started_at`, so no cross-stream order is
+  recorded: the step counts records of that stream only, the stream with the smaller position
+  is reported (a tie goes to the model call), and that choice is **not** a claim about which
+  happened first. The text line says which (`step counts model_calls records only`).
+- `reason` is `changed`, `added` or `removed`; `aspects` lists what changed in a changed pair
+  (`request`, `response`, `provider`, `params` for a model call; `arguments`, `result`,
+  `status` for a tool call). `record_id_a|b` are the `model_call_id` / `tool_call_id`.
+- Only model and tool calls are events here. A diff whose only differences are in the
+  environment or output sections has `first_divergence: null`, and the text line reads
+  `First divergence: none in model or tool calls` even though the counts line above it can
+  show `changed=1`. Model calls count logical calls only
+  (ADR-0305 transport records are not steps), and skipped malformed lines take no position.
+- Order-only differences are not reported: calls that pair by span id (model calls) or by tool name
+  and arguments (tool calls) and match in content (for example the same calls recorded in a different order) are unchanged
+  pairs, exactly as in the existing alignment, so `first_divergence` is `null` for them.
+- In the text report, record ids are shown on one line, with non-printable characters
+  (controls, bidi and zero-width marks, line separators, lone surrogates) replaced by `?` and
+  capped at 80 characters. The `json` report carries them unmodified. `nova verify` shows the
+  paths on its `modified:`, `missing:`, `not covered` and `First divergence` lines the same
+  way, with a 240-character cap.
+- Exit codes are unchanged; `github-annotation` output does not carry the field.
+
 Diff sections: environment (Python, OS), model calls (logical calls only — the wire hook's
 `transport` records under an SDK call are not paired, so one changed prompt is one changed
 pair, ADR-0305; a `parent_span_id` unique on both sides first, then sequence position anchored on identical requests; a pair is changed when the
@@ -3716,7 +3764,7 @@ original checks green.
 
 Options:
 - `--seal-config PATH` — path to `novaseal.yaml` (default: `$NOVAFABRIC_HOME/novaseal.yaml`, i.e. `~/.novafabric/novaseal.yaml` only when `NOVAFABRIC_HOME` is unset; env: `NOVAFABRIC_SEAL_CONFIG`)
-- `--json` — **experimental** (ADR-0301). Print one JSON object instead of the text report; exit code unchanged. Capsule directories with the local backend only (otherwise exit 2). Fields: `valid`, `sealed`, `signature_ok`, `pae_encoding`, `timestamp_ok` (`null` when the capsule carries no RFC 3161 token), `timestamp_present`, `timestamp_strict`, `log_integrity_ok`, `log_inclusion`, `log_notes`, `capsule_binding_ok`, `capsule_id_ok`, `ca_chain_checked`, `ca_chain_ok` (`null` when no CA bundle was used), additive: `manifest_file`, `unsealed_manifests`, `unsealed_refs`, `binding_errors` (why the capsule binding failed), `tsa_chain_checked`, `tsa_chain_ok`, `identity_trust` (`none` · `self-asserted` · `local-ca-pinned` · `ca-anchored`), `identity_statement`, `signer_subject`, `local_seal_identity`, `signing_intent`, `errors`; additive (ADR-0297 Amendment 2): `timestamp_trust` (`anchored` · `unanchored` · `absent` · `invalid` — only `anchored` is trusted time; `timestamp_ok` stays token integrity), `timestamp_gen_time` and `tsa_subject` (the token's own claims, unverified unless anchored), `sealer_log` (`entry-found` · `missing` · `unverifiable-other-version` · `not-sealer-log` · `no-log` · `not-consulted`), `unanchored_claims`, `strict`; additive: `capture_tampered` (`null`, or the signed manifest's `metadata.capture_tampered` — the recorded workload replaced capsule paths with links or special files during capture; such a capsule is never `valid`, exit 1)
+- `--json` — **experimental** (ADR-0301). Print one JSON object instead of the text report; exit code unchanged. Capsule directories with the local backend only (otherwise exit 2). Fields: `valid`, `sealed`, `signature_ok`, `pae_encoding`, `timestamp_ok` (`null` when the capsule carries no RFC 3161 token), `timestamp_present`, `timestamp_strict`, `log_integrity_ok`, `log_inclusion`, `log_notes`, `capsule_binding_ok`, `capsule_id_ok`, `ca_chain_checked`, `ca_chain_ok` (`null` when no CA bundle was used), additive: `manifest_file`, `unsealed_manifests`, `unsealed_refs`, `binding_errors` (why the capsule binding failed), `tsa_chain_checked`, `tsa_chain_ok`, `identity_trust` (`none` · `self-asserted` · `local-ca-pinned` · `ca-anchored`), `identity_statement`, `signer_subject`, `local_seal_identity`, `signing_intent`, `errors`; additive (ADR-0297 Amendment 2): `timestamp_trust` (`anchored` · `unanchored` · `absent` · `invalid` — only `anchored` is trusted time; `timestamp_ok` stays token integrity), `timestamp_gen_time` and `tsa_subject` (the token's own claims, unverified unless anchored), `sealer_log` (`entry-found` · `missing` · `unverifiable-other-version` · `not-sealer-log` · `no-log` · `not-consulted`), `unanchored_claims`, `strict`; additive: `capture_tampered` (`null`, or the signed manifest's `metadata.capture_tampered` — the recorded workload replaced capsule paths with links or special files during capture; such a capsule is never `valid`, exit 1); additive (issue #74): `first_divergence` (`null`, or the first modified/missing evidence file — file granularity, see *First divergence* below)
 - `--strict` — **experimental**. Also exit 1 when a passing check rests on a claim no anchor you trust vouches for, listed in `unanchored_claims`: `identity-self-asserted` (no `--ca-bundle`), `timestamp-unanchored` (a token without `--tsa-ca-bundle` / `tsa_ca_certs`), `log-head-unanchored` (inclusion shown only by the carried proof), `log-inclusion-not-checked`, `sealer-log-other-version`. A pass needs a CA-validated signer, a TSA-anchored timestamp or none, and the entry found in the sealer's log. Capsule directories with the local backend only (otherwise exit 2). Not an evidence failure: no seal-verify alert is raised
 - `--backend [local|sigstore]` — verification backend (default: `local`). Use `sigstore` to verify a Sigstore bundle stored alongside the capsule; requires `pip install novafabric[sigstore]`. The signature is checked over the capsule's `manifest.json`, else `capsule.json`, else `capsule.yaml` — the same file `nova serve`'s `POST /api/seal/sigstore/sign` signs (that route no longer accepts caller-supplied `manifest_json`)
 - `--capsule-id TEXT` — capsule ID for Sigstore bundle lookup (required when `--backend sigstore`)
@@ -3800,7 +3848,32 @@ Example output (a modified capsule):
   ✓ Manifest binding (capsule.yaml == signed payload): OK
   ✗ Evidence binding (per-file sha256): FAIL
     modified: model-calls.jsonl
+    First divergence: model-calls.jsonl (model_call records) modified after sealing
+      record index not locatable: the seal holds one sha256 per file
 ```
+
+**First divergence (works today, file granularity).** When the evidence binding fails, the
+report names the first evidence file the seal no longer matches, and `--json` carries it as an
+additive `first_divergence` (`null` when every digest held, or when the capsule was sealed
+before `evidence_digests`):
+
+```json
+"first_divergence": {
+  "path": "model-calls.jsonl", "stream": "model_calls", "event_type": "model_call",
+  "index": null, "reason": "modified", "granularity": "file", "divergent_files": 1
+}
+```
+
+The seal holds **one SHA-256 per file** (ADR-0251), so `nova verify` can prove *that*
+`model-calls.jsonl` was edited but not *which record*: `index` is always `null` and
+`granularity` is `file`. Per-record localization is not available — it would need per-record
+digests in the seal, which captures do not write. `reason` is `modified` or `missing`.
+"First" is a fixed precedence, not a time order (the seal records none between files): the
+capsule's event streams (`model-calls.jsonl`, `tool-calls.jsonl`, `trace.jsonl`,
+`network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl`, `assets.jsonl`, with
+`event_type` set) before any other file (`event_type: null`), each group in path order;
+`divergent_files` counts all of them. To locate the record, `nova diff` the capsule against an
+untampered copy. Exit codes are unchanged. Evidence Bundle ZIPs do not carry the field.
 
 **Capsules sealed before `evidence_digests` shipped** print
 `⊘ Evidence binding: NOT PRESENT (sealed before evidence_digests)` and still exit 0. They
