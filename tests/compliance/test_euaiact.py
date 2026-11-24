@@ -185,6 +185,15 @@ class TestIsWithinRetention:
 
 
 class TestEuAiActCli:
+    @pytest.fixture(autouse=True)
+    def _wide_console(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The command's module-level Rich console reads the terminal width, not the
+        # CliRunner env, so an 80- or 60-column CI terminal wraps table cells and the
+        # retention line. Pin a wide console so the assertions never depend on width.
+        from rich.console import Console
+
+        monkeypatch.setattr("novafabric.cli.euaiact.console", Console(width=300))
+
     def test_status_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NOVA_EUAIACT_HIGH_RISK", raising=False)
         monkeypatch.delenv("NOVA_EUAIACT_PROVIDER", raising=False)
@@ -215,16 +224,16 @@ class TestEuAiActCli:
             app, ["euaiact", "export", "--pretty"], env={"COLUMNS": "200"}
         )
         assert result.exit_code == 0, result.output
-        assert "Log retention floor: 6 months (Art. 19(1) / Art. 26(6))" in result.output
-        assert "documentation horizon" not in result.output
+        flat = " ".join(result.output.split())
+        assert "Log retention floor: 6 months (Art. 19(1) / Art. 26(6))" in flat
+        assert "documentation horizon" not in flat
         monkeypatch.setenv("NOVA_EUAIACT_PROVIDER", "true")
         provider = CliRunner().invoke(
             app, ["euaiact", "export", "--pretty"], env={"COLUMNS": "200"}
         )
-        assert "Log retention floor: 6 months" in provider.output
-        assert "documentation horizon applied: 120 months (Art. 18(1), provider mode)" in (
-            provider.output
-        )
+        pflat = " ".join(provider.output.split())
+        assert "Log retention floor: 6 months" in pflat
+        assert "documentation horizon applied: 120 months (Art. 18(1), provider mode)" in pflat
 
     def test_export_command_json_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         caps = tmp_path / "capsules"
