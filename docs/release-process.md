@@ -180,8 +180,19 @@ read-verify-write); re-running the **workflow** rebuilds, produces a different d
 digest by hand (`docker buildx imagetools create -t <hub-repo>:X.Y.Z <ghcr-repo>@<digest>`, then
 `X.Y` and `latest`) or cut the next patch version. Nothing is rolled back automatically.
 
+Concurrency is per ref (`publish-image-<ref>`, no cancellation): two **different** tags released at
+the same time run in parallel and race on `latest` and on `X.Y`; the last writer wins. This predates
+the image gate and is not changed by it.
+
+The scanner is pinned by hand to trivy `v0.76.2` in `.github/actions/scan-candidate/action.yml`
+(an action input that Dependabot does not bump); before the gate the action's default, `v0.70.0`,
+ran. A bump is a manual change that the `image-gate` job must pass.
+
 What is **not** yet proven (it executes for the first time in a real tag run): the copy to GHCR and
-to Docker Hub (including a tagless copy), `cosign sign` and the attestation on the promoted digest,
+to Docker Hub (including a tagless copy and the first push of a never-seen package), the
+classification of a missing tag as "not found" (the script reads imagetools' `: not found` message
+suffix; real GHCR and Docker Hub wording is unverified, and a mismatch would fail the release
+closed rather than pass it), `cosign sign` and the attestation on the promoted digest,
 `TRIVY_PLATFORM` reaching trivy through `aquasecurity/trivy-action` (the evidence check turns a
 silent miss into a failed run instead of a false pass), the `services:` loopback port binding of
 the candidate registry on a GitHub-hosted runner, and the run time of the copy for the real image.

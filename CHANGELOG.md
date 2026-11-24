@@ -76,7 +76,8 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **Experimental: the release image is scanned on both platforms before any production tag exists (#218).**
   `publish-image.yml` used to push the image to GHCR and Docker Hub under its release tags, sign and attest it, and
   only then run trivy, so a failing gate failed a job whose image was already public (run `45046197296` for v0.109.0:
-  the gate ran about 28 s after the signed image was live). The trivy scan also covered only the runner's platform,
+  the push finished at 16:54:57Z, cosign signing at 16:55:02Z and the gate ended at 16:55:25Z, so the image was
+  public about 28 s before the gate finished, and the gate finished about 23 s after the image was signed). The trivy scan also covered only the runner's platform,
   so the `linux/arm64` half of the image was never scanned. The job now builds once into a loopback-only registry
   that exists for the job, scans that digest on `linux/amd64` and `linux/arm64` (a finding, crash, timeout or missing
   platform fails the job), checks that each platform's JSON report names the scanned digest and the right
@@ -93,7 +94,9 @@ longer forwards the submitting shell's environment (ADR-0270).
   `:sha-<short>` after the scan. Whether a dispatch should instead be scan-only is an undecided owner choice (A2).
   The tag set is validated before the build, the checkout no longer persists the token, and registry error text is
   escaped so it cannot forge workflow commands. The Docker Hub
-  token is no longer in the job environment of the build and scan steps. The scanner is pinned to trivy v0.76.2. A
+  token is no longer in the job environment of the build and scan steps. The scanner is pinned to trivy v0.76.2 **by hand** in
+  `.github/actions/scan-candidate/action.yml` (an action input, so Dependabot does not bump it); the previous gate ran
+  the action's default, trivy v0.70.0, so this is a scanner version jump and future bumps are manual. A
   new `image-gate` job in `release-toolchain.yml` runs the real gate, evidence check and promotion on fixtures (clean,
   vulnerable, arm64-only vulnerable) and two local registries on every pull request that touches the publish path.
   The trivy report artifact is now JSON (`trivy-report-linux-<arch>.json`) instead of a text table.

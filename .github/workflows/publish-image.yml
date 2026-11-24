@@ -215,7 +215,7 @@ jobs:
         # Tagless copy (DEST@digest): no staging tag is ever visible. If the first
         # real run shows GHCR refusing a tagless manifest PUT, the one-line
         # fallback is `--stage-tag "scanned-${DIGEST:7:12}"` here and below
-        # (owner decision A4 in the release notes).
+        # (an open owner decision).
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE: ${{ steps.image.outputs.ref }}
