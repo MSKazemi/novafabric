@@ -584,7 +584,9 @@ def test_17_an_api_timeout_fails_closed() -> None:
         {"workflow_runs": [{"id": 1}]},
         {"workflow_runs": [run(1, "p") | {"id": "1"}]},
         {"workflow_runs": [run(1, "p") | {"created_at": "yesterday"}]},
-        {"workflow_runs": [run(1, "p") | {"head_repository": None}]},
+        {"workflow_runs": [run(1, "p") | {"head_repository": "attacker/x"}]},  # not an object
+        {"workflow_runs": [run(1, "p") | {"head_repository": {"full_name": 7}}]},
+        {"workflow_runs": [run(1, "p") | {"head_branch": 5}]},
         {"total_count": 3, "workflow_runs": [run(1, "p")]},  # pagination: 2 runs missing
     ],
 )
@@ -707,14 +709,46 @@ def test_22_only_pass_authorizes() -> None:
     assert gate.ReleaseVerdict("PASS", ()).authorizes is True
 
 
-def test_23_policy_digest_is_stable_and_changes_with_any_mandatory_field() -> None:
+def test_23_policy_digest_is_stable() -> None:
     d = gate.policy_digest(POLICY)
     assert d == gate.policy_digest(tuple(POLICY))
     assert len(d) == 64
-    changed = tuple(
-        dataclasses.replace(s, level="informational") if s.key == "ci" else s for s in POLICY
-    )
-    assert gate.policy_digest(changed) != d
+
+
+#: One different value per CheckSpec field; the test below fails if a field is added unlisted.
+_FIELD_CHANGES: dict[str, Any] = {
+    "key": "ci-renamed",
+    "workflow_path": ".github/workflows/other.yml",
+    "level": "informational",
+    "required_jobs": ("only-this",),
+    "events": ("schedule",),
+    "all_jobs_must_pass": False,
+    "max_age_s": 5,
+    "on_failure": "BLOCK",
+    "implemented": False,
+    "owner_issue": "owner-x",
+}
+
+
+def test_23b_every_checkspec_field_has_a_digest_case() -> None:
+    assert set(_FIELD_CHANGES) == {f.name for f in dataclasses.fields(gate.CheckSpec)}
+
+
+@pytest.mark.parametrize("field", sorted(_FIELD_CHANGES))
+def test_23c_the_digest_changes_with_every_field_of_every_check(field: str) -> None:
+    base = gate.policy_digest(POLICY)
+    for i, spec in enumerate(POLICY):
+        changed = list(POLICY)
+        changed[i] = dataclasses.replace(spec, **{field: _FIELD_CHANGES[field]})
+        if changed[i] == spec:  # the value already equals the replacement: use a distinct one
+            continue
+        assert gate.policy_digest(tuple(changed)) != base, (field, spec.key)
+
+
+def test_23d_dropping_or_reordering_a_check_changes_the_digest() -> None:
+    base = gate.policy_digest(POLICY)
+    assert gate.policy_digest(POLICY[1:]) != base
+    assert gate.policy_digest(tuple(reversed(POLICY))) != base
 
 
 def test_24_the_manifest_classifies_every_check_and_names_owning_issues() -> None:
@@ -789,3 +823,137 @@ def test_27_every_required_job_of_an_implemented_check_exists_in_its_workflow(sp
     assert (REPO / spec.workflow_path).is_file(), spec.workflow_path
     missing = set(spec.required_jobs) - _job_names(spec.workflow_path)
     assert not missing, f"{spec.key}: {sorted(missing)} not produced by {spec.workflow_path}"
+
+
+# ============================ round 3: availability, ordering, messages ==============
+
+
+def _ci_two_runs(*extra: dict[str, Any], main_id: int = 2000) -> Any:
+    """Evidence for ``ci``: one valid push-on-main run plus *extra* runs that have no jobs."""
+    spec = spec_of("ci")
+    good = run(main_id, spec.workflow_path)
+    jobs = {main_id: [job(n) for n in spec.required_jobs]}
+    return evidence([good, *extra], jobs)
+
+
+def _fork_pr_run(rid: int = 2001, **over: Any) -> dict[str, Any]:
+    return run(
+        rid,
+        spec_of("ci").workflow_path,
+        event="pull_request",
+        branch="feature",
+        repo="attacker/novafabric",
+        **over,
+    )
+
+
+def test_28_a_same_sha_fork_pull_request_run_cannot_invalidate_a_green_check() -> None:
+    """Griefing: anyone can open a PR whose head is the release SHA. It is not evidence."""
+    v = decide(ev=world(POLICY, ci=_ci_two_runs(_fork_pr_run())))
+    assert v.state == "PASS", v.reasons
+
+
+@pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
+def test_28b_a_fork_run_with_an_eligible_event_still_invalidates(event: str) -> None:
+    fork = run(2001, spec_of("ci").workflow_path, event=event, repo="attacker/novafabric")
+    assert decide(ev=world(POLICY, ci=_ci_two_runs(fork))).state == "INVALID"
+
+
+def test_28c_a_pull_request_run_on_another_sha_or_workflow_is_ignored_not_invalid() -> None:
+    other_sha = run(2001, spec_of("ci").workflow_path, event="pull_request", sha=OTHER_SHA)
+    other_path = run(2002, ".github/workflows/evil.yml", event="pull_request")
+    v = decide(ev=world(POLICY, ci=_ci_two_runs(other_sha, other_path)))
+    assert v.state == "PASS", v.reasons
+
+
+def test_28d_a_deleted_fork_run_with_null_head_repository_is_ignored_when_ineligible() -> None:
+    ghost = _fork_pr_run() | {"head_repository": None}
+    runs = gate.parse_runs({"total_count": 1, "workflow_runs": [ghost]})  # must not raise
+    assert runs[0]["head_repository"] is None
+    assert decide(ev=world(POLICY, ci=_ci_two_runs(ghost))).state == "PASS"
+
+
+@pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
+def test_28e_a_null_head_repository_on_an_eligible_event_run_fails_closed(event: str) -> None:
+    ghost = run(2001, spec_of("ci").workflow_path, event=event) | {"head_repository": None}
+    v = decide(ev=world(POLICY, ci=_ci_two_runs(ghost)))
+    assert v.state == "INVALID" and any("head repository" in r for r in v.reasons)
+
+
+def test_28f_a_null_head_branch_never_crashes_and_is_never_release_evidence() -> None:
+    headless_pr = _fork_pr_run() | {"head_branch": None}
+    assert decide(ev=world(POLICY, ci=_ci_two_runs(headless_pr))).state == "PASS"
+    only = run(2000, spec_of("ci").workflow_path) | {"head_branch": None}
+    ev = world(POLICY, ci=evidence([only], {2000: [job(n) for n in spec_of("ci").required_jobs]}))
+    assert decide(ev=ev, waited=TIMEOUT).state == "FAIL"  # nothing eligible remains
+
+
+def test_28g_other_malformed_fields_are_still_rejected() -> None:
+    for bad in ({"id": None}, {"event": None}, {"path": None}, {"head_sha": None}):
+        with pytest.raises(gate.EvidenceError):
+            gate.parse_runs({"workflow_runs": [run(1, "p") | bad]})
+
+
+def test_29_the_higher_run_id_breaks_a_created_at_tie_in_either_list_order() -> None:
+    spec = spec_of("ci")
+    names = list(spec.required_jobs)
+    same = "2026-11-22T16:30:00Z"
+    low_ok = run(1, spec.workflow_path, created=same)
+    high_bad = run(2, spec.workflow_path, created=same, conclusion="failure")
+    jobs = {1: [job(n) for n in names], 2: [job(n) for n in names]}
+    assert decide(ev=world(POLICY, ci=evidence([low_ok, high_bad], jobs))).state == "FAIL"
+    assert decide(ev=world(POLICY, ci=evidence([high_bad, low_ok], jobs))).state == "FAIL"
+    low_bad = run(1, spec.workflow_path, created=same, conclusion="failure")
+    high_ok = run(2, spec.workflow_path, created=same)
+    assert decide(ev=world(POLICY, ci=evidence([low_bad, high_ok], jobs))).state == "PASS"
+
+
+def test_29b_a_timezone_naive_created_at_is_rejected() -> None:
+    naive = run(1, "p") | {"created_at": "2026-11-22T16:28:52"}
+    with pytest.raises(gate.EvidenceError, match="timezone"):
+        gate.parse_runs({"workflow_runs": [naive]})
+
+
+def test_21b_invalid_evidence_outranks_a_missing_authorization() -> None:
+    """INVALID (from evidence) and BLOCK (from authorization) together: INVALID wins."""
+    ev = world(POLICY, ci=replace_run("ci", sha=OTHER_SHA))
+    v = decide(request(authorization=None), ev)
+    assert v.state == "INVALID"
+
+
+def test_30_a_missing_audit_run_says_exactly_how_to_satisfy_it() -> None:
+    ev = world(POLICY)
+    del ev["npm-audit"]
+    reason = decide(ev=ev, waited=1).reasons[0]
+    assert reason == (
+        "npm-audit: no eligible run for 9b7b31b9d54a; to satisfy it: dispatch "
+        ".github/workflows/npm-audit.yml on the release tag v0.109.0 or a push/schedule run of "
+        ".github/workflows/npm-audit.yml on exactly this SHA; evidence must be at most 24h old"
+    )
+
+
+def test_30b_stale_evidence_gets_the_same_instruction() -> None:
+    old = (NOW - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ev = world(POLICY, **{"pip-audit": replace_run("pip-audit", created=old)})
+    reason = decide(ev=ev, waited=1).reasons[0]
+    assert reason.startswith(
+        "pip-audit: only stale evidence for 9b7b31b9d54a; to satisfy it: dispatch "
+    )
+    assert reason.endswith("evidence must be at most 24h old")
+
+
+def test_30c_a_check_that_cannot_be_dispatched_is_not_told_to_dispatch() -> None:
+    ev = world(POLICY)
+    del ev["collector-ci"]
+    reason = decide(ev=ev, waited=1).reasons[0]
+    assert "dispatch" not in reason
+    assert "a push run of .github/workflows/collector-ci.yml on exactly this SHA" in reason
+    assert "old" not in reason  # no age bound on this check
+
+
+def test_11g_an_annotated_tags_own_object_id_is_not_the_release_commit() -> None:
+    """The v0.109.0 tag is annotated: its object id (01f2d02e...) differs from the commit."""
+    tag_object = "01f2d02edd365d9da02e248d290e6ff7a3debc02"
+    v = decide(request(tag_target_sha=tag_object))
+    assert v.state == "INVALID"
+    assert any("peeled commit" in r for r in v.reasons)

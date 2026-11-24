@@ -289,7 +289,9 @@ def policy_digest(policy: tuple[CheckSpec, ...]) -> str:
 class ReleaseRequest:
     """Facts about the candidate, gathered by a trusted caller (never read from the candidate).
 
-    ``main_vs_sha`` is GitHub's compare status for ``base=<sha>, head=main`` and
+    ``tag_target_sha`` must be the PEELED commit the tag points at (``git rev-parse
+    <tag>^{commit}``): an annotated tag, such as v0.109.0, has its own object id that is not
+    the commit. ``main_vs_sha`` is GitHub's compare status for ``base=<sha>, head=main`` and
     ``promotion`` the recorded publication state: none | in_progress | published | partial.
     """
 
@@ -358,13 +360,19 @@ def parse_runs(payload: Any) -> tuple[dict[str, Any], ...]:
         rid, repo = raw.get("id"), raw.get("head_repository")
         if not isinstance(rid, int) or isinstance(rid, bool):
             raise EvidenceError(f"run id is not an integer: {rid!r}")
-        for field in ("status", "head_sha", "head_branch", "event", "path"):
+        for field in ("status", "head_sha", "event", "path"):
             if not isinstance(raw.get(field), str):
                 raise EvidenceError(f"run {rid}: {field} missing or not a string")
         if "conclusion" not in raw or not isinstance(raw["conclusion"], str | None):
             raise EvidenceError(f"run {rid}: conclusion missing or malformed")
-        if not isinstance(repo, dict) or not isinstance(repo.get("full_name"), str):
-            raise EvidenceError(f"run {rid}: head_repository.full_name missing")
+        # GitHub sends null for a deleted fork and for a run with no branch. Such a run is
+        # parsed, not fatal: whether it matters depends on its event (see _evaluate).
+        if not isinstance(raw.get("head_branch"), str | None):
+            raise EvidenceError(f"run {rid}: head_branch is not a string or null")
+        if repo is not None and (
+            not isinstance(repo, dict) or not isinstance(repo.get("full_name"), str)
+        ):
+            raise EvidenceError(f"run {rid}: head_repository.full_name malformed")
         runs.append({**raw, "created": _timestamp(raw.get("created_at"))})
     return tuple(runs)
 
@@ -397,7 +405,10 @@ def _identity_problems(req: ReleaseRequest) -> list[str]:
     if not _FULL_SHA.match(req.sha):
         problems.append(f"approved SHA {req.sha!r} is not a full lowercase 40-hex commit id")
     if req.tag_target_sha != req.sha:
-        problems.append(f"the tag resolves to {req.tag_target_sha!r}, not the approved {req.sha!r}")
+        problems.append(
+            f"the tag resolves to {req.tag_target_sha!r}, not the approved {req.sha!r} "
+            "(compare the peeled commit, not an annotated tag object's own id)"
+        )
     if req.main_vs_sha not in _MAIN_CONTAINS:
         problems.append(
             f"the release commit is not on {DEFAULT_BRANCH} ancestry (compare: {req.main_vs_sha!r})"
@@ -439,6 +450,20 @@ def _eligible(spec: CheckSpec, run: dict[str, Any], tag: str) -> bool:
     return run["head_branch"] in (DEFAULT_BRANCH, tag)
 
 
+def _how_to_satisfy(spec: CheckSpec, tag: str) -> str:
+    """Deterministic instruction for a check that has no usable evidence yet."""
+    options = []
+    if "workflow_dispatch" in spec.events:
+        options.append(f"dispatch {spec.workflow_path} on the release tag {tag}")
+    others = [e for e in spec.events if e != "workflow_dispatch"]
+    if others:
+        options.append(f"a {'/'.join(others)} run of {spec.workflow_path} on exactly this SHA")
+    text = "to satisfy it: " + " or ".join(options)
+    if spec.max_age_s is not None:
+        text += f"; evidence must be at most {spec.max_age_s / 3600:g}h old"
+    return text
+
+
 def _evaluate(
     spec: CheckSpec, ev: Evidence | EvidenceError | None, req: ReleaseRequest, now: datetime
 ) -> tuple[str, str]:
@@ -451,25 +476,29 @@ def _evaluate(
         )
     if isinstance(ev, EvidenceError):
         return fail, f"{spec.key}: evidence unavailable: {ev}"
-    runs = ev.runs if ev else ()
+    # Runs of an event this check never accepts (a fork's pull_request run, say) are neither
+    # evidence nor a reason to distrust the evidence: anyone can open a pull request whose head
+    # is the release commit. Identity is enforced only on runs that could count.
+    runs = [r for r in (ev.runs if ev else ()) if r["event"] in spec.events]
     for r in runs:
         if r["head_sha"] != req.sha:
             return "INVALID", (
                 f"{spec.key}: run {r['id']} is bound to a different SHA {r['head_sha'][:12]}, "
                 f"not the approved {req.sha[:12]}"
             )
-        if r["head_repository"]["full_name"] != CANONICAL_REPO:
-            return (
-                "INVALID",
-                f"{spec.key}: run {r['id']} comes from {r['head_repository']['full_name']}",
-            )
+        repo = (r["head_repository"] or {}).get("full_name")
+        if repo is None:
+            return "INVALID", f"{spec.key}: run {r['id']} has an unknown head repository"
+        if repo != CANONICAL_REPO:
+            return "INVALID", f"{spec.key}: run {r['id']} comes from {repo}"
         if r["path"] != spec.workflow_path:
             return (
                 "INVALID",
                 f"{spec.key}: run {r['id']} is from {r['path']}, expected {spec.workflow_path}",
             )
     tag = _TAG_REF.match(req.ref)
-    eligible = [r for r in runs if _eligible(spec, r, tag.group(1) if tag else "")]
+    tag_name = tag.group(1) if tag else ""
+    eligible = [r for r in runs if _eligible(spec, r, tag_name)]
     fresh = [
         r
         for r in eligible
@@ -477,7 +506,7 @@ def _evaluate(
     ]
     if not fresh:
         why = "only stale evidence" if eligible else "no eligible run"
-        return "PENDING", f"{spec.key}: {why} for {req.sha[:12]}"
+        return "PENDING", f"{spec.key}: {why} for {req.sha[:12]}; {_how_to_satisfy(spec, tag_name)}"
     latest = max(fresh, key=lambda r: (r["created"], r["id"]))  # the newest attempt decides
     url = latest.get("html_url", f"run {latest['id']}")
     jobs = (ev.jobs.get(latest["id"]) if ev else None) or None
