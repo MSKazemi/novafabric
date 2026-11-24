@@ -148,3 +148,17 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+
+  # Release-gate fixtures (#218): three `FROM scratch` Dockerfiles that build the tiny
+  # images the real-registry scenarios scan. They have no base image to update, so
+  # Dependabot will find nothing; the entry exists so the guard in
+  # tests/docs/test_dependabot_covers_every_manifest.py stays honest about every
+  # tracked Dockerfile instead of being narrowed for these three.
+  - package-ecosystem: "docker"
+    directories:
+      - "/tests/fixtures/release_gate/clean"
+      - "/tests/fixtures/release_gate/mixed"
+      - "/tests/fixtures/release_gate/vulnerable"
+    schedule:
+      interval: "weekly"
+      day: "monday"
