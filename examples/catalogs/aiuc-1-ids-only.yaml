@@ -41,7 +41,7 @@ controls:
     description: ""
     evidence_requirements:
       - evidence_type: seal_signature
-        description: a NovaSeal seal over the capsule that verifies
+        description: a NovaSeal seal that verifies; it may not bind the log files
 
   - id: D003.3
     title: ""
@@ -55,4 +55,4 @@ controls:
     description: ""
     evidence_requirements:
       - evidence_type: pii_scan
-        description: redaction_manifest.json from nova capture --pii-subject parses
+        description: redaction_manifest.json parses; not proof inputs are filtered
