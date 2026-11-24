@@ -21,23 +21,35 @@ must be empty, so there is no field for standard text to land in. The page is he
 short labels of our own, no long quotations, no conformance claims, and the
 non-affiliation disclaimers.
 
-A second, weaker tripwire compares every 3- and 4-word window of the page and the
-catalog against SHA-256 digests of a few phrases known to be AIUC-1 titles. The digests
-are stored instead of the phrases, so the guard does not itself reproduce them.
+Two weaker tripwires compare the page and the catalog against SHA-256 digests of the
+standard's text, stored instead of the text so the guard does not itself reproduce it:
+every window of 3 to 4 words against a few known titles, and every window against the
+digest file ``aiuc1_standard_digests.txt``: all control and evidence-item titles of three
+or more words, and every 8-word run of the controls and evidence items the page cites.
+An unquoted run of eight words or more copied from the standard fails the second one.
 """
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import re
 from pathlib import Path
+from typing import Any
 
+import pytest
 import yaml
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 from typer.testing import CliRunner
 
+from novafabric.capture.finalize import evidence_digests
 from novafabric.cli.main import app
 from novafabric.compliance.audit.loader import load_profile
+from novafabric.trust.novaseal import KeyConfig, NovaSeal
 
 _REPO = Path(__file__).resolve().parents[2]
 _DOC = _REPO / "docs" / "aiuc-1-evidence-crosswalk.md"
@@ -66,6 +78,16 @@ TITLE_PHRASE_DIGESTS: frozenset[str] = frozenset({
     "40f96e3f8bf8ea32f971b037bb85d4f86b947407a92add8d8640fcdfbb966f2b",
 })
 
+_DIGESTS = Path(__file__).with_name("aiuc1_standard_digests.txt")
+
+#: The one sentence that mentions certification of AIUC-1 outside the disclaimer. It says
+#: who publishes the standard and that this page makes no claim; nothing about how AIUC
+#: or an auditor assesses anything, which this project cannot vouch for.
+CERTIFICATION_SENTENCE = (
+    "AIUC-1 is published by AIUC; this page does not claim or imply certification "
+    "against it, and only your auditor decides whether a record meets a requirement."
+)
+
 _ID = re.compile(r"^[A-F]\d{3}(?:\.\d+)?$")
 _NOT_AFFILIATED = re.compile(r"not affiliated with, endorsed by, or certified by [^.]*\.")
 _CLAIM = re.compile(
@@ -89,6 +111,36 @@ def _windows(text: str, sizes: tuple[int, ...] = (3, 4)) -> set[str]:
 
 def _digest_hits(text: str, digests: frozenset[str]) -> set[str]:
     return {w for w in _windows(text) if hashlib.sha256(w.encode()).hexdigest() in digests}
+
+
+def _norm_words(text: str) -> list[str]:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
+
+
+def _standard_digest_hits(text: str, digests: Path = _DIGESTS) -> dict[str, set[str]]:
+    """Windows of *text* whose digest is one of the stored title or 8-word digests."""
+    titles: dict[int, set[str]] = {}
+    grams: set[str] = set()
+    for line in digests.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        kind, digest = line.split(" ")
+        if kind == "G8":
+            grams.add(digest)
+        else:
+            titles.setdefault(int(kind[1:]), set()).add(digest)
+    words = _norm_words(text)
+    hits: dict[str, set[str]] = {"title": set(), "run": set()}
+    for n, wanted in titles.items():
+        for i in range(len(words) - n + 1):
+            window = " ".join(words[i:i + n])
+            if hashlib.sha256(window.encode()).hexdigest() in wanted:
+                hits["title"].add(window)
+    for i in range(len(words) - 7):
+        window = " ".join(words[i:i + 8])
+        if hashlib.sha256(window.encode()).hexdigest()[:16] in grams:
+            hits["run"].add(window)
+    return hits
 
 
 def _crosswalk_rows() -> dict[str, list[str]]:
@@ -208,3 +260,194 @@ def test_the_title_tripwire_catches_an_injected_phrase() -> None:
 def test_the_page_is_listed_in_the_docs_index() -> None:
     index = (_REPO / "docs" / "README.md").read_text(encoding="utf-8")
     assert "aiuc-1-evidence-crosswalk.md" in index
+
+
+# ------------------------------------------- review findings on the crosswalk (#68)
+
+
+def test_the_digest_file_holds_digests_only() -> None:
+    lines = [ln for ln in _DIGESTS.read_text(encoding="utf-8").splitlines()
+             if ln and not ln.startswith("#")]
+    assert len(lines) > 1500
+    for line in lines:
+        assert re.fullmatch(r"T\d+ [0-9a-f]{64}|G8 [0-9a-f]{16}", line), line[:40]
+
+
+def test_no_unquoted_eight_word_run_is_copied_from_the_standard() -> None:
+    for path in (_DOC, _CATALOG):
+        hits = _standard_digest_hits(path.read_text(encoding="utf-8"))
+        assert len(hits["run"]) == 0, (path.name, len(hits["run"]))
+
+
+def test_no_control_or_evidence_title_appears_verbatim() -> None:
+    for path in (_DOC, _CATALOG):
+        hits = _standard_digest_hits(path.read_text(encoding="utf-8"))
+        assert len(hits["title"]) == 0, (path.name, len(hits["title"]))
+
+
+def test_the_guards_have_teeth(tmp_path: Path) -> None:
+    run = "alpha beta gamma delta epsilon zeta eta theta"
+    title = "log of something plausible"
+    planted = tmp_path / "digests.txt"
+    planted.write_text(
+        f"G8 {hashlib.sha256(run.encode()).hexdigest()[:16]}\n"
+        f"T4 {hashlib.sha256(title.encode()).hexdigest()}\n",
+        encoding="utf-8",
+    )
+    hits = _standard_digest_hits(f"Intro. {run.title()}, then {title.upper()}!", planted)
+    assert hits == {"title": {title}, "run": {run}}
+    # Seven words, or the same words reordered, are not the planted run.
+    assert _standard_digest_hits("alpha beta gamma delta epsilon zeta eta", planted)["run"] == set()
+    assert _standard_digest_hits("beta alpha gamma delta epsilon zeta eta theta", planted)[
+        "run"
+    ] == set()
+
+
+def test_the_certification_sentence_is_pinned() -> None:
+    text = _flat(_DOC)
+    assert CERTIFICATION_SENTENCE in text
+    # Nothing about how AIUC or an auditor assesses: this project cannot vouch for it.
+    assert "accredited" not in text.lower()
+    assert "evaluations" not in text.lower()
+    assert "takes part in neither" not in text
+
+
+def test_validate_takes_a_capsule_directory_not_a_run_id() -> None:
+    text = _DOC.read_text(encoding="utf-8")
+    assert "nova validate <run-id>" not in text
+    assert "`nova validate <capsule-dir>`" in _crosswalk_rows()["E015.1"][2]
+
+
+def test_e015_2_is_rated_for_what_its_check_shows() -> None:
+    rows = _crosswalk_rows()
+    _area, _status, record, strength, gap = rows["E015.2"]
+    assert strength.split(":")[0] == "Partial"
+    requirements = {
+        c.id: [r.evidence_type for r in c.evidence_requirements]
+        for c in load_profile(str(_CATALOG)).controls
+    }
+    # The page and the catalog agree: the check is a recorded model call, as for E015.1.
+    assert requirements["E015.2"] == ["model_calls"]
+    assert "same check as E015.1" in gap
+    assert "does not check `trace.jsonl`" in gap
+    # The record cell must not present trace spans as what the catalog checks.
+    assert "catalog" in record and "model call" in record
+    for claim in ("execution chain", "delegation chain", "full agent"):
+        assert claim not in (record + gap).lower()
+    raw = yaml.safe_load(_CATALOG.read_text(encoding="utf-8"))
+    e015_2 = next(c for c in raw["controls"] if c["id"] == "E015.2")
+    for req in e015_2["evidence_requirements"]:
+        assert "trace" not in req["description"].lower()
+        assert "span" not in req["description"].lower()
+
+
+def test_e015_4_is_partial_and_states_the_legacy_seal_limit() -> None:
+    _area, _status, record, strength, gap = _crosswalk_rows()["E015.4"]
+    assert strength.split(":")[0] == "Partial"
+    # A seal made before evidence digests verifies but does not bind the logs (#318).
+    assert "before evidence digests" in gap
+    assert "does not bind" in gap
+    assert "`nova verify <capsule>`" in gap
+    assert "NOT PRESENT" in gap
+    assert "digest-bearing seal" in gap or "evidence digests" in gap
+
+
+def test_e015_4_catalog_description_warns_that_a_seal_may_not_bind_the_logs() -> None:
+    raw = yaml.safe_load(_CATALOG.read_text(encoding="utf-8"))
+    e015_4 = next(c for c in raw["controls"] if c["id"] == "E015.4")
+    (req,) = e015_4["evidence_requirements"]
+    assert req["evidence_type"] == "seal_signature"
+    assert "may not bind" in req["description"]
+
+
+def test_a006_1_says_a_redaction_manifest_exists_not_that_data_is_filtered() -> None:
+    _area, _status, record, _strength, gap = _crosswalk_rows()["A006.1"]
+    assert "redaction manifest exists" in gap
+    assert "not that" in gap and "filtered" in gap
+    raw = yaml.safe_load(_CATALOG.read_text(encoding="utf-8"))
+    a006 = next(c for c in raw["controls"] if c["id"] == "A006.1")
+    (req,) = a006["evidence_requirements"]
+    assert req["evidence_type"] == "pii_scan"
+    assert "not proof" in req["description"]
+
+
+# --- E015.4 is covered only for a sealed capsule (the catalog's evidence type) -------
+
+
+def _seal_capsule(root: Path, name: str, *, bind_evidence: bool) -> Path:
+    """A capsule under *root* with a genuine NovaSeal ``.seal/`` (local key, no TSA).
+
+    ``bind_evidence=False`` seals a manifest without ``evidence_digests``: the shape of a
+    seal made before evidence digests, which signs the manifest only."""
+    work = root.parent / f"_seal-{name}"
+    work.mkdir(parents=True)
+    cap = root / name
+    cap.mkdir(parents=True)
+    (cap / "model-calls.jsonl").write_text('{"model": "m"}\n', encoding="utf-8")
+    (cap / "tool-calls.jsonl").write_text('{"tool": "t"}\n', encoding="utf-8")
+    manifest: dict[str, Any] = {
+        "run_id": name, "status": "success",
+        "created_at": "2024-01-01T00:00:00.000000Z",
+        "finished_at": "2024-01-01T00:00:10.000000Z",
+    }
+    if bind_evidence:
+        manifest["evidence_digests"] = evidence_digests(cap)
+    (cap / "capsule.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "aiuc1-test")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+        .public_key(key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(days=1)).sign(key, hashes.SHA256())
+    )
+    key_path, cert_path = work / "seal.key", work / "seal.crt"
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ))
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    bundle = NovaSeal(
+        config=KeyConfig(profile="local", key_path=str(key_path), cert_path=str(cert_path)),
+        tsa_url="", db_path=str(work / "merkle.db"),
+    ).seal(manifest)
+    seal_dir = cap / ".seal"
+    seal_dir.mkdir()
+    (seal_dir / "manifest.dsse").write_bytes(bundle.dsse_envelope)
+    (seal_dir / "manifest.dsse.tsr").write_bytes(bundle.tsr)
+    (seal_dir / "log-entry.json").write_text(json.dumps(bundle.log_entry), encoding="utf-8")
+    return cap
+
+
+def _audit_status(data_dir: Path, capsule: str) -> dict[str, str]:
+    result = CliRunner().invoke(
+        app,
+        ["audit", "map", "--profile", str(_CATALOG), "--data-dir", str(data_dir),
+         "--capsule", capsule, "--json"],
+    )
+    assert isinstance(result.exception, SystemExit), result.exception
+    return {c["control_id"]: c["status"] for c in json.loads(result.output)["coverages"]}
+
+
+@pytest.mark.parametrize("bind_evidence", [True, False], ids=["digest-bearing", "legacy"])
+def test_e015_4_is_covered_for_a_sealed_capsule(
+    tmp_path: Path, bind_evidence: bool
+) -> None:
+    capsules = tmp_path / "data" / "capsules"
+    _seal_capsule(capsules, "sealed-run", bind_evidence=bind_evidence)
+    status = _audit_status(tmp_path / "data", "sealed-run")
+    # The check passes for both, which is why the page rates E015.4 Partial and says a
+    # seal made before evidence digests does not bind the logs.
+    assert status["E015.4"] == "covered"
+
+
+def test_e015_4_is_missing_for_an_unsealed_capsule(tmp_path: Path) -> None:
+    cap = tmp_path / "data" / "capsules" / "plain-run"
+    cap.mkdir(parents=True)
+    (cap / "capsule.yaml").write_text("run_id: plain-run\n", encoding="utf-8")
+    (cap / "model-calls.jsonl").write_text('{"model": "m"}\n', encoding="utf-8")
+    (cap / "tool-calls.jsonl").write_text('{"tool": "t"}\n', encoding="utf-8")
+    status = _audit_status(tmp_path / "data", "plain-run")
+    assert status["E015.4"] == "missing"
+    assert status["E015.1"] == status["E015.2"] == status["D003.3"] == "covered"
