@@ -130,3 +130,63 @@ def test_demo_runs_end_to_end(tmp_path: Path) -> None:
     assert len(capsules) == 2, capsules
     for capsule in capsules:
         assert f"{capsule}" in result.stdout
+
+
+@pytest.mark.parametrize("level", ["minimal", "standard", "forensic"])
+def test_model_calls_hold_the_request_messages_and_response_at_every_level(
+    tmp_path: Path, level: str
+) -> None:
+    """Pins today's default: SDK model-call capture keeps the prompt and the reply at any level.
+
+    AGENTS.md and docs/architecture.md (invariant 4) say this invariant is not met because of
+    exactly this. If a level now keeps content out of ``model-calls.jsonl``, update both texts,
+    ``LEVEL_EFFECTS`` in ``policies/capture_level.py`` and the capture-level docs in the same
+    change; ``tests/docs/test_capture_level_claims.py`` fails until you do.
+    """
+    import json
+
+    pytest.importorskip("openai")
+    env = _isolated_env(
+        tmp_path,
+        NOVA=str(NOVA),
+        PYTHON=sys.executable,
+        DEMO_PORT=str(_free_port()),
+        SKIP_VERIFY="1",
+        NOVA_CAPTURE_LEVEL=level,
+    )
+    # Control: the level really reaches a process started with this environment, so a pass
+    # below cannot be a run where NOVA_CAPTURE_LEVEL was silently ignored. Only the payload
+    # level differs here; the demo makes no tool calls, so the capsule cannot show it.
+    control = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from novafabric.capture.record import _payloads_enabled; print(_payloads_enabled())",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    assert control.stdout.strip() == str(level == "forensic"), control.stdout + control.stderr
+    result = subprocess.run(
+        ["sh", str(SCRIPT)],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=tmp_path,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    capsules = sorted((tmp_path / "home" / "capsules").iterdir())
+    assert capsules, "the demo wrote no capsule"
+    for capsule in capsules:
+        records = [
+            json.loads(line)
+            for line in (capsule / "model-calls.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert records, f"{capsule.name}: no model call recorded"
+        for record in records:
+            assert record.get("gen_ai.request.messages"), f"{level}: request messages missing"
+            assert record.get("gen_ai.response.choices"), f"{level}: response choices missing"

@@ -149,6 +149,42 @@ def _invariant_4(path: Path) -> str:
     return " ".join(match.group(1).split())
 
 
+def _says_not_met(invariant: str) -> bool:
+    """True only for the present-tense bold statement "invariant is **not met**".
+
+    A bare substring would also accept "**satisfied** (it was once not met)" or "was once
+    **not met** but is now opt-in", which say the opposite, so the statement must be the
+    present-tense phrase and nothing may say it is satisfied.
+    """
+    stated = re.search(r"invariant is \*\*not met\*\*", invariant) is not None
+    return stated and "satisfied" not in invariant
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("As built this invariant is **not met**: model calls are stored.", True),
+        ("As built, this invariant is **not met**: model calls are stored.", True),
+        ("This invariant was once **not met** but capture is now opt-in.", False),
+        ("This invariant is **satisfied** (it was once not met).", False),
+        ("It was once not met and is now **satisfied**; the **not met** note is gone.", False),
+        ("Capture is opt-in.", False),
+        ("", False),
+    ],
+    ids=[
+        "unmet",
+        "unmet-with-comma",
+        "was-once-not-met",
+        "satisfied-mentioning-not-met",
+        "both-words",
+        "no-statement",
+        "empty",
+    ],
+)
+def test_says_not_met_reads_the_statement_not_the_substring(text: str, expected: bool) -> None:
+    assert _says_not_met(text) is expected
+
+
 @pytest.mark.parametrize("path", _INVARIANT_4_TEXTS)
 def test_invariant_4_matches_what_the_default_level_stores(path: Path) -> None:
     """The privacy invariant may only be stated as met when the default stores no content.
@@ -160,9 +196,65 @@ def test_invariant_4_matches_what_the_default_level_stores(path: Path) -> None:
     from novafabric.policies.capture_level import LEVEL_EFFECTS, CaptureLevel
 
     stores_content = "full prompts and responses" in LEVEL_EFFECTS[CaptureLevel.STANDARD]
-    says_not_met = "not met" in _invariant_4(path).lower()
+    invariant = _invariant_4(path)
+    says_not_met = _says_not_met(invariant)
     assert says_not_met == stores_content, (
         f"{path.name} invariant 4 and LEVEL_EFFECTS[standard] disagree "
         f"(default stores content: {stores_content}; text says not met: {says_not_met}). "
         "Update AGENTS.md and docs/architecture.md invariant 4 in the same change."
     )
+    if stores_content:
+        missing = [p for p in _WHAT_THE_DEFAULT_STORES if p not in invariant]
+        assert not missing, (
+            f"{path.name} invariant 4 says 'not met' but no longer says what is stored "
+            f"(missing {missing}); the claim must name the file, the records and the levels."
+        )
+
+
+#: What a truthful "not met" must say: which file, which records, at which levels.
+_WHAT_THE_DEFAULT_STORES = (
+    "model-calls.jsonl",
+    "request messages",
+    "every capture level",
+    "NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off",
+)
+
+
+def _level_comments() -> dict[str, str]:
+    """Each ``CaptureLevel`` member's trailing comment, read from the source."""
+    import inspect
+
+    from novafabric.policies.capture_level import CaptureLevel
+
+    source = inspect.getsource(CaptureLevel)
+    return {
+        m.group(1): m.group(2).strip()
+        for m in re.finditer(r'^\s+([A-Z_]+) = "[a-z_]+"\s*# (.*)$', source, flags=re.M)
+    }
+
+
+def test_level_comments_say_what_each_level_does_today() -> None:
+    """The member comments are a third place that states what a level does; pin them to the code.
+
+    ``Today:`` is behaviour that exists, ``Planned (unscheduled):`` is not built. The facts each
+    comment must carry come from ``PAYLOAD_LEVELS`` and ``LEVEL_EFFECTS``, not from this test.
+    """
+    from novafabric.policies.capture_level import PAYLOAD_LEVELS, CaptureLevel
+
+    comments = _level_comments()
+    assert set(comments) == {level.name for level in CaptureLevel}, comments
+    for name, text in comments.items():
+        level = CaptureLevel[name]
+        today, _, planned = text.partition("Planned (unscheduled):")
+        assert today.startswith("Today: "), f"{name}: comment must start with 'Today:': {text!r}"
+        assert "Planned:" not in text, f"{name}: use 'Planned (unscheduled):': {text!r}"
+        # Only the payload levels change capture; the comment says so exactly for them.
+        assert ("tool payloads" in today) == (name == "FORENSIC"), f"{name}: {text!r}"
+        assert ("same as" in today) == (name in {"MINIMAL", "AIR_GAPPED"}), f"{name}: {text!r}"
+        # Whatever a level is said to be "the same as" must really behave the same.
+        if "same as STANDARD" in today:
+            assert level not in PAYLOAD_LEVELS, f"{name} changes capture; {text!r}"
+        if "same as FORENSIC" in today:
+            assert level in PAYLOAD_LEVELS, f"{name} does not change capture; {text!r}"
+        # Planned wording appears exactly where the code says the feature is not applied.
+        assert bool(planned.strip()) == (name in {"MINIMAL", "AIR_GAPPED"}), f"{name}: {text!r}"
