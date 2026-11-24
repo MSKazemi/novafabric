@@ -260,6 +260,81 @@ def test_a_failed_scan_cannot_be_papered_over_by_the_report_step() -> None:
     assert shipped <= gated
 
 
+# --------------------------------------------------------------------------- scan evidence
+
+
+def _release_image_steps(steps: list[dict[str, Any]], sub: str) -> list[dict[str, Any]]:
+    return [s for s in steps if f"release_image.py {sub}" in str(s.get("run") or "")]
+
+
+def _platform_args(step: dict[str, Any]) -> set[str]:
+    return set(re.findall(r"--platform\s+(\S+)", str(step.get("run") or "")))
+
+
+def test_scan_steps_write_one_json_report_per_shipped_platform() -> None:
+    """The evidence check reads trivy-report-<os>-<arch>.json; the scan must write exactly that."""
+    steps = _steps()
+    shipped = _build_platforms(steps)
+    reports = [s for s in steps if _is_trivy(s) and not _is_gate(s)]
+    for platform in sorted(shipped):
+        want = "trivy-report-" + platform.replace("/", "-") + ".json"
+        hits = [
+            s
+            for s in reports
+            if s["with"].get("output") == want
+            and s["with"].get("format") == "json"
+            and s["_env"].get("TRIVY_PLATFORM") == platform
+        ]
+        assert hits, (
+            f"no JSON report step writes {want!r} for {platform}: the evidence check "
+            "(release_image.py check-reports) would have nothing to read"
+        )
+    for s in reports:
+        assert str(s["with"].get("exit-code", "0")) == "0", (
+            f"{_name(s)!r}: an evidence step that exits 1 would stop the job before the "
+            "second platform's report exists"
+        )
+    last_report = max(_index(steps, lambda s: s in reports))
+    assert last_report < min(_index(steps, _is_gate)), (
+        "both platforms' reports must exist before the first gate can stop the job"
+    )
+
+
+def test_the_evidence_check_runs_after_the_gate_and_before_any_production_write() -> None:
+    steps = _steps()
+    shipped = _build_platforms(steps)
+    check = _index(steps, lambda s: "release_image.py check-reports" in str(s.get("run") or ""))
+    assert len(check) == 1, "exactly one evidence-check step is expected"
+    i = check[0]
+    assert i > max(_index(steps, _is_gate)), "the evidence check must follow every gate step"
+    assert i < min(_index(steps, _writes_to_production)), (
+        "the evidence check needs no credential and must fail the job before the first "
+        "production login"
+    )
+    s = steps[i]
+    assert _platform_args(s) == shipped, (
+        f"the evidence check covers {sorted(_platform_args(s))}, the build ships {sorted(shipped)}"
+    )
+    assert "--report-dir" in str(s["run"])
+    assert "steps.build.outputs.digest" in str(s.get("env") or "") + str(s["run"])
+    assert not s.get("if") and not s.get("continue-on-error")
+
+
+def test_promote_always_carries_the_scan_evidence_and_covers_every_platform() -> None:
+    """``promote`` re-checks the reports itself: the copy cannot happen without them."""
+    steps = _steps()
+    shipped = _build_platforms(steps)
+    promote = _release_image_steps(steps, "promote")
+    assert promote
+    for s in promote:
+        assert "--report-dir" in str(s["run"]), f"{_name(s)!r} promotes without scan evidence"
+        assert _platform_args(s) == shipped, (
+            f"{_name(s)!r} verifies {sorted(_platform_args(s))}, the build ships {sorted(shipped)}"
+        )
+    for s in _release_image_steps(steps, "tag"):
+        assert _platform_args(s) == shipped, f"{_name(s)!r} does not cover every platform"
+
+
 # --------------------------------------------------------------------------- bypass
 
 

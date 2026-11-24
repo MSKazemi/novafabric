@@ -67,7 +67,7 @@ FAKE_DOCKER = textwrap.dedent(
     raw = base64.b64decode(body)
     if state.get("mutate_on_create"):
         raw = raw + b" "
-    repo = dest.rsplit(":", 1)[0]
+    repo = dest.split("@")[0] if "@" in dest else dest.rsplit(":", 1)[0]
     enc = base64.b64encode(raw).decode()
     state["refs"][dest] = enc
     src_repo = src.split("@")[0] if "@" in src else src.rsplit(":", 1)[0]
@@ -75,6 +75,9 @@ FAKE_DOCKER = textwrap.dedent(
         if ref.startswith(src_repo + "@"):
             state["refs"][repo + ref[len(src_repo):]] = val
     state["refs"][repo + "@sha256:" + hashlib.sha256(raw).hexdigest()] = enc
+    if state.get("mutate_on_create") and "@" in src:
+        # a real registry cannot serve different bytes under the source digest
+        state["refs"].pop(repo + "@" + src.split("@")[1], None)
     save()
     """
 )
@@ -134,7 +137,39 @@ class Fake:
         shim.write_text(FAKE_DOCKER.format(python=sys.executable))
         shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
         self.bindir = bindir
+        self.reports = tmp / "reports"
         self.flush()
+
+    def write_reports(self, digest: str, bad: tuple[str, ...] = ()) -> Path:
+        """Trivy-shaped JSON reports for ``digest``; platforms in ``bad`` carry a fixable CRITICAL."""
+        self.reports.mkdir(exist_ok=True)
+        for plat in (AMD64, ARM64):
+            os_, arch = plat.split("/")
+            vulns = (
+                [
+                    {
+                        "VulnerabilityID": "CVE-1",
+                        "PkgName": "p",
+                        "InstalledVersion": "1",
+                        "FixedVersion": "2",
+                        "Severity": "CRITICAL",
+                    }
+                ]
+                if plat in bad
+                else []
+            )
+            (self.reports / f"trivy-report-{os_}-{arch}.json").write_text(
+                json.dumps(
+                    {
+                        "SchemaVersion": 2,
+                        "ArtifactType": "container_image",
+                        "ArtifactName": f"{CAND}@{digest}",
+                        "Metadata": {"ImageConfig": {"os": os_, "architecture": arch}},
+                        "Results": [{"Target": "t", "Vulnerabilities": vulns}],
+                    }
+                )
+            )
+        return self.reports
 
     def flush(self) -> None:
         self.state_path.write_text(json.dumps(self.state))
@@ -182,8 +217,14 @@ def fake(tmp_path: Path) -> Fake:
     return Fake(tmp_path)
 
 
-def _promote(fake: Fake, digest: str, *platforms: str) -> subprocess.CompletedProcess[str]:
+def _promote(
+    fake: Fake, digest: str, *platforms: str, stage: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Promote with clean scan reports for ``digest`` unless the test wrote its own."""
+    if not fake.reports.exists():
+        fake.write_reports(digest)
     plats = [x for p in (platforms or (AMD64, ARM64)) for x in ("--platform", p)]
+    staging = ["--stage-tag", stage] if stage else []
     return fake.run(
         "promote",
         "--src-repo",
@@ -192,8 +233,9 @@ def _promote(fake: Fake, digest: str, *platforms: str) -> subprocess.CompletedPr
         PROD,
         "--digest",
         digest,
-        "--stage-tag",
-        "scanned-abc",
+        "--report-dir",
+        str(fake.reports),
+        *staging,
         *plats,
     )
 
@@ -214,7 +256,7 @@ def test_promote_copies_the_digest_and_the_bytes_are_identical(fake: Fake) -> No
     assert result.returncode == 0, result.stderr
     refs = fake.reload()["refs"]
     assert refs[f"{PROD}@{digest}"] == base64.b64encode(index).decode()
-    assert refs[f"{PROD}:scanned-abc"] == base64.b64encode(index).decode()
+    assert not [r for r in refs if r.startswith(f"{PROD}:")], "a tagless stage creates no tag"
 
 
 def test_the_script_only_ever_speaks_imagetools(fake: Fake) -> None:
@@ -259,6 +301,16 @@ def test_a_source_missing_a_shipped_platform_is_refused(fake: Fake) -> None:
     result = _promote(fake, digest)
     assert result.returncode == 1 and "linux/arm64" in result.stderr
     assert fake.creates() == []
+
+
+def test_an_index_with_a_platform_nobody_scanned_is_refused(fake: Fake) -> None:
+    """The caller's platform list is what was scanned; the index is the truth about what ships."""
+    index, kids = _image(platforms=(AMD64, ARM64, "linux/s390x"))
+    digest = fake.put(CAND, index, kids)
+    result = _promote(fake, digest)
+    assert result.returncode == 1 and "unscanned" in result.stderr and "s390x" in result.stderr
+    assert fake.creates() == []
+    assert _tag(fake, digest, "--tag", "1.0.0").returncode == 1
 
 
 def test_a_single_image_that_is_not_an_index_is_refused(fake: Fake) -> None:
@@ -354,6 +406,97 @@ def test_a_hung_registry_call_times_out_as_a_failure(
         mod.main(["verify", "--repo", CAND, "--digest", "sha256:" + "0" * 64, "--platform", AMD64])
         == 1
     )
+
+
+# ---------------------------------------------------------------- scan evidence gates the copy
+
+
+def test_the_tagless_stage_copy_targets_the_digest_not_a_tag(fake: Fake) -> None:
+    """First choice (#218 task d): copy to ``DEST@digest`` so no staging tag is ever visible."""
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    assert _promote(fake, digest).returncode == 0
+    (create,) = fake.creates()
+    assert create[create.index("-t") + 1] == f"{PROD}@{digest}"
+
+
+def test_a_stage_tag_is_the_documented_fallback_and_still_verifies(fake: Fake) -> None:
+    """One line in the workflow (`--stage-tag scanned-<hex12>`) if a registry refuses tagless."""
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    assert _promote(fake, digest, stage="scanned-abc").returncode == 0
+    (create,) = fake.creates()
+    assert create[create.index("-t") + 1] == f"{PROD}:scanned-abc"
+    assert fake.reload()["refs"][f"{PROD}:scanned-abc"] == base64.b64encode(index).decode()
+
+
+@pytest.mark.parametrize(
+    "bad", [(ARM64,), (AMD64,), (AMD64, ARM64)], ids=["arm64", "amd64", "both"]
+)
+def test_a_platform_with_a_fixable_critical_means_no_copy_at_all(
+    fake: Fake, bad: tuple[str, ...]
+) -> None:
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    fake.write_reports(digest, bad=bad)
+    result = _promote(fake, digest)
+    assert result.returncode == 1 and "fixable CRITICAL" in result.stderr
+    assert fake.creates() == [], "a failed scan must write nothing to production"
+    assert not [r for r in fake.reload()["refs"] if r.startswith(PROD)]
+
+
+@pytest.mark.parametrize("victim", [AMD64, ARM64])
+def test_a_missing_scan_report_means_no_copy(fake: Fake, victim: str) -> None:
+    """Timeout, crash or cancel leaves no report; the unknown verdict is a refusal."""
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    fake.write_reports(digest)
+    (fake.reports / f"trivy-report-{victim.replace('/', '-')}.json").unlink()
+    result = _promote(fake, digest)
+    assert result.returncode == 1 and "no scan report" in result.stderr
+    assert fake.creates() == []
+
+
+@pytest.mark.parametrize("junk", ["", "not json", "{}", "[]", '{"SchemaVersion": 2}'])
+def test_an_unreadable_scan_report_means_no_copy(fake: Fake, junk: str) -> None:
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    fake.write_reports(digest)
+    (fake.reports / "trivy-report-linux-arm64.json").write_text(junk)
+    assert _promote(fake, digest).returncode == 1
+    assert fake.creates() == []
+
+
+def test_reports_for_another_digest_mean_no_copy(fake: Fake) -> None:
+    """The candidate changed after it was scanned: reports no longer describe this digest."""
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    fake.write_reports("sha256:" + "1" * 64)
+    result = _promote(fake, digest)
+    assert result.returncode == 1 and "different image" in result.stderr
+    assert fake.creates() == []
+
+
+def test_an_arm64_report_that_silently_scanned_amd64_means_no_copy(fake: Fake) -> None:
+    """TRIVY_PLATFORM that never reached trivy: a clean, well-formed, WRONG-arch report."""
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    fake.write_reports(digest)
+    amd = fake.reports / "trivy-report-linux-amd64.json"
+    (fake.reports / "trivy-report-linux-arm64.json").write_bytes(amd.read_bytes())
+    result = _promote(fake, digest)
+    assert result.returncode == 1 and "architecture" in result.stderr
+    assert fake.creates() == []
+
+
+def test_a_tagless_copy_the_registry_refuses_is_a_failure_with_nothing_tagged(fake: Fake) -> None:
+    """Fake docker fails the create: exit 1, no tag, no 'warn and continue'."""
+    index, kids = _image()
+    digest = fake.put(CAND, index, kids)
+    fake.state["errors"] = {f"{CAND}@{digest}": "boom"}  # inspect of the source now fails
+    result = _promote(fake, digest)
+    assert result.returncode == 1
+    assert fake.creates() == []
 
 
 # ---------------------------------------------------------------- moving the release tags

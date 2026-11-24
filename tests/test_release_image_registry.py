@@ -26,6 +26,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 import uuid
@@ -215,28 +216,49 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _reports(host: str, repo: str, digest: str, directory: Path) -> Path:
+    """Clean Trivy-shaped reports for ``host/repo@digest``, one per platform."""
+    for plat in (AMD64, ARM64):
+        os_, arch = plat.split("/")
+        (directory / f"trivy-report-{os_}-{arch}.json").write_text(
+            json.dumps(
+                {
+                    "SchemaVersion": 2,
+                    "ArtifactType": "container_image",
+                    "ArtifactName": f"{host}/{repo}@{digest}",
+                    "Metadata": {"ImageConfig": {"os": os_, "architecture": arch}},
+                    "Results": [{"Target": "t", "Vulnerabilities": []}],
+                }
+            )
+        )
+    return directory
+
+
 def _promote(
     cand: Registry,
     prod: Registry,
     repo: str,
     digest: str,
-    stage: str = "scanned-x",
     platforms: tuple[str, ...] = (AMD64, ARM64),
+    scanned: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    args = [
-        "promote",
-        "--src-repo",
-        f"{cand.host}/{repo}",
-        "--dest-repo",
-        f"{prod.host}/{repo}",
-        "--digest",
-        digest,
-        "--stage-tag",
-        stage,
-    ]
-    for p in platforms:
-        args += ["--platform", p]
-    return _run(*args)
+    """Promote with clean reports for ``scanned`` (default: the digest being promoted)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        reports = _reports(cand.host, repo, scanned or digest, Path(tmp))
+        args = [
+            "promote",
+            "--src-repo",
+            f"{cand.host}/{repo}",
+            "--dest-repo",
+            f"{prod.host}/{repo}",
+            "--digest",
+            digest,
+            "--report-dir",
+            str(reports),
+        ]
+        for p in platforms:
+            args += ["--platform", p]
+        return _run(*args)
 
 
 def _tag(
@@ -273,9 +295,9 @@ def test_promotion_copies_every_manifest_and_the_bytes_are_identical(
     assert prod.manifest("a1", digest) == cand.manifest("a1", digest)
     for child in json.loads(cand.manifest("a1", digest))["manifests"]:  # platforms + attestations
         assert prod.manifest("a1", child["digest"]) == cand.manifest("a1", child["digest"])
-    assert prod.tags("a1") == ["scanned-x"], "only the non-release staging tag exists after promote"
+    assert prod.tags("a1") == [], "a tagless stage copy leaves no tag behind"
     assert _tag(prod, "a1", digest, "1.0.0", "1.0", "latest", immutable="1.0.0").returncode == 0
-    assert prod.tags("a1") == ["1.0", "1.0.0", "latest", "scanned-x"]
+    assert prod.tags("a1") == ["1.0", "1.0.0", "latest"]
 
 
 # ---- scenario: digest changed between scan and promotion --------------------------------------
@@ -289,6 +311,9 @@ def test_a_repointed_candidate_tag_cannot_smuggle_an_unscanned_image_through(
     scanned = cand.push_image("b1", salt="scanned", tag="candidate")
     swapped = cand.push_image("b1", salt="NOT-SCANNED", tag="candidate")  # same tag, new content
     assert swapped != scanned
+    # the new image has no scan evidence: reports name the scanned digest only
+    assert _promote(cand, prod, "b1", swapped, scanned=scanned).returncode == 1
+    assert prod.tags("b1") == [] and not prod.has("b1", swapped)
     assert _promote(cand, prod, "b1", scanned).returncode == 0
     assert prod.has("b1", scanned) and not prod.has("b1", swapped)
 
@@ -369,7 +394,7 @@ def test_an_immutable_release_tag_is_not_overwritten_by_a_rebuild(
     cand, prod = oci_registries
     released = prod.push_image("e1", salt="first-build", tag="2.0.0")
     rebuilt = cand.push_image("e1", salt="second-build-same-source", tag="candidate")
-    assert _promote(cand, prod, "e1", rebuilt).returncode == 0  # staging copy is fine
+    assert _promote(cand, prod, "e1", rebuilt).returncode == 0  # the untagged copy is fine
     assert _tag(prod, "e1", rebuilt, "2.0.0", "latest", immutable="2.0.0").returncode == 1
     assert _sha(prod.manifest("e1", "2.0.0")) == released
     assert "latest" not in prod.tags("e1")
