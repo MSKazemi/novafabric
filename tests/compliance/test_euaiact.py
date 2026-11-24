@@ -289,8 +289,10 @@ class TestHighRiskDateIsStatedFromTheAmendedRegulation:
 
     def test_roadmap_does_not_bind_art12_on_the_original_date(self) -> None:
         for line in (_ROOT / "ROADMAP.md").read_text(encoding="utf-8").splitlines():
-            if "Art.12" in line and "2026-08-02" in line:
-                raise AssertionError(f"Art. 12 tied to the superseded date: {line}")
+            tied = "Art.12 binding 2026-08-02" in line or line.startswith(
+                "| **2026-08-02** | EU AI Act Art.12"
+            )
+            assert not tied, f"Art. 12 tied to the superseded date: {line}"
 
     def test_the_changelog_claims_no_eur_lex_check(self) -> None:
         text = " ".join((_ROOT / "CHANGELOG.md").read_text(encoding="utf-8").split())

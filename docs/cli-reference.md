@@ -5196,7 +5196,7 @@ Options:
 - `--output, -o PATH` — path to write the `ErasureReceipt` JSON (default: stdout; status lines go to stderr, so
   `nova pii erase X > receipt.json` is a valid receipt)
 - `--capsule-dir PATH` — search for redaction manifests here (default: where `nova capture` writes — `$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules/`; before 2026-10-23 the env var was ignored, so an erasure in the Docker layout scanned an empty directory)
-- `--retention-months INT` — Art.17(3)(b) retention floor in months (default: `6`; provider mode: `120`)
+- `--retention-months INT` — Art.17(3)(b) retention window in months (default: `6`, the AI Act's log floor under Art. 19(1) / Art. 26(6)). A provider may pass `120`, the Art. 18(1) period for the provider's *documentation*; that is not a log-retention duty
 
 Exit codes: `0` (erased or deferred; receipt written), `1` (subject not found or error),
 `3` (held by a legal hold — nothing erased; `ErasureHeldReceipt` written).
@@ -5726,7 +5726,12 @@ members still import on 5.
 #### nova euaiact export
 
 Export structured EU AI Act Art.12 log events for an authority's request for access to
-the logs (Art. 21(2)). Binding for high-risk AI systems: **2026-08-02** (ADR-0076).
+the logs (Art. 21(2)) (ADR-0076). The Art. 12 duties apply to Annex III high-risk AI
+systems from **2 December 2027**, and to high-risk systems that are safety components of
+Annex I products from 2 August 2028. Regulation (EU) 2026/1744 (the Digital Omnibus on
+AI, Official Journal of 24 July 2026) set those dates in place of 2 August 2026 and
+2 August 2027. Check the Official Journal for the dates in force before you rely on them.
+The Art. 50 transparency duties are separate and kept 2 August 2026.
 
 **works today** — implemented in v0.33.0.
 
@@ -5766,16 +5771,16 @@ whether it is an AI Act duty (`ai_act`), a standards item that goes beyond the A
 
 | Row (`field_name`) | Provision | Basis |
 |---|---|---|
-| `automatic_event_recording` | Art. 12(1): automatic recording of events over the system's lifetime | ai_act |
+| `automatic_event_recording` | Art. 12(1): automatic recording of events over the system's lifetime; at most `partial` from one capsule, which shows events recorded in that run, not over the lifetime | ai_act |
 | `period_of_use` | Art. 12(3)(a): start and end of each use; required for remote biometric identification (Annex III point 1(a)), reported for every run | ai_act |
 | `traceability` | Art. 12(2) chapeau: traceability appropriate to the intended purpose | ai_act |
 | `input_output_records` | Recorded model inputs/outputs supporting the Art. 12(2)(a)-(c) purposes; not a separate Act duty | novafabric_evidence |
-| `tamper_evidence` | Log integrity protection (prEN 18229-1; ISO/IEC 24970); the Act sets no tamper-protection duty | standards |
-| `retention` | Art. 19(1) (providers) / Art. 26(6) (deployers): at least six months | ai_act |
+| `tamper_evidence` | Log integrity protection (prEN 18229-1; ISO/IEC 24970); the Act does not expressly require it | standards |
+| `retention` | Art. 19(1) (providers) / Art. 26(6) (deployers): at least six months. A declared `retention_days` below 183 is `partial` and the reason names the shortfall | ai_act |
 | `risk_situation_events` | Art. 12(2)(a): risk situations (Art. 79(1)) and substantial modification | ai_act |
 | `post_market_monitoring_events` | Art. 12(2)(b): post-market monitoring (Art. 72) | ai_act |
 | `deployer_monitoring_events` | Art. 12(2)(c): monitoring of operation (Art. 26(5)) | ai_act |
-| `log_instructions_for_use` | Art. 13(3)(f): instructions for use describe log collection, storage and interpretation (operator-declared via `log_instructions_ref`) | ai_act |
+| `log_instructions_for_use` | Art. 13(3)(f): instructions for use describe log collection, storage and interpretation (operator-declared via `log_instructions_ref`; a blank value declares nothing, and the text is shown on one line, cut at 200 characters) | ai_act |
 | `authority_log_access` | Art. 21(2): giving a competent authority access to the logs; a capsule whose seal verifies and binds the evidence streams can be checked offline with `nova verify` | ai_act |
 | `rbi_reference_database` | Art. 12(3)(b); only with `remote_biometric_identification=True` | ai_act |
 | `rbi_matched_input_data` | Art. 12(3)(c); only with `remote_biometric_identification=True` | ai_act |
@@ -9152,7 +9157,7 @@ Start the experimental local dashboard. Read-only browsing of capsules, registry
 
 | Endpoint | What it does |
 |---|---|
-| `GET /api/compliance/euaiact/status` | EU AI Act Art.12 configuration — `high_risk`, `provider_mode`, `retention_months` (retention applied), `log_retention_floor_months` (6, Art. 19(1)/26(6)), `documentation_retention_months` (120 in provider mode, Art. 18(1), else `null`), `deadline`. Mirrors `nova euaiact status`. Dashboard: **GovernanceTab → EU AI Act Art.12 Status**. |
+| `GET /api/compliance/euaiact/status` | EU AI Act Art.12 configuration — `high_risk`, `provider_mode`, `retention_months` (retention applied), `log_retention_floor_months` (6, Art. 19(1)/26(6)), `documentation_retention_months` (120 in provider mode, Art. 18(1), else `null`), `deadline` (the Art. 50 date, 2026-08-02; not the Art. 12 high-risk date). Mirrors `nova euaiact status`. Dashboard: **GovernanceTab → EU AI Act Art.12 Status**. |
 | `POST /api/compliance/euaiact/export` | Art.12 structured log export. Body: `{from_date?, to_date?}` (ISO 8601 UTC). Returns `{ok, records[], count, retention_months, log_retention_floor_months, documentation_retention_months, mode}`. Mirrors `nova euaiact export`. Dashboard: **GovernanceTab → EU AI Act Export**. |
 | `POST /api/compliance/export/rocrate` | RO-Crate v1.1 ZIP export for a run ID. Body: `{run_id}`. Returns `{ok, filename, zip_base64, size_bytes, note}`. Mirrors `nova export-rocrate`. Dashboard: **ComplianceTab → RO-Crate Export** (one-click browser download). |
 | `POST /api/lineage/export-prov` | W3C PROV-JSON lineage document for a run ID. Body: `{run_id}`. Returns `{ok, run_id, document, note}`. Mirrors `nova lineage export-prov`. Dashboard: **LineageTab → PROV-JSON Export**. |

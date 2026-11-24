@@ -39,7 +39,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   `log_retention_floor_months` (always 6, Art. 19(1) / Art. 26(6)) and `documentation_retention_months`
   (120 in provider mode, Art. 18(1), else `null`). `retention_months` keeps its values (6, or 120 with
   `NOVA_EUAIACT_PROVIDER=true`). It now means the retention NovaFabric applies to capsules, not the
-  Act's log floor. No retention is shortened.
+  Act's log floor. No retention is shortened. The dashboard's EU AI Act status and export panels
+  show the same two figures (the log floor with Art. 19(1) / Art. 26(6); the 120 months as an
+  Art. 18(1) documentation horizon). The shipped bundle under `src/novafabric/serve/static` carries
+  the old labels until it is next rebuilt.
+- **Art. 12 report rows no longer read more complete than their wording (works today).**
+  `retention` is `partial` when the operator declares fewer than 183 days (six months), with a
+  reason naming the shortfall; at or above 183 it stays `complete`. `automatic_event_recording`
+  is `partial` from a single capsule, because the row is about the system's lifetime and one run
+  cannot show that. A blank `log_instructions_ref` declares nothing, and its text is shown on
+  one line, cut at 200 characters, in the row's reason.
 
 ### Documentation
 
@@ -101,20 +110,29 @@ longer forwards the submitting shell's environment (ADR-0270).
   the v0.109.0 tag's collector vulnerability scan on 1.26.10 (lint, unit tests and the build passed).
   The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
   chart), so the release is unaffected; anyone building the collector from source should use Go 1.26.11.
-- **EU AI Act Art. 12 report and `nova euaiact` cited the wrong provisions (#63).** Checked against
-  the EUR-Lex text of Regulation (EU) 2024/1689. The row labels changed, but the keys did not:
+- **EU AI Act Art. 12 report and `nova euaiact` cited the wrong provisions (#63).** Provision numbers
+  follow Regulation (EU) 2024/1689 as read on the artificialintelligenceact.eu explorer (spot-checked
+  for Arts. 12, 13(3)(f), 18, 19, 21(2) and 26(6)); they were not checked against EUR-Lex itself, so
+  confirm them in the Official Journal. The row labels changed, but the keys did not:
   `automatic_event_recording` now says "over its lifetime" (Art. 12(1)), not "operation";
   `period_of_use` cites Art. 12(3)(a), a duty that applies only to remote biometric identification
   systems, not 12(2)(a); `traceability` cites the Art. 12(2) chapeau, not 12(1); `retention` cites
   Art. 19(1) (providers) and Art. 26(6) (deployers), at least six months, not 12(3).
   `input_output_records` is now labelled as NovaFabric evidence supporting the Art. 12(2)(a)-(c)
   purposes. No Art. 12 paragraph sets a general input/output duty. `tamper_evidence` is labelled as a
-  standards item that goes beyond the Act (prEN 18229-1; ISO/IEC 24970), since the Act sets no log
-  tamper-protection duty. The report's `standard` string now names Arts. 13(3)(f), 19(1), 21(2) and
+  standards item that goes beyond the Act (prEN 18229-1; ISO/IEC 24970), since the Act does not
+  expressly require log tamper-protection. The report's `standard` string now names Arts. 13(3)(f), 19(1), 21(2) and
   26(6) as well. The `euaiact` module no longer claims its event taxonomy is aligned with Annex XII,
   which covers transparency for general-purpose AI models. Provider mode's 120 months is now called
   the Art. 18(1) *documentation* horizon, not a log floor. The `nova euaiact export` help cites
-  Art. 21(2) (authority access to logs), not Art. 74.
+  Art. 21(2) (authority access to logs), not Art. 74. The docs and the roadmap no longer bind
+  Art. 12 on 2 August 2026: Regulation (EU) 2026/1744 (Digital Omnibus on AI, Official Journal of
+  24 July 2026) moved Annex III high-risk application to 2 December 2027 and Annex I to 2 August
+  2028, as read on the European Parliament's Legislative Train and artificialintelligenceact.eu
+  (EUR-Lex itself not read); the Art. 50 date is unchanged. The `deadline` field of
+  `GET /api/compliance/euaiact/status` is the Art. 50 date, not the Art. 12 one. `nova pii erase
+  --retention-months` no longer calls 120 months a provider-mode requirement: it is the Art. 18(1)
+  documentation period.
 
 ## [0.109.0] - 2026-11-22
 

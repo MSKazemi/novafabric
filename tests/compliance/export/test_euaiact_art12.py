@@ -67,7 +67,7 @@ class TestArt12Exporter:
         assert ret.status == "missing"
 
     def test_retention_operator_asserted_when_provided(self, minimal_capsule_dir: Path) -> None:
-        report = build_art12_report(minimal_capsule_dir, deployment_id="dep-1", retention_days=180)
+        report = build_art12_report(minimal_capsule_dir, deployment_id="dep-1", retention_days=365)
         ret = next(e for e in report.completeness_summary if e.field_name == "retention")
         assert ret.status == "complete"
         assert ret.evidence_source is EvidenceSource.operator_asserted

@@ -31,9 +31,9 @@ already captured to each requirement, and marks it `complete` / `partial` /
 capsule-verified fact from an operator assertion.
 
 Each row also has a ``basis`` (see :class:`Art12Requirement`): an AI Act duty; a
-standards item that goes beyond the Act's text (log tamper-evidence — the Act
-sets no such duty); or NovaFabric evidence that supports Act duties without being
-one itself (input/output records).
+standards item that goes beyond the Act's text (log tamper-evidence — the Act does
+not expressly require it); or NovaFabric evidence that supports Act duties without
+being one itself (input/output records).
 
 It renders evidence that **supports** an Art. 12 assessment; it does not certify
 conformity (no verdict field). It runs offline against a local capsule — no server
@@ -58,6 +58,15 @@ from .models import (
     CompletenessSummaryEntry,
 )
 from .provenance import EvidenceSource, EvidenceSourceRef, build_capsule_ref, mark
+
+#: Art. 19(1) / Art. 26(6) set a log-retention floor of "at least six months". Six
+#: calendar months are 181 to 184 days; 183 days (6 x 30.44, rounded) is the line
+#: below which a declared retention is reported as short of the floor.
+LOG_RETENTION_FLOOR_DAYS: int = 183
+
+#: A free-text operator reference is shown in a row's reason on one line, at most
+#: this many characters.
+_REFERENCE_MAX_CHARS: int = 200
 
 ART12_STANDARD = (
     "EU AI Act Art. 12 — Record-keeping, with the related log provisions of "
@@ -91,7 +100,8 @@ ART12_REQUIREMENTS: tuple[tuple[str, str], ...] = (
      "identification see also Art. 12(3)(c))"),
     ("tamper_evidence",
      "Standards item, beyond the Act's text — log integrity protection "
-     "(prEN 18229-1; ISO/IEC 24970). The AI Act sets no log tamper-protection duty"),
+     "(prEN 18229-1; ISO/IEC 24970). The AI Act does not expressly require log "
+     "tamper-protection"),
     ("retention",
      "Art. 19(1) (providers) / Art. 26(6) (deployers) — automatically generated logs "
      "under the party's control kept for a period appropriate to the intended "
@@ -215,6 +225,16 @@ def _entry(
     )
 
 
+def _one_line(text: str, limit: int = _REFERENCE_MAX_CHARS) -> str:
+    """Operator free text as one bounded line: control characters and line breaks
+    become spaces, runs of whitespace collapse, and an overlong value is cut with an
+    ellipsis."""
+    cleaned = " ".join("".join(c if c.isprintable() else " " for c in text).split())
+    if len(cleaned) > limit:
+        cleaned = cleaned[: limit - 1].rstrip() + "…"
+    return cleaned
+
+
 def _cv_or_unv(present: bool, capsule_ref: Any) -> EvidenceSource:
     """capsule_verified when present with a re-performable ref, else unverifiable."""
     if present and capsule_ref is not None:
@@ -260,11 +280,14 @@ def build_art12_report(
         capsule_dir: path to the run capsule directory (must contain ``capsule.yaml``).
         deployment_id: operator-assigned identifier for the AI system deployment.
         retention_days: operator-declared log-retention period, if any. Art. 19(1)
-            and Art. 26(6) set a floor of six months; the value is reported as
-            declared, not compared against that floor.
+            and Art. 26(6) set a floor of at least six months (unless other Union or
+            national law provides otherwise): a value below
+            :data:`LOG_RETENTION_FLOOR_DAYS` is reported ``partial``, naming the
+            shortfall.
         log_instructions_ref: operator-declared reference (document, section, URL)
             to the instructions-for-use text that describes how deployers collect,
-            store and interpret the logs (Art. 13(3)(f)).
+            store and interpret the logs (Art. 13(3)(f)). A blank value is no
+            declaration; the text is shown on one line, cut at 200 characters.
         remote_biometric_identification: the system is a remote biometric
             identification system (Annex III point 1(a)); adds the
             Art. 12(3)(b)-(d) rows.
@@ -297,13 +320,18 @@ def build_art12_report(
 
     entries: list[CompletenessSummaryEntry] = []
 
-    # Automatic event recording — the capsule's event streams are the record.
+    # Automatic event recording — the capsule's event streams are the record. The row
+    # is about the system's lifetime; one run's capsule shows that events were
+    # recorded in that run, so the row is at most partial.
     has_events = _has_stream("model-calls.jsonl", "tool-calls.jsonl", "trace.jsonl")
     if has_events and capsule_ref is not None:
         entries.append(_entry(
             "automatic_event_recording",
-            "capsule carries automatically-recorded event streams (model/tool calls, trace)",
-            complete=True, source=EvidenceSource.capsule_verified, ref=capsule_ref,
+            "capsule carries automatically-recorded event streams (model/tool calls, "
+            "trace) from this one run; one run shows that events were recorded then, not "
+            "that the system records them over its lifetime",
+            complete=False, partial=True,
+            source=EvidenceSource.capsule_verified, ref=capsule_ref,
         ))
     else:
         entries.append(_entry(
@@ -374,10 +402,19 @@ def build_art12_report(
         ))
 
     # Retention — operator-declared policy (Art. 19(1) / Art. 26(6)).
-    if retention_days is not None:
+    if retention_days is not None and retention_days < LOG_RETENTION_FLOOR_DAYS:
         entries.append(_entry(
             "retention",
-            f"operator-declared log retention of {retention_days} days",
+            f"operator-declared log retention of {retention_days} days is below the "
+            f"six months (about {LOG_RETENTION_FLOOR_DAYS} days) that Art. 19(1) / "
+            "Art. 26(6) set, unless other Union or national law provides otherwise",
+            complete=False, partial=True, source=EvidenceSource.operator_asserted,
+        ))
+    elif retention_days is not None:
+        entries.append(_entry(
+            "retention",
+            f"operator-declared log retention of {retention_days} days, at least the "
+            "six months Art. 19(1) / Art. 26(6) set",
             complete=True, source=EvidenceSource.operator_asserted,
         ))
     else:
@@ -405,11 +442,12 @@ def build_art12_report(
     ))
 
     # Art. 13(3)(f) — the instructions for use; an operator document.
-    if log_instructions_ref:
+    instructions_ref = _one_line(log_instructions_ref or "")
+    if instructions_ref:
         entries.append(_entry(
             "log_instructions_for_use",
             "operator-declared instructions-for-use description of log collection, "
-            f"storage and interpretation: {log_instructions_ref}",
+            f"storage and interpretation: {instructions_ref}",
             complete=True, source=EvidenceSource.operator_asserted,
         ))
     else:
@@ -505,6 +543,7 @@ __all__ = [
     "ART12_RBI_REQUIREMENTS",
     "ART12_REQUIREMENTS",
     "ART12_STANDARD",
+    "LOG_RETENTION_FLOOR_DAYS",
     "Art12ConformanceReport",
     "Art12Requirement",
     "RequirementBasis",
