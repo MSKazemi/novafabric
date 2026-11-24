@@ -119,8 +119,8 @@ for security/operations, and [Sizing](ops/sizing-guide.md) for capacity estimate
 
 ## Enterprise / regulated: select controls, not a separate product
 
-This is a **target operating profile**, not a shipping
-`novafabric[enterprise]` package or an assertion of regulatory certification.
+This is a **target operating profile**, not a shipping enterprise package (there is
+no single extra for it) or an assertion of regulatory certification.
 
 Begin with a securely configured Team server, and enable only the
 capabilities your evidence policy requires:
