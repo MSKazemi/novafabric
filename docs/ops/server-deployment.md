@@ -28,7 +28,7 @@ nova capture python agent.py
 nova validate <run-id>
 nova replay <run-id> --mode forensic
 nova lineage provenance <run-id>
-nova export-evidence .novafabric/runs/01HX.../ --key key.pem --output evidence.zip
+nova export-evidence ~/.novafabric/capsules/01HX.../ --key key.pem --output evidence.zip
 ```
 
 The local SQLite registry is created automatically at

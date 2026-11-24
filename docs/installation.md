@@ -22,10 +22,10 @@ describe the current implementation, not a production SLA or certification.
 | **Light (CLI)** | Individual developers, researchers, CI | `pip install novafabric` | Local filesystem + Python's SQLite; **no external service** | **works today** (beta) |
 | **Desktop (CLI + dashboard)** | Local inspection and demonstrations | `pip install 'novafabric[serve]'` | Same local files and SQLite; local web server, no separate DB | Core **works today**; dashboard **experimental** |
 | **Team (shared server)** | A single organization's shared API | `pip install 'novafabric[server]'` | Server filesystem for capsules; SQLite for evaluation, **PostgreSQL recommended** for a shared deployment | **experimental**, single-tenant |
-| **Enterprise / regulated** | Teams needing identity, signing, retention and policy checks | `novafabric[server]` plus selected extras | PostgreSQL, authenticated/TLS server, optional signing, WORM store and policy services | **partial / experimental**; not a validated enterprise product |
-| **Factory (HPC / clusters)** | Many independent capture nodes | Core on capture nodes; optional scale/collector integrations | Node spools, separate Go forwarder, NATS JetStream, downstream indexes and optional object storage | **experimental / partial**, with planned integration work |
+| **Enterprise / regulated** | Teams needing identity, signing, retention and policy checks | `novafabric[server]` plus selected extras | PostgreSQL, authenticated/TLS server, optional signing, WORM store and policy services | **experimental**; not a validated enterprise product |
+| **Factory (HPC / clusters)** | Many independent capture nodes | Core on capture nodes; optional scale/collector integrations | Node spools, separate Go forwarder, NATS JetStream, downstream indexes and optional object storage | **experimental**; further integration work is not scheduled |
 
-**These are five ways to explain four architectural tiers**, not five separate
+**These are five ways to explain three architectural tiers**, not five separate
 binaries: Desktop is a local-mode option; Enterprise adds regulated controls to
 the server tier. Factory extends collection for cluster workloads. A higher
 profile must never force an external dependency into Light mode.
@@ -163,8 +163,8 @@ flowchart LR
 The spool, forwarder and NATS consumer paths are **experimental**. The
 central server does **not** automatically ingest the cluster event stream:
 capsule upload or directory indexing is a separate path. The HPC hub
-signing pipeline and fully integrated multi-cluster operation remain
-**planned / future design**. There is **no production-validated,
+signing pipeline is **planned**; fully integrated multi-cluster operation is
+**future design**. There is **no production-validated,
 single-command Factory installation**.
 
 Use [Operator Guide](operator-guide.md),
@@ -181,12 +181,12 @@ HPC/SLURM, Kubernetes and collector components.
 | **DuckDB** | Embedded derived query / analytics accelerator | Optional `[query]` or `[scale]` extra; `nova query` can use SQLite instead |
 | **Kuzu** | Optional embedded lineage/graph backend | Optional `[lineage-kuzu]` extra |
 | **ClickHouse** | Higher-volume cost and event analytics | Optional external service + `[clickhouse]` client extra |
-| **Apache AGE** | Alternative graph backend inside PostgreSQL | Optional, not an additional default DB |
+| **Apache AGE** | Alternative graph backend inside PostgreSQL (**experimental**) | Optional, not an additional default DB |
 | **JanusGraph** | Distributed lineage graph backend | Optional external service + `[janusgraph]` client extra |
 | **Filesystem** | **Authoritative Run Capsules** | Required for current local and server paths |
 | **S3-compatible / cloud object storage** | Backups, retention and experimental capsule object store | Optional; not yet wired into live server capsule routes |
 | **NATS JetStream** | Async delivery from cluster spools | Optional broker for cluster experiments, **not a database** |
-| **Kafka / PgBouncer** | Alternative/event integration and PostgreSQL pooling | Optional advanced services; **not default dependencies** |
+| **Kafka / PgBouncer** | Kafka: only a service in the compose `prod` example, with no Kafka integration in `src`; PgBouncer: PostgreSQL connection pooling | Optional advanced services; **not default dependencies** |
 
 Metadata indexes are generally derived and often rebuildable; this is **not**
 permission to discard non-rebuildable registry history, Merkle log entries,
