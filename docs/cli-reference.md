@@ -4563,7 +4563,8 @@ capsule metadata are populated automatically; operator-declared fields are stubs
 
 **Seal check.** A capsule with no `.seal` exports as before, without the `dsse_envelope_signing`
 security measure. A valid `.seal` adds that measure; it means the bytes the seal names are
-unchanged since sealing, not who signed them. A `.seal` that exists but fails verification (the
+unchanged since sealing, not who signed them; it is a signing measure, not a claim that the
+capsule's evidence streams are tamper-evident. A `.seal` that exists but fails verification (the
 capsule was edited after sealing, or the seal is damaged, substituted or not a directory) is
 refused: exit `2`, no file written, and a message naming `nova verify <capsule>` for the reasons.
 It is never reported as merely unsigned.

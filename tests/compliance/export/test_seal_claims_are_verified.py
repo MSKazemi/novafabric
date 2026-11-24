@@ -30,7 +30,7 @@ def test_a_decoy_seal_file_is_not_tamper_evidence(minimal_capsule_dir: Path) -> 
 def test_a_verifying_seal_is_tamper_evidence(
     minimal_capsule_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(euaiact_art12, "seal_is_valid_or_refuse", lambda _d: True)
+    monkeypatch.setattr(euaiact_art12, "seal_for_log_claims", lambda _d: "bound")
     assert "seal verifies against its files" in _art12(minimal_capsule_dir)
 
 

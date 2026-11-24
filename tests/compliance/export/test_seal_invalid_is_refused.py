@@ -34,6 +34,7 @@ from novafabric.capture.finalize import evidence_digests
 from novafabric.cli.main import app
 from novafabric.compliance.export import euaiact_art12, examiner, gdpr_ropa
 from novafabric.compliance.export._seal_guard import CapsuleSealInvalidError
+from novafabric.compliance.export.provenance import EvidenceSource
 from novafabric.trust.novaseal import KeyConfig, NovaSeal
 from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
 
@@ -203,6 +204,55 @@ def test_art12_manifest_only_seal_with_an_edited_manifest_is_refused(tmp_path: P
     _damage(cap, "edit-manifest", tmp_path)
     with pytest.raises(CapsuleSealInvalidError):
         euaiact_art12.build_art12_report(cap, deployment_id="dep-1")
+
+
+# A seal that verifies but does not bind the evidence streams must not be reported as
+# log tamper-evidence: it is neither refused (nothing the seal vouches for was changed)
+# nor claimed (it cannot detect a change to a stream).
+
+_UNBOUND_REASON = "does not bind the evidence streams"
+
+
+def _assert_unbound(cap: Path) -> None:
+    assert capsule_seal_status(cap) == "valid"  # the bare question still says valid
+    entry = _tamper_entry(cap)
+    assert entry.status == "missing"
+    assert entry.evidence_source is EvidenceSource.unverifiable
+    assert _UNBOUND_REASON in entry.reason
+    assert "no NovaSeal seal" not in entry.reason  # a seal exists; never "no seal"
+    assert "is detectable" not in entry.reason
+
+
+@pytest.mark.parametrize("mutate", ["untouched", "edit-stream", "inject-stream"])
+def test_art12_seal_without_evidence_digests_claims_no_tamper_evidence(
+    tmp_path: Path, mutate: str
+) -> None:
+    cap = _sealed_capsule(tmp_path, bind_evidence=False)
+    if mutate == "edit-stream":
+        (cap / "model-calls.jsonl").write_text('{"model":"EDITED"}\n', encoding="utf-8")
+    elif mutate == "inject-stream":
+        (cap / "tool-permission-events.jsonl").write_text('{"ev":"injected"}\n', encoding="utf-8")
+    _assert_unbound(cap)
+
+
+def test_art12_stream_added_after_sealing_claims_no_tamper_evidence(tmp_path: Path) -> None:
+    # evidence digests exist, but the seal never saw this stream (ADR-0251: unlisted, not fatal)
+    cap = _sealed_capsule(tmp_path)
+    (cap / "tool-permission-events.jsonl").write_text('{"ev":"injected"}\n', encoding="utf-8")
+    _assert_unbound(cap)
+
+
+def test_art12_unbound_seal_still_reports_the_other_requirements(tmp_path: Path) -> None:
+    report = euaiact_art12.build_art12_report(
+        _sealed_capsule(tmp_path, bind_evidence=False), deployment_id="dep-1"
+    )
+    assert len(report.completeness_summary) == len(euaiact_art12.ART12_REQUIREMENTS)
+
+
+def test_art12_fully_bound_seal_still_claims_tamper_evidence(tmp_path: Path) -> None:
+    entry = _tamper_entry(_sealed_capsule(tmp_path))
+    assert entry.status == "complete"
+    assert entry.evidence_source is EvidenceSource.capsule_verified
 
 
 # ---------------------------------------------------------------------------
