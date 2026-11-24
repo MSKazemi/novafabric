@@ -33,6 +33,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **The audit map, the evidence bindings and `nova serve`'s knowledge-graph ingest tell a tampered seal apart from no seal.** The seal check answered "no seal" both for a capsule that was never sealed and for one whose `.seal` exists but fails verification, so a capsule edited after sealing was scored and ingested exactly like an unsigned one and nothing said so. A capsule with no `.seal` is unchanged everywhere. A `.seal` that fails (edited member or manifest, a damaged or substituted envelope, a symlinked or non-directory `.seal`) is now distinct at each site:
+  - **`nova audit map` / `nova audit coverage` / `nova audit report` (behaviour change):** the report gains an additive `findings` list with a `seal_invalid` finding naming each such capsule (empty otherwise); the summary prints it instead of `Seals: verified`, and `nova audit map` and `nova audit coverage` now exit 1 on it even when every control is covered or the threshold is met. Coverage scores are unchanged, so the edited capsule's other evidence still counts toward them.
+  - **`nova evidence bind` and `/api/evidence/{run_id}/bind`:** the bindings of controls that ask for seal evidence gain an additive, optional `findings` entry (`seal_invalid`), omitted when empty so unaffected bindings serialise as before; the seal is still cited only when it verifies.
+  - **`POST /api/kg/ingest`, `POST /api/kg/ingest-all` and the auto-ingest loop:** the capsule's seal is read as `absent`, `valid` or `invalid`; edges count as NovaSeal-verified only for `valid`. The `/api/kg/ingest` response gains `seal_status` and `tampered`, with a note; `ingest-all` gains `tampered_capsules`; auto-ingest logs a warning naming the capsule. A tampered capsule is still ingested as unverified (not refused), and the graph's aggregate edges carry no per-edge tamper marker.
+
+  A valid seal means the bytes it names are unchanged since sealing; it does not say who signed them.
+
 - **`nova export-compliance iso42001 --capsule DIR` refuses a capsule whose seal fails verification
   (behaviour change: such a capsule used to export).** A capsule that had been sealed and then edited
   was exported exactly like one that was never sealed — `seal_envelope_path: null`, with its evidenced

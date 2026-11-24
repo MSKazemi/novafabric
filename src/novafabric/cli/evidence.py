@@ -166,6 +166,12 @@ def evidence_bind_cmd(
     except (ValueError, FileNotFoundError) as exc:
         console.print(f"[red]Unknown audit profile:[/red] {exc}")
         raise typer.Exit(code=1) from exc
+    if any(b.findings for b in bindings):
+        console.print(
+            f"[red]Finding:[/red] {escape(str(capsule_dir))} carries a .seal that failed seal "
+            "verification (edited after sealing or a damaged seal); it is not cited "
+            "as evidence. Run `nova verify` on the capsule for the reasons."
+        )
     doc = {"bindings": [b.model_dump() for b in bindings]}
     if key is None:
         path = output or Path("criterion-bindings.json")

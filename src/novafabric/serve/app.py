@@ -5848,18 +5848,29 @@ def create_app(
         capsule replaces its contribution (:mod:`novafabric.kg.capsule_ingest`).
         """
         from novafabric.kg.capsule_ingest import ingest_capsule_dir
-        from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
+        from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
 
         del store  # the pipeline writes to it
+        seal = capsule_seal_status(target)  # the seal, not a flag
         result = ingest_capsule_dir(
             pipeline, target,
-            novaseal_valid=capsule_seal_verifies(target),  # the seal, not a flag
+            novaseal_valid=seal == "valid",
+            seal_status=seal,
             operation="nova serve",
         )
+        if result.tampered:
+            # Ingested as unverified (like an unsealed capsule) but not silently: the
+            # seal exists and fails, which is evidence the capsule was edited.
+            logger.warning(
+                "KG ingest: %s carries a .seal that failed seal verification "
+                "(edited after sealing or a damaged seal); ingested as unverified",
+                target.name,
+            )
         return {
             "ingested": result.ingested,
             "skipped": result.skipped + len(result.unreadable),
             "written": result.written,
+            "tampered": int(result.tampered),
         }
 
     async def _kg_auto_ingest_loop() -> None:
@@ -6707,9 +6718,10 @@ def create_app(
         # NovaSeal verification comes from the capsule's own seal, never from the
         # caller: `verified: true` let any token holder mark an unsealed capsule's
         # edges verified (review serve-09).
-        from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
+        from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
 
-        novaseal_verified = capsule_seal_verifies(target)
+        seal_status = capsule_seal_status(target)
+        novaseal_verified = seal_status == "valid"
         flag_note = (
             "the request's verified flag was ignored: verification is read from the "
             "capsule's NovaSeal seal, which does not verify"
@@ -6742,7 +6754,8 @@ def create_app(
                     "note": "",
                 }
             result = ingest_capsule_dir(
-                pipeline, target, novaseal_valid=novaseal_verified, operation="nova serve"
+                pipeline, target, novaseal_valid=novaseal_verified,
+                seal_status=seal_status, operation="nova serve",
             )
             if result.unreadable and len(result.unreadable) == len(result.files):
                 # Present but every one a link, FIFO or directory: an error, never
@@ -6754,6 +6767,12 @@ def create_app(
                     "note": "",
                 }
             notes = [flag_note] if flag_note else []
+            if result.tampered:
+                notes.append(
+                    "the capsule carries a .seal that failed seal verification (edited "
+                    "after sealing or a damaged seal): ingested as unverified, which is "
+                    "not the same as a capsule that was never sealed"
+                )
             if result.unreadable:
                 notes.append(f"not read: {', '.join(result.unreadable)}")
             return {
@@ -6761,6 +6780,7 @@ def create_app(
                 "skipped": result.skipped + len(result.unreadable),
                 "written": result.written,
                 "novaseal_verified": novaseal_verified,
+                "seal_status": seal_status, "tampered": result.tampered,
                 "capsule_path": capsule_path_str, "kg_path": kg_path,
                 "note": "; ".join(notes),
             }
@@ -6935,6 +6955,8 @@ def create_app(
                 "failed": 0,
             }
 
+        tampered: list[str] = []
+
         def _ingest_dirs() -> tuple[int, int, int]:
             newly, skip, fail = 0, 0, 0
             for cdir in dirs:
@@ -6945,6 +6967,8 @@ def create_app(
                 try:
                     result = _ingest_one_capsule_dir(cdir, store=store, pipeline=pipeline)
                     tracker.mark(key)
+                    if result.get("tampered"):
+                        tampered.append(cdir.name)
                     if result["ingested"] > 0 or result["written"] > 0:
                         newly += 1
                     else:
@@ -6964,6 +6988,9 @@ def create_app(
             "newly_ingested": newly_ingested,
             "skipped": skipped,
             "failed": failed,
+            # Additive: capsules whose .seal exists but failed verification (ingested as
+            # unverified, like an unsealed one, but not the same thing).
+            "tampered_capsules": tampered,
             "capsule_base": str(base),
             "kg_path": kg_path,
         }

@@ -92,6 +92,20 @@ class ControlCoverage(BaseModel):
     )
 
 
+class AuditFinding(BaseModel):
+    """Something the audit found that is not a coverage gap (additive, optional).
+
+    ``seal_invalid`` is the only code today: a capsule carries a ``.seal`` that fails
+    verification (edited after sealing, a damaged envelope, a linked or non-directory
+    ``.seal``). That is evidence of tampering, which "no seal evidence" does not say;
+    a capsule with no ``.seal`` at all is not a finding.
+    """
+
+    code: Literal["seal_invalid"] = Field(..., description="Finding code")
+    capsule_id: str = Field(..., description="Name of the capsule directory the finding is about")
+    message: str = Field(..., description="Human-readable explanation")
+
+
 class AuditReport(BaseModel):
     """Full audit report mapping evidence to controls across a data directory."""
 
@@ -126,6 +140,14 @@ class AuditReport(BaseModel):
             "True if at least one capsule's NovaSeal seal verified when the report was "
             "generated (signature + content binding; signer self-asserted). A claim of "
             "the report: the report itself is not signed."
+        ),
+    )
+    findings: list[AuditFinding] = Field(
+        default_factory=list,
+        description=(
+            "Explicit findings beyond coverage gaps. A capsule whose .seal exists but "
+            "fails verification is reported here as seal_invalid, separately from a "
+            "capsule that was never sealed (which is only missing seal evidence)."
         ),
     )
     bundle_path: str | None = Field(
