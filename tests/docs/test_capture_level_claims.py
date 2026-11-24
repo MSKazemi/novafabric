@@ -132,3 +132,37 @@ def test_feature_tour_does_not_claim_prompts_are_opt_in() -> None:
     assert "does not capture full prompts" not in section
     assert "records different field sets depending on the capture-level policy" not in section
     assert "No level keeps prompts out of a capsule" in section
+
+
+# ── invariant 4 says what the default level stores ──────────────────────────
+
+_INVARIANT_4_TEXTS = [
+    pytest.param(REPO_ROOT / "AGENTS.md", id="AGENTS.md"),
+    pytest.param(REPO_ROOT / "docs" / "architecture.md", id="docs/architecture.md"),
+]
+
+
+def _invariant_4(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"^4\. (.*?)(?=^5\. )", text, flags=re.S | re.M)
+    assert match, f"{path.name}: numbered invariant 4 not found"
+    return " ".join(match.group(1).split())
+
+
+@pytest.mark.parametrize("path", _INVARIANT_4_TEXTS)
+def test_invariant_4_matches_what_the_default_level_stores(path: Path) -> None:
+    """The privacy invariant may only be stated as met when the default stores no content.
+
+    ``LEVEL_EFFECTS[STANDARD]`` is the code-side statement of what the default level does.
+    While it says model calls still store full prompts and responses, every public text of
+    invariant 4 must say the invariant is not met; once it stops saying so, none may.
+    """
+    from novafabric.policies.capture_level import LEVEL_EFFECTS, CaptureLevel
+
+    stores_content = "full prompts and responses" in LEVEL_EFFECTS[CaptureLevel.STANDARD]
+    says_not_met = "not met" in _invariant_4(path).lower()
+    assert says_not_met == stores_content, (
+        f"{path.name} invariant 4 and LEVEL_EFFECTS[standard] disagree "
+        f"(default stores content: {stores_content}; text says not met: {says_not_met}). "
+        "Update AGENTS.md and docs/architecture.md invariant 4 in the same change."
+    )
