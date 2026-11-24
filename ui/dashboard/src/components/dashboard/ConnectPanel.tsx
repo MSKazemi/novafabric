@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { ping, validateToken, setConnection } from '../../lib/api';
+import SupportHandoff from './SupportHandoff';
 
 interface ConnectPanelProps {
   onConnected: (info: { version: string; base: string }) => void;
@@ -89,6 +90,7 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
             {busy ? 'Connecting…' : 'Connect →'}
           </button>
         </form>
+        {bootError && <SupportHandoff context="disconnected" />}
       </div>
     </div>
   );
