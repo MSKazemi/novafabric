@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
-from novafabric._oneline import one_line
+from novafabric._oneline import PATH_LIMIT, one_line
 
 console = Console()
 err_console = Console(stderr=True)
@@ -714,7 +714,7 @@ def _revocation_lines(revocation: Any) -> list[str]:
 
 def _shown(rel: Any) -> str:
     """A capsule-relative path as one safe, markup-free line (display only)."""
-    return escape(one_line(rel))
+    return escape(one_line(rel, PATH_LIMIT))
 
 
 def _print_capsule_binding(binding: Any) -> bool:

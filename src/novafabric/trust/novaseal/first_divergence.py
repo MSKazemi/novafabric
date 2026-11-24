@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from novafabric._oneline import one_line
+from novafabric._oneline import PATH_LIMIT, one_line
 
 if TYPE_CHECKING:
     from novafabric.trust.novaseal.capsule_verify import CapsuleBinding
@@ -68,7 +68,7 @@ def format_binding_first_divergence(divergence: dict[str, Any]) -> list[str]:
     more = int(divergence.get("divergent_files") or 1) - 1
     also = f" ({more} more file(s) also diverge)" if more > 0 else ""
     return [
-        f"First divergence: {one_line(divergence.get('path'))} ({what}) "
+        f"First divergence: {one_line(divergence.get('path'), PATH_LIMIT)} ({what}) "
         f"{one_line(divergence.get('reason'))} after sealing{also}",
         "  record index not locatable: the seal holds one sha256 per file",
     ]

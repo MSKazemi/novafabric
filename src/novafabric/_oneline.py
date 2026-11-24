@@ -12,6 +12,8 @@ import unicodedata
 from typing import Any
 
 DEFAULT_LIMIT = 80
+#: Evidence paths get more room than ids: a cut path hides which file was changed.
+PATH_LIMIT = 240
 _ELLIPSIS = "…"
 #: Control, format (bidi overrides, zero-width), surrogate (cannot be encoded), private-use,
 #: unassigned, and line/paragraph separators.

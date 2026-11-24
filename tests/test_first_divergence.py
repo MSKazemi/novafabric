@@ -418,6 +418,55 @@ def test_verify_prints_hostile_paths_on_one_line(tmp_path: Path) -> None:
     assert fd["path"] == sealed_name  # JSON keeps the raw path
 
 
+def _flat(text: str) -> str:
+    """Console output without whitespace: rich folds a long word at the terminal width."""
+    return "".join(text.split())
+
+
+def test_an_ordinary_long_path_is_printed_in_full(tmp_path: Path) -> None:
+    edited = "a" + "x" * 113 + ".txt"  # 118 characters, longer than an id's cap
+    gone = "b" + "y" * 113 + ".txt"
+    cap, config = _build_sealed(tmp_path, extra_files=(edited, gone))
+    (cap / edited).write_text("edited\n")
+    (cap / gone).unlink()
+    out = _flat(_verify(cap, config).stdout)
+    assert f"modified:{edited}" in out
+    assert f"missing:{gone}" in out
+    assert f"Firstdivergence:{edited}(evidencefile)modified" in out
+
+
+def test_a_huge_path_is_still_capped() -> None:
+    from novafabric.cli.verify import _shown
+
+    assert len(_shown("p" * 10_000)) <= 240
+    line = format_binding_first_divergence({
+        "path": "p" * 10_000, "event_type": None, "reason": "modified", "divergent_files": 1,
+    })[0]
+    assert len(line) < 400
+
+
+def test_bracketed_ordinary_paths_print_literally(tmp_path: Path) -> None:
+    names = ("outputs/[red]x.txt", "we[ird].txt")
+    cap, config = _build_sealed(tmp_path, extra_files=names)
+    for name in names:
+        (cap / name).write_text("edited\n")
+    out = _flat(_verify(cap, config).stdout)
+    assert "modified:outputs/[red]x.txt" in out
+    assert "modified:we[ird].txt" in out
+    assert "Firstdivergence:outputs/[red]x.txt(evidencefile)modified" in out
+
+
+def test_a_hostile_missing_path_prints_on_one_line(tmp_path: Path) -> None:
+    name = "gone\n\x1b[31mfake: ok\u2028x.txt"
+    cap, config = _build_sealed(tmp_path, extra_files=(name,))
+    (cap / name).unlink()
+    out = _verify(cap, config)
+    assert out.exit_code == 1 and isinstance(out.exception, SystemExit)
+    assert "\x1b" not in out.stdout and "\u2028" not in out.stdout
+    assert not any(ln.strip().startswith("fake:") for ln in out.stdout.splitlines())
+    assert "missing: gone?" in out.stdout
+
+
 def test_engine_report_carries_the_field(tmp_path: Path) -> None:
     a = _capsule(tmp_path, "a", [], [_tool(1, "s")])
     b = _capsule(tmp_path, "b", [], [])
@@ -474,6 +523,7 @@ def _build_sealed(tmp_path: Path, extra_files: tuple[str, ...] = ()) -> tuple[Pa
     (cap / "env.lock").write_text("python=3.13\n")
     (cap / "outputs" / "stdout.txt").write_text("hello\n")
     for name in extra_files:
+        (cap / name).parent.mkdir(parents=True, exist_ok=True)
         (cap / name).write_text("sealed\n")
     manifest: dict[str, Any] = {
         "run_id": "issue-74",

@@ -37,7 +37,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   event-stream-first, then path order, not a time order. The `nova diff` text line can read
   `First divergence: none in model or tool calls` next to `changed=1` when only the environment
   or outputs differ. Record ids and paths are printed on one line (non-printable characters replaced,
-  80 characters at most; `nova verify` does the same for the paths it lists) in the text reports; JSON is unchanged.
+  80 characters at most for ids; `nova verify` does the same for the paths it lists, with
+  a 240-character cap) in the text reports; JSON is unchanged.
 - **Docs: AIUC-1 evidence crosswalk** (`docs/aiuc-1-evidence-crosswalk.md`). For E015.1–.4, D003.3,
   D003.4, C002.1, C002.2, C002.4, A006.1 and B001 it names the NovaFabric record or command that may be
   relevant, rates it strong or partial and states the gap, including that a default capsule stores full

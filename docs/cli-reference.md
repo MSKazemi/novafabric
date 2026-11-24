@@ -1588,7 +1588,8 @@ Diff: run-a → run-b
 - In the text report, record ids are shown on one line, with non-printable characters
   (controls, bidi and zero-width marks, line separators, lone surrogates) replaced by `?` and
   capped at 80 characters. The `json` report carries them unmodified. `nova verify` shows the
-  paths on its `modified:`, `missing:` and `not covered` lines the same way.
+  paths on its `modified:`, `missing:`, `not covered` and `First divergence` lines the same
+  way, with a 240-character cap.
 - Exit codes are unchanged; `github-annotation` output does not carry the field.
 
 Diff sections: environment (Python, OS), model calls (logical calls only — the wire hook's
