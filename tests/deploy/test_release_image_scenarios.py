@@ -22,6 +22,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -470,23 +471,44 @@ def test_the_cli_process_exits_1_with_an_error_annotation_and_publishes_nothing(
 
 # ------------------------------------------------------------- real Trivy
 
-TRIVY_IMAGE = "aquasec/trivy:0.76.2"
+TRIVY_VERSION = "0.76.2"  # the ONE place the tests name the scanner; the pin test below reads it
+TRIVY_IMAGE = f"aquasec/trivy:{TRIVY_VERSION}"
 TRIVY_TIMEOUT_S = 600  # per platform scan, DB download included
 
 
 def _trivy_cache() -> Path:
     """A cache that survives runs, so the vulnerability DB is downloaded once, not per test.
 
-    ``NOVA_TEST_TRIVY_CACHE`` overrides the location (an offline machine can point it at a
-    directory that already holds a DB). The directory is private to the invoking user.
+    The FIRST run needs network access to fetch the DB (``ghcr.io``). An offline machine must
+    set ``NOVA_TEST_TRIVY_CACHE`` to a directory that already holds a DB; without one the
+    scan fails (it does not skip). The override is trusted as given.
+
+    The default is ``<tmp>/nf-trivy-cache-<uid>``. A predictable directory in a shared /tmp is
+    only reused when it is a real directory owned by this user with mode 0700: anyone else
+    could have pre-created it, and a poisoned DB that reports nothing would make every
+    scenario pass for the wrong reason.
     """
     override = os.environ.get("NOVA_TEST_TRIVY_CACHE")
-    path = (
-        Path(override)
-        if override
-        else Path(tempfile.gettempdir()) / f"nf-trivy-cache-{os.getuid()}"
-    )
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if override:
+        path = Path(override)
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return path
+    path = Path(tempfile.gettempdir()) / f"nf-trivy-cache-{os.getuid()}"
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    st = path.lstat()  # lstat: a symlink is refused, never followed
+    if (
+        not stat.S_ISDIR(st.st_mode)
+        or st.st_uid != os.getuid()
+        or stat.S_IMODE(st.st_mode) != 0o700
+    ):
+        pytest.fail(
+            f"refusing to reuse the trivy cache {path}: it must be a real directory owned by "
+            f"uid {os.getuid()} with mode 0700 (found mode {oct(stat.S_IMODE(st.st_mode))}, "
+            f"owner {st.st_uid}). Remove it or set NOVA_TEST_TRIVY_CACHE."
+        )
     return path
 
 
@@ -606,3 +628,74 @@ def test_real_trivy_with_the_platform_flag_ignored_is_caught_by_the_evidence_che
     assert _promote(oci_registries, bad, work, dest) == 1
     assert "architecture" in capsys.readouterr().err
     _assert_nothing_published(oci_registries.a, dest, bad.digest)
+
+
+# ------------------------------------------------- the scanner pin and the trivy cache (no Docker needed)
+
+
+def test_the_scan_composite_pins_the_trivy_the_real_trivy_tests_run() -> None:
+    """Deleting the pin (the action then installs its own default) or bumping it without the
+    tests must fail: the gate and the tests have to scan with the same trivy."""
+    import yaml
+
+    composite = yaml.safe_load(
+        (REPO / ".github" / "actions" / "scan-candidate" / "action.yml").read_text(encoding="utf-8")
+    )
+    pins = [
+        str(step["with"]["version"])
+        for step in composite["runs"]["steps"]
+        if str(step.get("uses", "")).startswith("aquasecurity/trivy-action")
+        and "version" in (step.get("with") or {})
+    ]
+    assert pins == [f"v{TRIVY_VERSION}"], (
+        f"trivy pin {pins} != v{TRIVY_VERSION}: the first trivy step installs trivy for all later "
+        "steps, so it must carry exactly one pin, equal to the version the real-trivy tests use"
+    )
+
+
+def test_a_pre_existing_trivy_cache_that_is_not_private_to_me_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A world-writable or foreign /tmp dir could carry a poisoned vulnerability DB (a DB that
+    reports nothing makes every scenario pass for the wrong reason). Fail, never reuse it."""
+    monkeypatch.delenv("NOVA_TEST_TRIVY_CACHE", raising=False)
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    cache = tmp_path / f"nf-trivy-cache-{os.getuid()}"
+    cache.mkdir(mode=0o755)
+    cache.chmod(0o755)
+    with pytest.raises(pytest.fail.Exception, match="trivy cache"):
+        _trivy_cache()
+    cache.chmod(0o700)
+    assert _trivy_cache() == cache  # mine and private: reused (that is the point of the cache)
+
+
+def test_a_symlinked_trivy_cache_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("NOVA_TEST_TRIVY_CACHE", raising=False)
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    (tmp_path / f"nf-trivy-cache-{os.getuid()}").symlink_to(elsewhere)
+    with pytest.raises(pytest.fail.Exception, match="trivy cache"):
+        _trivy_cache()
+
+
+def test_a_new_trivy_cache_is_created_private(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("NOVA_TEST_TRIVY_CACHE", raising=False)
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    old = os.umask(0)  # even a permissive umask must not widen it
+    try:
+        cache = _trivy_cache()
+    finally:
+        os.umask(old)
+    assert cache.stat().st_mode & 0o777 == 0o700 and cache.stat().st_uid == os.getuid()
+
+
+def test_the_trivy_cache_override_is_honoured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NOVA_TEST_TRIVY_CACHE", str(tmp_path / "mine"))
+    assert _trivy_cache() == tmp_path / "mine"

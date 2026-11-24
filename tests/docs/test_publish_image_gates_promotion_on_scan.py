@@ -377,7 +377,11 @@ def test_the_tag_set_is_checked_before_anything_is_built_copied_or_signed() -> N
 
 def test_no_shell_step_builds_or_pushes_an_image() -> None:
     """The single build is ``docker/build-push-action``; a shell build after the gate would
-    publish bytes nobody scanned and could not be told apart by the digest checks."""
+    publish bytes nobody scanned and could not be told apart by the digest checks.
+
+    The tool list below cannot be complete (nerdctl, ``ctr``, a script that wraps a build ...).
+    It catches the obvious routes; the lasting guards are the digest checks (every production
+    step takes the one build digest) and the exact-permission and single-build tests."""
     for s in _steps():
         run = str(s.get("run") or "")
         hit = re.search(
@@ -440,6 +444,12 @@ def test_the_scan_composite_refuses_anything_that_is_not_a_digest(ref: str, ok: 
         check=False,
     )
     assert (done.returncode == 0) is ok, (ref, done.stdout, done.stderr)
+
+
+def test_the_job_has_a_bounded_timeout() -> None:
+    """Without ``timeout-minutes`` a hung copy or scan runs to GitHub's 6-hour default."""
+    timeout = _load(WORKFLOW)["jobs"][JOB].get("timeout-minutes")
+    assert isinstance(timeout, int) and 0 < timeout <= 60, timeout
 
 
 def test_permissions_are_exactly_what_the_release_needs() -> None:
