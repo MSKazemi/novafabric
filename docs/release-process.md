@@ -166,19 +166,20 @@ scan, from whatever ref it is started on:
   moving tag by nature.
 
 Making a branch dispatch **scan-only** (no production tag at all) is the recommended hardening, but
-it changes the documented "manual re-publish" behaviour and is an **undecided owner choice (A2)**;
-this branch implements only the namespace refusal above.
+it changes the documented "manual re-publish" behaviour, so it is an open owner decision (whether a
+non-tag dispatch should scan only); this change implements only the namespace refusal above.
 
 #### If the job fails after the first tag moved
 
 The tag steps run GHCR first, then Docker Hub. If the Docker Hub step fails (token, rate limit,
 outage) the release is **half done**: GHCR carries `X.Y.Z`, `X.Y` and `latest`, the run is red, and
 Docker Hub does not have the release. The image was already scanned, signed and attested, so
-GHCR is consistent. Re-running the failed job is idempotent for the same digest (tagging is
-read-verify-write); re-running the **workflow** rebuilds, produces a different digest, and the
-`X.Y.Z` check then refuses it by design. To finish the Docker Hub half, tag the already-scanned
-digest by hand (`docker buildx imagetools create -t <hub-repo>:X.Y.Z <ghcr-repo>@<digest>`, then
-`X.Y` and `latest`) or cut the next patch version. Nothing is rolled back automatically.
+GHCR is consistent. Do **not** use "Re-run failed jobs" or re-run the workflow: that re-runs the
+whole `image` job including the build, which produces a different digest, and the `X.Y.Z` check
+then refuses it by design. The only recovery for a half-published release is a manual copy of the
+already-promoted, already-signed digest, done by a maintainer who has push access to the Docker Hub
+repository (`docker buildx imagetools create -t <hub-repo>:X.Y.Z <ghcr-repo>@<digest>`, then
+`X.Y` and `latest`), or cutting the next patch version. Nothing is rolled back automatically.
 
 Concurrency is per ref (`publish-image-<ref>`, no cancellation): two **different** tags released at
 the same time run in parallel and race on `latest` and on `X.Y`; the last writer wins. This predates

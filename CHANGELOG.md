@@ -91,7 +91,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   (a duplicate, platform-less, `unknown/<arch>` or unannotated `unknown/unknown` child, or a platform nobody scanned, is
   refused). A run that is not a `v*` tag push (`workflow_dispatch` from a branch) may not write `latest` or any tag that
   starts with a digit, so a branch named `0.109.0` cannot re-point a release tag; it still publishes `:<branch>` and
-  `:sha-<short>` after the scan. Whether a dispatch should instead be scan-only is an undecided owner choice (A2).
+  `:sha-<short>` after the scan. Whether a dispatch should instead be scan-only is an open owner decision.
   The tag set is validated before the build, the checkout no longer persists the token, and registry error text is
   escaped so it cannot forge workflow commands. The Docker Hub
   token is no longer in the job environment of the build and scan steps. The scanner is pinned to trivy v0.76.2 **by hand** in
@@ -103,7 +103,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   A fixable CRITICAL finding blocks **container image publication** only: the PyPI package, the GitHub Release and
   the Helm chart run as independent workflows. A tag run uses the workflow file of its own tag, so nothing in the
   repository prevents a tag on a commit that removes the gate; a protected GitHub Environment with required reviewers
-  would (owner decision A5, not configured).
+  would; it is not configured.
   **Experimental:** the copy to GHCR and Docker Hub, cosign on the promoted digest and `TRIVY_PLATFORM` through
   trivy-action are first executed by the next tag run. The release job timeout is 60 minutes (was 30). Tests:
   `tests/docs/test_publish_image_gates_promotion_on_scan.py`, `tests/test_release_image.py`,
