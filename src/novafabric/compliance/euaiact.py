@@ -18,15 +18,22 @@ Provides:
 - ``EuAiActExporter`` — scans capsule directories and emits structured Art.12 log events.
 - ``infer_logging_event_types()`` — maps capsule content to Art.12 logging event type taxonomy.
 
-Art.12 taxonomy (aligned with EU AI Act Annex XII requirements):
+Logging event-type taxonomy. These names are NovaFabric's own; the AI Act does not
+define event types (Art. 12(2) sets the purposes logging serves, not a list):
 - ``interaction_timestamp`` — AI system was invoked
 - ``input_classification`` — input risk classification event present
 - ``output_record`` — AI system output hash / classification recorded
 - ``human_review_event`` — human oversight event present (Art.14)
 
-Retention floors (Art.12 / Art.18):
-- Deployer mode: 6 months (``NOVA_EUAIACT_HIGH_RISK=true``)
-- Provider mode: 120 months / 10 years (``NOVA_EUAIACT_PROVIDER=true``)
+Retention:
+- Log floor: 6 months for providers (Art. 19(1)) and deployers (Art. 26(6)) alike —
+  "at least six months", unless other Union or national law provides otherwise.
+- Documentation horizon (provider mode, ``NOVA_EUAIACT_PROVIDER=true``): 10 years.
+  Art. 18(1) sets it for the provider's *documentation* (technical documentation,
+  QMS records, EU declaration of conformity), not for logs. Provider mode applies it
+  to capsules as an optional policy — useful where a capsule or Evidence Bundle is
+  kept as part of the technical documentation — and reports it separately from the
+  log floor.
 """
 
 from __future__ import annotations
@@ -41,8 +48,13 @@ import yaml
 
 from novafabric._capsule_fs import read_capsule_member_or_none, read_required_capsule_member
 
-_DEPLOYER_RETENTION_MONTHS: int = 6
-_PROVIDER_RETENTION_MONTHS: int = 120  # 10 years per Art.18
+#: Log-retention floor: Art. 19(1) (providers) and Art. 26(6) (deployers) — logs
+#: under the party's control are kept "of at least six months".
+LOG_RETENTION_FLOOR_MONTHS: int = 6
+#: Art. 18(1): the provider keeps its *documentation* (technical documentation,
+#: QMS records, notified-body decisions, EU declaration of conformity) for 10 years.
+#: This is not a log obligation; provider mode applies it as an optional policy.
+DOCUMENTATION_RETENTION_MONTHS: int = 120
 
 
 class EuAiActConfig:
@@ -50,8 +62,15 @@ class EuAiActConfig:
 
     Attributes:
         high_risk: Whether the operator has declared high-risk classification.
-        provider_mode: Whether provider-mode retention (10-year floor) applies.
-        retention_months: Applicable retention floor in months.
+        provider_mode: Whether the provider-mode 10-year documentation horizon is
+            applied to capsules as policy.
+        log_retention_floor_months: The AI Act's log-retention floor, 6 months
+            (Art. 19(1) / Art. 26(6)), in both modes.
+        documentation_retention_months: 120 (Art. 18(1) documentation horizon) in
+            provider mode, else ``None``.
+        retention_months: The retention NovaFabric applies to capsules: the log
+            floor, or the documentation horizon in provider mode (unchanged values,
+            6 / 120).
     """
 
     def __init__(self) -> None:
@@ -61,8 +80,12 @@ class EuAiActConfig:
         self.provider_mode: bool = os.environ.get("NOVA_EUAIACT_PROVIDER", "").lower() in (
             "1", "true", "yes"
         )
+        self.log_retention_floor_months: int = LOG_RETENTION_FLOOR_MONTHS
+        self.documentation_retention_months: int | None = (
+            DOCUMENTATION_RETENTION_MONTHS if self.provider_mode else None
+        )
         self.retention_months: int = (
-            _PROVIDER_RETENTION_MONTHS if self.provider_mode else _DEPLOYER_RETENTION_MONTHS
+            self.documentation_retention_months or self.log_retention_floor_months
         )
 
 
@@ -235,7 +258,10 @@ def _presence(capsule_dir: Path, name: str) -> str:
 
 
 def is_within_retention(capsule_created_at: datetime, retention_months: int) -> bool:
-    """Return ``True`` if the capsule is still within the Art.12 retention window.
+    """Return ``True`` if the capsule is still within the log-retention window.
+
+    The AI Act's log floor is :data:`LOG_RETENTION_FLOOR_MONTHS` (Art. 19(1) /
+    Art. 26(6)); a caller may pass a longer policy window.
 
     Used by ``nova pii erase`` to gate GDPR erasure requests under Art.17(3)(b).
     """

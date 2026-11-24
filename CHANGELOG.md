@@ -39,6 +39,33 @@ longer forwards the submitting shell's environment (ADR-0270).
   or outputs differ. Record ids and paths are printed on one line (non-printable characters replaced,
   80 characters at most for ids; `nova verify` does the same for the paths it lists, with
   a 240-character cap) in the text reports; JSON is unchanged.
+- **EU AI Act Art. 12 conformance report (`build_art12_report`): rows for the provisions it lacked
+  (#63, works today).** Five rows apply to every report: `risk_situation_events` (Art. 12(2)(a)),
+  `post_market_monitoring_events` (Art. 12(2)(b), Art. 72), `deployer_monitoring_events`
+  (Art. 12(2)(c), Art. 26(5)), `log_instructions_for_use` (Art. 13(3)(f), operator-declared through the
+  new `log_instructions_ref` argument) and `authority_log_access` (Art. 21(2); names `nova verify` as a check
+  only when the capsule's seal verifies and binds the evidence streams). The 12(2)(a)-(c) rows are at most `partial`, because which events
+  are relevant is the provider's call. The remote biometric identification rows `rbi_reference_database`,
+  `rbi_matched_input_data` and `rbi_verifying_persons` (Art. 12(3)(b)-(d)) appear only with the new
+  `remote_biometric_identification=True` argument. New report fields: `requirements` (one
+  `{field_name, label, basis}` per row, where `basis` is `ai_act`, `standards` or `novafabric_evidence`)
+  and `remote_biometric_identification`. Additive: no key is removed, and the six existing rows keep
+  their names, order and status logic.
+- **`nova euaiact status` and `GET /api/compliance/euaiact/status` / `POST /api/compliance/euaiact/export`
+  report the log floor and the documentation horizon separately (works today).** New keys:
+  `log_retention_floor_months` (always 6, Art. 19(1) / Art. 26(6)) and `documentation_retention_months`
+  (120 in provider mode, Art. 18(1), else `null`). `retention_months` keeps its values (6, or 120 with
+  `NOVA_EUAIACT_PROVIDER=true`). It now means the retention NovaFabric applies to capsules, not the
+  Act's log floor. No retention is shortened. The dashboard's EU AI Act status and export panels
+  show the same two figures (the log floor with Art. 19(1) / Art. 26(6); the 120 months as an
+  Art. 18(1) documentation horizon). The shipped bundle under `src/novafabric/serve/static` carries
+  the old labels until it is next rebuilt.
+- **Art. 12 report rows no longer read more complete than their wording (works today).**
+  `retention` is `partial` when the operator declares fewer than 183 days (six months), with a
+  reason naming the shortfall; at or above 183 it stays `complete`. `automatic_event_recording`
+  is `partial` from a single capsule, because the row is about the system's lifetime and one run
+  cannot show that. A blank `log_instructions_ref` declares nothing, and its text is shown on
+  one line, cut at 200 characters, in the row's reason.
 - **Docs: AIUC-1 evidence crosswalk** (`docs/aiuc-1-evidence-crosswalk.md`). For E015.1–.4, D003.3,
   D003.4, C002.1, C002.2, C002.4, A006.1 and B001 it names the NovaFabric record or command that may be
   relevant, rates it strong or partial and states the gap, including that a default capsule stores full
@@ -109,6 +136,29 @@ longer forwards the submitting shell's environment (ADR-0270).
   the v0.109.0 tag's collector vulnerability scan on 1.26.10 (lint, unit tests and the build passed).
   The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
   chart), so the release is unaffected; anyone building the collector from source should use Go 1.26.11.
+- **EU AI Act Art. 12 report and `nova euaiact` cited the wrong provisions (#63).** Provision numbers
+  follow Regulation (EU) 2024/1689 as read on the artificialintelligenceact.eu explorer (spot-checked
+  for Arts. 12, 13(3)(f), 18, 19, 21(2) and 26(6)); they were not checked against EUR-Lex itself, so
+  confirm them in the Official Journal. The row labels changed, but the keys did not:
+  `automatic_event_recording` now says "over its lifetime" (Art. 12(1)), not "operation";
+  `period_of_use` cites Art. 12(3)(a), a duty that applies only to remote biometric identification
+  systems, not 12(2)(a); `traceability` cites the Art. 12(2) chapeau, not 12(1); `retention` cites
+  Art. 19(1) (providers) and Art. 26(6) (deployers), at least six months, not 12(3).
+  `input_output_records` is now labelled as NovaFabric evidence supporting the Art. 12(2)(a)-(c)
+  purposes. No Art. 12 paragraph sets a general input/output duty. `tamper_evidence` is labelled as a
+  standards item that goes beyond the Act (prEN 18229-1; ISO/IEC 24970), since the Act does not
+  expressly require log tamper-protection. The report's `standard` string now names Arts. 13(3)(f), 19(1), 21(2) and
+  26(6) as well. The `euaiact` module no longer claims its event taxonomy is aligned with Annex XII,
+  which covers transparency for general-purpose AI models. Provider mode's 120 months is now called
+  the Art. 18(1) *documentation* horizon, not a log floor. The `nova euaiact export` help cites
+  Art. 21(2) (authority access to logs), not Art. 74. The docs and the roadmap no longer bind
+  Art. 12 on 2 August 2026: Regulation (EU) 2026/1744 (Digital Omnibus on AI, Official Journal of
+  24 July 2026) moved Annex III high-risk application to 2 December 2027 and Annex I to 2 August
+  2028, as read on the European Parliament's Legislative Train and artificialintelligenceact.eu
+  (EUR-Lex itself not read); the Art. 50 date is unchanged. The `deadline` field of
+  `GET /api/compliance/euaiact/status` is the Art. 50 date, not the Art. 12 one. `nova pii erase
+  --retention-months` no longer calls 120 months a provider-mode requirement: it is the Art. 18(1)
+  documentation period.
 - **The dashboard's Audit Coverage panel follows `gate_passed` and shows seal findings.** It coloured the score by `threshold_met` (score at or above the threshold), so a capsule whose `.seal` fails verification still rendered green although `GET /api/compliance/audit/coverage` now answers `gate_passed: false`. The panel now takes its verdict from `gate_passed` (score at or above the threshold and no finding), falls back to `threshold_met` only when a server sends no `gate_passed`, prints `gate passed` / `gate failed`, and lists each `seal_invalid` finding with its capsule and message. The dashboard's API type gains the optional `gate_passed` and `findings`. Test: `ui/dashboard/tests/unit/audit-coverage-gate.test.tsx`.
 - **The Art. 12 report decides what a seal binds from one verification.** `seal_for_log_claims` asked the seal check twice (bare, then with the evidence streams to cover); a capsule edited between the two calls turned a seal that had just stopped verifying into "does not bind the streams" and was exported instead of refused. `capsule_seal_coverage` (new, `novafabric.trust.novaseal.capsule_verify`) verifies once and answers `absent`, `bound`, `unbound` or `invalid`; `capsule_seal_status` keeps its results and is now a view of it. Test: `tests/compliance/export/test_seal_log_claims_single_verification.py`.
 - **The API and CLI references state what `POST /api/compliance/export/ropa` and `POST /api/compliance/examiner/pccp` do with a failing seal** (HTTP 500 with the refusal message and no document; an unsealed capsule still exports, unsigned), and pin it in `tests/compliance/export/test_seal_invalid_http_routes.py`.

@@ -1840,12 +1840,29 @@ export const api = {
 
   // ---------- v0.34.0: EU AI Act Art.12 ----------
   euaiactStatus: () =>
-    request<{ ok: boolean; high_risk: boolean; provider_mode: boolean; retention_months: number; deadline: string; note: string }>(
+    request<{
+      ok: boolean; high_risk: boolean; provider_mode: boolean;
+      /** The retention NovaFabric applies to capsules (6, or 120 in provider mode). */
+      retention_months: number;
+      /** The Act's log floor: 6 months, Art. 19(1) / Art. 26(6). Absent on an older server. */
+      log_retention_floor_months?: number;
+      /** 120 (Art. 18(1) documentation, not logs) in provider mode, else null. */
+      documentation_retention_months?: number | null;
+      deadline: string; note: string;
+    }>(
       '/api/compliance/euaiact/status'
     ),
 
   euaiactExport: (from_date?: string, to_date?: string) =>
-    postJson<{ ok: boolean; records: Array<{ run_id: string; created_at: string; status: string; logging_event_type: string[] }>; count: number; retention_months: number; mode: string }>(
+    postJson<{
+      ok: boolean;
+      records: Array<{ run_id: string; created_at: string; status: string; logging_event_type: string[] }>;
+      count: number;
+      retention_months: number;
+      log_retention_floor_months?: number;
+      documentation_retention_months?: number | null;
+      mode: string;
+    }>(
       '/api/compliance/euaiact/export',
       { ...(from_date ? { from_date } : {}), ...(to_date ? { to_date } : {}) }
     ),

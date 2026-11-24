@@ -14,6 +14,8 @@ export default function EuAiActExportPanel() {
     records: Array<{ run_id: string; created_at: string; status: string; logging_event_type: string[] }>;
     count: number;
     retention_months: number;
+    log_retention_floor_months?: number;
+    documentation_retention_months?: number | null;
     mode: string;
   } | null>(null);
 
@@ -115,7 +117,11 @@ export default function EuAiActExportPanel() {
           )}
 
           <p className="text-[10px] text-[var(--color-text-faint)]">
-            Retention floor: {result.retention_months} months
+            {result.log_retention_floor_months != null
+              ? `Log retention floor: ${result.log_retention_floor_months} months (Art. 19(1) / Art. 26(6))`
+              : `Applied retention: ${result.retention_months} months`}
+            {result.documentation_retention_months != null &&
+              ` · Documentation horizon applied: ${result.documentation_retention_months} months (Art. 18(1), provider mode)`}
           </p>
         </div>
       )}
