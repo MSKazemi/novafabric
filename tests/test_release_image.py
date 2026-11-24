@@ -508,11 +508,23 @@ def test_a_tagless_copy_the_registry_refuses_is_a_failure_with_nothing_tagged(fa
 # ---------------------------------------------------------------- moving the release tags
 
 
-def test_tags_move_only_onto_a_digest_that_verifies(fake: Fake) -> None:
-    index, kids = _image()
-    digest = _sha(index)  # never stored in PROD
-    result = _tag(fake, digest, "--tag", "1.2.3", "--tag", "latest")
-    assert result.returncode == 1
+@pytest.mark.parametrize("stored", [False, True], ids=["digest-absent", "extra-platform"])
+def test_tags_move_only_onto_a_digest_that_verifies(fake: Fake, stored: bool) -> None:
+    """``tag`` must verify the image itself; the tag-name rules refuse nothing here.
+
+    The names are valid for a release (``--immutable`` given), so only ``verify`` can refuse:
+    either the digest is not in the registry at all, or it is there but its index carries a
+    platform nobody scanned.
+    """
+    if stored:
+        index, kids = _image(platforms=(AMD64, ARM64, "linux/s390x"))
+        digest = fake.put(PROD, index, kids)
+    else:
+        index, _ = _image()
+        digest = _sha(index)  # never stored in PROD
+    result = _tag(fake, digest, "--tag", "1.2.3", "--tag", "latest", "--immutable", "1.2.3")
+    assert result.returncode == 1 and "::error" in result.stderr
+    assert "release namespace" not in result.stderr, "refused for the wrong reason"
     assert fake.creates() == []
 
 
