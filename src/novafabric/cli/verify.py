@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
+from novafabric._oneline import one_line
 
 console = Console()
 err_console = Console(stderr=True)
@@ -711,6 +712,11 @@ def _revocation_lines(revocation: Any) -> list[str]:
     return lines
 
 
+def _shown(rel: Any) -> str:
+    """A capsule-relative path as one safe, markup-free line (display only)."""
+    return escape(one_line(rel))
+
+
 def _print_capsule_binding(binding: Any) -> bool:
     """Print the ADR-0251 binding checks. Returns False if the capsule is unbound."""
     name = binding.manifest_name
@@ -746,14 +752,14 @@ def _print_capsule_binding(binding: Any) -> bool:
     else:
         _print_check("Evidence binding (per-file sha256)", False)
         for rel in binding.mismatched:
-            console.print(f"    [red]modified:[/red] {rel}")
+            console.print(f"    [red]modified:[/red] {_shown(rel)}")
         for rel in binding.missing:
-            console.print(f"    [red]missing:[/red] {rel}")
+            console.print(f"    [red]missing:[/red] {_shown(rel)}")
 
     if binding.unlisted:
         console.print(
             f"    [yellow]not covered by the seal ({len(binding.unlisted)}):[/yellow] "
-            + ", ".join(binding.unlisted[:5])
+            + ", ".join(_shown(rel) for rel in binding.unlisted[:5])
             + (" …" if len(binding.unlisted) > 5 else "")
         )
     for err in binding.errors:

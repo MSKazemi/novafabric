@@ -22,12 +22,16 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from typer.testing import CliRunner
 
+from novafabric._oneline import one_line
 from novafabric.capture.orchestrator import _evidence_digests
 from novafabric.cli.main import app
 from novafabric.diff._engine import DiffEngine
 from novafabric.trust.novaseal import KeyConfig, NovaSeal
 from novafabric.trust.novaseal.capsule_verify import CapsuleBinding
-from novafabric.trust.novaseal.first_divergence import binding_first_divergence
+from novafabric.trust.novaseal.first_divergence import (
+    binding_first_divergence,
+    format_binding_first_divergence,
+)
 
 runner = CliRunner()
 ROOT = Path(__file__).resolve().parents[1]
@@ -352,6 +356,68 @@ def test_an_exact_tie_keeps_the_first_listed_entry(tmp_path: Path) -> None:
     )
 
 
+_HOSTILE = [
+    "\u202e", "\u200b", "\ufeff", "\u2028", "\u2029", "\x85", "\ud800", "\x1b", "\t",
+    "\x00", "\ue000", "\u0378",
+]
+
+
+@pytest.mark.parametrize("char", _HOSTILE)
+def test_one_line_replaces_every_non_printable_class(char: str) -> None:
+    out = one_line(f"a{char}b")
+    assert out == "a?b"
+    out.encode("utf-8")  # a lone surrogate would raise here
+
+
+def test_one_line_caps_the_length_with_an_ellipsis() -> None:
+    assert one_line("x" * 80) == "x" * 80
+    assert one_line("x" * 81) == "x" * 79 + "\u2026"
+    assert len(one_line("x" * 10_000)) == 80
+    assert one_line("x" * 30, limit=10) == "x" * 9 + "\u2026"
+    assert one_line({"k": "v"}) == "{'k': 'v'}"
+    assert one_line(None) == "None"
+
+
+def test_a_lone_surrogate_id_does_not_break_the_text_report(tmp_path: Path) -> None:
+    a = _capsule(tmp_path, "a", [_model(1, "p1", "x", second=0)], [])
+    b = _capsule(tmp_path, "b", [_model(1, "p1", "y", second=0)], [])
+    for cap in (a, b):  # json.dumps writes the lone surrogate as the escape \ud800
+        path = cap / "model-calls.jsonl"
+        record = json.loads(path.read_text())
+        record["model_call_id"] = "a\ud800b"
+        path.write_text(json.dumps(record) + "\n")
+    out = runner.invoke(app, ["diff", str(a), str(b)])
+    assert out.exit_code == 0, (out.output, out.exception)
+    assert "[A #0 a?b; B #0 a?b]" in out.stdout
+    assert _diff_json(a, b)["first_divergence"]["record_id_a"] == "a\ud800b"
+
+
+def test_a_lone_surrogate_path_does_not_break_the_verify_lines() -> None:
+    lines = format_binding_first_divergence({
+        "path": "x\ud800y", "event_type": "model_call", "reason": "modified",
+        "divergent_files": 1,
+    })
+    for line in lines:
+        line.encode("utf-8")
+    assert "x?y" in lines[0]
+
+
+def test_verify_prints_hostile_paths_on_one_line(tmp_path: Path) -> None:
+    sealed_name = "evil\n\x1b[31mforged line.txt"
+    cap, config = _build_sealed(tmp_path, extra_files=(sealed_name,))
+    (cap / sealed_name).write_text("edited\n")
+    (cap / "unlisted\nfake: no problems.txt").write_text("late\n")
+    out = _verify(cap, config)
+    assert out.exit_code == 1 and isinstance(out.exception, SystemExit)
+    assert "\x1b" not in out.stdout
+    assert not any(ln.strip().startswith(("forged line", "fake: no problems"))
+                   for ln in out.stdout.splitlines())
+    assert "evil?" in out.stdout and "unlisted?fake" in out.stdout
+    assert "modified: evil?" in out.stdout
+    fd = json.loads(_verify(cap, config, "--json").stdout)["first_divergence"]
+    assert fd["path"] == sealed_name  # JSON keeps the raw path
+
+
 def test_engine_report_carries_the_field(tmp_path: Path) -> None:
     a = _capsule(tmp_path, "a", [], [_tool(1, "s")])
     b = _capsule(tmp_path, "b", [], [])
@@ -367,6 +433,10 @@ def test_engine_report_carries_the_field(tmp_path: Path) -> None:
 @pytest.fixture()
 def sealed(tmp_path: Path) -> tuple[Path, Path]:
     """A capsule sealed with evidence_digests, as `nova capture` seals one."""
+    return _build_sealed(tmp_path)
+
+
+def _build_sealed(tmp_path: Path, extra_files: tuple[str, ...] = ()) -> tuple[Path, Path]:
     key = ec.generate_private_key(ec.SECP256R1())
     key_path = tmp_path / "seal.key"
     key_path.write_bytes(
@@ -403,6 +473,8 @@ def sealed(tmp_path: Path) -> tuple[Path, Path]:
     (cap / "trace.jsonl").write_text('{"span":"root"}\n')
     (cap / "env.lock").write_text("python=3.13\n")
     (cap / "outputs" / "stdout.txt").write_text("hello\n")
+    for name in extra_files:
+        (cap / name).write_text("sealed\n")
     manifest: dict[str, Any] = {
         "run_id": "issue-74",
         "status": "success",

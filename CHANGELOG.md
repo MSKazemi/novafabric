@@ -33,11 +33,11 @@ longer forwards the submitting shell's environment (ADR-0270).
   `stream`, `event_type`, `reason`, `granularity: file`, `index: null`): the seal holds one
   SHA-256 per file, so the tampered record itself cannot be located and is never claimed. Exit
   codes are unchanged. Order-only differences (the same calls in a different order, paired by
-  unique span ids) are not reported, as in the existing alignment. For `nova verify`, "first" is
+  span id for model calls or by tool name and arguments for tool calls) are not reported, as in the existing alignment. For `nova verify`, "first" is
   event-stream-first, then path order, not a time order. The `nova diff` text line can read
   `First divergence: none in model or tool calls` next to `changed=1` when only the environment
-  or outputs differ. Record ids and paths are printed on one line (control characters replaced,
-  80 characters at most) in the text reports; JSON is unchanged.
+  or outputs differ. Record ids and paths are printed on one line (non-printable characters replaced,
+  80 characters at most; `nova verify` does the same for the paths it lists) in the text reports; JSON is unchanged.
 
 ### Documentation
 

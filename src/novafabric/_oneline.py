@@ -13,12 +13,15 @@ from typing import Any
 
 DEFAULT_LIMIT = 80
 _ELLIPSIS = "…"
+#: Control, format (bidi overrides, zero-width), surrogate (cannot be encoded), private-use,
+#: unassigned, and line/paragraph separators.
+_REPLACED = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
 
 
 def one_line(value: Any, limit: int = DEFAULT_LIMIT) -> str:
-    """``str(value)`` on a single line: control characters become ``?``, capped at ``limit``."""
+    """``str(value)`` on one line: non-printable characters become ``?``, capped at ``limit``."""
     text = str(value)[: limit + 1]  # bound the work done on a huge value
     text = "".join(
-        "?" if unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"} else ch for ch in text
+        "?" if unicodedata.category(ch) in _REPLACED else ch for ch in text
     )
     return text if len(text) <= limit else text[: limit - 1] + _ELLIPSIS

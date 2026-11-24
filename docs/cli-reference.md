@@ -1582,11 +1582,13 @@ Diff: run-a → run-b
   `First divergence: none in model or tool calls` even though the counts line above it can
   show `changed=1`. Model calls count logical calls only
   (ADR-0305 transport records are not steps), and skipped malformed lines take no position.
-- Order-only differences are not reported: calls that pair by a unique `parent_span_id` and
-  match in content (for example the same calls recorded in a different order) are unchanged
+- Order-only differences are not reported: calls that pair by span id (model calls) or by tool name
+  and arguments (tool calls) and match in content (for example the same calls recorded in a different order) are unchanged
   pairs, exactly as in the existing alignment, so `first_divergence` is `null` for them.
-- In the text report, record ids are shown on one line, with control characters replaced by
-  `?` and capped at 80 characters. The `json` report carries them unmodified.
+- In the text report, record ids are shown on one line, with non-printable characters
+  (controls, bidi and zero-width marks, line separators, lone surrogates) replaced by `?` and
+  capped at 80 characters. The `json` report carries them unmodified. `nova verify` shows the
+  paths on its `modified:`, `missing:` and `not covered` lines the same way.
 - Exit codes are unchanged; `github-annotation` output does not carry the field.
 
 Diff sections: environment (Python, OS), model calls (logical calls only — the wire hook's
