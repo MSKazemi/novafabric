@@ -57,6 +57,7 @@ _JOB_DOC_MARKERS: dict[str, list[str]] = {
     "capture-overhead-gate": ["capture-overhead-gate"],
     "web": ["`web`"],
     "integration": ["`integration`"],
+    "golden-capsule": ["`golden-capsule`"],
 }
 
 

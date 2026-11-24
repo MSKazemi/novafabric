@@ -708,7 +708,7 @@ def _registered_fixture_digest(nova_home: Path) -> str | None:
     return digest if isinstance(digest, str) else None
 
 
-def _asset_spec(scn: lab.Scenario) -> str:
+def _asset_spec(scn: lab.Scenario, scenario_dir: Path) -> str:
     return (
         'novafabric_spec_version: "1"\n'
         "asset_type: dataset\n"
@@ -720,7 +720,7 @@ def _asset_spec(scn: lab.Scenario) -> str:
         '  synthetic: "true"\n'
         f'  fixture_manifest_sha256: "{scn.fixture_manifest_sha256}"\n'
         "spec:\n"
-        "  path: examples/evidence_lab/scenarios/service_incident_v1\n"
+        f"  path: {json.dumps(str(scenario_dir.resolve()))}\n"  # the scenario actually loaded
     )
 
 
@@ -802,7 +802,7 @@ def _walkthrough(
         }
 
     spec = work / "asset.yaml"
-    spec.write_text(_asset_spec(base), encoding="utf-8")
+    spec.write_text(_asset_spec(base, scenario_dir), encoding="utf-8")
     code, output = _cli(report, "register", [nova, "register", str(spec)], env=env, cwd=work)
     if code != 0 or f"Registered {wt.ASSET_REF}" not in output:
         raise lab.EvidenceLabError("E_ASSET_REGISTER_FAILED", output.strip()[-_TAIL:])
@@ -862,7 +862,12 @@ def _walkthrough(
         code, output = _cli(report, f"lineage_provenance_{variant}",
                             [nova, "lineage", "provenance", vreport["run_id"], "--output", "json"],
                             env=env, cwd=work)  # fmt: skip
-        edges = _jsonl(capsule / "lineage.jsonl")
+        edges: list[dict[str, Any]] | None
+        edges_error: str | None = None
+        try:
+            edges = _jsonl(capsule / "lineage.jsonl")
+        except lab.EvidenceLabError as exc:  # judged as a named lineage FAIL below
+            edges, edges_error = None, f"{exc.code}: {exc.message}"
         # The edge comes from the capsule alone, so read the asset back from the registry.
         reg_code, reg_output = _cli(report, f"registry_inspect_{variant}",
                                     [nova, "inspect", wt.ASSET_REF], env=env,
@@ -874,7 +879,8 @@ def _walkthrough(
                                        registry_output=reg_output,
                                        expected_fixture_sha256=base.fixture_manifest_sha256,
                                        registered_fixture_sha256=_registered_fixture_digest(
-                                           nova_home)))  # fmt: skip
+                                           nova_home),
+                                       edges_error=edges_error))  # fmt: skip
 
         verify_argv = [nova, "verify", "--json"]
         if ca_bundle is not None:
