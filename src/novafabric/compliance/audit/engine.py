@@ -110,9 +110,12 @@ def _check_seal_signature(capsule_dir: Path) -> bool:
 
 
 SEAL_INVALID_MESSAGE = (
-    "the capsule carries a .seal that failed seal verification (edited after sealing, "
-    "a damaged or substituted seal, or a .seal that is not a plain directory); its seal "
-    "is not evidence — run `nova verify <capsule>` for the reasons"
+    "the capsule carries a .seal that failed seal verification (for example a member or "
+    "the manifest edited after sealing, a damaged or substituted seal, or a .seal that is "
+    "not a plain directory); its seal is not evidence — run `nova verify <capsule>` for "
+    "the reasons. A seal made before evidence digests, or a stream the seal does not "
+    "list, cannot show edits to that stream, so the absence of this finding is not proof "
+    "that nothing was edited."
 )
 
 

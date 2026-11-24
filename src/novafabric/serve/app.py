@@ -5847,11 +5847,14 @@ def create_app(
         skipped, never as an empty stream that ingested cleanly. Re-ingesting a
         capsule replaces its contribution (:mod:`novafabric.kg.capsule_ingest`).
         """
-        from novafabric.kg.capsule_ingest import ingest_capsule_dir
+        from novafabric.kg.capsule_ingest import capsule_event_files, ingest_capsule_dir
         from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
 
         del store  # the pipeline writes to it
-        seal = capsule_seal_status(target)  # the seal, not a flag
+        # The seal, not a flag — and a seal that does not name the streams about to be
+        # read cannot vouch for them (a stream added after sealing, or a seal made
+        # before evidence digests), so it is not "valid" for this ingest.
+        seal = capsule_seal_status(target, must_cover=capsule_event_files(target))
         result = ingest_capsule_dir(
             pipeline, target,
             novaseal_valid=seal == "valid",
@@ -5862,8 +5865,9 @@ def create_app(
             # Ingested as unverified (like an unsealed capsule) but not silently: the
             # seal exists and fails, which is evidence the capsule was edited.
             logger.warning(
-                "KG ingest: %s carries a .seal that failed seal verification "
-                "(edited after sealing or a damaged seal); ingested as unverified",
+                "KG ingest: %s carries a .seal that failed seal verification or does not "
+                "cover its event streams (a stream edited or added after sealing, a seal "
+                "made before evidence digests, or a damaged seal); ingested as unverified",
                 target.name,
             )
         return {
@@ -6718,9 +6722,13 @@ def create_app(
         # NovaSeal verification comes from the capsule's own seal, never from the
         # caller: `verified: true` let any token holder mark an unsealed capsule's
         # edges verified (review serve-09).
+        from novafabric.kg.capsule_ingest import capsule_event_files as _event_files
         from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
 
-        seal_status = capsule_seal_status(target)
+        # must_cover: a seal that does not name the streams about to be read cannot
+        # vouch for them, so it is not "valid" here (a stream added after sealing, or a
+        # seal made before evidence digests).
+        seal_status = capsule_seal_status(target, must_cover=_event_files(target))
         novaseal_verified = seal_status == "valid"
         flag_note = (
             "the request's verified flag was ignored: verification is read from the "
@@ -6769,9 +6777,10 @@ def create_app(
             notes = [flag_note] if flag_note else []
             if result.tampered:
                 notes.append(
-                    "the capsule carries a .seal that failed seal verification (edited "
-                    "after sealing or a damaged seal): ingested as unverified, which is "
-                    "not the same as a capsule that was never sealed"
+                    "the capsule carries a .seal that failed seal verification or does "
+                    "not cover its event streams (a stream edited or added after sealing, "
+                    "a seal made before evidence digests, or a damaged seal): ingested as "
+                    "unverified, which is not the same as a capsule that was never sealed"
                 )
             if result.unreadable:
                 notes.append(f"not read: {', '.join(result.unreadable)}")
@@ -7869,6 +7878,11 @@ def create_app(
             "missing_controls": report.missing_controls,
             "not_captured_controls": report.not_captured_controls,
             "coverages": [cov.model_dump(by_alias=True) for cov in report.coverages],
+            # Additive. ``threshold_met`` keeps meaning "score >= threshold"; the gate a
+            # caller acts on (the CLI's exit code) is ``gate_passed``: that AND no finding,
+            # so a capsule whose .seal fails verification does not pass.
+            "findings": [f.model_dump() for f in report.findings],
+            "gate_passed": report.overall_score >= threshold and not report.findings,
         }
 
     @app.post("/api/compliance/audit/bundle", dependencies=[Depends(verify_token)])

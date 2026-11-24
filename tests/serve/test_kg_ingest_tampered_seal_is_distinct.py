@@ -47,6 +47,10 @@ INVALID_KINDS = [k for k in KINDS if k not in ("valid", "absent")]
 # POST /api/kg/ingest already refuses a capsule that holds a top-level link (a .seal link
 # included) with an HTTP error before any seal is read; the other paths reach the seal.
 ENDPOINT_INVALID_KINDS = [k for k in INVALID_KINDS if k != "seal_symlink"]
+# A seal that does not bind the event streams: sealed with no evidence digests (the shape
+# of a seal made before ADR-0251), or sealed and then given a stream the seal never saw.
+UNBOUND_KINDS = ["unlisted_stream", "legacy_seal", "legacy_seal_edited"]
+TOOL_CALL = {"tool_call_id": "t1", "tool_name": "read_file", "parent_span_id": "agent-span"}
 CALL = {
     "model_call_id": "m1", "parent_span_id": "agent-span",
     "gen_ai.system": "openai", "gen_ai.request.model": "gpt-4o",
@@ -94,7 +98,8 @@ def _make(store: Path, kind: str, work: Path, name: str = "cap") -> Path:
     work.mkdir(parents=True, exist_ok=True)
     key_path, cert_path = _seal_key(work)
     manifest = yaml.safe_load((capsule / "capsule.yaml").read_text())
-    manifest["evidence_digests"] = evidence_digests(capsule)
+    if not kind.startswith("legacy_seal"):
+        manifest["evidence_digests"] = evidence_digests(capsule)
     (capsule / "capsule.yaml").write_text(yaml.safe_dump(manifest))
     bundle = NovaSeal(
         config=KeyConfig(profile="local", key_path=str(key_path), cert_path=str(cert_path)),
@@ -105,9 +110,11 @@ def _make(store: Path, kind: str, work: Path, name: str = "cap") -> Path:
     (seal / "manifest.dsse").write_bytes(bundle.dsse_envelope)
     (seal / "manifest.dsse.tsr").write_bytes(bundle.tsr)
     (seal / "log-entry.json").write_text(json.dumps(bundle.log_entry))
-    if kind == "tampered_member":
+    if kind in ("tampered_member", "legacy_seal_edited"):
         with (capsule / "model-calls.jsonl").open("a") as fh:
             fh.write(json.dumps({**CALL, "model_call_id": "m2"}) + "\n")
+    elif kind == "unlisted_stream":
+        (capsule / "tool-calls.jsonl").write_text(json.dumps(TOOL_CALL) + "\n")
     elif kind == "tampered_manifest":
         with (capsule / "capsule.yaml").open("a") as fh:
             fh.write("status_note: edited after sealing\n")
@@ -219,6 +226,33 @@ def test_ingest_all_names_the_tampered_capsules_only(
     assert sorted(body["tampered_capsules"]) == ["bad", "linked"]
 
 
+@pytest.mark.parametrize("kind", UNBOUND_KINDS)
+def test_a_seal_that_does_not_bind_the_streams_is_not_verified(
+    stack: tuple[TestClient, Path, Path], tmp_path: Path, kind: str
+) -> None:
+    client, store, kg = stack
+    body = _ingest(client, _make(store, kind, tmp_path / "w"))
+    assert body["seal_status"] == "invalid"
+    assert body["tampered"] is True
+    assert body["novaseal_verified"] is False
+    note = " ".join(body["note"].split())
+    assert "does not cover" in note  # honest: not every such capsule was edited
+    store_ = KGStore(kg)
+    (edge,) = store_.query_agent_models("agent-span")
+    assert edge["confidence"] == 0.0
+    assert all(t["confidence"] == 0.0 for t in store_.query_agent_tools("agent-span"))
+
+
+def test_an_injected_stream_is_never_counted_under_a_valid_seal(
+    stack: tuple[TestClient, Path, Path], tmp_path: Path
+) -> None:
+    client, store, kg = stack
+    body = _ingest(client, _make(store, "unlisted_stream", tmp_path / "w"))
+    assert body["ingested"] == 2  # both streams are read, but neither is verified
+    (tool,) = KGStore(kg).query_agent_tools("agent-span")
+    assert tool["confidence"] == 0.0
+
+
 # -- the auto-ingest loop ----------------------------------------------------------------
 
 
@@ -276,3 +310,53 @@ def test_auto_ingest_is_quiet_about_an_unsealed_capsule(
     with TestClient(create_app(token=TOKEN, capsule_dir=store, db_path=tmp_path / "r2.db")):
         _wait_for_tracked(kg, 1)
     assert not [r for r in caplog.records if "failed seal verification" in r.getMessage()]
+
+
+# -- verified edges follow the seal on the shared helper path ------------------------------
+
+SEAL_CONFIDENCE = [("absent", 0.0), ("valid", 1.0)]
+
+
+@pytest.mark.parametrize(("kind", "confidence"), SEAL_CONFIDENCE)
+def test_auto_ingest_counts_edges_verified_only_for_a_valid_seal(
+    stack: tuple[TestClient, Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    confidence: float,
+) -> None:
+    client, store, kg = stack
+    assert client.post("/api/kg/init", headers=HEADERS).json()["ok"] is True
+    _make(store, kind, tmp_path / "w")
+    monkeypatch.setenv("NOVA_KG_INGEST_INTERVAL", "0.05")
+    with TestClient(create_app(token=TOKEN, capsule_dir=store, db_path=tmp_path / "r2.db")):
+        _wait_for_tracked(kg, 1)
+    (edge,) = KGStore(kg).query_agent_models("agent-span")
+    assert edge["confidence"] == confidence
+
+
+@pytest.mark.parametrize(("kind", "confidence"), SEAL_CONFIDENCE)
+def test_ingest_all_counts_edges_verified_only_for_a_valid_seal(
+    stack: tuple[TestClient, Path, Path], tmp_path: Path, kind: str, confidence: float
+) -> None:
+    client, store, kg = stack
+    _make(store, kind, tmp_path / "w")
+    assert client.post("/api/kg/init", headers=HEADERS).json()["ok"] is True
+    body = client.post("/api/kg/ingest-all", headers=HEADERS, json={}).json()
+    assert body["ok"] is True, body
+    assert body["tampered_capsules"] == []
+    (edge,) = KGStore(kg).query_agent_models("agent-span")
+    assert edge["confidence"] == confidence
+
+
+@pytest.mark.parametrize("kind", UNBOUND_KINDS)
+def test_auto_ingest_and_ingest_all_treat_an_unbound_seal_as_tampered(
+    stack: tuple[TestClient, Path, Path], tmp_path: Path, kind: str
+) -> None:
+    client, store, kg = stack
+    _make(store, kind, tmp_path / "w")
+    assert client.post("/api/kg/init", headers=HEADERS).json()["ok"] is True
+    body = client.post("/api/kg/ingest-all", headers=HEADERS, json={}).json()
+    assert body["tampered_capsules"] == ["cap"]
+    (edge,) = KGStore(kg).query_agent_models("agent-span")
+    assert edge["confidence"] == 0.0

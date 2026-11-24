@@ -94,9 +94,11 @@ def _pii_manifest_parses(capsule_dir: Path) -> bool:
 _SEAL_INVALID = BindingFinding(
     code="seal_invalid",
     message=(
-        "the capsule carries a .seal that failed seal verification (edited after "
-        "sealing, a damaged or substituted seal, or a .seal that is not a plain "
-        "directory); it is not cited as evidence"
+        "the capsule carries a .seal that failed seal verification (for example a member "
+        "or the manifest edited after sealing, a damaged or substituted seal, or a .seal "
+        "that is not a plain directory); it is not cited as evidence. A seal made before "
+        "evidence digests, or a stream the seal does not list, cannot show edits to that "
+        "stream, and a valid seal does not say who signed it"
     ),
 )
 

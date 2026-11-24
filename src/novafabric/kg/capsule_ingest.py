@@ -59,7 +59,9 @@ class CapsuleIngestResult:
         """True when the capsule carries a ``.seal`` that failed verification.
 
         That is not the same as a capsule that was never sealed (``"absent"``): the
-        seal names bytes that are no longer there, or is itself damaged.
+        seal fails verification, does not name a stream that is on disk, or is a legacy
+        seal made before evidence digests that cannot vouch for any stream. Not every
+        such capsule was edited; none has a seal that vouches for its streams.
         """
         return self.seal_status == "invalid"
 
