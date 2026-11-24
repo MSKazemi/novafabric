@@ -1703,6 +1703,9 @@ export const api = {
   auditCoverage: (profile = 'nist-ai-rmf', threshold = 0.8) =>
     request<{
       profile: string; overall_score: number; threshold: number; threshold_met: boolean;
+      // gate_passed = score >= threshold AND no finding; optional (absent on an older server).
+      gate_passed?: boolean;
+      findings?: Array<{ code: string; capsule_id: string; message: string }>;
       capsule_count: number; total_controls: number; covered_controls: number;
       partial_controls: number; missing_controls: number;
       coverages: Array<Record<string, unknown>>;

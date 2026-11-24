@@ -9119,7 +9119,7 @@ Start the experimental local dashboard. Read-only browsing of capsules, registry
 | `POST /api/compliance/export/rocrate` | RO-Crate v1.1 ZIP export for a run ID. Body: `{run_id}`. Returns `{ok, filename, zip_base64, size_bytes, note}`. Mirrors `nova export-rocrate`. Dashboard: **ComplianceTab → RO-Crate Export** (one-click browser download). |
 | `POST /api/lineage/export-prov` | W3C PROV-JSON lineage document for a run ID. Body: `{run_id}`. Returns `{ok, run_id, document, note}`. Mirrors `nova lineage export-prov`. Dashboard: **LineageTab → PROV-JSON Export**. |
 | `POST /api/compliance/export/c2pa` | C2PA v2.3 manifest for a run ID. Body: `{run_id, include_training_mining?}`. Returns `{ok, run_id, manifest, note}`. Mirrors `nova export-c2pa`. Dashboard: **ComplianceTab → C2PA Export**. |
-| `POST /api/compliance/export/ropa` | GDPR Art.30 RoPA entry for a run ID. Body: `{run_id, controller_name?, controller_contact?}`. Returns `{ok, run_id, document, completeness, missing_fields, note}`. Mirrors `nova export-ropa`. Dashboard: **ComplianceTab → GDPR Art.30 RoPA Export**. |
+| `POST /api/compliance/export/ropa` | GDPR Art.30 RoPA entry for a run ID. Body: `{run_id, controller_name?, controller_contact?}`. Returns `{ok, run_id, document, completeness, missing_fields, note}`. Mirrors `nova export-ropa`. A capsule whose `.seal` fails verification is refused: HTTP 500, `detail` = the message that names `nova verify <capsule>`, no document (the CLI exits `2`); an unsealed capsule still exports, unsigned. Dashboard: **ComplianceTab → GDPR Art.30 RoPA Export**. |
 | `POST /api/compliance/export/aibom` | CycloneDX 1.7 AI-SBOM for a run ID. Body: `{run_id}`. Returns `{ok, run_id, bom_format, serial_number, component_count, components, generated_at, note}`. Mirrors `nova export-aibom`. Dashboard: **ComplianceTab → AI-SBOM Export**. |
 | `POST /api/compliance/export/nist-rmf` | NIST AI RMF 1.0 quantitative risk report for a run ID. Body: `{run_id}`. Returns `{ok, run_id, overall_score, risk_level, metrics, missing_evidence, generated_at, note}`. Mirrors `nova export-nist-rmf`. Dashboard: **ComplianceTab → NIST AI RMF Report**. |
 | `GET /api/aibom/status` | CRA SBOM compliance coverage across all capsules. Returns `{ok, regulation, cra_deadline, spec_version, capsule_directory, total_capsules, capsules_with_aibom, capsules_missing_aibom, coverage_status}`. Mirrors `nova aibom status`. Dashboard: **ComplianceTab → AI-SBOM Coverage Status**. |
@@ -9681,6 +9681,10 @@ nova export-examiner bagit 01HXAY7M5JZ8R7K4P9DPBYK2WX \
 
 A capsule directory holding a symbolic link is refused (exit 1, no bag written).
 
+**Known gap (not fixed):** this command runs no seal check. A capsule whose `.seal` fails verification
+(edited after sealing, damaged or substituted) is still exported; the `.seal/` directory is copied into the
+bag as it is. Run `nova verify <capsule>` first. `POST /api/compliance/examiner/bagit` behaves the same.
+
 **Output:** BagIt ZIP containing `bagit.txt`, `bag-info.txt`, `manifest-sha256.txt`, `tagmanifest-sha256.txt`, and the capsule payload under `data/`. The payload is **every regular file of the capsule** — the streams, `inputs/`, `outputs/` and `.seal/` included — streamed and checksummed; a special file (FIFO, socket, device) is named in `bag-info.txt` as `Payload-Omitted`, and a capsule holding a symbolic link is refused. Releases up to v0.107.0 bagged only `capsule.yaml`, top-level ZIPs and `audit-report.json`, yet the checksums verified clean.
 
 ### nova export-examiner pccp
@@ -9703,6 +9707,9 @@ no seal on either, or on one of them, it is empty. If either capsule has a `.sea
 verification (edited after sealing, or damaged, substituted or not a directory), the command exits
 `2`, writes no file, and names `nova verify <capsule>`; an unsealed capsule next to it does not hide that.
 
+`POST /api/compliance/examiner/pccp` (dashboard) refuses the same capsule differently: HTTP 500, `detail`
+= `examiner export failed:` plus the same message, and no document. An unsealed capsule still exports, unsigned.
+
 ### nova export-examiner iso42001
 
 Export an ISO/IEC 42001 AI Management System evidence package for an audit period.
@@ -9719,6 +9726,10 @@ nova export-examiner iso42001 --data-dir .novafabric/runs/ \
 default: every supported clause).
 
 **Output:** ZIP containing `iso42001-evidence.json`, `control-narratives.json`, `capsule-index.json`, and `README.txt`.
+
+**Known gap (not fixed):** this command runs no seal check on the capsules it indexes, so a capsule whose
+`.seal` fails verification is still exported. (`nova export-compliance iso42001 --capsule DIR` is a
+different command and does refuse it.) `POST /api/compliance/examiner/iso42001` behaves the same.
 
 **Reference:** `src/novafabric/compliance/export/examiner.py`, `src/novafabric/cli/export_examiner.py`.
 
