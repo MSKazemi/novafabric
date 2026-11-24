@@ -204,6 +204,28 @@ class TestEuAiActCli:
         assert "Art. 18(1) documentation, not logs" in result.output
         assert "6 months" in result.output and "120 months" in result.output
 
+    def test_export_pretty_shows_the_log_floor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        caps = tmp_path / "capsules"
+        _make_capsule(caps, "run-P1", "2024-01-01T00:00:00Z")
+        monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", str(caps))
+        monkeypatch.delenv("NOVA_EUAIACT_PROVIDER", raising=False)
+        result = CliRunner().invoke(
+            app, ["euaiact", "export", "--pretty"], env={"COLUMNS": "200"}
+        )
+        assert result.exit_code == 0, result.output
+        assert "Log retention floor: 6 months (Art. 19(1) / Art. 26(6))" in result.output
+        assert "documentation horizon" not in result.output
+        monkeypatch.setenv("NOVA_EUAIACT_PROVIDER", "true")
+        provider = CliRunner().invoke(
+            app, ["euaiact", "export", "--pretty"], env={"COLUMNS": "200"}
+        )
+        assert "Log retention floor: 6 months" in provider.output
+        assert "documentation horizon applied: 120 months (Art. 18(1), provider mode)" in (
+            provider.output
+        )
+
     def test_export_command_json_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         caps = tmp_path / "capsules"
         _make_capsule(caps, "run-E1", "2024-01-01T00:00:00Z")
@@ -240,3 +262,53 @@ class TestEuAiActCli:
         runner = CliRunner()
         result = runner.invoke(app, ["euaiact", "export", "--from", "not-a-date"])
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# The high-risk application date: Regulation (EU) 2026/1744 (Digital Omnibus on AI,
+# OJ 24 July 2026) moved Annex III high-risk application to 2 December 2027
+# (Regulation (EU) 2024/1689 Art. 113(c)). Art. 50 transparency kept 2 August 2026.
+# ---------------------------------------------------------------------------
+
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _euaiact_export_section() -> str:
+    text = (_ROOT / "docs" / "cli-reference.md").read_text(encoding="utf-8")
+    start = text.index("#### nova euaiact export")
+    return text[start : text.index("\n---\n", start)]
+
+
+class TestHighRiskDateIsStatedFromTheAmendedRegulation:
+    def test_cli_reference_does_not_bind_art12_on_the_original_date(self) -> None:
+        section = _euaiact_export_section()
+        assert "high-risk AI systems: **2026-08-02**" not in section
+        assert "Regulation (EU) 2026/1744" in section
+        assert "2 December 2027" in section
+        assert "Official Journal" in section
+
+    def test_roadmap_does_not_bind_art12_on_the_original_date(self) -> None:
+        for line in (_ROOT / "ROADMAP.md").read_text(encoding="utf-8").splitlines():
+            if "Art.12" in line and "2026-08-02" in line:
+                raise AssertionError(f"Art. 12 tied to the superseded date: {line}")
+
+    def test_the_changelog_claims_no_eur_lex_check(self) -> None:
+        text = " ".join((_ROOT / "CHANGELOG.md").read_text(encoding="utf-8").split())
+        # A bool, not `assert ... not in text`: pytest's failure diff of a 1 MB string hangs.
+        claims_a_check = "Checked against the EUR-Lex text" in text
+        assert not claims_a_check
+
+
+class TestRetentionDocs:
+    def test_pii_erase_does_not_present_120_months_as_a_requirement(self) -> None:
+        text = (_ROOT / "docs" / "cli-reference.md").read_text(encoding="utf-8")
+        line = next(
+            ln for ln in text.splitlines() if ln.startswith("- `--retention-months INT`")
+        )
+        assert "Art. 18(1)" in line and "documentation" in line
+        assert "provider mode: `120`" not in line
+        result = CliRunner().invoke(app, ["pii", "erase", "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0, result.output
+        flat = " ".join(result.output.split())
+        assert "should use 120" not in flat
+        assert "Art. 18(1)" in flat

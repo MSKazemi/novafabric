@@ -169,6 +169,27 @@ class TestEuAiActExport:
         record = body["records"][0]
         assert record["run_id"] == RUN_ID
 
+    def test_export_reports_the_log_floor_and_the_documentation_horizon(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The two retention figures are separate: the log floor (Art. 19(1)/26(6)) is 6
+        # months in both modes; the 10-year figure is Art. 18(1) documentation.
+        monkeypatch.delenv("NOVA_EUAIACT_PROVIDER", raising=False)
+        deployer = client.post(
+            f"/api/compliance/euaiact/export?{TOKEN_Q}", json={}, headers=AUTH
+        ).json()
+        assert deployer["retention_months"] == 6
+        assert deployer["log_retention_floor_months"] == 6
+        assert deployer["documentation_retention_months"] is None
+        monkeypatch.setenv("NOVA_EUAIACT_PROVIDER", "true")
+        provider = client.post(
+            f"/api/compliance/euaiact/export?{TOKEN_Q}", json={}, headers=AUTH
+        ).json()
+        assert provider["mode"] == "provider"
+        assert provider["retention_months"] == 120
+        assert provider["log_retention_floor_months"] == 6
+        assert provider["documentation_retention_months"] == 120
+
     def test_accepts_from_date_to_date_params(self, client: TestClient) -> None:
         res = client.post(
             f"/api/compliance/euaiact/export?{TOKEN_Q}",
