@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from novafabric._oneline import one_line
 from novafabric.diff._align import Pair
 
 Record = dict[str, Any]
@@ -165,7 +166,7 @@ def format_first_divergence(divergence: dict[str, Any] | None) -> list[str]:
     counted = (
         "model and tool calls, by started_at"
         if divergence.get("timeline") == TIMELINE_STARTED_AT
-        else f"{divergence.get('stream')} records only"
+        else f"{one_line(divergence.get('stream'))} records only"
     )
     sides = []
     for side in ("a", "b"):
@@ -173,12 +174,14 @@ def format_first_divergence(divergence: dict[str, Any] | None) -> list[str]:
         if index is not None:
             record_id = divergence.get(f"record_id_{side}")
             sides.append(
-                f"{side.upper()} #{index}" + (f" {record_id}" if record_id is not None else "")
+                f"{side.upper()} #{one_line(index)}"
+                + (f" {one_line(record_id)}" if record_id is not None else "")
             )
     aspects = divergence.get("aspects") or []
-    detail = f" ({', '.join(aspects)})" if aspects else ""
+    detail = f" ({one_line(', '.join(str(a) for a in aspects), 120)})" if aspects else ""
     return [
-        f"First divergence: step {divergence.get('index')} {divergence.get('event_type')} "
-        f"{divergence.get('reason')}{detail} [{'; '.join(sides)}]",
+        f"First divergence: step {one_line(divergence.get('index'))} "
+        f"{one_line(divergence.get('event_type'))} "
+        f"{one_line(divergence.get('reason'))}{detail} [{'; '.join(sides)}]",
         f"  (step counts {counted})",
     ]

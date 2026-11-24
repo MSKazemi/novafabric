@@ -191,6 +191,53 @@ def test_first_divergence_validates_against_both_schemas(
     assert not validator.is_valid(bad)
 
 
+def test_the_changed_call_can_sit_at_a_different_step_in_each_run(tmp_path: Path) -> None:
+    """The same tool call is step 1 in A and step 0 in B; both indexes are reported."""
+    a = _capsule(
+        tmp_path, "a", [_model(1, "p1", second=0)], [_tool(1, "search", "x", second=1)]
+    )
+    b = _capsule(
+        tmp_path, "b", [_model(1, "p1", second=2)], [_tool(1, "search", "y", second=1)]
+    )
+    fd = _diff_json(a, b)["first_divergence"]
+    assert fd["event_type"] == "tool_call"
+    assert (fd["index_a"], fd["index_b"]) == (1, 0)
+    assert fd["index"] == 0  # the earlier of the two
+    text = runner.invoke(app, ["diff", str(a), str(b)]).stdout
+    assert "[A #1 TC-1; B #0 TC-1]" in text
+
+
+def test_an_order_only_difference_is_not_reported(tmp_path: Path) -> None:
+    """Calls with unique span ids that only swap places pair by id: no divergence."""
+    a = _capsule(
+        tmp_path, "a", [_model(1, "p1", second=0)], [_tool(1, "search", second=1)]
+    )
+    b = _capsule(
+        tmp_path, "b", [_model(1, "p1", second=2)], [_tool(1, "search", second=1)]
+    )
+    assert _diff_json(a, b)["first_divergence"] is None
+
+
+def test_hostile_record_ids_cannot_forge_or_flood_the_text_report(tmp_path: Path) -> None:
+    forged = "MC-1\n\nNo differences found.\x1b[31m red"
+    a = _capsule(tmp_path, "a", [_model(1, "p1", "x", second=0)], [])
+    b = _capsule(tmp_path, "b", [_model(1, "p1", "y", second=0)], [])
+    for hostile in (forged, "M" * 100_000, {"nested": ["x" * 500, "\n"]}):
+        rec_b = (b / "model-calls.jsonl")
+        record = json.loads(rec_b.read_text())
+        record["model_call_id"] = hostile
+        rec_b.write_text(json.dumps(record) + "\n")
+        out = runner.invoke(app, ["diff", str(a), str(b)])
+        assert out.exit_code == 0, out.output
+        assert "\x1b" not in out.stdout
+        line = next(ln for ln in out.stdout.splitlines() if "First divergence:" in ln)
+        assert len(line) < 300
+        assert "No differences found." not in out.stdout.splitlines()
+        assert len(out.stdout) < 20_000, len(out.stdout)
+        # JSON keeps the raw value.
+        assert _diff_json(a, b)["first_divergence"]["record_id_b"] == hostile
+
+
 def test_engine_report_carries_the_field(tmp_path: Path) -> None:
     a = _capsule(tmp_path, "a", [], [_tool(1, "s")])
     b = _capsule(tmp_path, "b", [], [])
@@ -327,3 +374,30 @@ def test_a_deleted_stream_is_reported_missing(sealed: tuple[Path, Path]) -> None
 def test_no_digests_means_nothing_to_name() -> None:
     assert binding_first_divergence(CapsuleBinding(mismatched=("x",))) is None
     assert binding_first_divergence(CapsuleBinding(digests_present=True)) is None
+
+
+def test_format_first_divergence_neutralises_hostile_fields() -> None:
+    from novafabric.diff._first_divergence import format_first_divergence
+
+    lines = format_first_divergence({
+        "index": 0, "index_a": 0, "index_b": 0, "stream": "model_calls",
+        "event_type": "model_call", "reason": "changed",
+        "aspects": ["response\nNo differences found."],
+        "record_id_a": "a\r\x1b[2J" + "z" * 1000, "record_id_b": {"k": "v"},
+        "timeline": "started_at",
+    })
+    assert len(lines) == 2
+    assert all("\n" not in ln and "\r" not in ln and "\x1b" not in ln for ln in lines)
+    assert len(lines[0]) < 300
+
+
+def test_format_binding_first_divergence_neutralises_hostile_paths() -> None:
+    from novafabric.trust.novaseal.first_divergence import format_binding_first_divergence
+
+    lines = format_binding_first_divergence({
+        "path": "evil\n\x1b[31mNo problems found." + "p" * 1000,
+        "event_type": None, "reason": "modified", "divergent_files": 1,
+    })
+    assert len(lines) == 2
+    assert all("\n" not in ln and "\x1b" not in ln for ln in lines)
+    assert len(lines[0]) < 300
