@@ -26,7 +26,8 @@ NovaFabric?" question. Most are regression tests under
 
 Support directories (not runnable examples): `assets/` (sample asset
 specs), `capsules/` (sample captured capsules), `reports/` (sample
-report output).
+report output), `catalogs/` (bring-your-own control catalogs holding IDs
+only, such as [`aiuc-1-ids-only.yaml`](catalogs/aiuc-1-ids-only.yaml)).
 
 The stdlib-only examples run in any clean checkout. The provider-backed
 ones need keys and SDKs but **all indexed examples exit cleanly with a

@@ -117,7 +117,9 @@ def erase_cmd(
         min=0,
         help=(
             "Minimum Art.17(3)(b) retention window in months "
-            "(NOVA_AI_ACT_RETENTION_MONTHS). Provider mode should use 120."
+            "(NOVA_AI_ACT_RETENTION_MONTHS). Default 6, the AI Act's log floor "
+            "(Art. 19(1) / Art. 26(6)). A provider may pass 120 to match the "
+            "Art. 18(1) documentation period, which is not a log-retention duty."
         ),
     ),
     output: Optional[Path] = typer.Option(  # noqa: UP007
