@@ -52,8 +52,10 @@ __all__ = [
     "AnchorCheck",
     "CapsuleBinding",
     "CapsuleVerification",
+    "SealCoverage",
     "SealStatus",
     "capsule_binding",
+    "capsule_seal_coverage",
     "capsule_seal_status",
     "derive_capsule_id",
     "read_capsule_tsr",
@@ -841,6 +843,48 @@ def capsule_seal_verifies(capsule_dir: Path) -> bool:
 SealStatus = Literal["absent", "valid", "invalid"]
 
 
+SealCoverage = Literal["absent", "bound", "unbound", "invalid"]
+
+
+def capsule_seal_coverage(capsule_dir: Path, *, must_cover: Sequence[str] = ()) -> SealCoverage:
+    """One verification of *capsule_dir*'s seal, split four ways. Never raises.
+
+    :func:`capsule_seal_status` folds "valid but does not bind *must_cover*" into
+    ``"invalid"``, so a caller that must tell that case from a seal that fails outright
+    would have to verify twice, and a capsule edited between the two calls could turn
+    an ``"invalid"`` into an ``"unbound"``. This reads the capsule once:
+
+    * ``"absent"``  — as :func:`capsule_seal_status`;
+    * ``"invalid"`` — a seal that fails verification, is not a real directory, or
+      cannot be read;
+    * ``"unbound"`` — the seal verifies but does not name every *must_cover* file (it
+      has no ``evidence_digests``, or a digested file was added after sealing);
+    * ``"bound"``   — the seal verifies and names every *must_cover* file (always, when
+      *must_cover* is empty).
+    """
+    try:
+        mode = os.lstat(capsule_dir / ".seal").st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return "absent"
+    except OSError:
+        logger.debug("could not lstat %s/.seal", capsule_dir, exc_info=True)
+        return "invalid"
+    if not stat.S_ISDIR(mode):
+        return "invalid"
+    try:
+        result = verify_capsule(capsule_dir)
+        if not result.valid:
+            return "invalid"
+        if set(must_cover) & set(result.binding.unlisted):
+            return "unbound"
+        if must_cover and not result.binding.digests_present:
+            return "unbound"
+        return "bound"
+    except Exception:  # noqa: BLE001 — a seal that cannot be verified is not valid
+        logger.debug("seal verification failed for %s", capsule_dir, exc_info=True)
+        return "invalid"
+
+
 def capsule_seal_status(capsule_dir: Path, *, must_cover: Sequence[str] = ()) -> SealStatus:
     """Tell an unsealed capsule apart from one whose seal is broken. Never raises.
 
@@ -870,22 +914,8 @@ def capsule_seal_status(capsule_dir: Path, *, must_cover: Sequence[str] = ()) ->
     is given such a seal cannot vouch for any of those files, so the status is
     ``"invalid"`` rather than a seal path attached to digested but unbound bytes.
     """
-    try:
-        mode = os.lstat(capsule_dir / ".seal").st_mode
-    except (FileNotFoundError, NotADirectoryError):
+    coverage = capsule_seal_coverage(capsule_dir, must_cover=must_cover)
+    if coverage == "absent":
         return "absent"
-    except OSError:
-        logger.debug("could not lstat %s/.seal", capsule_dir, exc_info=True)
-        return "invalid"
-    if not stat.S_ISDIR(mode):
-        return "invalid"
-    try:
-        result = verify_capsule(capsule_dir)
-        if not result.valid or set(must_cover) & set(result.binding.unlisted):
-            return "invalid"
-        if must_cover and not result.binding.digests_present:
-            return "invalid"
-        return "valid"
-    except Exception:  # noqa: BLE001 — a seal that cannot be verified is not valid
-        logger.debug("seal verification failed for %s", capsule_dir, exc_info=True)
-        return "invalid"
+    # a seal that verifies but leaves a *must_cover* file unbound is not valid for the caller
+    return "valid" if coverage == "bound" else "invalid"
