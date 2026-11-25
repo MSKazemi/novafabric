@@ -30,7 +30,12 @@ REASON = (
     "Emergency hotfix required due to a critical security vulnerability; authorized "
     "by the CTO per incident response procedure IR-2026-001."
 )
-SLOW_S = 1.5
+# How long the fake webhook blocks. If the notification ran on the event loop, the
+# /livez probe (sent 0.3 s in) would wait ~SLOW_S - 0.3 s; off the loop it takes
+# milliseconds. 4 s keeps that gap wide on a loaded runner: with 1.5 s the 0.75 s
+# latency bound sat close to what a busy machine needs for an unblocked /livez
+# (1.35 s once, 2026-11-25, while the ordering check still passed).
+SLOW_S = 4.0
 
 
 def _key_cert() -> tuple[str, str]:
