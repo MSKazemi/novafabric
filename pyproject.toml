@@ -665,6 +665,11 @@ pythonpath = ["src", "packages/nova_worm_conformance/src", "tests"]
 timeout = 900
 
 [tool.coverage.run]
+# sys.monitoring (PEP 669) instead of the C tracer. coverage makes it the default
+# only from Python 3.14; CI runs 3.12, where it is supported for line coverage,
+# which is all this project measures (no branch coverage). Same report, less
+# per-line overhead in every coverage-enabled test run.
+core = "sysmon"
 omit = [
     # Cloud-backend adapters require live infrastructure — excluded from coverage gate
     "src/novafabric/object_capsule_store/worm/s3.py",
