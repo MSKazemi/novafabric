@@ -691,7 +691,7 @@ to export, and saves nothing.
 | Level | Works today | Planned (not implemented) |
 |---|---|---|
 | `minimal` | Same behaviour as `standard` | metadata-only capture (no model IDs, tool names) |
-| `standard` | adapter, tool-hook and record-façade paths keep digests, not payloads | redacted model-call content |
+| `standard` | adapter, tool-hook and record-façade paths keep digests, not payloads. Model-call capture (`model-calls.jsonl`) stores full prompts and responses at this level, as at every level | redacted model-call content |
 | `forensic` | those paths also keep payloads (tool arguments and results, state, documents) | — |
 | `air_gapped` | same as `forensic` | blocking external network calls |
 
