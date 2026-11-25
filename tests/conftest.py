@@ -5,6 +5,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
+import _cli_command_cache
 import _live_audit_guard
 import pytest
 from _shard import ShardPlugin, ShardSpec, ShardSpecError
@@ -61,6 +62,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    # Reuse the built click command across CliRunner.invoke calls (most of the CLI
+    # tests' time was rebuilding an identical ~1,100-command tree). See the module.
+    _cli_command_cache.install()
     shard = config.getoption("--shard")
     manifest = config.getoption("--shard-manifest")
     if shard or manifest:

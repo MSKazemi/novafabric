@@ -10,7 +10,10 @@ name: MetadataStore Security Gate
 #
 # `workflow_dispatch` is the manual escape hatch for the same reason.
 on:
+  # Push runs only for main: a pushed branch with a pull request already runs
+  # this workflow once as `pull_request`; the push run on that branch duplicated it.
   push:
+    branches: [main]
     paths: &gate_paths
       - "src/novafabric/metadata_store/**"
       - "tests/metadata_store/**"

@@ -14,6 +14,8 @@ Each case fakes the scheduler with a ``subprocess.run`` that answers by argv[0].
 from __future__ import annotations
 
 import subprocess
+import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -80,10 +82,22 @@ class _Scheduler:
 
 @contextmanager
 def _interrupted_while_polling(exc: BaseException) -> Iterator[list[float]]:
-    """The first poll sleep raises *exc* (the user's Ctrl-C); later sleeps return."""
+    """The first poll sleep raises *exc* (the user's Ctrl-C); later sleeps return.
+
+    Only sleeps on the test's own thread are recorded. ``time.sleep`` is patched for
+    the whole process, so a stray thread on the same xdist worker (one a previous test
+    left running) used to land in *sleeps* too: CI once recorded an extra exact 0.5 s
+    sleep, which no settle poll can produce (they are 1.0 s +-15%), and failed the
+    settle-count assertion. Other threads now sleep for real.
+    """
     sleeps: list[float] = []
+    owner = threading.get_ident()
+    real_sleep = time.sleep
 
     def sleep(seconds: float) -> None:
+        if threading.get_ident() != owner:
+            real_sleep(seconds)
+            return
         sleeps.append(seconds)
         if len(sleeps) == 1:
             raise exc

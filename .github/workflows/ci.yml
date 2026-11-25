@@ -21,11 +21,14 @@ on:
   # release gate (require-green-ci.yml) waits for.
   workflow_dispatch:
 
-# Cancel in-flight runs of the same ref when new commits land. Saves CI
-# minutes on rapid-fire pushes.
+# A pull request cancels its own older run when new commits land (saves CI
+# minutes on rapid-fire pushes). A push to main does not: each commit gets its own
+# group (its SHA), so every commit on main keeps a CI result. With one group per
+# ref, a merge streak cancelled every run but the last, and those commits never
+# had a result (11fff4df and 165b8892, 2026-11-25).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least privilege: every job here only reads the repository. Without this the
 # token inherits the repository default (OpenSSF Scorecard TokenPermissions).
