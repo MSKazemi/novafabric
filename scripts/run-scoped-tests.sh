@@ -16,6 +16,9 @@ shift || true
 # ANSI escapes break ~88 CLI/JSON assertions in this suite.
 unset FORCE_COLOR COLORTERM
 
+# One parallel pool per machine at a time (scripts/test-pool.sh): a second run waits
+# for the first instead of stacking on it. NOVA_TEST_POOL_WAIT bounds the wait.
+#
 # Size `-n auto` to the cores/memory that are actually free, and run niced so
 # an automated QA pass never outcompetes interactive work. See scripts/test-workers.sh.
 export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-$(./scripts/test-workers.sh)}"
@@ -38,12 +41,12 @@ fi
 
 if [ "$SEL" = "*" ]; then
   echo "scoped tests: escalating to the full fast suite — $REASON"
-  exec nice -n 10 $PYTEST -n auto --dist=loadgroup --benchmark-disable -q \
+  exec nice -n 10 ./scripts/test-pool.sh $PYTEST -n auto --dist=loadgroup --benchmark-disable -q \
        -m "not container" --ignore=tests/integration "$@"
 fi
 
 COUNT=$(echo "$SEL" | wc -l)
 echo "scoped tests: $REASON"
 # shellcheck disable=SC2086
-exec nice -n 10 $PYTEST -n auto --dist=loadgroup --benchmark-disable -q \
+exec nice -n 10 ./scripts/test-pool.sh $PYTEST -n auto --dist=loadgroup --benchmark-disable -q \
      -m "not container" -p no:randomly $SEL "$@"

@@ -53,8 +53,15 @@ if ! flock -w 240 9; then
   exit 0
 fi
 
-OUT=$(./scripts/run-scoped-tests.sh direct 2>&1)
+# The scoped run also takes the machine-wide pool lock (scripts/test-pool.sh); wait
+# at most 240 s for another session's pool, and treat "still busy" (exit 75) as a
+# skip, never as failing tests.
+OUT=$(NOVA_TEST_POOL_WAIT=240 ./scripts/run-scoped-tests.sh direct 2>&1)
 STATUS=$?
+if [ $STATUS -eq 75 ]; then
+  jq -n '{systemMessage:"scoped tests SKIPPED — another test pool held the machine-wide lock for 240s; pre-push remains the gate"}'
+  exit 0
+fi
 
 if [ $STATUS -eq 0 ]; then
   echo 0 > "$COUNT_FILE"
