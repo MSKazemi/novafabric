@@ -23,7 +23,7 @@ describe the current implementation, not a production SLA or certification.
 | **Desktop (CLI + dashboard)** | Local inspection and demonstrations | `pip install 'novafabric[serve]'` | Same local files and SQLite; local web server, no separate DB | Core **works today**; dashboard **experimental** |
 | **Team (shared server)** | A single organization's shared API | `pip install 'novafabric[server]'` | Server filesystem for capsules; SQLite for evaluation, **PostgreSQL recommended** for a shared deployment | **experimental**, single-tenant |
 | **Enterprise / regulated** | Teams needing identity, signing, retention and policy checks | `novafabric[server]` plus selected extras | PostgreSQL, authenticated/TLS server, optional signing, WORM store and policy services | **experimental**; not a validated enterprise product |
-| **Factory (HPC / clusters)** | Many independent capture nodes | Core on capture nodes; optional scale/collector integrations | Node spools, separate Go forwarder, NATS JetStream, downstream indexes and optional object storage | **experimental**; further integration work is not scheduled |
+| **Factory (HPC / clusters)** | Many independent capture nodes | Core on capture nodes; optional scale/collector integrations | Node spools, separate Go forwarder, NATS JetStream, downstream indexes and optional object storage | **experimental**, partial; no single-command install (see the Factory section below) |
 
 **These are five ways to explain three architectural tiers**, not five separate
 binaries: Desktop is a local-mode option; Enterprise adds regulated controls to
@@ -127,7 +127,7 @@ capabilities your evidence policy requires:
 
 | Requirement | What to configure |
 |---|---|
-| Authentication / authorization | Server OIDC/JWKS, RBAC and API keys; optional SAML (`[saml]` extra) |
+| Authentication / authorization | Server OIDC/JWKS, RBAC and API keys; optional SAML assertion verification (`[saml]` extra, **experimental**, off by default; a verified assertion does not yet create a login session) |
 | Cryptographic evidence | Local NovaSeal keys (no extra required for the core path); optional `[sigstore]` or cloud KMS extras |
 | Durable retention | Existing WORM adapters: `[worm-s3]`, `[worm-azure]` or `[worm-gcs]`, chosen for your actual storage provider |
 | Merkle log on PostgreSQL | Optional `[seal-postgres]` extra and a provisioned database |
@@ -163,7 +163,7 @@ flowchart LR
 The spool, forwarder and NATS consumer paths are **experimental**. The
 central server does **not** automatically ingest the cluster event stream:
 capsule upload or directory indexing is a separate path. The HPC hub
-signing pipeline is **planned**; fully integrated multi-cluster operation is
+signing pipeline is **future design** (the `novafabric-hpc-hub` binary is a stub that exits with "not implemented"); fully integrated multi-cluster operation is
 **future design**. There is **no production-validated,
 single-command Factory installation**.
 

@@ -25,7 +25,7 @@ flowchart LR
         CN["compute node<br/>nova capture --emit-spool"] --> SP[("node spool")]
         SP --> FW["novafabric-spool-forwarder"] --> NATS[["NATS JetStream<br/>NOVA_EVIDENCE"]]
         NATS --> CO["consumers<br/>lineage · evidence fabric"]
-        HUB["HPC hub signing<br/>(planned)"]:::planned
+        HUB["HPC hub signing<br/>(future design)"]:::planned
     end
     LD -- "POST /v0/capsules" --> SV
     classDef planned stroke-dasharray: 5 5
@@ -87,7 +87,7 @@ or graph.** They append to a local spool, and something else ingests it.
 | 3 | `novafabric-spool-forwarder` (Go) | Drains the spool to the NATS JetStream stream `NOVA_EVIDENCE` on `nova.evidence.<run_id>` (`collector/cmd/novafabric-spool-forwarder/`) | experimental |
 | 4 | Consumers | `nova lineage consume` and the evidence-fabric NATS consumer index events into DuckDB, ClickHouse or Kuzu (`evidence_fabric/nats_consumer.py`) | experimental |
 | — | OTel collector with the NovaSeal processor | A custom build via the OpenTelemetry Collector Builder (`collector/ocb/builder-config.yaml`) | experimental |
-| — | HPC hub (central signing) | The binary exists in `collector/cmd/novafabric-hpc-hub/`, but its signing pipeline is not wired up. See `deploy/hpc/README.md`. | **planned** |
+| — | HPC hub (central signing) | The binary exists in `collector/cmd/novafabric-hpc-hub/`, but it is a stub that exits with "not implemented"; the signing pipeline is not written. See `deploy/hpc/README.md`. | **future design** |
 | — | Kubernetes collector manifests | `deploy/k8s/`. The collector image is not published. | **planned** |
 | — | Writer lease with fencing tokens | `ha/lease.py` (Postgres and SQLite) | experimental primitive; automated failover is **planned** |
 | — | Multi-cluster federation of capsules and lineage | — | **future design** |
