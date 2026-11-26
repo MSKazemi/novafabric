@@ -26,7 +26,7 @@ import { CapsuleTreePanel, RunSpoolLineagePanel, ScanSecretsPanel } from './runs
 import FilterBar from './runs/FilterBar';
 import AggregateStrip from './runs/AggregateStrip';
 import { useFilteredRuns } from './runs/useFilteredRuns';
-import { useUrlState } from '../../../lib/useUrlState';
+import { useUrlState, URL_STATE_CHANGED } from '../../../lib/useUrlState';
 import {
   LINKABLE_VIEWS, parseDate, parseScope, parseSort, parseStatus, parseView, type FilterScope,
 } from './runs/viewState';
@@ -62,7 +62,7 @@ export default function RunsTab({
     setRunParam(r?.run_id ?? '');
   }, [setRunParam]);
   const [capsule, setCapsule] = useState<FullCapsule | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<{ runId: string; message: string } | null>(null);
   const [actionTarget, setActionTarget] = useState<{ run: RunSummary; action: RunAction } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [search, setSearch] = useUrlState('q', '');
@@ -88,6 +88,17 @@ export default function RunsTab({
     if (LINKABLE_VIEWS.includes(v)) { setTransientView(null); setViewParam(v); }
     else setTransientView(v);
   }, [setViewParam]);
+  // A palette/deep-link run change must not retain a transient replay pane
+  // from the previously selected run.
+  useEffect(() => { setTransientView(null); }, [runParam]);
+  // Reopening the same run from global search must exit a transient replay view
+  // even when its URL ID is unchanged (the hook would otherwise see no change).
+  useEffect(() => {
+    const onExternalNavigation = () => setTransientView(null);
+    window.addEventListener(URL_STATE_CHANGED, onExternalNavigation);
+    return () => window.removeEventListener(URL_STATE_CHANGED, onExternalNavigation);
+  }, []);
+
   // ADR-0239 — session evidence cart (references only; resolved at export).
   const cart = useEvidenceCart();
   const [replayResult, setReplayResult] = useState<{ runId: string; result: ReplayResult } | null>(null);
@@ -98,7 +109,8 @@ export default function RunsTab({
   // For ordinary single-process runs the "Children" tab is meaningless and
   // always empty, so we hide it rather than show a perpetual "No child runs".
   const isDistributed = useMemo(() => {
-    if (!capsule) return false;
+    // A new selected run must never inherit the previous capsule's hierarchy.
+    if (!capsule || capsule.run_id !== selected?.run_id) return false;
     const m = capsule.manifest as Record<string, unknown>;
     const workers = m.worker_run_ids;
     return (
@@ -107,7 +119,7 @@ export default function RunsTab({
       !!m.parent_run_id ||
       (Array.isArray(workers) && workers.length > 0)
     );
-  }, [capsule]);
+  }, [capsule, selected?.run_id]);
   const [compareA, setCompareA] = useState<string | null>(null);
   // Multi-select state for compare shortcut (at most 2 runs)
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -130,8 +142,15 @@ export default function RunsTab({
     setCapsule(null);
     setDetailError(null);
     api.getRun(selectedId)
-      .then(c => { if (!cancelled) setCapsule(c); })
-      .catch(e => { if (!cancelled) setDetailError((e as Error).message); });
+      .then(c => {
+        if (cancelled) return;
+        if (c.run_id !== selectedId) {
+          setDetailError({ runId: selectedId, message: 'Run detail does not match the requested run ID.' });
+          return;
+        }
+        setCapsule(c);
+      })
+      .catch(e => { if (!cancelled) setDetailError({ runId: selectedId, message: (e as Error).message }); });
     return () => { cancelled = true; };
   }, [selectedId]);
 
@@ -379,8 +398,10 @@ export default function RunsTab({
       {/* Detail panel */}
       <RunInspector
         selected={selected}
-        capsule={capsule}
-        detailError={detailError}
+        // A palette jump can render before the detail-fetch effect clears the
+        // previous result. Never expose another run's capsule or error in that frame.
+        capsule={capsule?.run_id === selectedId ? capsule : null}
+        detailError={detailError?.runId === selectedId ? detailError.message : null}
         runs={runs}
         isDistributed={isDistributed}
         detailView={detailView}

@@ -15,6 +15,7 @@ import CommandPalette, { type Command } from '../ui/CommandPalette';
 import Icon from '../ui/primitives/Icon';
 import { COMPLIANCE_GROUPS } from './tabs/compliance/groups';
 import { stripRunsViewParams } from './tabs/runs/viewState';
+import { notifyUrlStateChanged } from '../../lib/useUrlState';
 import { Loading } from './helpers';
 import { usePolling } from '../../lib/usePolling';
 import { ToastProvider, useToast } from '../../lib/ToastContext';
@@ -283,6 +284,26 @@ function DashboardInner() {
     writeTabParam(t);
   }, []);
 
+  // Run search must select the exact entity, not only navigate to the Runs tab.
+  // Keep the existing replaceState semantics of run selection (ADR-0232 D2).
+  const handleOpenRun = useCallback((runId: string) => {
+    handleTabChange('runs');
+    try {
+      const p = new URLSearchParams(window.location.search);
+      p.set('run', runId);
+      p.delete('view'); // New investigation starts at Inspect, never stale replay.
+      p.delete('run_ids');
+      p.delete('run_a');
+      p.delete('run_b');
+      const qs = p.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
+      // replaceState does not fire popstate; RunsTab may already be mounted.
+      notifyUrlStateChanged();
+    } catch {
+      flash('error', 'Could not open the selected run. Try opening it from Runs.');
+    }
+  }, [handleTabChange, flash]);
+
   // Stable per-section callbacks — created once, never recreated, so tabs don't
   // loop when onCountChange is in their useCallback deps.
   const stableCountHandlers = useMemo<Record<Tab, (n: number) => void>>(() => {
@@ -344,7 +365,7 @@ function DashboardInner() {
         id: `ent:run:${r.run_id}`,
         label: `Run ${r.run_id}`,
         group: r.status ?? 'run',
-        run: () => handleTabChange('runs'),
+        run: () => handleOpenRun(r.run_id),
       });
     }
     for (const a of assets.filter(a => `${a.name} ${a.version}`.toLowerCase().includes(ql)).slice(0, 6)) {
@@ -364,7 +385,7 @@ function DashboardInner() {
       });
     }
     return out;
-  }, [handleTabChange]);
+  }, [handleTabChange, handleOpenRun]);
 
   if (!connected) {
     return (

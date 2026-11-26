@@ -3,7 +3,7 @@
  * `?f=` lists the filter's selection (not the cursor search), and `?run=` opens
  * the inspector on that run even before the list has loaded it.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const run = (id: string, status = 'error') => ({
@@ -36,6 +36,7 @@ vi.mock('@/lib/api', () => ({
   ServeApiError: class ServeApiError extends Error {},
 }));
 
+import { notifyUrlStateChanged } from '@/lib/useUrlState';
 import RunsTab from '@/components/dashboard/tabs/RunsTab';
 
 describe('RunsTab URL state', () => {
@@ -58,4 +59,17 @@ describe('RunsTab URL state', () => {
     await waitFor(() => expect(getRun).toHaveBeenCalledWith('DEEP'));
     expect(filterRuns).not.toHaveBeenCalled();
   });
+  it('reacts to external run URL selection without remounting RunsTab', async () => {
+    window.history.replaceState({}, '', '/dashboard?tab=runs&run=FIRST');
+    render(<RunsTab onFlash={() => {}} refreshTick={0} />);
+    await waitFor(() => expect(getRun).toHaveBeenCalledWith('FIRST'));
+
+    // Live palette results update the URL with replaceState, not a popstate.
+    act(() => {
+      window.history.replaceState({}, '', '/dashboard?tab=runs&run=SECOND');
+      notifyUrlStateChanged();
+    });
+    await waitFor(() => expect(getRun).toHaveBeenCalledWith('SECOND'));
+  });
+
 });
