@@ -247,28 +247,58 @@ _LINEAGE_NOTES = [
 ]
 
 
-def judge_lineage(variant: str, provenance: Any, edges: list[dict[str, Any]], *, run_id: str,
-                  exit_code: int, artifact: str | None, registry_exit_code: int,
-                  registry_output: str) -> Check:  # fmt: skip
+def judge_lineage(variant: str, provenance: Any, edges: list[dict[str, Any]] | None, *,
+                  run_id: str, exit_code: int, artifact: str | None, registry_exit_code: int,
+                  registry_output: str, expected_fixture_sha256: str,
+                  registered_fixture_sha256: str | None,
+                  edges_error: str | None = None) -> Check:  # fmt: skip
     """The run's *declared* input must be exactly the registered dataset — never empty.
 
     Three views must agree: the capsule's own ``lineage.jsonl`` (a ``consumed`` edge from
     this run to the asset), the indexed store's ``nova lineage provenance``, and a read-back
     of the asset from the registry (``nova inspect``). The read-back is needed because the
     edge is built from the capsule's ``assets.jsonl`` alone and never consults the registry.
+    A name, version and type do not say WHICH dataset was registered, so the fixture digest
+    stored with the asset must equal the digest computed from the scenario's own files
+    (``expected_fixture_sha256``); that ties the declared name to the data the tools served.
     The edge records the agent's own declaration (``record_asset_consumption``); it is not
-    an observation that the agent read the data. An empty answer is a FAIL.
+    an observation that the agent read the data. An empty answer is a FAIL, and so is a
+    capsule whose ``lineage.jsonl`` could not be read (``edges`` is ``None``, the reason in
+    ``edges_error``): the check is still reported rather than the run stopping.
     """
     name = "run_declared_registered_asset"
     registered = parse_registry_inspect(registry_output) if registry_exit_code == 0 else {}
-    want = {"provenance_refs": [ASSET_NODE_REF], "consumed_edges": [[run_id, ASSET_REF]],
-            "registry_readback": {"exit_code": 0, "name": ASSET_NAME, "version": ASSET_VERSION,
-                                  "asset_type": ASSET_TYPE}}  # fmt: skip
+    want: dict[str, Any] = {
+        "provenance_refs": [ASSET_NODE_REF],
+        "consumed_edges": [[run_id, ASSET_REF]],
+        "registry_readback": {
+            "exit_code": 0, "name": ASSET_NAME, "version": ASSET_VERSION,
+            "asset_type": ASSET_TYPE, "fixture_manifest_sha256": expected_fixture_sha256,
+        },
+    }  # fmt: skip
     method = ("nova inspect <asset> + nova lineage provenance <run> --output json + capsule "
               "lineage.jsonl vs the registered asset")  # fmt: skip
     if exit_code != 0 or not isinstance(provenance, list):
         return Check("capture", variant, name, "FAIL", "lineage-query-failed", want,
                      {"exit_code": exit_code}, method, artifact, "PASS")  # fmt: skip
+    readback = {"exit_code": registry_exit_code,
+                **{k: registered.get(k) for k in ("name", "version", "asset_type")},
+                "fixture_manifest_sha256": registered_fixture_sha256}  # fmt: skip
+    named = {k: v for k, v in readback.items() if k != "fixture_manifest_sha256"}
+    named_want = {k: v for k, v in want["registry_readback"].items()
+                  if k != "fixture_manifest_sha256"}  # fmt: skip
+    registry_reason: str | None = None
+    if named != named_want:
+        registry_reason = "asset-not-in-registry"
+    elif registered_fixture_sha256 != expected_fixture_sha256:
+        registry_reason = "asset-content-mismatch"
+    if edges is None:
+        # The unreadable capsule artifact stays the named reason, but a registration that is
+        # also wrong is reported beside it rather than hidden by the early return.
+        return Check("capture", variant, name, "FAIL", "lineage-artifact-unreadable", want,
+                     {"edges_error": edges_error, "registry_readback": readback,
+                      "registry_reason": registry_reason}, method, artifact, "PASS",
+                     notes=list(_LINEAGE_NOTES))  # fmt: skip
     refs = sorted(str(n.get("ref")) for n in provenance if isinstance(n, dict))
     consumed_records = [
         e for e in edges if isinstance(e, dict) and e.get("edge_type") == "consumed"
@@ -277,13 +307,11 @@ def judge_lineage(variant: str, provenance: Any, edges: list[dict[str, Any]], *,
         [str((e.get("source") or {}).get("run_id")), str((e.get("target") or {}).get("asset_ref"))]
         for e in consumed_records
     ]
-    readback = {"exit_code": registry_exit_code,
-                **{k: registered.get(k) for k in ("name", "version", "asset_type")}}  # fmt: skip
     got = {"provenance_refs": refs, "consumed_edges": consumed, "registry_readback": readback,
            "consumption_source": "declared-by-agent",
            "edge_confidence_label": [e.get("confidence") for e in consumed_records]}  # fmt: skip
-    if readback != want["registry_readback"]:
-        reason = "asset-not-in-registry"
+    if registry_reason is not None:
+        reason = registry_reason
     elif not refs:
         reason = "lineage-empty"
     elif refs != want["provenance_refs"]:

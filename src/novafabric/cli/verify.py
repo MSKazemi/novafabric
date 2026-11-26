@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from novafabric import _paths as _nf_paths
+from novafabric._oneline import PATH_LIMIT, one_line
 
 console = Console()
 err_console = Console(stderr=True)
@@ -480,6 +481,19 @@ def _verify_capsule_dir(
     _print_log_inclusion(result.log_inclusion, result.log_notes)
     _print_sealer_log(result.sealer_log)
     binding_ok = _print_capsule_binding(binding)
+    # Issue #74: name the first evidence file the seal no longer matches. The
+    # seal holds one digest per file, so no record index is ever claimed.
+    from novafabric.trust.novaseal.first_divergence import (  # noqa: PLC0415
+        binding_first_divergence,
+        format_binding_first_divergence,
+    )
+
+    first_divergence = binding_first_divergence(binding)
+    for line in (
+        format_binding_first_divergence(first_divergence) if first_divergence else []
+    ):
+        # markup=False: the path is a capsule file name, which may contain "[".
+        console.print(f"    {line}", markup=False, highlight=False)
     if chain_check is not None:
         _print_check("Signer certificate chain (CA bundle)", chain_check.ok)
         console.print(f"    {chain_check.reason}")
@@ -554,6 +568,9 @@ def _verify_capsule_dir(
                 "unsealed_manifests": list(binding.unsealed_manifests),
                 "unsealed_refs": list(binding.unsealed_refs),
                 "binding_errors": binding.failure_reasons(),
+                # Additive (issue #74): first modified/missing evidence file, or
+                # null; file granularity only (index is always null).
+                "first_divergence": first_divergence,
                 "capsule_id_ok": capsule_id_ok,
                 "ca_chain_checked": chain_check is not None,
                 "ca_chain_ok": chain_ok if chain_check is not None else None,
@@ -695,6 +712,11 @@ def _revocation_lines(revocation: Any) -> list[str]:
     return lines
 
 
+def _shown(rel: Any) -> str:
+    """A capsule-relative path as one safe, markup-free line (display only)."""
+    return escape(one_line(rel, PATH_LIMIT))
+
+
 def _print_capsule_binding(binding: Any) -> bool:
     """Print the ADR-0251 binding checks. Returns False if the capsule is unbound."""
     name = binding.manifest_name
@@ -730,14 +752,14 @@ def _print_capsule_binding(binding: Any) -> bool:
     else:
         _print_check("Evidence binding (per-file sha256)", False)
         for rel in binding.mismatched:
-            console.print(f"    [red]modified:[/red] {rel}")
+            console.print(f"    [red]modified:[/red] {_shown(rel)}")
         for rel in binding.missing:
-            console.print(f"    [red]missing:[/red] {rel}")
+            console.print(f"    [red]missing:[/red] {_shown(rel)}")
 
     if binding.unlisted:
         console.print(
             f"    [yellow]not covered by the seal ({len(binding.unlisted)}):[/yellow] "
-            + ", ".join(binding.unlisted[:5])
+            + ", ".join(_shown(rel) for rel in binding.unlisted[:5])
             + (" …" if len(binding.unlisted) > 5 else "")
         )
     for err in binding.errors:

@@ -133,8 +133,11 @@ test:
 #
 # Full `make test` / `make test-par` remain the release gates and still run the
 # container tier.
+#
+# scripts/test-pool.sh holds a machine-wide lock for the run, so a second
+# `make test-fast` from another session waits instead of starting a second pool.
 test-fast:
-	uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
+	./scripts/test-pool.sh uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
 		-m "not container" \
 		--ignore=tests/integration
 

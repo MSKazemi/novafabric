@@ -77,7 +77,8 @@ def export_bagit(
 
     BagIt (RFC 8493) is a standard for digital preservation and evidence
     exchange used by forensic examiners and archivists. A capsule holding a
-    symbolic link is refused (exit 1, nothing written).
+    symbolic link is refused (exit 1, nothing written), and so is a capsule whose
+    .seal fails verification (exit 2, nothing written).
 
     Scope: single capsule.
 
@@ -87,6 +88,7 @@ def export_bagit(
       nova export-examiner bagit path/to/my-capsule/ --output evidence.bag.zip
     """
     try:
+        from novafabric.compliance.export._seal_guard import CapsuleSealInvalidError
         from novafabric.compliance.export.examiner import BagItExporter
     except ImportError as exc:
         console.print(f"[red]✗[/red] examiner module not available: {exc}")
@@ -99,6 +101,9 @@ def export_bagit(
             include_audit_report=not no_audit_report,
             contact_email=contact_email,
         )
+    except CapsuleSealInvalidError as exc:
+        # A seal that exists but fails is evidence of tampering: exit 2, no bag written.
+        raise typer.BadParameter(str(exc)) from exc
     except Exception as exc:
         console.print(f"[red]✗[/red] BagIt export failed: {exc}")
         raise typer.Exit(code=1) from exc
@@ -158,6 +163,7 @@ def export_pccp(
         --data-dir ~/.novafabric/capsules --output pccp.json
     """
     try:
+        from novafabric.compliance.export._seal_guard import CapsuleSealInvalidError
         from novafabric.compliance.export.examiner import PCCPExporter
     except ImportError as exc:
         console.print(f"[red]✗[/red] examiner module not available: {exc}")
@@ -170,6 +176,10 @@ def export_pccp(
     )
     try:
         out_path = exporter.export(output_path=output)
+    except CapsuleSealInvalidError as exc:
+        # A seal that exists but fails (in either capsule) is evidence of tampering:
+        # exit 2, no file written.
+        raise typer.BadParameter(str(exc)) from exc
     except Exception as exc:
         console.print(f"[red]✗[/red] PCCP export failed: {exc}")
         raise typer.Exit(code=1) from exc
@@ -231,6 +241,7 @@ def export_iso42001(
       nova export-examiner iso42001 path/to/my-capsule/
     """
     try:
+        from novafabric.compliance.export._seal_guard import CapsuleSealInvalidError
         from novafabric.compliance.export.examiner import ISO42001Exporter
     except ImportError as exc:
         console.print(f"[red]✗[/red] examiner module not available: {exc}")
@@ -257,6 +268,10 @@ def export_iso42001(
     )
     try:
         out_path = exporter.export(output_path=output, controls=controls or None)
+    except CapsuleSealInvalidError as exc:
+        # An in-period capsule whose seal fails is evidence of tampering: exit 2, no
+        # package written.
+        raise typer.BadParameter(str(exc)) from exc
     except Exception as exc:
         console.print(f"[red]✗[/red] ISO 42001 export failed: {exc}")
         raise typer.Exit(code=1) from exc

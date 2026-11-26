@@ -10,6 +10,7 @@ import yaml
 from novafabric._capsule_fs import CapsuleEntryError, open_capsule_file, read_capsule_file
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.diff._align import align_model_calls, align_tool_calls
+from novafabric.diff._first_divergence import StreamComparison, first_divergence
 from novafabric.diff._report import DiffReport
 
 
@@ -231,9 +232,11 @@ class DiffEngine:
         report = DiffReport(run_a_id=run_a_id, run_b_id=run_b_id)
 
         self._diff_env(capsule_a, capsule_b, report)
-        self._diff_model_calls(capsule_a, capsule_b, report)
-        self._diff_tool_calls(capsule_a, capsule_b, report)
+        model_calls = self._diff_model_calls(capsule_a, capsule_b, report)
+        tool_calls = self._diff_tool_calls(capsule_a, capsule_b, report)
         self._diff_outputs(capsule_a, capsule_b, report)
+        # Issue #74: the earliest call where the two runs stop agreeing.
+        report.first_divergence = first_divergence((model_calls, tool_calls))
 
         return report
 
@@ -258,7 +261,7 @@ class DiffEngine:
 
     def _diff_model_calls(
         self, capsule_a: Path, capsule_b: Path, report: DiffReport
-    ) -> None:
+    ) -> StreamComparison:
         calls_a, report.skipped_malformed_lines["a"]["model_calls"] = _read_jsonl(
             capsule_a / "model-calls.jsonl"
         )
@@ -268,7 +271,8 @@ class DiffEngine:
         # ADR-0305: align logical calls only. The wire hook's transport records
         # (one per HTTP attempt under an SDK call) are not calls: pairing them
         # too reported one changed prompt as two changed pairs.
-        pairs = align_model_calls(logical_model_calls(calls_a), logical_model_calls(calls_b))
+        logical_a, logical_b = logical_model_calls(calls_a), logical_model_calls(calls_b)
+        pairs = align_model_calls(logical_a, logical_b)
 
         for a, b in pairs:
             if a is None and b is not None:
@@ -320,10 +324,13 @@ class DiffEngine:
                     "changed_params": changed_params,
                     **_placeholders(a, b),
                 })
+        return StreamComparison(
+            "model_calls", logical_a, logical_b, pairs, report.model_call_pairs
+        )
 
     def _diff_tool_calls(
         self, capsule_a: Path, capsule_b: Path, report: DiffReport
-    ) -> None:
+    ) -> StreamComparison:
         calls_a, report.skipped_malformed_lines["a"]["tool_calls"] = _read_jsonl(
             capsule_a / "tool-calls.jsonl"
         )
@@ -375,6 +382,7 @@ class DiffEngine:
                     "status_b": b.get("status"),
                     **_placeholders(a, b),
                 })
+        return StreamComparison("tool_calls", calls_a, calls_b, pairs, report.tool_call_pairs)
 
     def _diff_outputs(
         self, capsule_a: Path, capsule_b: Path, report: DiffReport

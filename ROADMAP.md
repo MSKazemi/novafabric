@@ -424,7 +424,7 @@ Goal: implement the compliance ADRs written in v0.25.0. All nine items shipped b
 | ~~AIBOM upgrade CycloneDX 1.6 → 1.7~~ — **shipped v0.39.0** — `nova export-aibom` emits CycloneDX 1.7 (ECMA-424 2nd Edition); `metadata.tools` object format, `metadata.lifecycles`, `modelCard.limitations`, `type: "data"` dataset components; ADR-0073 Accepted | ADR-0073 | EU CRA SBOM deadline 2026-09-11 |
 | C2PA content credentials — `nova export-c2pa` (post-hoc) + `nova capture --mark-provenance` (live, sealed) | ADR-0074 **Accepted** | EU AI Act Art.50 deadline 2026-08-02 | **shipped** — export v0.33.0, live in-capture marking v0.45.0; TSP hard-binding signature deferred |
 | ~~Sigstore keyless signing — `nova seal sign --backend sigstore`; Sigstore Bundle v0.3; `novafabric[sigstore]` extra~~ — **shipped v0.44.0** (Fulcio OIDC + Rekor v2; `nova verify --backend sigstore`; full CRL/OCSP deferred to future) | ADR-0071 Accepted | ADR-0055 Sigstore path |
-| EU AI Act Art.12 compliance mode — `nova euaiact export` | ADR-0076 | EU AI Act Art.12 binding 2026-08-02 | **shipped v0.33.0** (authority export; capture-time gate deferred) |
+| EU AI Act Art.12 compliance mode — `nova euaiact export` | ADR-0076 | EU AI Act Art.12 applies to Annex III systems from 2027-12-02 (Regulation (EU) 2026/1744) | **shipped v0.33.0** (authority export; capture-time gate deferred) |
 
 ---
 
@@ -434,9 +434,9 @@ Dates represent mandatory or significant regulatory milestones relevant to NovaF
 
 | Date | Regulation / Standard | Obligation | ADR |
 |---|---|---|---|
-| **2026-08-02** | EU AI Act Art.12 | High-risk AI logging requirements binding for new-to-market systems; `nova euaiact export` required by regulated deployments | ADR-0076 |
 | **2026-08-02** | EU AI Act Art.50 | C2PA content marking mandatory for AI-generated content; `nova export-c2pa` (post-hoc) + `nova capture --mark-provenance` (live, sealed) ✅ shipped v0.45.0 | ADR-0074 |
 | **2026-09-11** | EU Cyber Resilience Act (CRA) | SBOM/AIBOM required for AI-enabled products; `nova export-aibom` + `nova aibom generate --all` (per-deployment automation) ✅ shipped v0.45.0 | ADR-0073 |
+| **2027-12-02** | EU AI Act Art.12 | High-risk AI logging requirements apply to Annex III systems, as amended by Regulation (EU) 2026/1744 (Digital Omnibus on AI, OJ 24 July 2026; it replaced 2026-08-02); check the Official Journal; `nova euaiact export` supports authority access to logs (Art. 21(2)) | ADR-0076 |
 | **2027-12-11** | EU CRA | Full CRA application; all products with digital elements in scope | ADR-0073 |
 | **2028-08-02** | EU AI Act Art.12 | Extended application to AI in regulated products (medical devices, machinery, vehicles) | ADR-0076 |
 | **2029** | PQC migration window opens | 10-year retained artifacts signed with ECDSA today must be re-signed or co-signed with ML-DSA before ECDSA deprecation | ADR-0072 |

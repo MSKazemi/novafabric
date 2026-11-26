@@ -11,6 +11,8 @@ export default function EuAiActStatusPanel() {
     high_risk: boolean;
     provider_mode: boolean;
     retention_months: number;
+    log_retention_floor_months?: number;
+    documentation_retention_months?: number | null;
     deadline: string;
     note: string;
   } | null>(null);
@@ -62,10 +64,26 @@ export default function EuAiActStatusPanel() {
               {result.provider_mode ? 'provider' : 'deployer'}
             </span>
 
-            <span className="text-[var(--color-text-faint)]">Retention floor</span>
-            <span className="text-[var(--color-text)]">
-              {result.retention_months} months (Art.18 provider / Art.12 deployer)
-            </span>
+            {result.log_retention_floor_months != null && (
+              <>
+                <span className="text-[var(--color-text-faint)]">Log retention floor</span>
+                <span className="text-[var(--color-text)]">
+                  {result.log_retention_floor_months} months (Art. 19(1) providers / Art. 26(6) deployers)
+                </span>
+              </>
+            )}
+
+            {result.documentation_retention_months != null && (
+              <>
+                <span className="text-[var(--color-text-faint)]">Documentation horizon</span>
+                <span className="text-[var(--color-text)]">
+                  {result.documentation_retention_months} months (Art. 18(1) documentation, not logs; applied to capsules as policy)
+                </span>
+              </>
+            )}
+
+            <span className="text-[var(--color-text-faint)]">Applied retention</span>
+            <span className="text-[var(--color-text)]">{result.retention_months} months</span>
 
             <span className="text-[var(--color-text-faint)]">Art.50 deadline</span>
             <span className="text-[var(--color-text)] font-mono">2026-08-02</span>

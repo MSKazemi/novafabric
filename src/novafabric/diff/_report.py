@@ -22,6 +22,10 @@ class DiffReport:
             side: {"model_calls": 0, "tool_calls": 0} for side in ("a", "b")
         }
     )
+    #: Issue #74: the earliest changed, added or removed model or tool call
+    #: (``diff._first_divergence.first_divergence``), or None when the two
+    #: runs' calls agree. Environment and output changes are not events.
+    first_divergence: dict[str, Any] | None = None
 
     @property
     def changed_count(self) -> int:
@@ -84,6 +88,9 @@ class DiffReport:
             # The gate's own verdict (ADR-0303): a consumer of the JSON reads the
             # property --assert-no-regressions uses instead of re-deriving it.
             "has_changes": self.has_changes,
+            # Additive (issue #74): where the call streams first diverge; null
+            # when they do not (other sections may still differ).
+            "first_divergence": self.first_divergence,
             # Always present, zeros included: absent would not distinguish "none
             # skipped" from "an older nova that skipped silently" (ADR-0303 Am. 1).
             "skipped_malformed_lines": {

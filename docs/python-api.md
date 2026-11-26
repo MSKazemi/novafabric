@@ -604,6 +604,7 @@ class DiffReport:
     tool_call_pairs: list[dict]
     output_changes: list[dict]
     skipped_malformed_lines: dict[str, dict[str, int]]  # {"a"|"b": {"model_calls", "tool_calls"}}
+    first_divergence: dict | None  # earliest changed/added/removed model or tool call; None if the call streams agree (also a top-level key of `as_dict()`)
 
     @property
     def changed_count(self) -> int: ...

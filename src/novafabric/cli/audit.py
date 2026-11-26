@@ -22,6 +22,7 @@ from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from novafabric import _paths as _nf_paths
@@ -125,6 +126,20 @@ def _status_colour(status: str) -> str:
     }.get(status, "white")
 
 
+def _print_findings(report: AuditReport) -> None:
+    """A capsule edited after sealing is tampering, not "no seal evidence".
+
+    A blocking finding is an error line; a non-blocking one (``seal_unbound``: the seal
+    verifies but cannot show edits to the evidence streams) is a notice.
+    """
+    for finding in report.findings:
+        label = "[red]Finding[/red]  " if finding.blocking else "[yellow]Notice[/yellow]   "
+        console.print(
+            f"  {label}: {finding.code} — capsule "
+            f"{escape(finding.capsule_id)}: {escape(finding.message)}"
+        )
+
+
 def _print_report_summary(report: AuditReport) -> None:
     console.print(
         f"\n[bold]Audit Report[/bold]  [dim]{report.report_id}[/dim]"
@@ -151,7 +166,9 @@ def _print_report_summary(report: AuditReport) -> None:
         "yellow" if report.overall_score >= 0.5 else "red"
     )
     console.print(f"  Score    : [{colour}]{score_pct}[/{colour}]")
-    if report.evidence_seal_verified:
+    if report.findings:
+        _print_findings(report)
+    elif report.evidence_seal_verified:
         console.print("  Seals    : [green]verified[/green]")
     console.print()
 
@@ -204,7 +221,11 @@ def audit_map(
 
     Built-in profiles: nist-ai-rmf, eu-ai-act-high-risk, gdpr, soc2-type2, iso42001,
     scientific-reproducibility.
-    Exits 1 if any required control has no evidence.
+    Exits 1 if any required control has no evidence, or if a scanned capsule
+    carries a .seal that fails verification (a ``seal_invalid`` finding: edited
+    after sealing or a damaged seal; a capsule with no .seal is not a finding). A seal
+    that verifies but does not name the capsule's evidence streams is a ``seal_unbound``
+    notice and does not change the exit code.
 
     Scope: all capsules (default: where `nova capture` writes; or
     <data-dir>/capsules), or a single capsule with --capsule.
@@ -233,7 +254,7 @@ def audit_map(
         _print_report_summary(report)
         _print_coverage_table(report)
     # Review cli-a-03: the help has always promised this exit; nothing raised it.
-    if any(c.status == "missing" for c in report.coverages):
+    if any(c.status == "missing" for c in report.coverages) or report.blocking_findings:
         raise typer.Exit(code=1)
 
 
@@ -286,6 +307,11 @@ def audit_report(
             f"{report.not_captured_controls} not captured by this version",
             "",
         ]
+        for finding in report.findings:
+            label = "FINDING" if finding.blocking else "NOTICE"
+            lines.append(f"{label} {finding.code}: capsule {finding.capsule_id}: {finding.message}")
+        if report.findings:
+            lines.append("")
         for cov in report.coverages:
             lines.append(
                 f"[{cov.status.upper():12s}] {cov.control_id}  {cov.control_title}"
@@ -441,8 +467,11 @@ def audit_coverage(
 ) -> None:
     """Show regulatory control coverage for a data directory (CI gate).
 
-    Exits 1 if the coverage score is below the threshold. Use in CI pipelines
-    to gate promotion on compliance coverage.
+    Exits 1 if the coverage score is below the threshold, or if a scanned capsule
+    carries a .seal that fails verification (a ``seal_invalid`` finding). A
+    ``seal_unbound`` notice (a valid seal that does not bind the evidence streams)
+    never changes the exit code. Use in CI pipelines to gate promotion on compliance
+    coverage.
 
     Scope: all capsules (default: where `nova capture` writes; or
     <data-dir>/capsules).
@@ -471,6 +500,8 @@ def audit_coverage(
         f"/ {report.total_controls} total controls"
     )
 
+    _print_findings(report)
+
     if report.overall_score < threshold:
         console.print(
             f"[red]FAIL[/red] Coverage {score_pct:.1f}% is below threshold {threshold_pct:.1f}%"
@@ -485,6 +516,13 @@ def audit_coverage(
                     f"  [{colour}]{cov.status:8s}[/{colour}] "
                     f"{cov.control_id}  {cov.control_title}"
                 )
+        raise typer.Exit(code=1)
+
+    if report.blocking_findings:
+        console.print(
+            "[red]FAIL[/red] Coverage meets the threshold, but a capsule's seal failed "
+            "verification (see the finding above)"
+        )
         raise typer.Exit(code=1)
 
     console.print("[green]PASS[/green] Coverage meets threshold.")

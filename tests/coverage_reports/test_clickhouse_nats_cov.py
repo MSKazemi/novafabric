@@ -643,9 +643,20 @@ class TestNatsAckAfterIngest:
         consumer._sub = MagicMock(fetch=fake_fetch)
         consumer._running = True
 
+        def settled() -> bool:
+            return all(m.ack.await_count or m.nak.await_count for m in msgs)
+
         async def scenario() -> None:
+            # Wait until every message is acked or nacked (bounded), not a fixed
+            # 0.15 s: under a loaded xdist run the loop sometimes had not reached the
+            # second message yet, and the test failed on a missing nak. The short
+            # spin afterwards still lets a stray second ack or nak show up.
             task = asyncio.create_task(consumer._drain_loop())
-            await asyncio.sleep(0.15)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 10.0
+            while not settled() and loop.time() < deadline:
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.05)
             consumer._running = False
             task.cancel()
             try:

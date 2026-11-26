@@ -1,0 +1,58 @@
+# AIUC-1 control IDs only: a bring-your-own-catalog skeleton for `nova audit map`.
+#
+# This file holds control identifiers and NovaFabric's own evidence checks. It holds
+# no AIUC-1 text. Every control's `title` and `description` is deliberately empty:
+# fill them in from your licensed copy of the standard, in your own words if the file
+# will be shared or committed.
+#
+# NovaFabric is not affiliated with, endorsed by, or certified by AIUC. A mapping
+# shows which recorded evidence exists; it does not certify that a control is met.
+# IDs follow the Q4-2026 release; check them against the release you are audited on.
+#
+# Only IDs a capsule check can test are listed. For the others (E015.3, D003.4,
+# C002.x, B001, ...) see docs/aiuc-1-evidence-crosswalk.md and assess them separately.
+#
+#   cp examples/catalogs/aiuc-1-ids-only.yaml my-aiuc-1.yaml
+#   nova audit map --profile my-aiuc-1.yaml --capsule <capsule-id>
+id: aiuc-1-ids-only
+name: AIUC-1 control IDs (fill in from your licensed copy)
+framework: AIUC-1
+version: "Q4-2026"
+controls:
+  - id: E015.1
+    title: ""
+    description: ""
+    evidence_requirements:
+      - evidence_type: model_calls
+        description: model-calls.jsonl is present and non-empty
+      - evidence_type: tool_calls
+        required: false
+        description: tool-calls.jsonl records at least one call
+
+  - id: E015.2
+    title: ""
+    description: ""
+    evidence_requirements:
+      - evidence_type: model_calls
+        description: the run's capsule holds at least one recorded model call
+
+  - id: E015.4
+    title: ""
+    description: ""
+    evidence_requirements:
+      - evidence_type: seal_signature
+        description: a NovaSeal seal that verifies; it may not bind the log files
+
+  - id: D003.3
+    title: ""
+    description: ""
+    evidence_requirements:
+      - evidence_type: tool_calls
+        description: tool-calls.jsonl records at least one call
+
+  - id: A006.1
+    title: ""
+    description: ""
+    evidence_requirements:
+      - evidence_type: pii_scan
+        description: redaction_manifest.json parses; not proof inputs are filtered

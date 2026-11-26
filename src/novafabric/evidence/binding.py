@@ -15,15 +15,16 @@ import hashlib
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from novafabric._capsule_fs import (
     CapsuleRequiredFileError,
     read_capsule_file,
     sha256_required_capsule_file,
 )
+from novafabric.compliance.audit.engine import SEAL_UNBOUND_MESSAGE, seal_coverage_of_evidence
 from novafabric.compliance.audit.loader import load_profile
-from novafabric.compliance.audit.models import ControlProfile
+from novafabric.compliance.audit.models import BLOCKING_FINDING_CODES, ControlProfile
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
 
 BINDING_PREDICATE_TYPE = "https://novafabric.io/criterion-binding/v0"
@@ -53,6 +54,22 @@ class EvidenceRef(BaseModel):
     )
 
 
+class BindingFinding(BaseModel):
+    """What a criterion's seal evidence cannot claim, when "absent" is not the whole story.
+
+    ``seal_invalid`` (blocking) says the seal fails and is not cited; ``seal_unbound`` (not
+    blocking) says the seal verifies and is cited but does not bind the evidence streams.
+    """
+
+    code: Literal["seal_invalid", "seal_unbound"]
+    message: str
+
+    @property
+    def blocking(self) -> bool:
+        """True for the codes that fail a gate (the audit's :data:`BLOCKING_FINDING_CODES`)."""
+        return self.code in BLOCKING_FINDING_CODES
+
+
 class CriterionBinding(BaseModel):
     """Machine-checkable criterion→evidence traceability (ADR-0087(b))."""
 
@@ -60,6 +77,24 @@ class CriterionBinding(BaseModel):
     criterion_id: str
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     binding_status: Literal["satisfied", "partial", "unsatisfied"]
+    findings: list[BindingFinding] = Field(
+        default_factory=list,
+        description=(
+            "Additive and optional; omitted from the serialised binding when empty. "
+            "seal_invalid: the capsule carries a .seal that fails verification, which "
+            "is not the same as a capsule that was never sealed. seal_unbound: the "
+            ".seal verifies (and is cited) but does not name the evidence streams, so "
+            "it could not show an edit to them; not blocking."
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_findings(self, handler: Any) -> Any:
+        """A binding with no finding serialises exactly as it did before the field."""
+        data = handler(self)
+        if isinstance(data, dict) and not data.get("findings"):
+            data.pop("findings", None)
+        return data
 
 
 def _pii_manifest_parses(capsule_dir: Path) -> bool:
@@ -68,10 +103,20 @@ def _pii_manifest_parses(capsule_dir: Path) -> bool:
     return _check_pii_scan(capsule_dir)
 
 
-def _seal_verifies(capsule_dir: Path) -> bool:
-    from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies  # noqa: PLC0415
+_SEAL_INVALID = BindingFinding(
+    code="seal_invalid",
+    message=(
+        "the capsule carries a .seal that failed seal verification (for example a member "
+        "or the manifest edited after sealing, a damaged or substituted seal, or a .seal "
+        "that is not a plain directory); it is not cited as evidence. A seal that verifies "
+        "but does not name the evidence streams (made before evidence digests, or a stream "
+        "added after sealing) cannot show edits to them and is reported separately as a "
+        "non-blocking seal_unbound finding; a valid seal does not say who signed it"
+    ),
+)
 
-    return capsule_seal_verifies(capsule_dir)
+
+_SEAL_UNBOUND = BindingFinding(code="seal_unbound", message=SEAL_UNBOUND_MESSAGE)
 
 
 def _ref_for(capsule_dir: Path, rel_path: str) -> EvidenceRef | None:
@@ -98,16 +143,27 @@ def build_bindings(
         load_profile(profile) if isinstance(profile, str) else profile
     )
     bindings: list[CriterionBinding] = []
+    seal: str | None = None  # verified once, and only if a control asks for a seal
     for control in resolved.controls:
         refs: list[EvidenceRef] = []
+        findings: list[BindingFinding] = []
         wanted = 0
         for req in control.evidence_requirements:
             rel = _EVIDENCE_FILES.get(req.evidence_type)
             if rel is None:
                 continue
             wanted += 1
-            if req.evidence_type == "seal_signature" and not _seal_verifies(capsule_dir):
-                continue  # a seal is evidence only when it verifies (review cli-a-03)
+            if req.evidence_type == "seal_signature":
+                seal = seal or seal_coverage_of_evidence(capsule_dir)
+                if seal in ("absent", "invalid"):
+                    # A seal is evidence only when it verifies (review cli-a-03). One
+                    # that exists and fails is tampering, which "absent" does not say.
+                    if seal == "invalid" and _SEAL_INVALID not in findings:
+                        findings.append(_SEAL_INVALID)
+                    continue
+                # a seal that verifies is cited; "unbound" only qualifies what it shows
+                if seal == "unbound" and _SEAL_UNBOUND not in findings:
+                    findings.append(_SEAL_UNBOUND)
             if req.evidence_type == "pii_scan" and not _pii_manifest_parses(capsule_dir):
                 continue  # compliance-privacy-04: the PII manifest, parsed
             ref = _ref_for(capsule_dir, rel)
@@ -124,6 +180,7 @@ def build_bindings(
                 criterion_id=control.id,
                 evidence_refs=refs,
                 binding_status=status,
+                findings=findings,
             )
         )
     return bindings

@@ -1,7 +1,10 @@
 name: Collector CI
 
 on:
+  # Push runs only for main: a pushed branch with a pull request already runs
+  # this workflow once as `pull_request`; the push run on that branch duplicated it.
   push:
+    branches: [main]
     paths:
       - "collector/**"
       - "schemas/event-envelope-v1/**"

@@ -5046,6 +5046,7 @@ def create_app(
             )
 
         try:
+            from novafabric.compliance.export._seal_guard import CapsuleSealInvalidError
             from novafabric.compliance.export.examiner import (
                 BagItExporter,
                 ISO42001Exporter,
@@ -5127,6 +5128,13 @@ def create_app(
 
         except HTTPException:
             raise
+        except CapsuleSealInvalidError as exc:
+            # A capsule whose .seal fails verification is refused: the request conflicts
+            # with the capsule's state, it is not a server fault.
+            raise HTTPException(
+                status_code=409,
+                detail=f"examiner export failed: {exc}",
+            ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=500,
@@ -5847,19 +5855,34 @@ def create_app(
         skipped, never as an empty stream that ingested cleanly. Re-ingesting a
         capsule replaces its contribution (:mod:`novafabric.kg.capsule_ingest`).
         """
-        from novafabric.kg.capsule_ingest import ingest_capsule_dir
-        from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
+        from novafabric.kg.capsule_ingest import capsule_event_files, ingest_capsule_dir
+        from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
 
         del store  # the pipeline writes to it
+        # The seal, not a flag — and a seal that does not name the streams about to be
+        # read cannot vouch for them (a stream added after sealing, or a seal made
+        # before evidence digests), so it is not "valid" for this ingest.
+        seal = capsule_seal_status(target, must_cover=capsule_event_files(target))
         result = ingest_capsule_dir(
             pipeline, target,
-            novaseal_valid=capsule_seal_verifies(target),  # the seal, not a flag
+            novaseal_valid=seal == "valid",
+            seal_status=seal,
             operation="nova serve",
         )
+        if result.tampered:
+            # Ingested as unverified (like an unsealed capsule) but not silently: the
+            # seal exists and fails, which is evidence the capsule was edited.
+            logger.warning(
+                "KG ingest: %s carries a .seal that failed seal verification or does not "
+                "cover its event streams (a stream edited or added after sealing, a seal "
+                "made before evidence digests, or a damaged seal); ingested as unverified",
+                target.name,
+            )
         return {
             "ingested": result.ingested,
             "skipped": result.skipped + len(result.unreadable),
             "written": result.written,
+            "tampered": int(result.tampered),
         }
 
     async def _kg_auto_ingest_loop() -> None:
@@ -6707,9 +6730,14 @@ def create_app(
         # NovaSeal verification comes from the capsule's own seal, never from the
         # caller: `verified: true` let any token holder mark an unsealed capsule's
         # edges verified (review serve-09).
-        from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
+        from novafabric.kg.capsule_ingest import capsule_event_files as _event_files
+        from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
 
-        novaseal_verified = capsule_seal_verifies(target)
+        # must_cover: a seal that does not name the streams about to be read cannot
+        # vouch for them, so it is not "valid" here (a stream added after sealing, or a
+        # seal made before evidence digests).
+        seal_status = capsule_seal_status(target, must_cover=_event_files(target))
+        novaseal_verified = seal_status == "valid"
         flag_note = (
             "the request's verified flag was ignored: verification is read from the "
             "capsule's NovaSeal seal, which does not verify"
@@ -6742,7 +6770,8 @@ def create_app(
                     "note": "",
                 }
             result = ingest_capsule_dir(
-                pipeline, target, novaseal_valid=novaseal_verified, operation="nova serve"
+                pipeline, target, novaseal_valid=novaseal_verified,
+                seal_status=seal_status, operation="nova serve",
             )
             if result.unreadable and len(result.unreadable) == len(result.files):
                 # Present but every one a link, FIFO or directory: an error, never
@@ -6754,6 +6783,13 @@ def create_app(
                     "note": "",
                 }
             notes = [flag_note] if flag_note else []
+            if result.tampered:
+                notes.append(
+                    "the capsule carries a .seal that failed seal verification or does "
+                    "not cover its event streams (a stream edited or added after sealing, "
+                    "a seal made before evidence digests, or a damaged seal): ingested as "
+                    "unverified, which is not the same as a capsule that was never sealed"
+                )
             if result.unreadable:
                 notes.append(f"not read: {', '.join(result.unreadable)}")
             return {
@@ -6761,6 +6797,7 @@ def create_app(
                 "skipped": result.skipped + len(result.unreadable),
                 "written": result.written,
                 "novaseal_verified": novaseal_verified,
+                "seal_status": seal_status, "tampered": result.tampered,
                 "capsule_path": capsule_path_str, "kg_path": kg_path,
                 "note": "; ".join(notes),
             }
@@ -6935,6 +6972,8 @@ def create_app(
                 "failed": 0,
             }
 
+        tampered: list[str] = []
+
         def _ingest_dirs() -> tuple[int, int, int]:
             newly, skip, fail = 0, 0, 0
             for cdir in dirs:
@@ -6945,6 +6984,8 @@ def create_app(
                 try:
                     result = _ingest_one_capsule_dir(cdir, store=store, pipeline=pipeline)
                     tracker.mark(key)
+                    if result.get("tampered"):
+                        tampered.append(cdir.name)
                     if result["ingested"] > 0 or result["written"] > 0:
                         newly += 1
                     else:
@@ -6964,6 +7005,9 @@ def create_app(
             "newly_ingested": newly_ingested,
             "skipped": skipped,
             "failed": failed,
+            # Additive: capsules whose .seal exists but failed verification (ingested as
+            # unverified, like an unsealed one, but not the same thing).
+            "tampered_capsules": tampered,
             "capsule_base": str(base),
             "kg_path": kg_path,
         }
@@ -7842,6 +7886,12 @@ def create_app(
             "missing_controls": report.missing_controls,
             "not_captured_controls": report.not_captured_controls,
             "coverages": [cov.model_dump(by_alias=True) for cov in report.coverages],
+            # Additive. ``threshold_met`` keeps meaning "score >= threshold"; the gate a
+            # caller acts on (the CLI's exit code) is ``gate_passed``: that AND no BLOCKING
+            # finding, so a capsule whose .seal fails verification does not pass. A
+            # ``seal_unbound`` finding is listed here and never gates.
+            "findings": [f.model_dump() for f in report.findings],
+            "gate_passed": report.overall_score >= threshold and not report.blocking_findings,
         }
 
     @app.post("/api/compliance/audit/bundle", dependencies=[Depends(verify_token)])
@@ -8138,6 +8188,8 @@ def create_app(
                 "high_risk": cfg.high_risk,
                 "provider_mode": cfg.provider_mode,
                 "retention_months": cfg.retention_months,
+                "log_retention_floor_months": cfg.log_retention_floor_months,
+                "documentation_retention_months": cfg.documentation_retention_months,
                 "deadline": "2026-08-02",
                 "note": "ADR-0076 — EU AI Act Art.12 compliance mode",
             }
@@ -8183,6 +8235,8 @@ def create_app(
                 "records": records,
                 "count": len(records),
                 "retention_months": cfg.retention_months,
+                "log_retention_floor_months": cfg.log_retention_floor_months,
+                "documentation_retention_months": cfg.documentation_retention_months,
                 "mode": "provider" if cfg.provider_mode else "deployer",
             }
         except Exception as exc:  # noqa: BLE001
@@ -8300,6 +8354,9 @@ def create_app(
         controller_name: str = body.get("controller_name", "")
         controller_contact: str = body.get("controller_contact", "")
         try:
+            from novafabric.compliance.export._seal_guard import (  # noqa: PLC0415
+                CapsuleSealInvalidError,
+            )
             from novafabric.compliance.export.gdpr_ropa import GDPRRoPAExporter  # noqa: PLC0415
         except ImportError as exc:
             raise HTTPException(
@@ -8323,6 +8380,8 @@ def create_app(
                 "missing_fields": entry.missing_fields,
                 "note": "GDPR Art.30 Records of Processing Activities (RoPA)",
             }
+        except CapsuleSealInvalidError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 

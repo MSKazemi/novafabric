@@ -48,6 +48,90 @@
       "type": "boolean",
       "description": "True on any changed, added or removed entry: the property nova diff --assert-no-regressions gates on (ADR-0303). Optional."
     },
+    "first_divergence": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "index",
+            "stream",
+            "event_type",
+            "reason",
+            "timeline"
+          ],
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Step index of the first divergent call: the smaller of index_a and index_b."
+            },
+            "index_a": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Step index of the call in run A; null for a call added in B."
+            },
+            "index_b": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Step index of the call in run B; null for a call removed from B."
+            },
+            "stream": {
+              "type": "string",
+              "enum": [
+                "model_calls",
+                "tool_calls"
+              ]
+            },
+            "event_type": {
+              "type": "string",
+              "enum": [
+                "model_call",
+                "tool_call"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "changed",
+                "added",
+                "removed"
+              ]
+            },
+            "aspects": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "What changed in a changed pair: request/response/provider/params (model call) or arguments/result/status (tool call)."
+            },
+            "record_id_a": {
+              "description": "model_call_id / tool_call_id of the call in run A, when recorded."
+            },
+            "record_id_b": {
+              "description": "model_call_id / tool_call_id of the call in run B, when recorded."
+            },
+            "timeline": {
+              "type": "string",
+              "enum": [
+                "started_at",
+                "per_stream"
+              ],
+              "description": "started_at: indexes count model and tool calls together in started_at order; per_stream: some call lacked started_at, so indexes count records of that stream only."
+            }
+          }
+        }
+      ],
+      "description": "Additive (issue #74): the earliest changed, added or removed model or tool call, or null when the call streams agree (environment or output sections may still differ). Indexes count records that parsed. Optional."
+    },
     "skipped_malformed_lines": {
       "type": "object",
       "description": "Non-blank record lines that were not UTF-8, not JSON, or not a JSON object, per side (a, b) and record file. They took no part in the comparison: any non-zero count makes it incomplete, and nova diff --assert-no-regressions then exits 2 (ADR-0303 Amendment 1). Optional; when emitted, zeros are included.",

@@ -19,16 +19,29 @@ its input (a capsule directory or a JSON file) and writes a report JSON.
 
 from __future__ import annotations
 
+import base64
+import datetime
+import hashlib
 import json
 import os
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 from typer.testing import CliRunner
 
+from novafabric.capture.finalize import evidence_digests
 from novafabric.cli.export_compliance import export_compliance_app
-from novafabric.compliance.export.provenance import build_capsule_ref
+from novafabric.compliance.export.provenance import CAPSULE_REF_FILES, build_capsule_ref
+from novafabric.trust.novaseal import KeyConfig, NovaSeal
+from novafabric.trust.novaseal.capsule_verify import capsule_seal_status
 
 runner = CliRunner()
 
@@ -210,6 +223,298 @@ def test_iso42001_standard_label(tmp_path: Path) -> None:
     assert json.loads(out.read_text())["standard"] == "AIUC-1 (user catalog)"
     result, out = _iso(tmp_path, "--catalog", str(cat))
     assert json.loads(out.read_text())["standard"] == "ISO/IEC 42001:2023"
+
+
+def _sealed_capsule(tmp_path: Path, *, bind_evidence: bool = True) -> Path:
+    """A capsule with a genuine NovaSeal ``.seal/`` (local key, no TSA).
+
+    ``bind_evidence=False`` seals a manifest without ``evidence_digests``, the shape of a
+    seal made before ADR-0251: it signs the manifest only, not the evidence streams."""
+    cap = tmp_path / "sealed"
+    cap.mkdir()
+    (cap / "model-calls.jsonl").write_text('{"model":"m"}\n', encoding="utf-8")
+    manifest: dict[str, Any] = {"run_id": "r-sealed", "status": "success"}
+    if bind_evidence:
+        manifest["evidence_digests"] = evidence_digests(cap)
+    (cap / "capsule.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "export-test")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder().subject_name(name).issuer_name(name)
+        .public_key(key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(days=1)).sign(key, hashes.SHA256())
+    )
+    key_path, cert_path = tmp_path / "seal.key", tmp_path / "seal.crt"
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ))
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    bundle = NovaSeal(
+        config=KeyConfig(profile="local", key_path=str(key_path), cert_path=str(cert_path)),
+        tsa_url="", db_path=str(tmp_path / "merkle.db"),
+    ).seal(manifest)
+    seal_dir = cap / ".seal"
+    seal_dir.mkdir()
+    (seal_dir / "manifest.dsse").write_bytes(bundle.dsse_envelope)
+    (seal_dir / "manifest.dsse.tsr").write_bytes(bundle.tsr)
+    (seal_dir / "log-entry.json").write_text(json.dumps(bundle.log_entry), encoding="utf-8")
+    return cap
+
+
+def _flat(output: str) -> str:
+    """Rich wraps the error panel: drop borders and join lines before matching."""
+    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", output).split())
+
+
+def _iso_capsule(tmp_path: Path, cap: Path) -> tuple[Any, Path]:
+    return _iso(
+        tmp_path, "--catalog", str(_catalog(tmp_path, "C-1")),
+        "--evidence", "eval_gate", "--capsule", str(cap),
+    )
+
+
+def _assert_refused_for_seal(result: Any, out: Path, cap: Path) -> None:
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "seal verification" in _flat(result.output)
+    # rich wraps a long temp path mid-word (longer under xdist: popen-gwN), so compare
+    # with all whitespace removed
+    assert cap.name in "".join(_flat(result.output).split())
+    assert not out.exists()
+
+
+def test_iso42001_validly_sealed_capsule_carries_the_seal_path(tmp_path: Path) -> None:
+    cap = _sealed_capsule(tmp_path)
+    assert capsule_seal_status(cap) == "valid"
+    result, out = _iso_capsule(tmp_path, cap)
+    assert result.exit_code == 0, result.output
+    ref = json.loads(out.read_text())["controls"][0]["evidence_ref"]
+    assert ref["seal_envelope_path"] == ".seal/manifest.dsse"
+    assert ref["capsule_id"] == "r-sealed"
+
+
+def test_iso42001_sealed_then_tampered_capsule_is_refused(tmp_path: Path) -> None:
+    # This used to export as "unsealed" with a digest of the edited bytes.
+    cap = _sealed_capsule(tmp_path)
+    with (cap / "model-calls.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write('{"model":"edited"}\n')
+    assert capsule_seal_status(cap) == "invalid"
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+def _independent_digest(cap: Path) -> str:
+    """The reference digest, derived here from the bytes: file name then contents, in the
+    documented order, for the files that exist (not read from the exporter)."""
+    h = hashlib.sha256()
+    for name in ("capsule.yaml", "tool-permission-events.jsonl", "model-calls.jsonl",
+                 "tool-calls.jsonl"):  # fmt: skip
+        if (cap / name).is_file():
+            h.update(name.encode())
+            h.update((cap / name).read_bytes())
+    return "sha256:" + h.hexdigest()
+
+
+def test_iso42001_valid_seal_binds_the_real_digest_of_the_sealed_bytes(tmp_path: Path) -> None:
+    cap = _sealed_capsule(tmp_path)
+    result, out = _iso_capsule(tmp_path, cap)
+    assert result.exit_code == 0, result.output
+    ref = json.loads(out.read_text())["controls"][0]["evidence_ref"]
+    assert ref["content_digest"] == _independent_digest(cap)
+    assert ref["seal_envelope_path"] == ".seal/manifest.dsse"
+    # the seal says the bytes are intact; it says nothing about who signed them
+    assert "signer" not in json.dumps(ref).lower()
+
+
+def test_iso42001_unsealed_capsule_stays_distinctly_unsigned(tmp_path: Path) -> None:
+    cap = _sealed_capsule(tmp_path)
+    shutil.rmtree(cap / ".seal")
+    assert capsule_seal_status(cap) == "absent"
+    result, out = _iso_capsule(tmp_path, cap)
+    assert result.exit_code == 0, result.output
+    ref = json.loads(out.read_text())["controls"][0]["evidence_ref"]
+    assert ref["seal_envelope_path"] is None
+    assert ref["content_digest"] == _independent_digest(cap)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    ["edit-model-calls", "edit-manifest", "delete-model-calls", "add-tool-calls",
+     "add-tool-permission-events"],
+)  # fmt: skip
+def test_iso42001_any_change_to_a_digested_member_after_sealing_is_refused(
+    tmp_path: Path, mutate: str
+) -> None:
+    """Every file the reference digest covers must be one the seal covers.
+
+    Editing or deleting a sealed member breaks the binding. A *new* tool stream is not named
+    by the seal, so the verifier reports it as unlisted (ADR-0251: derived files are not
+    fatal), yet the exporter would still hash it into a digest that carries the seal path."""
+    cap = _sealed_capsule(tmp_path)
+    if mutate == "edit-model-calls":
+        (cap / "model-calls.jsonl").write_text('{"model":"EDITED"}\n', encoding="utf-8")
+    elif mutate == "edit-manifest":
+        with (cap / "capsule.yaml").open("a", encoding="utf-8") as fh:
+            fh.write("status_note: edited after sealing\n")
+    elif mutate == "delete-model-calls":
+        (cap / "model-calls.jsonl").unlink()
+    elif mutate == "add-tool-calls":
+        (cap / "tool-calls.jsonl").write_text('{"tool":"injected"}\n', encoding="utf-8")
+    else:
+        (cap / "tool-permission-events.jsonl").write_text('{"ev":"injected"}\n', encoding="utf-8")
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+@pytest.mark.parametrize("mutate", ["untouched", "edit-model-calls", "add-tool-calls"])
+def test_iso42001_a_seal_that_never_bound_the_evidence_is_refused(
+    tmp_path: Path, mutate: str
+) -> None:
+    """A seal made without ``evidence_digests`` (before ADR-0251) signs the manifest only.
+
+    Whatever happens to the streams, it still verifies, so the exporter cannot attach its
+    path to a digest of those streams: an edited capsule would read as sealed. Even an
+    untouched one is refused, because nothing the seal holds can tell the two apart."""
+    cap = _sealed_capsule(tmp_path, bind_evidence=False)
+    if mutate == "edit-model-calls":
+        (cap / "model-calls.jsonl").write_text('{"model":"EDITED"}\n', encoding="utf-8")
+    elif mutate == "add-tool-calls":
+        (cap / "tool-calls.jsonl").write_text('{"tool":"injected"}\n', encoding="utf-8")
+    assert capsule_seal_status(cap) == "valid"  # the bare question is unchanged
+    assert capsule_seal_status(cap, must_cover=CAPSULE_REF_FILES) == "invalid"
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+def _resign_free_edit(env: dict[str, Any], how: str, other_root: Path) -> bytes:
+    """Damage the signing material of a real envelope without touching the capsule files."""
+    sig = env["signatures"][0]
+    if how == "flip-signature-byte":
+        raw = bytearray(base64.b64decode(sig["sig"]))
+        raw[-1] ^= 0x01
+        sig["sig"] = base64.b64encode(bytes(raw)).decode()
+    elif how == "modify-signed-payload":
+        payload = json.loads(base64.b64decode(env["payload"]))
+        payload["run_id"] = "r-forged"
+        env["payload"] = base64.b64encode(json.dumps(payload).encode()).decode()
+    elif how == "swap-certificate":
+        other_root.mkdir()
+        other = _sealed_capsule(other_root)
+        other_env = json.loads((other / ".seal" / "manifest.dsse").read_text())
+        sig["cert"] = other_env["signatures"][0]["cert"]
+    elif how == "drop-signatures":
+        env["signatures"] = []
+    return json.dumps(env).encode()
+
+
+@pytest.mark.parametrize(
+    "how",
+    ["flip-signature-byte", "modify-signed-payload", "swap-certificate",
+     "drop-signatures", "truncated-envelope"],
+)  # fmt: skip
+def test_iso42001_changed_signing_material_is_refused(tmp_path: Path, how: str) -> None:
+    cap = _sealed_capsule(tmp_path)
+    seal = cap / ".seal" / "manifest.dsse"
+    if how == "truncated-envelope":
+        seal.write_bytes(seal.read_bytes()[: len(seal.read_bytes()) // 2])
+    else:
+        seal.write_bytes(_resign_free_edit(json.loads(seal.read_text()), how, tmp_path / "other"))
+    assert capsule_seal_status(cap) == "invalid"
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+def test_iso42001_derived_file_next_to_a_sealed_capsule_is_not_a_tamper(tmp_path: Path) -> None:
+    """ADR-0251 §5: an unlisted derived artifact is reported, never fatal."""
+    cap = _sealed_capsule(tmp_path)
+    (cap / "report.html").write_text("<p>derived</p>", encoding="utf-8")
+    result, out = _iso_capsule(tmp_path, cap)
+    assert result.exit_code == 0, result.output
+    assert json.loads(out.read_text())["controls"][0]["evidence_ref"]["seal_envelope_path"]
+
+
+def test_iso42001_fifo_seal_is_refused_without_blocking(tmp_path: Path) -> None:
+    cap = _sealed_capsule(tmp_path)
+    shutil.rmtree(cap / ".seal")
+    os.mkfifo(cap / ".seal")
+    assert capsule_seal_status(cap) == "invalid"
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+def test_iso42001_a_verifier_that_crashes_is_a_refusal_not_a_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seal that cannot be verified is not a valid seal (and not an absent one)."""
+    import novafabric.trust.novaseal.capsule_verify as cv
+
+    cap = _sealed_capsule(tmp_path)
+
+    def boom(_dir: Path, **_kw: Any) -> None:
+        raise RuntimeError("verifier exploded")
+
+    monkeypatch.setattr(cv, "verify_capsule", boom)
+    assert capsule_seal_status(cap) == "invalid"
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+def test_capsule_seal_verifies_keeps_its_boolean_contract(tmp_path: Path) -> None:
+    from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
+
+    cap = _sealed_capsule(tmp_path)
+    assert capsule_seal_verifies(cap) is True
+    (cap / "model-calls.jsonl").write_text("{}\n", encoding="utf-8")
+    assert capsule_seal_verifies(cap) is False  # invalid
+    shutil.rmtree(cap / ".seal")
+    assert capsule_seal_verifies(cap) is False  # absent
+
+
+@pytest.mark.parametrize("garbage", [b"", b"not a dsse envelope"])
+def test_iso42001_garbage_seal_is_refused(tmp_path: Path, garbage: bytes) -> None:
+    cap = _capsule(tmp_path)
+    (cap / ".seal").mkdir()
+    (cap / ".seal" / "manifest.dsse").write_bytes(garbage)
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+def test_iso42001_empty_seal_directory_is_refused(tmp_path: Path) -> None:
+    cap = _capsule(tmp_path)
+    (cap / ".seal").mkdir()
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+def test_iso42001_seal_that_is_a_file_is_refused(tmp_path: Path) -> None:
+    cap = _capsule(tmp_path)
+    (cap / ".seal").write_text("{}", encoding="utf-8")
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+@pytest.mark.parametrize("target", ["valid", "dangling"])
+def test_iso42001_symlinked_seal_is_refused_not_treated_as_absent(
+    tmp_path: Path, target: str
+) -> None:
+    # A link is never followed: even one to a genuine seal is not this capsule's seal,
+    # and a dangling one must not read as "no seal".
+    cap = _capsule(tmp_path)
+    if target == "valid":
+        (cap / ".seal").symlink_to(_sealed_capsule(tmp_path) / ".seal")
+    else:
+        (cap / ".seal").symlink_to(tmp_path / "nowhere")
+    assert capsule_seal_status(cap) == "invalid"
+    result, out = _iso_capsule(tmp_path, cap)
+    _assert_refused_for_seal(result, out, cap)
+
+
+def test_capsule_seal_status_absent(tmp_path: Path) -> None:
+    assert capsule_seal_status(_capsule(tmp_path)) == "absent"
+    assert capsule_seal_status(tmp_path / "missing") == "absent"
 
 
 def test_iso42001_without_capsule_degrades_to_not_evidenced(tmp_path: Path) -> None:

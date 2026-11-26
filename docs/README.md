@@ -103,6 +103,7 @@ Task- and workflow-oriented references for day-to-day use.
 | [Human-oversight evidence](human-oversight.md) | `nova hitl thread` / `context` / `override` / `rationale` (experimental) — what a human was shown when deciding, their overrides, and the agent's surfaced rationale, digest-only and record-only |
 | [For researchers](for-researchers.md) | Using NovaFabric for a reproducible, reviewable, citable paper artifact — and what it does not solve |
 | [Standards and specifications](standards-conformance.md) | Every specification implemented, how to verify each claim, and what is explicitly **not** claimed |
+| [AIUC-1 evidence crosswalk](aiuc-1-evidence-crosswalk.md) | Which NovaFabric records may be relevant to which AIUC-1 control IDs, how direct each one is and what it leaves out, plus an IDs-only catalog you fill in from your licensed copy and check with `nova audit map` |
 | [Developer guide](developer-guide.md) | Local dev setup, extension points, adding asset types and commands |
 
 ## Reference

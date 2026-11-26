@@ -46,6 +46,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Mapping, Sequence
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -669,16 +670,48 @@ _REPLAY_ID = re.compile(r"replay_id=([0-9A-HJKMNP-TV-Z]{26})")
 _CLI_SECONDS = 120.0
 
 
+#: A JSON document in a command's output starts at the first column of a line.
+_DOCUMENT_START = re.compile(r"(?m)^[\[{]")
+#: At most this many candidate lines are decoded; more is "not parseable", not a long scan.
+_MAX_JSON_CANDIDATES = 20
+
+
 def _json_from_output(text: str) -> Any:
-    """The first JSON value in a command's output (a warning line may precede it)."""
-    starts = [i for i in (text.find("{"), text.find("[")) if i >= 0]
-    if not starts:
+    """The JSON object or array a command printed, or ``None`` when there is no whole one.
+
+    ``nova ... --json`` prints its document with ``indent=2`` starting at the first column, and
+    stderr is merged into the same stream, so warnings can come before and after it. A candidate
+    is a line whose first character is ``{`` or ``[``, so a successful decode is always an
+    object or array. It is the document only when nothing but whitespace follows it on its
+    last line; a later candidate that also qualifies replaces it, so the document that ends
+    the output wins and trailing warnings (bracketed or not) are ignored. Consequences, all
+    returning ``None`` or the later document rather than a fragment:
+
+    * truncated output never yields an inner piece of the document (those start indented, and
+      a compact one has no second candidate);
+    * ``[1] deprecated`` before the document is skipped, not taken for it;
+    * an indented or mid-line bracket is not a document start;
+    * more than ``_MAX_JSON_CANDIDATES`` candidate lines, or a nesting deep enough to overflow
+      the decoder (``RecursionError``), is not parseable.
+
+    The scan is bounded: at most ``_MAX_JSON_CANDIDATES`` decodes, each at an offset into
+    ``text`` (no slicing).
+    """
+    starts = [m.start() for m in islice(_DOCUMENT_START.finditer(text), _MAX_JSON_CANDIDATES + 1)]
+    if len(starts) > _MAX_JSON_CANDIDATES:
         return None
-    try:
-        value, _ = json.JSONDecoder().raw_decode(text[min(starts) :])
-    except ValueError:
-        return None
-    return value
+    decoder = json.JSONDecoder()
+    found: Any = None
+    for start in starts:
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except (ValueError, RecursionError):
+            continue
+        line_end = text.find("\n", end)
+        if text[end : len(text) if line_end < 0 else line_end].strip():
+            continue
+        found = value
+    return found
 
 
 def _cli(
@@ -690,7 +723,25 @@ def _cli(
     return code, output
 
 
-def _asset_spec(scn: lab.Scenario) -> str:
+def _registered_fixture_digest(nova_home: Path) -> str | None:
+    """The fixture digest ``nova register`` stored with the asset, read back from the registry.
+
+    ``nova inspect`` prints the asset's name, version, type and ``spec`` but not its tags, so
+    the digest is read through the same ``get_asset`` that command uses, against the
+    disposable registry only. Anything unreadable is ``None``; the lineage check then fails.
+    """
+    try:
+        from novafabric.registry.service import get_asset
+
+        asset = get_asset(wt.ASSET_NAME, wt.ASSET_VERSION, nova_home / "registry.db")
+        tags = json.loads(asset["spec_json"]).get("tags")
+        digest = tags.get("fixture_manifest_sha256") if isinstance(tags, dict) else None
+    except Exception:  # noqa: BLE001 - an unreadable registry is a named FAIL, not a crash
+        return None
+    return digest if isinstance(digest, str) else None
+
+
+def _asset_spec(scn: lab.Scenario, scenario_dir: Path) -> str:
     return (
         'novafabric_spec_version: "1"\n'
         "asset_type: dataset\n"
@@ -702,7 +753,7 @@ def _asset_spec(scn: lab.Scenario) -> str:
         '  synthetic: "true"\n'
         f'  fixture_manifest_sha256: "{scn.fixture_manifest_sha256}"\n'
         "spec:\n"
-        "  path: examples/evidence_lab/scenarios/service_incident_v1\n"
+        f"  path: {json.dumps(str(scenario_dir.resolve()))}\n"  # the scenario actually loaded
     )
 
 
@@ -784,7 +835,7 @@ def _walkthrough(
         }
 
     spec = work / "asset.yaml"
-    spec.write_text(_asset_spec(base), encoding="utf-8")
+    spec.write_text(_asset_spec(base, scenario_dir), encoding="utf-8")
     code, output = _cli(report, "register", [nova, "register", str(spec)], env=env, cwd=work)
     if code != 0 or f"Registered {wt.ASSET_REF}" not in output:
         raise lab.EvidenceLabError("E_ASSET_REGISTER_FAILED", output.strip()[-_TAIL:])
@@ -844,7 +895,12 @@ def _walkthrough(
         code, output = _cli(report, f"lineage_provenance_{variant}",
                             [nova, "lineage", "provenance", vreport["run_id"], "--output", "json"],
                             env=env, cwd=work)  # fmt: skip
-        edges = _jsonl(capsule / "lineage.jsonl")
+        edges: list[dict[str, Any]] | None
+        edges_error: str | None = None
+        try:
+            edges = _jsonl(capsule / "lineage.jsonl")
+        except lab.EvidenceLabError as exc:  # judged as a named lineage FAIL below
+            edges, edges_error = None, f"{exc.code}: {exc.message}"
         # The edge comes from the capsule alone, so read the asset back from the registry.
         reg_code, reg_output = _cli(report, f"registry_inspect_{variant}",
                                     [nova, "inspect", wt.ASSET_REF], env=env,
@@ -853,7 +909,11 @@ def _walkthrough(
                                        run_id=vreport["run_id"], exit_code=code,
                                        artifact=str(capsule / "lineage.jsonl"),
                                        registry_exit_code=reg_code,
-                                       registry_output=reg_output))  # fmt: skip
+                                       registry_output=reg_output,
+                                       expected_fixture_sha256=base.fixture_manifest_sha256,
+                                       registered_fixture_sha256=_registered_fixture_digest(
+                                           nova_home),
+                                       edges_error=edges_error))  # fmt: skip
 
         verify_argv = [nova, "verify", "--json"]
         if ca_bundle is not None:

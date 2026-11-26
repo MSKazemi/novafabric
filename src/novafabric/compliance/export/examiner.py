@@ -44,7 +44,8 @@ from novafabric._capsule_fs import (
     refuse_capsule_links,
 )
 from novafabric._hashutil import sha256_file_hex, sha256_hex
-from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies
+
+from ._seal_guard import all_seals_valid_or_refuse, seal_is_valid_or_refuse
 
 _OPERATION = "an examiner BagIt export"
 
@@ -156,6 +157,8 @@ class BagItExporter:
 
         Raises:
             CapsuleLinkError: the capsule holds a symbolic link. Nothing is written.
+            CapsuleSealInvalidError: the capsule carries a ``.seal`` that fails
+                verification. Nothing is written.
         """
         output_path = output_dir / f"{self.capsule_id}-bag.zip"
 
@@ -168,6 +171,12 @@ class BagItExporter:
         # export: never a bag that silently lacks it.
         for candidate in ["capsule.yaml", "capsule-manifest.json"]:
             read_required_capsule_file(self.data_dir, candidate, operation=_OPERATION)
+
+        # A capsule whose .seal exists but fails verification was edited after sealing
+        # (or its seal was damaged or swapped): bagging it would hand an archive whose
+        # own checksums verify clean to a repository as if the evidence were intact.
+        # An absent seal is not tampering and still bags.
+        seal_is_valid_or_refuse(self.data_dir)
 
         # Every regular capsule file is payload (review compliance-privacy-20): only
         # capsule.yaml, top-level zips and audit-report.json used to be bagged — no
@@ -290,11 +299,14 @@ class PCCPExporter:
         self.data_dir = data_dir
 
     def _verified_risk_controls(self) -> list[str]:
-        """Controls the two capsules themselves show: NovaSeal signing when both seals verify."""
+        """Controls the two capsules themselves show: NovaSeal signing when both seals verify.
+
+        Raises :class:`CapsuleSealInvalidError` if *either* capsule carries a seal that
+        fails verification: a broken seal is not "unsigned", and one unsealed capsule
+        cannot hide it.
+        """
         dirs = [self.data_dir / self.baseline_capsule_id, self.data_dir / self.proposed_capsule_id]
-        if all(capsule_seal_verifies(d) for d in dirs):
-            return ["NovaSeal signing"]
-        return []
+        return ["NovaSeal signing"] if all_seals_valid_or_refuse(dirs) else []
 
     def export(self, output_path: Path) -> Path:
         """Export the PCCP document as JSON.
@@ -304,7 +316,13 @@ class PCCPExporter:
 
         Returns:
             Path to the written file.
+
+        Raises:
+            CapsuleSealInvalidError: the baseline or the proposed capsule carries a
+                ``.seal`` that fails verification; nothing is written.
         """
+        # Decided before anything is created, so a refusal leaves no output behind.
+        risk_controls = self._verified_risk_controls()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         pccp: dict[str, Any] = {
@@ -327,7 +345,7 @@ class PCCPExporter:
                 # Review compliance-privacy-12: controls this export can check are
                 # listed only when they hold; the rest are for the operator to
                 # confirm, never asserted as in place.
-                "risk_controls": self._verified_risk_controls(),
+                "risk_controls": risk_controls,
                 "risk_controls_to_confirm": [
                     "Rego policy gates",
                     "Maker-checker approval",
@@ -533,7 +551,17 @@ class ISO42001Exporter:
 
         Returns:
             Path to the written ZIP file.
+
+        Raises:
+            CapsuleSealInvalidError: an in-period capsule carries a ``.seal`` that fails
+                verification. Nothing is written.
         """
+        # The package lists every in-period capsule as evidence. One whose .seal exists
+        # but fails verification is not evidence of anything the seal vouched for, and a
+        # package that listed it next to intact capsules would hide that. Every capsule
+        # is checked before anything is created; an absent seal is not tampering.
+        all_seals_valid_or_refuse(child for child, _data, _when in self._period_capsules())
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         selected = controls if controls is not None else _DEFAULT_CONTROLS
 
@@ -602,13 +630,11 @@ class ISO42001Exporter:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _gather_evidence_refs(self, clause: str) -> list[str]:
-        """Return a list of evidence references for *clause*."""
-        refs: list[str] = []
+    def _period_capsules(self) -> list[tuple[Path, dict[str, Any], datetime]]:
+        """Capsules whose ``created_at`` falls inside the audit period, in name order."""
+        found: list[tuple[Path, dict[str, Any], datetime]] = []
         if not self.data_dir.exists():
-            return refs
-
-        # Collect capsule IDs in the audit period
+            return found
         for child in sorted(self.data_dir.iterdir()):
             if child.is_symlink() or not child.is_dir():
                 continue  # a scan never lists a linked entry
@@ -623,51 +649,32 @@ class ISO42001Exporter:
             if not isinstance(data, dict):
                 continue
             created_at_raw = data.get("created_at", "")
-            if created_at_raw:
-                try:
-                    created_at = _aware(datetime.fromisoformat(
-                        str(created_at_raw).replace("Z", "+00:00")
-                    ))
-                    if self.period_start <= created_at <= self.period_end:
-                        run_id = data.get("run_id", child.name)
-                        refs.append(f"capsule:{run_id}")
-                except ValueError:
-                    pass
+            if not created_at_raw:
+                continue
+            try:
+                created_at = _aware(datetime.fromisoformat(
+                    str(created_at_raw).replace("Z", "+00:00")
+                ))
+            except ValueError:
+                continue
+            if self.period_start <= created_at <= self.period_end:
+                found.append((child, data, created_at))
+        return found
 
-        return refs
+    def _gather_evidence_refs(self, clause: str) -> list[str]:
+        """Return a list of evidence references for *clause*."""
+        return [
+            f"capsule:{data.get('run_id', child.name)}"
+            for child, data, _created_at in self._period_capsules()
+        ]
 
     def _build_capsule_index(self) -> list[dict[str, Any]]:
         """Build an index of capsules within the audit period."""
-        index: list[dict[str, Any]] = []
-        if not self.data_dir.exists():
-            return index
-
-        for child in sorted(self.data_dir.iterdir()):
-            if child.is_symlink() or not child.is_dir():
-                continue  # a scan never lists a linked entry
-            # Absent: not a capsule. Present but unusable: CapsuleRequiredFileError,
-            # so the audit-period package never silently omits a capsule.
-            capsule_text = read_required_capsule_member(
-                child / "capsule.yaml", operation="compliance export"
-            )
-            if capsule_text is None:
-                continue
-            data = yaml.safe_load(capsule_text)
-            if not isinstance(data, dict):
-                continue
-            created_at_raw = data.get("created_at", "")
-            if created_at_raw:
-                try:
-                    created_at = _aware(datetime.fromisoformat(
-                        str(created_at_raw).replace("Z", "+00:00")
-                    ))
-                    if self.period_start <= created_at <= self.period_end:
-                        index.append({
-                            "run_id": data.get("run_id", child.name),
-                            "asset_name": data.get("asset_name"),
-                            "created_at": created_at.isoformat(),
-                        })
-                except ValueError:
-                    pass
-
-        return index
+        return [
+            {
+                "run_id": data.get("run_id", child.name),
+                "asset_name": data.get("asset_name"),
+                "created_at": created_at.isoformat(),
+            }
+            for child, data, created_at in self._period_capsules()
+        ]

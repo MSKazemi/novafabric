@@ -32,8 +32,9 @@ Honesty invariants (ADR-0021 §4, spec R2–R4):
   disk). Content-bearing fields (prompts, model output, message transcripts,
   sample ``metadata``, and a score's ``answer`` / ``explanation`` / ``metadata`` /
   ``history``) are **enumerated by name** in ``omitted`` but deliberately not copied —
-  full-content span import is the planned capsule-level bridge, and NovaFabric
-  never captures prompt/response bytes by default.
+  full-content span import is the planned capsule-level bridge. This importer never
+  copies prompt/response bytes; that says nothing about NovaFabric's own capture
+  of model calls, which stores them by default (``docs/architecture.md``, invariant 4).
 - **Foreign provenance is explicit.** Imported scores carry
   ``evaluator_id="inspect-ai:<scorer>"`` and a *synthetic* content-addressed
   ``eval_card_digest`` derived from the foreign scorer identity — it

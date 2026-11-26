@@ -124,6 +124,11 @@ licensed copy**:
   control with no evidence requirements is refused when the catalog loads, because with nothing to
   check it would otherwise be scored as covered.
 
+For AIUC-1 there is a ready-made starting point: the
+[AIUC-1 evidence crosswalk](../aiuc-1-evidence-crosswalk.md) rates which NovaFabric records
+may be relevant to which control IDs, and ships an IDs-only catalog whose titles and
+descriptions you fill in from your copy.
+
 If you need a JSON report that carries a digest of the capsule for each evidenced control, the
 same catalog idea works with `nova export-compliance iso42001 --catalog controls.json --capsule
 <dir> --standard "<your framework>"` ([CLI reference](../cli-reference.md)).

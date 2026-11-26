@@ -6,6 +6,17 @@
 
 The dashboard is an **opt-in local-only HTTP server** (`nova serve --experimental`) that renders an interactive view over the same registry SQLite, lineage SQLite, and capsule directories the CLI reads. The CLI is the canonical interface; the dashboard is a satellite that surfaces the equivalent CLI command for every action.
 
+
+## Troubleshooting and support handoff (experimental)
+
+If connecting to the dashboard fails, the connection form displays a **Troubleshoot locally** panel. From the Admin tab, an unsuccessful `nova doctor` check displays the same help. A successful check does not show failure guidance, and rerunning the check clears its prior results while it is pending.
+
+The panel offers two **copy-only** commands: `nova doctor` to inspect the local installation and `nova support-bundle` to write an experimental diagnostics archive to the **local filesystem**. Clicking **Copy** does not run either command, read diagnostic files or upload anything. The second command remains **CLI-only**, not a dashboard action. You must paste and execute it in a terminal yourself. The CLI chooses an output filename in your current directory unless you supply `--output`.
+
+The support bundle uses an allowlisted, redacted file set, but **inspect its contents (including optional logs) before choosing to share it**. The dashboard never shares it automatically. A support bundle is troubleshooting material, not a Run Capsule, Evidence Bundle, verification result, or guarantee that every possible secret has been removed.
+
+This guidance works locally and needs no additional server endpoint, cloud account or telemetry. Connectivity, authentication and failure states are still determined by the existing server and session checks.
+
 ---
 
 ## Dashboard tabs (complete inventory)
