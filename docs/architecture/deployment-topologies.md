@@ -25,7 +25,7 @@ flowchart LR
         CN["compute node<br/>nova capture --emit-spool"] --> SP[("node spool")]
         SP --> FW["novafabric-spool-forwarder"] --> NATS[["NATS JetStream<br/>NOVA_EVIDENCE"]]
         NATS --> CO["consumers<br/>lineage · evidence fabric"]
-        HUB["HPC hub signing<br/>(planned)"]:::planned
+        HUB["HPC hub signing<br/>(future design)"]:::planned
     end
     LD -- "POST /v0/capsules" --> SV
     classDef planned stroke-dasharray: 5 5
@@ -64,7 +64,7 @@ contacted only if `tsa_url` or `tsa_urls` is configured (see
 | Metadata store | SQLite (default) or Postgres via `--backend postgres`; Postgres applies row-level security per transaction (`metadata_store/postgres.py`, `metadata_store/rls.py`) | experimental |
 | Capsule bytes | A filesystem directory on the server (`server/deps.py:get_capsule_dir`), filled by `POST /v0/capsules` (`server/ingest.py`) or by indexing a directory | experimental |
 | Tenancy | **Single-tenant today.** The server refuses to start with more than one organization unless the operator explicitly accepts a shared capsule store (`server/config.py`). | experimental |
-| Packaging | `deploy/docker/` (Compose; the container runs the `nova serve` dashboard by default, and `NOVA_MODE=server` runs the API server) and `deploy/helm/novafabric` | experimental |
+| Packaging | `deploy/docker/` (Compose defaults to `nova serve`; `NOVA_MODE=server` selects the API server) and `deploy/helm/novafabric` (Helm defaults to authenticated `server` mode) | experimental |
 
 **Object storage.** `object_capsule_store/` implements an S3-compatible,
 content-addressed capsule store with a write-once put protocol. Backends: S3,
@@ -87,7 +87,7 @@ or graph.** They append to a local spool, and something else ingests it.
 | 3 | `novafabric-spool-forwarder` (Go) | Drains the spool to the NATS JetStream stream `NOVA_EVIDENCE` on `nova.evidence.<run_id>` (`collector/cmd/novafabric-spool-forwarder/`) | experimental |
 | 4 | Consumers | `nova lineage consume` and the evidence-fabric NATS consumer index events into DuckDB, ClickHouse or Kuzu (`evidence_fabric/nats_consumer.py`) | experimental |
 | — | OTel collector with the NovaSeal processor | A custom build via the OpenTelemetry Collector Builder (`collector/ocb/builder-config.yaml`) | experimental |
-| — | HPC hub (central signing) | The binary exists in `collector/cmd/novafabric-hpc-hub/`, but its signing pipeline is not wired up. See `deploy/hpc/README.md`. | **planned** |
+| — | HPC hub (central signing) | The binary exists in `collector/cmd/novafabric-hpc-hub/`, but it is a stub that exits with "not implemented"; the signing pipeline is not written. See `deploy/hpc/README.md`. | **future design** |
 | — | Kubernetes collector manifests | `deploy/k8s/`. The collector image is not published. | **planned** |
 | — | Writer lease with fencing tokens | `ha/lease.py` (Postgres and SQLite) | experimental primitive; automated failover is **planned** |
 | — | Multi-cluster federation of capsules and lineage | — | **future design** |
@@ -99,6 +99,14 @@ and consumer path builds query and lineage indexes alongside the capsules.
 For the step-by-step version with SLURM prolog and epilog scripts, see the
 [cluster-scale tutorial](../tutorials/cluster-scale.md) and the
 [operator guide](../operator-guide.md).
+
+For the five **user-facing installation profiles** (Light, Desktop, Team,
+Enterprise and Factory), the component-by-component installation matrix and
+optional database inventory, see
+[Installation options and software stack](../installation.md).
+The profiles are deployment choices, not new software editions: Desktop is
+Local plus an experimental dashboard, and Enterprise adds regulated controls
+to the experimental Server tier.
 
 ## Choosing a tier
 

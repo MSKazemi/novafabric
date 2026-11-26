@@ -64,6 +64,10 @@ pip install novafabric            # or: uv add novafabric
 uv tool install novafabric        # or: pipx install novafabric — CLI only, isolated
 ```
 
+For Light CLI, local dashboard, shared Team server, regulated controls or
+experimental HPC/Factory collection, see the
+[installation options and software stack](docs/installation.md) guide.
+
 NovaFabric requires **Python 3.12+**. Capture, validate, replay and diff need no extras.
 To try it without installing anything, open the repository in
 [GitHub Codespaces](https://codespaces.new/MSKazemi/novafabric).

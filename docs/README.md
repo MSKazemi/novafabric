@@ -67,6 +67,7 @@ in [Concepts](concepts.md). Two journeys branch from the Run Capsule:
 | Document | What it is |
 |---|---|
 | [Getting Started](getting-started.md) | Install → capture → validate → replay → diff → lineage → seal, in about 15 minutes |
+| [Installation options and software stack](installation.md) | Compare Light, Desktop, Team, Enterprise and Factory; exact package extras, storage, databases, components and maturity |
 | [Prove a run to an auditor](tutorials/prove-a-run-to-an-auditor.md) | End-to-end: capture, seal, archive, then verify and replay it six months later — including what it does *not* prove |
 | [Why NovaFabric?](tutorials/why-novafabric.md) | Plain-English value guide with five concrete scenarios |
 | [Feature tour](tutorials/feature-tour.md) | Hands-on tour of every capability, with real commands and output |

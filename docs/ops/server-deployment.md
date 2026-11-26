@@ -5,6 +5,10 @@ is labelled with its current implementation status per the [docs honesty
 rule](../../CONTRIBUTING.md#documentation-status-labels): **works today**, **experimental**, **planned**, or
 **future design**.
 
+Choosing between Light, Desktop, Team, Enterprise and Factory? Start with
+[Installation options and software stack](../installation.md); this guide covers
+server operation, identity, migrations and Kubernetes in more detail.
+
 Sizing the host first? The [capacity planning & sizing guide](sizing-guide.md) covers
 storage, memory and CPU from a single laptop to a shared Postgres server.
 
@@ -12,7 +16,7 @@ storage, memory and CPU from a single laptop to a shared Postgres server.
 
 ## Scenario 1 — Default local install (SQLite, no server)
 
-**Status: experimental.**
+**Status: works today** (local toolkit is beta; server and dashboard remain experimental).
 
 The default NovaFabric install requires no server, no database setup, and no
 network connectivity. All core commands work out of the box:
@@ -21,10 +25,10 @@ network connectivity. All core commands work out of the box:
 pip install novafabric
 
 nova capture python agent.py
-nova validate .novafabric/runs/01HX.../
-nova replay .novafabric/runs/01HX.../ --mode forensic
+nova validate <run-id>
+nova replay <run-id> --mode forensic
 nova lineage provenance <run-id>
-nova export-evidence .novafabric/runs/01HX.../ --key key.pem --output evidence.zip
+nova export-evidence ~/.novafabric/capsules/01HX.../ --key key.pem --output evidence.zip
 ```
 
 The local SQLite registry is created automatically at
