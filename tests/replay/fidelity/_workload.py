@@ -44,22 +44,87 @@ def _answer(prompt: str) -> str:
     return f"{prefix}:{prompt}"
 
 
+def _prompt(body: dict) -> str:
+    """The prompt as each API shape carries it (chat ``messages`` or Responses ``input``)."""
+    if "messages" in body:
+        return body["messages"][-1].get("content", "")
+    return body.get("input", "")
+
+
+def _sse(events: list[dict]) -> httpx.Response:
+    payload = "".join(f"data: {json.dumps(e)}\n\n" for e in events) + "data: [DONE]\n\n"
+    return httpx.Response(
+        200, content=payload.encode(), headers={"content-type": "text/event-stream"}
+    )
+
+
 def _handler(request: httpx.Request) -> httpx.Response:
     body = json.loads(request.content or b"{}")
-    prompt = body.get("messages", [{}])[-1].get("content", "")
+    prompt = _prompt(body)
     _append("FIDELITY_MODEL_HITS", f"{PHASE} openai {request.url.path} {prompt}")
+    text = _answer(prompt)
+    if request.url.path.endswith("/responses"):
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp-fidelity",
+                "object": "response",
+                "created_at": 0,
+                "model": "gpt-fidelity",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg-fidelity",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": text, "annotations": []}],
+                    }
+                ],
+                "parallel_tool_calls": True,
+                "tool_choice": "auto",
+                "tools": [],
+                "error": None,
+                "incomplete_details": None,
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                    "input_tokens_details": {"cached_tokens": 0},
+                    "output_tokens_details": {"reasoning_tokens": 0},
+                },
+            },
+        )
+    base = {
+        "id": "chatcmpl-fidelity",
+        "created": 0,
+        "model": "gpt-fidelity",
+    }
+    if body.get("stream"):
+
+        def chunk(delta: dict, finish: str | None = None) -> dict:
+            choice = {"index": 0, "delta": delta, "finish_reason": finish}
+            return {**base, "object": "chat.completion.chunk", "choices": [choice]}
+
+        half = len(text) // 2
+        return _sse(
+            [
+                chunk({"role": "assistant", "content": ""}),
+                chunk({"content": text[:half]}),
+                chunk({"content": text[half:]}),
+                chunk({}, "stop"),
+            ]
+        )
     return httpx.Response(
         200,
         json={
-            "id": "chatcmpl-fidelity",
+            **base,
             "object": "chat.completion",
-            "created": 0,
-            "model": "gpt-fidelity",
             "choices": [
                 {
                     "index": 0,
                     "finish_reason": "stop",
-                    "message": {"role": "assistant", "content": _answer(prompt)},
+                    "message": {"role": "assistant", "content": text},
                 }
             ],
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
@@ -71,6 +136,19 @@ def _handler(request: httpx.Request) -> httpx.Response:
 def lookup(x: int) -> dict:
     _append("FIDELITY_SENTINEL", f"{PHASE} lookup {x}")
     return {"v": x * 2}
+
+
+def _force_live(client_http: httpx.Client, prompt: str) -> str:
+    """Control: bypass the SDK so no dispatcher can serve this call (answered by the canary)."""
+    resp = client_http.post(
+        "http://model.invalid/v1/chat/completions",
+        json={"model": "gpt-fidelity", "messages": [{"role": "user", "content": prompt}]},
+    )
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+def _live_requested(i: int) -> bool:
+    return i == 0 and os.environ.get("FIDELITY_FORCE_LIVE_MODEL") == "1"
 
 
 def _model(out: dict) -> None:
@@ -97,6 +175,68 @@ def _model(out: dict) -> None:
     out["model"] = answers
 
 
+def _openai_kwargs() -> dict:
+    return {"api_key": "sk-test-not-a-key", "base_url": "http://model.invalid/v1"}
+
+
+def _model_async(out: dict) -> None:
+    import asyncio
+
+    import openai
+
+    async def run() -> list[str]:
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+        client = openai.AsyncOpenAI(http_client=http_client, **_openai_kwargs())
+        answers = []
+        for i, prompt in enumerate(("q1", "q2")):
+            if _live_requested(i):
+                answers.append(
+                    _force_live(httpx.Client(transport=httpx.MockTransport(_handler)), prompt)
+                )
+                continue
+            r = await client.chat.completions.create(
+                model="gpt-fidelity", messages=[{"role": "user", "content": prompt}]
+            )
+            answers.append(r.choices[0].message.content)
+        return answers
+
+    out["model_async"] = asyncio.run(run())
+
+
+def _model_stream(out: dict) -> None:
+    import openai
+
+    http_client = httpx.Client(transport=httpx.MockTransport(_handler))
+    client = openai.OpenAI(http_client=http_client, **_openai_kwargs())
+    answers = []
+    for i, prompt in enumerate(("q1", "q2")):
+        if _live_requested(i):
+            answers.append(_force_live(http_client, prompt))
+            continue
+        stream = client.chat.completions.create(
+            model="gpt-fidelity",
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+        answers.append("".join(c.choices[0].delta.content or "" for c in stream if c.choices))
+    out["model_stream"] = answers
+
+
+def _model_responses(out: dict) -> None:
+    import openai
+
+    http_client = httpx.Client(transport=httpx.MockTransport(_handler))
+    client = openai.OpenAI(http_client=http_client, **_openai_kwargs())
+    answers = []
+    for i, prompt in enumerate(("q1", "q2")):
+        if _live_requested(i):
+            answers.append(_force_live(http_client, prompt))
+            continue
+        r = client.responses.create(model="gpt-fidelity", input=prompt)
+        answers.append(r.output_text)
+    out["model_responses"] = answers
+
+
 def _net(out: dict) -> None:
     import socket
 
@@ -116,6 +256,16 @@ def _child_net(out: dict) -> None:
         check=False,
     )
     out["child_net_rc"] = proc.returncode
+
+
+def _py_child_net(out: dict) -> None:
+    # A *Python* child: the support matrix says replay observes its connections (ADR-0304).
+    port = int(os.environ["FIDELITY_SINK_PORT"])
+    code = f"import socket; socket.create_connection(('127.0.0.1', {port}), timeout=5).close()"
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, timeout=30, check=False
+    )
+    out["py_child_net_rc"] = proc.returncode
 
 
 def _file(out: dict, per_phase: bool = False) -> None:
@@ -147,12 +297,20 @@ def main() -> int:
     for step in STEPS:
         if step == "model":
             _model(out)
+        elif step == "model_async":
+            _model_async(out)
+        elif step == "model_stream":
+            _model_stream(out)
+        elif step == "model_responses":
+            _model_responses(out)
         elif step == "tool":
             out["tool"] = lookup(21)
         elif step == "net":
             _net(out)
         elif step == "child_net":
             _child_net(out)
+        elif step == "py_child_net":
+            _py_child_net(out)
         elif step == "file":
             _file(out)
         elif step == "file_per_phase":

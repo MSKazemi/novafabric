@@ -92,6 +92,34 @@ def test_s5_oracle_sees_the_child_process_connection(corpus: Corpus) -> None:
     assert score.replay.connections == 1
 
 
+def test_s4_report_declares_complete_observation_within_the_python_process(
+    corpus: Corpus,
+) -> None:
+    report = corpus.score("S4").report
+    assert report["network_observation_scope"] == "python-process"
+    assert report["network_observation_coverage"] == "complete"
+    assert report["child_processes_unobserved"] == 0
+
+
+def test_s5_report_declares_that_it_could_not_observe_the_child(corpus: Corpus) -> None:
+    """The oracle saw a connection the counter missed; the report must say it was blind."""
+    score = corpus.score("S5")
+    assert score.replay.connections == 1
+    assert score.report["network_connections_live"] == 0  # the counter alone would say "none"
+    assert score.report["network_observation_coverage"] == "partial"
+    assert score.report["child_processes_unobserved"] >= 1
+
+
+def test_s13_a_python_child_connection_is_counted_by_the_report(corpus: Corpus) -> None:
+    """ADR-0304: connections of Python children are observed, so the counter agrees."""
+    score = corpus.score("S13")
+    assert score.replay.connections == 1  # the oracle: the child reached the sink
+    assert score.report["network_connections_live"] == 1
+    assert score.e7["network"]["agree"] is True
+    assert score.report["network_observation_coverage"] == "complete"
+    assert score.verdict == "live-reported"
+
+
 def test_s6_oracle_sees_the_side_effect_repeated(corpus: Corpus) -> None:
     score = corpus.score("S6")
     assert score.capture.outside_writes == score.replay.outside_writes == ["ledger.txt"]

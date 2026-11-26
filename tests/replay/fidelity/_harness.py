@@ -60,8 +60,27 @@ REPLAY_BUDGET_S = 60.0
 #: not claim success. ``live-reported`` / ``live-unreported``: an oracle saw live
 #: activity and the report did / did not acknowledge every kind of it.
 #: ``diverged``: anything else (outcome differs with no live activity, yet the report
-#: claims success; or over budget).
-VERDICTS = ("faithful", "refused", "live-reported", "live-unreported", "diverged")
+#: claims success; or over budget). ``unmeasured``: the outcome reproduced but the
+#: capture oracles never saw the activity the scenario claims to exercise (or it claims
+#: none), so ``0 of 0 served`` would otherwise read as a pass.
+VERDICTS = ("faithful", "refused", "live-reported", "live-unreported", "diverged", "unmeasured")
+
+#: The oracle kind each workload step exercises (a key of ``PhaseObservation.live``).
+STEP_KINDS: dict[str, str] = {
+    "model": "model",
+    "model_async": "model",
+    "model_stream": "model",
+    "model_responses": "model",
+    "ollama": "model",
+    "ollama_embed": "model",
+    "tool": "tool",
+    "net": "network",
+    "child_net": "network",
+    "py_child_net": "network",
+    "file": "side_effects",
+    "file_per_phase": "side_effects",
+    "exit1": "",  # changes the exit code only; exercises no surface of its own
+}
 
 _runner = CliRunner()
 
@@ -184,6 +203,18 @@ class Scenario:
     needs: tuple[str, ...] = ()  # executables the scenario needs (skip if absent)
     #: Extra environment for both phases (``(name, value)`` pairs).
     env: tuple[tuple[str, str], ...] = ()
+    #: The surface this scenario measures (the row of the per-surface report).
+    surface: str = ""
+
+    @property
+    def claims(self) -> tuple[str, ...]:
+        """Oracle kinds this scenario claims to exercise, in step order, without repeats.
+
+        Raises ``KeyError`` for a step with no registered kind, so a new step cannot
+        silently claim nothing.
+        """
+        kinds = [STEP_KINDS[step] for step in self.steps]
+        return tuple(dict.fromkeys(k for k in kinds if k))
 
 
 @dataclass
@@ -247,10 +278,17 @@ def report_counters(result: dict[str, Any]) -> dict[str, Any]:
         "network_connections_live": contract.get("network_connections_live"),
         "network_observed": contract.get("network_observed"),
         "child_processes_spawned": contract.get("child_processes_spawned"),
+        # What the engine itself says it could observe (ADR-0304 / #52): a limit it declares
+        # is a disclosed limitation, one it does not is a finding.
+        "network_observation_coverage": contract.get("network_observation_coverage"),
+        "network_observation_scope": contract.get("network_observation_scope"),
+        "child_processes_unobserved": contract.get("child_processes_unobserved"),
+        "network_connections_live_children": contract.get("network_connections_live_children"),
         "divergences": [d.get("kind") for d in contract.get("divergences") or []],
         "fidelity_verdict": (result.get("fidelity") or {}).get("verdict"),
         "fidelity_failing": [
-            c.get("name") for c in (result.get("fidelity") or {}).get("checks") or []
+            c.get("name")
+            for c in (result.get("fidelity") or {}).get("checks") or []
             if c.get("equal") is False and not c.get("advisory")
         ],
         "fidelity_replay_only_writes": [
@@ -303,8 +341,15 @@ def classify(
     replay: PhaseObservation,
     report: dict[str, Any],
     live: dict[str, int] | None = None,
+    claims: tuple[str, ...] | None = None,
 ) -> tuple[str, bool, dict[str, bool]]:
-    """Verdict from oracle observations; *report* only separates refusal and E7."""
+    """Verdict from oracle observations; *report* only separates refusal and E7.
+
+    *claims* are the oracle kinds the scenario says it exercises. A would-be
+    ``faithful`` verdict needs every claimed kind to have been seen by the capture
+    oracle, and at least one claim: otherwise it is ``unmeasured``. ``None`` skips the
+    check (callers that score a bare observation pair).
+    """
     live = replay.live if live is None else live
     outcome_equal = (
         replay.started
@@ -316,6 +361,8 @@ def classify(
     if any(live.values()):
         return ("live-reported" if all(ack.values()) else "live-unreported"), outcome_equal, ack
     if outcome_equal and replay.wall_s <= REPLAY_BUDGET_S:
+        if claims is not None and (not claims or any(not capture.live[k] for k in claims)):
+            return "unmeasured", outcome_equal, ack
         return "faithful", outcome_equal, ack
     if not outcome_equal and report.get("status") != "success":
         return "refused", outcome_equal, ack
@@ -456,8 +503,11 @@ class Harness:
         base = self.root / (name or scenario.sid)
         for sub in ("work", "outside", "runs", "replays", "home"):
             (base / sub).mkdir(parents=True, exist_ok=True)
-        extra = {"FIDELITY_STEPS": ",".join(scenario.steps), "NOVA_CAPTURE_LEVEL": scenario.level,
-                 **dict(scenario.env)}
+        extra = {
+            "FIDELITY_STEPS": ",".join(scenario.steps),
+            "NOVA_CAPTURE_LEVEL": scenario.level,
+            **dict(scenario.env),
+        }
         obs, result = self._run(
             base,
             "capture",
@@ -494,7 +544,9 @@ class Harness:
         new = sorted(set(replays.iterdir()) - before)
         assert len(new) == 1, f"{captured.scenario.sid}: no replay result\n{result.output}"
         report = report_counters(yaml.safe_load((new[0] / "replay_result.yaml").read_text()))
-        verdict, outcome_equal, ack = classify(captured.observation, obs, report)
+        verdict, outcome_equal, ack = classify(
+            captured.observation, obs, report, claims=captured.scenario.claims
+        )
         e7 = {
             kind: {
                 "oracle": n,
@@ -532,19 +584,32 @@ class Captured:
 SCENARIOS: dict[str, Scenario] = {
     s.sid: s
     for s in (
-        Scenario("S1", "OpenAI SDK model calls only", ("model",)),
+        Scenario(
+            "S1",
+            "OpenAI SDK model calls only",
+            ("model",),
+            surface="openai.chat.completions (sync)",
+        ),
         Scenario(
             "S2",
             "+ record.tool at the default standard level",
             ("model", "tool"),
             expected=frozenset({"refused"}),
+            surface="record.tool at standard capture level",
         ),
-        Scenario("S3", "+ record.tool at forensic", ("model", "tool"), level="forensic"),
+        Scenario(
+            "S3",
+            "+ record.tool at forensic",
+            ("model", "tool"),
+            level="forensic",
+            surface="record.tool at forensic capture level",
+        ),
         Scenario(
             "S4",
             "+ Python socket to a loopback sink",
             ("model", "net"),
             expected=frozenset({"live-reported", "refused"}),
+            surface="network: Python socket in the replayed process",
         ),
         Scenario(
             "S5",
@@ -552,18 +617,41 @@ SCENARIOS: dict[str, Scenario] = {
             ("model", "child_net"),
             expected=frozenset({"live-reported", "refused"}),
             needs=("bash",),
+            surface="network: non-Python child process",
         ),
         Scenario(
             "S6",
             "+ file side effect outside the work dir",
             ("model", "file"),
             expected=frozenset({"live-reported", "refused"}),
+            surface="file side effect outside the work dir (repeated path)",
+        ),
+        # S13 (issue #59): a *Python* child process. The support matrix says replay
+        # observes the connections of the replayed process and of its Python children;
+        # until now only a non-Python child (S5) was scored. Pre-registered 2026-11-23
+        # before the workload could run it.
+        Scenario(
+            "S13",
+            "+ Python child process connecting to the sink",
+            ("model", "py_child_net"),
+            expected=frozenset({"live-reported", "refused"}),
+            surface="network: Python child process",
         ),
         # S7 was pre-registered on 2026-11-19 as live-reported/refused, when replay had
         # no Ollama surface; ADR-0320 (#51) records and serves /api/chat, so a correct
         # system now replays it faithfully. S9 keeps the unservable-model case (#49).
-        Scenario("S7", "Ollama /api/chat to a loopback fake (served, ADR-0320)", ("ollama",)),
-        Scenario("S8", "original run exits 1", ("model", "exit1")),
+        Scenario(
+            "S7",
+            "Ollama /api/chat to a loopback fake (served, ADR-0320)",
+            ("ollama",),
+            surface="ollama /api/chat (raw httpx)",
+        ),
+        Scenario(
+            "S8",
+            "original run exits 1",
+            ("model", "exit1"),
+            surface="recorded run that failed (exit 1)",
+        ),
         Scenario(
             "S9",
             "Ollama /api/embed to a loopback fake (a model call replay cannot serve)",
@@ -572,6 +660,28 @@ SCENARIOS: dict[str, Scenario] = {
             # ADR-0324 records /api/embed with its response (generic wire) and serves it;
             # with body recording off it stays the pre-registered unservable case (#49).
             env=(("NOVAFABRIC_CAPTURE_WIRE_RESPONSES", "off"),),
+            surface="ollama /api/embed, body recording off (unservable)",
+        ),
+        # S10-S12 (issue #59): the OpenAI call shapes the support matrix lists as served
+        # besides sync Chat Completions. Pre-registered 2026-11-23 before the workload
+        # could run them: a correct system replays each faithfully with no live call.
+        Scenario(
+            "S10",
+            "OpenAI SDK async Chat Completions",
+            ("model_async",),
+            surface="openai.chat.completions (async)",
+        ),
+        Scenario(
+            "S11",
+            "OpenAI SDK streamed Chat Completions",
+            ("model_stream",),
+            surface="openai.chat.completions (stream)",
+        ),
+        Scenario(
+            "S12",
+            "OpenAI SDK Responses API",
+            ("model_responses",),
+            surface="openai.responses",
         ),
     )
 }
