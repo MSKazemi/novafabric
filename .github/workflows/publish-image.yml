@@ -8,16 +8,34 @@ name: Publish container image
 # GHCR auth uses the built-in GITHUB_TOKEN (OIDC) — no stored secret required,
 # mirroring the PyPI Trusted Publisher in publish-pypi.yml.
 #
+# Release order (issue #218) — nothing reaches a production registry before the
+# exact image has been scanned on every platform it ships:
+#   1. build the multi-arch CANDIDATE into a throw-away registry that lives and
+#      dies with this job (never GHCR, never Docker Hub);
+#   2. scan that digest once per platform — a finding, crash, timeout or missing
+#      platform fails the job;
+#   3. only then log in to the production registries and copy the SAME digest
+#      (no rebuild), verifying the manifest bytes after each copy;
+#   4. sign and attest the production digest;
+#   5. last, move the release tags (X.Y.Z, X.Y, latest) onto that digest.
+#
 # Fires when a v* tag is pushed (same trigger as release.yml / publish-pypi.yml).
 on:
   push:
     tags:
       - "v*"
   # Allow a manual re-publish from the Actions tab if a tag run needs a retry.
+  # It runs the SAME job, so it cannot skip the scan.
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# One publish per ref at a time. cancel-in-progress is false on purpose: a
+# cancelled run could stop between two tag moves and leave a half-promoted release.
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   ci-green:
@@ -31,9 +49,9 @@ jobs:
 
   image:
     needs: ci-green
-    name: Build and push image
+    name: Build candidate, scan, promote by digest
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     # Publish only from the public repo. A tag pushed to the private mirror
     # (MSKazemi/novafabric-private) must never publish images.
     if: github.repository == 'MSKazemi/novafabric'
@@ -46,35 +64,36 @@ jobs:
       # actions/attest-build-provenance writes an attestation for the image.
       attestations: write
     env:
-      # Presence of this secret toggles the optional Docker Hub mirror.
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Whether the DOCKERHUB_TOKEN secret exists toggles the optional Docker Hub
+      # mirror. Only that boolean lives in the job environment: the token itself is
+      # passed to the login step alone, so the build and scan steps above the gate
+      # never see it.
+      DOCKERHUB_MIRROR: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+      CANDIDATE_REPO: localhost:5000/novafabric
+    services:
+      # The candidate registry. Pinned by digest; bound to loopback so nothing
+      # outside this job can read or write the unscanned image.
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports:
+          - 127.0.0.1:5000:5000
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          # Nothing in this job pushes to the repository; do not leave the token in
+          # .git/config for every later (third-party) step to read.
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Log in to GHCR
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to Docker Hub
-        if: env.DOCKERHUB_TOKEN != ''
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          # Username is not sensitive; override with the DOCKERHUB_USERNAME repo
-          # variable if it ever changes.
-          username: ${{ vars.DOCKERHUB_USERNAME || 'kazemi' }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          # The BuildKit container must reach the candidate registry on the host.
+          driver-opts: network=host
 
       - name: Derive image tags and labels
         id: meta
@@ -82,6 +101,7 @@ jobs:
         with:
           # GHCR always; Docker Hub only when the mirror secret is present.
           # DOCKERHUB_REPO repo variable overrides the default namespace/name.
+          # These are the PRODUCTION tags: they are consumed only after the gate.
           images: |
             ghcr.io/${{ github.repository }}
             name=docker.io/${{ vars.DOCKERHUB_REPO || 'kazemi/novafabric' }},enable=${{ secrets.DOCKERHUB_TOKEN != '' }}
@@ -99,15 +119,32 @@ jobs:
             type=sha,format=short,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=semver,pattern={{major}}.{{minor}}
 
-      - name: Build and push
+      - name: Check the release tag set (fails before any build, copy or signature)
+        # A v* tag that is not semver, or a run that derived no tag for GHCR, must stop
+        # here in seconds, not after the copy. Also refuses, for a run that is not a tag
+        # push, any name in the release namespace (X.Y.Z, X.Y, latest): a branch called
+        # 0.109.0 must not be able to re-point a release tag. No registry, no credential.
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+          # Only a real tag push has an immutable X.Y.Z; a branch dispatch does not.
+          IMMUTABLE: ${{ github.ref_type == 'tag' && steps.meta.outputs.version || '' }}
+        run: |
+          # An OCI repository name must be lowercase (see "Resolve the lowercase image reference").
+          repo=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          python3 scripts/release_image.py check-tags \
+            --repo "$repo" --meta-tags "$META_TAGS" --immutable "$IMMUTABLE"
+
+      - name: Build candidate (local registry only)
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: deploy/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
+          # `push` targets the loopback candidate registry above — never a
+          # production registry. No production login exists yet at this point.
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ env.CANDIDATE_REPO }}:candidate
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -116,13 +153,50 @@ jobs:
           sbom: true
           provenance: mode=max
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Scan the candidate digest on every shipped platform (trivy gate)
+        # The release scan policy, applied to the exact digest that will be promoted and
+        # to BOTH platforms: trivy scans only the runner's platform unless told
+        # otherwise, so the previous single scan never looked at arm64.
+        uses: ./.github/actions/scan-candidate
         with:
-          # Pinned: cosign-installer v4.1.3 changed its default to cosign v3.1.4. Keep the
-          # signing tool unchanged until a tag run has verified the new one (the signature
-          # layout moved once before, with cosign v3).
-          cosign-release: 'v3.0.6'
+          image-ref: ${{ env.CANDIDATE_REPO }}@${{ steps.build.outputs.digest }}
+
+      - name: Upload trivy scan reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trivy-report-${{ github.sha }}
+          path: trivy-report-*.json
+          retention-days: 90
+
+      - name: Check the scan evidence (digest, architecture, no fixable CRITICAL)
+        # A green gate step proves trivy exited 0, not what it scanned. If
+        # TRIVY_PLATFORM never reached trivy, "arm64" would be a clean amd64 scan.
+        # This needs no credential, so it runs before any production login.
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          python3 scripts/release_image.py check-reports \
+            --digest "$DIGEST" --report-dir . \
+            --platform linux/amd64 --platform linux/arm64
+
+      # ---- Nothing above this line can write to a production registry. ------
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_MIRROR == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          # Username is not sensitive; override with the DOCKERHUB_USERNAME repo
+          # variable if it ever changes.
+          username: ${{ vars.DOCKERHUB_USERNAME || 'kazemi' }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Resolve the lowercase image reference
         # An OCI repository name MUST be lowercase, but `github.repository`
@@ -137,9 +211,44 @@ jobs:
         run: |
           echo "ref=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
+      - name: Promote the scanned digest to GHCR (copy by digest, then verify)
+        # Tagless copy (DEST@digest): no staging tag is ever visible. If the first
+        # real run shows GHCR refusing a tagless manifest PUT, the one-line
+        # fallback is `--stage-tag "scanned-${DIGEST:7:12}"` here and below
+        # (still undecided).
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          python3 scripts/release_image.py promote \
+            --src-repo "$CANDIDATE_REPO" --dest-repo "$IMAGE" \
+            --digest "$DIGEST" --report-dir . \
+            --platform linux/amd64 --platform linux/arm64
+
+      - name: Promote the scanned digest to Docker Hub (optional mirror)
+        if: env.DOCKERHUB_MIRROR == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: docker.io/${{ vars.DOCKERHUB_REPO || 'kazemi/novafabric' }}
+        run: |
+          python3 scripts/release_image.py promote \
+            --src-repo "$CANDIDATE_REPO" --dest-repo "$IMAGE" \
+            --digest "$DIGEST" --report-dir . \
+            --platform linux/amd64 --platform linux/arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          # Pinned: cosign-installer v4.1.3 changed its default to cosign v3.1.4. Keep the
+          # signing tool unchanged until a tag run has verified the new one (the signature
+          # layout moved once before, with cosign v3).
+          cosign-release: 'v3.0.6'
+
       - name: Sign the image (keyless, Sigstore/Fulcio + Rekor)
         # Signs the immutable digest, not the mutable tag. Keyless: the identity
-        # is this workflow's OIDC token, logged transparently to Rekor.
+        # is this workflow's OIDC token, logged transparently to Rekor. A
+        # signature is attached to a digest in ONE registry and does not follow a
+        # copy, so this runs on the promoted production digest.
         env:
           COSIGN_YES: "true"
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -152,38 +261,29 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-      - name: Scan image (trivy, full report — informational)
-        # Vulnerability scan of the image we just published (ADR-0186).
-        # This pass reports ALL severities for the release record and never
-        # blocks by itself; the gate is the next step.
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.image.outputs.ref }}:${{ steps.meta.outputs.version }}
-          format: table
-          output: trivy-report.txt
-          exit-code: "0"
-
-      - name: Upload trivy scan report
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: trivy-report-${{ github.sha }}
-          path: trivy-report.txt
-          retention-days: 90
-
-      - name: Gate on fixable CRITICAL vulnerabilities (trivy)
-        # ADR-0186: block the release on CRITICAL findings that have an
-        # available fix. Unfixable criticals (ignore-unfixed) report in the
-        # full scan above but do not wedge the release behind upstream
-        # base-image lag; if they persist they enter the waiver discipline.
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.image.outputs.ref }}:${{ steps.meta.outputs.version }}
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          # trivy is already installed and its DB cached by the report step.
-          skip-setup-trivy: true
+      - name: Move release tags on GHCR (last step that publishes)
         env:
-          TRIVY_SKIP_DB_UPDATE: true
-          TRIVY_SKIP_JAVA_DB_UPDATE: true
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ steps.image.outputs.ref }}
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+          # Only a real tag push has an immutable X.Y.Z; a branch dispatch does not.
+          IMMUTABLE: ${{ github.ref_type == 'tag' && steps.meta.outputs.version || '' }}
+        run: |
+          python3 scripts/release_image.py tag \
+            --repo "$IMAGE" --digest "$DIGEST" --meta-tags "$META_TAGS" \
+            --immutable "$IMMUTABLE" \
+            --platform linux/amd64 --platform linux/arm64
+
+      - name: Move release tags on Docker Hub (optional mirror)
+        if: env.DOCKERHUB_MIRROR == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: docker.io/${{ vars.DOCKERHUB_REPO || 'kazemi/novafabric' }}
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+          # Only a real tag push has an immutable X.Y.Z; a branch dispatch does not.
+          IMMUTABLE: ${{ github.ref_type == 'tag' && steps.meta.outputs.version || '' }}
+        run: |
+          python3 scripts/release_image.py tag \
+            --repo "$IMAGE" --digest "$DIGEST" --meta-tags "$META_TAGS" \
+            --immutable "$IMMUTABLE" \
+            --platform linux/amd64 --platform linux/arm64

@@ -1,0 +1,78 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.76.2"
+  },
+  "ReportID": "01a208a5-0158-7460-b598-4737b035a37d",
+  "CreatedAt": "2026-11-23T13:42:41.240290637Z",
+  "ArtifactID": "sha256:85d41ff4e384f1d3f55f3609a12c8917cada62e4b9b619035befdc4cc10993cf",
+  "ArtifactName": "/lay",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "Size": 5120,
+    "ImageID": "sha256:85d41ff4e384f1d3f55f3609a12c8917cada62e4b9b619035befdc4cc10993cf",
+    "DiffIDs": [
+      "sha256:0f408c3387dd0ea5ef3b1f5a68c2e24245cf81520e9223fba158e96f89f612c7"
+    ],
+    "ImageConfig": {
+      "architecture": "amd64",
+      "created": "2026-11-23T13:38:50.526565092Z",
+      "history": [
+        {
+          "created": "2026-11-23T13:38:50.526565092Z",
+          "created_by": "ARG TARGETARCH=amd64",
+          "comment": "buildkit.dockerfile.v0",
+          "empty_layer": true
+        },
+        {
+          "created": "2026-11-23T13:38:50.526565092Z",
+          "created_by": "COPY site-amd64/ /usr/local/lib/python3.12/site-packages/ # buildkit",
+          "comment": "buildkit.dockerfile.v0"
+        }
+      ],
+      "os": "linux",
+      "rootfs": {
+        "type": "layers",
+        "diff_ids": [
+          "sha256:0f408c3387dd0ea5ef3b1f5a68c2e24245cf81520e9223fba158e96f89f612c7"
+        ]
+      },
+      "config": {
+        "Env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ],
+        "WorkingDir": "/"
+      }
+    },
+    "Layers": [
+      {
+        "Size": 5120,
+        "Digest": "sha256:9ff28e2e4cb39cb568dc89e6ebfc11e0c06beabedd10db2980f4188f19046e5c",
+        "DiffID": "sha256:0f408c3387dd0ea5ef3b1f5a68c2e24245cf81520e9223fba158e96f89f612c7"
+      }
+    ]
+  },
+  "Results": [
+    {
+      "Target": "Python",
+      "Class": "lang-pkgs",
+      "Type": "python-pkg",
+      "Packages": [
+        {
+          "Name": "harmless",
+          "Identifier": {
+            "PURL": "pkg:pypi/harmless@1.0.0",
+            "UID": "e983bb09ce9c5560"
+          },
+          "Version": "1.0.0",
+          "Layer": {
+            "Digest": "sha256:9ff28e2e4cb39cb568dc89e6ebfc11e0c06beabedd10db2980f4188f19046e5c",
+            "DiffID": "sha256:0f408c3387dd0ea5ef3b1f5a68c2e24245cf81520e9223fba158e96f89f612c7"
+          },
+          "FilePath": "usr/local/lib/python3.12/site-packages/harmless-1.0.0.dist-info/METADATA",
+          "AnalyzedBy": "python-pkg"
+        }
+      ]
+    }
+  ]
+}

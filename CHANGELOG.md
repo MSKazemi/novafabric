@@ -184,6 +184,45 @@ longer forwards the submitting shell's environment (ADR-0270).
   - `bagit` still refuses a capsule holding a symbolic link first (exit 1), so a symlinked `.seal` is refused by that older rule. To preserve a capsule you know is damaged, copy it with an ordinary archive tool; the export is not a forensic copy.
   - **HTTP:** `POST /api/compliance/examiner/{pccp,bagit,iso42001}` and `POST /api/compliance/export/ropa` answer **409** with the refusal message for such a capsule; they answered 500, which reads as a server fault. Any other export failure is still 500. A client that treated 500 as the refusal signal should test for 409.
 
+### Security
+
+- **Experimental: the release image is scanned on both platforms before any production tag exists (#218).**
+  `publish-image.yml` used to push the image to GHCR and Docker Hub under its release tags, sign and attest it, and
+  only then run trivy, so a failing gate failed a job whose image was already public (run `45046197296` for v0.109.0:
+  the push finished at 16:54:57Z, cosign signing at 16:55:02Z and the gate ended at 16:55:25Z, so the image was
+  public about 28 s before the gate finished, and the gate finished about 23 s after the image was signed). The trivy scan also covered only the runner's platform,
+  so the `linux/arm64` half of the image was never scanned. The job now builds once into a loopback-only registry
+  that exists for the job, scans that digest on `linux/amd64` and `linux/arm64` (a finding, crash, timeout or missing
+  platform fails the job), checks that each platform's JSON report names the scanned digest and the right
+  architecture (a report that silently covered another platform is a failure, not a pass), and only then logs in,
+  copies the same digest to GHCR and Docker Hub with a byte-for-byte check (`scripts/release_image.py`), signs and
+  attests the promoted digest, and moves `X.Y.Z`, `X.Y` and `latest` last. The copy is by digest alone, so no staging
+  tag is visible (a one-line `--stage-tag` fallback is documented in `docs/release-process.md`). Before it moves `X.Y.Z`
+  the tag step reads where that tag points and refuses to move it to a different digest; that check is a read-then-write
+  in the script, not a registry-side guarantee, and no tag immutability is configured at GHCR or Docker Hub. The index
+  that is promoted may contain only image children with a unique real platform and BuildKit attestation manifests
+  (a duplicate, platform-less, `unknown/<arch>` or unannotated `unknown/unknown` child, or a platform nobody scanned, is
+  refused). A run that is not a `v*` tag push (`workflow_dispatch` from a branch) may not write `latest` or any tag that
+  starts with a digit, so a branch named `0.109.0` cannot re-point a release tag; it still publishes `:<branch>` and
+  `:sha-<short>` after the scan. Whether a dispatch should instead be scan-only is still undecided.
+  The tag set is validated before the build, the checkout no longer persists the token, and registry error text is
+  escaped so it cannot forge workflow commands. The Docker Hub
+  token is no longer in the job environment of the build and scan steps. The scanner is pinned to trivy v0.76.2 **by hand** in
+  `.github/actions/scan-candidate/action.yml` (an action input, so Dependabot does not bump it); the previous gate ran
+  the action's default, trivy v0.70.0, so this is a scanner version jump and future bumps are manual. A
+  new `image-gate` job in `release-toolchain.yml` runs the real gate, evidence check and promotion on fixtures (clean,
+  vulnerable, arm64-only vulnerable) and two local registries on every pull request that touches the publish path.
+  The trivy report artifact is now JSON (`trivy-report-linux-<arch>.json`) instead of a text table.
+  A fixable CRITICAL finding blocks **container image publication** only: the PyPI package, the GitHub Release and
+  the Helm chart run as independent workflows. A tag run uses the workflow file of its own tag, so nothing in the
+  repository prevents a tag on a commit that removes the gate; a protected GitHub Environment with required reviewers
+  would; it is not configured.
+  **Experimental:** the copy to GHCR and Docker Hub, cosign on the promoted digest and `TRIVY_PLATFORM` through
+  trivy-action are first executed by the next tag run. The release job timeout is 60 minutes (was 30). Tests:
+  `tests/docs/test_publish_image_gates_promotion_on_scan.py`, `tests/test_release_image.py`,
+  `tests/test_release_image_scan_evidence.py`, `tests/test_release_image_registry.py`,
+  `tests/deploy/test_release_image_scenarios.py`.
+
 ## [0.109.0] - 2026-11-22
 
 **Replay that refuses rather than pretends: what it cannot serve, it names.**
