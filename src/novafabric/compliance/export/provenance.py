@@ -54,6 +54,9 @@ _DEFAULT_REF_FILES: tuple[str, ...] = (
     "tool-calls.jsonl",
 )
 
+#: Public name: the files a capsule reference digests (a sealed capsule must cover them all).
+CAPSULE_REF_FILES = _DEFAULT_REF_FILES
+
 
 class EvidenceSource(str, Enum):
     """How a compliance-export field-group value was established (ADR-0197 D1)."""

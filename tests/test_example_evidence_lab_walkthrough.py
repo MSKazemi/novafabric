@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -465,7 +466,11 @@ INSPECT_OK = (
     "│ status: development                         │\n"
     "╰─────────────────────────────────────────────╯\n"
 )
-REGISTRY_OK = {"registry_exit_code": 0, "registry_output": INSPECT_OK}
+#: The fixture digest the scenario's own files hash to (computed here, not read from a run).
+FIXTURE_DIGEST = "ab" * 32
+REGISTRY_OK = {"registry_exit_code": 0, "registry_output": INSPECT_OK,
+               "expected_fixture_sha256": FIXTURE_DIGEST,
+               "registered_fixture_sha256": FIXTURE_DIGEST}
 
 
 @pytest.mark.parametrize(
@@ -492,6 +497,144 @@ def test_judge_lineage(provenance: Any, edges: Any, reason: str) -> None:
     assert c.name == "run_declared_registered_asset"
 
 
+def test_an_unreadable_lineage_artifact_is_a_named_lineage_failure() -> None:
+    """A capsule whose lineage.jsonl cannot be read after capture is judged, not aborted."""
+    c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}], None,
+                         run_id="R", exit_code=0, artifact=None,
+                         edges_error="E_CAPSULE_INVALID: cannot read lineage.jsonl",
+                         **REGISTRY_OK)  # fmt: skip
+    assert (c.verdict, c.reason_code, c.as_expected) == ("FAIL", "lineage-artifact-unreadable",
+                                                         False)  # fmt: skip
+    assert c.observed["edges_error"] == "E_CAPSULE_INVALID: cannot read lineage.jsonl"
+    assert c.observed["registry_reason"] is None
+
+
+@pytest.mark.parametrize(
+    ("registry", "registry_reason"),
+    [
+        (REGISTRY_OK, None),
+        ({**REGISTRY_OK, "registered_fixture_sha256": "cd" * 32}, "asset-content-mismatch"),
+        ({**REGISTRY_OK, "registered_fixture_sha256": None}, "asset-content-mismatch"),
+        ({**REGISTRY_OK, "registry_exit_code": 1, "registry_output": ""}, "asset-not-in-registry"),
+    ],
+    ids=["registry-ok", "other-dataset", "no-digest", "not-in-registry"],
+)  # fmt: skip
+def test_an_unreadable_lineage_artifact_still_reports_the_registry_side(
+    registry: dict[str, Any], registry_reason: str | None
+) -> None:
+    """The unreadable-lineage reason stays first, but a bad registration is not hidden by it."""
+    c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}], None,
+                         run_id="R", exit_code=0, artifact=None, edges_error="unreadable",
+                         **registry)  # fmt: skip
+    assert (c.verdict, c.reason_code) == ("FAIL", "lineage-artifact-unreadable")
+    assert c.observed["registry_reason"] == registry_reason
+    assert "registry_readback" in c.observed
+
+
+PRETTY = json.dumps({"a": 1, "items": [{"x": 1}, {"y": 2}], "k": [["p", "q"], ["r"]]}, indent=2)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('{"a": 1}', {"a": 1}),
+        ('warning, no brackets\n{"a": 1}\n', {"a": 1}),
+        ('[novafabric] WARNING: dev-only backend\n{"a": 1}\n', {"a": 1}),
+        ('[WARN] one\n[WARN] two\n[1, 2]\n', [1, 2]),
+        ('WARNING [novafabric] dev-only backend\n[1, 2]\n', [1, 2]),
+        ('{"msg": "a [b] c"}', {"msg": "a [b] c"}),
+        ("[novafabric] WARNING: nothing structured follows\n", None),
+        ("", None),
+        # A warning that is itself valid JSON, on the same line as other text, is not the document.
+        ('[1] deprecated\n{"a": 1}\n', {"a": 1}),
+        # A warning after the document (stderr is merged into stdout) is ignored, bracketed or not.
+        ('{"a": 1}\n[novafabric] WARNING: closing\n', {"a": 1}),
+        ('{"a": 1}\nWARNING: closing\n', {"a": 1}),
+        (PRETTY + "\n[novafabric] WARNING: closing\n", json.loads(PRETTY)),
+    ],
+    ids=["plain", "plain-warning", "bracket-prefix-warning", "two-bracket-warnings",
+         "bracket-inside-warning", "bracket-inside-json", "only-a-warning", "empty",
+         "json-valued-warning-same-line", "trailing-bracket-warning", "trailing-warning",
+         "pretty-with-trailing-warning"],
+)  # fmt: skip
+def test_json_from_output_skips_a_warning_that_contains_a_bracket(text: str, expected: Any) -> None:
+    assert run._json_from_output(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        PRETTY[: PRETTY.index('"y"') + 2],  # cut inside the second list item
+        PRETTY[: PRETTY.index('"r"') + 1],  # cut inside the last nested list
+        '{\n  "a": 1,\n  "items": [\n    {"x": 1}\n',  # cut right after a complete item
+        '[\n  [1, 2]\n',  # cut right after a complete nested list
+        '{"a": 1, "b": [1, 2',  # compact, cut mid-array
+        '[novafabric] WARNING: x\n{"a": 1, "b"',  # truncated behind a warning
+    ],
+    ids=["mid-item", "mid-nested-list", "after-complete-item", "after-complete-nested-list",
+         "compact", "behind-warning"],
+)  # fmt: skip
+def test_json_from_output_never_returns_a_fragment_of_truncated_output(text: str) -> None:
+    assert run._json_from_output(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('  {"a": 1}\n', None),  # indented: the document must start the line
+        ('warning {"a": 1}\n', None),  # bracket mid-line is not a document start
+        ('[1]\n{"a": 1}\n', {"a": 1}),  # two documents: the one that ends the output wins
+        ('{"a": 1}\n{"b": 2}\n', {"b": 2}),
+        ('{"a": 1}\n[3]\nWARNING: tail\n', [3]),
+        ('{"a": 1} trailing\n', None),  # text on the document's last line: not a clean end
+        ('{"a": 1} trailing', None),  # ... also when the output has no final newline
+        ('{"a": 1} x', None),
+        (PRETTY + " trailing\n", None),  # ... also when the document spans lines
+        (PRETTY + "  \t\n", json.loads(PRETTY)),  # whitespace after it is fine
+        (PRETTY, json.loads(PRETTY)),  # ... and so is nothing
+        ("[WARN] w\n" * 19 + '{"a": 1}\n', {"a": 1}),  # 20 candidate lines: the cap
+        ("[WARN] w\n" * 20 + '{"a": 1}\n', None),  # 21: over the cap is not parseable
+    ],
+    ids=["indented", "mid-line", "list-then-dict", "two-docs", "two-docs-then-warning",
+         "text-after-doc-same-line", "text-after-doc-no-newline", "one-char-after-doc",
+         "text-after-pretty-doc", "whitespace-after-doc", "nothing-after-doc",
+         "twenty-candidates", "twenty-one-candidates"],
+)  # fmt: skip
+def test_json_from_output_document_must_start_a_line_and_end_its_line(
+    text: str, expected: Any
+) -> None:
+    assert run._json_from_output(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[x\n" * 100_000,  # 300 KB of bracket-led non-JSON lines
+        "{ " * 524_288,  # 1 MiB of nested-looking opens on one line
+        "[" * 100_000,
+        "[x\n" * 100_000 + '{"a": 1}\n',  # a document behind far too many warnings
+    ],
+    ids=["many-warning-lines", "one-huge-line", "deep-open-brackets", "document-behind-flood"],
+)  # fmt: skip
+def test_json_from_output_is_bounded_on_pathological_output(text: str) -> None:
+    started = time.monotonic()
+    assert run._json_from_output(text) is None
+    assert time.monotonic() - started < 2.0
+
+
+def test_json_from_output_survives_a_deeply_nested_valid_document() -> None:
+    deep = "[" * 100_000 + "]" * 100_000 + "\n"
+    assert run._json_from_output(deep) is None  # RecursionError is "not parseable", not a crash
+    assert run._json_from_output("[WARN] x\n" + deep) is None
+
+
+def test_the_registered_asset_path_is_the_scenario_actually_used(tmp_path: Path) -> None:
+    """--scenarios-root must reach the asset spec: the registered path is the loaded scenario."""
+    scenario_dir = _copy_scenario(tmp_path)
+    spec = yaml.safe_load(run._asset_spec(lab.load_scenario(scenario_dir), scenario_dir))
+    assert spec["spec"]["path"] == str(scenario_dir.resolve())
+
+
 def test_judge_lineage_fails_when_the_query_fails() -> None:
     c = wt.judge_lineage("unsafe", None, [], run_id="R", exit_code=1, artifact=None,
                          **REGISTRY_OK)  # fmt: skip
@@ -514,8 +657,32 @@ def test_judge_lineage_needs_the_asset_read_back_from_the_registry(code: int, ou
     assets.jsonl and never consults the registry, so registration is read back separately."""
     c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}],
                          [_edge("R")], run_id="R", exit_code=0, artifact=None,
-                         registry_exit_code=code, registry_output=output)  # fmt: skip
+                         registry_exit_code=code, registry_output=output,
+                         expected_fixture_sha256=FIXTURE_DIGEST,
+                         registered_fixture_sha256=FIXTURE_DIGEST)  # fmt: skip
     assert (c.verdict, c.reason_code, c.as_expected) == ("FAIL", "asset-not-in-registry", False)
+
+
+@pytest.mark.parametrize(
+    "registered",
+    ["cd" * 32, None, "", FIXTURE_DIGEST.upper() + "0"],
+    ids=["other-dataset", "unreadable", "empty", "not-the-digest"],
+)
+def test_judge_lineage_binds_the_registered_asset_to_the_fixtures(registered: str | None) -> None:
+    """The asset's name, version and type say nothing about WHICH dataset was registered.
+
+    The run declared a name; only the fixture digest stored with the asset (``nova register``
+    keeps it under ``tags``; ``nova inspect`` does not print tags) ties that name to the
+    files the tools served. A registry entry with the right name but another digest must not
+    pass as the scenario's dataset."""
+    c = wt.judge_lineage("unsafe", [{"kind": "asset", "ref": f"local:{ASSET_REF}"}],
+                         [_edge("R")], run_id="R", exit_code=0, artifact=None,
+                         registry_exit_code=0, registry_output=INSPECT_OK,
+                         expected_fixture_sha256=FIXTURE_DIGEST,
+                         registered_fixture_sha256=registered)  # fmt: skip
+    assert (c.verdict, c.reason_code, c.as_expected) == ("FAIL", "asset-content-mismatch", False)
+    assert c.expected["registry_readback"]["fixture_manifest_sha256"] == FIXTURE_DIGEST
+    assert c.observed["registry_readback"]["fixture_manifest_sha256"] == registered
 
 
 def test_judge_lineage_says_consumption_is_declared_not_observed() -> None:
@@ -526,7 +693,8 @@ def test_judge_lineage_says_consumption_is_declared_not_observed() -> None:
     assert c.observed["consumption_source"] == "declared-by-agent"
     assert c.observed["edge_confidence_label"] == ["observed"]
     assert c.observed["registry_readback"] == {"exit_code": 0, "name": ASSET_REF.split("@")[0],
-                                               "version": "1.0.0", "asset_type": "dataset"}  # fmt: skip
+                                               "version": "1.0.0", "asset_type": "dataset",
+                                               "fixture_manifest_sha256": FIXTURE_DIGEST}  # fmt: skip
     assert any("declared" in n and "not observed" in n for n in c.notes)
 
 
@@ -670,10 +838,14 @@ _PER_VARIANT = [("task", "policy_oracle_verdict"), ("capture", "logical_calls_an
 ZERO_KEY_CHECKS = {(a, v, n) for v in ("unsafe", "corrected") for a, n in _PER_VARIANT} | {
     ("capture", None, "nova_diff_names_the_change")
 }
-SIGNED_CHECKS = ZERO_KEY_CHECKS | {
-    ("integrity", f"negative:{case}", "broken_copy_is_refused")
-    for case in ("tampered-member", "missing-member", "corrupt-signature", "wrong-ca")
-} | {("integrity", "control:pristine-copy", "untouched_copy_verifies")}
+SIGNED_CHECKS = (
+    ZERO_KEY_CHECKS
+    | {
+        ("integrity", f"negative:{case}", "broken_copy_is_refused")
+        for case in ("tampered-member", "missing-member", "corrupt-signature", "wrong-ca")
+    }
+    | {("integrity", "control:pristine-copy", "untouched_copy_verifies")}
+)
 
 
 def _complete(required: set[tuple[str, str | None, str]]) -> list[Any]:
@@ -1032,6 +1204,116 @@ def test_a_registration_that_never_reached_the_registry_fails_lineage(tmp_path: 
             "asset-not-in-registry",
         )
         assert report["commands"][f"registry_inspect_{variant}"]["exit_code"] != 0
+
+
+@needs_nova
+def test_a_registered_asset_of_another_dataset_fails_lineage(tmp_path: Path) -> None:
+    """Right name, version and type, wrong content: the registration is rewritten on its way
+    to the real `nova register` so the stored fixture digest differs from the scenario's."""
+    fake = _fake_nova(
+        tmp_path,
+        'if [ "$1" = register ]; then\n'
+        '  sed -i -E "s/(fixture_manifest_sha256: \\")[0-9a-f]{64}/\\1$(printf %064d 0)/" "$2"\n'
+        "fi\n"
+        f'exec "{NOVA}" "$@"',
+    )  # fmt: skip
+    walked = _walk(tmp_path, "otherdata", "--nova-bin", str(fake))
+    done, report = walked["done"], walked["report"]
+    assert done.returncode == 2 and "code=E_CHECK_UNEXPECTED" in done.stderr, done.stderr[-2000:]
+    lineage = _checks(report, "capture", "run_declared_registered_asset")
+    for variant in ("unsafe", "corrected"):
+        assert (lineage[variant]["verdict"], lineage[variant]["reason_code"]) == (
+            "FAIL",
+            "asset-content-mismatch",
+        )
+    assert report["harness_verdict"] == "FAIL"
+
+
+@needs_nova
+def test_the_registered_asset_carries_the_digest_of_the_fixtures_read(
+    zero_key: dict[str, Any],
+) -> None:
+    """Positive control: in the honest run the digest read back from the registry equals the
+    one computed from the scenario files, and it is the one the report pins."""
+    import hashlib
+
+    import yaml
+
+    report = zero_key["report"]
+    lineage = _checks(report, "capture", "run_declared_registered_asset")
+    # derived here from the scenario files with the standard library, not from the harness
+    scenario = LAB / "scenarios" / "service_incident_v1"
+    pins = yaml.safe_load((scenario / "scenario.yaml").read_text())["fixture_sha256"]
+    for name, pinned in pins.items():
+        assert hashlib.sha256((scenario / name).read_bytes()).hexdigest() == pinned
+    expected = hashlib.sha256(
+        json.dumps(pins, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert report["scenario_revision"]["fixture_manifest_sha256"] == expected
+    for variant in ("unsafe", "corrected"):
+        readback = lineage[variant]["observed"]["registry_readback"]
+        assert readback["fixture_manifest_sha256"] == expected
+        assert lineage[variant]["verdict"] == "PASS"
+
+
+@needs_nova
+def test_a_lineage_artifact_lost_after_capture_is_a_named_check(tmp_path: Path) -> None:
+    """A capsule that loses lineage.jsonl after capture: the walkthrough still runs every check
+    and names the lineage failure, instead of stopping with an error and fewer checks."""
+    fake = _fake_nova(tmp_path, f'if [ "$1" = capture ]; then "{NOVA}" "$@"; rc=$?\n'
+                                f'  find "$3" -name lineage.jsonl -delete; exit $rc; fi\n'
+                                f'exec "{NOVA}" "$@"')  # fmt: skip
+    walked = _walk(tmp_path, "nolineage", "--nova-bin", str(fake))
+    done, report = walked["done"], walked["report"]
+    assert done.returncode == 2 and "code=E_CHECK_UNEXPECTED" in done.stderr, done.stderr[-2000:]
+    assert report["error"] is None and report["missing_checks"] == []
+    assert report["harness_verdict"] == "FAIL"
+    lineage = _checks(report, "capture", "run_declared_registered_asset")
+    for variant in ("unsafe", "corrected"):
+        assert (lineage[variant]["verdict"], lineage[variant]["reason_code"]) == (
+            "FAIL",
+            "lineage-artifact-unreadable",
+        )
+
+
+@needs_nova
+def test_mocked_replay_of_a_default_level_capsule_never_reports_success(tmp_path: Path) -> None:
+    """#225 honest limitation: a capsule captured at the default level records tool digests,
+    not payloads, so mocked replay cannot serve the tools. The capsule must say so, and the
+    replay must diverge with no live call — never a success or a "faithful" verdict.
+
+    A fresh walk is used because replay re-executes the agent, which rewrites that walk's
+    own ``agent-result.json`` (recorded as a file effect).
+    """
+    walked = _walk(tmp_path, "replay-src")
+    assert walked["done"].returncode == 0, walked["done"].stderr[-2000:]
+    capsule = Path(walked["report"]["runs"]["unsafe"]["capsule_path"])
+
+    replayability = json.loads((capsule / "replayability.json").read_text())
+    assert replayability["replayable"] == "partial"
+    assert replayability["tool_calls"]["not_servable"] == 2
+    reasons = {r["code"]: r for r in replayability["reasons"]}
+    assert reasons["tool_result_not_servable"]["cause"] == "payload_not_recorded"
+    assert sorted(reasons["tool_result_not_servable"]["tools"]) == ["read_metrics", "search_logs"]
+
+    home = tmp_path / "replay-home"
+    home.mkdir()
+    env = {"PATH": f"{BIN_DIR}:/usr/bin:/bin", "HOME": str(home),
+           "NOVAFABRIC_AUDIT_LOG_PATH": str(home / "audit.log")}  # fmt: skip
+    out = tmp_path / "replays"
+    done = subprocess.run([str(NOVA), "replay", str(capsule), "--mode", "mocked",
+                           "--output-dir", str(out)], capture_output=True, text=True, env=env,
+                          cwd=tmp_path, timeout=300)  # fmt: skip
+    assert done.returncode == 2, done.stdout[-2000:] + done.stderr[-2000:]
+    (result_path,) = out.glob("*/replay_result.yaml")
+    result = yaml.safe_load(result_path.read_text())
+    assert result["status"] == "failure"
+    assert result["fidelity"]["verdict"] == "diverged"
+    contract = result["replay_contract"]
+    assert (result["tool_calls_live"], contract["model_calls_live"],
+            contract["network_connections_live"]) == (0, 0, 0)  # fmt: skip
+    kinds = {d["kind"] for d in contract["divergences"]}
+    assert {"model_calls_unconsumed", "tool_calls_unconsumed"} <= kinds
 
 
 @needs_nova

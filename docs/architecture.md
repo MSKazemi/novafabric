@@ -202,8 +202,10 @@ because each one is load-bearing for a promise the project makes to users.
 4. **Full prompt/response capture should be opt-in, never the default.** As
    built, this invariant is **not met**: a default `nova capture` of a Python
    workload writes the request messages and the response choices into
-   `model-calls.jsonl` (the SDK and wire hooks, `capture/hooks/`), and mocked
-   replay depends on those stored responses. `--capture-content` governs only
+   `model-calls.jsonl` at every capture level (the SDK and wire hooks,
+   `capture/hooks/`; `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` drops only the
+   generic wire hook's response bodies), and mocked replay depends on those
+   stored responses. `--capture-content` governs only
    what the OpenTelemetry span export carries. Changing the default is an open
    decision; until then, treat a capsule as holding full prompts and responses.
 5. **No silent telemetry and no update checks.** Ever. The project has none and

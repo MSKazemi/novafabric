@@ -353,14 +353,14 @@ always reported as a gap, never fabricated. Each source is capped
 | `GET` | `/api/compliance/erasure/status` | **Experimental — works today (ADR-0210).** List persisted GDPR erasure requests from `erasure.db`, newest first (`?subject_id=` exact filter, `?limit=`, default 200). Rows are hash-only at top level (`subject_sha256`); receipts appear verbatim. Empty queue returns `requests: []` honestly. |
 | `POST` | `/api/compliance/euaiact/export` | Export EU AI Act Art.12 structured log records (ADR-0076). |
 | `GET` | `/api/compliance/euaiact/status` | Return EU AI Act Art.12 compliance configuration (ADR-0076). |
-| `POST` | `/api/compliance/examiner/{format}` | Export a capsule in examiner format (bagit / pccp / iso42001). |
+| `POST` | `/api/compliance/examiner/{format}` | Export a capsule in examiner format (bagit / pccp / iso42001). A capsule whose `.seal` fails verification is refused for all three formats (for `pccp`, in the baseline or the proposed capsule; for `iso42001`, among the capsules inside the audit period): HTTP 409, `detail` = `examiner export failed:` plus the message that names `nova verify <capsule>`, and no document. An unsealed capsule still exports, unsigned. Any other export failure is HTTP 500. |
 | `POST` | `/api/compliance/export/aibom` | Export CycloneDX 1.7 AI-SBOM (ML-BOM) — nova export-aibom. |
 | `POST` | `/api/compliance/export/c2pa` | Export C2PA v2.3 manifest for a capsule (ADR-0074 / EU AI Act Art.50). |
 | `POST` | `/api/compliance/export/hipaa-proof` | Export HIPAA Safe Harbor de-identification proof — nova export-hipaa-proof. |
 | `GET` | `/api/compliance/export/kinds` | The registry catalog the dynamic panel renders (ADR-0200 §2). |
 | `POST` | `/api/compliance/export/nist-rmf` | Export NIST AI RMF 1.0 quantitative risk report — nova export-nist-rmf. |
 | `POST` | `/api/compliance/export/rocrate` | Export a capsule as W3C RO-Crate v1.1 ZIP (base64-encoded). |
-| `POST` | `/api/compliance/export/ropa` | Export GDPR Art.30 Records of Processing Activities (RoPA) — nova export-ropa. |
+| `POST` | `/api/compliance/export/ropa` | Export GDPR Art.30 Records of Processing Activities (RoPA) — nova export-ropa. A capsule whose `.seal` fails verification is refused: HTTP 409, `detail` = the message that names `nova verify <capsule>`, and no document; an unsealed capsule still exports, unsigned. |
 | `POST` | `/api/compliance/export/{kind}` | Run one registry exporter — the same builder its CLI command calls. |
 | `GET` | `/api/compliance/nis2` | Build and return a NIS2 incident report as JSON. |
 | `POST` | `/api/compliance/pii/erase` | Destroy a data subject's DEK — nova pii erase (**experimental**: makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314). While any legal hold is active the DEK is kept: 409 `{error: "legal_hold_active", erased: false, receipt}` (GDPR Art.17(3)(e)). Optional `retention_months` must be an integer in `0..1200` (default 6; `0` = no Art.17(3)(b) window, as `nova pii erase --retention-months 0`); a negative, non-integer, boolean or string value is **422** and no key is touched. |

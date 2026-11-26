@@ -23,7 +23,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -51,6 +51,19 @@ class CapsuleIngestResult:
     skipped: int
     written: int
     unreadable: tuple[str, ...] = ()
+    #: The capsule's seal state when the caller supplied it (additive, optional).
+    seal_status: Literal["absent", "valid", "invalid"] | None = None
+
+    @property
+    def tampered(self) -> bool:
+        """True when the capsule carries a ``.seal`` that failed verification.
+
+        That is not the same as a capsule that was never sealed (``"absent"``): the
+        seal fails verification, does not name a stream that is on disk, or is a legacy
+        seal made before evidence digests that cannot vouch for any stream. Not every
+        such capsule was edited; none has a seal that vouches for its streams.
+        """
+        return self.seal_status == "invalid"
 
 
 def capsule_event_files(capsule_dir: Path) -> list[str]:
@@ -92,6 +105,7 @@ def ingest_capsule_dir(
     capsule_dir: Path,
     *,
     novaseal_valid: bool = False,
+    seal_status: Literal["absent", "valid", "invalid"] | None = None,
     operation: str = "knowledge-graph ingest",
 ) -> CapsuleIngestResult:
     """Ingest *capsule_dir*'s event files through *pipeline* and flush them.
@@ -99,7 +113,15 @@ def ingest_capsule_dir(
     *pipeline* is a :class:`~novafabric.kg.pipeline.KGIngestionPipeline`. Anything
     it had accumulated before is flushed first, additively, so it is never
     attributed to this capsule.
+
+    *seal_status* is the tri-state from
+    :func:`~novafabric.trust.novaseal.capsule_verify.capsule_seal_status`, for a caller
+    that read the seal itself. It is echoed on the result (``tampered`` is True for
+    ``"invalid"``) and a broken seal never counts as verified, whatever *novaseal_valid*
+    says. Omitted, behaviour is exactly as before.
     """
+    if seal_status == "invalid":
+        novaseal_valid = False
     pipeline.flush_to_store()
     capsule_id = capsule_identity(capsule_dir)
     files = capsule_event_files(capsule_dir)
@@ -151,4 +173,5 @@ def ingest_capsule_dir(
         skipped=skipped,
         written=written,
         unreadable=tuple(unreadable),
+        seal_status=seal_status,
     )

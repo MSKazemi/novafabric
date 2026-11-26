@@ -194,15 +194,15 @@ rung is defined by what it can prove and what it costs.
 | 0a | *(automatic)* | lint the file you just edited | ~0.2 s |
 | 0b | `make test-direct` | tests directly covering your change | **~17 s** |
 | 1 | `make test-impacted` | full static import closure of your change | seconds–minutes |
-| 2 | `make test-fast` | everything except Docker and `tests/integration` | ~4 min |
-| 2 | `make test-gate` | tier 2 + the push-gate stamp — run it *before* pushing | ~4 min, then pushes are instant |
+| 2 | `make test-fast` | everything except Docker and `tests/integration` | ~31–37 min (25,863 tests, 5 workers, 12-thread laptop, 2026-11-24) |
+| 2 | `make test-gate` | the push gate: the smallest tier the change needs (below) + the stamp — run it *before* pushing | ~2 min for a docs-only change, a full `test-fast` for a risky one; pushes are then instant |
 | 3 | `make test-par` | the release gate — the whole suite as CI's `unit` shards run it, coverage ≥ 90% | ~5 min |
 | — | `make test-container` | the Docker tier alone | needs a daemon |
 | — | `make test-shard SHARD=3/6` | exactly one CI `unit` shard — to reproduce a red shard | a sixth of tier 3 |
 
 **Tiers 0 and 2 can run by themselves.** The three hook scripts are public, under
 `scripts/hooks/`: `lint-edited-file.sh` lints each edited file, `stop-scoped-tests.sh` runs tier
-0b once a batch of edits is done, and `pre-push-test-gate.sh` runs tier 2 and refuses to push red.
+0b once a batch of edits is done, and `pre-push-test-gate.sh` runs the push gate and refuses to push red.
 The maintainers wire the first two into their editor tooling (a Claude Code `PostToolUse` and
 `Stop` hook — that local configuration is not part of this repository) and the third as the git
 `pre-push` hook. To get the same push gate, link it yourself:
@@ -219,6 +219,39 @@ command lines are untouched, so `test-par` still runs what CI runs. Automated ru
 additionally `nice`d, the Stop hook skips (without blocking) when the machine is already saturated,
 and concurrent scoped runs serialize on a lock instead of stacking. Force a count with
 `NOVA_TEST_WORKERS=8 make test-fast`. Guard: `tests/docs/test_worker_throttle.py`.
+
+**The push gate picks a tier from what changed.** `scripts/test-gate.sh` asks
+`scripts/testsel.py --mode gate` to compare the tree (committed, staged, unstaged and untracked
+files) with its merge base on `origin/main`, and runs one of:
+
+| Gate tier | When | What runs |
+|---|---|---|
+| `none` | nothing differs from the merge base | nothing |
+| `docs` | only Markdown, `docs/`, `ui/dashboard/` (or private `design/`, `.claude/`) paths changed | all of `tests/docs` plus every test file that names a changed path, its file name or a directory above it |
+| `scoped` | Python under `src/novafabric/` or `tests/` changed (text paths allowed beside it) | the `docs` set plus the static import closure of the changed Python |
+| `full` | anything else: `pyproject.toml`, `uv.lock`, `Makefile`, root `conftest.py`, `scripts/`, `.github/`, `schemas/`, `.dualgit/`, package data or fixtures under `src/`/`tests/`, Python outside `src/`/`tests/`, the central modules `capture/orchestrator.py`, `replay/_engine.py` and `lineage/_store.py`, any path class it does not know, or a selection over 40 % of the suite | `make test-fast` |
+
+What the push accepts comes from git's ref list: a **tag** push always runs the full suite, a
+push to **main** accepts `docs` but upgrades `scoped` to full, and any other branch accepts
+every tier. A hook that receives no ref list assumes the worst and runs the full suite, and so
+does a run with no merge base. The stamp records the tier it passed (`<digest> <tier>`), so a
+`docs` stamp never lets a tag push through. CI still runs the whole suite on every pull request
+and on main. Guard: `tests/docs/test_push_gate_tiers.py`.
+
+**One local test pool at a time.** `make test-fast`, the scoped runs and the push gate run
+pytest through `scripts/test-pool.sh`, which holds a machine-wide lock
+(`/tmp/nova-test-pool-<uid>.lock`). A second run says who holds the lock and waits its turn
+instead of starting a second pool; two full pools at once have ended in a SIGKILL and a reboot
+on this class of machine. `NOVA_TEST_POOL_WAIT=<seconds>` bounds the wait (exit 75 when it runs
+out; the Stop hook waits 240 s and then skips), and `NOVA_TEST_POOL_LOCK=off` turns the lock
+off. `make test-par` and `make test-container` do not take it, so they stay byte-for-byte what
+CI runs. A pytest started by hand outside these targets is not covered. Guard:
+`tests/docs/test_test_pool_lock.py`.
+
+**The stamp works in a git worktree.** It lives in `git rev-parse --absolute-git-dir`, so
+`make test-gate` in a worktree stamps the result and the push that follows is instant. It used
+to be a hard-coded `.git/nova-test-gate-passed`, and in a worktree `.git` is a file, so every
+worktree push re-ran the whole suite inside the hook.
 
 **Run the push gate by hand, then push.** git opens the SSH connection to the remote *before*
 running `pre-push`, so a long in-hook gate can outlive it — measured 2026-09-04: a 34-minute

@@ -20,13 +20,24 @@ import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ulid import ULID
 
 from novafabric._capsule_fs import is_capsule_regular_file, read_capsule_member_or_none
 from novafabric.compliance.capture_coverage import evidence_is_uncaptured, not_captured_note
 
-from .models import AuditReport, Control, ControlCoverage, ControlProfile, EvidenceRequirement
+if TYPE_CHECKING:
+    from novafabric.trust.novaseal.capsule_verify import SealCoverage
+
+from .models import (
+    AuditFinding,
+    AuditReport,
+    Control,
+    ControlCoverage,
+    ControlProfile,
+    EvidenceRequirement,
+)
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +111,63 @@ def _check_seal_signature(capsule_dir: Path) -> bool:
     from novafabric.trust.novaseal.capsule_verify import capsule_seal_verifies  # noqa: PLC0415
 
     return capsule_seal_verifies(capsule_dir)
+
+
+SEAL_INVALID_MESSAGE = (
+    "the capsule carries a .seal that failed seal verification (for example a member or "
+    "the manifest edited after sealing, a damaged or substituted seal, or a .seal that is "
+    "not a plain directory); its seal is not evidence — run `nova verify <capsule>` for "
+    "the reasons. A seal that verifies but does not name the evidence streams (made before "
+    "evidence digests, or a stream added after sealing) cannot show edits to them and is "
+    "reported separately as a non-blocking seal_unbound finding, so the absence of "
+    "seal_invalid is not proof that nothing was edited."
+)
+
+SEAL_UNBOUND_MESSAGE = (
+    "the capsule's .seal verifies, but it does not name some or all of the capsule's "
+    "evidence streams (it was made before evidence digests, or a stream was added after "
+    "sealing), so an edit to those streams would not be detected by the seal. This does "
+    "not say the capsule was edited; run `nova verify <capsule>` to see what the seal "
+    "covers."
+)
+
+
+def seal_coverage_of_evidence(capsule_dir: Path) -> SealCoverage:
+    """One verification of *capsule_dir*'s seal against the capsule's evidence streams.
+
+    The streams are the ones knowledge-graph ingest reads
+    (:func:`~novafabric.kg.capsule_ingest.capsule_event_files`), so the audit and the
+    ingest agree on what a seal must name. ``"invalid"`` is a seal that fails
+    verification, ``"unbound"`` one that verifies but does not name those streams. The
+    capsule is verified **once** (:func:`capsule_seal_coverage`): asking twice, bare and
+    then with the streams, would let a capsule edited in between flip the answer.
+    """
+    from novafabric.kg.capsule_ingest import capsule_event_files  # noqa: PLC0415
+    from novafabric.trust.novaseal.capsule_verify import capsule_seal_coverage  # noqa: PLC0415
+
+    return capsule_seal_coverage(capsule_dir, must_cover=capsule_event_files(capsule_dir))
+
+
+def _seal_findings(capsule_dirs: Sequence[Path]) -> list[AuditFinding]:
+    """``seal_invalid`` / ``seal_unbound`` findings, one capsule verified once each.
+
+    ``_check_seal_signature`` answers False both for a capsule that was never sealed and
+    for one whose ``.seal`` exists and fails, which is right for scoring (only a verifying
+    seal is evidence) and says nothing about tampering. A capsule with no ``.seal``, or one
+    whose seal verifies and names its evidence streams, is not a finding.
+    """
+    findings: list[AuditFinding] = []
+    for cd in capsule_dirs:
+        coverage = seal_coverage_of_evidence(cd)
+        if coverage == "invalid":
+            findings.append(
+                AuditFinding(code="seal_invalid", capsule_id=cd.name, message=SEAL_INVALID_MESSAGE)
+            )
+        elif coverage == "unbound":
+            findings.append(
+                AuditFinding(code="seal_unbound", capsule_id=cd.name, message=SEAL_UNBOUND_MESSAGE)
+            )
+    return findings
 
 
 def _check_tool_calls(capsule_dir: Path) -> bool:
@@ -223,6 +291,7 @@ class AuditEngine:
         seal_verified = any(
             _has_evidence(cd, "seal_signature") for cd in capsule_dirs
         )
+        findings = _seal_findings(capsule_dirs)
 
         return AuditReport(
             report_id=str(ULID()),
@@ -240,6 +309,7 @@ class AuditEngine:
             overall_score=round(overall_score, 4),
             coverages=coverages,
             evidence_seal_verified=seal_verified,
+            findings=findings,
         )
 
     # ------------------------------------------------------------------

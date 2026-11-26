@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from novafabric.diff._first_divergence import format_first_divergence
 from novafabric.diff._report import DiffReport
 
 #: Record file each ``skipped_malformed_lines`` key counts lines of.
@@ -46,6 +47,8 @@ def format_text(report: DiffReport) -> str:
         f"  added={report.added_count}"
         f"  removed={report.removed_count}"
     )
+    if report.has_changes:
+        lines.extend(f"  {line}" for line in format_first_divergence(report.first_divergence))
     lines.append("")
 
     if report.env_changes:

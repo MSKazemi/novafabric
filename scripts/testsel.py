@@ -34,9 +34,11 @@ from __future__ import annotations
 
 import ast
 import json
+import os
+import re
 import subprocess
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -271,11 +273,218 @@ def select_direct(paths: list[str]) -> tuple[list[str], str]:
     return sorted(selected), f"{len(selected)} test file(s) directly covering the change ({what})"
 
 
+# ── Gate tiers: what the push gate (scripts/test-gate.sh) runs ────────────────────────
+#
+# The push gate used to run the whole fast suite for every push, so a one-line Markdown
+# edit paid the same ~30 minutes as a schema change. `select_gate` picks the smallest
+# tier that can still see the change. The safety rule is the one above, applied harder:
+# a path the gate cannot classify runs everything, and every non-full tier still runs
+# all of tests/docs (the guards that read docs, workflows, scripts and source text).
+#
+#   none    nothing differs from the base             -> run nothing
+#   docs    only text/asset paths changed             -> tests/docs + tests naming those paths
+#   scoped  Python in src/ or tests/ changed (+text)  -> the docs set + the import closure
+#   full    anything else                             -> make test-fast
+#
+# CI still runs the full suite on every PR and on main; the gate decides only what has
+# to pass on this machine before a push.
+
+GATE_TIERS = ("none", "docs", "scoped", "full")
+
+#: The gate scripts, CI config, schemas and the dual-git classification can change what
+#: every test means, so a change under any of them runs the whole fast suite.
+GATE_FULL_PREFIXES = ("scripts/", ".github/", "schemas/", ".dualgit/")
+
+#: Central modules most subsystems depend on through runtime wiring the import graph
+#: under-reports. A change to one of them runs the whole fast suite.
+GATE_FULL_MODULES = {
+    "src/novafabric/capture/orchestrator.py",
+    "src/novafabric/replay/_engine.py",
+    "src/novafabric/lineage/_store.py",
+}
+
+#: Text and front-end paths the Python suite reads only through tests that name them
+#: (Markdown anywhere outside src/ and tests/ counts too).
+#: The maintainers' private trees, present only in their dual-git working tree.
+_PRIVATE_TEXT = ("design/", "papers/", ".claude/")  # private: never in the public repo
+GATE_TEXT_PREFIXES = ("docs/", "ui/dashboard/", *_PRIVATE_TEXT)
+
+
+def _test_texts(index: dict[str, list[str]]) -> dict[str, str]:
+    """test file -> its source text, for the "does this test name that path" check."""
+    texts: dict[str, str] = {}
+    for rel in index:
+        try:
+            texts[rel] = (REPO / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return texts
+
+
+def _mentioning(path: str, texts: dict[str, str]) -> set[str]:
+    """Test files whose source names *path*, its basename or any directory above it.
+
+    Over-matches on purpose: a test that names `docs/`, `"docs"`, `docs/tutorials` or
+    `feature-tour.md` is selected for a change to `docs/tutorials/feature-tour.md`.
+    A one-component token is matched only as `"x"`, `'x'` or `x/`, so `docs` does not
+    match every word that merely contains it.
+    """
+    parts = path.split("/")
+    needles = {"/".join(parts[:i]) for i in range(2, len(parts) + 1)}
+    needles.add(parts[-1])
+    first = re.compile(rf"""["']{re.escape(parts[0])}["'/]|{re.escape(parts[0])}/""")
+    return {
+        rel
+        for rel, text in texts.items()
+        if any(n in text for n in needles) or (len(parts) > 1 and first.search(text))
+    }
+
+
+def select_gate(
+    paths: list[str],
+    index: dict[str, list[str]],
+    texts: dict[str, str] | None = None,
+    is_file: Callable[[str], bool] | None = None,
+) -> tuple[str, list[str], str]:
+    """Return (tier, test files to run, reason) for the push gate. See GATE_TIERS."""
+    if is_file is None:
+        is_file = lambda rel: (REPO / rel).is_file()  # noqa: E731
+    changed = sorted({p.strip() for p in paths if p.strip()})
+    if not changed:
+        return "none", [], "nothing differs from the base"
+
+    def full(why: str) -> tuple[str, list[str], str]:
+        return "full", [SENTINEL_ALL], why
+
+    python_paths: list[str] = []
+    text_paths: list[str] = []
+    for p in changed:
+        if p in GLOBAL_TRIGGERS or p.startswith(GATE_FULL_PREFIXES) or p in GATE_FULL_MODULES:
+            return full(f"{p} changed — the gate runs the whole fast suite for it")
+        if p.endswith(".py"):
+            if p.startswith(("src/novafabric/", "tests/")):
+                python_paths.append(p)
+                continue
+            return full(f"{p} is Python outside src/tests — cannot scope it")
+        if p.startswith(("src/", "tests/")):
+            # Package data and fixtures are opened at runtime by computed paths.
+            return full(f"{p} is a non-Python file under src/ or tests/ — cannot scope it")
+        if p.endswith(".md") or p.startswith(GATE_TEXT_PREFIXES):
+            text_paths.append(p)
+            continue
+        return full(f"{p} is outside every path class the gate can scope")
+
+    if texts is None:
+        texts = _test_texts(index)
+    selected = {t for t in index if t.startswith("tests/docs/")}
+    for p in text_paths:
+        selected |= _mentioning(p, texts)
+
+    tier = "docs"
+    if python_paths:
+        tier = "scoped"
+        closure, why = select(python_paths, index)
+        if closure == [SENTINEL_ALL]:
+            return full(why)
+        selected |= set(closure)
+
+    if index and len(selected) > IMPACT_CAP * len(index):
+        return full(
+            f"{len(selected)} of {len(index)} test files selected — over the "
+            f"{IMPACT_CAP:.0%} cap, so the whole fast suite is simpler and strictly safer"
+        )
+    # conftest.py files load on their own; a deleted test file has nothing to run;
+    # tests/integration is CI-only, exactly as `make test-fast` leaves it out.
+    runnable = sorted(
+        t
+        for t in selected
+        if Path(t).name != "conftest.py"
+        and not t.startswith("tests/integration/")
+        and is_file(t)
+    )
+    reason = f"{tier}: {len(runnable)} test file(s) for {len(changed)} changed path(s)"
+    return tier, runnable, reason
+
+
+#: What a push accepts (scripts/hooks/pre-push-test-gate.sh decides from the refs).
+GATE_REQUIREMENTS = ("branch", "main", "full")
+
+
+def apply_requirement(
+    tier: str, tests: list[str], reason: str, require: str
+) -> tuple[str, list[str], str]:
+    """Upgrade a selection to what the push accepts.
+
+    `full` (a tag push, or unknown refs) always runs everything; `main` never accepts
+    the import-closure guess of `scoped`, but does accept `docs` and `none`; `branch`
+    accepts every tier. An unknown requirement is treated as `full`.
+    """
+    if require not in GATE_REQUIREMENTS or require == "full":
+        if tier == "full":
+            return tier, tests, reason
+        return "full", [SENTINEL_ALL], f"this push needs the full suite ({require}); {reason}"
+    if require == "main" and tier == "scoped":
+        return "full", [SENTINEL_ALL], f"a push to main never accepts the scoped tier; {reason}"
+    return tier, tests, reason
+
+
+_GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+
+
+def _git(args: list[str], gitdir: str | None = None) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_ENV_DROP}
+    prefix = ["git"] if gitdir is None else ["git", f"--git-dir={gitdir}", "--work-tree=."]
+    return subprocess.run(
+        prefix + args, cwd=REPO, capture_output=True, text=True, check=False, env=env
+    )
+
+
+def gate_changed_files(base_ref: str = "origin/main") -> list[str] | None:
+    """Paths that differ from the merge base with *base_ref*: committed, staged, unstaged
+    and untracked-but-not-ignored. Renames are listed as delete + add.
+
+    In the dual-git tree the private gitdir's changes are added too, because the public
+    `.git` hides private paths. Returns None when the base cannot be found — the caller
+    then runs everything.
+    """
+    gitdirs: list[str | None] = [None]
+    if (REPO / ".git-private").is_dir():
+        gitdirs.append(".git-private")
+    paths: set[str] = set()
+    for gitdir in gitdirs:
+        base = _git(["merge-base", "HEAD", base_ref], gitdir)
+        if base.returncode != 0 or not base.stdout.strip():
+            return None
+        diff = _git(["diff", "--no-renames", "--name-only", base.stdout.strip()], gitdir)
+        new = _git(["ls-files", "--others", "--exclude-standard"], gitdir)
+        if diff.returncode != 0 or new.returncode != 0:
+            return None
+        paths |= {line.strip() for line in diff.stdout.splitlines() + new.stdout.splitlines()}
+    return sorted(p for p in paths if p)
+
+
 def main() -> int:
     args = sys.argv[1:]
     base = None
     if "--base" in args:
         base = args[args.index("--base") + 1]
+
+    if "--mode" in args and args[args.index("--mode") + 1] == "gate":
+        # Always a fresh index: the gate must never select from a stale import graph.
+        index = build_index()
+        (REPO / ".testsel-index.json").write_text(json.dumps(index))
+        require = args[args.index("--require") + 1] if "--require" in args else "branch"
+        changed = gate_changed_files(base or "origin/main")
+        if changed is None:
+            tier, tests, reason = "full", [SENTINEL_ALL], "no merge base with the base ref"
+        else:
+            tier, tests, reason = select_gate(changed, index)
+        tier, tests, reason = apply_requirement(tier, tests, reason, require)
+        print(reason, file=sys.stderr)
+        print(tier)
+        for t in tests:
+            print(t)
+        return 0
 
     index_path = REPO / ".testsel-index.json"
     if "--rebuild-index" in args or not index_path.exists():

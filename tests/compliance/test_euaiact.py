@@ -60,6 +60,25 @@ class TestEuAiActConfig:
         assert cfg.provider_mode
         assert cfg.retention_months == 120
 
+    def test_log_floor_is_six_months_in_both_modes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Art. 19(1) (providers) and Art. 26(6) (deployers): logs at least six months.
+        # The 10-year Art. 18(1) period covers documentation, not logs (issue #63).
+        monkeypatch.delenv("NOVA_EUAIACT_PROVIDER", raising=False)
+        deployer = EuAiActConfig()
+        assert deployer.log_retention_floor_months == 6
+        assert deployer.documentation_retention_months is None
+        monkeypatch.setenv("NOVA_EUAIACT_PROVIDER", "true")
+        provider = EuAiActConfig()
+        assert provider.log_retention_floor_months == 6
+        assert provider.documentation_retention_months == 120
+
+    def test_retention_constants(self) -> None:
+        from novafabric.compliance import euaiact
+
+        assert euaiact.LOG_RETENTION_FLOOR_MONTHS == 6
+        assert euaiact.DOCUMENTATION_RETENTION_MONTHS == 120
+        assert not hasattr(euaiact, "_PROVIDER_RETENTION_MONTHS")
+
 
 class TestInferLoggingEventTypes:
     def test_interaction_timestamp_always_present(self, tmp_path: Path) -> None:
@@ -166,6 +185,15 @@ class TestIsWithinRetention:
 
 
 class TestEuAiActCli:
+    @pytest.fixture(autouse=True)
+    def _wide_console(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The command's module-level Rich console reads the terminal width, not the
+        # CliRunner env, so an 80- or 60-column CI terminal wraps table cells and the
+        # retention line. Pin a wide console so the assertions never depend on width.
+        from rich.console import Console
+
+        monkeypatch.setattr("novafabric.cli.euaiact.console", Console(width=300))
+
     def test_status_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NOVA_EUAIACT_HIGH_RISK", raising=False)
         monkeypatch.delenv("NOVA_EUAIACT_PROVIDER", raising=False)
@@ -173,6 +201,39 @@ class TestEuAiActCli:
         result = runner.invoke(app, ["euaiact", "status"])
         assert result.exit_code == 0, result.output
         assert "NOVA_EUAIACT_HIGH_RISK" in result.output
+        assert "Art. 19(1)" in result.output
+        assert "Art.18 provider" not in result.output
+
+    def test_status_provider_mode_labels_documentation_horizon(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NOVA_EUAIACT_PROVIDER", "true")
+        result = CliRunner().invoke(app, ["euaiact", "status"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0, result.output
+        assert "Art. 18(1) documentation, not logs" in result.output
+        assert "6 months" in result.output and "120 months" in result.output
+
+    def test_export_pretty_shows_the_log_floor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        caps = tmp_path / "capsules"
+        _make_capsule(caps, "run-P1", "2024-01-01T00:00:00Z")
+        monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", str(caps))
+        monkeypatch.delenv("NOVA_EUAIACT_PROVIDER", raising=False)
+        result = CliRunner().invoke(
+            app, ["euaiact", "export", "--pretty"], env={"COLUMNS": "200"}
+        )
+        assert result.exit_code == 0, result.output
+        flat = " ".join(result.output.split())
+        assert "Log retention floor: 6 months (Art. 19(1) / Art. 26(6))" in flat
+        assert "documentation horizon" not in flat
+        monkeypatch.setenv("NOVA_EUAIACT_PROVIDER", "true")
+        provider = CliRunner().invoke(
+            app, ["euaiact", "export", "--pretty"], env={"COLUMNS": "200"}
+        )
+        pflat = " ".join(provider.output.split())
+        assert "Log retention floor: 6 months" in pflat
+        assert "documentation horizon applied: 120 months (Art. 18(1), provider mode)" in pflat
 
     def test_export_command_json_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         caps = tmp_path / "capsules"
@@ -210,3 +271,55 @@ class TestEuAiActCli:
         runner = CliRunner()
         result = runner.invoke(app, ["euaiact", "export", "--from", "not-a-date"])
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# The high-risk application date: Regulation (EU) 2026/1744 (Digital Omnibus on AI,
+# OJ 24 July 2026) moved Annex III high-risk application to 2 December 2027
+# (Regulation (EU) 2024/1689 Art. 113(c)). Art. 50 transparency kept 2 August 2026.
+# ---------------------------------------------------------------------------
+
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _euaiact_export_section() -> str:
+    text = (_ROOT / "docs" / "cli-reference.md").read_text(encoding="utf-8")
+    start = text.index("#### nova euaiact export")
+    return text[start : text.index("\n---\n", start)]
+
+
+class TestHighRiskDateIsStatedFromTheAmendedRegulation:
+    def test_cli_reference_does_not_bind_art12_on_the_original_date(self) -> None:
+        section = _euaiact_export_section()
+        assert "high-risk AI systems: **2026-08-02**" not in section
+        assert "Regulation (EU) 2026/1744" in section
+        assert "2 December 2027" in section
+        assert "Official Journal" in section
+
+    def test_roadmap_does_not_bind_art12_on_the_original_date(self) -> None:
+        for line in (_ROOT / "ROADMAP.md").read_text(encoding="utf-8").splitlines():
+            tied = "Art.12 binding 2026-08-02" in line or line.startswith(
+                "| **2026-08-02** | EU AI Act Art.12"
+            )
+            assert not tied, f"Art. 12 tied to the superseded date: {line}"
+
+    def test_the_changelog_claims_no_eur_lex_check(self) -> None:
+        text = " ".join((_ROOT / "CHANGELOG.md").read_text(encoding="utf-8").split())
+        # A bool, not `assert ... not in text`: pytest's failure diff of a 1 MB string hangs.
+        claims_a_check = "Checked against the EUR-Lex text" in text
+        assert not claims_a_check
+
+
+class TestRetentionDocs:
+    def test_pii_erase_does_not_present_120_months_as_a_requirement(self) -> None:
+        text = (_ROOT / "docs" / "cli-reference.md").read_text(encoding="utf-8")
+        line = next(
+            ln for ln in text.splitlines() if ln.startswith("- `--retention-months INT`")
+        )
+        assert "Art. 18(1)" in line and "documentation" in line
+        assert "provider mode: `120`" not in line
+        result = CliRunner().invoke(app, ["pii", "erase", "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0, result.output
+        flat = " ".join(result.output.split())
+        assert "should use 120" not in flat
+        assert "Art. 18(1)" in flat

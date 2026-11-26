@@ -13,14 +13,79 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **`seal_unbound`: a seal that verifies but does not bind the evidence streams is now a visible, non-gating finding (works today).** `nova audit map|coverage|report`, `GET /api/compliance/audit/coverage` and `nova evidence bind` / `POST /api/evidence/{run_id}/bind` only told a seal that fails verification (`seal_invalid`) from no seal; a seal that verifies but could not show an edit to the evidence streams passed with no finding, while knowledge-graph ingest already treated the same capsule as invalid. Two shapes, both reported per capsule: a seal made before ADR-0251 with no `evidence_digests` (it signs the manifest only), and a stream added to the capsule after sealing (the seal does not name it). The streams are the ones KG ingest reads (`capsule_event_files`), and each capsule's seal is verified once. The finding says the seal verifies, does not name some or all of the evidence streams, so an edit to them would not be detected by the seal, and does not say the capsule was edited (`nova verify <capsule>` shows what the seal covers).
+  - **Non-gating, by design.** It never changes an exit code and never changes `gate_passed`: `AuditFinding.code` gains `seal_unbound`, and which codes block is one named set (`BLOCKING_FINDING_CODES`, `AuditFinding.blocking`, `AuditReport.blocking_findings`) that the CLI exit codes and the route's `gate_passed` use, so only `seal_invalid` blocks and a future code is non-blocking until added there. Making `seal_unbound` blocking would fail every capsule sealed before ADR-0251; that is a separate owner decision, not taken here.
+  - **Additive.** `findings` stays empty/omitted when there is nothing to report, a client that only knows `seal_invalid` keeps working, and a binding's seal reference is still cited when the seal verifies. The CLI prints `seal_unbound` as a `Notice` (and `NOTICE` in `nova audit report --format text`), not as an error line, and no longer reads `Seals: verified` for it. The dashboard's Audit Coverage panel lists it as a notice that does not turn the verdict red. Tests: `tests/compliance/audit/test_audit_unbound_seal_is_a_notice.py`, `tests/evidence/test_binding_unbound_seal_is_a_notice.py`, `tests/serve/test_unbound_seal_routes.py`, `ui/dashboard/tests/unit/audit-coverage-gate.test.tsx`.
 - **`examples/evidence_lab/`: EvidenceLab D1, one deterministic incident captured for real (example only).** `python examples/evidence_lab/run.py --scenario service-incident-v1 --variant unsafe --output-dir PATH` (with `--variant` since D2, below) starts a strict loopback fixture model, runs the actual `nova capture` around a small agent (two declared read-only `record.tool` calls and one genuine OpenAI SDK call) and checks the capsule against the scenario's own fixtures: one logical model call, two tool calls in order, digest-only tool records, matching result digests. It reports the task verdict (`FAIL` here: the scenario is deliberately unsafe) separately from the harness verdict, and `NOT_EVALUATED` for integrity and replay. No change to `src/novafabric`, schemas, the CLI or dependencies; the BlackBox demo is untouched. Skips with exit 77 when `openai` is missing.
 - **EvidenceLab D2: a two-variant walkthrough with declared lineage, diff and four separate verdicts (example only).** The same command now runs, in a disposable NovaFabric home:
   - `nova register` for the synthetic dataset.
   - Two real captures. The *unsafe* variant's task verdict is `FAIL`, as expected. The *corrected* variant uses a corrective prompt against the same observations; the policy oracle now checks `reduce_max_connections` against integer bounds, and its task verdict is `PASS`.
-  - `nova lineage provenance`, which must return the registered asset (each run *declares* it with `record_asset_consumption`, so this is declared, not observed, consumption; an empty answer fails), plus `nova inspect`, which must read that asset back from the registry. `nova diff` must name the one changed model call, two unchanged tool calls, no environment change and the one changed stdout output.
+  - `nova lineage provenance`, which must return the registered asset (each run *declares* it with `record_asset_consumption`, so this is declared, not observed, consumption; an empty answer fails, and so does an unreadable `lineage.jsonl`, reported as the named check `lineage-artifact-unreadable` while the other checks still run), plus `nova inspect`, which must read that asset back from the registry. `nova diff` must name the one changed model call, two unchanged tool calls, no environment change and the one changed stdout output.
   - `nova verify --json` and `nova replay --mode forensic`.
 
   Every check reports `task`, `capture`, `integrity` or `replay` with an expected verdict. In the default zero-key profile, integrity is `NOT_EVALUATED` even though `nova validate` passes, and replay is `NOT_EVALUATED` (forensic only, no fidelity claim). The opt-in `--profile signed-offline` uses `nova seal init` and `nova verify --ca-bundle` with a disposable local CA (a self-asserted identity, no timestamp authority), and must see a tampered member, a missing member, a corrupted signature and a wrong CA refused, each for its own reason (the broken property false and the untouched ones true; a corrupted signature also fails the chain check). `--require-verified` exits 2 unless both variants verify. A wrong but faithfully captured decision fails that variant's `task` check, not `capture`. `--variant unsafe|corrected` keeps the single-run D1 report. Examples only: no change to `src/novafabric`, schemas, the CLI, dependencies or capture defaults.
+- **CI: a `golden-capsule` job (#225).** It builds the wheel, installs it into a clean Python 3.12 venv with versions from `uv.lock`, and runs from it the EvidenceLab walkthrough in both profiles (zero-key; signed-offline with `--require-verified`, including the four tamper negatives), the existing replay-fidelity oracles in `tests/replay/fidelity`, and one new test: mocked replay of a capsule captured at the default level must never report success. That capsule's `replayability.json` names `tool_result_not_servable` (`payload_not_recorded`) for both tools, and the replay ends `diverged` with no live model call, tool call or network connection. The step fails if any of those tests is skipped or xfailed, so a missing optional client cannot silently drop an oracle, and the install step checks that every `force-include` target in `pyproject.toml` is present in the installed wheel. The wheel is built from the checked-out commit; it is not the artifact `publish-pypi.yml` uploads. The reports are uploaded as a 7-day artifact; the fixtures are synthetic.
+- **`nova diff` and `nova verify` name the first divergent step (#74, works today).** `nova diff` prints the
+  earliest changed, added or removed model or tool call (`First divergence: step 2 model_call
+  changed (response) [A #2 MC-2; B #2 MC-2]`) and its JSON gains an additive top-level
+  `first_divergence` (`index`, `index_a`, `index_b`, `stream`, `event_type`, `reason`, `aspects`,
+  record ids, `timeline`), `null` when the call streams agree; `diff-report.schema.json` documents
+  it. Steps are ordered by recorded `started_at` across model and tool calls, or counted per stream
+  (`timeline: per_stream`) when a call lacks one. `nova verify` names the first evidence file the
+  seal no longer matches, event streams first, and `--json` gains `first_divergence` (`path`,
+  `stream`, `event_type`, `reason`, `granularity: file`, `index: null`): the seal holds one
+  SHA-256 per file, so the tampered record itself cannot be located and is never claimed. Exit
+  codes are unchanged. Order-only differences (the same calls in a different order, paired by
+  span id for model calls or by tool name and arguments for tool calls) are not reported, as in the existing alignment. For `nova verify`, "first" is
+  event-stream-first, then path order, not a time order. The `nova diff` text line can read
+  `First divergence: none in model or tool calls` next to `changed=1` when only the environment
+  or outputs differ. Record ids and paths are printed on one line (non-printable characters replaced,
+  80 characters at most for ids; `nova verify` does the same for the paths it lists, with
+  a 240-character cap) in the text reports; JSON is unchanged.
+- **EU AI Act Art. 12 conformance report (`build_art12_report`): rows for the provisions it lacked
+  (#63, works today).** Five rows apply to every report: `risk_situation_events` (Art. 12(2)(a)),
+  `post_market_monitoring_events` (Art. 12(2)(b), Art. 72), `deployer_monitoring_events`
+  (Art. 12(2)(c), Art. 26(5)), `log_instructions_for_use` (Art. 13(3)(f), operator-declared through the
+  new `log_instructions_ref` argument) and `authority_log_access` (Art. 21(2); names `nova verify` as a check
+  only when the capsule's seal verifies and binds the evidence streams). The 12(2)(a)-(c) rows are at most `partial`, because which events
+  are relevant is the provider's call. The remote biometric identification rows `rbi_reference_database`,
+  `rbi_matched_input_data` and `rbi_verifying_persons` (Art. 12(3)(b)-(d)) appear only with the new
+  `remote_biometric_identification=True` argument. New report fields: `requirements` (one
+  `{field_name, label, basis}` per row, where `basis` is `ai_act`, `standards` or `novafabric_evidence`)
+  and `remote_biometric_identification`. Additive: no key is removed, and the six existing rows keep
+  their names, order and status logic.
+- **`nova euaiact status` and `GET /api/compliance/euaiact/status` / `POST /api/compliance/euaiact/export`
+  report the log floor and the documentation horizon separately (works today).** New keys:
+  `log_retention_floor_months` (always 6, Art. 19(1) / Art. 26(6)) and `documentation_retention_months`
+  (120 in provider mode, Art. 18(1), else `null`). `retention_months` keeps its values (6, or 120 with
+  `NOVA_EUAIACT_PROVIDER=true`). It now means the retention NovaFabric applies to capsules, not the
+  Act's log floor. No retention is shortened. The dashboard's EU AI Act status and export panels
+  show the same two figures (the log floor with Art. 19(1) / Art. 26(6); the 120 months as an
+  Art. 18(1) documentation horizon). The shipped bundle under `src/novafabric/serve/static` carries
+  the old labels until it is next rebuilt.
+- **Art. 12 report rows no longer read more complete than their wording (works today).**
+  `retention` is `partial` when the operator declares fewer than 183 days (six months), with a
+  reason naming the shortfall; at or above 183 it stays `complete`. `automatic_event_recording`
+  is `partial` from a single capsule, because the row is about the system's lifetime and one run
+  cannot show that. A blank `log_instructions_ref` declares nothing, and its text is shown on
+  one line, cut at 200 characters, in the row's reason.
+- **Docs: AIUC-1 evidence crosswalk** (`docs/aiuc-1-evidence-crosswalk.md`). For E015.1–.4, D003.3,
+  D003.4, C002.1, C002.2, C002.4, A006.1 and B001 it names the NovaFabric record or command that may be
+  relevant, rates it strong or partial and states the gap, including that a default capsule stores full
+  prompts and responses. E015.2 and E015.4 are rated partial: the catalog check for E015.2 is one
+  recorded model call (the same as E015.1), and E015.4 passes on any seal that verifies, including one
+  made before evidence digests, which signs the manifest only and does not bind the logs (`nova verify`
+  prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
+  has empty titles and descriptions for you to fill in from your licensed copy, and loads with
+  `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+
+### Changed
+
+- **Coverage runs use `sys.monitoring` (tests only).** `[tool.coverage.run] core = "sysmon"`: coverage makes it the default only from Python 3.14, and CI runs 3.12, where it is supported for the line coverage this project measures.
+- **Tests: `CliRunner.invoke` reuses the built CLI command (tests only).** typer rebuilds the whole ~1,100-command tree on every `CliRunner.invoke`, about 0.3–0.46 s per call, across ~1,400 calls in the suite. `tests/_cli_command_cache.py` caches the built command per app, keyed on a fingerprint of its registrations, so any added command or replaced callback gets a fresh build. `tests/cli/test_every_command_help_renders.py` went from 54 s to 7.9 s (486 passed both ways, 5 workers). `NOVA_TEST_CLI_CACHE=off` turns it off.
+- **CI: every commit on main keeps a CI result, and two workflows stop running twice (developer tooling).** A push to main now gets its own concurrency group instead of cancelling the previous commit's run (a merge streak used to leave every commit but the last without a result); pull requests still cancel their own older runs. `collector-ci` and the metadata-store security gate run on push only for `main`, so a pull-request branch no longer runs them twice. The CI shard-balancing timings (`tests/.test-durations.json`) are refreshed: 308 test files had no timing and were guessed, now 5.
+- **The push gate runs the smallest test tier the change needs (developer tooling).** `scripts/test-gate.sh` (the `pre-push` hook and `make test-gate`) used to run the whole fast suite, about 30 minutes on a loaded laptop, for every push, a one-line Markdown edit included. It now picks `none`, `docs` (all of `tests/docs` plus every test that names a changed path), `scoped` (that plus the import closure of the changed Python) or `full`, and anything it cannot classify runs the full suite. A tag push always runs the full suite and a push to main never accepts `scoped`. CI is unchanged and still runs everything. See the developer guide, "How the test tiers work".
+- **One local pytest pool at a time (developer tooling).** `make test-fast`, the scoped runs and the push gate now run through `scripts/test-pool.sh`, a machine-wide lock that makes a second run wait and say who holds the lock.
 
 ### Documentation
 
@@ -32,6 +97,39 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **A load-sensitive seal-bypass test keeps its margin on a busy machine (tests only).** `tests/serve/test_seal_bypass_notify_off_loop.py` checks that a slow bypass webhook does not block `/livez`. Its fake webhook now blocks 4 s instead of 1.5 s, so the latency bound (half of that) sits far above an unblocked `/livez` under load (1.35 s seen once) and far below a blocked one (~3.7 s). The ordering check is unchanged, and moving the notification back onto the event loop still fails the test.
+- **A flaky NATS ack test waits until its messages settle (tests only).** `TestNatsAckAfterIngest` stopped the consumer after a fixed 0.15 s; under a loaded run the loop had sometimes not reached the second message, and the test failed on a missing nak (seen once in a full local run, 2026-11-25). It now waits until every message is acked or nacked, at most 10 s.
+- **A flaky runner test no longer counts other threads' sleeps (tests only).** `tests/test_runners_interrupt_cancels_the_job.py` patches `time.sleep` for the whole process, so a stray thread on the same xdist worker could add a sleep to the recorded list and fail the settle-count assertion (CI recorded an extra exact 0.5 s sleep, which no 1.0 s ±15% settle poll produces). The fake now records only the test's own thread.
+- **The push-gate stamp works in a git worktree (developer tooling).** It was written to a hard-coded `.git/nova-test-gate-passed`, and in a worktree `.git` is a file, so `make test-gate` could never stamp there and every worktree push re-ran the whole suite inside the hook, long enough for the remote to close the connection. It now lives in `git rev-parse --absolute-git-dir`.
+- **EvidenceLab D2 walkthrough: lineage check follow-ups (example only).** The lineage check binds the registered asset to the fixtures the tools served: the digest stored at `nova register` must equal the digest of the scenario's own files, or the check fails `asset-content-mismatch`. A capsule whose `lineage.jsonl` cannot be read after capture is a named `lineage-artifact-unreadable` FAIL, and the report now also carries the registry-side reason (`registry_reason`) so a wrong registration is not hidden behind it. The registered asset's `spec.path` is the scenario directory actually loaded. A warning line that starts with or contains a bracket no longer makes the lineage query read as failed. The walkthrough reads a command's JSON as the object or array that starts a line and is followed only by whitespace on its last line (the one that ends the output wins), so bracketed warnings before or after it, including a warning that is itself valid JSON such as `[1] deprecated`, are skipped; truncated output, an indented or mid-line bracket, more than 20 bracket-led lines, or nesting deep enough to overflow the decoder reads as unparseable (`None`) rather than as a fragment. In CI, the `golden-capsule` wheel check requires every `force-include` directory to contain a file, not merely exist.
+- **`nova export-ropa`, `nova export-examiner pccp` and the Art. 12 report refuse a capsule whose seal fails verification (behaviour change: such a capsule used to export).** Same defect and same fix as `nova export-compliance iso42001` above: the seal check answered "not sealed" both for a capsule that was never sealed and for one that was sealed and then edited, so a tampered capsule was handled as an ordinary unsigned one. A `.seal` that exists but does not verify (edited member or manifest, a damaged, substituted or unreadable seal, a symlinked or non-directory `.seal`) is now refused, per surface:
+  - `nova export-ropa` and `nova export-examiner pccp` exit 2 with no output file and a message naming `nova verify DIR`. Before, the RoPA entry silently left `dsse_envelope_signing` out of its security measures and the PCCP document left `NovaSeal signing` out of `risk_controls`, as for an unsealed capsule. For PCCP, a broken seal in *either* the baseline or the proposed capsule refuses the export, even when the other capsule is unsealed.
+  - `build_art12_report` (programmatic; no CLI command) raises `CapsuleSealInvalidError`, a `ValueError` subclass, instead of building a report whose `tamper_evidence` entry read "incomplete" while every other entry was rendered from the edited bytes. Separately, a seal that verifies but does not bind the evidence streams (made before evidence digests, which signs the manifest only, or a digested stream added after sealing) no longer yields `tamper_evidence` as complete and `capsule_verified`: the report is still built, but that entry is incomplete and `unverifiable`, with a reason saying the seal does not bind the evidence streams (not "no seal"), because such a seal cannot detect an edited or injected log.
+  - The dashboard routes `POST /api/compliance/export/ropa` and `POST /api/compliance/examiner/pccp` no longer return a document either; they answer HTTP 409 (the capsule's state conflicts with the request) carrying the same message; see the bagit and ISO 42001 entry below for the status code.
+  A capsule with no `.seal` still exports, visibly unsigned, and a valid seal keeps the current output (RoPA and PCCP list a signing measure only; they make no claim that the evidence streams are tamper-evident). A valid seal means the bytes it names are unchanged since sealing; it does not say who signed them.
+- **The audit map, the evidence bindings and `nova serve`'s knowledge-graph ingest tell a tampered seal apart from no seal.** The seal check answered "no seal" both for a capsule that was never sealed and for one whose `.seal` exists but fails verification, so a capsule edited after sealing was scored and ingested exactly like an unsigned one and nothing said so. A capsule with no `.seal` is unchanged everywhere. A `.seal` that fails (an edited member or manifest, a damaged or substituted envelope, a symlinked or non-directory `.seal`) is now distinct at each site. The audit and binding sites use the plain seal check, so a seal made before evidence digests, or a stream the seal does not list, cannot show edits to that stream there; KG ingest is stricter (below):
+  - **`nova audit map` / `nova audit coverage` / `nova audit report` (behaviour change):** the report gains an additive `findings` list with a `seal_invalid` finding naming each such capsule (empty otherwise); the summary prints it instead of `Seals: verified`, and `nova audit map` and `nova audit coverage` now exit 1 on it even when every control is covered or the threshold is met. The coverage scores themselves are unchanged (the finding is reported beside them, not subtracted from them), so the edited capsule's other evidence still counts toward the scores while the gate fails.
+  - **`GET /api/compliance/audit/coverage`:** the response gains `findings` and `gate_passed` (score at or above the threshold and no finding, the same decision as the CLI's exit code). `threshold_met` and every other key keep their meaning, so a client that reads only `threshold_met` still sees `true` for a tampered capsule and should read `gate_passed`. `POST /api/compliance/audit/report` already returns the whole report, `findings` included; `GET /api/compliance/audit/map` lists checkers and scans nothing.
+  - **`nova evidence bind` and `/api/evidence/{run_id}/bind`:** the bindings of controls that ask for seal evidence gain an additive, optional `findings` entry (`seal_invalid`), omitted when empty so unaffected bindings serialise as before; the seal is still cited only when it verifies.
+  - **`POST /api/kg/ingest`, `POST /api/kg/ingest-all` and the auto-ingest loop (behaviour change):** the capsule's seal is read as `absent`, `valid` or `invalid`, and a seal only counts as `valid` if it also names the event streams about to be read. A stream added after sealing, or a legacy seal made before evidence digests, used to leave the capsule `valid` and its injected or edited stream counted NovaSeal-verified; such a capsule is now `invalid` (the note says it "does not cover its event streams", which is not a claim that it was edited). Edges count as verified only for `valid`. The `/api/kg/ingest` response gains `seal_status` and `tampered`, with a note; `ingest-all` gains `tampered_capsules`; auto-ingest logs a warning naming the capsule. A tampered capsule is still ingested as unverified (not refused), and the graph's aggregate edges carry no per-edge tamper marker. `tampered_capsules` lists only capsules ingested in that call: a capsule already tracked by an earlier ingest is skipped, so one tampered after its first ingest is not re-checked or reported.
+
+  A valid seal means the bytes it names are unchanged since sealing; it does not say who signed them (a capsule re-sealed with another key also verifies).
+
+- **`nova export-compliance iso42001 --capsule DIR` refuses a capsule whose seal fails verification
+  (behaviour change: such a capsule used to export).** A capsule that had been sealed and then edited
+  was exported exactly like one that was never sealed — `seal_envelope_path: null`, with its evidenced
+  controls bound to a fresh digest of the edited bytes — because the seal check answered "not sealed"
+  for both. A `.seal` that exists but does not verify (including a symlinked or non-directory `.seal`)
+  now exits 2 and writes no report; run `nova verify DIR` for the reasons. So does a sealed capsule to
+  which a digested stream (`tool-calls.jsonl`, `tool-permission-events.jsonl`) was added after sealing:
+  the seal never covered it, yet the export would have hashed it into a reference carrying the seal path.
+  A seal made before evidence digests (ADR-0251) signs the manifest only, so it cannot vouch for any
+  stream and is refused too, untouched or not (behaviour change; `nova verify DIR` prints "Evidence binding: NOT PRESENT
+  (sealed before evidence_digests)"). A valid seal does not identify the signer: a re-seal with another key verifies unless `nova verify --ca-bundle`
+  pins the trust root, which this exporter does not take.
+  Unsealed and validly sealed capsules export as before; a derived file next to a sealed capsule is still
+  not a tamper (ADR-0251 §5). New helper `capsule_seal_status()` (`absent`, `valid` or `invalid`);
+  `capsule_seal_verifies()` is unchanged. The other exporters still use the Boolean helper.
 - **The declared FastAPI floor is the patched release.** FastAPI before 0.163.2 is affected by GHSA-f56c-v883-vx8r (a
   high-severity denial of service from quadratic request-parameter processing). The lock already resolves 0.165.0; the
   `serve`, `server` and `federation` extras and the dev group now require `fastapi>=0.163.2` (was `>=0.115`), so an install
@@ -54,6 +152,37 @@ longer forwards the submitting shell's environment (ADR-0270).
   the v0.109.0 tag's collector vulnerability scan on 1.26.10 (lint, unit tests and the build passed).
   The collector is not part of any published v0.109.0 artifact (PyPI package, container image, Helm
   chart), so the release is unaffected; anyone building the collector from source should use Go 1.26.11.
+- **EU AI Act Art. 12 report and `nova euaiact` cited the wrong provisions (#63).** Provision numbers
+  follow Regulation (EU) 2024/1689 as read on the artificialintelligenceact.eu explorer (spot-checked
+  for Arts. 12, 13(3)(f), 18, 19, 21(2) and 26(6)); they were not checked against EUR-Lex itself, so
+  confirm them in the Official Journal. The row labels changed, but the keys did not:
+  `automatic_event_recording` now says "over its lifetime" (Art. 12(1)), not "operation";
+  `period_of_use` cites Art. 12(3)(a), a duty that applies only to remote biometric identification
+  systems, not 12(2)(a); `traceability` cites the Art. 12(2) chapeau, not 12(1); `retention` cites
+  Art. 19(1) (providers) and Art. 26(6) (deployers), at least six months, not 12(3).
+  `input_output_records` is now labelled as NovaFabric evidence supporting the Art. 12(2)(a)-(c)
+  purposes. No Art. 12 paragraph sets a general input/output duty. `tamper_evidence` is labelled as a
+  standards item that goes beyond the Act (prEN 18229-1; ISO/IEC 24970), since the Act does not
+  expressly require log tamper-protection. The report's `standard` string now names Arts. 13(3)(f), 19(1), 21(2) and
+  26(6) as well. The `euaiact` module no longer claims its event taxonomy is aligned with Annex XII,
+  which covers transparency for general-purpose AI models. Provider mode's 120 months is now called
+  the Art. 18(1) *documentation* horizon, not a log floor. The `nova euaiact export` help cites
+  Art. 21(2) (authority access to logs), not Art. 74. The docs and the roadmap no longer bind
+  Art. 12 on 2 August 2026: Regulation (EU) 2026/1744 (Digital Omnibus on AI, Official Journal of
+  24 July 2026) moved Annex III high-risk application to 2 December 2027 and Annex I to 2 August
+  2028, as read on the European Parliament's Legislative Train and artificialintelligenceact.eu
+  (EUR-Lex itself not read); the Art. 50 date is unchanged. The `deadline` field of
+  `GET /api/compliance/euaiact/status` is the Art. 50 date, not the Art. 12 one. `nova pii erase
+  --retention-months` no longer calls 120 months a provider-mode requirement: it is the Art. 18(1)
+  documentation period.
+- **The dashboard's Audit Coverage panel follows `gate_passed` and shows seal findings.** It coloured the score by `threshold_met` (score at or above the threshold), so a capsule whose `.seal` fails verification still rendered green although `GET /api/compliance/audit/coverage` now answers `gate_passed: false`. The panel now takes its verdict from `gate_passed` (score at or above the threshold and no finding), falls back to `threshold_met` only when a server sends no `gate_passed`, prints `gate passed` / `gate failed`, and lists each `seal_invalid` finding with its capsule and message. The dashboard's API type gains the optional `gate_passed` and `findings`. Test: `ui/dashboard/tests/unit/audit-coverage-gate.test.tsx`.
+- **The Art. 12 report decides what a seal binds from one verification.** `seal_for_log_claims` asked the seal check twice (bare, then with the evidence streams to cover); a capsule edited between the two calls turned a seal that had just stopped verifying into "does not bind the streams" and was exported instead of refused. `capsule_seal_coverage` (new, `novafabric.trust.novaseal.capsule_verify`) verifies once and answers `absent`, `bound`, `unbound` or `invalid`; `capsule_seal_status` keeps its results and is now a view of it. Test: `tests/compliance/export/test_seal_log_claims_single_verification.py`.
+- **The API and CLI references state what `POST /api/compliance/export/ropa` and `POST /api/compliance/examiner/pccp` do with a failing seal** (HTTP 409 with the refusal message and no document; an unsealed capsule still exports, unsigned), and pin it in `tests/compliance/export/test_seal_invalid_http_routes.py`.
+- **`nova export-examiner bagit` and `nova export-examiner iso42001` refuse a capsule whose seal fails verification (behaviour change: such a capsule used to export).** They were the last exporters that ran no seal check: the BagIt archive copied the edited bytes and the broken `.seal/` into a bag whose own checksums verified clean, and the audit-period package listed the capsule as evidence next to intact ones. Same rule as `nova export-ropa` and `nova export-examiner pccp`:
+  - Both exit 2, write nothing (no output file, no output directory) and name `nova verify DIR`. `iso42001` checks the capsules inside the audit period, since those are the ones it lists; a broken seal on a capsule outside the period does not block the package.
+  - A capsule with no `.seal` still exports, and a valid seal keeps the current output. A valid seal means the bytes it names are unchanged since sealing; it does not say who signed them.
+  - `bagit` still refuses a capsule holding a symbolic link first (exit 1), so a symlinked `.seal` is refused by that older rule. To preserve a capsule you know is damaged, copy it with an ordinary archive tool; the export is not a forensic copy.
+  - **HTTP:** `POST /api/compliance/examiner/{pccp,bagit,iso42001}` and `POST /api/compliance/export/ropa` answer **409** with the refusal message for such a capsule; they answered 500, which reads as a server fault. Any other export failure is still 500. A client that treated 500 as the refusal signal should test for 409.
 
 ## [0.109.0] - 2026-11-22
 

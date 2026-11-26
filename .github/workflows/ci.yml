@@ -10,6 +10,7 @@ name: CI
 #   unit        — six duration-balanced shards of the suite (ADR-0316).
 #   coverage    — combines the shards: 90% floor + proof every test ran once.
 #   integration — runs on every PR/push; spins up a Postgres 16 service.
+#   golden-capsule — EvidenceLab + replay-fidelity oracles from the built wheel (#225).
 on:
   push:
     branches: [main]
@@ -20,11 +21,14 @@ on:
   # release gate (require-green-ci.yml) waits for.
   workflow_dispatch:
 
-# Cancel in-flight runs of the same ref when new commits land. Saves CI
-# minutes on rapid-fire pushes.
+# A pull request cancels its own older run when new commits land (saves CI
+# minutes on rapid-fire pushes). A push to main does not: each commit gets its own
+# group (its SHA), so every commit on main keeps a CI result. With one group per
+# ref, a merge streak cancelled every run but the last, and those commits never
+# had a result (11fff4df and 165b8892, 2026-11-25).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least privilege: every job here only reads the repository. Without this the
 # token inherits the repository default (OpenSSF Scorecard TokenPermissions).
@@ -340,6 +344,100 @@ jobs:
 
       - name: Type check (mypy strict)
         run: uv run mypy src
+
+  # --------------------------------------------------------------------------
+  # Golden-capsule gate (#225): the EvidenceLab walkthrough and the replay
+  # fidelity oracles, run against the BUILT WHEEL in a clean venv, not src/.
+  # Synthetic fixtures only; the fixture model binds to loopback; no secrets
+  # (trust/ holds the disposable public CA certificate only).
+  # --------------------------------------------------------------------------
+  golden-capsule:
+    runs-on: ubuntu-24.04
+    if: github.repository == 'MSKazemi/novafabric'
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel and install it into a clean venv (versions from uv.lock)
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+          uv export --frozen --all-extras --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
+          uv venv --python 3.12 "$RUNNER_TEMP/golden-venv"
+          uv pip install --python "$RUNNER_TEMP/golden-venv/bin/python" \
+            -c "$RUNNER_TEMP/constraints.txt" "$RUNNER_TEMP"/dist/novafabric-*.whl \
+            openai pytest pytest-timeout pyyaml
+          "$RUNNER_TEMP/golden-venv/bin/python" -c \
+            "import novafabric; assert 'site-packages' in novafabric.__file__, novafabric.__file__"
+          # The walkthrough still exits 0 without some packaged data, so check every
+          # force-include target from pyproject.toml is present in the installed wheel.
+          "$RUNNER_TEMP/golden-venv/bin/python" - <<'PY'
+          import pathlib, tomllib, novafabric
+          root = pathlib.Path(novafabric.__file__).parent.parent
+          cfg = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          targets = cfg["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"].values()
+          def present(p):  # a directory must hold a file, so an empty one is not "present"
+              return p.is_file() or (p.is_dir() and any(f.is_file() for f in p.rglob("*")))
+          missing = [t for t in targets if not present(root / t)]
+          assert not missing, f"force-include targets missing from the installed wheel: {missing}"
+          print(f"{len(targets)} force-include targets present in the installed wheel")
+          PY
+
+      - name: EvidenceLab walkthrough from the wheel (zero-key, then signed-offline --require-verified)
+        run: |
+          V="$RUNNER_TEMP/golden-venv/bin"
+          mkdir -p "$RUNNER_TEMP/golden-home"
+          for profile in zero-key signed-offline; do
+            extra=""
+            [ "$profile" = signed-offline ] && extra="--require-verified"
+            env -i PATH="$V:/usr/bin:/bin" HOME="$RUNNER_TEMP/golden-home" \
+              "$V/python" examples/evidence_lab/run.py --scenario service-incident-v1 \
+              --profile "$profile" $extra --output-dir "$RUNNER_TEMP/golden/$profile"
+          done
+
+      - name: Replay fidelity oracles and the default-level replay limitation, from the wheel
+        # pyproject's pythonpath includes src/; override it so the wheel is what is tested.
+        # The fidelity modules importorskip optional clients, so a dependency drift would
+        # skip the oracles and still pass: any skip or xfail fails this step.
+        run: |
+          set -o pipefail
+          V="$RUNNER_TEMP/golden-venv/bin"
+          mkdir -p "$RUNNER_TEMP/fidelity-home"
+          env -i PATH="$V:/usr/bin:/bin" HOME="$RUNNER_TEMP/fidelity-home" \
+            NOVAFABRIC_AUDIT_LOG_PATH="$RUNNER_TEMP/fidelity-home/audit.log" \
+            "$V/python" -m pytest -q -rsx -p no:cacheprovider -o pythonpath=tests -o addopts="" \
+            tests/replay/fidelity \
+            "tests/test_example_evidence_lab_walkthrough.py::test_mocked_replay_of_a_default_level_capsule_never_reports_success" \
+            | tee "$RUNNER_TEMP/fidelity.log"
+          if grep -qE '[0-9]+ (skipped|xfailed|xpassed)' "$RUNNER_TEMP/fidelity.log"; then
+            echo "::error::golden-capsule oracles must all run; a test was skipped or xfailed"
+            exit 1
+          fi
+
+      - name: Upload the golden-capsule reports (synthetic only)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: golden-capsule
+          path: |
+            ${{ runner.temp }}/golden/*/evidence-lab-report.json
+            ${{ runner.temp }}/golden/*/diff.json
+            ${{ runner.temp }}/golden/*/negative/
+          if-no-files-found: warn
+          retention-days: 7
 
   # --------------------------------------------------------------------------
   # NovaSeal latency gate

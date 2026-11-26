@@ -166,6 +166,21 @@ def evidence_bind_cmd(
     except (ValueError, FileNotFoundError) as exc:
         console.print(f"[red]Unknown audit profile:[/red] {exc}")
         raise typer.Exit(code=1) from exc
+    codes = {f.code for b in bindings for f in b.findings}
+    if "seal_invalid" in codes:
+        console.print(
+            f"[red]Finding:[/red] {escape(str(capsule_dir))} carries a .seal that failed seal "
+            "verification (for example edited after sealing, or a damaged seal); it is "
+            "not cited as evidence. Run `nova verify` on the capsule for the reasons."
+        )
+    if "seal_unbound" in codes:
+        # not an error: the seal verifies and is cited, it just cannot show edits to the streams
+        console.print(
+            f"[yellow]Notice:[/yellow] {escape(str(capsule_dir))} has a .seal that verifies "
+            "but does not name some or all of the capsule's evidence streams (seal_unbound), "
+            "so an edit to them would not be detected by the seal. This does not say the "
+            "capsule was edited; run `nova verify` on the capsule to see what the seal covers."
+        )
     doc = {"bindings": [b.model_dump() for b in bindings]}
     if key is None:
         path = output or Path("criterion-bindings.json")
