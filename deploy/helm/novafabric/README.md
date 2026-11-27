@@ -97,6 +97,51 @@ processes). Provide OIDC settings through `extraEnv`.
 
 See [`values.yaml`](values.yaml) for the full list.
 
+## CI: Kind install, upgrade and rollback
+
+**Status: experimental** (the job is new). The
+[`helm-kind.yml`](../../../.github/workflows/helm-kind.yml) workflow installs this chart into a
+throwaway [Kind](https://kind.sigs.k8s.io/) cluster on a GitHub-hosted `ubuntu-24.04` runner.
+It runs on pull requests that touch `deploy/helm/**`, `src/novafabric/server/**`,
+`deploy/docker/Dockerfile` or the workflow itself, nightly, and on demand. No external cluster,
+registry login or paid account is involved, and nothing is pushed.
+
+The steps live in [`scripts/helm_kind_smoke.sh`](../../../scripts/helm_kind_smoke.sh):
+
+1. Build the image from the pull request's tree and copy it into the Kind node
+   (`kind load docker-image`; the chart uses it with `pullPolicy: Never`).
+2. Generate a random API token and database password and store them as Kubernetes Secrets. They
+   are never printed or passed on a command line, and the job masks them in its log.
+3. Start a throwaway Postgres that reads that password, then install the chart in server mode
+   with `postgres.enabled=false`, `externalDatabase.existingSecret` and the token pinned through
+   `extraEnv` (`NOVAFABRIC_SERVER_TOKEN` from the Secret). Before installing, it checks that the
+   rendered manifest contains no chart-managed Secret and no bundled Postgres.
+4. Smoke the API through `kubectl port-forward`: `/livez` and `/readyz` return 200,
+   `GET /v0/version` returns 200 with the token and 401/403 without a token or with a wrong one.
+5. `helm upgrade` with a changed value (`resources.requests.memory`, plus
+   `upgradeAcknowledged: true`), check the Deployment picked it up, smoke again, and check that
+   the data PVC and a marker file written to it survived.
+6. `helm rollback` to revision 1, check the value is back, smoke again and repeat the PVC check.
+7. Check that neither generated value appears in any container log, `helm get values --all` or
+   `helm get manifest`.
+
+When a step fails, the job uploads a `helm-kind-diagnostics` artifact (kept 7 days): recent pod
+logs, events, pod and PVC descriptions, and Helm history. Secrets are listed by name only, and any
+collected file that contains a generated value is dropped.
+
+Not covered yet: upgrading from the previous *published* chart and image, installing with
+production values, ingress/TLS, OIDC, and multi-node clusters.
+
+To run the same steps against a local Kind cluster you created yourself:
+
+```bash
+docker build -f deploy/docker/Dockerfile -t novafabric-ci:kind .
+kind create cluster --name nova-helm-ci
+kind load docker-image novafabric-ci:kind --name nova-helm-ci
+bash scripts/helm_kind_smoke.sh run          # needs kubectl, helm 3, curl, jq
+kind delete cluster --name nova-helm-ci
+```
+
 ## Security defaults
 
 - Runs as non-root (uid/gid/fsGroup 1000), `allowPrivilegeEscalation: false`,
