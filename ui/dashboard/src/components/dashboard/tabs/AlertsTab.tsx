@@ -145,7 +145,7 @@ export default function AlertsTab() {
       icon="alerts"
       subtitle="Operational alerts (quota, rate-limit, policy, drift, seal, backup) and their delivery outcomes"
       cli={['nova audit-log export', 'nova events emit']}
-      help="Read-only feed from the hash-chained audit log + ops.* events. Configure outbound delivery server-side with NOVA_ALERTS_* (Slack/PagerDuty/email/webhook). Alerting is OFF by default (ADR-0192). Triage (per row, experimental) opens a read-only panel: the run the alert source recorded — or "no run linked" — a timeline, and copyable next commands; it runs nothing."
+      help="Read-only feed from the hash-chained audit log + ops.* events. Configure outbound delivery server-side with NOVA_ALERTS_* (Slack/PagerDuty/email/webhook). Alerting is OFF by default (ADR-0192). Triage (per row, experimental) opens a read-only panel: the run the alert source recorded — or “no run linked” — a timeline, and copyable next commands; it runs nothing."
       actions={
         <Button size="sm" variant={auto ? 'secondary' : 'ghost'} onClick={() => setAuto((a) => !a)}>
           {auto ? 'live' : 'paused'}
