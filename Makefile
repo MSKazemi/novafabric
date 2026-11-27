@@ -60,7 +60,7 @@ help:
 	@echo "  test-watch        test-direct, rerun on every save (pytest-watcher)"
 	@echo "  test-container    The Docker tier only (testcontainers + docker CLI); skips without a daemon"
 	@echo "  test-gate         Run the push gate NOW and stamp it — the next push skips the re-run"
-	@echo "  test-par          Release gate — the whole suite as CI's unit shards run it (~5 min)"
+	@echo "  test-par          Release gate — the whole suite as CI's unit shards run it (superset of test-fast)"
 	@echo "  test-shard        One CI unit shard locally: make test-shard SHARD=3/6"
 	@echo "  test-durations    Fold CI's test-durations artifact into tests/.test-durations.json"
 	@echo "  benchmark         Run NovaSeal p99 latency gate (100 rounds, < 200 ms)"
@@ -143,15 +143,16 @@ test-fast:
 
 # The container tier on its own — testcontainers Postgres/AGE/JanusGraph and the
 # docker-CLI examples. Needs a reachable Docker daemon; skips cleanly without one.
-# Export TESTCONTAINERS_REUSE_ENABLE=true (see docs/developer-guide.md) to keep
-# the containers warm between runs instead of paying startup every time.
+# No fixture opts into testcontainers reuse (no `.with_reuse()` under tests/), so
+# every run starts its containers fresh.
 test-container:
 	uv run pytest -m "container" --benchmark-disable -q \
 		--dist=loadgroup -n auto
 
 # Tier 0 — the inner loop. The tests that directly cover what you changed,
 # selected by scripts/testsel.py from location and module name. ~17 s on a
-# one-package change, against ~4 min for the whole fast suite.
+# one-package change, against ~31–37 min for the whole fast suite (measured
+# 2026-11-24; docs/developer-guide.md, "How the test tiers work").
 #
 # This is what scripts/hooks/stop-scoped-tests.sh runs automatically at the end
 # of every editor turn when that hook is wired in (the maintainers' local editor
