@@ -3,7 +3,7 @@ import { api } from '../../../lib/api';
 import type { AssetSummary, LineageEdgePayload, LineageRecord, OpenLineageExportResult } from '../../../lib/api';
 import type { AssetRecord, LineageEdgeRecord } from '../../../lib/fixtures';
 import type { LineageNode } from '../../../lib/lineage';
-import LineageGraph from '../../lineage/LineageGraph';
+import LineageExplorer from './lineage/LineageExplorer';
 import { ErrorBox, Loading } from '../helpers';
 import { SuggestInput } from '../../ui/SuggestInput';
 import CopyButton from '../../ui/CopyButton';
@@ -13,7 +13,8 @@ const LIMIT_OPTIONS = [
   { label: '100', value: 100 },
   { label: '200', value: 200 },
   { label: '500', value: 500 },
-  { label: 'all', value: 5000 },
+  // Not "all": the store can hold more edges than this; the explorer reports truncation.
+  { label: '5000', value: 5000 },
 ];
 
 type QueryMode = 'provenance' | 'blast-radius' | 'replay-chain' | 'time-travel';
@@ -102,7 +103,8 @@ function QueryPanel({ onClose, assets, runIds, edgeTypeFilter }: { onClose: () =
     'provenance': `nova lineage provenance ${ref || '<ref>'} --depth ${depth}`,
     'blast-radius': `nova lineage blast-radius ${ref || '<ref>'} --depth ${depth}`,
     'replay-chain': `nova lineage replay-chain ${ref || '<run_id>'}`,
-    'time-travel': `nova lineage time-travel ${ref || '<ref>'} --at ${at || '<ISO-datetime>'}`,
+    // The CLI flag is --asof (`nova lineage time-travel --help`), not --at.
+    'time-travel': `nova lineage time-travel ${ref || '<ref>'} --asof ${at || '<ISO-datetime>'}`,
   };
 
   const isTimeTravelQueryDisabled = loading || !ref.trim() || (mode === 'time-travel' && !at);
@@ -566,6 +568,10 @@ function ProvJsonExportPanel({ runIds }: { runIds: string[] }) {
 
 export default function LineageTab({ refreshTick, onCountChange }: { refreshTick: number; onCountChange?: (n: number) => void }) {
   const [edges, setEdges] = useState<LineageEdgePayload[] | null>(null);
+  // The edges endpoint also reports the store's true edge count and whether older edges
+  // were left out (bounded paging); the explorer says so instead of implying completeness.
+  const [storeTotal, setStoreTotal] = useState<number | undefined>(undefined);
+  const [truncated, setTruncated] = useState(false);
   const [assets, setAssets] = useState<AssetSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState(100);
@@ -582,7 +588,10 @@ export default function LineageTab({ refreshTick, onCountChange }: { refreshTick
     setError(null);
     try {
       const [e, a] = await Promise.all([api.edges(limit), api.listAssets()]);
+      const page = e as typeof e & { total?: number; truncated?: boolean };
       setEdges(e.edges);
+      setStoreTotal(typeof page.total === 'number' ? page.total : undefined);
+      setTruncated(page.truncated === true);
       setAssets(a.assets);
       onCountChangeRef.current?.(e.count);
     } catch (e) {
@@ -609,12 +618,8 @@ export default function LineageTab({ refreshTick, onCountChange }: { refreshTick
     return chain.map(id => nodeById.get(id) ?? ({ id, data: { kind: 'asset', ref: id, label: id }, position: { x: 0, y: 0 }, type: 'lineage' } as LineageNode));
   }, [selectedNode, edges]);
 
-  if (error && !edges) return <ErrorBox message={error} onRetry={refresh} />;
-  if (!edges || !assets) return <Loading />;
-
-  const edgeTypes = [...new Set(edges.map(e => e.edge_type))].sort();
-
-  const adaptedEdges: LineageEdgeRecord[] = edges.map((e) => ({
+  // Memoised: the explorer derives its scope and store check from these arrays' identity.
+  const adaptedEdges = useMemo<LineageEdgeRecord[]>(() => (edges ?? []).map((e) => ({
     edge_id: e.edge_id,
     edge_type: e.edge_type as LineageEdgeRecord['edge_type'],
     source: e.source,
@@ -623,23 +628,30 @@ export default function LineageTab({ refreshTick, onCountChange }: { refreshTick
     confidence: e.confidence,
     created_at: e.created_at,
     direction: e.direction,
-  }));
+  })), [edges]);
 
-  const adaptedAssets: AssetRecord[] = assets.map((a) => ({
+  const adaptedAssets = useMemo<AssetRecord[]>(() => (assets ?? []).map((a) => ({
     name: a.name,
     version: a.version,
     asset_type: a.asset_type as AssetRecord['asset_type'],
     status: (a.status === 'production' || a.status === 'promoted' ? 'promoted' : 'development'),
     description: '',
     spec: {},
-  }));
+  })), [assets]);
 
-  const filteredEdges = adaptedEdges.filter(e => {
-    if (edgeTypeFilter !== 'all' && e.edge_type !== edgeTypeFilter) return false;
+  const filteredEdges = useMemo(() => {
     const q = nodeSearch.trim().toLowerCase();
-    if (!q) return true;
-    return e.source.toLowerCase().includes(q) || e.target.toLowerCase().includes(q);
-  });
+    return adaptedEdges.filter(e => {
+      if (edgeTypeFilter !== 'all' && e.edge_type !== edgeTypeFilter) return false;
+      if (!q) return true;
+      return e.source.toLowerCase().includes(q) || e.target.toLowerCase().includes(q);
+    });
+  }, [adaptedEdges, edgeTypeFilter, nodeSearch]);
+
+  if (error && !edges) return <ErrorBox message={error} onRetry={refresh} />;
+  if (!edges || !assets) return <Loading />;
+
+  const edgeTypes = [...new Set(edges.map(e => e.edge_type))].sort();
 
 
   return (
@@ -649,6 +661,7 @@ export default function LineageTab({ refreshTick, onCountChange }: { refreshTick
         <div className="flex items-center gap-3">
           <p className="text-xs text-[var(--color-text-muted)]">
             {filteredEdges.length}{filteredEdges.length !== adaptedEdges.length ? ` / ${adaptedEdges.length}` : ''} edge{filteredEdges.length === 1 ? '' : 's'}
+            {truncated && storeTotal !== undefined ? ` loaded of ${storeTotal}` : ''}
           </p>
           <button
             onClick={() => setShowQuery(q => !q)}
@@ -729,12 +742,13 @@ export default function LineageTab({ refreshTick, onCountChange }: { refreshTick
           <span className="text-[var(--color-text)] font-medium">{selectedNode.data.label ?? selectedNode.id}</span>
         </nav>
       )}
-      <LineageGraph
+      <LineageExplorer
         edges={filteredEdges}
         assets={adaptedAssets}
-        initialSelectedNodeId={null}
-        initialMode="all"
-        emptyMessage="No lineage edges yet. Run captures that consume registered assets to build the graph."
+        loadedCount={adaptedEdges.length}
+        storeTotal={storeTotal}
+        truncated={truncated}
+        filtered={filteredEdges.length !== adaptedEdges.length || nodeSearch.trim() !== '' || edgeTypeFilter !== 'all'}
         onNodeSelect={setSelectedNode}
       />
 

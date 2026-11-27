@@ -78,6 +78,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **Lineage tab: zoom levels, scoped neighbourhoods and a table view (experimental, dashboard).** The Lineage tab has three levels: **Overview** (one group per node kind with edge counts per relationship type), **Runs & assets** (at most 60 nodes, raised 60 at a time up to 240) and **Calls** (the scoped run's model and tool calls from its capsule, metadata only, at most 50 at a time up to 500). Each level counts what it did not draw and asks you to narrow the scope. **Scope to selected node** shows a run's or asset's neighbourhood at depth 1 to 3: provenance plus blast radius, the set `nova lineage export-graph --ref` exports. The view shows that command and the matching `nova lineage provenance` and `blast-radius` commands with the same `--kind` and `--depth` flags. It reports how many of the store's edges were loaded and names any neighbourhood node the store's own queries return but the loaded edges lack. A **Table** view lists the same nodes and edges with keyboard row navigation and labels each edge as a recorded association, not a cause. The level, scope and view are kept in the URL, so Back undoes a scope change. No new dependency: React Flow and dagre as before. Tests: `ui/dashboard/tests/unit/lineage-scope.test.ts`, `ui/dashboard/tests/unit/lineage-explorer.test.tsx`. Refs #274.
 
 ### Changed
 
@@ -184,6 +185,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   - A capsule with no `.seal` still exports, and a valid seal keeps the current output. A valid seal means the bytes it names are unchanged since sealing; it does not say who signed them.
   - `bagit` still refuses a capsule holding a symbolic link first (exit 1), so a symlinked `.seal` is refused by that older rule. To preserve a capsule you know is damaged, copy it with an ordinary archive tool; the export is not a forensic copy.
   - **HTTP:** `POST /api/compliance/examiner/{pccp,bagit,iso42001}` and `POST /api/compliance/export/ropa` answer **409** with the refusal message for such a capsule; they answered 500, which reads as a server fault. Any other export failure is still 500. A client that treated 500 as the refusal signal should test for 409.
+- **The Lineage tab's time-travel query shows the real CLI flag.** Its CLI equivalent read `nova lineage time-travel <ref> --at <ts>`, but the command's flag is `--asof`. The "N edges" limit option that read **all** now reads **5000**, since the store can hold more edges than that. `docs/dashboard.md` no longer lists time-travel and OpenLineage export as missing from the dashboard; both have Lineage tab panels.
 
 ## [0.109.0] - 2026-11-22
 
