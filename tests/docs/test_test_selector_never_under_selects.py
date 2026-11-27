@@ -102,3 +102,68 @@ def test_direct_mode_ignores_paths_it_cannot_map(testsel) -> None:
 def test_no_changed_files_selects_nothing(testsel, index) -> None:
     selected, _ = testsel.select([], index)
     assert selected == []
+
+
+def test_a_changed_test_helper_selects_the_tests_that_use_it_not_itself(testsel, index) -> None:
+    """A helper is not a test file: pytest given `_harness.py` collects nothing (or
+    crashes on an import-time environment read) while the tests importing it go unrun."""
+    helper = "tests/replay/fidelity/_harness.py"
+    selected, _ = testsel.select([helper], index)
+    assert helper not in selected
+    assert "tests/replay/fidelity/test_fidelity_corpus.py" in selected
+    assert "tests/replay/fidelity/test_fidelity_controls.py" in selected
+
+
+def test_a_test_helper_is_found_by_every_kind_of_importer(testsel, tmp_path, monkeypatch) -> None:
+    """Subtree selection alone misses users elsewhere; a text match misses most forms."""
+    files = {
+        "pkg/__init__.py": "",
+        "pkg/sub/__init__.py": "",
+        "pkg/sub/_h.py": "X = 1\n",
+        "other/test_dotted.py": "from pkg.sub._h import X\n",
+        "other/test_from_parent.py": "from pkg.sub import _h\n",
+        "other/test_multiline.py": "from pkg.sub import (\n    other_name,\n    _h,\n)\n",
+        "other/test_comma.py": "import os, pkg.sub._h\n",
+        "other/test_tests_prefix.py": "from tests.pkg.sub._h import X\n",
+        "pkg/side/test_relative.py": "from ..sub._h import X\n",
+        "other/_h2.py": "from pkg.sub._h import X\n",
+        "other/test_transitive.py": "from other._h2 import X\n",
+        "covered/conftest.py": "from pkg.sub._h import X\n",
+        "covered/test_under_importing_conftest.py": "def test_x():\n    pass\n",
+        "other/test_unrelated.py": "from pkg.sub import _hx\n",
+    }
+    for rel, body in files.items():
+        path = tmp_path / "tests" / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+    monkeypatch.setattr(testsel, "REPO", tmp_path)
+    fake_index = {f"tests/{rel}": [] for rel in files if rel.rsplit("/", 1)[-1].startswith("test_")}
+    selected, _ = testsel.select(["tests/pkg/sub/_h.py"], fake_index)
+    assert set(selected) == {
+        "tests/other/test_dotted.py",
+        "tests/other/test_from_parent.py",
+        "tests/other/test_multiline.py",
+        "tests/other/test_comma.py",
+        "tests/other/test_tests_prefix.py",
+        "tests/pkg/side/test_relative.py",
+        "tests/other/test_transitive.py",
+        "tests/covered/test_under_importing_conftest.py",
+    }
+
+
+def test_a_conftest_imported_by_another_conftest_selects_both_subtrees(testsel, index) -> None:
+    """`tests/trend/conftest.py` imports `query.conftest`, so trend tests use it too."""
+    selected, _ = testsel.select(["tests/query/conftest.py"], index)
+    assert any(t.startswith("tests/trend/test_") for t in selected)
+
+
+def test_a_non_python_file_named_like_a_test_is_not_selected(testsel, index) -> None:
+    selected, _ = testsel.select(["tests/fixtures/test_data.json"], index)
+    assert "tests/fixtures/test_data.json" not in selected
+
+
+def test_the_gate_never_hands_pytest_a_helper_module(testsel, index) -> None:
+    tier, tests, _ = testsel.select_gate(["tests/replay/fidelity/_workload.py"], index=index)
+    assert tier == "scoped"
+    assert "tests/replay/fidelity/test_fidelity_corpus.py" in tests
+    assert all(pathlib.Path(t).name.startswith("test_") for t in tests), tests
