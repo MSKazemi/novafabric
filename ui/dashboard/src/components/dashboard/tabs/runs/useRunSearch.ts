@@ -2,7 +2,8 @@
  * Data layer for the Runs tab: cursor-paginated search (B-1), SSE live-stream
  * prepend (B-3), and the per-run ClickHouse cost-summary fetch.
  *
- * Extracted verbatim from the former RunsTab monolith — behavior frozen. The
+ * Extracted from the former RunsTab monolith. The list is bounded to
+ * `LIVE_RUNS_MAX` runs and carries a freshness tracker (issue #282). The
  * SSE stream mutates the accumulated list in place (prepend) and deletes
  * filter it, which is why this stays a bespoke hook rather than adopting
  * `usePaginatedQuery` (the shared hook owns its items internally and has no
@@ -12,6 +13,9 @@ import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateA
 import { api, getConnection, openManagedRunStream, type RunStreamHandle } from '../../../../lib/api';
 import type { RunSummary } from '../../../../lib/api';
 import type { RunCostEntry, StatusFilter } from './types';
+import { LIVE_RUNS_MAX, appendBounded, isAtCap, prependBounded, pruneRecord } from '../../../../lib/boundedList';
+import type { LiveTracker } from '../../../../lib/freshness';
+import { useLiveTracker } from '../../../../lib/useLiveTracker';
 
 const PAGE_SIZE = 50;
 
@@ -33,6 +37,12 @@ export interface RunSearchState {
   hasMore: boolean;
   loadingMore: boolean;
   liveConnected: boolean;
+  /** How current the list is (stream + reload state), for `FreshnessIndicator`. */
+  liveTracker: LiveTracker;
+  /** The list holds `listMax` runs: no further page is loaded, the oldest are dropped. */
+  capped: boolean;
+  /** The named in-memory maximum for this list (`LIVE_RUNS_MAX`). */
+  listMax: number;
   costMap: Record<string, RunCostEntry>;
   refresh: () => Promise<void>;
   loadMore: () => Promise<void>;
@@ -67,6 +77,8 @@ export function useRunSearch({
   // SSE live indicator (B-3)
   const [liveConnected, setLiveConnected] = useState(false);
   const sseRef = useRef<RunStreamHandle | null>(null);
+  const [liveTracker, dispatchLive] = useLiveTracker();
+  const capped = isAtCap(runs, LIVE_RUNS_MAX);
 
   // Each refresh starts a new "generation"; a response from an older one is dropped, so
   // typing "ab" cannot end with the results for "a", and a loadMore begun before a filter
@@ -93,13 +105,19 @@ export function useRunSearch({
       totalApproxRef.current = r.total_approx;
       setHasMore(r.next_cursor !== null);
       onCountChange?.(r.total_approx);
+      dispatchLive({ type: 'synced', at: Date.now() });
     } catch (e) {
-      if (mine === generation.current) setError((e as Error).message);
+      if (mine === generation.current) {
+        setError((e as Error).message);
+        dispatchLive({ type: 'sync-failed', at: Date.now() });
+      }
     }
-  }, [onCountChange, search, since, until, statusFilter]);
+  }, [onCountChange, search, since, until, statusFilter, dispatchLive]);
+  const refreshRef = useRef(refresh);
+  useEffect(() => { refreshRef.current = refresh; }, [refresh]);
 
   const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMore) return;
+    if (!nextCursor || loadingMore || capped) return;
     const mine = generation.current;
     setLoadingMore(true);
     try {
@@ -112,7 +130,9 @@ export function useRunSearch({
         until: endOfDay(until),
       });
       if (mine !== generation.current) return; // the list was refreshed meanwhile
-      setRuns(prev => [...(prev ?? []), ...r.items]);
+      // Bounded (LIVE_RUNS_MAX): a page that does not fit loses its oldest rows,
+      // and `capped` then stops further loads, so the stale cursor is never used.
+      setRuns(prev => appendBounded(prev, r.items, LIVE_RUNS_MAX).items);
       setNextCursor(r.next_cursor);
       setHasMore(r.next_cursor !== null);
     } catch (e) {
@@ -120,28 +140,37 @@ export function useRunSearch({
     } finally {
       setLoadingMore(false);
     }
-  }, [nextCursor, loadingMore, search, since, until, statusFilter]);
+  }, [nextCursor, loadingMore, capped, search, since, until, statusFilter]);
 
   useEffect(() => { refresh(); }, [refresh, refreshTick]);
   // Keep ref current so the SSE callback (captured once) always calls the latest prop
   useEffect(() => { onCountChangeRef.current = onCountChange; }, [onCountChange]);
 
-  // SSE live stream — prepend newly-captured runs (B-3).
-  // Managed stream auto-reconnects with backoff and reports connection state.
+  // SSE live stream — prepend newly-captured runs (B-3), bounded to LIVE_RUNS_MAX
+  // (the oldest drop off the tail). The managed stream reconnects with jittered
+  // backoff; an open after a gap reloads the list, because the stream does not
+  // replay the runs it missed, and the freshness tracker says "refreshing…" until then.
   useEffect(() => {
     const handle = openManagedRunStream(
       (newRun) => {
-        setRuns(prev => {
-          if (!prev) return [newRun];
-          if (prev.some(r => r.run_id === newRun.run_id)) return prev;
-          return [newRun, ...prev];
-        });
+        setRuns(prev => prependBounded(prev, newRun, LIVE_RUNS_MAX, r => r.run_id));
+        dispatchLive({ type: 'stream-message', at: Date.now() });
         const next = totalApproxRef.current + 1;
         totalApproxRef.current = next;
         setTotalApprox(next);
         onCountChangeRef.current?.(next);
       },
-      (connected) => setLiveConnected(connected),
+      (connected, status) => {
+        setLiveConnected(connected);
+        const at = Date.now();
+        if (connected) {
+          const reconnected = Boolean(status?.reconnected);
+          dispatchLive({ type: 'stream-open', at, reconnected });
+          if (reconnected) void refreshRef.current();
+        } else {
+          dispatchLive({ type: 'stream-down', at });
+        }
+      },
     );
     sseRef.current = handle;
     return () => { handle.close(); setLiveConnected(false); };
@@ -162,12 +191,20 @@ export function useRunSearch({
       .then(res => res.ok ? res.json() : Promise.resolve({ costs: {} }))
       .then((data: { costs?: Record<string, RunCostEntry> }) => {
         if (!cancelled && data.costs && Object.keys(data.costs).length > 0) {
-          setCostMap(prev => ({ ...prev, ...data.costs }));
+          // Keep cost entries only for runs still in the (bounded) list.
+          const keep = runs.map(r => r.run_id);
+          setCostMap(prev => pruneRecord({ ...prev, ...data.costs }, keep));
         }
       })
       .catch(() => { /* ClickHouse absent — degrade silently */ });
     return () => { cancelled = true; };
   }, [runs]);
 
-  return { runs, setRuns, error, totalApprox, hasMore, loadingMore, liveConnected, costMap, refresh, loadMore };
+  return {
+    runs, setRuns, error, totalApprox,
+    // At the cap there is no further page to load: the UI says "showing the latest N".
+    hasMore: hasMore && !capped,
+    loadingMore, liveConnected, liveTracker, capped, listMax: LIVE_RUNS_MAX,
+    costMap, refresh, loadMore,
+  };
 }

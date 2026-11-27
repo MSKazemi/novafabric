@@ -849,14 +849,35 @@ export interface RunStreamHandle {
   close(): void;
 }
 
+/** Connection detail passed as the second argument of `onStatus`. */
+export interface RunStreamStatus {
+  connected: boolean;
+  /**
+   * True on an open that follows a failure. The stream has no event IDs and no
+   * replay, so runs created during the gap were never delivered: the caller
+   * must reload its list before calling it current again.
+   */
+  reconnected: boolean;
+  /** Consecutive failed attempts so far (0 while healthy). */
+  attempt: number;
+  /** Delay before the next attempt in ms; null while connected or waiting for the network. */
+  retryInMs: number | null;
+  /** The browser reports no network; the next attempt waits for its `online` event. */
+  waitingForNetwork: boolean;
+}
+
 /**
- * Managed SSE stream with capped exponential-backoff reconnect.
+ * Managed SSE stream with capped, jittered exponential-backoff reconnect.
  *
- * The browser's EventSource auto-retries transient drops, but gives up
- * (readyState === CLOSED) on hard failures like token expiry or a long server
- * outage. This wrapper detects that terminal state and reconnects itself,
- * backing off 1s → 30s and resetting on a successful (re)connection. `onStatus`
- * reports live connection state so the UI can show "reconnecting…".
+ * Any error closes the EventSource and the wrapper schedules the next attempt
+ * itself, instead of leaving it to the browser's fixed-interval auto-retry (a
+ * dead server would otherwise be retried every few seconds forever). Delays
+ * grow 1s → 30s with "equal jitter" (each delay is drawn from [d/2, d]) so many
+ * tabs do not reconnect in lockstep; the attempt counter resets only after a
+ * connection has stayed up for `stableMs` or delivered an event, so a server
+ * that accepts and immediately drops cannot cause a tight reconnect loop. While
+ * the browser is offline no attempt is made until its `online` event.
+ * `onStatus` reports live connection state so the UI can show "reconnecting…".
  */
 /** Tunables for the exponential-backoff reconnect loop (exported for tests). */
 export const RUN_STREAM_BACKOFF = {
@@ -866,6 +887,8 @@ export const RUN_STREAM_BACKOFF = {
   maxMs: 30000,
   /** Multiplier applied per consecutive failure. */
   factor: 2,
+  /** A connection open at least this long (ms) counts as healthy and resets the backoff. */
+  stableMs: 10000,
 } as const;
 
 /**
@@ -886,43 +909,107 @@ export function nextBackoffDelay(
   return Math.min(delay, maxMs);
 }
 
+/**
+ * `nextBackoffDelay` with equal jitter: a delay in [d/2, d], never above the
+ * cap and never below half the base. `random` is injectable for tests.
+ */
+export function jitteredBackoffDelay(
+  attempt: number,
+  random: () => number = Math.random,
+  opts: { baseMs?: number; maxMs?: number; factor?: number } = {},
+): number {
+  const d = nextBackoffDelay(attempt, opts);
+  const r = Math.min(1, Math.max(0, Number(random()) || 0));
+  return Math.round(d / 2 + r * (d / 2));
+}
+
 export function openManagedRunStream(
   onRun: (run: RunSummary) => void,
-  onStatus?: (connected: boolean) => void,
+  onStatus?: (connected: boolean, status: RunStreamStatus) => void,
+  opts: { random?: () => number } = {},
 ): RunStreamHandle {
   const { token, base } = getCfg();
   const url = `${base}/api/runs/stream?token=${encodeURIComponent(token ?? '')}`;
+  const random = opts.random ?? Math.random;
   let es: EventSource | null = null;
   let closed = false;
   let attempt = 0;
+  let hadFailure = false;
+  let openedAt: number | null = null;
+  let waitingForNetwork = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
-  const connect = (): void => {
+  const browserOffline = (): boolean =>
+    typeof navigator !== 'undefined' && navigator.onLine === false;
+
+  const report = (connected: boolean, retryInMs: number | null, reconnected = false): void => {
+    onStatus?.(connected, { connected, reconnected, attempt, retryInMs, waitingForNetwork });
+  };
+
+  const scheduleRetry = (): void => {
     if (closed) return;
-    es = new EventSource(url);
-    es.onopen = () => { attempt = 0; onStatus?.(true); };
-    es.onmessage = (ev) => {
+    if (browserOffline()) {
+      waitingForNetwork = true;
+      report(false, null);
+      return;
+    }
+    waitingForNetwork = false;
+    const delay = jitteredBackoffDelay(attempt, random);
+    timer = setTimeout(connect, delay);
+    report(false, delay);
+  };
+
+  function connect(): void {
+    timer = null;
+    if (closed) return;
+    if (browserOffline()) {
+      waitingForNetwork = true;
+      report(false, null);
+      return;
+    }
+    waitingForNetwork = false;
+    const current = new EventSource(url);
+    es = current;
+    current.onopen = () => {
+      if (closed || es !== current) return;
+      openedAt = Date.now();
+      const reconnected = hadFailure;
+      hadFailure = false;
+      report(true, null, reconnected);
+    };
+    current.onmessage = (ev) => {
+      if (closed || es !== current) return;
+      attempt = 0; // the server is delivering: healthy
       try { onRun(JSON.parse(ev.data) as RunSummary); } catch { /* ignore malformed event */ }
     };
-    es.onerror = () => {
-      onStatus?.(false);
-      // CONNECTING => the browser is already retrying; only step in once it gives up.
-      if (es && es.readyState === EventSource.CLOSED) {
-        es.close();
-        es = null;
-        if (!closed) {
-          attempt += 1;
-          timer = setTimeout(connect, nextBackoffDelay(attempt));
-        }
-      }
+    current.onerror = () => {
+      if (closed || es !== current) return;
+      if (openedAt !== null && Date.now() - openedAt >= RUN_STREAM_BACKOFF.stableMs) attempt = 0;
+      openedAt = null;
+      current.close();
+      es = null;
+      hadFailure = true;
+      attempt += 1;
+      scheduleRetry();
     };
+  }
+
+  const onOnline = (): void => {
+    if (closed || !waitingForNetwork || es || timer) return;
+    waitingForNetwork = false;
+    // Jitter the first attempt so tabs that come back online together do not stampede.
+    const delay = jitteredBackoffDelay(1, random);
+    timer = setTimeout(connect, delay);
+    report(false, delay);
   };
+  if (typeof window !== 'undefined') window.addEventListener('online', onOnline);
 
   connect();
 
   return {
     close(): void {
       closed = true;
+      if (typeof window !== 'undefined') window.removeEventListener('online', onOnline);
       if (timer) { clearTimeout(timer); timer = null; }
       if (es) { es.close(); es = null; }
     },

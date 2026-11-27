@@ -7,8 +7,15 @@
  * Exposes accumulated items + loadMore/hasMore plus the server's honesty
  * signals (`total` / `truncated` / `approximate`) so every list can render the
  * ADR-0199 "N more" affordance instead of silently cutting off.
+ *
+ * The accumulated list is bounded (`maxItems`, default `PAGINATED_MAX_ITEMS`):
+ * once it is full, `capped` is true, `hasMore` is false and `loadMore` does
+ * nothing, so an endless scroll cannot grow memory without limit. A page that
+ * does not fit is cut, and because no further page is then fetched the server
+ * cursor is never reused past the cut. `reset()` (or a deps change) starts over.
  */
 import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react';
+import { PAGINATED_MAX_ITEMS, appendBounded } from './boundedList';
 
 export interface CursorPage<T> {
   items: T[];
@@ -38,15 +45,30 @@ export interface PaginatedState<T> {
   total: number | null;
   approximate: boolean;
   hasMore: boolean;
+  /** The list reached `maxItems`; no more pages are loaded (UI: "showing the first N"). */
+  capped: boolean;
+  /** The in-memory maximum in effect. */
+  maxItems: number;
   loadMore: () => void;
   /** Drop everything and refetch the first page. */
   reset: () => void;
 }
 
+/**
+ * The list is "capped" when a page had to be cut, or when it is exactly full
+ * while the server still has more. A list that simply ends at the limit is not.
+ */
+export function reachesCap(held: number, incoming: number, serverHasMore: boolean, max: number): boolean {
+  const n = held + incoming;
+  return n > max || (n >= max && serverHasMore);
+}
+
 export function usePaginatedQuery<T>(
   source: PaginatedSource<T>,
   deps: DependencyList = [],
+  opts: { maxItems?: number } = {},
 ): PaginatedState<T> {
+  const maxItems = Math.max(1, Math.floor(opts.maxItems ?? PAGINATED_MAX_ITEMS));
   const [items, setItems] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -55,6 +77,7 @@ export function usePaginatedQuery<T>(
   const [approximate, setApproximate] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [resetTick, setResetTick] = useState(0);
+  const [capped, setCapped] = useState(false);
 
   // Pagination position — refs so loadMore stays stable.
   const cursorRef = useRef<string | null>(null);
@@ -62,8 +85,19 @@ export function usePaginatedQuery<T>(
   const inflight = useRef(0);
   const sourceRef = useRef(source);
   sourceRef.current = source;
+  const countRef = useRef(0);
+  const maxRef = useRef(maxItems);
+  maxRef.current = maxItems;
+
+  // Replace or append, never past the cap.
+  const store = (prev: T[], pageItems: T[], append: boolean): T[] => {
+    const next = appendBounded(append ? prev : [], pageItems, maxRef.current).items;
+    countRef.current = next.length;
+    return next;
+  };
 
   const fetchPage = useCallback(async (append: boolean) => {
+    if (append && countRef.current >= maxRef.current) return;
     const ticket = ++inflight.current;
     if (append) setLoadingMore(true);
     else { setLoading(true); setError(null); }
@@ -73,8 +107,11 @@ export function usePaginatedQuery<T>(
         const page = await src.fetch(append ? cursorRef.current : null);
         if (ticket !== inflight.current) return;
         cursorRef.current = page.next_cursor ?? null;
-        setItems((prev) => (append ? [...prev, ...page.items] : page.items));
-        setHasMore(Boolean(page.next_cursor));
+        const more = Boolean(page.next_cursor);
+        const full = reachesCap(append ? countRef.current : 0, page.items.length, more, maxRef.current);
+        setItems((prev) => store(prev, page.items, append));
+        setCapped(full);
+        setHasMore(more && !full);
         if (page.total !== undefined) setTotal(page.total ?? null);
         setApproximate(Boolean(page.approximate));
       } else {
@@ -82,13 +119,14 @@ export function usePaginatedQuery<T>(
         const page = await src.fetch(offset, src.pageSize);
         if (ticket !== inflight.current) return;
         offsetRef.current = offset + page.items.length;
-        setItems((prev) => (append ? [...prev, ...page.items] : page.items));
+        const more = page.has_more ?? (page.total != null
+          ? offset + page.items.length < page.total
+          : page.items.length === src.pageSize);
+        const full = reachesCap(append ? countRef.current : 0, page.items.length, more, maxRef.current);
+        setItems((prev) => store(prev, page.items, append));
         if (page.total !== undefined) setTotal(page.total ?? null);
-        setHasMore(
-          page.has_more ?? (page.total != null
-            ? offset + page.items.length < page.total
-            : page.items.length === src.pageSize),
-        );
+        setCapped(full);
+        setHasMore(more && !full);
       }
     } catch (e) {
       if (ticket !== inflight.current) return;
@@ -114,5 +152,5 @@ export function usePaginatedQuery<T>(
 
   const reset = useCallback(() => setResetTick((t) => t + 1), []);
 
-  return { items, loading, loadingMore, error, total, approximate, hasMore, loadMore, reset };
+  return { items, loading, loadingMore, error, total, approximate, hasMore, capped, maxItems, loadMore, reset };
 }
