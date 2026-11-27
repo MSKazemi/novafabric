@@ -1783,7 +1783,13 @@ export const api = {
     ),
 
   doctor: () =>
-    request<{ ok: boolean; checks: Array<{ name: string; ok: boolean; detail: string; db_path?: string }> }>(
+    request<{
+      ok: boolean;
+      checks: Array<{ name: string; ok: boolean; detail: string; db_path?: string }>;
+      // Optional extras (`nova doctor --check-extras` as data). Absent on older
+      // servers; read through lib/capabilities.ts, never as "missing".
+      extras?: Array<{ name: string; installed: boolean; requires?: string[]; missing?: string[]; install?: string }>;
+    }>(
       '/api/doctor'
     ),
 
@@ -1871,7 +1877,13 @@ export const api = {
 
   listAdapters: () =>
     request<{
-      adapters: Array<{ id: string; module: string; function: string; framework: string; extra: string; available: boolean }>;
+      // `extra` is a real novafabric extra or null; `framework_installed` and
+      // `install` are absent on servers older than the #283 fix.
+      adapters: Array<{
+        id: string; module: string; function: string; framework: string;
+        extra: string | null; available: boolean;
+        package?: string; framework_installed?: boolean; install?: string;
+      }>;
       count: number;
     }>('/api/adapters'),
 

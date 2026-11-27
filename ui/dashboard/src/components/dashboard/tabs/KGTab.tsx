@@ -6,6 +6,8 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api';
+import { FEATURE_EXTRAS, FEATURE_NEEDS, useExtraState } from '../../../lib/capabilities';
+import FeatureUnavailable from '../../ui/FeatureUnavailable';
 import {
   AgentQueryPanel,
   EntityQueuePanel,
@@ -24,6 +26,11 @@ export default function KGTab() {
   const [status, setStatus] = useState<KGStatus | null>(null);
   const [statusErr, setStatusErr] = useState<string | null>(null);
   const [runIds, setRunIds] = useState<string[]>([]);
+  // #283: the store panels need KuzuDB (`kuzu`, from the scale-kg extra). When
+  // the server reports kuzu missing, say so once instead of eight panels that
+  // each fail. A missing `cachetools` alone does not gate them. The alias table
+  // and the entity review queue are SQLite and stay visible either way.
+  const kgExtra = useExtraState(FEATURE_EXTRAS.knowledgeGraph, FEATURE_NEEDS.knowledgeGraph);
 
   useEffect(() => {
     api.kgStatus()
@@ -55,18 +62,29 @@ export default function KGTab() {
         </div>
       </div>
 
-      <StatusPanel status={status} error={statusErr} />
-      <TopologyLayerPanel />
-      <AgentQueryPanel runIds={runIds} />
-      <KGInitPanel onDone={() => {
-        api.kgStatus().then(setStatus).catch(() => {});
-      }} />
-      <KGIngestPanel capsuleDirs={runIds} />
-      <KGIngestAllPanel onDone={() => {
-        api.kgStatus().then(setStatus).catch(() => {});
-      }} />
-      <KGQueryPanel />
-      <KGAuditPanel />
+      {kgExtra.state === 'unavailable' ? (
+        <FeatureUnavailable
+          feature="Capsule Knowledge Graph store"
+          reason={`the KG store needs KuzuDB from the scale-kg extra, and this server is missing: ${kgExtra.missing.join(', ')}. Alias management and the entity review queue below do not need it.`}
+          enable={kgExtra.install}
+          cli="nova kg status"
+        />
+      ) : (
+        <>
+          <StatusPanel status={status} error={statusErr} />
+          <TopologyLayerPanel />
+          <AgentQueryPanel runIds={runIds} />
+          <KGInitPanel onDone={() => {
+            api.kgStatus().then(setStatus).catch(() => {});
+          }} />
+          <KGIngestPanel capsuleDirs={runIds} />
+          <KGIngestAllPanel onDone={() => {
+            api.kgStatus().then(setStatus).catch(() => {});
+          }} />
+          <KGQueryPanel />
+          <KGAuditPanel />
+        </>
+      )}
       <EntityQueuePanel />
       <KGAliasPanel />
 

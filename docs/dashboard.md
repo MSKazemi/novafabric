@@ -536,6 +536,45 @@ These are intentionally not in the dashboard because the CLI is the right surfac
 
 ---
 
+## Feature availability: "not available here" states *(experimental)*
+
+Some dashboard features need an optional extra on the machine that runs `nova serve`. When the
+server reports that extra missing, the feature shows one consistent state **before** you try it,
+instead of an error after the click or an empty panel. The state is written out in words (colour is
+never the only signal) and is exposed to screen readers as a note named
+"*&lt;feature&gt;*: not available here". It always says:
+
+- **Not available here:** the feature's name;
+- **Why:** which extra is missing on this server, and which packages of it are absent;
+- **How to enable:** the exact command, for example `pip install 'novafabric[sigstore]'`, then restart `nova serve`;
+- **CLI equivalent:** the `nova` command that does the same thing, when one exists. It needs the same extra.
+
+**Where the dashboard learns this.** `GET /api/doctor` (token required) returns an `extras` list — the
+same rows `nova doctor --check-extras` prints: `name`, `installed`, `requires`, `missing` and `install`.
+The dashboard reads it once and reuses it; when the window regains focus and the copy is older than 30 seconds it reads it again, so a `nova serve` restarted with the extra installed is picked up without reloading the page. Extras that the server does not report — an older
+server without the field, a source checkout with no package metadata, or a failed call — count as
+**unknown**: the feature behaves exactly as before and the server's own answer stays authoritative.
+Unknown is never shown as "missing".
+
+| Where | Needs | Unavailable state | CLI equivalent |
+|---|---|---|---|
+| Seal tab → Sigstore keyless sign | `sigstore` extra | Banner; **Sign with Sigstore** disabled | `nova seal sign <capsule_dir>/capsule.yaml --backend sigstore --capsule-id <id>` (the file `nova capture` writes; the server route signs the first of `manifest.json`, `capsule.json`, `capsule.yaml` it finds, and `nova verify --backend sigstore` checks that file) |
+| Seal tab → Sigstore bundle verify | `sigstore` extra | Banner; **Verify Sigstore Bundle** disabled | `nova verify --backend sigstore --capsule-id <id> <capsule_dir>` |
+| KG tab: store panels (status, topology, agent query, init, ingest, query, audit) | `kuzu` from the `scale-kg` extra | One banner replaces those panels, which would each fail. A missing `cachetools` alone does not trigger it. **KG Alias Management** and the **entity review queue** are SQLite and stay visible | `nova kg status` |
+| Capture tab → Framework Adapters | the framework each adapter wraps | Each row says **framework installed** / **framework not installed** / **install state not reported**, plus the server-supplied install command | — |
+
+Every adapter module ships with NovaFabric; the framework it wraps is yours to install. `GET /api/adapters`
+reports `extra` (a real NovaFabric extra, or `null` when there is none), `package`, `framework_installed`
+(read from installed package metadata, nothing is imported) and `install`. Four adapters have an extra
+(`openai-agents`, `google-adk`, `bedrock-agentcore`, `a2a`); the rest install the framework directly, for
+example `pip install langgraph`. Before this, the Capture tab printed `novafabric[<extra>]` around
+framework names, which suggested nine extras that do not exist.
+
+Not yet covered by this state (they still report a missing extra after the call): Reports PDF export
+(`compliance` extra) and the Policy tab's OPA check, which keeps its own "OPA not installed" warning.
+
+---
+
 ## What the dashboard does that the CLI cannot
 
 A short list, for completeness — the dashboard is not strictly a subset:
@@ -807,6 +846,12 @@ Badge colours: **shipped** (green), **partial** (accent), **placeholder** (amber
 > `pip`/`uv` install); the Python-side surface is `nova collector rebuild`. All ten
 > component statuses themselves are unchanged and correct — only the verification
 > commands were wrong.
+
+The **Collector** card's own detail list separates what ships from what does not:
+`novafabric-hpc-hub` is listed under **Future design — not implemented**, because the binary is a
+stub that exits `1` (see `ROADMAP.md`), and the 100K events/sec / p99 < 200 ms figures are labelled a
+design target, not a measured result. When the server has no collector-status route, the card says
+"Collector status is not reported by this server" instead of checking forever.
 
 ---
 

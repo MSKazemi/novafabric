@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { api } from '../../../lib/api';
 import type { RunSummary } from '../../../lib/api';
+import { adapterFrameworkLabel } from '../../../lib/capabilities';
 
 function CmdRow({ cmd, desc }: { cmd: string; desc: string }) {
   return (
@@ -200,9 +201,16 @@ COPY . .`}</pre>
 }
 
 // ---------- Framework Adapters panel (E-5..E-8 + v0.26.0) ----------
+//
+// Install hints come from the server (`/api/adapters` → `install`), never from a
+// name built here: the panel used to print `novafabric[<extra>]` around values
+// that were framework package names, not extras (nine of thirteen did not exist).
+// A guard test pins every non-null `extra` to pyproject.toml.
+
+type AdapterRow = Awaited<ReturnType<typeof api.listAdapters>>['adapters'][number];
 
 function AdaptersPanel() {
-  const [adapters, setAdapters] = useState<Array<{ id: string; module: string; function: string; framework: string; extra: string; available: boolean }>>([]);
+  const [adapters, setAdapters] = useState<AdapterRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -214,45 +222,55 @@ function AdaptersPanel() {
   }, []);
 
   return (
-    <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 space-y-3">
+    <section aria-labelledby="capture-adapters-heading" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-xs font-semibold text-[var(--color-text)]">Framework Adapters</h3>
+          <h3 id="capture-adapters-heading" className="text-xs font-semibold text-[var(--color-text)]">Framework Adapters</h3>
           <p className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
-            Registered Nova capture adapters — install with{' '}
-            <code className="font-mono">pip install novafabric[&lt;extra&gt;]</code>
+            Every adapter ships with NovaFabric; the framework it wraps is installed separately.
+            Each row shows the command that installs it on this server.
           </p>
         </div>
         <span className="text-[9px] font-mono text-[var(--color-text-faint)] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)]">E-5..E-8</span>
       </div>
       {loading && <p className="text-[10px] text-[var(--color-text-faint)]">Loading…</p>}
       {err && (
-        <div className="text-xs text-[var(--color-status-failure)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] border border-[color-mix(in_oklab,var(--color-status-failure)_25%,transparent)] rounded px-3 py-2">
-          {err}
+        <div role="alert" className="text-xs text-[var(--color-status-failure)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] border border-[color-mix(in_oklab,var(--color-status-failure)_25%,transparent)] rounded px-3 py-2">
+          Adapter list unavailable from this server: {err}
         </div>
       )}
       {!loading && !err && (
-        <div className="grid grid-cols-1 gap-1">
+        <ul className="grid grid-cols-1 gap-1">
           {adapters.map(a => (
-            <div key={a.id} className="flex items-center justify-between text-[10px] py-0.5">
+            <li key={a.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[10px] py-0.5">
               <div className="flex items-center gap-2">
                 <span
+                  aria-hidden="true"
                   className={clsx(
                     'w-1.5 h-1.5 rounded-full shrink-0',
-                    a.available
+                    a.framework_installed
                       ? 'bg-[var(--color-status-success)]'
                       : 'bg-[var(--color-border)]',
                   )}
                 />
                 <span className="font-mono text-[var(--color-text)]">{a.framework}</span>
-                {a.available && (
-                  <span className="text-[9px] text-[var(--color-status-success)] bg-[color-mix(in_oklab,var(--color-status-success)_10%,transparent)] px-1 py-px rounded">available</span>
-                )}
+                <span
+                  className={clsx(
+                    'text-[9px] px-1 py-px rounded',
+                    a.framework_installed
+                      ? 'text-[var(--color-status-success)] bg-[color-mix(in_oklab,var(--color-status-success)_10%,transparent)]'
+                      : 'text-[var(--color-text-faint)]',
+                  )}
+                >
+                  {adapterFrameworkLabel(a)}
+                </span>
               </div>
-              <code className="text-[var(--color-text-faint)]">[{a.extra}]</code>
-            </div>
+              {a.install && !a.framework_installed && (
+                <code className="font-mono text-[var(--color-text-faint)] break-all">{a.install}</code>
+              )}
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </section>
   );

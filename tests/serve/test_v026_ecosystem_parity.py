@@ -259,3 +259,115 @@ class TestAdaptersEndpoint:
         # pre-existing adapters
         assert "langgraph" in ids
         assert "autogen" in ids
+
+
+# ---------------------------------------------------------------------------
+# Capability-aware dashboard (#283): install hints name real extras, and the
+# dashboard can tell "framework not installed" apart from "adapter shipped".
+# ---------------------------------------------------------------------------
+
+_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
+
+
+def _real_extras() -> set[str]:
+    import tomllib
+
+    with _PYPROJECT.open("rb") as f:
+        return set(tomllib.load(f)["project"]["optional-dependencies"])
+
+
+class TestAdapterInstallHints:
+    def test_every_adapter_extra_exists_in_pyproject(self, client: TestClient) -> None:
+        """The Capture tab rendered `novafabric[<extra>]` from this field, and nine
+        of its thirteen values (langgraph, pyautogen, crewai, ...) were not extras
+        at all. A non-null `extra` must be a real optional-dependencies name."""
+        real = _real_extras()
+        r = client.get(f"/api/adapters?{TOKEN_Q}", headers=H)
+        assert r.status_code == 200
+        named = [a for a in r.json()["adapters"] if a["extra"] is not None]
+        assert named, "expected at least one adapter backed by a real extra"
+        phantom = {a["id"]: a["extra"] for a in named if a["extra"] not in real}
+        assert not phantom, f"adapter rows name extras pyproject does not declare: {phantom}"
+
+    def test_install_command_matches_the_extra_or_the_package(self, client: TestClient) -> None:
+        from novafabric.cli._extras import install_command
+
+        r = client.get(f"/api/adapters?{TOKEN_Q}", headers=H)
+        for a in r.json()["adapters"]:
+            if a["extra"] is not None:
+                assert a["install"] == install_command(a["extra"]), a
+            else:
+                # No extra: install the framework itself, never a novafabric[...] hint.
+                assert "novafabric[" not in a["install"], a
+                assert a["install"] == f"pip install {a['package']}", a
+
+    def test_known_extra_backed_adapters_keep_their_extra(self, client: TestClient) -> None:
+        r = client.get(f"/api/adapters?{TOKEN_Q}", headers=H)
+        by_id = {a["id"]: a for a in r.json()["adapters"]}
+        assert by_id["openai_agents"]["extra"] == "openai-agents"
+        assert by_id["google_adk"]["extra"] == "google-adk"
+        assert by_id["bedrock_agentcore"]["extra"] == "bedrock-agentcore"
+        assert by_id["a2a"]["extra"] == "a2a"
+        assert by_id["langgraph"]["extra"] is None
+
+    def test_framework_installed_is_a_bool_and_reads_metadata(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`framework_installed` follows distribution metadata, not the adapter
+        module (which always ships, so `available` alone said nothing)."""
+        import importlib.metadata as md
+
+        def _missing(name: str) -> object:
+            raise md.PackageNotFoundError(name)
+
+        monkeypatch.setattr(md, "distribution", _missing)
+        r = client.get(f"/api/adapters?{TOKEN_Q}", headers=H)
+        assert r.status_code == 200
+        for a in r.json()["adapters"]:
+            assert a["framework_installed"] is False, a
+            assert a["available"] is True, a
+            assert "dists" not in a, "internal detection list must not be served"
+
+
+class TestDoctorExtras:
+    def test_doctor_reports_extras_with_real_names(self, client: TestClient) -> None:
+        r = client.get(f"/api/doctor?{TOKEN_Q}", headers=H)
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data["extras"], list)
+        real = _real_extras()
+        for row in data["extras"]:
+            assert row["name"] in real, row
+            assert row["name"] != "all"
+            assert isinstance(row["installed"], bool)
+            assert row["install"] == f"pip install 'novafabric[{row['name']}]'"
+            assert row["installed"] is (not row["missing"])
+
+    def test_doctor_extras_failure_does_not_break_doctor(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import novafabric.cli._extras as extras_mod
+
+        def _boom() -> list[dict[str, object]]:
+            raise RuntimeError("metadata unreadable")
+
+        monkeypatch.setattr(extras_mod, "extras_status", _boom)
+        r = client.get(f"/api/doctor?{TOKEN_Q}", headers=H)
+        assert r.status_code == 200
+        assert r.json()["extras"] == []
+        assert "checks" in r.json()
+
+    def test_doctor_extras_do_not_change_ok(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import novafabric.cli._extras as extras_mod
+
+        monkeypatch.setattr(
+            extras_mod,
+            "extras_status",
+            lambda: [{"name": "sigstore", "installed": False, "requires": ["sigstore"],
+                      "missing": ["sigstore"], "install": "pip install 'novafabric[sigstore]'"}],
+        )
+        r = client.get(f"/api/doctor?{TOKEN_Q}", headers=H)
+        data = r.json()
+        assert data["ok"] is all(c["ok"] for c in data["checks"])
