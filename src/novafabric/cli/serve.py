@@ -317,6 +317,8 @@ def serve_cmd(
             db_path=db_path or _registry_db_path(),
             static_dir=None,          # mounted last — see below
             static_mounted_by_caller=static_arg is not None,
+            # The CSP hashes the inline scripts of the site mounted below (issue #278).
+            csp_static_dir=static_arg,
             topology_enabled=topology,
             topology_louvain_resolution=topology_louvain_resolution,
             extra_routers=[tv5_router] if tv5_router is not None else [],
@@ -375,6 +377,12 @@ def serve_cmd(
         threading.Thread(target=_open, daemon=True).start()
 
     import uvicorn
+
+    # Defence in depth (issue #278): the access log is off below, but should these
+    # loggers ever record a request line, a `?token=` value is written redacted.
+    from novafabric.serve.log_redaction import install_token_redaction
+
+    install_token_redaction()
 
     try:
         uvicorn.run(

@@ -383,6 +383,21 @@ longer forwards the submitting shell's environment (ADR-0270).
   - **A database an earlier chart already stamped `v005` is not repaired:** the pod stays in `Init:CrashLoopBackOff` until the manual, backup-first recovery in upgrade guide §4b is applied. That procedure clears the foreign stamp only when no registry-track table exists; any other state needs a product decision.
 - **The Docker image crash-looped in server mode (`NOVA_MODE=server`): its entrypoint migrated the wrong Alembic track.** `deploy/docker/entrypoint.sh` ran `nova db upgrade --backend postgres` (the MetadataStore track, `nova db upgrade`'s default) for both modes. Both tracks keep their stamp in one `alembic_version` table, and in the bundled compose stack both DSNs name the same database, so it was stamped `v005` and `nova server start` refused with `SchemaSkewError` (`v005` is not known to the registry track). Server mode now runs only `nova db upgrade --track registry --backend postgres --revision ${NOVA_DB_REVISION}`; the server creates the MetadataStore tables it uses itself on first use (`PostgresMetadataStore.bootstrap`). Dashboard mode is unchanged. A database already stamped `v005` is not repaired. #343 applies the same fix to the Helm chart's init container. Tests: `tests/deploy/test_entrypoint_migrates_the_registry_track.py` (refs #231).
 
+### Security
+
+- **`nova serve` restricts scripts with a hash-based Content-Security-Policy, keeps tokens out of
+  its logs, and the dashboard's share links carry no token** (issue #278). Every response except
+  the Swagger UI page (`/api/docs`) now adds `script-src 'self' 'unsafe-eval' 'sha256-…'` and
+  `worker-src 'self' blob:` to the existing `object-src 'none'; base-uri 'none'; frame-ancestors
+  'none'; form-action 'self'`, next to `nosniff`, `X-Frame-Options: DENY` and
+  `Referrer-Policy: no-referrer`. The hashes are those of the inline scripts in the served HTML,
+  computed at start-up, so there is no `'unsafe-inline'`. `'unsafe-eval'` stays for the in-browser
+  Ajv capsule validation. A logging filter on uvicorn's loggers writes any `…token=` value as
+  `[REDACTED]` (the access log stays off). In the dashboard source, the run summary's **Copy link**
+  and the evidence cart's `added_from` drop `token`/`access_token`, and start-up strips `?token=`
+  from the address bar even when storing it fails. The bundled dashboard picks this up at its next
+  rebuild. The API requests and the `/api/runs/stream` event stream still send `?token=`.
+
 ## [0.109.0] - 2026-11-22
 
 **Replay that refuses rather than pretends: what it cannot serve, it names.**

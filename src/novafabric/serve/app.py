@@ -59,6 +59,7 @@ from novafabric.registry.runs_cache import (
     query_runs as _query_runs_cache,
 )
 from novafabric.serve import audit, token_store
+from novafabric.serve import csp as _csp
 from novafabric.serve import paths as _serve_paths
 from novafabric.serve import reports as _reports
 from novafabric.serve.aggregates import AggregateCondition, computable, refuse
@@ -117,12 +118,13 @@ _BUNDLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 #: Browser security headers on every ``nova serve`` response (review frontend-dashboard-01,
 #: defence in depth). No plugins, no ``<base>`` hijack, no framing (click-jacking), no
 #: MIME sniffing, and no Referer: the dashboard token can travel in ``?token=``, so a
-#: Referer would hand it to any site the dashboard links to. ``script-src`` is not
-#: restricted yet — the built dashboard carries an inline hydration script.
+#: Referer would hand it to any site the dashboard links to. The ``Content-Security-Policy``
+#: here is the base policy, sent as-is only with the Swagger UI page (``/api/docs``,
+#: which loads its script from a CDN); every other response gets the stricter policy
+#: from :mod:`novafabric.serve.csp`, which adds ``script-src`` with per-build hashes of
+#: the dashboard's inline scripts (issue #278).
 SECURITY_HEADERS: dict[str, str] = {
-    "Content-Security-Policy": (
-        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-    ),
+    "Content-Security-Policy": _csp.BASE_POLICY,
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -737,6 +739,7 @@ def create_app(
     db_path: Path | None = None,
     static_dir: Path | None = None,
     static_mounted_by_caller: bool = False,
+    csp_static_dir: Path | None = None,
     topology_enabled: bool = False,
     topology_louvain_resolution: float | None = None,
     extra_routers: Sequence[APIRouter] = (),
@@ -757,6 +760,11 @@ def create_app(
     registration order — that route permanently shadows the real landing page
     the caller is about to mount. Callers that mount static themselves must
     pass ``True`` so the placeholder is never registered.
+
+    ``csp_static_dir`` is the directory whose inline-script hashes the
+    Content-Security-Policy allows (issue #278). It defaults to ``static_dir``; a
+    caller that mounts the site itself passes the directory it mounts, or the
+    dashboard's inline scripts are blocked by the browser.
     """
 
     _db_path = db_path  # capture for lifespan closure
@@ -958,11 +966,23 @@ def create_app(
             )
         return await call_next(request)
 
+    # Issue #278: script-src with the hashes of the inline scripts actually served,
+    # computed once here (a rebuilt bundle takes effect on restart). The Swagger UI
+    # page loads a CDN script and runs an inline bootstrap, so it keeps the base policy.
+    dashboard_csp = _csp.dashboard_content_security_policy(
+        csp_static_dir if csp_static_dir is not None else static_dir
+    )
+    swagger_paths = frozenset(
+        p for p in (app.docs_url, app.swagger_ui_oauth2_redirect_url) if p
+    )
+
     @app.middleware("http")
     async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
         # Registered after the host guard, so it wraps that guard's 403s too; a
         # route that sets one of these headers itself keeps its own value.
         response = await call_next(request)
+        if request.url.path not in swagger_paths:
+            response.headers.setdefault("Content-Security-Policy", dashboard_csp)
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
         return response
