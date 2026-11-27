@@ -251,6 +251,8 @@ broader ADR-0149 interop facets (NF-171..178, NF-180) are **future design**.
   `nova export-evidence`, the sources these projections consume
 - [NovaSeal configuration](novaseal-configuration.md) — sealing, Merkle log,
   timestamps
+- [Dashboard — per-check verification](dashboard.md) — every `nova verify` check for a
+  run as its own row, with its offline command (experimental)
 - [Assurance cases](assurance-cases.md) — binding sealed evidence into a
   machine-checkable argument
 - [Human-oversight evidence](human-oversight.md) — what a human reviewer was

@@ -3917,7 +3917,7 @@ verification instead — DSSE ed25519 signature, batch digest, and every member'
 bytes at the destination (`--public-key <pem>` required; optional `--dest` override).
 See [`nova export-blob`](#nova-export-blob---dest-uri) (experimental, ADR-0141).
 
-**Dashboard equivalent:** SealTab → Capsule Integrity Verify panel (run ID input + DSSE/TSA/Merkle result display).
+**Dashboard equivalent:** SealTab → Capsule Integrity Verify panel (run ID input + DSSE/TSA/Merkle result display). Runs → Integrity → **Verify seal** also lists every check above as its own row (passed / failed / not established / not applicable) with the reason, the files it looked at and the offline `nova verify` command for it (experimental, #271; see [Dashboard](dashboard.md)).
 
 **NovaSeal configuration (`$NOVAFABRIC_HOME/novaseal.yaml`, default `~/.novafabric/novaseal.yaml`):**
 

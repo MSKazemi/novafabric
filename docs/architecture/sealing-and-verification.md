@@ -306,6 +306,12 @@ not independently anchored, and the output says so. For a capsule sealed by
 v0.102.x or earlier, verified away from the sealer's log, check 3 prints
 `NOT CHECKED — log not available` and does not fail.
 
+**In the dashboard (experimental).** `nova serve`'s Runs → Integrity view verifies through
+`POST /api/runs/{run_id}/verify` (the same `verify_capsule`) and lists each of these checks
+as its own row — *passed*, *failed*, *not established* or *not applicable* — with the reason,
+the files it looked at and the `nova verify` command that repeats it offline. See
+[Dashboard — per-check verification](../dashboard.md).
+
 ## Maker-checker signing (experimental)
 
 `nova seal propose` (maker) and `nova seal approve` (checker) add a
