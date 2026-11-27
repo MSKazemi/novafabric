@@ -1,0 +1,81 @@
+name: iac-validate
+
+# Offline validation of the OpenTofu/Terraform-compatible templates under
+# deploy/iac/ (#238). Nothing here can create a cloud resource or spend money:
+#
+#   - no cloud credentials, secrets or OIDC tokens are configured, and the job
+#     has read-only repository permissions;
+#   - only `tofu fmt -check`, `tofu init -backend=false`, `tofu validate` and
+#     `tofu test` run. The contract tests are `command = plan` against a module
+#     that declares no providers and no resources;
+#   - `tofu init` downloads the pinned providers from the OpenTofu registry for
+#     the two experimental examples; `validate` never configures a provider, so
+#     no provider API is called.
+#
+# `apply` must never appear in this workflow. tests/docs/test_iac_module_contract.py
+# asserts that, and that the job stays credential-free.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/iac/**"
+      - ".github/workflows/iac-validate.yml"
+      - "tests/docs/test_iac_module_contract.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/iac/**"
+      - ".github/workflows/iac-validate.yml"
+      - "tests/docs/test_iac_module_contract.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iac-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  CHECKPOINT_DISABLE: "1"
+
+jobs:
+  validate:
+    name: iac validate (offline, no credentials)
+    runs-on: ubuntu-24.04
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: "1.13.10"
+          tofu_wrapper: false
+
+      - name: tofu fmt -check
+        run: tofu fmt -check -recursive -diff deploy/iac
+
+      - name: tofu init -backend=false + validate (module and examples)
+        run: |
+          set -euo pipefail
+          for dir in deploy/iac/modules/novafabric-single-host deploy/iac/examples/aws-ec2 deploy/iac/examples/gcp-compute; do
+            echo "::group::$dir"
+            tofu -chdir="$dir" init -backend=false -input=false
+            tofu -chdir="$dir" validate
+            echo "::endgroup::"
+          done
+
+      - name: tofu test (module contract, plan-only)
+        run: tofu -chdir=deploy/iac/modules/novafabric-single-host test

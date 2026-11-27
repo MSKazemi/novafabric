@@ -148,3 +148,19 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+
+  # OpenTofu/Terraform provider constraints of the experimental IaC examples
+  # (deploy/iac/, #238). No lock file is committed there, so Dependabot proposes
+  # constraint bumps; the iac-validate workflow re-validates every such PR.
+  - package-ecosystem: "terraform"
+    directories:
+      - "/deploy/iac/examples/aws-ec2"
+      - "/deploy/iac/examples/gcp-compute"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5

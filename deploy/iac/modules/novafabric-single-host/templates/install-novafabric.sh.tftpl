@@ -1,0 +1,23 @@
+# Installs one exact NovaFabric release into a dedicated virtualenv.
+# Rendered by deploy/iac/modules/novafabric-single-host (experimental).
+# Idempotent: re-running reinstalls the same pinned version.
+# (The #!/bin/sh line is prepended in main.tf, so this template is not itself
+# a shebang file in the repository.)
+set -eu
+
+VENV=${venv_dir}
+
+if [ ! -x "$VENV/bin/python" ]; then
+  python3 -m venv "$VENV"
+fi
+
+# --disable-pip-version-check: no update check is made from the host.
+"$VENV/bin/python" -m pip install \
+  --disable-pip-version-check \
+  --no-input \
+%{ if package_index_url != "" ~}
+  --index-url "${package_index_url}" \
+%{ endif ~}
+  "novafabric[server]==${version}"
+
+"$VENV/bin/nova" --version
