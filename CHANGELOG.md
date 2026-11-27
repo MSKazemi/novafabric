@@ -119,6 +119,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   new adapter, the OpenAPI + SDK regeneration for a new asset type. Also: the recorder has no
   `record_event`, four adapters (not eight) still carry their own manifest, the KG has six node
   tables, and the pytest timeout is 900 s.
+- **Operator playbook for v0.109.0** (`docs/ops/playbook.md`, linked from `docs/README.md`). One page of
+  numbered checklists: find the installed version, check the release artifacts, install, smoke-test in an
+  isolated home, back up, restore, upgrade, roll back, and recover from common failures. It links to the
+  detailed guides and does not copy them. The artifact checks cover the PyPI SHA-256 digests, the wheel's
+  GitHub attestation pinned to `publish-pypi.yml` and the tag, and cosign plus attestation for the image
+  with an exact signer identity. It also says what is missing: the chart has no signature, and there is
+  no yank procedure. v0.109.0's digests are listed. The artifact checks and the local checklists were
+  run against the published v0.109.0 wheel. The page also records three things that run found. A restored
+  capsule whose `inputs/` was empty fails `nova validate` with `missing directory: inputs` (a workaround
+  is given). `nova db upgrade` needs the `server` extra, although `nova doctor --check-storage` suggests
+  it on a base install. `nova ledger verify` exits 10 on a capsule that was never anchored, which is
+  expected and not a failed restore.
 
 ### Fixed
 

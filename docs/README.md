@@ -147,6 +147,7 @@ implemented versus design intent.
 | [Encryption at rest](ops/encryption-at-rest.md) | Opt-in envelope encryption for the object capsule store — KMS-wrapped DEKs, crypto-shred (experimental, never the default) |
 | [Data residency](ops/data-residency.md) | Jurisdiction-aware capsule placement — fail-closed regional routing + the deny-by-default cross-border read gate (experimental) |
 | [Cluster-scale migration](ops/cluster-scale-migration.md) | Migrating from SQLite + filesystem toward Postgres + object storage + graph DB |
+| [Operator playbook (v0.109.0)](ops/playbook.md) | Numbered checklists from install to recovery: find your version, verify the PyPI wheel, image and chart (hashes, attestations, cosign identity), smoke-test in an isolated home, back up, restore, upgrade, roll back, and the common failures, each with its maturity label |
 | [Lineage store migration](lineage/migration-guide.md) | Migrating the lineage store from SQLite to KuzuDB |
 
 ## Decide (evaluating NovaFabric)
