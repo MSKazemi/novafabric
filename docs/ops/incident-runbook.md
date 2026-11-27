@@ -11,7 +11,7 @@ First moves for almost any incident:
 
 ```bash
 nova doctor --check-storage      # backend, schema revision, migration state
-nova support-bundle              # secret-safe diagnostics tarball (§8)
+nova support-bundle              # redacted diagnostics tarball (§9); review before sharing
 ```
 
 ---
@@ -207,6 +207,10 @@ nova support-bundle -o /tmp/diag.tar.gz --log-window-hours 24
 Allowlist-only and deny-by-default: doctor output, versions, env-var
 **names** only, health snapshot, secret-redacted config, bounded recent logs
 (via `NOVAFABRIC_LOG_DIR` / `$NOVAFABRIC_HOME/logs`), plus a manifest with
-the SHA-256 of every member and the redaction-ruleset version. It never
-contains tokens, keys, credentials, capsule payloads, prompts, responses, or
-env-var values — safe to attach to a ticket as-is.
+the SHA-256 of every member and the redaction-ruleset version. No collector
+reads tokens, keys, capsule payloads, prompts, responses or env-var values;
+the home directory, the user name after a home or scratch directory and this host's name are replaced by
+`~`, `[USER]` and `[HOSTNAME]`. Redaction is pattern-based and log text is
+copied as written, so **review the archive before attaching it to a ticket**:
+`MANIFEST.txt` inside it lists every file and why it is there. See
+[Troubleshooting](troubleshooting.md#support-bundles-what-is-collected-and-what-to-review).

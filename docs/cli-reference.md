@@ -280,7 +280,7 @@ Status: **experimental**.
 | [`nova preservation`](#nova-preservation-experimental-adr-0165-nf-333334) | Record/verify crypto re-seal events and LTV timestamp-renewal chains in a preservation facet (experimental, record-only) |
 | [`nova settlement`](#nova-settlement-experimental-adr-0163-nf-315) | Walk the A2A payment-provenance chain in a settlement facet offline (experimental, record-only; moves no money) |
 | [`nova backup`](#nova-backup-create-experimental-adr-0181--adr-0216) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181--adr-0211) | Evidence-grade backup sets: create, verify offline, restore (local + automated pg restore, experimental) |
-| [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Secret-safe diagnostics tarball for support (experimental) |
+| [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Redacted diagnostics tarball for support, written locally (experimental) |
 | [`nova audit-log`](#nova-audit-log-export-experimental-adr-0191) | Export local audit logs for SIEM ingestion (OCSF / CEF / native JSONL, experimental) |
 
 For everything else — the knowledge graph, energy receipts, the accountability
@@ -8577,18 +8577,40 @@ Exit codes: `0` (restore + verification chain passed), `1` (any failed step), `2
 
 ### nova support-bundle (experimental, ADR-0187)
 
-Produce a secret-safe diagnostics tarball for support. Contains ONLY
-allowlisted members: `doctor.json`, `versions.json`, `env.txt`
-(`NOVAFABRIC_*`/`NOVA_*` variable **names** only — never values),
-`health.json`, `config.redacted.yaml` (if a server config exists, with
-secret-keyed values redacted), and a `manifest.json` with the SHA-256 of every
-member plus the redaction ruleset version. Since ruleset `v4` every string value is
-also scanned — known credential shapes and the password of a URL's userinfo
-(`postgresql://nova:[REDACTED]@db/nova`) are redacted whatever key holds them;
-`v3` and earlier went by key names only, so a `database_url` with a password
-shipped verbatim. No tokens, keys, credentials,
-capsule payloads, prompts, or responses are ever included. Scope: global
-(snapshots the whole installation).
+Write a redacted diagnostics tarball for support. The archive is written to this
+computer only; nothing is uploaded. It contains ONLY allowlisted members:
+
+| Member | Why it is there |
+|---|---|
+| `MANIFEST.txt` | Plain-text table of contents: what each file is, what is missing and why, what is never collected, which rules ran, what to check before sharing |
+| `doctor.json` | Storage health as `nova doctor --check-storage` sees it (backend, schema version, migration state, row counts), or the error that stopped the check |
+| `versions.json` | NovaFabric, Python and OS versions, and which optional extras are fully installed |
+| `env.txt` | `NOVAFABRIC_*`/`NOVA_*` variable **names** only, never values |
+| `health.json` | Whether the data directory, registry and capsule directory exist; registry size; capsule count (no capsule is opened) |
+| `config.redacted.yaml` | The server config, with secret-keyed values redacted; only if a server config exists and parses |
+| `logs/*.log` | Redacted tails of `*.log` files modified within `--log-window-hours`, only if you keep logs in `NOVAFABRIC_LOG_DIR` or `$NOVAFABRIC_HOME/logs` (otherwise `logs/README.txt` says none were found) |
+| `manifest.json` | SHA-256 and size of every other member, the redaction ruleset version and the local scrub version |
+
+Two passes run on every member. **Redaction** (ruleset `v4`) replaces values
+under secret-like keys, known credential shapes and the password of a URL's
+userinfo (`postgresql://nova:[REDACTED]@db/nova`) whatever key holds them; `v3`
+and earlier went by key names only, so a `database_url` with a password shipped
+verbatim. The **local identity scrub** (`v1`) replaces your home directory with `~`;
+the name after any home prefix (`/home/`, `/Users/`, `C:\Users\`, also JSON-escaped
+or URL-encoded), your user name right after `/scratch/`, `/work/`, `/tmp/` or
+`/var/tmp/`, and your user name in a `user=` or `for user "…"` field with `[USER]`;
+and this host's name, as a whole word matched case-sensitively, with `[HOSTNAME]`
+(no DNS lookup is made). It is narrow on purpose so that diagnostic text survives: a
+host name joined by `-` or `_` (`serve-<host>.log`) is kept, and `versions.json` is
+not scrubbed. Tar entries carry no owner name or id. No collector reads tokens, keys,
+capsule payloads, prompts or responses.
+
+Redaction is pattern-based and is not a guarantee. Remote host names, IP
+addresses and database user names are kept on purpose because they are often the
+diagnosis. Log text can contain anything the program that wrote it logged.
+**Review the archive before you share it** (`tar -tzvf`, then read `MANIFEST.txt`
+and any `logs/` files). Scope: global (snapshots the whole installation).
+See the [troubleshooting guide](ops/troubleshooting.md#support-bundles-what-is-collected-and-what-to-review).
 
 ```bash
 nova support-bundle                     # default name in the current directory
@@ -8597,7 +8619,7 @@ nova support-bundle -o /tmp/diag.tar.gz
 
 Options:
 - `--output, -o PATH` — output tarball path (default: `./nova-support-bundle-<timestamp>.tar.gz`)
-- `--log-window-hours INT` — bound for the structured-log window recorded in the manifest (default: `24`)
+- `--log-window-hours INT` — collect only `*.log` files modified within this many hours; also recorded in the manifest (default: `24`)
 
 Exit codes: `0` (bundle written), `1` (bundle error).
 

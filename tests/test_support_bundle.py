@@ -56,6 +56,7 @@ def test_bundle_created_with_expected_members(tmp_path: Path) -> None:
     # No server config in the isolated home -> no config member.
     # No log files in the isolated home -> honest logs/README.txt member.
     assert set(contents) == {
+        "MANIFEST.txt",
         "doctor.json",
         "versions.json",
         "env.txt",
