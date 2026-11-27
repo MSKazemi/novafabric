@@ -133,3 +133,31 @@ def test_missing_requirements_is_empty_for_an_installed_extra() -> None:
 
 def test_missing_requirements_of_an_unknown_extra_is_empty_not_an_error() -> None:
     assert missing_requirements("no-such-extra") == []
+
+
+def test_extras_status_reports_missing_and_skips_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The data form of `nova doctor --check-extras`, served by /api/doctor (#283)."""
+    import novafabric.cli._extras as mod
+
+    monkeypatch.setattr(mod, "declared_extras", lambda: ["all", "empty", "serve", "sigstore"])
+    reqs = {"serve": ["fastapi"], "sigstore": ["sigstore"], "empty": []}
+    monkeypatch.setattr(mod, "extra_requirements", lambda e: reqs.get(e, []))
+    monkeypatch.setattr(
+        mod, "missing_requirements", lambda e: ["sigstore"] if e == "sigstore" else []
+    )
+
+    rows = {r["name"]: r for r in mod.extras_status()}
+
+    assert set(rows) == {"serve", "sigstore"}
+    assert rows["serve"]["installed"] is True
+    assert rows["sigstore"]["installed"] is False
+    assert rows["sigstore"]["missing"] == ["sigstore"]
+    assert rows["sigstore"]["install"] == "pip install 'novafabric[sigstore]'"
+
+
+def test_extras_status_is_empty_without_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A source checkout declares nothing: an empty report, read as 'unknown'."""
+    import novafabric.cli._extras as mod
+
+    monkeypatch.setattr(mod, "declared_extras", lambda: [])
+    assert mod.extras_status() == []

@@ -11,15 +11,19 @@ export default function CollectorCard() {
   const [data, setData] = useState<CollectorData | null>(null);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
+  // #283: a server without the collector-status route is "not reported", not
+  // an endless "Checking collector…".
+  const [unreachable, setUnreachable] = useState(false);
 
   const doFetch = () => {
     setLoading(true);
     api.collectorStatus()
       .then((d) => {
         setData(d);
+        setUnreachable(false);
         setLastChecked(new Date());
       })
-      .catch(() => {/* silently ignore — endpoint may not be available yet */})
+      .catch(() => setUnreachable(true))
       .finally(() => setLoading(false));
   };
 
@@ -68,11 +72,9 @@ export default function CollectorCard() {
           {[
             'novafabric-collector binary (Go, collector/ in the NovaFabric repository)',
             'novafabric-verifier — offline signature verifier',
-            'novafabric-hpc-hub — NATS leaf lifecycle wrapper',
             'deploy/hpc/ — prolog.sh, epilog.sh, NATS templates, Ansible playbook',
             'deploy/k8s/ — DaemonSet (Fluent Bit), ConfigMap, Secret',
             '1000-event deterministic reference corpus validated',
-            'Target: 100K events/sec at spool; NovaSeal p99 < 200ms',
           ].map((s, i) => (
             <li key={i} className="flex items-start gap-1.5 text-[11px] text-[var(--color-text-muted)]">
               <span className="shrink-0 mt-px text-[var(--color-status-success)]">✓</span>
@@ -80,6 +82,22 @@ export default function CollectorCard() {
             </li>
           ))}
         </ul>
+      </div>
+
+      <div>
+        <div className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-text-faint)] mb-1.5">Future design — not implemented</div>
+        <ul className="space-y-0.5">
+          <li className="flex items-start gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+            <span className="shrink-0 mt-px text-[var(--color-text-faint)]" aria-hidden="true">○</span>
+            <span>
+              novafabric-hpc-hub — NATS leaf lifecycle wrapper. The binary is a stub that exits 1
+              (it does not subscribe, sign or publish yet); see ROADMAP.md.
+            </span>
+          </li>
+        </ul>
+        <p className="mt-1.5 text-[10px] text-[var(--color-text-faint)]">
+          Design target, not a measured result here: 100K events/sec at spool; NovaSeal p99 &lt; 200ms.
+        </p>
       </div>
 
       <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-3 py-2.5 space-y-2">
@@ -90,7 +108,12 @@ export default function CollectorCard() {
           )}
         </div>
 
-        {data === null ? (
+        {data === null && unreachable ? (
+          <p className="text-[11px] text-[var(--color-text-faint)]">
+            Collector status is not reported by this server. Check the health file instead:{' '}
+            <code className="font-mono text-[10px]">~/.novafabric/collector-health.json</code>
+          </p>
+        ) : data === null ? (
           <p className="text-[11px] text-[var(--color-text-faint)]">Checking collector…</p>
         ) : data.detected ? (
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">

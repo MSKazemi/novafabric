@@ -41,6 +41,7 @@ from importlib.metadata import PackageNotFoundError, distribution, metadata
 __all__ = [
     "declared_extras",
     "extra_requirements",
+    "extras_status",
     "install_command",
     "missing_requirements",
     "rich_install_command",
@@ -126,3 +127,34 @@ def missing_requirements(extra: str) -> list[str]:
         except PackageNotFoundError:
             missing.append(dist_name)
     return sorted(missing)
+
+
+def extras_status() -> list[dict[str, object]]:
+    """Each declared extra with its install state, for a machine-readable report.
+
+    The same rows ``nova doctor --check-extras`` prints, as data: the dashboard
+    reads them from ``/api/doctor`` to decide whether a feature that needs an
+    extra can run on this server, and to show the exact command that enables it.
+
+    ``all`` and extras with no requirements are left out, as in the CLI report.
+    An empty list means the installed metadata declares no extras (a source
+    checkout), which a consumer must read as "unknown", never as "missing".
+    """
+    report: list[dict[str, object]] = []
+    for extra in declared_extras():
+        if extra == "all":
+            continue
+        required = extra_requirements(extra)
+        if not required:
+            continue
+        missing = missing_requirements(extra)
+        report.append(
+            {
+                "name": extra,
+                "installed": not missing,
+                "requires": required,
+                "missing": missing,
+                "install": install_command(extra),
+            }
+        )
+    return report
