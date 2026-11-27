@@ -110,12 +110,12 @@ Read from the GitHub API on 2026-11-27:
 Over the last 200 runs (up to 2026-11-27), Scorecard concluded `success` 189 times and `failure`
 11 times. The failures have two upstream causes, and neither is a defect in this repository:
 
-- **10 failures in a row on 2026-11-24, 11:06–18:47 UTC.** The `docker pull
-  ghcr.io/ossf/scorecard-action:v2.6.0` step failed three times with `manifest unknown` each run.
+- **10 failures in a row on 2026-11-24, 11:06–18:47 UTC.** In each run, the step that pulls
+  the action's container image from GHCR (the OpenSSF `scorecard-action` image, tag `v2.6.0`)
+  failed three times with `manifest unknown`.
   The same action SHA (`23f22cd…`, v2.6.0) pulled that image successfully at 10:18 and again at
   21:35, and every run since has passed. So the image tag was briefly unresolvable on GHCR.
-  scorecard-action's `action.yaml` names its image by tag
-  (`docker://ghcr.io/ossf/scorecard-action:v2.6.0`), not by digest. Pinning the action to a SHA
+  scorecard-action's `action.yaml` names that image by its `v2.6.0` tag, not by digest. Pinning the action to a SHA
   therefore does not pin the image it runs, and a registry-side problem with that tag fails the job.
 - **1 failure on 2026-10-22.** Scorecard exited with `internal error: ListCommits … githubv4.Query:
   Something went wrong while executing your query`. That was a transient GitHub GraphQL error.
