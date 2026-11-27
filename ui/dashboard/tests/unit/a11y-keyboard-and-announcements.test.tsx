@@ -9,7 +9,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef, useState } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import AppearancePanel from '@/components/dashboard/AppearancePanel';
 import EvidenceList from '@/components/evidence/EvidenceList';
 import CommandPalette, { type Command } from '@/components/ui/CommandPalette';
@@ -23,6 +23,29 @@ import {
   singleKeyShortcutsEnabled,
 } from '@/lib/shortcuts';
 import { ToastProvider, useToast } from '@/lib/ToastContext';
+
+// jsdom implements neither Element.scrollIntoView (the palette keeps the
+// highlighted row in view) nor window.matchMedia (AppearancePanel reads the
+// colour scheme). Both exist in every browser the dashboard supports, so the
+// test environment provides minimal stand-ins rather than the components
+// growing jsdom-only guards.
+beforeAll(() => {
+  if (typeof Element.prototype.scrollIntoView !== 'function') {
+    Element.prototype.scrollIntoView = () => {};
+  }
+  if (typeof window.matchMedia !== 'function') {
+    window.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+  }
+});
 
 afterEach(() => {
   localStorage.clear();
