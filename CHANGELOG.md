@@ -78,6 +78,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **Dashboard: first-run guide with a copy-only `nova capture` builder (experimental, #265).** When the
+  server reports zero runs, Home shows a **Capture your first run** panel. You pick a workload, the
+  command and a capture level, and it shows the exact command to copy, for example
+  `NOVA_CAPTURE_LEVEL=forensic nova capture --output-dir <server capsule dir> -- python agent.py`. It
+  never runs anything and calls no new endpoint. Every emitted flag is checked against the generated
+  `nova capture` registry entry, and arguments are shell-quoted. Shell syntax the builder would have to
+  rewrite (pipes, redirects, `;`, `$`, globs) is refused with an explanation. The capture-level notes
+  follow the CLI: only `forensic`/`air_gapped` change capture today, and model-call capture stores full
+  prompts and responses at every level. **Check for runs** re-reads the run count, and a refused count
+  is never shown as zero. The panel shows no sample data. Keyboard and screen-reader accessible, with no
+  animation. See `docs/dashboard.md`.
 
 ### Changed
 

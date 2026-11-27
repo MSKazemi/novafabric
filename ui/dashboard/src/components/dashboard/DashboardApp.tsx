@@ -52,6 +52,8 @@ const StorageTab = lazy(() => import('./tabs/StorageTab'));
 const IncidentsTab = lazy(() => import('./tabs/IncidentsTab'));
 const OpsTab = lazy(() => import('./tabs/OpsTab'));
 const SpineTab = lazy(() => import('./tabs/SpineTab'));
+// First-run guide (#265): its own chunk, loaded only while the store has no runs.
+const OnboardingPanel = lazy(() => import('./onboarding/OnboardingPanel'));
 
 const TABS: Tab[] = ALL_TABS;
 
@@ -145,6 +147,9 @@ function DashboardInner() {
 
   // Sidebar counts
   const [counts, setCounts] = useState<Partial<Record<Tab, number>>>({});
+  // Store-wide run count from /api/stats — not the Runs tab's (possibly filtered)
+  // count. `null` = refused or unknown, which must not read as "no runs".
+  const [storeRunCount, setStoreRunCount] = useState<number | null>(null);
 
   // Auto-refresh polling — visibility-aware: pauses while the tab is hidden,
   // refreshes immediately on return (no background full-table query storms).
@@ -189,6 +194,7 @@ function DashboardInner() {
       api.listHolds().catch(() => null),
       api.incidentList().catch(() => null),
     ]).then(([stats, holds, incidents]) => {
+      setStoreRunCount(typeof stats?.run_count === 'number' ? stats.run_count : null);
       setCounts(prev => ({
         ...prev,
         // A refused run count (ADR-0234 D2) shows no badge rather than a wrong one.
@@ -277,6 +283,7 @@ function DashboardInner() {
     setConnected(false);
     setServerInfo(null);
     setCounts({});
+    setStoreRunCount(null);
   }, []);
 
   const handleTabChange = useCallback((t: Tab) => {
@@ -447,6 +454,15 @@ function DashboardInner() {
               so a crashed/loading tab never blocks switching away. */}
           <ErrorBoundary key={tab} label={`The ${TAB_LABEL[tab] ?? tab} view hit an error.`}>
             <Suspense fallback={<Loading />}>
+          {tab === 'home' && storeRunCount === 0 && (
+            // Own boundary: loading the guide's chunk must not blank the Home tab.
+            <Suspense fallback={null}>
+              <OnboardingPanel
+                onNavigate={handleTabChange}
+                onRunsFound={(n) => { setStoreRunCount(n); setCounts(prev => ({ ...prev, runs: n })); }}
+              />
+            </Suspense>
+          )}
           {tab === 'home' && (
             <HomeTab onNavigate={handleTabChange} />
           )}
