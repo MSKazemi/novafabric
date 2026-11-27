@@ -164,20 +164,6 @@ backends:
   (a bare `nova db upgrade --backend postgres` migrates the MetadataStore track,
   not the database the guard checks). `nova db upgrade --revision <id>` stops at
   a given revision when you must hold a gated migration back.
-
-⚠ **Known defect — container server mode.** The Docker entrypoint runs
-`nova db upgrade --backend postgres` (MetadataStore track) against the same
-Postgres database the server's guard reads, and both
-Alembic tracks keep their stamp in the same `alembic_version` table. The
-database is therefore stamped with a MetadataStore revision (`v005`) that the
-registry track does not know, and `nova server start` can refuse with
-`E-SKEW-AHEAD` — whose "upgrade the package" advice does not apply here.
-Running `--track registry` afterwards does not help (Alembic cannot locate
-`v005` in the registry tree). A fix needs a distinct version table per track
-(tracked; pinned by `tests/server/test_schema_skew_track_names.py`). The Helm
-chart's init container no longer hits this for new databases: in server mode it
-runs only `--track registry` (the server bootstraps the MetadataStore tables it
-uses). A database an earlier chart already stamped `v005` is still affected.
 - **unknown** (head unresolvable / DB unreadable) → starts with a warning —
   never a fake `ok`, never a refusal based on ignorance.
 
@@ -188,6 +174,96 @@ Unsupported for normal operation; unset it after the incident.
 
 `/readyz`'s `migrations` check uses the same comparator and now returns real
 `ok`/`fail` for Postgres as well (previously hardcoded `unknown`).
+
+⚠ **Known defect — fixed for new databases, manual recovery for stamped ones.**
+The Helm chart's init container ran `nova db upgrade --backend postgres` (the
+MetadataStore track) against the same Postgres database the server's guard
+reads, and both Alembic tracks keep their stamp in the same `alembic_version`
+table. The database was therefore stamped with a MetadataStore revision (`v005`)
+that the registry track does not know, and `nova server start` refused with
+`SchemaSkewError` / `E-SKEW-AHEAD` — whose "upgrade the package" advice does not
+apply here. In server mode the chart now runs only
+`nova db upgrade --track registry --backend postgres`. The Docker image's
+entrypoint had the same defect; PR #345 fixes it the same way. The structural
+fix, a distinct version table per track, is still open (pinned by
+`tests/server/test_schema_skew_track_names.py`).
+
+---
+
+## 4b. Recovering a database stamped `v005` by an earlier chart or entrypoint
+
+**Status: manual procedure; not exercised by this repository's CI.** Upgrading
+the chart does **not** repair such a database: its init container runs
+`--track registry`, Alembic cannot locate `v005` in the registry tree, and the
+pod stays in `Init:CrashLoopBackOff`. Recover explicitly:
+
+1. **Stop the writer and back up.** `kubectl scale deploy/<release>-novafabric --replicas=0`,
+   then, from a host with the PostgreSQL client tools,
+   `pg_dump --format=custom --file=nova-before-restamp.dump "$DSN"`. Keep the dump.
+2. **Confirm the state with `psql`** (for the chart's bundled Postgres:
+   `kubectl exec -it deploy/<release>-novafabric-postgres -- psql --username=<user> --dbname=<database>`, using `postgres.auth.username` / `postgres.auth.database`):
+
+   ```sql
+   SELECT version_num FROM alembic_version;
+   SELECT table_name FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN ('schema_version', 'assets', 'eval_results',
+                         'lineage_nodes', 'lineage_edges', 'approvals');
+   ```
+
+   Continue **only if** the first query returns exactly one row, a MetadataStore
+   revision (`v001`…`v005`), **and** the second query returns **no rows**. Those
+   six tables are everything the registry track creates (`alembic/postgres/versions/`
+   `0001`–`0003`). The old init container never created them, so they exist only if
+   something else did, for example a server started with
+   `NOVAFABRIC_ALLOW_SCHEMA_SKEW=1`, whose lineage backend creates `lineage_*`
+   itself.
+3. **Clear the foreign stamp:** `DELETE FROM alembic_version;`. The MetadataStore
+   tables and their data are untouched; only the bookkeeping row goes.
+4. **Restart:** `kubectl scale deploy/<release>-novafabric --replicas=1`. The init
+   container runs `nova db upgrade --track registry --backend postgres` from base,
+   creates the six registry tables and stamps the registry head; the server then
+   starts.
+5. **Afterwards, never run the bare `nova db upgrade --backend postgres` against
+   this database.** With the registry stamp in place, the MetadataStore track
+   fails because it cannot locate `p0003`. Clearing the stamp again to make it run
+   would re-apply `v001` over the existing tables.
+
+If step 2 shows any of the six registry tables, or a `p000N` row in
+`alembic_version`, **stop**. Stamping the registry head over tables of unknown
+shape, or dropping them, could lose lineage data. A safe procedure for that state
+needs a product decision (the per-track version table above) and is not
+documented here. Restore nothing; keep the dump and open an issue.
+
+## 4c. MetadataStore tables in server mode
+
+**Status: works today (behaviour of the fixed chart).** With only the registry track
+migrated, the server creates the MetadataStore tables it uses on **first use**, not
+at startup: `PostgresMetadataStore.bootstrap()` (`server/deps.py`) runs `CREATE TABLE
+IF NOT EXISTS` for `runs`, `capsules`, `signatures` and `retention_policies`, creates
+the `novafabric_app` (NOBYPASSRLS) and `novafabric_migrator` (**BYPASSRLS**) roles if
+absent, enables row-level security with the `tenant_isolation` policy, and grants
+the app role its privileges, including `DELETE` on `runs`, `capsules` and
+`signatures`. Two consequences:
+
+- **Privileges.** Creating those roles needs `CREATEROLE`. Under PostgreSQL's
+  `CREATE ROLE` rules, creating a role with `BYPASSRLS` also needs a creator that
+  is superuser or has `BYPASSRLS` itself. The old init container needed the same
+  thing for migration `v001`, but there a missing privilege failed the init
+  container. Now `/readyz` passes and the failure surfaces at the first
+  MetadataStore call. An upload still succeeds and logs
+  `capsule_metadata_index_failed`; other MetadataStore calls, such as the
+  tenant-scoped index delete, can fail. On managed Postgres without that
+  privilege, have an administrator pre-create both roles
+  (`CREATE ROLE novafabric_app NOLOGIN NOBYPASSRLS;`
+  `CREATE ROLE novafabric_migrator NOLOGIN BYPASSRLS;`). `bootstrap()` skips
+  existing roles.
+- **Shape.** `bootstrap()` builds a non-partitioned `runs` table. It has the
+  `(run_id, tenant_id, started_at)` primary key that `v004` produces, but not
+  `v002`'s quarterly partitions, and it creates no `v003` knowledge-graph tables
+  (`kg_alias_table`, `kg_entity_resolution_queue`). A database the MetadataStore
+  migrations built keeps those, which is the shape of a database stamped `v005`
+  by an earlier chart.
 
 ---
 

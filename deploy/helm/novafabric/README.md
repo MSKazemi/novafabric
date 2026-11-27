@@ -161,12 +161,21 @@ See [`values.yaml`](values.yaml) for the full list.
   and the server refuses to start when it is stamped behind head. The MetadataStore
   track is **not** run in server mode — both tracks share one `alembic_version`
   table in the same database, and its stamp (`v005`) made the server refuse to start
-  with `SchemaSkewError` (fixed after v0.109.0). The server creates the
-  MetadataStore tables it uses itself on first use. Dashboard mode still runs
-  `nova db upgrade --backend postgres`, as the Docker entrypoint does.
+  with `SchemaSkewError` (fixed after v0.109.0). Dashboard mode still runs
+  `nova db upgrade --backend postgres`.
+- **`dbRevision` changed meaning in server mode.** It is now a registry-track
+  revision (`p0001`…). A pinned MetadataStore id such as `v001` makes the init
+  container fail.
+- In server mode the server creates the MetadataStore tables it uses on **first
+  use** (`PostgresMetadataStore.bootstrap()`). This needs a database role that can
+  `CREATE ROLE … BYPASSRLS`, or the two roles pre-created by an administrator. The
+  resulting `runs` table is not partitioned and there are no knowledge-graph tables,
+  unlike a migrated database. See
+  [upgrade guide §4c](../../../docs/ops/upgrade-guide.md#4c-metadatastore-tables-in-server-mode).
 - A database already stamped `v005` by an earlier chart is **not** repaired by
-  upgrading the chart: `--track registry` cannot locate `v005`. See
-  [upgrade guide §4a](../../../docs/ops/upgrade-guide.md#4a-startup-schema-skew-guard-experimental-adr-0211).
+  upgrading the chart: `--track registry` cannot locate `v005`, and the pod stays in
+  `Init:CrashLoopBackOff`. Follow the manual recovery in
+  [upgrade guide §4b](../../../docs/ops/upgrade-guide.md#4b-recovering-a-database-stamped-v005-by-an-earlier-chart-or-entrypoint).
 - Readiness/liveness probes use `/readyz` and `/livez` (HTTP GET).
 - The stock `values.yaml` keeps a writable root filesystem and a bundled Postgres
   whose password is the literal `nova`: an **evaluation** default. Use

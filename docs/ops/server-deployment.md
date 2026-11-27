@@ -513,7 +513,16 @@ chart used to run the bare `nova db upgrade --backend postgres` (MetadataStore t
 against the same database; because both tracks share one `alembic_version` table,
 that stamped `v005` and `nova server start` refused with `SchemaSkewError`, so the
 stock chart crash-looped. A database already stamped that way is not repaired by
-the fixed chart ([upgrade guide §4a](upgrade-guide.md#4a-startup-schema-skew-guard-experimental-adr-0211)).
+the fixed chart. It stays in `Init:CrashLoopBackOff`; recover it manually
+([upgrade guide §4b](upgrade-guide.md#4b-recovering-a-database-stamped-v005-by-an-earlier-chart-or-entrypoint)). `dbRevision` is now a registry-track
+revision (`p0001`…) in server mode.
+
+The MetadataStore tables the server uses are created on first use by
+`PostgresMetadataStore.bootstrap()`, not by the init container. This needs a role
+that can `CREATE ROLE … BYPASSRLS`, or administrator-pre-created roles. Without it
+`/readyz` still passes and the first MetadataStore call fails. The bootstrapped
+`runs` table is not partitioned and has no knowledge-graph tables
+([upgrade guide §4c](upgrade-guide.md#4c-metadatastore-tables-in-server-mode)).
 
 In server mode the chart's readiness/liveness probes hit `/readyz` and `/livez`
 (both modes expose them); `/readyz` gates traffic on database reachability and
