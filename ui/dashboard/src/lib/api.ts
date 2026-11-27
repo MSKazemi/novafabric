@@ -1036,8 +1036,12 @@ export interface ReplayabilityView {
   recorded: ReplayabilitySummary | null;
   recorded_state: 'present' | 'absent' | 'invalid';
   recorded_error: string | null;
+  /** Set when a member is over the server's read bound: nothing was classified. */
+  current_over_limit?: { member: string; size_bytes: number; max_bytes: number } | null;
   /** Modes the dashboard may start; none of them re-runs the workload. */
   dashboard_modes: Record<string, boolean>;
+  /** Per startable mode: the scope its route requires and whether this credential holds it. */
+  mode_access?: Record<string, { required_scope: string | null; held_scope: string | null; permitted: boolean }>;
 }
 
 // Trust surfaces (ADR-0173 radar / ADR-0174 redaction x-ray), read-only.

@@ -23,6 +23,7 @@ import {
   mockedDryRunCommand,
   replayCommand,
   shellQuote,
+  startBlockedReason,
   startableAction,
 } from '@/components/replay/modes';
 import RunInspector from '@/components/dashboard/tabs/runs/RunInspector';
@@ -108,10 +109,40 @@ describe('mode contracts', () => {
     const strict = REPLAY_MODES.find(m => m.id === 'mocked')!;
     const permissive = REPLAY_MODES.find(m => m.id === 'mocked-permissive')!;
     expect(servabilityLine(strict, refusing)).toMatch(/refused before anything runs \(ModelSurfaceNotServable\)/);
-    expect(servabilityLine(permissive, refusing)).toMatch(/1 model call replay cannot serve would go LIVE/);
+    // `not_servable` mixes "runs LIVE" (unsupported surface) and "empty reply" (no recorded
+    // response): the line names both, as `nova replay --help` does, and claims neither.
+    const line = servabilityLine(permissive, refusing);
+    expect(line).toMatch(/1 recorded model call is not servable/);
+    expect(line).toMatch(/unsupported surface runs LIVE/);
+    expect(line).toMatch(/no recorded response gets an empty reply/);
+    expect(line).toMatch(/does not say which/);
     expect(servabilityLine(strict, null)).toMatch(/^Unknown/);
     const none = { ...refusing, replayable: 'none' as const, reexecution: { reexecutable: false, source: null, guard: null } };
     expect(servabilityLine(permissive, none)).toMatch(/cannot be re-run/);
+  });
+});
+
+describe('scope gate', () => {
+  const forensic = REPLAY_MODES.find(m => m.id === 'forensic')!;
+  it('explains a refusal from the server and stays silent when access is unknown or permitted', () => {
+    expect(startBlockedReason(forensic, { forensic: { required_scope: 'admin', held_scope: 'read', permitted: false } }))
+      .toBe('Not permitted: starting it needs the "admin" scope; this credential holds "read". The command above still works in a terminal.');
+    expect(startBlockedReason(forensic, { forensic: { required_scope: 'admin', held_scope: 'admin', permitted: true } })).toBeNull();
+    expect(startBlockedReason(forensic, undefined)).toBeNull();
+  });
+
+  it('disables "Run in dashboard…" for a credential without the scope', async () => {
+    const onAction = vi.fn();
+    const deny = { required_scope: 'admin', held_scope: 'read', permitted: false };
+    render(<ReplayWorkspace run={run} capsulePath="/runs/R1" onAction={onAction} load={async () => view({
+      mode_access: { forensic: deny, semantic: deny, exact: deny, dry_run: { ...deny, required_scope: 'operate' } },
+    })} />);
+    await screen.findByText('would refuse');
+    const button = screen.getByRole('button', { name: 'Run Forensic in the dashboard (not permitted)' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(/needs the "admin" scope; this credential holds "read"/);
+    fireEvent.click(button);
+    expect(onAction).not.toHaveBeenCalled();
   });
 });
 

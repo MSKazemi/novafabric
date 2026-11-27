@@ -14,7 +14,7 @@ import type { ReplayabilityView, RunSummary } from '../../lib/api';
 import type { RunAction } from '../dashboard/tabs/runs/types';
 import ModeCard from './ModeCard';
 import ReplayabilityReport from './ReplayabilityReport';
-import { REPLAY_MODES, mockedDryRunCommand, replayCommand, startableAction } from './modes';
+import { REPLAY_MODES, mockedDryRunCommand, replayCommand, startBlockedReason, startableAction } from './modes';
 
 export interface ReplayWorkspaceProps {
   run: RunSummary;
@@ -89,6 +89,7 @@ export default function ReplayWorkspace({ run, capsulePath, onAction, load = api
               checkCommand={mode.cliMode === 'mocked' ? mockedDryRunCommand(ref) : null}
               summary={summary}
               onStart={action ? () => onAction(run, action) : null}
+              startBlockedReason={action ? startBlockedReason(mode, view?.mode_access) : null}
               onCopy={onCopy}
             />
           );

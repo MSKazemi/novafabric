@@ -21,6 +21,8 @@ export interface ModeCardProps {
   summary: ReplayabilitySummary | null;
   /** Set when the dashboard may start this mode; opens the confirm dialog. */
   onStart: (() => void) | null;
+  /** Why starting is refused for this credential (the server's scope check), if it is. */
+  startBlockedReason?: string | null;
   onCopy: (command: string, what: string) => void;
 }
 
@@ -36,8 +38,11 @@ export function servabilityLine(mode: ReplayModeContract, summary: Replayability
     if (summary.reexecution && summary.reexecution.reexecutable === false) {
       return 'Would be refused: the capsule cannot be re-run (--permissive does not change that).';
     }
+    // `not_servable` counts both an unsupported surface (runs LIVE under --permissive) and a
+    // supported surface whose response was never recorded (gets an empty reply); the
+    // report does not split them, so neither is claimed.
     return notServable > 0
-      ? `Would start; ${notServable} model call${notServable === 1 ? '' : 's'} replay cannot serve would go LIVE if the workload makes ${notServable === 1 ? 'it' : 'them'}.`
+      ? `Would start. ${notServable} recorded model call${notServable === 1 ? ' is' : 's are'} not servable: if the workload makes ${notServable === 1 ? 'it' : 'them'}, a call on an unsupported surface runs LIVE and one on a supported surface with no recorded response gets an empty reply. The report does not say which applies.`
       : 'Would start; divergences are reported instead of failing the replay.';
   }
   if (summary.strict_mocked === 'refuse') {
@@ -49,7 +54,7 @@ export function servabilityLine(mode: ReplayModeContract, summary: Replayability
     : 'Would start and serve every recorded call.';
 }
 
-export default function ModeCard({ mode, command, checkCommand, summary, onStart, onCopy }: ModeCardProps) {
+export default function ModeCard({ mode, command, checkCommand, summary, onStart, startBlockedReason, onCopy }: ModeCardProps) {
   const titleId = useId();
   return (
     <li>
@@ -93,7 +98,20 @@ export default function ModeCard({ mode, command, checkCommand, summary, onStart
             />
           )}
         </div>
-        {onStart ? (
+        {onStart && startBlockedReason ? (
+          <div className="space-y-1">
+            <button
+              type="button"
+              disabled
+              aria-describedby={`${titleId}-blocked`}
+              aria-label={`Run ${mode.title} in the dashboard (not permitted)`}
+              className="px-2.5 py-1 text-xs rounded border border-[var(--color-border)] text-[var(--color-text-faint)] opacity-60 cursor-not-allowed"
+            >
+              Run in dashboard…
+            </button>
+            <p id={`${titleId}-blocked`} className="text-xs text-[var(--color-text-faint)]">{startBlockedReason}</p>
+          </div>
+        ) : onStart ? (
           <button
             type="button"
             onClick={onStart}

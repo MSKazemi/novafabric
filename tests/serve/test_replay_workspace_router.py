@@ -223,3 +223,63 @@ class TestDashboardModes:
         # classified here before the dashboard can treat it as startable.
         assert mounted == startable
         assert "mocked" not in mounted and "intervention" not in mounted
+
+
+class TestBoundedReads:
+    def test_a_stream_over_the_bound_is_not_classified(
+        self, client: TestClient, capsule_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from novafabric.serve.routers import replay_workspace
+
+        size = (capsule_dir / RUN_ID / "model-calls.jsonl").stat().st_size
+        monkeypatch.setattr(replay_workspace, "MAX_MEMBER_BYTES", size - 1)
+        res = _get(client)
+        assert res.status_code == 200
+        body = res.json()
+        # A prefix would give wrong counts: no verdict at all, and the reason says why.
+        assert body["current"] is None
+        assert body["current_over_limit"] == {
+            "member": "model-calls.jsonl",
+            "size_bytes": size,
+            "max_bytes": size - 1,
+        }
+        assert "nothing was classified" in body["current_error"]
+        assert "--dry-run" in body["current_error"]
+
+    def test_within_the_bound_reports_no_limit(self, client: TestClient) -> None:
+        assert _get(client).json()["current_over_limit"] is None
+
+    def test_the_handler_runs_off_the_event_loop(self, client: TestClient) -> None:
+        """A plain ``def`` handler: FastAPI runs its file reads in the threadpool."""
+        import inspect
+
+        (route,) = [
+            info.route
+            for info in iter_routes(client.app)
+            if info.path == "/api/runs/{run_id}/replayability"
+        ]
+        assert not inspect.iscoroutinefunction(route.endpoint)
+
+
+class TestModeAccess:
+    def test_reports_each_startable_routes_scope(self) -> None:
+        from novafabric.serve.authz import Scope
+        from novafabric.serve.routers.replay_workspace import mode_access
+
+        read = {m: a.model_dump() for m, a in mode_access(Scope.read).items()}
+        assert set(read) == {m for m, ok in DASHBOARD_STARTABLE_MODES.items() if ok}
+        assert read["forensic"] == {
+            "required_scope": "admin",
+            "held_scope": "read",
+            "permitted": False,
+        }
+        assert read["dry_run"]["required_scope"] == "operate"
+        assert not any(a["permitted"] for a in read.values())
+        admin = mode_access(Scope.admin)
+        assert all(a.permitted for a in admin.values())
+        assert not any(a.permitted for a in mode_access(None).values())
+
+    def test_the_shared_token_may_start_every_startable_mode(self, client: TestClient) -> None:
+        access = _get(client).json()["mode_access"]
+        assert access and all(a["permitted"] for a in access.values())
+        assert "mocked" not in access and "intervention" not in access

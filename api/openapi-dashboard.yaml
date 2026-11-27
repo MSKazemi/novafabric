@@ -767,6 +767,28 @@ components:
       - manifest
       title: MCPScanRequest
       type: object
+    ModeAccess:
+      description: Whether the calling credential may start one mode from the dashboard.
+      properties:
+        held_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Held Scope
+        permitted:
+          title: Permitted
+          type: boolean
+        required_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Required Scope
+      required:
+      - required_scope
+      - held_scope
+      - permitted
+      title: ModeAccess
+      type: object
     OTLPLogsIngestResponse:
       description: Declared (not bound) body of ``POST /api/otlp/v1/logs`` — see ``to_response``.
       properties:
@@ -820,6 +842,24 @@ components:
       - capsule_amended
       - storage
       title: OTLPLogsIngestResponse
+      type: object
+    OverLimit:
+      description: A member too large for the dashboard to classify; nothing was classified.
+      properties:
+        max_bytes:
+          title: Max Bytes
+          type: integer
+        member:
+          title: Member
+          type: string
+        size_bytes:
+          title: Size Bytes
+          type: integer
+      required:
+      - member
+      - size_bytes
+      - max_bytes
+      title: OverLimit
       type: object
     PlaceHoldRequest:
       properties:
@@ -925,10 +965,20 @@ components:
           - type: string
           - type: 'null'
           title: Current Error
+        current_over_limit:
+          anyOf:
+          - $ref: '#/components/schemas/OverLimit'
+          - type: 'null'
         dashboard_modes:
           additionalProperties:
             type: boolean
           title: Dashboard Modes
+          type: object
+        mode_access:
+          additionalProperties:
+            $ref: '#/components/schemas/ModeAccess'
+          default: {}
+          title: Mode Access
           type: object
         recorded:
           anyOf:

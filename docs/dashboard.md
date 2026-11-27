@@ -178,7 +178,10 @@ URL (`view=replay-modes`), so a link opens on the same report.
   and each reason with the provider and host where one applies. Below it, the capsule's
   own `replayability.json` — the prediction the capturing version wrote — or *unknown at
   capture* for a capsule written without one. When the report cannot be loaded or the
-  capsule cannot be classified, servability is shown as unknown, never guessed.
+  capsule cannot be classified, servability is shown as unknown, never guessed. The server
+  reads each capsule member up to 16 MiB; a call stream above that is not classified at all
+  (a prefix would give wrong counts), and the view says which file and points to
+  `nova replay <capsule> --dry-run`.
 - **One card per mode** — *Forensic*, *Semantic*, *Exact eligibility*, *Mocked — strict
   (default)*, *Mocked — permissive* and *Intervention* (there is no `live` mode). Each card
   says in words what the mode executes, whether tools run live, whether the network is
@@ -192,7 +195,11 @@ URL (`view=replay-modes`), so a link opens on the same report.
   replay would refuse or run live. *Forensic*, *Semantic* and *Exact eligibility* execute
   nothing; when the server lists them in `dashboard_modes`, **Run in dashboard…** opens the
   same confirm dialog as the run's row buttons, and the result opens in the *Replay result*
-  view.
+  view. Their routes need the `admin` scope (`operate` for the dry-run); for a credential
+  that lacks it the button is disabled and says which scope it needs and which it holds.
+- **Mocked — permissive** follows `nova replay --help`: a model call with no recorded
+  response gets an empty reply, unsupported model surfaces run live. The report's
+  *not servable* count covers both cases and does not split them, so the card names both.
 
 The dashboard's *Dry-run policy check* action is `nova replay --mode forensic --dry-run`
 (tool policy decisions only); the mocked-mode check is the CLI's `--dry-run` on the

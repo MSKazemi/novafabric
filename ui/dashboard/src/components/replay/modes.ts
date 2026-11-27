@@ -127,11 +127,11 @@ export const REPLAY_MODES: readonly ReplayModeContract[] = [
     executesWorkload: true,
     sideEffecting: true,
     executes:
-      'The same re-run, but divergences are only reported. Model calls replay cannot serve go LIVE to their provider; an unmatched intercepted tool call runs live only when an --allow-* flag permits its mutation class.',
+      'The same re-run, but divergences are only reported: a model call with no recorded response gets an empty reply, unsupported model surfaces run LIVE, an unmatched intercepted tool call runs live only if an --allow-* flag permits its mutation class (never if replay.yaml says allow: false), and unconsumed recordings are only reported.',
     tools:
       'As strict, plus unmatched intercepted tool calls when an --allow-* flag permits them. Non-intercepted tools RUN LIVE.',
     network:
-      'Reachable, and used: unservable model calls reach the provider. Connections past loopback are counted, not failed.',
+      'Reachable, and used: calls on unsupported model surfaces reach their provider. Connections past loopback are counted, not failed.',
     writes:
       'Whatever the re-run workload and its live tools write, plus the replay result and a replay capsule.',
     maturity: 'works today (Python workloads, supported surfaces only)',
@@ -176,6 +176,29 @@ export function replayCommand(mode: ReplayModeContract, capsuleRef: string): str
  */
 export function mockedDryRunCommand(capsuleRef: string): string {
   return `nova replay ${shellQuote(capsuleRef)} --dry-run`;
+}
+
+/** Per startable mode: the scope its route requires and whether this credential holds it. */
+export interface ModeAccess {
+  required_scope: string | null;
+  held_scope: string | null;
+  permitted: boolean;
+}
+
+/**
+ * Why this credential may not start *mode*, from the server's `mode_access`, or null.
+ * Unknown access (an older server) is not a refusal: the route still enforces its scope,
+ * and a denial is shown as the action's error.
+ */
+export function startBlockedReason(
+  mode: ReplayModeContract,
+  modeAccess: Record<string, ModeAccess> | null | undefined,
+): string | null {
+  const access = modeAccess?.[mode.startableKey];
+  if (!access || access.permitted) return null;
+  const needs = access.required_scope ? `the "${access.required_scope}" scope` : 'a scope this server does not report';
+  const holds = access.held_scope ? `this credential holds "${access.held_scope}"` : 'this credential holds no recognised scope';
+  return `Not permitted: starting it needs ${needs}; ${holds}. The command above still works in a terminal.`;
 }
 
 /**
