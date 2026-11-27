@@ -2,6 +2,8 @@
 
 [Architecture, as built](README.md) › Deployment topologies
 
+> Verified against code on 2026-11-27.
+
 > **Local-first now. Distributed-ready always. Cluster-scale later.**
 
 All three tiers read and write the same Run Capsule format. Moving up a tier is a
@@ -53,24 +55,26 @@ contacted only if `tsa_url` or `tsa_urls` is configured (see
 ## Server mode (experimental)
 
 `nova server start` (`cli/server.py`) runs uvicorn with the FastAPI app from
-`server/app.py:create_app`. The routes are under `/v0`, and the default bind is
-`127.0.0.1:7433`. `--workers N` runs several worker processes.
+`server/app.py:create_app`. The API routes are under `/v0`; the exceptions are
+`/health`, `/metrics`, `/.well-known/mcp.json` and SCIM at `/scim/v2`. The default
+bind is `127.0.0.1:7433`. `--workers N` runs several worker processes and requires
+`--backend postgres`; with the SQLite metadata store it exits 2 (`cli/server.py`).
 
 | Component | As built | Maturity |
 |---|---|---|
 | Authentication | OIDC/JWKS when configured. Otherwise an auto-generated local bearer token. `--insecure-no-auth` is an explicit opt-out. | experimental |
 | Authorization | RBAC, and API keys via `nova server api-key create / list / revoke / rotate` | experimental |
 | Identity provisioning | SCIM, and SAML behind an opt-in | experimental / partial |
-| Metadata store | SQLite (default) or Postgres via `--backend postgres`; Postgres applies row-level security per transaction (`metadata_store/postgres.py`, `metadata_store/rls.py`) | experimental |
+| Metadata store | SQLite (the `nova server start` default, `server/config.py:ServerConfig.backend`) or Postgres via `--backend postgres`; Postgres applies row-level security per transaction (`metadata_store/postgres.py`, `metadata_store/rls.py`). The packaged Compose file sets `postgres` (`deploy/docker/docker-compose.yml`). Whatever the backend, `GET /v0/capsules` pages from the SQLite runs-cache in `registry.db`, which every worker writes on upload (`server/capsule_index.py`) | experimental |
 | Capsule bytes | A filesystem directory on the server (`server/deps.py:get_capsule_dir`), filled by `POST /v0/capsules` (`server/ingest.py`) or by indexing a directory | experimental |
 | Tenancy | **Single-tenant today.** The server refuses to start with more than one organization unless the operator explicitly accepts a shared capsule store (`server/config.py`). | experimental |
 | Packaging | `deploy/docker/` (Compose defaults to `nova serve`; `NOVA_MODE=server` selects the API server) and `deploy/helm/novafabric` (Helm defaults to authenticated `server` mode) | experimental |
 
 **Object storage.** `object_capsule_store/` implements an S3-compatible,
 content-addressed capsule store with a write-once put protocol. Backends: S3,
-MinIO, Ceph RGW, Azure Blob, and an in-memory `local` backend for tests (a GCS
-WORM adapter exists in `worm/gcs.py` but is not selectable through the backend
-router yet). It is used today by backup, batch
+MinIO, Ceph RGW, Azure Blob, GCS (`object_capsule_store/worm/gcs.py`, selectable
+as `gcs` in `object_capsule_store/backend_router.py`), and an in-memory `local`
+backend for tests. It is used today by backup, batch
 export and import, and rebuild. It is **not** wired into the server's capsule
 routes. The library is experimental, and serving capsules from it in server mode
 is not implemented.
@@ -83,14 +87,17 @@ or graph.** They append to a local spool, and something else ingests it.
 | Hop | Component | As built | Maturity |
 |---|---|---|---|
 | 1 | `nova capture --emit-spool` | `capture/spool_sink.py:SpoolSink` writes Event Envelope v1 records (`schemas/event-envelope-v1/`) to the node spool. Opt-in. | experimental |
-| 2 | Node spool | `$NOVAFABRIC_HOME/spool` (or `NOVAFABRIC_SPOOL_DIR`). It uses the Go `libnovaspool` when present (segments, checkpoints, dead-letter queue), otherwise a pure-Python fallback (`collector_cffi/spool.py`). | experimental |
+| 2 | Node spool | `$NOVAFABRIC_HOME/spool` (or `NOVAFABRIC_SPOOL_DIR`) on the Python side; the Go forwarder has no default and exits 2 without `--spool` or `NOVAFABRIC_SPOOL_DIR`. It uses the Go `libnovaspool` when present (segments, checkpoints, dead-letter queue), otherwise a pure-Python fallback (`collector_cffi/spool.py`). | experimental |
 | 3 | `novafabric-spool-forwarder` (Go) | Drains the spool to the NATS JetStream stream `NOVA_EVIDENCE` on `nova.evidence.<run_id>` (`collector/cmd/novafabric-spool-forwarder/`) | experimental |
-| 4 | Consumers | `nova lineage consume` and the evidence-fabric NATS consumer index events into DuckDB, ClickHouse or Kuzu (`evidence_fabric/nats_consumer.py`) | experimental |
+| 4 | Consumers | `nova lineage consume` writes lineage edges into Kuzu (`--kuzu-path`, `cli/lineage_consume.py`); the evidence-fabric NATS consumer feeds an accumulator, an in-memory DuckDB one unless another (such as ClickHouse) is passed in (`evidence_fabric/nats_consumer.py`) | experimental |
+| — | Python collector app | `collector_app/app.py`: `POST /capsule` into an in-memory DuckDB accumulator, or ClickHouse when `NOVA_CLICKHOUSE_URL` is set; `GET /health` | experimental |
+| — | `novafabric-verifier` (Go) | Offline check of NovaSeal Ed25519 batch signatures (`collector/cmd/novafabric-verifier/`) | experimental |
 | — | OTel collector with the NovaSeal processor | A custom build via the OpenTelemetry Collector Builder (`collector/ocb/builder-config.yaml`) | experimental |
 | — | HPC hub (central signing) | The binary exists in `collector/cmd/novafabric-hpc-hub/`, but it is a stub that exits with "not implemented"; the signing pipeline is not written. See `deploy/hpc/README.md`. | **future design** |
 | — | Kubernetes collector manifests | `deploy/k8s/`. The collector image is not published. | **planned** |
 | — | Writer lease with fencing tokens | `ha/lease.py` (Postgres and SQLite) | experimental primitive; automated failover is **planned** |
-| — | Multi-cluster federation of capsules and lineage | — | **future design** |
+| — | Multi-cluster federation of capsules | — | **future design** |
+| — | Cross-site lineage query federation | `lineage/federation/`: a coordinator app fanning queries out to per-site shard apps (`federation` extra); no `nova` command starts it | experimental, library-level |
 
 The cluster path does not feed the server today. Captured capsules reach a
 server only through `POST /v0/capsules` or directory indexing. The spool, NATS
