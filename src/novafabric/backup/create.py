@@ -280,6 +280,10 @@ def create_backup(
         # Manifest-only sets carry NO capsule blobs (ADR-0181 D2): the WORM
         # bucket is the durability layer, the listing below is the proof.
         capsule_members = 0
+        # Empty directories are not tar file members; they travel in the signed
+        # manifest instead (0.2.2). A capsule's empty inputs/ is part of its layout:
+        # without it a restored capsule fails `nova validate`.
+        empty_dirs: list[str] = []
         capsule_dirs = _CAPSULE_DIRS if manifest_profile != PROFILE_MANIFEST_ONLY else ()
         for dirname in capsule_dirs:
             src_dir = home / dirname
@@ -287,12 +291,18 @@ def create_backup(
                 continue
             # Never follow a link: rglob + copyfile put the target of a planted
             # capsules/<id>/inputs/x -> ~/.ssh/id_rsa into the set (ADR-0011 Am. 2).
+            tree_empty: list[str] = []
             for rel_in_dir in copy_tree_files(
-                src_dir, stage / dirname, skip=_skip_denied(dirname), error=BackupLinkError
+                src_dir,
+                stage / dirname,
+                skip=_skip_denied(dirname),
+                error=BackupLinkError,
+                empty_dirs=tree_empty,
             ):
                 rel = PurePosixPath(dirname) / rel_in_dir
                 members.append(_member(stage / rel, str(rel), kind="blob", role="capsules"))
                 capsule_members += 1
+            empty_dirs.extend(str(PurePosixPath(dirname) / d) for d in tree_empty)
         capsule_detail: Optional[str] = None
         external_capsules = (
             _external_capsule_dir(home, capsule_dir)
@@ -303,11 +313,13 @@ def create_backup(
             # M12: the store capture writes to (NOVAFABRIC_CAPSULE_DIR) lives outside
             # the home — the Docker layout. Archived under external/capsule-dir/ and
             # restored by the same rule on the target (resolve_origin_root).
+            external_empty: list[str] = []
             for rel_in_dir in copy_tree_files(
                 external_capsules,
                 stage / CAPSULE_DIR_ARC,
                 skip=_skip_denied(CAPSULE_DIR_ARC),
                 error=BackupLinkError,
+                empty_dirs=external_empty,
             ):
                 rel = PurePosixPath(CAPSULE_DIR_ARC) / rel_in_dir
                 members.append(
@@ -317,6 +329,7 @@ def create_backup(
                     )
                 )
                 capsule_members += 1
+            empty_dirs.extend(str(PurePosixPath(CAPSULE_DIR_ARC) / d) for d in external_empty)
             capsule_detail = f"capsule store {external_capsules} (NOVAFABRIC_CAPSULE_DIR)"
         if manifest_profile == PROFILE_MANIFEST_ONLY:
             coverage.append(
@@ -430,12 +443,13 @@ def create_backup(
             pg_schema_revision=pg_schema_revision,
             pg_table_counts=pg_table_counts,
             pg_client_version=pg_client_version,
+            empty_dirs=sorted(empty_dirs) or None,
         )
         manifest, dsse_bytes = _sign_manifest(manifest)
 
         manifest_path = stage / MANIFEST_NAME
         manifest_path.write_text(
-            json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True),
+            json.dumps(manifest.body(), indent=2, sort_keys=True),
             encoding="utf-8",
         )
         dsse_path: Optional[Path] = None

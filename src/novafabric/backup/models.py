@@ -11,7 +11,7 @@ verify, per the spec.
 from __future__ import annotations
 
 import json
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,7 +26,11 @@ from pydantic import BaseModel, ConfigDict
 #: 0.2.1 adds the ``capsule-dir`` member origin: a capsule store outside the
 #: home (``NOVAFABRIC_CAPSULE_DIR``) travels under ``external/capsule-dir/``.
 #: Sets without such a store carry no new value and validate on 0.2.0 readers.
-MANIFEST_SCHEMA_VERSION = "0.2.1"
+#: 0.2.2 adds ``empty_dirs``: the empty directories of the capsule trees, which a
+#: set of file members alone cannot carry (``nova validate`` requires a capsule's
+#: ``inputs/`` even when empty). The field is written only when a set has one, so
+#: a set without empty directories validates on 0.2.1 readers.
+MANIFEST_SCHEMA_VERSION = "0.2.2"
 
 #: First-slice profile: local deployment, blobs included (no WORM delegation).
 PROFILE_LOCAL_FULL = "local-full"
@@ -129,9 +133,25 @@ class BackupManifest(BaseModel):
     object_store_backend: Optional[str] = None
     #: ADR-0216 D6: SHA-256 of the canonical secret-free backend fingerprint.
     object_store_fingerprint: Optional[str] = None
+    #: 0.2.2: in-archive paths of empty directories under the capsule trees
+    #: (``capsules/``, ``runs/``, ``external/capsule-dir/``), recreated on restore.
+    #: ``None`` (never written) when the set has none; covered by the signature.
+    empty_dirs: Optional[list[str]] = None
     signing_status: Literal["signed", "unsigned"] = "unsigned"
     signing_detail: Optional[str] = None
     signature: Optional[ManifestSignature] = None
+
+    def body(self) -> dict[str, Any]:
+        """The manifest as written to ``manifest.json``.
+
+        ``empty_dirs`` is left out when ``None``, so sets without empty
+        directories (and every set made before 0.2.2) keep the exact body,
+        and therefore the exact signed bytes, they had before the field existed.
+        """
+        body = self.model_dump(mode="json")
+        if body.get("empty_dirs") is None:
+            body.pop("empty_dirs", None)
+        return body
 
     def signable_bytes(self) -> bytes:
         """Canonical manifest body the DSSE signature covers.
@@ -140,7 +160,7 @@ class BackupManifest(BaseModel):
         itself); sorted keys + compact separators make the encoding
         deterministic across creator and verifier.
         """
-        body = self.model_dump(mode="json")
+        body = self.body()
         for field in ("signing_status", "signing_detail", "signature"):
             body.pop(field, None)
         return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")

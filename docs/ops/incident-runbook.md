@@ -171,8 +171,13 @@ Follow the [Backup & Restore Runbook](backup-restore.md) — do not improvise:
 - Local-profile sets: `nova restore <set.tar.gz>` (verifies first, extracts
   safely, migrates to head, replays crypto-shreds, then runs the
   verification chain — it reports ok **only** when verification passes).
-- Postgres: `pg_restore --clean --if-exists` per runbook §1.2, then
-  `nova db upgrade` and the §1.5 verification chain.
+- Postgres: `nova restore <set.tar.gz> --dsn …` (experimental), or the manual
+  `pg_restore --clean --if-exists` per runbook §1.2 followed by
+  `nova db upgrade --track registry --backend postgres` (a bare `nova db upgrade`
+  migrates the separate MetadataStore tier, not the restored database), then the §1.5
+  verification chain.
+- To rehearse a single-host recovery without touching production, run the restore
+  drill (runbook §1.8).
 - **A restore is not done until verification passes** (`nova doctor
   --check-storage`, `nova seal log verify`, `nova ledger verify`,
   spot-check `nova validate`).

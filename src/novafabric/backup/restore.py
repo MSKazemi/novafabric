@@ -226,6 +226,9 @@ def restore_backup(
     for member in manifest.members:
         _reject_unsafe_member(member.path, allow_keys=manifest.includes_keys)
     _reject_non_regular_members(set_path, [m.path for m in manifest.members])
+    empty_dirs = list(manifest.empty_dirs or [])
+    for dir_path in empty_dirs:
+        _reject_unsafe_empty_dir(dir_path)
 
     roots = {
         "audit_log_path": audit_log_path,
@@ -246,6 +249,7 @@ def restore_backup(
 
     # --- 2. prepare the target home (and external destinations) -------------
     home_paths = [m.path for m in restorable if m.origin == "home"]
+    home_paths += [d for d in empty_dirs if not d.startswith(f"{CAPSULE_DIR_ARC}/")]
     moved_aside = _prepare_home(home, home_paths, force=force)
     moved_aside = _prepare_external(
         home, restorable, roots, force=force, pre_restore=moved_aside
@@ -274,6 +278,9 @@ def restore_backup(
     # --- 3. extract members (manifest-listed paths only) --------------------
     extracted = _extract_members(set_path, home, restorable, roots)
     detail = f"{extracted} member(s) extracted"
+    if empty_dirs:
+        created = _create_empty_dirs(home, empty_dirs, roots)
+        detail += f"; {created} empty director{'y' if created == 1 else 'ies'} recreated"
     if skipped_keys:
         detail += (
             f"; {skipped_keys} key member(s) SKIPPED — pass --restore-keys to "
@@ -374,6 +381,48 @@ def _reject_unsafe_member(path: str, *, allow_keys: bool = False) -> None:
             f"Set lists excluded path {path!r} — key material must never be "
             "restored from a backup set"
         )
+
+
+#: Where a manifest's ``empty_dirs`` may point: the capsule trees only.
+_EMPTY_DIR_ROOTS = ("capsules/", "runs/", f"{CAPSULE_DIR_ARC}/")
+
+
+def _reject_unsafe_empty_dir(path: str) -> None:
+    """An ``empty_dirs`` entry gets the member-path checks, and must be under a capsule tree."""
+    _reject_unsafe_member(path)
+    if not path.startswith(_EMPTY_DIR_ROOTS) or path.rstrip("/") != path:
+        raise RestoreError(
+            f"Unsafe empty directory in set: {path!r} is not under "
+            + ", ".join(_EMPTY_DIR_ROOTS)
+        )
+
+
+def _create_empty_dirs(
+    home: Path, dir_paths: list[str], roots: dict[str, Optional[Path]]
+) -> int:
+    """Recreate the manifest's empty capsule directories under their origin root.
+
+    The manifest is verified (and signed when a profile is configured) before
+    this runs, and each path was checked by :func:`_reject_unsafe_empty_dir`.
+    The resolved destination must still stay inside its root, and an existing
+    non-directory is never replaced.
+    """
+    count = 0
+    for dir_path in dir_paths:
+        if dir_path.startswith(f"{CAPSULE_DIR_ARC}/"):
+            root = resolve_origin_root(
+                CAPSULE_DIR_ORIGIN, home, capsule_dir=roots.get("capsule_dir")
+            )
+        else:
+            root = home
+        dst = root / strip_external_prefix(dir_path)
+        if not dst.resolve().is_relative_to(root.resolve()):
+            raise RestoreError(f"Empty directory {dir_path!r} escapes {root}")
+        if dst.is_symlink() or (dst.exists() and not dst.is_dir()):
+            raise RestoreError(f"Cannot recreate empty directory {dst}: a non-directory is there")
+        dst.mkdir(parents=True, exist_ok=True)
+        count += 1
+    return count
 
 
 def _reject_non_regular_members(set_path: Path, paths: list[str]) -> None:

@@ -78,6 +78,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **CI: a single-host backup/restore drill (#233, works today for the local profile).** `scripts/backup_restore_drill.py` runs a full recovery through the real `nova` CLI in a throwaway directory, with synthetic data only. It runs `nova seal init`, `nova register` and `nova capture`, then `nova backup create`. The default set must hold no key material. It checks that `nova backup verify` passes and that a one-byte-tampered copy fails both `nova backup verify` and `nova restore`. Then it deletes the whole host (home, audit log, private keys) and runs `nova restore` into an empty home. Every capsule file must come back byte-identical, `nova validate` and `nova verify --ca-bundle` must pass with no private key on the host, `nova inspect`/`nova list` must still show the asset, and a second restore over the non-empty home must be refused. The new `backup-restore-drill.yml` workflow runs it on pull requests that touch backup, registry, NovaSeal or capture-finalization code, nightly, and on demand. It has two jobs: this tree's wheel on both sides, and an upgrade job in which the newest PyPI release backs up and this tree restores. Each job uploads a JSON report and per-command logs. Tests: `tests/backup/test_restore_drill_script.py`. No change to `src/novafabric`, the CLI, schemas or dependencies.
 
 ### Changed
 
@@ -94,6 +95,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **Backup & Restore Runbook §1.8: the restore drill as the single-host recovery procedure.** It also adds `nova verify --ca-bundle` to the §1.5 checks (a restored host can verify before its keys are re-provisioned), and the Upgrade Guide now describes how to rehearse a restore before upgrading. The Incident Runbook §8 no longer says to run a bare `nova db upgrade` after a manual Postgres restore, because that migrates the MetadataStore tier and not the restored database. It now gives `nova db upgrade --track registry --backend postgres`.
 
 ### Fixed
 
@@ -184,6 +186,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   - A capsule with no `.seal` still exports, and a valid seal keeps the current output. A valid seal means the bytes it names are unchanged since sealing; it does not say who signed them.
   - `bagit` still refuses a capsule holding a symbolic link first (exit 1), so a symlinked `.seal` is refused by that older rule. To preserve a capsule you know is damaged, copy it with an ordinary archive tool; the export is not a forensic copy.
   - **HTTP:** `POST /api/compliance/examiner/{pccp,bagit,iso42001}` and `POST /api/compliance/export/ropa` answer **409** with the refusal message for such a capsule; they answered 500, which reads as a server fault. Any other export failure is still 500. A client that treated 500 as the refusal signal should test for 409.
+- **`nova restore` brings back empty capsule directories (#233).** A backup set held regular-file members only, so an empty directory was lost. A capsule's empty `inputs/` did not come back, and the restored capsule failed `nova validate` (`missing directory: inputs`) while `nova restore` reported success. Found by the new CI restore drill. `nova backup create` now lists the empty directories of the capsule trees (`capsules/`, `runs/`, `external/capsule-dir/`) in the manifest's new `empty_dirs` field, which the manifest signature covers. `nova restore` recreates them after extraction, and refuses the set if an entry is absolute, traverses, is not under a capsule tree, matches the key-material deny filter, or resolves outside its root. Manifest schema 0.2.2. The field is written only when a set has empty directories, so other sets keep the 0.2.1 body and signed bytes. Sets made before this fix still restore without those directories: recreate a missing empty `inputs/` by hand (`mkdir <capsule>/inputs`). Tests: `tests/backup/test_backup_empty_dirs.py`.
 
 ## [0.109.0] - 2026-11-22
 
