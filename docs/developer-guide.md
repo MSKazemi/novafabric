@@ -167,11 +167,13 @@ A repo-root `.dockerignore` keeps the build context lean (it excludes `.git`,
 ## Quality gates
 
 Run all four gates before opening a PR. Coverage must stay **≥ 90%**, and ruff, mypy
-and the documentation link check must be clean. These are the same commands enforced
-in CI (see also `CONTRIBUTING.md`).
+and the documentation link check must be clean. CI enforces the same four checks; its
+test step is the whole suite with coverage (see [How CI runs the suite](#how-ci-runs-the-suite-adr-0316)),
+which `make test-fast` does not measure — `make test-par` is the local equivalent (see also
+`CONTRIBUTING.md`).
 
 ```bash
-make test-fast     # tests (~4 min measured; the old "~90 s" was stale)
+make test-fast     # tests (~31–37 min measured, see the tier table below; while you work, use make test-direct)
 make lint          # ruff check src tests scripts
 make typecheck     # mypy src
 make check-links   # every relative link in a public doc resolves
@@ -186,7 +188,7 @@ locally and fails only for the person the docs are written for.
 
 ### How the test tiers work
 
-The suite is **~20,000 tests** (20,199 collected on 2026-10-22), so "run the tests" is not one command — it is a ladder, and each
+The suite is **over 25,000 tests** (`make test-fast` alone ran 25,863 on 2026-11-24), so "run the tests" is not one command — it is a ladder, and each
 rung is defined by what it can prove and what it costs.
 
 | Tier | Command | Scope | Measured |
@@ -196,7 +198,7 @@ rung is defined by what it can prove and what it costs.
 | 1 | `make test-impacted` | full static import closure of your change | seconds–minutes |
 | 2 | `make test-fast` | everything except Docker and `tests/integration` | ~31–37 min (25,863 tests, 5 workers, 12-thread laptop, 2026-11-24) |
 | 2 | `make test-gate` | the push gate: the smallest tier the change needs (below) + the stamp — run it *before* pushing | ~2 min for a docs-only change, a full `test-fast` for a risky one; pushes are then instant |
-| 3 | `make test-par` | the release gate — the whole suite as CI's `unit` shards run it, coverage ≥ 90% | ~5 min |
+| 3 | `make test-par` | the release gate — the whole suite as CI's `unit` shards run it, coverage ≥ 90% | longer than tier 2 on one machine: it is a superset of `test-fast` (adds the Docker tier and coverage); no current local measurement |
 | — | `make test-container` | the Docker tier alone | needs a daemon |
 | — | `make test-shard SHARD=3/6` | exactly one CI `unit` shard — to reproduce a red shard | a sixth of tier 3 |
 
@@ -229,7 +231,7 @@ files) with its merge base on `origin/main`, and runs one of:
 | `none` | nothing differs from the merge base | nothing |
 | `docs` | only Markdown, `docs/`, `ui/dashboard/` (or private `design/`, `.claude/`) paths changed | all of `tests/docs` plus every test file that names a changed path, its file name or a directory above it |
 | `scoped` | Python under `src/novafabric/` or `tests/` changed (text paths allowed beside it) | the `docs` set plus the static import closure of the changed Python |
-| `full` | anything else: `pyproject.toml`, `uv.lock`, `Makefile`, root `conftest.py`, `scripts/`, `.github/`, `schemas/`, `.dualgit/`, package data or fixtures under `src/`/`tests/`, Python outside `src/`/`tests/`, the central modules `capture/orchestrator.py`, `replay/_engine.py` and `lineage/_store.py`, any path class it does not know, or a selection over 40 % of the suite | `make test-fast` |
+| `full` | anything else: `pyproject.toml`, `uv.lock`, `Makefile`, `tests/conftest.py`, `pytest.ini`/`setup.cfg`/`tox.ini`, `scripts/`, `.github/`, `schemas/`, `.dualgit/`, package data or fixtures under `src/`/`tests/`, Python outside `src/`/`tests/`, the central modules `capture/orchestrator.py`, `replay/_engine.py` and `lineage/_store.py`, any path class it does not know, or a selection over 40 % of the suite | `make test-fast` |
 
 What the push accepts comes from git's ref list: a **tag** push always runs the full suite, a
 push to **main** accepts `docs` but upgrades `scoped` to full, and any other branch accepts
@@ -270,8 +272,11 @@ hooks call `.venv/bin/ruff`, `.venv/bin/python`, `.venv/bin/pytest` directly, fa
 
 **How selection works.** `scripts/testsel.py` builds the import graph with `ast` — it parses,
 it never executes — and maps changed files to test files. The governing rule is that
-**ambiguity selects more, never less**: a changed `pyproject.toml`, `uv.lock`, `Makefile` or
-root `conftest.py` escalates to the whole suite, and so does anything it cannot parse or scope.
+**ambiguity selects more, never less**. In tier 1 a changed `pyproject.toml`, `uv.lock`,
+`Makefile`, `tests/conftest.py` (or `pytest.ini`/`setup.cfg`/`tox.ini`), or Python outside
+`src/` and `tests/`, escalates to the whole fast suite; a non-Python file such as a schema or a
+workflow selects nothing there, which is why the push gate classifies paths itself (table
+above). Tier 0b matches by location and module name only and never escalates.
 
 **What tiers 0 and 1 cannot see.** Static analysis cannot follow a string-referenced entrypoint,
 a plugin registered by name, or a runtime `importlib` call. A green tier 0 is a fast pre-check,
@@ -317,21 +322,20 @@ publishes nothing unless it passed (`docs/release-process.md`, step 7).
 
 ### Tests
 
-```bash
-uv run pytest --cov=novafabric --cov-report=term-missing
-```
-
-Run a focused subset with `-k`:
+A bare `uv run pytest` runs the whole suite **serially** — do not use it during development
+(see the tier table above). For the whole suite with coverage, run `make test-par`. Run a
+focused subset by file or with `-k`:
 
 ```bash
+uv run pytest tests/test_spec_validator.py -v
 uv run pytest -k test_validate -v
 ```
 
 ### Ruff (lint)
 
 ```bash
-uv run ruff check src tests
-uv run ruff check --fix src tests   # auto-fix safe issues
+uv run ruff check src tests scripts          # what make lint and CI run (make lint adds --no-cache)
+uv run ruff check --fix src tests scripts    # auto-fix safe issues
 ```
 
 ### mypy (types)
@@ -386,6 +390,12 @@ evaluation, deployment). To add an eighth:
 4. Add a test fixture in `tests/fixtures/valid_<type>.yaml` (the existing ones are
    `valid_agent.yaml`, `valid_model.yaml`, `valid_prompt.yaml`).
 5. Add a test in `tests/test_spec_validator.py` asserting the fixture validates.
+6. Regenerate the server API spec and the TypeScript SDK types. `AssetType` is part of the
+   server's schema, so the new value changes `api/openapi.yaml`
+   (`uv run python scripts/gen_openapi.py`) and then `packages/nova-sdk-ts/src/types.gen.ts`
+   (`npm run generate:types` in `packages/nova-sdk-ts`). The SDK's CI workflow
+   (`.github/workflows/sdk-ts.yml`, `npm run check:drift`) fails when the spec moves without
+   the types.
 
 ## Adding a new CLI command
 
@@ -422,11 +432,19 @@ evaluation, deployment). To add an eighth:
    froze the Typer pin for weeks (ADR-0250). The same rule applies to HTTP routes:
    use `novafabric.serve.introspect`, not `isinstance(r, APIRoute)` over
    `app.routes`, which FastAPI 0.141 made empty for every included router.
-5. If the new command deserves a real dashboard panel (not just a copy-only
-   command builder), add a row for it in
-   `ui/dashboard/src/components/dashboard/commands/commandParity.json`
-   (`"status": "real-panel"` + `tab`/`api`); otherwise it defaults to
-   `"builder-only"` and needs no entry.
+5. Classify every new leaf command in
+   `ui/dashboard/src/components/dashboard/commands/commandParity.json` — there is no
+   implicit default: `tests/serve/test_command_parity_classification.py` fails for a command
+   with no entry (`uv run python ui/dashboard/scripts/gen-parity-skeleton.py` lists the
+   missing ones). `{"status": "builder-only"}` is the honest default; use
+   `"status": "real-panel"` + `tab`/`api` only when a dashboard panel really exists, or
+   `"cli-only"` with a `reason`.
+6. Document it. `tests/docs/test_cli_reference_coverage.py` fails unless every top-level
+   command appears as `nova <name>` in `docs/cli-reference.md` and every subcommand path as
+   `nova <group> <sub>` in at least one user-facing doc (`docs/cli-reference.md`,
+   `docs/user-guide.md`, `docs/operator-guide.md`, `docs/getting-started.md`, this guide or
+   `README.md`). A new command or default flag also needs an RFC (`AGENTS.md`, "When a
+   change needs an RFC").
 
 **JSON output — never through a Rich console.** A `--json` / `--output-format json`
 path writes with `novafabric.cli._output.emit_json(text)` (or a plain `typer.echo` /
@@ -553,6 +571,15 @@ four-part pattern:
 2. **Require auth** with `dependencies=[Depends(verify_token)]` on the route decorator.
 3. **Classify it** in `ROUTE_SCOPES` (`src/novafabric/serve/authz.py`). ⚠ **This step is not optional.** An unclassified route is **denied to everyone** — including the server token — because ADR-0228 D3 fails closed rather than defaulting to `read`. `tests/serve/test_authz_route_table.py` fails the moment you add a route without a line, so you will hit this in CI rather than in production.
 4. **Mirror a CLI command** — every endpoint should have an obvious CLI equivalent noted in its docstring.
+
+Then regenerate the dashboard API contract. `tests/serve/test_openapi_dashboard_contract.py`
+fails for any route that is neither **annotated** — an `operation_id` starting with
+`dashboard` plus a declared `responses={200: {"model": ...}}` and `response_model=None`, as in
+`src/novafabric/serve/routers/filter_bar.py` — nor listed in
+`tests/serve/openapi_dashboard_pending.txt` (adding to that list is discouraged — the ratchet
+exists to shrink it — so annotate a new route; annotated routes get unique ids), and it fails
+when the committed `api/openapi-dashboard.yaml` differs from
+`uv run python scripts/gen_openapi_dashboard.py` (`--check` reports staleness without writing).
 
 ```python
 @app.get("/api/example/{run_id}", dependencies=[Depends(verify_token)])
@@ -830,6 +857,11 @@ from `generate_report` itself.
    binary and needs `--output`).
 3. Add a test in `tests/test_report.py` asserting the output is valid for the
    format, and a CLI test for the new `--format` value.
+4. Add the value to the `--format` `options` of the hand-curated `nova report` entry in
+   `ui/dashboard/src/components/dashboard/commands/commandRegistry.ts`, which is what the
+   CommandsTab shows. That list is maintained by hand: the generated registry records
+   `--format` as free text, and its guard compares command paths only, so nothing catches a
+   stale choice list.
 
 ## Extending failure attribution (diagnose/, ADR-0084)
 
@@ -1525,7 +1557,10 @@ module that monkey-patches or wraps the framework's entry-point method to record
 `nova capture`-compatible events. NovaFabric is framework-neutral — it *records* what
 LangGraph/AutoGen/CrewAI/DSPy/OpenAI Agents SDK do rather than orchestrating them.
 
-Pattern (using `crewai.py` as the model):
+Pattern — a sketch of recording into a capture that is already running. No shipped adapter
+is written exactly like this (`crewai.py` now owns its capsule through the shared core
+below), and the recorder has no generic `record_event`: it exposes the typed `record_*`
+methods listed under [Typed `record_*` methods](#typed-record_-methods-extended-event-taxonomy-adr-0082).
 
 ```python
 # src/novafabric/adapters/myframework.py
@@ -1539,11 +1574,11 @@ def wrap_thing(thing):
         try:
             result = original(*args, **kwargs)
             if recorder:
-                recorder.record_event(...)
+                recorder.record_state_transition(...)
             return result
         except Exception:
             if recorder:
-                recorder.record_event(...)
+                recorder.record_state_transition(...)
             raise
 
     thing.run = _wrapped
@@ -1551,13 +1586,27 @@ def wrap_thing(thing):
 ```
 
 Rules:
-1. Fail-open: never raise inside the wrapper; log and swallow.
+1. Fail-open: NovaFabric's own bookkeeping never raises out of the wrapper — log and swallow
+   it. The framework's own exception is re-raised unchanged.
 2. Use `get_current_recorder()` — never instantiate a new recorder.
 3. Restore the original method on `unwrap()` if reversibility matters.
-4. Add an entry to `src/novafabric/adapters/__init__.py`.
-5. Add the framework to the adapter roster in
+4. Export it from `src/novafabric/adapters/__init__.py`: a lazy alias in `__all__` whose name
+   starts with `wrap_`, `register_` or `make_`. The module must import without its framework;
+   raise the install-hint `ImportError` at call time.
+5. Add an entry to `KNOWN_ADAPTERS` in `src/novafabric/serve/app.py` (`id` = the module's file
+   name, plus `module`, `function`, `framework`, `extra`). `GET /api/adapters` serves that list,
+   and `tests/serve/test_v026_ecosystem_parity.py` requires its ids to equal the non-`_`
+   modules under `adapters/` (minus the `git`, `langfuse` and `mlflow` helpers) and each
+   `function` to exist.
+6. Name the exported symbol in `docs/cli-reference.md`, `docs/user-guide.md` or this guide —
+   `tests/docs/test_adapter_docs_coverage.py` fails on an export no user-facing doc mentions.
+   Add the framework to the adapter roster in
    [`docs/for-platform-teams.md`](for-platform-teams.md) and note it in
    [`docs/architecture.md`](architecture.md).
+7. A capsule-writing adapter (next section) opens and finishes its capsule through the shared
+   core — never `CapsuleWriter(...)` directly, and every `finalize_in_process_capsule` call
+   passes `incomplete_reason`. `tests/adapters/test_setup_fail_open.py` and
+   `tests/adapters/test_teardown_fail_open.py` scan every module under `adapters/` for both.
 
 ### Two kinds of adapter
 
@@ -1573,8 +1622,11 @@ complete manifest around it: `dspy.py`, `crewai.py`, `llamaindex.py`,
 New capsule-writing adapters should use the shared core rather than copying a
 manifest literal. Eight of the adapters were written before it (`a2a`, `autogen`,
 `bedrock_agentcore`, `crewai`, `dspy`, `google_adk`, `langgraph`,
-`openai_agents`), and each carries its own copy, which is how all eight of them
-once drifted into writing a `tags` key the schema rejects:
+`openai_agents`), each with its own copy, which is how all eight of them
+once drifted into writing a `tags` key the schema rejects. Four still carry that copy
+(`a2a`, `google_adk`, `langgraph`, `openai_agents`); `autogen`, `crewai` and `dspy` now
+wrap through `adapters/_entry_points.py::wrap_entry_points`, and `bedrock_agentcore` calls
+`begin_capture` directly:
 
 ```python
 from novafabric.adapters._capsule import begin_capture, require
@@ -1998,7 +2050,9 @@ is required either way.
 
 ## Extending the Capsule Knowledge Graph
 
-The KG schema has 5 node tables and 4 relationship tables.  To add a new node type:
+The KG schema has 6 node tables — five entity types (`Agent`, `Model`, `Tool`,
+`InferenceEndpoint`, `MCPServer`) plus `EdgeContribution`, which records what one capsule
+added to one edge — and 4 relationship tables.  To add a new node type:
 
 1. Add `CREATE NODE TABLE IF NOT EXISTS <Type> (id STRING PRIMARY KEY, …)` to the
    module-level `SCHEMA_DDL` list in `kg/store.py` (`KGStore.init_schema()` runs it).
@@ -2007,8 +2061,9 @@ The KG schema has 5 node tables and 4 relationship tables.  To add a new node ty
 4. Add extraction logic in `KGIngestionPipeline.ingest_event()` (`kg/pipeline.py`), resolving
    each raw name through `_resolve_entity()`.
 5. Include the new type in `get_node_counts()` / `get_topology_graph()` in `kg/store.py`.
-6. Add the type to `KGTopology` in `ui/dashboard/src/lib/api.ts` and update `TopologyLayerPanel`
-   in `ui/dashboard/src/components/dashboard/tabs/KGTab.tsx`.
+6. Add the type to `KGTopology` in `ui/dashboard/src/components/dashboard/tabs/kg/shared.ts` and
+   update `TopologyLayerPanel` in `ui/dashboard/src/components/dashboard/tabs/kg/TopologyLayerPanel.tsx`
+   (`KGTab.tsx` only renders it).
 
 **MCP server auto-detection pattern:** tool names containing `:` are
 split on the first `:` in `ingest_event()`.  The left part becomes the `MCPServer`
@@ -2387,6 +2442,7 @@ Run `cd ui/dashboard && npm run build` after a structural docs change. It needs 
 | Add a schema migration | [Adding a database migration](#adding-a-database-migration) |
 | Publish a doc page to the website | [Publishing docs to the website](#publishing-docs-to-the-website) |
 
-Before opening a PR, re-run the four [quality gates](#quality-gates) (pytest ≥ 90%
-coverage, ruff, mypy, link check) and, for any CLI change, smoke-test
+Before opening a PR, re-run the four [quality gates](#quality-gates) (`make test-fast`, ruff,
+mypy, link check; the ≥ 90% coverage floor is enforced by `make test-par` and CI) and, for any
+CLI change, smoke-test
 `uv run nova --help` and the affected sub-command.
