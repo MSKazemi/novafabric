@@ -472,8 +472,8 @@ Runner details:
 > collector tier, object capsule store, Postgres metadata DB and at-scale lineage
 > backends are **experimental**. See [ROADMAP.md](../ROADMAP.md) and
 > [Deployment topologies](architecture/deployment-topologies.md) for
-> per-component labels; cross-cluster federation of capsules and lineage remains
-> **future design**.
+> per-component labels; cross-cluster federation of capsules and of the lineage store remains
+> **future design** (cross-site lineage *query* federation is **experimental**, library-level).
 
 ---
 
@@ -950,7 +950,8 @@ backends** exist for larger graphs, all **experimental** and library-level:
 **Kuzu** (embedded), **Postgres** (recursive CTE, no extension needed), **Apache
 AGE** (openCypher on Postgres) and **JanusGraph** (Gremlin, needs the GraphSON
 serializer). Each is implemented with integration tests, but **no `nova` command
-selects one**: the `nova lineage` CLI always uses SQLite, `nova lineage-store
+selects one** for queries: the `nova lineage` query commands use SQLite (`nova lineage
+consume` is the exception: it writes edges from NATS into Kuzu), `nova lineage-store
 migrate` imports into the SQLite store, and `nova lineage-store profile` prints a
 docker-compose profile. Use the backend classes from Python
 ([Lineage graph](architecture/lineage-graph.md#storage-backends)). A Kuzu

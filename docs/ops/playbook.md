@@ -52,7 +52,7 @@ the same number before tagging. So one number names all four for a given release
 | HPC / SLURM / cluster capture | [Operator guide](../operator-guide.md) §3 + [Cluster-scale migration](cluster-scale-migration.md) | **experimental**, partial |
 
 For every path side by side (OS, services, storage, auth, TLS, backup, upgrade, and what CI actually
-runs for each one), see the deployment matrix in PR #358 (in review).
+runs for each one), see the [deployment matrix](deployment-matrix.md).
 
 **Tested versions** ([support policy](../support-policy.md), **works today**):
 
@@ -420,5 +420,5 @@ First moves for any incident ([Incident runbook](incident-runbook.md)):
   procedures:** issue #221 (open). Not available in v0.109.0.
 - **Ansible single-host install:** PR #354 (in review). **Complete air-gap wheelhouse with an offline
   verifier:** PR #353 (in review). **Compose secrets bootstrap:** PR #345 (in review).
-  **Deployment matrix with per-path CI evidence:** PR #358 (in review). **CI workflow matrix:** PR #360
+  **Deployment matrix with per-path CI evidence:** [deployment-matrix.md](deployment-matrix.md). **CI workflow matrix:** PR #360
   (in review). Until they merge, this page does not depend on any of them.
