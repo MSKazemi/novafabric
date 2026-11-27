@@ -94,6 +94,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **Security docs checked against the code.** `SECURITY.md` now gives the real bind defaults and auth
+  paths of `nova serve` and `nova server`, says `--insecure` lifts only the bind refusal, lists every
+  outbound network path (the lifecycle webhook was called the only one), says SAML verifies an
+  assertion but cannot log anyone in, names the six fixes listed as "next release" as v0.107.0's,
+  says what `nova verify` proves (sealing is opt-in, an unanchored signer is self-asserted, a file
+  added after sealing is reported but not fatal), and lists four missing escape hatches. It also
+  corrects that the trivy gate runs after the image is pushed, that the audit jobs are not required
+  checks, and that MD5 and SHA-1 do appear. The trust surfaces, concepts, key management and SPKG
+  pages carry the matching limits.
 
 ### Fixed
 

@@ -544,7 +544,10 @@ After scanning, `redaction-proof.json` is written. It records:
 
 - How many findings were detected
 - Which files were scanned
-- A cryptographic chain hash proving the scan ran
+- A `chain_hash`: an unkeyed SHA-256 over the proof's own content. It catches an
+  accidental edit, not a deliberate one, since anyone can recompute it; what
+  binds the proof to the run is the seal, which lists `redaction-proof.json` in
+  `evidence_digests` (sealing is opt-in)
 
 Capsules without `redaction-proof.json` are considered invalid by
 `nova validate` and **cannot be exported** into an Evidence Bundle. Verifiable
