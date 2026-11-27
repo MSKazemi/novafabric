@@ -6,10 +6,12 @@ NovaFabric attestation uses (``evidence/intoto.py``), not a second signing
 path. Verification needs **zero network**: the public key, the manifest, and
 the bytes travel together.
 
-Slice 1 is the *format/verifier* half (the repo's standing slice rule): the
-CI job that assembles the full closure (wheels + image + chart + docs +
-advisory snapshot) and the network-disabled install gate are the next
-slices, recorded in the ADR.
+Slice 1 is the *format/verifier* half (the repo's standing slice rule).
+``scripts/build_airgap_bundle.py --closure-wheel`` adds the Python wheelhouse
+closure on top of it, and ``scripts/verify_airgap_bundle.py`` is a
+standard-library re-implementation of :func:`verify_bundle` that runs before
+anything is installed (a test pins the two to the same format). The image,
+chart, docs and advisory snapshot members are still to come (ADR-0249).
 """
 
 from __future__ import annotations
@@ -47,6 +49,55 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+#: Key files are small; a member larger than this is not scanned for key material.
+_KEY_SCAN_LIMIT = 1 << 20
+
+
+def _signing_key_material(signing_key: Path) -> tuple[bytes, bytes]:
+    """(raw 32-byte ed25519 seed, raw public key) of the PEM key at *signing_key*."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = serialization.load_pem_private_key(signing_key.read_bytes(), password=None)
+    if not isinstance(key, Ed25519PrivateKey):  # LocalSigner already refused this
+        raise AirgapBundleError(f"{signing_key} is not an ed25519 private key")
+    return key.private_bytes_raw(), key.public_key().public_bytes_raw()
+
+
+def _holds_key(src: Path, seed: bytes, public_raw: bytes) -> bool:
+    """True when *src* carries the signing key in any encoding we can read.
+
+    Catches the raw seed anywhere in the file (raw, PKCS#8 DER), and any PEM,
+    DER or OpenSSH private key whose public half is the signing key's. A copy
+    encrypted under a passphrase cannot be recognised and is not caught.
+    """
+    from cryptography.exceptions import UnsupportedAlgorithm
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    if src.stat().st_size > _KEY_SCAN_LIMIT:
+        return False
+    data = src.read_bytes()
+    if seed in data:
+        return True
+    loaders = (
+        serialization.load_pem_private_key,
+        serialization.load_der_private_key,
+        serialization.load_ssh_private_key,
+    )
+    for loader in loaders:
+        try:
+            key = loader(data, None)
+        except (ValueError, TypeError, UnsupportedAlgorithm):
+            continue
+        if (
+            isinstance(key, Ed25519PrivateKey)
+            and key.public_key().public_bytes_raw() == public_raw
+        ):
+            return True
+    return False
+
+
 def build_bundle(
     out_path: Path,
     members: dict[str, Path],
@@ -68,11 +119,19 @@ def build_bundle(
 
     if not members:
         raise AirgapBundleError("refusing to build an empty bundle")
+    signer = LocalSigner(signing_key)
+    seed, public_raw = _signing_key_material(signing_key)
     for arcname, src in members.items():
         if not src.is_file():
             raise AirgapBundleError(f"member {arcname!r}: source {src} is not a file")
         if arcname in (MANIFEST_NAME, ENVELOPE_NAME):
             raise AirgapBundleError(f"member name {arcname!r} is reserved")
+        # The signing secret must never travel with the bundle it signs: not the
+        # key file itself, and not the same key under another name or encoding.
+        if src.resolve() == signing_key.resolve() or _holds_key(src, seed, public_raw):
+            raise AirgapBundleError(
+                f"member {arcname!r} is the signing key; it must never enter the bundle"
+            )
 
     manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -89,9 +148,7 @@ def build_bundle(
         ],
     }
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode()
-    envelope = dsse_sign_payload(
-        manifest_bytes, PAYLOAD_TYPE, LocalSigner(signing_key)
-    )
+    envelope = dsse_sign_payload(manifest_bytes, PAYLOAD_TYPE, signer)
     envelope_bytes = json.dumps(envelope, indent=2, sort_keys=True).encode()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
