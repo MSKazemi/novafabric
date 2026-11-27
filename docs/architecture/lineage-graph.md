@@ -2,13 +2,19 @@
 
 [Architecture, as built](README.md) › Lineage graph
 
+> Verified against code on 2026-11-27.
+
 Lineage answers two questions:
 
 - **Provenance:** what did this run or artifact depend on?
 - **Blast radius:** what depends on this asset?
 
 Each capsule carries its own edges in `lineage.jsonl`. The graph you query is an
-index built from those files, so it can always be rebuilt from the capsules.
+index built from those files, so the capture-written edges can always be rebuilt
+from the capsules. One exception: registering an asset with declared dependencies
+writes `depends_on` edges straight into the index under a synthetic run id
+`reg:<name@version>` (`registry/service.py:_record_declared_deps`). No capsule
+holds those edges, so a rebuild from capsules does not bring them back.
 
 **Maturity:** the SQLite store and the `nova lineage` queries work today. The
 at-scale backends are experimental (see below).
@@ -28,7 +34,9 @@ flowchart LR
 
 ## How edges are written
 
-`lineage/_writer.py:LineageWriter` runs during `nova capture`, after
+`lineage/_writer.py:LineageWriter` runs during capsule finalization
+(`capture/finalize.py`, shared by `nova capture`, the framework adapters, the
+`@agent` decorator and OTLP trace ingest), after
 `capsule.yaml` exists and before the evidence digests are taken, so
 `lineage.jsonl` is covered by the seal. It emits three edge types:
 
@@ -52,6 +60,13 @@ original is identified by run id and digest, not by a filesystem path. (The repo
 `nova memory` derives `wrote_memory` / `read_memory` edges between runs and
 memory keys **on demand** (`lineage/memory.py`); they are not stored in
 `lineage.jsonl` or the lineage index.
+
+A second, typed vocabulary, `capsule/schema.py:EdgeType` (`contains`, `spawned`,
+`delegated_to`, `member_of_session`, plus the two memory edges), belongs to the
+parent/child and session tooling under `capsule/` (experimental). The store and the
+`--edge-type` filters accept it (`lineage/_types.py:LINEAGE_EDGE_TYPES`), but it is
+not in the in-force lineage-edge schema, so `nova lineage import` rejects those
+edges.
 
 **Node identity.** A node ID is the first 26 hex characters of
 `SHA-256("kind:ref")` (`lineage/_types.py:node_id_for`). The same asset seen by
@@ -86,8 +101,10 @@ Other `nova lineage` subcommands:
   `OPENLINEAGE_URL` is set.
 - **Analytics** (experimental): `metrics`, `root-cause` and `export-graph`
   (GraphML, GEXF or Cypher), plus `nova insights`.
-- **Cluster ingestion** (experimental): `consume` reads lineage events from NATS
-  (see [Deployment topologies](deployment-topologies.md)).
+- **Cluster ingestion** (experimental): `consume` reads capsule events from NATS
+  and writes the lineage edges it derives into a Kuzu database, not the SQLite
+  index (`lineage/consumer.py`, `--kuzu-path`, default `$NOVA_KUZU_PATH` or
+  `.nova/kg/lineage.kuzu`; see [Deployment topologies](deployment-topologies.md)).
 
 ## Storage backends
 
@@ -97,7 +114,7 @@ Other `nova lineage` subcommands:
 
 | Backend | Class | Extra | Maturity |
 |---|---|---|---|
-| SQLite | `SqliteLineageStore` (wraps `LineageStore`) | none | **works today**, the default and the only backend the `nova lineage` CLI uses |
+| SQLite | `SqliteLineageStore` (wraps `LineageStore`) | none | **works today**, the default and the only backend the `nova lineage` queries use (`consume` writes to Kuzu, above) |
 | Kuzu (embedded) | `KuzuLineageStore` | `lineage-kuzu` | experimental, library-level |
 | Postgres (recursive CTE) | `PostgresLineageStore` | psycopg, through the `server` extra | experimental, library-level |
 | Apache AGE (openCypher on Postgres) | `AGELineageStore` | psycopg | experimental, library-level |
@@ -107,7 +124,10 @@ Other `nova lineage` subcommands:
 no `nova` command selects it yet. `nova lineage-store migrate` imports into the
 SQLite store, and `nova lineage-store profile` prints a docker-compose profile for
 a Kuzu or JanusGraph deployment. Selecting a non-SQLite backend from the CLI
-is not implemented; use the backend classes from Python. Cross-cluster lineage federation is **future design**. See the
+is not implemented; use the backend classes from Python. Cross-site lineage
+federation is **experimental, library-level**: `lineage/federation/` holds a
+coordinator app that fans a query out to per-site shard apps with cross-site
+tokens (the `federation` extra), and no `nova` command starts it. See the
 [lineage migration guide](../lineage/migration-guide.md) for the current
 migration path.
 

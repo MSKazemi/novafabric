@@ -100,6 +100,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   services, storage, auth, TLS, backup, upgrade, the CI job that exercises it ("nothing" where none does) and known
   gaps, each read from code or a workflow. It also lists the resource sizing the repo documents and says cloud cost
   is not measured.
+- **The architecture docs were checked against the code** (`docs/architecture.md`, every page in
+  `docs/architecture/`, and the README's architecture paragraph). 42 stale or wrong claims are fixed, among them:
+  `--hermetic` has a Landlock + seccomp backend and `--hermetic-backend` (it is not bwrap only); exit 5 is in the
+  replay exit table; `replayability.json` is in the capsule write order; `otel-genai-spans.json` is written after
+  the seal, so the seal does not cover it; GCS is a selectable object-store backend; keyset paging covers
+  `GET /v0/assets`; lineage federation exists as a library; and `nova lineage consume` writes to Kuzu. 40
+  subsystems that were in `src/novafabric/` but not in the subsystem map now have an entry with a maturity
+  label, and the cluster table adds 2 components (`collector_app`, `novafabric-verifier`). 5 Mermaid diagrams are
+  corrected (serve request path, encryption read path, capsule tree, seal chain, capture sequence).
 
 ### Fixed
 
