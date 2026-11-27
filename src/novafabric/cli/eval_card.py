@@ -131,16 +131,27 @@ def card_new(
     card_id: Annotated[str, typer.Option("--card-id", help="Stable evaluator id.")],
     name: Annotated[str, typer.Option(help="Human-readable name.")],
     version: Annotated[str, typer.Option(help="Semantic version.")] = "0.1.0",
-    judge_model: Annotated[str | None, typer.Option(help="Judge model name.")] = None,
+    judge_model: Annotated[
+        str | None, typer.Option(help="Judge model name (required for --source judge).")
+    ] = None,
     endpoint_ref: Annotated[
-        str, typer.Option(help="Judge endpoint reference (no hardcoded URL).")
+        str, typer.Option(help="Judge endpoint reference, e.g. env:VAR (no hardcoded URL).")
     ] = "env:NOVA_JUDGE_ENDPOINT",
     prompt_version: Annotated[str | None, typer.Option(help="Judge prompt version.")] = None,
     rubric: Annotated[str | None, typer.Option(help="Judge rubric text.")] = None,
     dataset: Annotated[str | None, typer.Option(help="Dataset version / ref.")] = None,
-    human_agreement: Annotated[float | None, typer.Option(help="Judge agreement.")] = None,
-    n: Annotated[int, typer.Option(help="Judge calibration sample size.")] = 0,
-    metric: Annotated[str, typer.Option(help="Judge calibration metric.")] = "cohen_kappa",
+    human_agreement: Annotated[
+        float | None,
+        typer.Option(
+            help="Judge-vs-human agreement; recorded as calibration only with --n > 0 (judge only)."
+        ),
+    ] = None,
+    n: Annotated[
+        int, typer.Option(help="Judge calibration sample size (with --human-agreement).")
+    ] = 0,
+    metric: Annotated[
+        str, typer.Option(help="Agreement metric of the judge calibration.")
+    ] = "cohen_kappa",
     out: Annotated[Path | None, typer.Option(help="Card JSON out (default stdout).")] = None,
 ) -> None:
     """Create a new (unsigned) eval card."""
@@ -178,7 +189,9 @@ def card_new(
 @card_app.command("sign")
 def card_sign(
     card_file: Annotated[Path, typer.Argument(help="Path to a card JSON file.")],
-    identity: Annotated[str | None, typer.Option(help="Keyring identity (default: local).")] = None,
+    identity: Annotated[
+        str | None, typer.Option(help="Keyring identity (default: <user>@<host>).")
+    ] = None,
     out: Annotated[Path | None, typer.Option(help="Signed card out (default: overwrite).")] = None,
 ) -> None:
     """Sign a card with the local Ed25519 keyring and print its digest."""
