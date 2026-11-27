@@ -1,0 +1,17 @@
+{
+  "name": "novafabric",
+  "description": "The NovaFabric Claude Code plugin: capture Python agent runs as replayable Run Capsules you own (sealable with your own key) and deploy the NovaFabric server.",
+  "owner": {
+    "name": "NovaFabric",
+    "url": "https://github.com/MSKazemi/novafabric"
+  },
+  "plugins": [
+    {
+      "name": "novafabric",
+      "source": "./integrations/claude-plugin",
+      "description": "Two skills: capture a Python agent's runs as replayable Run Capsules (validate, and verify once sealing is configured), and deploy the NovaFabric REST API server or the experimental dashboard to Docker or Kubernetes.",
+      "category": "development",
+      "homepage": "https://github.com/MSKazemi/novafabric/tree/main/integrations/claude-plugin"
+    }
+  ]
+}

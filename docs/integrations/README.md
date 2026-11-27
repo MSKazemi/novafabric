@@ -8,6 +8,7 @@ integration's own source of truth and says plainly what it does **not** cover.
 | [GitHub Actions](github-actions.md) | **works today** | Capture a CI step as a capsule and upload it as a build artifact. |
 | [Hugging Face](huggingface.md) | **experimental** (new in v0.109.0) | Capture `smolagents` agent runs and Inference Providers calls; opt-in Hub revision receipts and evaluation receipts. Replay never serves these calls. |
 | [Writing a hook plugin](writing-a-hook-plugin.md) | **works today** | The wire-level capture plugin contract, for instrumenting an SDK NovaFabric does not know about. |
+| [Claude Code plugin](https://github.com/MSKazemi/novafabric/tree/main/integrations/claude-plugin) | **experimental** | Two Claude Code skills, installed with `/plugin marketplace add MSKazemi/novafabric` and `/plugin install novafabric@novafabric`. One captures a Python agent's runs; the other deploys the REST API server or the dashboard. Skills only: no hooks, MCP server or executables. |
 
 ## Not here yet
 
