@@ -121,6 +121,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   log and is stripped (before signing) from every record sent to a webhook or alert endpoint,
   which still receives the seal's capsule id. Other alert types record none. The shipped bundle under `src/novafabric/serve/static` gains the panel when
   it is next rebuilt.
+- **Dashboard: Replay workspace** (experimental, issue #269). The Runs inspector has a **Replay modes**
+  view (`view=replay-modes`, linkable) that explains, for the selected run, what each `nova replay` mode
+  executes, whether tools run live, whether the network is reachable and what it writes, with the
+  exact command to copy (capsule path shell-quoted). It shows the run's replayability report from the
+  new read-only `GET /api/runs/{run_id}/replayability` (`read` scope): what a strict mocked replay would
+  do, classified now with the same rules as `nova replay` (servable and not-servable calls, the refusal,
+  each reason), beside the capsule's own `replayability.json`. Opening the view starts nothing. The
+  modes that re-run the workload (mocked strict, mocked `--permissive`, intervention) are marked
+  side-effecting and are copy-only, since `nova serve` has no endpoint that runs them; forensic,
+  semantic and exact eligibility can be started through the existing confirm dialog when the server's
+  `dashboard_modes` lists them. The bundled static dashboard picks it up after the next dashboard rebuild.
 
 ### Changed
 
@@ -5052,7 +5063,7 @@ are behaviour changes; read the upgrade notes.** Full narrative:
   `read` sees plus the audit trail, and can mutate nothing at any level. No new vocabulary was
   invented, because a fourth taxonomy is what guarantees drift.
 
-  Enforcement is **one declarative table of 225 routes** consulted by **one** app-level
+  Enforcement is **one declarative table of 226 routes** consulted by **one** app-level
   dependency — not 184 decorators inside the module ADR-0183 froze. A route missing from the
   table is **denied to everyone**, including the server token: in an evidence tool a loud
   failure beats a quiet disclosure, and defaulting to `read` would make a forgotten line a

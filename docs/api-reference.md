@@ -2,7 +2,7 @@
 
 **Status:** works today (v0.98.0). Generated from the live `nova serve` FastAPI route table (`src/novafabric/serve/app.py`).
 
-The `nova serve` dashboard server exposes **208 REST endpoints** in the generated tables below, plus the 14 experimental routes in the next section that the generator has not yet been re-run for — 222 in all, every route `create_app` can mount across its flags (`GET /` and the `/api/topology/*` routes are conditional). The authorization table classifies 225, the other three being the TV-5 routes `nova serve` mounts after the app is built. All require a valid auth token except the seven `public` routes: the probes `GET /api/health`, `GET /livez` and `GET /readyz`, the interactive docs `GET /api/docs`, `GET /api/openapi.json` and `GET /docs/oauth2-redirect`, and `GET /` (the placeholder served when no dashboard is mounted). The multi-tenant `nova server` API is specified separately in `api/openapi.yaml`.
+The `nova serve` dashboard server exposes **208 REST endpoints** in the generated tables below, plus the 15 experimental routes in the next section that the generator has not yet been re-run for — 223 in all, every route `create_app` can mount across its flags (`GET /` and the `/api/topology/*` routes are conditional). The authorization table classifies 226, the other three being the TV-5 routes `nova serve` mounts after the app is built. All require a valid auth token except the seven `public` routes: the probes `GET /api/health`, `GET /livez` and `GET /readyz`, the interactive docs `GET /api/docs`, `GET /api/openapi.json` and `GET /docs/oauth2-redirect`, and `GET /` (the placeholder served when no dashboard is mounted). The multi-tenant `nova server` API is specified separately in `api/openapi.yaml`.
 
 ## Authorization (ADR-0228, experimental)
 
@@ -178,7 +178,7 @@ never be reachable in a release.
 > that connected without a token must now supply one.
 
 
-## Dashboards, saved views, filter bar and evidence cart (experimental)
+## Dashboards, saved views, filter bar, evidence cart and replay workspace (experimental)
 
 *Status: **experimental**. Hand-maintained until the generator is re-run; the authority is the
 route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
@@ -200,6 +200,7 @@ route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
 | `POST` | `/api/dashboards/validate` | `read` | Dry run: the verdict and diff inputs; writes nothing. Body over 256 KiB is a 413. |
 | `POST` | `/api/dashboards/apply` | `operate` | Validate then store atomically; 409 if the file changed since the preview digest; refuses `builtin`, symlinked targets and bad ids; audited as `dashboard_apply`. |
 | `POST` | `/api/evidence/cart/export` | `admin` | Resolve a cart once and write one signed Evidence Bundle (ADR-0239); one export at a time (429). |
+| `GET` | `/api/runs/{run_id}/replayability` | `read` | What a strict `mocked` replay of the run would do — `current`, classified now with the same rules as `nova replay` (servable / not-servable model and tool calls, the refusal, the reasons), and `recorded`, the capsule's own `replayability.json` (`present` / `absent` / `invalid`) — plus `dashboard_modes`, the replay modes the dashboard may start (`mocked` and `intervention` are always `false`: they re-run the workload), and `mode_access`, per startable mode the scope its `POST` route requires and whether the calling credential holds it (a hint; the route still enforces it). Executes and writes nothing; each member read is bounded at 16 MiB, and a call stream above that is not classified (`current: null`, `current_over_limit` names the member, its size and the bound); a classification error is returned in `current_error`, not as a 500. |
 
 ## Health & meta  (9)
 
