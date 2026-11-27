@@ -41,9 +41,9 @@ export default function KeyboardHelp({ onClose, tabShortcuts }: KeyboardHelpProp
       role="dialog"
       aria-modal="true"
       aria-label="Keyboard shortcuts"
-      // `?` must still close this dialog, so the global single-key shortcuts
-      // keep working while it is the only dialog open (see lib/shortcuts.ts).
-      data-shortcut-passthrough=""
+      // Marks the overlay so `?` can close it; every other single-key shortcut
+      // is blocked while it is open, like any modal (see lib/shortcuts.ts).
+      data-keyboard-help=""
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="absolute inset-0 bg-[var(--color-bg)] opacity-80" aria-hidden="true" />

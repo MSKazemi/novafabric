@@ -19,7 +19,7 @@ import { notifyUrlStateChanged } from '../../lib/useUrlState';
 import { Loading } from './helpers';
 import { usePolling } from '../../lib/usePolling';
 import { ToastProvider, useToast } from '../../lib/ToastContext';
-import { ignoreSingleKeyShortcut, isTypingTarget } from '../../lib/shortcuts';
+import { ignoreSingleKeyShortcut, isTypingTarget, keyboardHelpOpen, singleKeyShortcutsEnabled } from '../../lib/shortcuts';
 
 // Tabs are code-split: each becomes its own chunk, loaded on first navigation
 // instead of shipping all ~20 in the initial bundle.
@@ -221,6 +221,13 @@ function DashboardInner() {
       }
       if (isTypingTarget(e.target)) return;
       if (e.key === 'Escape') { setShowHelp(false); return; }
+      // Inside the keyboard-help overlay only `?` (and Escape, above) act: it
+      // closes the overlay. g…/r/j/k must not reach the page behind it.
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey && keyboardHelpOpen()) {
+        disarm();
+        if (singleKeyShortcutsEnabled()) setShowHelp(false);
+        return;
+      }
       // Single printable keys: not while a modifier is held, a modal dialog is
       // open, or the user turned them off (WCAG 2.1.4 — see lib/shortcuts.ts).
       if (ignoreSingleKeyShortcut(e)) { disarm(); return; }

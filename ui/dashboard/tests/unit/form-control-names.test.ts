@@ -10,7 +10,7 @@
  * A visually adjacent <label> WITHOUT htmlFor does not name anything.
  */
 import { parse } from '@babel/parser';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -27,6 +27,9 @@ const EXTRA_FILES = [
   'capsule/CapsuleInspector.tsx',
   'ui/CommandPalette.tsx',
 ].map((f) => join(COMPONENTS, f));
+// The onboarding panel (#344) is scanned as soon as its directory exists on
+// main; it is absent at the time of writing, so this is a no-op until then.
+const ONBOARDING = join(COMPONENTS, 'dashboard/onboarding');
 const CONTROLS = new Set(['input', 'textarea', 'select', 'Input', 'Select', 'Textarea', 'SuggestInput']);
 
 function files(): string[] {
@@ -36,6 +39,7 @@ function files(): string[] {
     else if (p.endsWith('.tsx')) out.push(p);
   };
   walk(TABS);
+  if (existsSync(ONBOARDING)) walk(ONBOARDING);
   out.push(...EXTRA_FILES);
   return out.sort();
 }

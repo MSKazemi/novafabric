@@ -38,14 +38,21 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * A modal dialog (confirm, command palette, …) is open. Shortcuts that act on
- * the page underneath must not fire through it. A dialog that opts out with
- * `data-shortcut-passthrough` (the keyboard-help overlay, which `?` closes) is
- * ignored.
+ * A modal dialog (confirm, command palette, keyboard help, …) is open.
+ * Shortcuts that act on the page underneath must not fire through it.
  */
 export function modalDialogOpen(): boolean {
   if (typeof document === 'undefined') return false;
-  return document.querySelector('[aria-modal="true"]:not([data-shortcut-passthrough])') !== null;
+  return document.querySelector('[aria-modal="true"]') !== null;
+}
+
+/**
+ * The keyboard-help overlay is open. It is modal like any other dialog, but
+ * `?` — the key that opened it — must also close it.
+ */
+export function keyboardHelpOpen(): boolean {
+  if (typeof document === 'undefined') return false;
+  return document.querySelector('[data-keyboard-help]') !== null;
 }
 
 /**

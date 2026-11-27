@@ -745,8 +745,8 @@ is checked, and what is still missing.
 | `Enter` / `Space` | Audit rows, Evidence run IDs | Open the row's detail |
 
 Single-key shortcuts (`g …`, `r`, `?`, `j`/`k`) never fire while you type in a field, while a
-modifier key is held, or while a dialog is open (the `?` overlay is the exception, so `?` can
-close it). **Turn them off** under **Appearance › Keyboard › Single-key shortcuts** if you use
+modifier key is held, or while a dialog is open (inside the `?` overlay only `?` and `Esc` act,
+and both close it). **Turn them off** under **Appearance › Keyboard › Single-key shortcuts** if you use
 speech input or tend to trigger them by accident (WCAG 2.1.4). The setting is stored per browser
 in `localStorage` (`novafabric.single-key-shortcuts`). `Ctrl+K`/`⌘K`, `Tab`, arrows and `Esc`
 keep working either way.
@@ -809,8 +809,10 @@ keep working either way.
   panels in other views may still carry state by colour alone.
 - **Details live in `title` tooltips** in places (e.g. the error list behind an *invalid*
   badge), which keyboard and screen-reader users often cannot reach.
-- **The Audit table is built from `div`s**: rows are focusable, but header/cell relationships are
-  not exposed as a table.
+- **Shared data tables** (Audit, Alerts, Incidents, Storage) expose ARIA table, row, column-header
+  and cell roles with the real row count, and clickable rows are focusable. They are not a
+  `grid`, so there is no arrow-key movement between cells. When a focused row scrolls out of
+  the virtualised list, focus moves to the list itself rather than the page.
 - **Very small text** (`9–10 px`) is used in many panels; it scales with browser zoom but is hard
   to read at 100 %.
 - **The Appearance panel is a non-modal popover**: focus does not move into it when it opens

@@ -9,15 +9,17 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef, useState } from 'react';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import AppearancePanel from '@/components/dashboard/AppearancePanel';
 import EvidenceList from '@/components/evidence/EvidenceList';
 import CommandPalette, { type Command } from '@/components/ui/CommandPalette';
+import DataTable, { type Column } from '@/components/ui/DataTable';
 import KeyboardHelp from '@/components/ui/KeyboardHelp';
 import Modal from '@/components/ui/primitives/Modal';
 import { api, type EvidenceSummary, type VerifyResult } from '@/lib/api';
 import {
   ignoreSingleKeyShortcut,
+  keyboardHelpOpen,
   modalDialogOpen,
   setSingleKeyShortcutsEnabled,
   singleKeyShortcutsEnabled,
@@ -78,14 +80,18 @@ describe('single-key shortcut guard (WCAG 2.1.4)', () => {
     expect(ignoreSingleKeyShortcut(key('r'))).toBe(false);
   });
 
-  it('ignores the key while a modal dialog is open, except a passthrough dialog', () => {
+  it('ignores the key while any modal dialog is open, the keyboard help included', () => {
     const { unmount } = render(<div role="dialog" aria-modal="true">confirm</div>);
     expect(modalDialogOpen()).toBe(true);
+    expect(keyboardHelpOpen()).toBe(false);
     expect(ignoreSingleKeyShortcut(key('g'))).toBe(true);
     unmount();
-    render(<div role="dialog" aria-modal="true" data-shortcut-passthrough="">help</div>);
-    expect(modalDialogOpen()).toBe(false);
-    expect(ignoreSingleKeyShortcut(key('?'))).toBe(false);
+    // g…/r/j/k must not act on the page behind the help overlay; only `?`
+    // (handled by the shell via keyboardHelpOpen) and Escape close it.
+    render(<KeyboardHelp onClose={() => {}} />);
+    expect(modalDialogOpen()).toBe(true);
+    expect(keyboardHelpOpen()).toBe(true);
+    expect(ignoreSingleKeyShortcut(key('r'))).toBe(true);
   });
 
   it('is switchable from the Appearance panel', async () => {
@@ -231,6 +237,50 @@ describe('toasts', () => {
   });
 });
 
+describe('toasts and keyboard focus', () => {
+  function Trigger() {
+    const { toast } = useToast();
+    return <button onClick={() => toast('info', 'Saved')}>fire</button>;
+  }
+
+  it('mouse-leave does not restart the timer while the toast has focus', () => {
+    vi.useFakeTimers();
+    render(<ToastProvider><Trigger /></ToastProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'fire' }));
+    const t = screen.getByRole('button', { name: /Saved/ });
+    fireEvent.focus(t);
+    fireEvent.mouseEnter(t);
+    fireEvent.mouseLeave(t);
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(screen.getByRole('button', { name: /Saved/ })).toBeInTheDocument();
+    fireEvent.blur(t);
+    act(() => { vi.advanceTimersByTime(5_000); });
+    expect(screen.queryByRole('button', { name: /Saved/ })).toBeNull();
+  });
+});
+
+describe('toast hold while focused', () => {
+  function Trigger() {
+    const { toast } = useToast();
+    return <button onClick={() => toast('info', 'Saved')}>fire</button>;
+  }
+
+  it('the pointer leaving does not restart the timer while the toast has focus', () => {
+    vi.useFakeTimers();
+    render(<ToastProvider><Trigger /></ToastProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'fire' }));
+    const t = screen.getByRole('button', { name: /Saved/ });
+    fireEvent.mouseEnter(t);
+    fireEvent.focus(t);
+    fireEvent.mouseLeave(t);
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(screen.getByRole('button', { name: /Saved/ })).toBeInTheDocument();
+    fireEvent.blur(t);
+    act(() => { vi.advanceTimersByTime(5_000); });
+    expect(screen.queryByRole('button', { name: /Saved/ })).toBeNull();
+  });
+});
+
 describe('evidence list keyboard path and spoken verdicts', () => {
   const bundles: EvidenceSummary[] = [
     { bundle_id: 'b1', run_id: 'r1', timestamp: '', size_bytes: 10, verified: false },
@@ -270,5 +320,41 @@ describe('evidence list keyboard path and spoken verdicts', () => {
     // Untrusted signer is a failure in words, not only a red glyph.
     expect(screen.getByText(/^signer untrusted/).textContent).toContain('failed');
     expect(screen.getByText(/^tsr –/).textContent).toContain('not established');
+  });
+});
+
+describe('data table semantics and focus', () => {
+  type R = { id: string; name: string };
+  const columns: Column<R>[] = [{ key: 'name', header: 'Name' }];
+  const rows: R[] = [{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }];
+
+  // jsdom lays nothing out, so the virtualizer sees a 0-px scroller and renders
+  // no rows. Give elements a size (restored by the global afterEach).
+  beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800);
+  });
+
+  it('exposes table, header and row roles, and clickable rows work from the keyboard', async () => {
+    const onRowClick = vi.fn();
+    render(<DataTable<R> columns={columns} rows={rows} rowKey={(r) => r.id} onRowClick={onRowClick} />);
+    const table = screen.getByRole('table');
+    expect(table).toHaveAttribute('aria-rowcount', '3');
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeInTheDocument();
+    const row = screen.getByRole('row', { name: 'alpha' });
+    expect(row).toHaveAttribute('tabindex', '0');
+    row.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(onRowClick).toHaveBeenCalledWith(rows[0]);
+  });
+
+  it('parks focus on the scroller when the focused row unmounts', () => {
+    const { rerender } = render(
+      <DataTable<R> columns={columns} rows={rows} rowKey={(r) => r.id} onRowClick={() => {}} />,
+    );
+    screen.getByRole('row', { name: 'alpha' }).focus();
+    rerender(<DataTable<R> columns={columns} rows={[rows[1]!]} rowKey={(r) => r.id} onRowClick={() => {}} />);
+    expect(screen.queryByRole('row', { name: 'alpha' })).toBeNull();
+    expect(screen.getByRole('rowgroup')).toHaveFocus();
   });
 });

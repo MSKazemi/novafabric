@@ -46,9 +46,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const seq = useRef(0);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const hovered = useRef<Set<number>>(new Set());
+  const focused = useRef<Set<number>>(new Set());
 
   const dismiss = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+    hovered.current.delete(id);
+    focused.current.delete(id);
     const handle = timers.current.get(id);
     if (handle) { clearTimeout(handle); timers.current.delete(id); }
   }, []);
@@ -60,11 +64,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, [dismiss]);
 
   // Hovering or focusing a toast holds it on screen (WCAG 2.2.1): a reader who
-  // needs longer than 4.5 s is not raced by the auto-dismiss.
-  const hold = useCallback((id: number) => {
+  // needs longer than 4.5 s is not raced by the auto-dismiss. The timer
+  // restarts only once the toast is neither hovered nor focused.
+  const hold = useCallback((id: number, why: 'hover' | 'focus') => {
+    (why === 'hover' ? hovered : focused).current.add(id);
     const handle = timers.current.get(id);
     if (handle) { clearTimeout(handle); timers.current.delete(id); }
   }, []);
+  const release = useCallback((id: number, why: 'hover' | 'focus') => {
+    (why === 'hover' ? hovered : focused).current.delete(id);
+    if (!hovered.current.has(id) && !focused.current.has(id)) schedule(id);
+  }, [schedule]);
 
   const toast = useCallback((tone: ToastTone, text: string): number => {
     const id = ++seq.current;
@@ -87,10 +97,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             key={t.id}
             type="button"
             onClick={() => dismiss(t.id)}
-            onMouseEnter={() => hold(t.id)}
-            onMouseLeave={() => schedule(t.id)}
-            onFocus={() => hold(t.id)}
-            onBlur={() => schedule(t.id)}
+            onMouseEnter={() => hold(t.id, 'hover')}
+            onMouseLeave={() => release(t.id, 'hover')}
+            onFocus={() => hold(t.id, 'focus')}
+            onBlur={() => release(t.id, 'focus')}
             title="Dismiss"
             className={clsx(
               'pointer-events-auto rounded-lg border px-4 py-3 shadow-xl max-w-md text-sm font-medium text-left transition-opacity',
