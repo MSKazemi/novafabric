@@ -184,7 +184,7 @@ that the registry track does not know, and `nova server start` refused with
 `SchemaSkewError` / `E-SKEW-AHEAD` — whose "upgrade the package" advice does not
 apply here. In server mode the chart now runs only
 `nova db upgrade --track registry --backend postgres`. The Docker image's
-entrypoint had the same defect; PR #345 fixes it the same way. The structural
+entrypoint had the same defect and is fixed the same way (`deploy/docker/entrypoint.sh`). The structural
 fix, a distinct version table per track, is still open (pinned by
 `tests/server/test_schema_skew_track_names.py`).
 
