@@ -1,0 +1,167 @@
+name: Backup/restore drill
+
+# Single-host recovery drill (#233): capture a synthetic run into a disposable
+# NOVAFABRIC_HOME, `nova backup create`, delete the whole host directory,
+# `nova restore`, then prove every capsule byte came back, the capsule still
+# validates and verifies with no private key on the host, the registry still
+# lists the asset, and a tampered set / a non-empty home are refused.
+# The steps live in scripts/backup_restore_drill.py; every step is a real `nova`
+# subprocess. No Docker, no Postgres, no provider key, synthetic data only.
+#
+# Jobs:
+#   drill   — this tree's wheel, installed the way a user installs it (no extras),
+#             backs up AND restores.
+#   upgrade — the newest novafabric release on PyPI seals, captures and backs up;
+#             this tree's wheel verifies and restores (the upgrade path).
+#
+# Runs on pull requests that touch backup/restore code, nightly, and on demand.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/novafabric/backup/**"
+      - "src/novafabric/cli/backup.py"
+      - "src/novafabric/registry/**"
+      - "src/novafabric/trust/novaseal/**"
+      - "src/novafabric/capture/finalize.py"
+      - "scripts/backup_restore_drill.py"
+      - "tests/backup/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/backup-restore-drill.yml"
+  schedule:
+    - cron: "30 3 * * *" # 03:30 UTC nightly, after nightly-scale-gates
+  workflow_dispatch:
+    inputs:
+      from_version:
+        description: "Release that creates the set in the upgrade job (default: newest on PyPI)"
+        required: false
+        default: ""
+
+concurrency:
+  group: backup-restore-drill-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    # Pinned like every other workflow here: ubuntu-latest moved to 26.04 on
+    # 2026-11-07 (see nightly-scale-gates.yml). This job needs no Postgres client.
+    runs-on: ubuntu-24.04
+    # CI belongs to the PUBLIC repository; the private mirror carries the same tree.
+    if: github.repository == 'MSKazemi/novafabric'
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel and install it into a clean venv (versions from uv.lock)
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+          uv export --frozen --all-extras --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
+          uv venv --python 3.12 "$RUNNER_TEMP/new-venv"
+          uv pip install --python "$RUNNER_TEMP/new-venv/bin/python" \
+            -c "$RUNNER_TEMP/constraints.txt" "$RUNNER_TEMP"/dist/novafabric-*.whl
+          "$RUNNER_TEMP/new-venv/bin/python" -c \
+            "import novafabric; assert 'site-packages' in novafabric.__file__, novafabric.__file__"
+
+      - name: Backup -> wipe -> restore drill (this build on both sides)
+        run: |
+          V="$RUNNER_TEMP/new-venv/bin"
+          env -i PATH="$V:/usr/bin:/bin" LANG=C.UTF-8 \
+            "$V/python" scripts/backup_restore_drill.py \
+            --nova "$V/nova" \
+            --work-dir "$RUNNER_TEMP/drill" \
+            --report "$RUNNER_TEMP/drill/report.json"
+
+      - name: Upload the drill report and logs (synthetic data only)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backup-restore-drill
+          path: |
+            ${{ runner.temp }}/drill/report.json
+            ${{ runner.temp }}/drill/logs/
+          if-no-files-found: warn
+          retention-days: 14
+
+  upgrade:
+    runs-on: ubuntu-24.04
+    if: github.repository == 'MSKazemi/novafabric'
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the previous release from PyPI into its own venv
+        env:
+          FROM_VERSION: ${{ inputs.from_version }}
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/old-venv"
+          if [ -n "$FROM_VERSION" ]; then
+            spec="novafabric==$FROM_VERSION"
+          else
+            spec="novafabric"
+          fi
+          uv pip install --python "$RUNNER_TEMP/old-venv/bin/python" "$spec"
+          "$RUNNER_TEMP/old-venv/bin/nova" --version
+
+      - name: Build this tree's wheel and install it into a clean venv (versions from uv.lock)
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+          uv export --frozen --all-extras --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
+          uv venv --python 3.12 "$RUNNER_TEMP/new-venv"
+          uv pip install --python "$RUNNER_TEMP/new-venv/bin/python" \
+            -c "$RUNNER_TEMP/constraints.txt" "$RUNNER_TEMP"/dist/novafabric-*.whl
+          "$RUNNER_TEMP/new-venv/bin/nova" --version
+
+      - name: Upgrade drill (previous release backs up, this build restores)
+        run: |
+          OLD="$RUNNER_TEMP/old-venv/bin"
+          NEW="$RUNNER_TEMP/new-venv/bin"
+          env -i PATH="$NEW:/usr/bin:/bin" LANG=C.UTF-8 \
+            "$NEW/python" scripts/backup_restore_drill.py \
+            --backup-nova "$OLD/nova" \
+            --nova "$NEW/nova" \
+            --work-dir "$RUNNER_TEMP/upgrade" \
+            --report "$RUNNER_TEMP/upgrade/report.json"
+
+      - name: Upload the upgrade drill report and logs (synthetic data only)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backup-restore-upgrade-drill
+          path: |
+            ${{ runner.temp }}/upgrade/report.json
+            ${{ runner.temp }}/upgrade/logs/
+          if-no-files-found: warn
+          retention-days: 14

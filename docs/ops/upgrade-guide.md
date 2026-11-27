@@ -292,5 +292,14 @@ nova validate <a-recent-capsule-dir>   # capsule reads fine
 nova seal log verify           # if you seal: Merkle log integrity
 ```
 
+**Rehearse the restore before you upgrade (works today, local profile).** Install the new
+release in its own venv and run the restore drill with the old release on the backup side:
+`python scripts/backup_restore_drill.py --backup-nova old-venv/bin/nova --nova new-venv/bin/nova`.
+The old release seals, captures and backs up a synthetic run, and the new release restores
+and verifies it, all in a throwaway directory
+([Backup & Restore Runbook](backup-restore.md) §1.8). CI runs the same upgrade drill
+nightly, from the newest PyPI release to the current tree. The drill checks upgrades only:
+restoring a newer release's set with an older release is not supported (§7).
+
 If the server won't come up or `/readyz` fails after an upgrade, switch to
 the [Incident Runbook](incident-runbook.md) §1.

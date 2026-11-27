@@ -166,7 +166,11 @@ nova doctor --check-storage        # backend, schema revision, migration state
 nova seal log verify               # Merkle log integrity
 nova ledger verify <run-dir>       # accountability ledger chains, per capsule (ADR-0094)
 nova validate <restored-run-dir>   # spot-check capsules
+nova verify --ca-bundle <ca.crt.pem> <restored-run-dir>   # sealed capsules: seal + log inclusion
 ```
+
+`nova verify` needs only the capsule and the public CA certificate. Private keys are not
+needed, so it works on a restored host before its keys are re-provisioned (§1.4, §1.8).
 
 Treat any verification failure as a failed restore, not a warning.
 
@@ -210,6 +214,63 @@ runs and refusals included — leaves a receipt under
 [CLI reference](../cli-reference.md#nova-import-source) for exit codes and
 flags. This transfers **capsules only** — the asset registry, holds, and
 policies still travel via the database backup paths above.
+
+### 1.8 Restore drill — rehearse a single-host recovery
+
+**Status: works today** for the local profile (the drill script and its CI workflow).
+The drill does not cover Postgres (`--profile pg`) sets or object-store manifests.
+
+[`scripts/backup_restore_drill.py`](../../scripts/backup_restore_drill.py) runs a complete
+single-host recovery through the real `nova` CLI, in a throwaway directory, with synthetic
+data only. Use it to rehearse a recovery, or to check that a new release can restore your
+current release's sets before you upgrade:
+
+```bash
+# this install backs up and restores
+python scripts/backup_restore_drill.py --report drill.json
+# upgrade rehearsal: the installed release backs up, the new one restores
+python scripts/backup_restore_drill.py --backup-nova old-venv/bin/nova --nova new-venv/bin/nova
+```
+
+It never touches your real home: `HOME`, the XDG directories, `NOVAFABRIC_HOME` and the
+audit log all point into the throwaway directory, and nothing else is inherited except
+`PATH` and the locale. Exit `0` means every step passed. Exit `1` names the failed step, and
+the directory is kept for inspection. Exit `2` means `--work-dir` was not empty. The steps,
+which are also the recovery procedure for a lost host:
+
+1. `nova seal init`, then copy the **public** CA certificate
+   (`keys/novaseal/ca.crt.pem`) off the host. The private keys stay behind.
+2. `nova register` an asset and `nova capture` a one-line run. Then `nova validate` and
+   `nova verify --ca-bundle`, and record the SHA-256 of every capsule file.
+3. `nova backup create`. The set must contain no key material: no `keys/` path, no
+   `*.pem` or `*.key` file, no `novaseal.yaml`, no `key_material` member.
+4. `nova backup verify` passes. A copy with one flipped byte fails `nova backup verify`,
+   and `nova restore` of that copy fails without writing a capsule file.
+5. Delete the whole host directory: home, audit log, configuration and private keys.
+6. `nova restore <set> --home <empty home>`. Every capsule file must match its recorded
+   SHA-256. No `keys/` or `novaseal.yaml` may come back. `nova validate` and
+   `nova verify --ca-bundle <saved CA certificate>` must pass with no private key on the
+   host, and `nova inspect` and `nova list` must still show the asset.
+7. A second `nova restore` into the now non-empty home is refused (exit 1) and leaves the
+   capsule unchanged.
+
+Step 6 shows what §1.4 promises: a restored deployment can **verify** its evidence without
+its signing keys. To **sign** again, re-provision the keys
+([NovaSeal Key Management](../novaseal-key-management.md)) or run `nova seal init` for a
+new self-asserted identity. Keep the old CA certificate, because capsules sealed before
+the loss verify against it.
+
+**In CI (works today):** `.github/workflows/backup-restore-drill.yml` runs the drill on
+pull requests that touch backup, registry, NovaSeal or capture-finalization code, nightly,
+and on demand. The `drill` job installs this tree's wheel with no extras, the way a user
+installs it, and uses it for both sides. The `upgrade` job backs up with the newest
+NovaFabric release on PyPI (or the `from_version` input) and restores with this tree's
+wheel. Each job uploads its JSON report and per-command logs as an artifact. They contain
+only synthetic data and temporary paths.
+
+**Not covered yet:** a restore with an older release (there is no supported downgrade,
+see the [Upgrade Guide](upgrade-guide.md) §7), a failed upgrade, `pg_dump`/`pg_restore`
+version handling, and sets created with `--include-keys`.
 
 ---
 
