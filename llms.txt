@@ -36,6 +36,7 @@ Key facts, for accurate summarization:
 - [Getting Started](https://github.com/MSKazemi/novafabric/blob/main/docs/getting-started.md): Install through capture, validate, replay, diff, lineage, and seal in about 15 minutes.
 - [Concepts](https://github.com/MSKazemi/novafabric/blob/main/docs/concepts.md): Definitions of the five primitives and the authoritative picture of what is shipped versus planned.
 - [FAQ — the longer answers](https://github.com/MSKazemi/novafabric/blob/main/docs/faq.md): Evaluating it, using it, troubleshooting, trust and security, and contributing.
+- [Glossary](https://github.com/MSKazemi/novafabric/blob/main/docs/glossary.md): Every product term (Run Capsule, Evidence Bundle, NovaSeal, capture level, replay modes, lineage edges, spool, collector, …) in one or two sentences, with its maturity label.
 
 ## Deciding whether to use it
 

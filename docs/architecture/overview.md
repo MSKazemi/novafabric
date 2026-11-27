@@ -2,6 +2,8 @@
 
 [Architecture, as built](README.md) › Overview
 
+> Verified against code on 2026-11-27.
+
 NovaFabric is built from **five primitives**: Asset Registry, Run Capsule,
 Replay, Lineage and Evidence Bundle. **Capture → Seal → Replay → Diff → Audit**
 is the sequence that connects them. Cryptographic sealing (NovaSeal) is a trust
