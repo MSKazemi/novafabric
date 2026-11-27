@@ -148,6 +148,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   corrects the replay-mode table, the signing and portability answers, and adds answers for replay
   refusals, fidelity, capture levels, unsealed capsules, `nova validate` vs `nova verify` and the
   evidence key.
+- **Six `docs/ops/` pages checked against the code: 23 claims fixed, `quotas-and-rate-limits.md`
+  unchanged.** The server admin guide no longer calls the shipped org/workspace layer and the ADR-0188
+  deprecation mechanism "future design", no longer counts `/v0/version` as exempt from rate limiting,
+  and says `/readyz` always reports its object-store check as `skipped`. The sizing guide no longer
+  names a `nova-bench` command that does not exist or a `query_runs` latency gate that no test runs,
+  and labels two old benchmark numbers `target`, as `docs/slo.md` does. The encryption page counts the
+  cloud-KMS wrapping tests correctly (11, not 31). Items with no ROADMAP target are relabelled
+  `future design` instead of `planned` (data residency, per-tenant KEKs, webhook secret rotation).
 
 ### Fixed
 
