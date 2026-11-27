@@ -333,7 +333,12 @@ Three additive, nullable row fields feed the dashboard's triage panel (**experim
 #276); none is ever derived from `subject`. Today only `ops.seal.verify_failed` records them:
 
 - `capsule_dir` — the directory `nova verify` found failing (absolute path on the host that ran
-  it): the thing to re-verify.
+  it): the thing to re-verify. **Local only:** it is kept in the local `events.jsonl` and the
+  `alert.delivery` audit details, so this token-protected endpoint and the dashboard show it,
+  but it is stripped from every record sent off the host (`NOVA_EVENTS_WEBHOOK`, every
+  `NOVA_ALERTS_*` endpoint), because the path can reveal a home directory and user name.
+  External receivers get the seal's `capsule_id` instead; signed records are signed over the
+  stripped body they receive.
 - `claimed_run_id` — the run id **named by the failed capsule's own `capsule.yaml`, which the
   failed seal does not vouch for**. A tampered capsule can name any run: treat it as an
   unverified claim and verify independently. Only a plain ref is kept (`[A-Za-z0-9._:@-]`, at
@@ -342,8 +347,8 @@ Three additive, nullable row fields feed the dashboard's triage panel (**experim
   no longer matches the seal (file granularity).
 
 They ride in the event `payload` and, for delivered alerts, in the `alert.delivery` audit
-entry's details. A generic webhook endpoint receives the payload, so it now also sees the
-failed capsule's directory path. Alerts raised before this change carry none of them.
+entry's details (`capsule_dir` locally only, as above). Alerts raised before this change carry
+none of them.
 
 Decision record: [ADR-0192 — Alerting & notification bus](../decisions.md). The
 full variable reference and normative semantics live in a spec in the maintainers'

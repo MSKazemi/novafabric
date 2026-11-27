@@ -36,6 +36,27 @@ def sanitize_record(record: dict[str, Any]) -> dict[str, Any]:
     return {k: _sanitize_value(v) for k, v in record.items()}
 
 
+#: Payload keys kept on this host only — the local ``events.jsonl`` and the
+#: audit log, which the token-protected local dashboard reads — and stripped
+#: from every record sent to an outbound sink (webhooks, alert endpoints).
+#: ``capsule_dir`` is an absolute local path and can reveal a home directory and
+#: user name (issue #276); outbound receivers still get the seal's capsule id.
+LOCAL_ONLY_PAYLOAD_KEYS = frozenset({"capsule_dir"})
+
+
+def strip_local_only(record: dict[str, Any]) -> dict[str, Any]:
+    """*record* without :data:`LOCAL_ONLY_PAYLOAD_KEYS` in its payload.
+
+    Returns *record* itself when there is nothing to strip, else a copy; apply
+    it **before** signing, so a signature covers exactly what is sent.
+    """
+    payload = record.get("payload")
+    if not isinstance(payload, dict) or not LOCAL_ONLY_PAYLOAD_KEYS.intersection(payload):
+        return record
+    kept = {k: v for k, v in payload.items() if k not in LOCAL_ONLY_PAYLOAD_KEYS}
+    return {**record, "payload": kept}
+
+
 def redact_url(url: str) -> str:
     """``scheme://host[:port]`` plus ``/…`` when there was more — never the path or query.
 

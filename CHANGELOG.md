@@ -92,7 +92,9 @@ longer forwards the submitting shell's environment (ADR-0270).
   labels it unverified, does not load it, and points its commands at the failed capsule. All
   three ride in the payload and `alert.delivery` audit details, and `GET /api/alerts/recent`
   rows carry them as additive, nullable fields; a run id that is only dots or contains `/` is
-  dropped. Other alert types record none. The shipped bundle under `src/novafabric/serve/static` gains the panel when
+  dropped. `capsule_dir` is an absolute local path, so it stays in the local events log and audit
+  log and is stripped (before signing) from every record sent to a webhook or alert endpoint,
+  which still receives the seal's capsule id. Other alert types record none. The shipped bundle under `src/novafabric/serve/static` gains the panel when
   it is next rebuilt.
 
 ### Changed

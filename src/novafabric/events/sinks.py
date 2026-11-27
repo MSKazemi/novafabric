@@ -51,8 +51,20 @@ class DeliveryResult:
     status_code: int | None = None
 
 
+def is_outbound(sink: object) -> bool:
+    """Whether *sink* sends records off this host (issue #276).
+
+    Outbound sinks receive records without local-only payload keys
+    (``hygiene.LOCAL_ONLY_PAYLOAD_KEYS``). A sink that does not declare
+    ``outbound`` is treated as outbound — fail closed.
+    """
+    return bool(getattr(sink, "outbound", True))
+
+
 class NullSink:
     """No-op sink — active when nothing is configured (the opt-out)."""
+
+    outbound = False
 
     def send(self, record: dict[str, Any]) -> None:
         pass
@@ -63,6 +75,8 @@ class FileSink:
 
     Works fully offline; the durable source of truth (ADR-0137 D3).
     """
+
+    outbound = False
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -83,6 +97,8 @@ class WebhookSink:
     validation, or promotion. There is no queue, redelivery daemon, or
     delivery guarantee (the local log holds the durable record).
     """
+
+    outbound = True
 
     def __init__(
         self,
@@ -167,13 +183,22 @@ class WebhookSink:
 class MultiSink:
     """Fans out to all configured sinks; swallows per-sink exceptions."""
 
+    outbound = True
+
     def __init__(self, sinks: list[EventSink]) -> None:
         self._sinks = sinks
 
     def send(self, record: dict[str, Any]) -> None:
+        self.send_split(record, record)
+
+    def send_split(self, local: dict[str, Any], outbound: dict[str, Any]) -> None:
+        """*local* to local sinks, *outbound* to sinks that leave the host (#276)."""
         for sink in self._sinks:
             try:
-                sink.send(record)
+                if isinstance(sink, MultiSink):
+                    sink.send_split(local, outbound)
+                else:
+                    sink.send(outbound if is_outbound(sink) else local)
             except Exception as exc:  # noqa: BLE001 — fail-safe, never blocks
                 logger.warning(
                     "lifecycle event sink %s raised: %s", type(sink).__name__, exc
