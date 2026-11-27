@@ -274,7 +274,7 @@ Status: **experimental**.
 | [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke, rotate (experimental) |
 | [`nova server usage`](#nova-server-usage-reconcile-experimental-adr-0208) | Usage-ledger drift reconciliation and chargeback CSV/NDJSON export (experimental) |
 | [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Log in through a server's demo device grant (testing only) / remove stored credentials |
-| [`nova doctor`](#nova-doctor---check-extras---check-storage---check-scheduler---check-tokens) | Installation, storage, scheduler/env-var, and token-at-rest diagnostics |
+| [`nova doctor`](#nova-doctor---check-extras---check-storage---check-scheduler---check-tokens---check-server) | Installation, storage, scheduler/env-var, token-at-rest diagnostics, and a read-only server deployment preflight |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
 | [`nova migrate-format`](#nova-migrate-format-experimental-adr-0165-nf-332) | Record a format-migration hop in a preservation facet; verify the chain offline (experimental) |
 | [`nova preservation`](#nova-preservation-experimental-adr-0165-nf-333334) | Record/verify crypto re-seal events and LTV timestamp-renewal chains in a preservation facet (experimental, record-only) |
@@ -7506,7 +7506,7 @@ Options:
 
 Requires: `pip install 'novafabric[server]'`
 
-### nova doctor [--check-extras] [--check-storage] [--check-scheduler] [--check-tokens]
+### nova doctor [--check-extras] [--check-storage] [--check-scheduler] [--check-tokens] [--check-server]
 
 Run diagnostic checks on the NovaFabric installation.
 
@@ -7518,6 +7518,8 @@ nova doctor --check-storage --backend postgres --postgres-dsn "postgresql://..."
 nova doctor --check-storage --db-path /path/to/custom.db
 nova doctor --check-scheduler
 nova doctor --check-tokens
+nova doctor --check-server
+nova doctor --check-server --server-config /etc/novafabric/server.yaml
 ```
 
 With `--check-tokens`: reports how many serve-token records still store the secret itself
@@ -7582,6 +7584,76 @@ Options:
 - `--backend TEXT` — `sqlite` (default) or `postgres`
 - `--db-path PATH` — override the SQLite path; defaults to `NOVAFABRIC_DB_PATH`
 - `--postgres-dsn TEXT` — Postgres DSN; defaults to `NOVAFABRIC_POSTGRES_DSN`
+- `--check-server` — read-only preflight for a `nova server start` deployment (see below)
+- `--server-config PATH` — server YAML for `--check-server`; defaults to
+  `~/.config/novafabric/server.yaml`, the file `nova server start` reads
+
+#### `--check-server`: server deployment preflight (**experimental**)
+
+Run it on the host, as the service user, before `nova server start`. It reads the same
+configuration the server reads (the YAML file through the server's own loader, plus the
+`NOVAFABRIC_SERVER_*` / `NOVAFABRIC_*` environment) and prints one line per check:
+**PASS**, **FAIL**, **WARN** or **SKIP**, with a one-line `fix:` under anything that needs one.
+`--backend`, `--db-path` and `--postgres-dsn` apply to `--check-storage` only; `--host`,
+`--port` and `--backend` passed to `nova server start` are not seen, so put them in the file
+or the environment to have them checked.
+
+| Check | What it verifies | FAIL when |
+|---|---|---|
+| `server-extra` | `fastapi` and `uvicorn` are installed (looked up, not imported) | either is missing |
+| `config` | the YAML parses and validates with the server's loader, env overrides included | invalid, unreadable, or a `--server-config` file that does not exist (`nova server start --config` silently falls back to defaults in that case) |
+| `data-dir`, `capsule-dir` | `$NOVAFABRIC_HOME` and the capsule store exist, are writable by you and are not world-writable | world-writable, not writable, or cannot be created (absent but creatable is WARN) |
+| `secret-files` | `.server-token`, the evidence signing key and the `NOVAFABRIC_OFFLINE_KEY_PATH` private key have no group/world permission bits | any of them does, or the offline key path names no file |
+| `database` | sqlite: the registry file's migration stamp; postgres: the DSN is reachable and the registry track is at head | the server would refuse to start (schema behind, ahead/foreign, or an empty Postgres), or Postgres is unreachable within 2 s |
+| `listen-port` | nothing accepts connections on the configured address | something does (a privileged port as non-root is WARN) |
+| `tls` | when `tls.enabled`: both files exist and are readable, the key is owner-only, the certificate is PEM and inside its validity window | any of those fails (expiry within 30 days is WARN; TLS off on a non-loopback host is WARN) |
+| `auth-token` | without OIDC: the pinned `NOVAFABRIC_SERVER_TOKEN` or the `.server-token` file | the token file is empty (the server would use a new, unsaved token on every start) |
+| `audit-log` | the hash-chained audit log is, or can be created, writable | it cannot be written |
+| `seal-key` | when NovaSeal is configured: the profile parses, the certificate is readable, a `local` key is readable and owner-only | any of those fails (not configured is SKIP; a KMS profile is not contacted) |
+
+The server enforces **no minimum length** on a pinned token. `auth-token` WARNs (it does not
+fail) when a token is shorter than the 43 characters of the token the server generates
+itself; the token is measured, never printed. The `database` check reports exactly the states
+the server's own start-up schema guard refuses on as FAIL, and the states it starts on with a
+warning as WARN; `NOVAFABRIC_ALLOW_SCHEMA_SKEW=1` turns those FAILs into WARNs, as it does for
+the server.
+
+**Read-only.** `--check-server` creates, changes and deletes nothing: no directory, no token,
+no schema stamp. The SQLite registry is read without creating its `-wal` / `-shm` files, and
+at the exact `db_path` the server opens (a leading `~` is not expanded by the server, so
+preflight WARNs about it). A config file that fails to parse is reported by error type and
+line/column only, never quoted, because the broken line may hold a secret. It never binds a socket: the port check makes one TCP connect to the
+configured address (loopback for `0.0.0.0` / `::`) and does not resolve host names (a host
+name is SKIP). It contacts no external service. The only connection off the host is the one
+you configured: with the `postgres` backend, at most two short connections to
+`NOVAFABRIC_POSTGRES_DSN` (2 s connect timeout) that run `SELECT` only. A DSN is never echoed.
+
+Limits: the port check sees a listener on the probed address only, not one bound to a different
+interface of the same host; it does not check that the TLS key matches the certificate.
+
+Exit code: **1** if any check FAILs, otherwise **0** (WARN and SKIP do not fail). There is no
+`--json` output yet.
+
+```console
+$ nova doctor --check-server --server-config /etc/novafabric/server.yaml
+
+Server deployment preflight (read-only)
+PASS  server-extra  fastapi and uvicorn are installed
+PASS  config        /etc/novafabric/server.yaml parses and validates
+PASS  data-dir      /srv/novafabric exists and is writable (mode 0o700)
+WARN  capsule-dir   /srv/novafabric/capsules does not exist yet; it is created on first use
+                    fix: mkdir -p -m 700 /srv/novafabric/capsules
+FAIL  secret-files  group/world-accessible: server token /srv/novafabric/.server-token (mode 0o644)
+                    fix: chmod 600 /srv/novafabric/.server-token
+PASS  database      postgres: registry track at head (db=… head=…)
+PASS  listen-port   127.0.0.1:7433 is free
+SKIP  tls           tls.enabled is false (loopback listener)
+PASS  auth-token    token from /srv/novafabric/.server-token is 43 characters
+PASS  audit-log     /var/log/novafabric/audit.jsonl (NOVAFABRIC_AUDIT_LOG_PATH) is writable
+SKIP  seal-key      NovaSeal not configured (no NOVAFABRIC_SEAL_CONFIG, no novaseal.yaml in NOVAFABRIC_HOME)
+
+  7 pass, 1 warn, 1 fail, 2 skip
+```
 
 ---
 

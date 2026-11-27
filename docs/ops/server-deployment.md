@@ -93,6 +93,28 @@ export NOVAFABRIC_POSTGRES_DSN="postgresql://nova_user:s3cr3t@db.example.com:543
 See [ADR-0029](../decisions.md) for the config design and the
 [config file reference](#config-file-reference) below for every key.
 
+### Preflight before you start (experimental)
+
+Run a read-only preflight on the host, as the service user, before the first start and after
+any config change:
+
+```bash
+nova doctor --check-server --server-config ~/.config/novafabric/server.yaml
+```
+
+It reads the same file and environment `nova server start` reads and prints PASS / FAIL /
+WARN / SKIP with a one-line fix for: the server extra, the config (parsed and validated by the
+server's own loader), the data and capsule directories (exist, writable, not world-writable),
+secret-file permissions, the database (the Postgres DSN is reachable and the registry migration
+track is at head), the listen port, TLS material and certificate expiry, the local auth token,
+the audit log path, and the NovaSeal key when sealing is configured. It exits **1** if any check
+FAILs.
+
+It changes nothing: no directory, token or schema stamp is created, no port is bound, no host
+name is resolved and no external service is contacted. With the `postgres` backend it opens
+at most two short read-only connections to `NOVAFABRIC_POSTGRES_DSN` and never prints the DSN.
+Check-by-check detail: [`nova doctor` in the CLI reference](../cli-reference.md#--check-server-server-deployment-preflight-experimental).
+
 ### Start the server
 
 ```bash

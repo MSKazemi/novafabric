@@ -5,6 +5,7 @@ from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from novafabric.capsule.env_contract import SchedulerEnvDiagnosis, diagnose_scheduler_env
@@ -61,6 +62,32 @@ def doctor_cmd(
             ),
         ),
     ] = False,
+    check_server: Annotated[
+        bool,
+        typer.Option(
+            "--check-server",
+            help=(
+                "Read-only preflight for a `nova server start` deployment: config, "
+                "data and capsule dirs, secret-file modes, database reachability and "
+                "migration head, listen port, TLS, auth token, audit log, seal key. "
+                "Each check prints PASS/FAIL/WARN/SKIP with a one-line fix; exits 1 "
+                "on any FAIL. Writes nothing and never binds a port."
+            ),
+        ),
+    ] = False,
+    server_config: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--server-config",
+            help=(
+                "Server YAML config for --check-server (default "
+                "~/.config/novafabric/server.yaml, the same file `nova server start` "
+                "reads). A named file that does not exist is a FAIL."
+            ),
+            show_default=False,
+            dir_okay=False,
+        ),
+    ] = None,
     db_path: Annotated[
         Optional[Path],
         typer.Option(
@@ -110,18 +137,25 @@ def doctor_cmd(
 
       # Check a specific database path
       nova doctor --db-path ~/custom/novafabric.db
+
+      # Read-only preflight before `nova server start`
+      nova doctor --check-server --server-config /etc/novafabric/server.yaml
     """
-    if not check_storage and not check_scheduler and not check_extras and not check_tokens:
+    if not any((check_storage, check_scheduler, check_extras, check_tokens, check_server)):
         console.print(
             "[yellow]Hint:[/yellow] pass [bold]--check-extras[/bold] to see which "
             "optional extras are installed, [bold]--check-storage[/bold] to inspect "
             "the storage backend, [bold]--check-scheduler[/bold] to detect a "
-            "scheduler/env-var contract mismatch, or [bold]--check-tokens[/bold] "
-            "to audit serve tokens still stored in cleartext."
+            "scheduler/env-var contract mismatch, [bold]--check-tokens[/bold] "
+            "to audit serve tokens still stored in cleartext, or "
+            "[bold]--check-server[/bold] for a read-only server deployment preflight."
         )
         return
 
     failed = False
+
+    if check_server and not _print_server_preflight(server_config):
+        failed = True
 
     if check_extras:
         _print_extras_report()
@@ -157,6 +191,44 @@ def doctor_cmd(
 
     if failed:
         raise typer.Exit(1)
+
+
+_STATUS_STYLE = {
+    "PASS": "[green]PASS[/green]",
+    "FAIL": "[red]FAIL[/red]",
+    "WARN": "[yellow]WARN[/yellow]",
+    "SKIP": "[dim]SKIP[/dim]",
+}
+
+
+def _print_server_preflight(config_path: Optional[Path]) -> bool:
+    """Print the --check-server report; True when no check FAILed."""
+    from novafabric.cli._server_preflight import run_server_preflight
+
+    results = run_server_preflight(config_path)
+
+    console.print()
+    console.print("[bold]Server deployment preflight[/bold] [dim](read-only)[/dim]")
+    table = Table.grid(padding=(0, 2))
+    table.add_column(no_wrap=True)
+    table.add_column(style="cyan", no_wrap=True)
+    table.add_column()
+    for result in results:
+        detail = escape(result.detail)
+        if result.fix:
+            detail += f"\n[dim]fix:[/dim] {escape(result.fix)}"
+        table.add_row(_STATUS_STYLE[result.status], result.name, detail)
+    console.print(table)
+
+    counts = dict.fromkeys(_STATUS_STYLE, 0)
+    for result in results:
+        counts[result.status] += 1
+    console.print()
+    console.print(
+        f"  {counts['PASS']} pass, {counts['WARN']} warn, "
+        f"{counts['FAIL']} fail, {counts['SKIP']} skip"
+    )
+    return counts["FAIL"] == 0
 
 
 def _print_storage_report(info: StorageInfo) -> None:
