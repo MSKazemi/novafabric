@@ -34,7 +34,10 @@ _EXIT_INTEGRITY = 3
 _EXIT_DIVERGED = 4
 
 _RaplBase = Annotated[
-    Path | None, typer.Option(help="Override the RAPL sysfs base (testing/non-Linux).")
+    Path | None,
+    typer.Option(
+        help="RAPL sysfs base to read (default: /sys/class/powercap; for testing/non-Linux)."
+    ),
 ]
 
 
@@ -56,7 +59,10 @@ def probe(rapl_base: _RaplBase = None) -> None:
 @app.command()
 def attest(
     capsule_dir: Annotated[Path, typer.Argument(help="Run Capsule directory.")],
-    node_id: Annotated[str | None, typer.Option(help="Override the node id.")] = None,
+    node_id: Annotated[
+        str | None,
+        typer.Option(help="Node id recorded in each receipt (default: this host's name)."),
+    ] = None,
     rapl_base: _RaplBase = None,
 ) -> None:
     """Write energy receipts for every action in the capsule."""

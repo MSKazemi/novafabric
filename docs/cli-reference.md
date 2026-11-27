@@ -2013,7 +2013,10 @@ nova trend --metric cost --view prod-summarizer
   under `(none)`).
 - `--since` (default `30d`) / `--until` (default now) bound the input window.
 - `--view NAME` runs a saved view's `where` clause as the capsule selector;
-  `view` and `filters` are echoed into the report for provenance.
+  `view` and `filters` are echoed into the report for provenance. `--views-dir PATH` reads
+  views from another directory (default: `$NOVAFABRIC_VIEWS_DIR`, else `./.novafabric/views`).
+- `--capsule-dir PATH` — capsules to read (default: `$NOVAFABRIC_CAPSULE_DIR`, else
+  `$NOVAFABRIC_HOME/capsules`).
 - Output: canonical `TrendReport` JSON to stdout by default; `--json FILE`
   writes it to a file; `--html FILE` also writes **one** self-contained static
   HTML file — inline CSS, a stdlib pre-rendered inline SVG chart (line for
@@ -2915,13 +2918,14 @@ nova lineage provenance 01HX... --with-facets
 ### nova lineage blast-radius
 
 ```
-nova lineage blast-radius <ref> [--depth N] [--kind run|asset|artifact] [--edge-type TYPES] [--output text|json]
+nova lineage blast-radius <ref> [--depth N] [--kind run|asset|artifact] [--edge-type TYPES] [--with-facets] [--output text|json]
 ```
 
 Show what depends on the given node (backward traversal).
 
 Options:
 - `--edge-type TYPES` — walk only edges of these types (comma-separated). Same semantics and valid values as `provenance`. Invalid types exit 1.
+- `--with-facets` — print column-level lineage facets on traversed edges, as for `provenance` (experimental, ADR-0090).
 
 ```bash
 nova lineage blast-radius my-model@v1.0 --edge-type consumed   # runs that consumed this asset version
@@ -3456,6 +3460,11 @@ nova annotate confirm <item_id> --as reviewer:b                       # checker 
 nova annotate skip <item_id> --note "out of scope"                    # terminal, writes no score
 ```
 
+`queue create --select KEY=VALUE` (repeatable) sets the queue's `subject_selector`; keys are
+`subject_kind`, `run_ids`, `tool_names`, `tags` (comma-separated lists) and `sample` (a
+fraction). `queue populate --capsule-dir DIR` scans another capsule root (default:
+`$NOVAFABRIC_CAPSULE_DIR`, then `$NOVAFABRIC_HOME/capsules`).
+
 `queue populate` enqueues every stored capsule matching the queue's `subject_selector`
 (all present keys ANDed). It is **idempotent** — a subject already queued is skipped, so
 re-running after new capsules land adds only the new ones, which makes it safe to
@@ -3514,8 +3523,10 @@ nova score submit --capsule <capsule-dir> \
   --name answer_correct --value 0.87 --value-type numeric \
   --evaluator "ci://acme/repo#judge@v3" --source code \
   --subject sha256:<hex> --eval-card sha256:<hex> \
-  [--score-id <ulid>] [--supersedes <score_id>] [--run-id <ulid>] [--json]
+  [--subject-kind span|capsule] [--score-id <ulid>] [--supersedes <score_id>] [--run-id <ulid>] [--json]
 ```
+
+`--subject-kind` says what `--subject` names (default `span`).
 
 Validation is **fail-closed** — on any rejection nothing is written:
 
@@ -3716,6 +3727,7 @@ Options:
 - `--certify` — (experimental, ADR-0094 B) after the re-performance attestation, also emit a DSSE-signed determinism certificate (`ReplayAttestation`, predicate `novafabric.io/replay-attestation/v0`) to `replay-attestation-<capsule>.intoto.json`. `determinism_class` ∈ `BIT_EXACT`/`BOUNDED_EQUIVALENT`/`NON_DETERMINISTIC` is derived honestly from the capsule's recorded pins (`model-calls.jsonl` `gen_ai.*` + `env.lock`): a missing seed/model digest or a non-`exact` verdict downgrades to `NON_DETERMINISTIC` with the reasons recorded — hosted models without a digest and pinned seed never classify `BIT_EXACT`. When a ledger checkpoint exists (or `--anchor` is given) the certificate back-links via `ledger_ref`.
 - `--anchor` — (experimental, ADR-0094 A) append the attestation digest to `<capsule>/attestations.jsonl` and seal it via the accountability-ledger path (per-stream sidecar hash chains + a signed checkpoint with a local finalize anchor), making the attestation tamper-evident. Verify with `nova ledger verify`. Existing `.jsonl` evidence streams are never modified.
 - `--output, -o PATH` — output file.
+- `--output-dir PATH` — `attest-replay` only: base directory for the replay it performs (default: `$NOVAFABRIC_HOME/replays`).
 
 Without `--certify`/`--anchor`, `attest-replay` behavior is unchanged (including exit 2 on mismatch).
 
@@ -3979,7 +3991,10 @@ nova incident list                       # status + most-pressing deadline
 nova incident status inc-0123abcd4567    # full record + Art. 73 deadline table
 nova incident export inc-0123abcd4567 --format aim     # OECD AIM JSON
 nova incident export inc-0123abcd4567 --format nis2    # NIS2 report from the stored record
+nova incident export inc-0123abcd4567 --format aim --output aim.json
 ```
+
+`export --output PATH` chooses the file (default: `incident-<id>-<format>.json`).
 
 Notes:
 - Deadlines anchor at `--aware-at` (fallback `--occurred-at`): 15 days standard (Art. 73(2)), 10 days death (Art. 73(4)), 2 days widespread infringement / critical infrastructure (Art. 73(3)). Classification keywords `death`, `widespread`, `critical_infrastructure` select the stricter clocks; an empty classification emits all candidates (fail-informative).
@@ -4552,7 +4567,10 @@ export NOVA_EVENTS_LOG=~/.novafabric/events.jsonl
 nova events tail                                  # summary lines
 nova events tail --type capsule.created --json    # filter + raw JSON
 nova events tail --since 2026-07-15T00:00:00Z --last 10
+nova events tail --log ./events.jsonl            # read another log file
 ```
+
+`--log PATH` reads that events log instead of `$NOVA_EVENTS_LOG`.
 
 ### nova events emit
 
@@ -4565,6 +4583,9 @@ nova events emit --type policy.failed \
   --subject policy:promotion:agent-a@1.4.0 \
   --payload '{"gate": "eval-regression", "decision": "deny"}'
 ```
+
+Further options: `--digest sha256:…` — optional content digest of the subject; `--source TEXT` —
+emitting component recorded in the event (default: `nova events emit`).
 
 Exit 1 when no sink is configured; delivery itself is best-effort.
 
@@ -5116,7 +5137,7 @@ nova insurance liability show --capsule 01HX... --chain chain.json --write
 ```
 
 Options: `--chain PATH` (declared chain JSON — a list or `{liability_chain: [...]}`), `--write`
-(requires `--chain`), `--json`.
+(requires `--chain`), `--force-unseal` (with `--write`, see above), `--json`.
 
 #### nova insurance sla verify --capsule \<capsule\> --sla \<terms.json\> --observed \<decimal\>
 
@@ -5130,7 +5151,7 @@ showback.
 nova insurance sla verify --capsule 01HX... --sla sla.json --observed 99.2 --evidence-ref sha256:<hex>
 ```
 
-Options: `--evidence-ref` (repeatable `sha256:` digest), `--write`, `--json`.
+Options: `--evidence-ref` (repeatable `sha256:` digest), `--write`, `--force-unseal`, `--json`.
 
 #### nova insurance coverage check --capsule \<capsule\> --exclusions \<set.json\> --facts \<facts.json\> --event-kind \<kind\>
 
@@ -5144,6 +5165,8 @@ are recorded as *not observed*). It **never** decides whether the policy respond
 nova insurance coverage check --capsule 01HX... --exclusions cg4047.json --facts facts.json \
     --event-kind erroneous_output --json
 ```
+
+Options: `--write` (persist `coverage_trigger` into `capsule.yaml`), `--force-unseal`, `--json`.
 
 `--exclusions`: `{exclusions: [{exclusion_id, fact_markers[]}], parametric_triggers?: [{metric,
 operator, threshold, unit?}]}`. `--facts`: `{trigger_facts: [{fact_ref, marker}], observations?:
@@ -6593,6 +6616,16 @@ nova eval score add  --card exact-match@0.1.0 --subject sha256:<hex> \
 nova eval score list --capsule ./my-capsule [--source judge] [--json]
 ```
 
+`card new` options: `--source` (required; `human`, `heuristic`, `code` or `judge`), `--card-id`
+and `--name` (required), `--version` (default `0.1.0`), `--prompt-version`, `--rubric`,
+`--dataset` (dataset version/ref), `--out` (default: stdout). A `judge` card also needs
+`--judge-model` and takes `--endpoint-ref` (default `env:NOVA_JUDGE_ENDPOINT`); its calibration is
+recorded only when both `--human-agreement` and `--n` (> 0) are given, with `--metric` (default
+`cohen_kappa`). These judge options are ignored for other sources. `card sign --identity`
+picks the keyring identity (default: `<user>@<host>`) and `--out` writes elsewhere (default: overwrite the
+input); `card verify --identity` picks the identity to verify with. `score add` also takes
+`--subject-kind span|capsule` (default `span`) and an optional `--run-id`.
+
 `nova eval card verify` exits non-zero on a broken signature, a missing local key
 (`key_id` mismatch → exit 2), or missing calibration on a `judge` card. `nova eval score
 add` refuses a `--card` ref that does not resolve to a registered eval card. Judge models
@@ -6639,6 +6672,8 @@ nova eval score add --card tox-scan@0.1.0 --subject sha256:<hex> \
     --value 0.3 --value-type numeric --source code --name toxicity \
     --scores-file scores.jsonl --validate-scores
 ```
+
+`config add --label TAG` (repeatable) attaches a free, advisory catalog tag.
 
 Re-registering an **identical** body is a no-op (same digest, same version).
 `nova eval score add --validate-scores` resolves the latest config for `--name` and
@@ -6742,6 +6777,9 @@ nova eval offline --capsule ./my-capsule --check contract --schema out.schema.js
 # does a recorded input transform preserve a recorded invariant? (declarative check-spec)
 nova eval offline --capsule ./my-capsule --check metamorphic --spec check-spec.yaml [--emit-score]
 ```
+
+`contract` validates `--field` (default `output`) of each record in `--records-file` (a JSONL file
+inside the capsule, default `tool-calls.jsonl`).
 
 `--emit-score` appends the resulting score to `<capsule>/scores.jsonl`, so it is sealed by the capsule
 Merkle root (see `nova eval score`). Because the capsule is already on disk, these checks spend **zero
@@ -6897,6 +6935,12 @@ either side unpinned ⇒ `comparable: null` ("not pinned" — never assumed). Th
 not gated: exit codes stay the ADR-0080 contract unless `--require-comparable` (on `compare`, or on
 `run --baseline`) is set, which exits `2` for anything but `comparable: true`.
 
+Further `run` options: `--target-kind asset|prompt|agent` (default `agent`) and `--target-label
+LABEL` (the deployment label the ref was resolved through) are recorded on the experiment;
+`--dataset-name` (default: the file stem) and `--dataset-version` (default: the first 12 hex of the
+content hash) label the pinned dataset; `--timeout SECONDS` bounds each item; `--out, -o PATH`
+also writes the finalized record to a file.
+
 Records live under `./.novafabric/experiments/` (override: `--experiments-dir` /
 `NOVAFABRIC_EXPERIMENTS_DIR`); item capsules under `./.novafabric/runs/` (override: `--runs-dir`).
 A finalized experiment is **never mutated** — a re-run mints a new `experiment_id`, and the store
@@ -6919,7 +6963,7 @@ for the existing Rego regression gate (ADR-0003/0019) — no new gate engine.
 ### nova asset diff \<name@v1\> \<name@v2\>
 
 Produce a unified diff of the spec JSON between two registered versions of the same (or different) asset.
-Exits with code `1` if differences are found — useful as a CI gate.
+Exits with code `1` if differences are found (and `1` if either ref is not registered) — useful as a CI gate.
 
 ```bash
 nova asset diff fraud-model@1.0.0 fraud-model@2.0.0
@@ -6930,7 +6974,7 @@ nova asset diff fraud-model@1.0.0 fraud-model@2.0.0 --output-format json
 Options:
 
 - `--unified, -U INT` — lines of context in unified diff output (default: `3`)
-- `--output-format text|json` — `text` (default) renders a coloured unified diff; `json` returns a structured payload with `added`, `removed`, `changed` field maps and an `identical` boolean
+- `--output-format unified|json` — `unified` (default) renders a coloured unified diff (any value other than `json` does the same); `json` returns a structured payload with `added`, `removed`, `changed` field maps and an `identical` boolean
 
 **JSON output shape:**
 
@@ -7398,6 +7442,7 @@ these columns existed count only if they are no older than the current registrat
 Options:
 - `--to <version>` — target an explicit rollback version instead of auto-discovery.
 - `--actor <id>` — recorded in the audit log and as `promoted_by` (default: `cli-user`).
+- `--db <path>` — registry DB to use (default: `NOVAFABRIC_DB_PATH`, else `$NOVAFABRIC_HOME/registry.db`).
 
 Errors (exit 1) when there is no current production version, no prior production version in
 the history, or a `--to` target without production history lacks a `promote_direct` allow.
@@ -7635,6 +7680,30 @@ duplicates on re-run after a partial failure.
 
 ---
 
+### nova migrate \<source\> -o \<output\>
+
+**works today** ([ADR-0034](./decisions.md) §6). Converts one capsule directory from the
+`schema_version: 0.1.0` draft (what every writer stamps today) to the `1.0.0` format. It copies
+`<source>` to `--output`, bumps every `schema_version: 0.1.0` field in `capsule.yaml`,
+`replay.yaml`, `env.lock`, `manifest.json`, `redaction-proof.json` and the `*.jsonl` streams, and
+appends a `migration_source` lineage edge (same run id, source identified by the SHA-256 of its
+`capsule.yaml`, never by path) to the copy's `lineage.jsonl`. The source is never modified.
+
+```bash
+nova migrate path/to/old-capsule/ -o path/to/new-capsule/
+nova migrate path/to/old-capsule/ -o path/to/new-capsule/ --json-errors
+```
+
+Options:
+- `<source>` (positional, required) — source capsule directory (`schema_version: 0.1.0`)
+- `--output, -o PATH` (required) — destination for the migrated copy; must not already exist
+- `--json-errors` — emit a structured JSON error (`error`, `field`, `rule`, `spec_section`) to stderr instead of the human-readable message
+
+Exit codes: `0` (migrated), `1` (source missing, not a directory, no `capsule.yaml`, already at
+`1.0.0`, any other source version, output exists, or the source holds a symbolic link — nothing
+is written). Unlike `nova migrate-schema` (below), which upgrades many capsules in place, this
+writes one new copy.
+
 ### nova migrate-schema
 
 Batch-migrates capsule directories from schema v0 to v1.0.0. Walks every capsule sub-directory under `--capsule-dir`, inspects the manifest, and applies any needed upgrades. Safe to re-run — already-migrated capsules are skipped.
@@ -7741,6 +7810,10 @@ It **generates no key, calls no Timestamp Authority, and performs no signature**
 no ML-DSA code in NovaFabric); the operations are recorded by reference. `--capsule` is
 read-only — the updated facet is written as JSON to stdout or to a new `--output` file
 (an existing file is never overwritten).
+
+`reseal record --resealed-at` and `ltv append --renewed-at` take an RFC 3339 time (default: now,
+UTC); `reseal record --agent REF` names the PREMIS agent (digest or URI) recorded in the
+provenance event.
 
 ```bash
 # Record a re-seal (the original-signature assertion is mandatory)
@@ -9126,6 +9199,9 @@ nova retention plan --registry my-registry
 nova retention plan --registry my-registry --json
 ```
 
+Options: `--registry / -r`, `--capsule-dir`, `--worm-db`, `--action` and `--json`, as for
+`apply` below.
+
 ### nova retention apply
 
 Apply due retention actions. Confirm-gated: prompts unless `--yes` (or
@@ -9178,6 +9254,8 @@ the capture capsules each binding matches that `apply` will not touch.
 nova retention status --registry my-registry --json
 ```
 
+Options: `--registry / -r`, `--capsule-dir`, `--worm-db` and `--json`, as for `apply`.
+
 ### nova retention explain \<capsule-id\>
 
 Read-only: which bindings match this capsule, its computed due date, and its
@@ -9187,6 +9265,8 @@ current hold state. `--json` adds `manifest` (`capsule.json` or `capsule.yaml`) 
 ```bash
 nova retention explain cap-01JXXXXX --registry my-registry
 ```
+
+Options: `--registry / -r`, `--capsule-dir`, `--worm-db` and `--json`, as for `apply`.
 
 ---
 
@@ -10125,6 +10205,8 @@ Prices are keyed by the ADR-0132 usage types (`--input`, `--output`,
 (`per_1k`, `per_1m`; images are `per_image`), an ISO-4217 `--currency`
 (default USD, never converted), and an optional `--effective-from` date —
 the resolver picks the entry in force at the capsule's capture time.
+`nova pricing add` writes the project catalog (`./.novafabric/pricing.yaml`) unless `--user`
+(the user catalog) or `--catalog PATH` (an explicit file) is given.
 `nova capture` consults the merged catalog automatically when estimating
 `cost_usd_estimated`, so self-hosted models get real figures instead of 0.0;
 a malformed catalog is skipped with a warning and never fails a capture.
@@ -10190,6 +10272,9 @@ any bucket with Object Lock enabled was reported as `COMPLIANCE`.
 >
 > It now fails loudly (exit `2`) and names the working path.
 
+`--run-id` is still required, so an existing invocation reaches that message rather than a
+usage error.
+
 **Use instead:** [`nova pii erase <subject_id>`](#nova-pii-erase-subject_id) for
 Art.17 DEK destruction (ADR-0069; experimental, covers PII captured with `--pii-subject`), or `POST /v0/erasure` on the server, which
 uses the persisted queue in `pii/erasure_queue.py` behind an explicit
@@ -10200,7 +10285,8 @@ confirmation and a fail-closed cap-003 gate.
 > **Corrected 2026-09-02.** This returned `status=pending` for **any** id,
 > including ids that were never created — it consulted nothing. A status surface
 > that cannot distinguish "pending" from "never existed" is worse than none on a
-> compliance path. It now fails loudly (exit `2`).
+> compliance path. It now fails loudly (exit `2`). `--request-id` is still required, so an
+> existing invocation reaches that message.
 
 The erasure receipts written by `nova pii erase` are the record of what actually
 happened.
@@ -11459,6 +11545,9 @@ honestly marked `unavailable` rather than fabricated.
 nova energy probe
 ```
 
+Options: `--rapl-base PATH` — read RAPL counters from this sysfs base instead of
+`/sys/class/powercap` (for testing, or hosts without Linux RAPL).
+
 ### nova energy attest
 
 Write one `EnergyReceipt` per action into `energy-receipts.jsonl` for a captured capsule.
@@ -11469,6 +11558,9 @@ yields the measured per-job class. If `energy-receipts.jsonl` in the capsule is 
 ```bash
 nova energy attest ./my-capsule
 ```
+
+Options: `--node-id TEXT` — node id recorded in each receipt (default: the host name); `--rapl-base PATH` —
+as for `nova energy probe`.
 
 ### nova energy verify
 
@@ -11499,6 +11591,12 @@ files are never mutated) and write a DSSE-signed checkpoint. Requires a signing 
 ```bash
 nova ledger anchor ./my-capsule --key ~/.config/novafabric/keyring/ed25519.pem
 ```
+
+Options:
+- `--key PATH` (required) — PEM Ed25519 private key that DSSE-signs the checkpoint
+- `--node-id TEXT` — signing node identity recorded in the checkpoint (default: `local`)
+- `--epoch INT` — ratchet epoch of the signing key (default: `0`); `nova ledger verify --observed-epoch` rejects a checkpoint below the epoch you last saw
+- `--agent-id TEXT` / `--principal TEXT` — optional agent identity and principal (OIDC/RBAC subject) bound into the checkpoint
 
 ### nova ledger verify
 
@@ -11543,7 +11641,10 @@ Show the current chain heads and checkpoint state for a capsule.
 
 ```bash
 nova ledger status ./my-capsule
+nova ledger status ./my-capsule --format json
 ```
+
+Options: `--format table|json` (default: `table`).
 
 **Reference:** `src/novafabric/trust/ledger/`, `design/adr/0094-adversary-anchored-ledger-and-replay-attestation.md` (private).
 
@@ -11621,6 +11722,12 @@ on the operator's word).
 ```bash
 nova evidence bind-custody 01HX... --custodian alice@corp --provenance oidc --key ed25519.pem -o custody.json
 ```
+
+Further options: `--role TEXT` — the custodian's role; `--timestamp-ok / --no-timestamp-ok`
+(default off) — assert that an RFC 3161 timestamp for this capsule verifies against a TSA trust
+anchor (FRE-902(14) point 4; check first with `nova verify --tsa-ca-bundle`, which must report
+`timestamp_trust=anchored` — an unanchored token is not trusted time); `--output, -o PATH` —
+output file (default: stdout).
 
 ### nova evidence check-admissibility
 

@@ -89,15 +89,16 @@ def trend_cmd(
         Optional[Path],
         typer.Option(
             "--capsule-dir",
-            help="Capsule storage directory (defaults to $NOVAFABRIC_CAPSULE_DIR).",
+            help="Capsule storage directory (default: $NOVAFABRIC_CAPSULE_DIR, "
+            "else $NOVAFABRIC_HOME/capsules).",
         ),
     ] = None,
     views_dir: Annotated[
         Optional[Path],
         typer.Option(
             "--views-dir",
-            help="Saved-views directory (defaults to .novafabric/views; "
-            "override $NOVAFABRIC_VIEWS_DIR).",
+            help="Saved-views directory for --view (default: $NOVAFABRIC_VIEWS_DIR, "
+            "else ./.novafabric/views).",
         ),
     ] = None,
 ) -> None:

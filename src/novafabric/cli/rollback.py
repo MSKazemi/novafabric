@@ -46,7 +46,7 @@ def rollback_cmd(
         "--db",
         help=(
             "Override the registry DB path "
-            "(default: NOVAFABRIC_DB_PATH or ~/.novafabric/registry.db)"
+            "(default: NOVAFABRIC_DB_PATH, else $NOVAFABRIC_HOME/registry.db)"
         ),
         envvar="NOVAFABRIC_DB_PATH",
     ),
