@@ -6,6 +6,8 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api';
+import { FEATURE_EXTRAS, useExtraState } from '../../../lib/capabilities';
+import FeatureUnavailable from '../../ui/FeatureUnavailable';
 import {
   AgentQueryPanel,
   EntityQueuePanel,
@@ -24,6 +26,9 @@ export default function KGTab() {
   const [status, setStatus] = useState<KGStatus | null>(null);
   const [statusErr, setStatusErr] = useState<string | null>(null);
   const [runIds, setRunIds] = useState<string[]>([]);
+  // #283: every panel below needs the scale-kg extra (KuzuDB). When the server
+  // reports it missing, say so once instead of ten panels that each fail.
+  const kgExtra = useExtraState(FEATURE_EXTRAS.knowledgeGraph);
 
   useEffect(() => {
     api.kgStatus()
@@ -55,20 +60,35 @@ export default function KGTab() {
         </div>
       </div>
 
-      <StatusPanel status={status} error={statusErr} />
-      <TopologyLayerPanel />
-      <AgentQueryPanel runIds={runIds} />
-      <KGInitPanel onDone={() => {
-        api.kgStatus().then(setStatus).catch(() => {});
-      }} />
-      <KGIngestPanel capsuleDirs={runIds} />
-      <KGIngestAllPanel onDone={() => {
-        api.kgStatus().then(setStatus).catch(() => {});
-      }} />
-      <KGQueryPanel />
-      <KGAuditPanel />
-      <EntityQueuePanel />
-      <KGAliasPanel />
+      {kgExtra.state === 'unavailable' ? (
+        <FeatureUnavailable
+          feature="Capsule Knowledge Graph"
+          reason={
+            kgExtra.missing.length > 0
+              ? `the scale-kg extra is not installed on this server (missing: ${kgExtra.missing.join(', ')})`
+              : 'the scale-kg extra is not installed on this server'
+          }
+          enable={kgExtra.install}
+          cli="nova kg status"
+        />
+      ) : (
+        <>
+          <StatusPanel status={status} error={statusErr} />
+          <TopologyLayerPanel />
+          <AgentQueryPanel runIds={runIds} />
+          <KGInitPanel onDone={() => {
+            api.kgStatus().then(setStatus).catch(() => {});
+          }} />
+          <KGIngestPanel capsuleDirs={runIds} />
+          <KGIngestAllPanel onDone={() => {
+            api.kgStatus().then(setStatus).catch(() => {});
+          }} />
+          <KGQueryPanel />
+          <KGAuditPanel />
+          <EntityQueuePanel />
+          <KGAliasPanel />
+        </>
+      )}
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 space-y-2">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">

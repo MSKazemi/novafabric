@@ -7655,7 +7655,19 @@ def create_app(
             ),
         })
 
-        return {"ok": all(c["ok"] for c in checks), "checks": checks}
+        # Optional extras (`nova doctor --check-extras`, as data). The dashboard
+        # reads this to show "not available here — <how to enable>" before a
+        # feature fails, instead of after. Informational: it never changes `ok`
+        # (a missing extra is a deliberate choice for most installs), and an
+        # empty list means "not reported" (source checkout), not "missing".
+        try:
+            from novafabric.cli._extras import extras_status  # noqa: PLC0415
+
+            extras = extras_status()
+        except Exception:  # noqa: BLE001 — a diagnostic must not break doctor
+            extras = []
+
+        return {"ok": all(c["ok"] for c in checks), "checks": checks, "extras": extras}
 
     @app.post("/api/policy/test", dependencies=[Depends(verify_token)])
     async def policy_test_endpoint(request: Request, body: dict[str, Any]) -> dict[str, Any]:
@@ -8064,35 +8076,51 @@ def create_app(
             return {"ok": False, "note": str(exc)}
 
     # ---------- Adapter registry (ecosystem adapters — E-5..E-8 + v0.26.0) ----------
+    #
+    # `extra` is a real `[project.optional-dependencies]` name or None. It used
+    # to hold the framework's own PyPI name for most rows ("langgraph",
+    # "crewai", ...), which the Capture tab rendered as `novafabric[<extra>]` —
+    # an install hint for nine extras that do not exist. `package` is what a
+    # user installs when there is no extra; `dists` are the distributions whose
+    # presence means the framework is installed (checked by metadata, never by
+    # importing third-party code). A guard test pins `extra` to pyproject.
 
-    KNOWN_ADAPTERS = [
+    KNOWN_ADAPTERS: list[dict[str, Any]] = [
         {
             "id": "langgraph",
             "module": "novafabric.adapters.langgraph",
             "function": "wrap",
             "framework": "LangGraph",
-            "extra": "langgraph",
+            "extra": None,
+            "package": "langgraph",
+            "dists": ("langgraph",),
         },
         {
             "id": "autogen",
             "module": "novafabric.adapters.autogen",
             "function": "wrap_agent",
             "framework": "AutoGen / pyautogen",
-            "extra": "pyautogen",
+            "extra": None,
+            "package": "pyautogen",
+            "dists": ("pyautogen", "ag2", "autogen"),
         },
         {
             "id": "crewai",
             "module": "novafabric.adapters.crewai",
             "function": "wrap_crew",
             "framework": "CrewAI",
-            "extra": "crewai",
+            "extra": None,
+            "package": "crewai",
+            "dists": ("crewai",),
         },
         {
             "id": "dspy",
             "module": "novafabric.adapters.dspy",
             "function": "wrap_program",
             "framework": "DSPy",
-            "extra": "dspy",
+            "extra": None,
+            "package": "dspy-ai",
+            "dists": ("dspy", "dspy-ai"),
         },
         {
             "id": "openai_agents",
@@ -8100,6 +8128,8 @@ def create_app(
             "function": "register",
             "framework": "OpenAI Agents SDK",
             "extra": "openai-agents",
+            "package": "openai-agents",
+            "dists": ("openai-agents",),
         },
         {
             "id": "google_adk",
@@ -8107,6 +8137,8 @@ def create_app(
             "function": "make_plugin",
             "framework": "Google ADK",
             "extra": "google-adk",
+            "package": "google-adk",
+            "dists": ("google-adk",),
         },
         {
             "id": "bedrock_agentcore",
@@ -8114,6 +8146,8 @@ def create_app(
             "function": "wrap_client",
             "framework": "AWS Bedrock AgentCore",
             "extra": "bedrock-agentcore",
+            "package": "boto3",
+            "dists": ("boto3",),
         },
         {
             "id": "a2a",
@@ -8121,34 +8155,44 @@ def create_app(
             "function": "make_interceptor",
             "framework": "A2A SDK",
             "extra": "a2a",
+            "package": "a2a-sdk",
+            "dists": ("a2a-sdk",),
         },
         {
             "id": "llamaindex",
             "module": "novafabric.adapters.llamaindex",
             "function": "wrap_engine",
             "framework": "LlamaIndex",
-            "extra": "llama-index",
+            "extra": None,
+            "package": "llama-index",
+            "dists": ("llama-index-core", "llama-index"),
         },
         {
             "id": "pydantic_ai",
             "module": "novafabric.adapters.pydantic_ai",
             "function": "wrap_agent",
             "framework": "Pydantic AI",
-            "extra": "pydantic-ai",
+            "extra": None,
+            "package": "pydantic-ai",
+            "dists": ("pydantic-ai-slim", "pydantic-ai"),
         },
         {
             "id": "haystack",
             "module": "novafabric.adapters.haystack",
             "function": "wrap_pipeline",
             "framework": "Haystack",
-            "extra": "haystack-ai",
+            "extra": None,
+            "package": "haystack-ai",
+            "dists": ("haystack-ai",),
         },
         {
             "id": "smolagents",
             "module": "novafabric.adapters.smolagents",
             "function": "wrap_agent",
             "framework": "Hugging Face smolagents",
-            "extra": "smolagents",
+            "extra": None,
+            "package": "smolagents",
+            "dists": ("smolagents",),
         },
         {
             # ADR-0306 slice 3 (experimental): the tool seam, not a run adapter.
@@ -8156,17 +8200,44 @@ def create_app(
             "module": "novafabric.adapters.langchain_tools",
             "function": "wrap_tools",
             "framework": "LangChain / LangGraph tools",
-            "extra": "langchain-core",
+            "extra": None,
+            "package": "langchain-core",
+            "dists": ("langchain-core",),
         },
     ]
+
+    def _any_dist_installed(dists: tuple[str, ...]) -> bool:
+        for name in dists:
+            try:
+                importlib_metadata.distribution(name)
+            except importlib_metadata.PackageNotFoundError:
+                continue
+            return True
+        return False
 
     @app.get("/api/adapters", dependencies=[Depends(verify_token)])
     async def api_adapters() -> dict[str, Any]:
         """List registered Nova framework adapters with availability flags."""
+        # The docstring is the OpenAPI description (api/openapi-dashboard.yaml is
+        # drift-checked), so the fields are explained here: `available` means the
+        # NovaFabric adapter module ships in this install; `framework_installed`
+        # means the framework it wraps is installed too; `install` is the exact
+        # command that installs what is missing.
+        from novafabric.cli._extras import install_command  # noqa: PLC0415
+
         result = []
         for adapter in KNOWN_ADAPTERS:
             spec = importlib.util.find_spec(adapter["module"])
-            result.append({**adapter, "available": spec is not None})
+            extra = adapter["extra"]
+            public = {k: v for k, v in adapter.items() if k != "dists"}
+            result.append({
+                **public,
+                "available": spec is not None,
+                "framework_installed": _any_dist_installed(adapter["dists"]),
+                "install": (
+                    install_command(extra) if extra else f"pip install {adapter['package']}"
+                ),
+            })
         return {"adapters": result, "count": len(result)}
 
     # ---------- EU AI Act / Regulatory export endpoints (v0.34.0) ----------

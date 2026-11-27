@@ -78,6 +78,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **Dashboard "not available here" states (experimental, first slice of #283).** `GET /api/doctor` returns an `extras` list (the data form of `nova doctor --check-extras`: `name`, `installed`, `requires`, `missing`, `install`; it never changes `ok`). The Seal tab's Sigstore panels and the KG tab read it and, when the server reports the extra missing, show one consistent state in words: the feature, why, the exact `pip install` command, and the CLI equivalent, with the action disabled. An extra the server does not report (older server, source checkout, failed call) is treated as unknown and the feature behaves as before. See docs/dashboard.md, "Feature availability".
 
 ### Changed
 
@@ -183,6 +184,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   - A capsule with no `.seal` still exports, and a valid seal keeps the current output. A valid seal means the bytes it names are unchanged since sealing; it does not say who signed them.
   - `bagit` still refuses a capsule holding a symbolic link first (exit 1), so a symlinked `.seal` is refused by that older rule. To preserve a capsule you know is damaged, copy it with an ordinary archive tool; the export is not a forensic copy.
   - **HTTP:** `POST /api/compliance/examiner/{pccp,bagit,iso42001}` and `POST /api/compliance/export/ropa` answer **409** with the refusal message for such a capsule; they answered 500, which reads as a server fault. Any other export failure is still 500. A client that treated 500 as the refusal signal should test for 409.
+- **The dashboard no longer suggests install commands for extras that do not exist.** The Capture tab's Framework Adapters panel printed `pip install novafabric[<extra>]` around framework package names: nine of its thirteen rows (`langgraph`, `pyautogen`, `crewai`, ...) named no `[project.optional-dependencies]` entry. `GET /api/adapters` now reports `extra` as a real extra or `null`, plus `package`, `install` (the exact command) and `framework_installed` (from package metadata; `available` only ever meant the adapter module ships). Clients that read `extra` as a package name should read `package`. The Sigstore panels' CLI equivalents now include the positional argument `nova seal sign` and `nova verify` need, and the Infra tab's Collector card lists `novafabric-hpc-hub` as future design (the binary is a stub that exits 1), not as shipped. Guarded by `tests/serve/test_v026_ecosystem_parity.py` and `ui/dashboard/tests/unit/capabilities.test.tsx`.
 
 ## [0.109.0] - 2026-11-22
 

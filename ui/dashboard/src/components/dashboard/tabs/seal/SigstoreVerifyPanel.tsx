@@ -5,6 +5,8 @@ import { clsx } from 'clsx';
 import { api } from '../../../../lib/api';
 import { SuggestInput } from '../../../ui/SuggestInput';
 import CopyButton from '../../../ui/CopyButton';
+import FeatureUnavailable from '../../../ui/FeatureUnavailable';
+import { FEATURE_EXTRAS, installCommand, useExtraState } from '../../../../lib/capabilities';
 
 export default function SigstoreVerifyPanel({ runIds }: { runIds: string[] }) {
   const [capsuleId, setCapsuleId] = useState('');
@@ -15,6 +17,9 @@ export default function SigstoreVerifyPanel({ runIds }: { runIds: string[] }) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notInstalled, setNotInstalled] = useState(false);
+  // #283: ask the server up front whether the sigstore extra is installed.
+  const sigstore = useExtraState(FEATURE_EXTRAS.sigstore);
+  const sigstoreMissing = sigstore.state === 'unavailable';
 
   const inputClass =
     'w-full text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none';
@@ -41,9 +46,23 @@ export default function SigstoreVerifyPanel({ runIds }: { runIds: string[] }) {
     }
   }, [capsuleId]);
 
+  // `nova verify` takes the capsule directory as its positional argument.
   const cliCmd = capsuleId.trim()
-    ? `nova verify --backend sigstore --capsule-id ${capsuleId.trim()}`
-    : 'nova verify --backend sigstore --capsule-id <capsule_id>';
+    ? `nova verify --backend sigstore --capsule-id ${capsuleId.trim()} <capsule_dir>`
+    : 'nova verify --backend sigstore --capsule-id <capsule_id> <capsule_dir>';
+
+  const unavailable = (
+    <FeatureUnavailable
+      feature="Sigstore bundle verification"
+      reason={
+        sigstore.state === 'unavailable' && sigstore.missing.length > 0
+          ? `the sigstore extra is not installed on this server (missing: ${sigstore.missing.join(', ')})`
+          : 'the sigstore extra is not installed on this server'
+      }
+      enable={sigstore.state === 'unavailable' ? sigstore.install : installCommand(FEATURE_EXTRAS.sigstore)}
+      cli={cliCmd}
+    />
+  );
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 space-y-3">
@@ -54,6 +73,8 @@ export default function SigstoreVerifyPanel({ runIds }: { runIds: string[] }) {
         Verify a stored Sigstore bundle — checks the Fulcio certificate, signature,
         and Rekor inclusion proof offline. (ADR-0071)
       </p>
+
+      {sigstoreMissing && unavailable}
 
       <div className="flex items-end gap-2">
         <div className="flex-1 space-y-1">
@@ -67,15 +88,15 @@ export default function SigstoreVerifyPanel({ runIds }: { runIds: string[] }) {
             suggestions={runIds}
             placeholder="01KRK8..."
             className={inputClass}
-            onEnter={verify}
+            onEnter={sigstoreMissing ? undefined : verify}
           />
         </div>
         <button
           onClick={verify}
-          disabled={loading || !capsuleId.trim()}
+          disabled={loading || !capsuleId.trim() || sigstoreMissing}
           className={clsx(
             'text-xs font-mono px-4 py-1.5 rounded border transition-colors shrink-0',
-            loading || !capsuleId.trim()
+            loading || !capsuleId.trim() || sigstoreMissing
               ? 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
               : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
           )}
@@ -94,14 +115,8 @@ export default function SigstoreVerifyPanel({ runIds }: { runIds: string[] }) {
         </div>
       </div>
 
-      {notInstalled && (
-        <div className="rounded border border-[color-mix(in_oklab,var(--color-status-pending)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-status-pending)_8%,transparent)] px-3 py-2">
-          <p className="text-xs text-[var(--color-status-pending)] font-mono">
-            novafabric[sigstore] not installed — run:{' '}
-            <span className="font-bold">pip install novafabric[sigstore]</span>
-          </p>
-        </div>
-      )}
+      {/* The server stays authoritative: a 501 after the fact gets the same state. */}
+      {notInstalled && !sigstoreMissing && unavailable}
 
       {error && (
         <p className="text-xs text-[var(--color-status-failure)]">Error: {error}</p>
