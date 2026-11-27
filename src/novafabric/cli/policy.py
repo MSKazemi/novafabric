@@ -85,7 +85,9 @@ def policy_test(
 
 @app.command("explain")
 def policy_explain(
-    decision_id: str = typer.Argument(...),
+    decision_id: str = typer.Argument(
+        ..., help="Decision ID of the policy evaluation, as recorded in the audit log."
+    ),
     audit_log_path: Optional[str] = typer.Option(
         None,
         "--audit-log",

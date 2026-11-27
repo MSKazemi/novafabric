@@ -62,13 +62,14 @@ def asset_diff_cmd(
         str,
         typer.Option(
             "--output-format",
-            help="Output format: unified|json",
+            help="Output format: unified (default) or json; any other value prints unified.",
         ),
     ] = "unified",
 ) -> None:
-    """Show a unified diff of the spec YAML for two registered asset versions.
+    """Show a unified diff of the spec JSON for two registered asset versions.
 
-    Both refs must be versions of the same asset (name@v1 vs name@v2).
+    Usually two versions of the same asset (name@v1 vs name@v2); the names are
+    not required to match. Exits 1 when the specs differ.
 
     Scope: two asset versions.
 

@@ -22,7 +22,7 @@ def migrate_capsule_cmd(
     source: Annotated[
         Path,
         typer.Argument(
-            help="Path to the source capsule directory (v0.1.x).",
+            help="Source capsule directory (schema_version 0.1.0).",
             show_default=False,
         ),
     ],
@@ -43,10 +43,12 @@ def migrate_capsule_cmd(
         ),
     ] = False,
 ) -> None:
-    """Upgrade a capsule directory to the current schema format.
+    """Convert a schema_version 0.1.0 capsule to the 1.0.0 format.
 
-    Copies SOURCE to --output and bumps all schema_version fields.
-    The original source directory is not modified.
+    Copies SOURCE to --output, bumps every schema_version 0.1.0 field to
+    1.0.0 and appends a migration_source lineage edge to the copy. The
+    original source directory is not modified. Only 0.1.0 (what every writer
+    stamps today) is accepted; any other source version exits 1.
 
     A source holding a symbolic link is refused (exit 1, no output): a
     migration never follows a link.

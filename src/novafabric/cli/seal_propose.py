@@ -50,6 +50,9 @@ _DB_UNUSED_HELP = (
     "(nova seal propose and nova seal verify do)."
 )
 _DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "novafabric"
+_DATA_DIR_HELP = (
+    "Promote-bundle data directory; bundles live under <data-dir>/promote/<capsule-id>/"
+)
 
 _CA_BUNDLE_HELP = (
     "PEM CA bundle that proposer, approver, policy and bypass signers must chain to "
@@ -252,7 +255,7 @@ def seal_propose_cmd(
     cert: Path = typer.Option(..., "--cert", help="Path to X.509 certificate PEM"),
     target_env: str = typer.Option("staging", "--target-env", help="Target environment"),
     db_path: Path | None = typer.Option(None, "--db", help=_DB_HELP),
-    data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
+    data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help=_DATA_DIR_HELP),
 ) -> None:
     """Propose a NovaSeal signature for a capsule (maker step).
 
@@ -353,7 +356,7 @@ def seal_approve_cmd(
     key: Path = typer.Option(..., "--key", help="Path to ECDSA P-256 private key PEM"),
     cert: Path = typer.Option(..., "--cert", help="Path to X.509 certificate PEM"),
     db_path: Path | None = typer.Option(None, "--db", help=_DB_UNUSED_HELP),
-    data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
+    data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help=_DATA_DIR_HELP),
     ca_bundle: Path | None = typer.Option(None, "--ca-bundle", help=_CA_BUNDLE_HELP),
     insecure_self_signed: bool = typer.Option(
         False, "--insecure-self-signed", help=_INSECURE_HELP
@@ -510,7 +513,7 @@ def seal_verify_cmd(
     capsule_id: str = typer.Argument(..., help="Capsule ID to verify"),
     offline: bool = typer.Option(False, "--offline", help="Skip network checks"),
     db_path: Path | None = typer.Option(None, "--db", help=_DB_HELP),
-    data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help="Data directory"),
+    data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir", help=_DATA_DIR_HELP),
     ca_bundle: Path | None = typer.Option(None, "--ca-bundle", help=_CA_BUNDLE_HELP),
     insecure_self_signed: bool = typer.Option(
         False, "--insecure-self-signed", help=_INSECURE_HELP
@@ -568,7 +571,9 @@ def seal_bypass_cmd(
     ),
     key: Path = typer.Option(..., "--key", help="ECDSA P-256 private key PEM"),
     cert: Path = typer.Option(..., "--cert", help="X.509 certificate PEM"),
-    target_env: str = typer.Option("production", "--target-env"),
+    target_env: str = typer.Option(
+        "production", "--target-env", help="Target environment the bypass applies to"
+    ),
     notify: list[str] = typer.Option(
         [],
         "--notify",
@@ -579,7 +584,11 @@ def seal_bypass_cmd(
         ),
     ),
     db_path: Path | None = typer.Option(None, "--db", help=_DB_UNUSED_HELP),
-    data_dir: Path = typer.Option(_DEFAULT_DATA_DIR, "--data-dir"),
+    data_dir: Path = typer.Option(
+        _DEFAULT_DATA_DIR,
+        "--data-dir",
+        help=_DATA_DIR_HELP,
+    ),
 ) -> None:
     """Create a time-limited bypass of the maker-checker SoD requirement.
 

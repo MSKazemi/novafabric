@@ -94,6 +94,13 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **`docs/cli-reference.md` and `--help` checked against the real command tree.** 1 command added to
+  the reference (`nova migrate`, which had no section), 65 flags fixed (64 that commands accept but the
+  reference never mentioned, and `nova asset diff --output-format`, documented as `text|json` when it
+  takes `unified|json`), and 27 help strings fixed (6 options with no description, defaults that named
+  the wrong path, such as `--db` on `nova rollback`/`nova unregister` ignoring `$NOVAFABRIC_HOME`, and
+  `nova migrate`/`nova asset diff` describing formats they do not use). A new guard test fails when the
+  reference shows a flag on a `nova …` invocation that the command does not accept.
 
 ### Fixed
 

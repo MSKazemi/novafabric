@@ -106,18 +106,42 @@ def classify_run(
     description: Optional[str] = typer.Option(
         None, "--description", help="Free-text description of the system"
     ),
-    uses_biometrics: bool = typer.Option(False, "--biometrics/--no-biometrics"),
+    uses_biometrics: bool = typer.Option(
+        False,
+        "--biometrics/--no-biometrics",
+        help=(
+            "The system uses biometric data. Ignored with --input "
+            "(set uses_biometrics in the YAML)."
+        ),
+    ),
     affects_rights: bool = typer.Option(
-        False, "--affects-rights/--no-affects-rights"
+        False,
+        "--affects-rights/--no-affects-rights",
+        help=(
+            "The system affects fundamental rights. Ignored with --input "
+            "(set affects_fundamental_rights in the YAML)."
+        ),
     ),
     is_general_purpose: bool = typer.Option(
-        False, "--general-purpose/--no-general-purpose"
+        False,
+        "--general-purpose/--no-general-purpose",
+        help=(
+            "The system is a general-purpose AI model. Ignored with --input "
+            "(set is_general_purpose in the YAML)."
+        ),
     ),
     role: str = typer.Option(
-        "deployer", "--role", help="Operator role: provider or deployer"
+        "deployer",
+        "--role",
+        help="Operator role: provider or deployer. Ignored with --input (set operator_role).",
     ),
     subject_count: Optional[int] = typer.Option(
-        None, "--subject-count", help="Estimated number of persons affected"
+        None,
+        "--subject-count",
+        help=(
+            "Estimated number of persons affected. Ignored with --input "
+            "(set subject_count_estimate)."
+        ),
     ),
     output_json: bool = typer.Option(False, "--json", help="Output raw JSON"),
 ) -> None:
