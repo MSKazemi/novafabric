@@ -94,10 +94,40 @@ jobs:
             --report pip-audit-report.json \
             --waivers .pip-audit-waivers.toml
 
+      # Every tracked uv.lock is audited, not only the root one
+      # (tests/docs/test_pip_audit_covers_every_uv_lock.py enforces this).
+      # examples/plugin-hook-reference has its OWN lock — a file readers clone
+      # and install — and it pins its own versions of novafabric's transitive
+      # dependencies, which can lag the root lock. It once carried a vulnerable
+      # cryptography release while the root lock was clean.
+      - name: Export the example plugin's locked dependency set
+        # --no-emit-package novafabric: the example takes novafabric from the
+        # working tree as an editable path dependency (`-e ../../`), which
+        # pip-audit cannot look up; its dependencies are still exported.
+        run: >-
+          uv export --project examples/plugin-hook-reference --frozen --all-extras
+          --no-emit-project --no-emit-package novafabric --no-hashes
+          -o requirements-audit-example-plugin.txt
+
+      - name: Run pip-audit against the example plugin's locked set
+        run: |
+          uvx --from "pip-audit==2.10.1" pip-audit -r requirements-audit-example-plugin.txt --no-deps \
+            --format json --output pip-audit-report-example-plugin.json \
+            || echo "pip-audit reported findings; the gate step decides below"
+          test -s pip-audit-report-example-plugin.json
+
+      - name: Severity + waiver gate (example plugin)
+        run: |
+          python3 scripts/pip_audit_gate.py \
+            --report pip-audit-report-example-plugin.json \
+            --waivers .pip-audit-waivers.toml
+
       - name: Upload audit report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pip-audit-${{ github.sha }}
-          path: pip-audit-report.json
+          path: |
+            pip-audit-report.json
+            pip-audit-report-example-plugin.json
           retention-days: 90
