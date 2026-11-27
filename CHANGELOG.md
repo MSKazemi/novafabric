@@ -94,6 +94,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **Six `docs/ops/` pages checked against the code: 23 claims fixed, `quotas-and-rate-limits.md`
+  unchanged.** The server admin guide no longer calls the shipped org/workspace layer and the ADR-0188
+  deprecation mechanism "future design", no longer counts `/v0/version` as exempt from rate limiting,
+  and says `/readyz` always reports its object-store check as `skipped`. The sizing guide no longer
+  names a `nova-bench` command that does not exist or a `query_runs` latency gate that no test runs,
+  and labels two old benchmark numbers `target`, as `docs/slo.md` does. The encryption page counts the
+  cloud-KMS wrapping tests correctly (11, not 31). Items with no ROADMAP target are relabelled
+  `future design` instead of `planned` (data residency, per-tenant KEKs, webhook secret rotation).
 
 ### Fixed
 

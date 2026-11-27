@@ -176,7 +176,7 @@ readable forever (the `tenant_key_id` field is additive). The registry
 resolves tenants from the `capsules/{tenant}/…` key layout the store already
 uses. Customer-held cloud KMS keys (BYOK), rotation campaigns, and the
 maker-checker `tenant-keys shred` command are later ADR-0243 slices —
-**planned**, not implemented.
+**future design** (no ROADMAP target), not implemented.
 
 ## 3. Crypto-shred
 
@@ -214,19 +214,23 @@ it yet.
   extras. What works today, in order of maturity: the local 256-bit KEK file
   (experimental; the backend itself is documented as dev/test parity — a
   cloud-KMS-held KEK is the production path), the test-only `MockKmsBackend`, and the three cloud
-  wrapping backends (unit-tested against in-memory fakes of each SDK — 31
-  passing tests across `tests/seal/test_aws_kms_wrapping.py`,
-  `test_cloud_kms_backends.py`, `test_cloud_kms_wrapping.py`). Handing a
+  wrapping backends (11 wrapping tests: 4 in `tests/seal/test_aws_kms_wrapping.py`
+  against `moto`'s mocked AWS KMS, skipped when `moto`/`boto3` are not
+  installed, and 7 in `tests/seal/test_cloud_kms_wrapping.py` against in-memory
+  Azure/GCP SDK fakes; `tests/seal/test_cloud_kms_backends.py` covers the
+  *signing* backends, not wrapping). Handing a
   non-wrap-capable backend to the crypto layer still raises
   `NotImplementedError` — it never silently downgrades.
 - **Verified against mock/local KMS and in-memory cloud-SDK fakes.** The test
   suite proves the scheme (round-trip, tamper detection, shred,
   WORM-conformance-over-ciphertext, mixed-store reads) against the local-file
   KEK, the mock backend, and the three cloud wrapping backends' fake
-  transports. **What has not been done**: end-to-end verification against a
-  *live* AWS KMS / Azure Key Vault / GCP KMS endpoint with real credentials —
-  that remains the one outstanding gap before recommending cloud KMS in
-  production.
+  transports. The Azure Key Vault wrap path was exercised once by hand
+  against a live vault (recorded in commit `5e64bb83`, 2026-08-27); no test
+  runs against a live endpoint. **What has not been done**: any verification
+  against a *live* AWS KMS or GCP KMS endpoint, and automated live
+  verification for any of the three — the outstanding gap before
+  recommending cloud KMS in production.
 - **The §2 env-var wiring is local-KEK-only, by design, today.**
   `backend_router.make_adapter()` — the function §2's `NOVA_OBJECT_STORE_*`
   env vars drive — only ever constructs a `LocalSigningBackend` from
@@ -237,9 +241,12 @@ it yet.
   equivalent) yourself in Python, bypassing `make_adapter`'s env-var
   convenience path — this is a real gap in the operator-facing surface, not
   a doc-only omission.
-- **Security-Architect review pending.** Per the ADR's acceptance record,
+- **Security-Architect sign-off pending.** Per the ADR's acceptance record,
   this feature requires a Security Architect sign-off before production use
-  in regulated deployments. That review has not happened yet.
+  in regulated deployments. v0.74.0 recorded a delegated-authority security
+  review of this surface (one bug found and fixed: cloud-SDK unwrap failures
+  now surface as `DekUnwrapError`, see `docs/releases/v0.74.0.md`); the human
+  sign-off has not happened yet.
 - **Scope is the object capsule store.** The SQLite/Postgres metadata store,
   the local `~/.novafabric/capsules/` filesystem store, and lineage data are
   not covered by this feature — use disk/database encryption there.

@@ -26,8 +26,12 @@ your own workload before committing hardware.
 | **`runs_cache` index** | table inside `registry.db` | one row per run | Yes — always rebuildable from the capsule filesystem (`src/novafabric/registry/runs_cache.py`) |
 | **Lineage graph** (SQLite) | `registry.db` (`lineage_nodes`/`lineage_edges`) | edges per run (typically a handful) | Yes — derived from each capsule's `lineage.jsonl` |
 | **NovaSeal Merkle log** | `~/.novafabric/novaseal-merkle.db` | one entry per sealed capsule | No — append-only evidence |
-| **Server metadata DB** | Postgres (server mode) or SQLite | runs, capsules, signatures, RBAC, audit | Partially — see `nova rebuild-metadata-db` |
+| **Server metadata DB** | Postgres (server mode) or SQLite (`~/.novafabric/metadata.db`) | runs, capsules, signatures, RBAC, audit | Partially — see `nova rebuild-metadata-db` |
 | **WORM object store** | S3/Azure/GCS/Ceph bucket (experimental, cluster tier) | capsule objects + manifest chain | Metadata is rebuildable *from* it, not vice versa |
+
+`~/.novafabric` is the default `$NOVAFABRIC_HOME`; every `~/.novafabric/…`
+path above moves with it (`src/novafabric/_paths.py`), and `NOVAFABRIC_CAPSULE_DIR` moves the
+capsule store on its own.
 
 The design invariant: **the capsule is the source of truth; the registry,
 metadata DB, and lineage graph are derived, rebuildable indexes**
@@ -109,7 +113,9 @@ Two non-obvious limits at the top end:
 - **Inodes, not just bytes.** Each capsule is a directory of ~10–12 files.
   At 1M runs that is on the order of 10⁷ filesystem entries under one tree.
 - **Lineage edges.** SQLite lineage is documented for < ~1M edges; the
-  KuzuDB migration path exists for beyond (§5).
+  KuzuDB backend exists for beyond (§5), but `nova lineage-store migrate`
+  can only target SQLite today — moving a graph into KuzuDB is not a CLI
+  step yet ([Lineage migration guide](../lineage/migration-guide.md)).
 
 ---
 
@@ -123,7 +129,7 @@ Two non-obvious limits at the top end:
 | Concurrency | Single machine, single writer per DB file | Multi-user over `/v0` REST; RLS tenant isolation |
 | Writers | One | **Still one** — see §7 (ADR-0180) |
 | Migration | — | `nova migrate-to-postgres` (idempotent; the SQLite file is never modified) |
-| Query latency target | — | `query_runs` p99 ≤ 200 ms was the Phase-5 acceptance criterion (`docs/releases/v0.24.0.md`) — a target the suite gates on, not a promise for your hardware |
+| Query latency | — | **Not measured.** `docs/releases/v0.24.0.md` names a `query_runs` p99 ≤ 200 ms test, but `tests/metadata_store/test_scale_migration.py` today gates only a 100 K-row SQLite insert at < 30 s; no test gates `query_runs` latency |
 
 Postgres capacity itself (connections, WAL, vacuum) is standard Postgres
 operations — NovaFabric adds no special requirements
@@ -139,14 +145,16 @@ treat them as evidence the design meets its gates, not as an SLA:
 
 | Component | Measured result | Source |
 |---|---|---|
-| Collector NovaSeal batch signer | **295 K events/sec, p99 4.7 ms** (gate: ≥100 K events/sec, p99 < 200 ms) | `docs/releases/v0.14.3.md` |
-| `NovaSeal.seal()` per-capsule latency | CI gate **median < 50 ms** over 100 rounds (p99 ≥ 200 ms raises a non-blocking alarm); medians of 0.5–9.2 ms on shared CI runners | `docs/releases/v0.12.16.md`, `docs/release-process.md` §1a |
+| Collector NovaSeal batch signer | **295 K events/sec, p99 4.7 ms** (gate: ≥100 K events/sec, p99 < 200 ms), measured once on 2026-05-10; the SLO catalog now labels it **target**, not measured, because it was not re-measured before its 2026-11-01 revalidation date | `docs/releases/v0.14.3.md`, `docs/slo.md` (`collector.seal-batch.throughput`) |
+| `NovaSeal.seal()` per-capsule latency | CI gate **median < 50 ms** over 100 rounds (p99 ≥ 200 ms raises a non-blocking alarm); per-run medians of 0.53–9.2 ms over 55 shared-runner CI runs | `docs/slo.md` (`seal.seal-call.median`), `docs/release-process.md` §1a |
 | `nova seal log verify` | **O(N) by design** — recomputes the Merkle root from every leaf hash. Measured ~1.9 s at 1 M entries end to end (CI runner + Postgres 16); ~1.2 µs per leaf of in-process hashing. The former p99 < 200 ms target was never met and is withdrawn (ADR-0268) | `docs/releases/v0.38.0.md` (correction), `docs/cli-reference.md` |
-| KuzuDB lineage tier (BQ-015 gate) | **blast_radius p99 = 45.5 ms @ 10 M edges** (gate < 500 ms, cleared 2026-05-16) | `docs/lineage/migration-guide.md` |
+| KuzuDB lineage tier (BQ-015 gate) | **blast_radius p99 = 45.5 ms @ 10 M edges** (gate < 500 ms, cleared 2026-05-16 on a workstation); the SLO catalog now labels it **target**, because it was not re-measured before its 2026-11-01 revalidation date | `docs/lineage/migration-guide.md`, `docs/slo.md` (`lineage.kuzu-blast-radius.p99`) |
 
-When your `nova-bench run` shows p99 depth-5 lineage traversal > 500 ms on
-SQLite, that is the documented trigger to migrate to the KuzuDB tier
-([Lineage migration guide](../lineage/migration-guide.md)).
+The documented trigger for an at-scale lineage tier is graph size — beyond
+~1M edges ([Lineage migration guide](../lineage/migration-guide.md)). The
+500 ms depth-5 p99 figure is the gate the KuzuDB benchmark cleared, measured
+with the external `nova-lineage-bench` harness; no lineage benchmark command
+ships with NovaFabric, so time your own `nova lineage` queries.
 
 ---
 
@@ -221,7 +229,8 @@ federation remains **future design**.
 4. Multi-user or > ~100 K runs: Postgres server mode; size Postgres with
    standard tooling; keep exactly one writer (ADR-0180).
 5. Millions of runs / inode pressure: move capsule objects to a WORM object
-   store (experimental) and lineage to KuzuDB
-   ([migration guide](../lineage/migration-guide.md)).
+   store (experimental) and plan lineage on an at-scale backend such as KuzuDB
+   (experimental; not yet a `nova lineage-store migrate` target —
+   [migration guide](../lineage/migration-guide.md)).
 6. Set retention ([ADR-0134](../decisions.md))
    and quotas (ADR-0179) so growth is a policy, not an accident.
