@@ -8,7 +8,7 @@ in :data:`HARDENED`; this guard keeps them fixed.
 Scope, stated rather than implied: only the workflows in :data:`HARDENED`. The other
 non-release workflows already carried timeouts and pins when the audit ran, and are left
 out so that a concurrent change to them is not blocked by this guard; the release and
-publish workflows are owner-reviewed and listed as findings in ``docs/ci.md`` instead.
+publish workflows are owner-reviewed and out of scope here.
 Add a file here once it meets all three rules below.
 
 Rules, per hardened workflow:

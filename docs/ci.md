@@ -136,76 +136,49 @@ so they are listed for review instead of fixed.
      ban-list grep then finds nothing and the step passes.
    - In `Build Artifacts`, the `--help` smoke tests end `| head -3 || true`, so they can never fail.
    - In `Unit Tests`, the 75% coverage check only prints a warning.
-2. **A step that is a no-op in this repository.** `metadata_store_security_gate.yml` "Benchmark
-   smoke" runs a script under `bench/`, which is not part of the public tree. It always prints a
-   skip notice.
-3. **Duplicated work.**
+2. **Duplicated work.**
    - `metadata_store_security_gate.yml` re-runs `ruff check src/ tests/ scripts/`, the same command
      as `ci.yml` `lint`. It also runs `tests/metadata_store/`, which the `ci.yml` unit shards and the
      nightly `postgres-scale` job run too.
    - `mcp-conformance.yml` re-runs `tests/mcp_conformance` and the MCP proxy tests, which the unit
      shards run as well. Its CLI vector replay and Server Card validation are unique to it.
    - `collector-ci.yml` runs govulncheck twice (item 1).
-4. **Unfrozen installs.** `metadata_store_security_gate.yml`, `license-policy.yml` and
+3. **Unfrozen installs.** `metadata_store_security_gate.yml`, `license-policy.yml` and
    `mcp-conformance.yml` run `uv sync --all-extras` without `--frozen`. If `uv.lock` is stale, uv
    then re-locks on the runner and installs the new resolution instead of failing. `ci.yml` `lint` catches a stale lock on the same commit,
    so in practice this matters only for these jobs' own reproducibility. `mcp-conformance.yml` also
    sets no Python version, so uv picks the runner's interpreter.
-5. **`uv` itself is unpinned** in every `setup-uv` step (see Toolchain versions above).
-6. **No `concurrency:` group** in `collector-ci.yml`, `metadata_store_security_gate.yml`,
+4. **`uv` itself is unpinned** in every `setup-uv` step (see Toolchain versions above).
+5. **No `concurrency:` group** in `collector-ci.yml`, `metadata_store_security_gate.yml`,
    `mcp-conformance.yml`, `nightly-scale-gates.yml`, `scorecard.yml` or `cla.yml`. Superseded
    pull-request runs of these keep running.
-7. **Path-filtered workflows cannot simply be made required checks.** These are `collector-ci.yml`,
+6. **Path-filtered workflows cannot simply be made required checks.** These are `collector-ci.yml`,
    `metadata_store_security_gate.yml`, `mcp-conformance.yml`, `dashboard.yml`, `sdk-ts.yml`,
    `npm-audit.yml` and `release-toolchain.yml`. A workflow that is skipped by its path filter never
    reports, so a required check on it would leave unrelated pull requests pending. This bears on
    any future merge rules.
-8. **Dependabot does not watch the composite action.** The `github-actions` entry in
+7. **Dependabot does not watch the composite action.** The `github-actions` entry in
    `.github/dependabot.yml` has `directory: "/"`. That covers `.github/workflows/` and a root
    `action.yml`, but not `.github/actions/capture/action.yml`. The two have already drifted: the
    composite action pins `astral-sh/setup-uv` v10.3.2 and the workflows pin v10.4.0. The fix is to
    add `/.github/actions/*` to that entry. Two open pull requests edit `.github/dependabot.yml`, so it
    is not changed here.
-9. **No SAST and no workflow linting** (see the section above). Enabling CodeQL default setup is a
+8. **No SAST and no workflow linting** (see the section above). Enabling CodeQL default setup is a
    repository setting, not a file change, and costs no Actions minutes on a public repository.
    Whether to turn it on is an owner decision.
-10. **The repository does not require SHA-pinned actions.** The setting is
+9. **The repository does not require SHA-pinned actions.** The setting is
     `sha_pinning_required: false` with `allowed_actions: all`. Every workflow pins today, but
     nothing outside the tests enforces it.
-11. **CI failures alert no one beyond GitHub's defaults.** A red scheduled run (the nightly gates,
+10. **CI failures alert no one beyond GitHub's defaults.** A red scheduled run (the nightly gates,
     the weekly audits, Scorecard) produces no issue and no notification other than GitHub's own email
     to the person who last edited the schedule. The nightly `postgres-scale` job was red on 11
     consecutive nights (2026-11-12 to 2026-11-22). The cause was `pg_restore` 17 on the
     `ubuntu-latest` image sending `SET transaction_timeout` to a Postgres 16 server. It was fixed by
     pinning the runner (#207).
 
-### Open findings: release and publish workflows (for the owner; not edited)
+### Release and publish workflows
 
-`release.yml`, `publish-pypi.yml`, `publish-image.yml`, `publish-chart.yml` and the reusable
-`require-green-ci.yml` were reviewed and left unchanged.
-
-1. **The release gate checks `ci.yml` only.** Collector CI, the audits and the metadata-store gate
-   can be red on a tagged commit, and that commit still publishes. The design for a wider gate is in
-   [release verdict design](release-verdict-design.md) (not active).
-2. **The image is pushed and signed before it is scanned.** In `publish-image.yml`, the trivy
-   CRITICAL gate runs after `Build and push` and after `cosign sign`. A failing scan therefore leaves
-   a signed image, and its version tags, already in the registry. An open draft pull request
-   proposes scanning a candidate before any production tag.
-3. **Manual dispatch can publish.** `publish-pypi.yml`, `publish-image.yml` and `publish-chart.yml`
-   all accept `workflow_dispatch`. For the image, a dispatch from a branch pushes branch and short-SHA
-   tags. The green-CI gate still applies to the dispatched SHA.
-4. **Only PyPI uses a deployment environment** (`environment: pypi`). The image and chart jobs hold
-   `packages: write` with no environment and so no required reviewer.
-5. **`publish-chart.yml` puts a secret straight into a shell line**:
-   `echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login …`. Passing it through `env:` is the
-   documented safe pattern. The chart is also pushed without a signature or provenance, unlike the
-   image and the PyPI distributions.
-6. **The release workflows have no `concurrency:` group.** Two tags pushed close together run their
-   publish jobs in parallel.
-7. **The PyPI SBOM step is `continue-on-error: true`**, and the full trivy report runs with
-   `exit-code: "0"`. Both are deliberate and documented inline: an SBOM failure once blocked five
-   releases from PyPI, and the separate CRITICAL step is the trivy gate. They are recorded here so
-   the matrix is complete.
+Release and publish workflows were audited separately; findings are tracked privately.
 
 ## Guards that keep this true
 

@@ -95,7 +95,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
-- **`docs/ci.md`: the CI workflow matrix and audit (#217).** For every workflow it lists the trigger, jobs, what the workflow gates, timeouts, permissions, action pinning and whether anything requires it. It states that no check is required for a merge and that only `ci.yml` gates a release. It records the CodeQL and secret-scanning state, and why Scorecard went red: 10 runs on 2026-11-24 when GHCR answered `manifest unknown` for its image tag, plus one GitHub GraphQL error. The open findings are listed for review, with those in the release workflows kept separate.
+- **`docs/ci.md`: the CI workflow matrix and audit (#217).** For every workflow it lists the trigger, jobs, what the workflow gates, timeouts, permissions, action pinning and whether anything requires it. It states that no check is required for a merge and that only `ci.yml` gates a release. It records the CodeQL and secret-scanning state, and why Scorecard went red: 10 runs on 2026-11-24 when GHCR answered `manifest unknown` for its image tag, plus one GitHub GraphQL error. The open findings for the non-release workflows are listed for review.
 
 ### Fixed
 
