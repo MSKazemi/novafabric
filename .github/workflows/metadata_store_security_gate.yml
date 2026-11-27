@@ -37,6 +37,7 @@ jobs:
     # ubuntu-latest (26.04) ships 17+, whose pg_restore a 16 server rejects (#207).
     # tests/docs/test_workflow_runner_images_are_pinned.py enforces the pairing.
     runs-on: ubuntu-24.04
+    timeout-minutes: 20  # slowest of 15 green runs to 2026-11-27: 132 s
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.

@@ -9,12 +9,20 @@ on:
   push:
     branches: [main]
 
-permissions: read-all
+# Least privilege, like every other workflow here: the one job below declares
+# exactly what it needs, so nothing is granted at workflow level beyond reading
+# the repository. scorecard-action forbids only workflow-level WRITE
+# permissions when publish_results is on; `read-all` was broader than needed.
+permissions:
+  contents: read
 
 jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-24.04
+    # Slowest of 8 green runs to 2026-11-27: 53 s. The action pulls its image by tag
+    # and retries a failed pull, so the cap bounds that retry loop too.
+    timeout-minutes: 15
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
