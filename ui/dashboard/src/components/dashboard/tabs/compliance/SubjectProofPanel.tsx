@@ -56,6 +56,7 @@ export default function SubjectProofPanel() {
 
       <div className="flex gap-2">
         <SuggestInput
+          aria-label="Data subject identifier"
           value={subjectId}
           onChange={setSubjectId}
           suggestions={subjectSuggestions}

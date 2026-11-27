@@ -27,7 +27,7 @@ function CheckBadge({ label, ok, title }: { label: string; ok: boolean | null; t
   if (ok === null) {
     return (
       <span title={title} className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-mono bg-[var(--color-bg-raised)] text-[var(--color-text-faint)] border border-[var(--color-border)]">
-        {label} –
+        {label} –<span className="sr-only">: not established</span>
       </span>
     );
   }
@@ -42,6 +42,8 @@ function CheckBadge({ label, ok, title }: { label: string; ok: boolean | null; t
       )}
     >
       {label} {ok ? '✓' : '✗'}
+      {/* The glyph and colour alone carry the verdict visually; say it in words. */}
+      <span className="sr-only">{ok ? ': passed' : ': failed'}</span>
     </span>
   );
 }
@@ -85,6 +87,15 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
         next.delete(bundleId);
         return next;
       });
+      // The Verify button is replaced by the result badges; if it held focus,
+      // keyboard focus fell to <body>. Put it back on this bundle's row.
+      // setTimeout, not requestAnimationFrame: runs after React commits the
+      // badges and exists in every environment (jsdom included).
+      setTimeout(() => {
+        if (document.activeElement === document.body || document.activeElement === null) {
+          document.getElementById(`evidence-select-${bundleId}`)?.focus();
+        }
+      }, 0);
     }
   }, []);
 
@@ -101,7 +112,7 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
               onClick={() => onNavigate('commands')}
               className="text-[10px] px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-raised)] transition-colors"
             >
-              ↗ Export evidence
+              <span aria-hidden="true">↗</span> Export evidence
             </button>
           )}
           <button
@@ -109,7 +120,7 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
             title="Refresh evidence list (r)"
             className="text-[10px] px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-raised)] transition-colors"
           >
-            ↺ Refresh
+            <span aria-hidden="true">↺</span> Refresh
           </button>
         </div>
       </div>
@@ -169,11 +180,22 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
                           b.verified ? 'text-[var(--color-status-success)]' : 'text-[var(--color-status-failure)]',
                         )}
                       >
-                        {b.verified ? '✓' : '✗'}
+                        <span aria-hidden="true">{b.verified ? '✓' : '✗'}</span>
+                        <span className="sr-only">{b.verified ? 'Manifest hash matches' : 'Manifest hash mismatch'}</span>
                       </span>
                     </td>
                     <td className="px-3 py-2.5 font-mono" title={b.run_id}>
-                      {b.run_id.length > 20 ? `${b.run_id.slice(0, 20)}…` : b.run_id}
+                      {/* Row click is mouse-only; this button is the keyboard path. */}
+                      <button
+                        type="button"
+                        id={`evidence-select-${b.bundle_id}`}
+                        onClick={(e) => { e.stopPropagation(); onSelect(b.bundle_id); }}
+                        aria-current={isSelected ? 'true' : undefined}
+                        aria-label={`Show details for run ${b.run_id}`}
+                        className="font-mono text-left hover:underline"
+                      >
+                        {b.run_id.length > 20 ? `${b.run_id.slice(0, 20)}…` : b.run_id}
+                      </button>
                     </td>
                     <td className="px-3 py-2.5 text-[var(--color-text-muted)]" title={b.timestamp}>
                       {relativeTime(b.timestamp)}
@@ -185,6 +207,8 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
                       className="px-3 py-2.5"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {/* Polite live region: the verdict is announced when it arrives. */}
+                      <div aria-live="polite">
                       {result ? (
                         <div className="flex items-center gap-1 flex-wrap">
                           <CheckBadge
@@ -214,9 +238,11 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
                               : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)]',
                           )}
                         >
-                          {isVerifying ? '…' : 'Verify'}
+                          {isVerifying ? <span aria-hidden="true">…</span> : 'Verify'}
+                          {isVerifying && <span className="sr-only">Verifying</span>}
                         </button>
                       )}
+                      </div>
                     </td>
                     <td
                       className="px-3 py-2.5 text-center"
@@ -226,9 +252,10 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
                         href={downloadUrl}
                         download={`evidence-${b.bundle_id}.zip`}
                         title="Download bundle"
+                        aria-label={`Download bundle for run ${b.run_id}`}
                         className="text-[var(--color-text-faint)] hover:text-[var(--color-accent)] transition-colors text-sm"
                       >
-                        ↓
+                        <span aria-hidden="true">↓</span>
                       </a>
                     </td>
                   </tr>

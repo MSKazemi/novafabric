@@ -53,6 +53,7 @@ export default function AuditPanel({ runIds }: { runIds: string[] }) {
 
       <div className="grid grid-cols-2 gap-2">
         <SuggestInput
+          aria-label="Capsule run ID"
           value={runId}
           onChange={v => setRunId(v)}
           suggestions={runIds}
@@ -61,6 +62,7 @@ export default function AuditPanel({ runIds }: { runIds: string[] }) {
           className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2.5 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none"
         />
         <select
+          aria-label="Audit profile"
           value={profile}
           onChange={(e) => setProfile(e.target.value)}
           className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2.5 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none"

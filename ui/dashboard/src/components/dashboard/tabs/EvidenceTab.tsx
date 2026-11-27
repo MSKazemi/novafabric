@@ -6,6 +6,7 @@ import EvidenceDetailPanel from '../../evidence/EvidenceDetail';
 import type { Tab } from '../Sidebar';
 import ActionButton from '../../ui/ActionButton';
 import { useMutation } from '../../../lib/useMutation';
+import { ignoreSingleKeyShortcut } from '../../../lib/shortcuts';
 
 /** Audit-grade evidence assertions (nova evidence, ADR-0087). */
 function AssertionsPanel() {
@@ -68,10 +69,7 @@ export default function EvidenceTab({ onNavigate, onCountChange }: Props) {
   // 'r' key shortcut to refresh (consistent with other tabs)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'r' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        const tag = (e.target as HTMLElement).tagName;
-        if (tag !== 'INPUT' && tag !== 'TEXTAREA') refresh();
-      }
+      if (e.key === 'r' && !ignoreSingleKeyShortcut(e)) refresh();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

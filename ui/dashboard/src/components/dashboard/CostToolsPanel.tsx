@@ -185,6 +185,7 @@ export default function CostToolsPanel() {
       </p>
 
       <textarea
+        aria-label={`${active.label} input document`}
         value={doc}
         onChange={(e) => setDoc(e.target.value)}
         spellCheck={false}

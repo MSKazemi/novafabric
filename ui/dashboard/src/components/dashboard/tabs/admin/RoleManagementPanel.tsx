@@ -89,6 +89,7 @@ export default function RoleManagementPanel({
           <div>
             <label className={labelClass}>Subject (user / token fingerprint)</label>
             <input
+              aria-label="Subject (user / token fingerprint) to assign"
               value={assignSubject}
               onChange={(e) => setAssignSubject(e.target.value)}
               placeholder="user@example.com"
@@ -98,6 +99,7 @@ export default function RoleManagementPanel({
           <div>
             <label className={labelClass}>Role</label>
             <select
+              aria-label="Role to assign"
               value={assignRole}
               onChange={(e) => setAssignRole(e.target.value as RoleValue)}
               className={inputClass}
@@ -124,6 +126,7 @@ export default function RoleManagementPanel({
           <div>
             <label className={labelClass}>Subject (user / token fingerprint)</label>
             <input
+              aria-label="Subject (user / token fingerprint) to revoke"
               value={revokeSubject}
               onChange={(e) => setRevokeSubject(e.target.value)}
               placeholder="user@example.com"
@@ -133,6 +136,7 @@ export default function RoleManagementPanel({
           <div>
             <label className={labelClass}>Role</label>
             <select
+              aria-label="Role to revoke"
               value={revokeRole}
               onChange={(e) => setRevokeRole(e.target.value as RoleValue)}
               className={inputClass}

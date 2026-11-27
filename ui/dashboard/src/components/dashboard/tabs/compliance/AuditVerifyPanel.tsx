@@ -34,6 +34,7 @@ export default function AuditVerifyPanel() {
       cli="nova audit verify audit-report.json"
       form={
         <textarea
+          aria-label="AuditReport JSON"
           value={reportJson}
           onChange={e => setReportJson(e.target.value)}
           placeholder='{"report_id": "...", "profile": "nist-ai-rmf", ...}'

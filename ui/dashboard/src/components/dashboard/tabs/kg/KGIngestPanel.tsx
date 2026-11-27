@@ -39,6 +39,7 @@ export default function KGIngestPanel({ capsuleDirs }: { capsuleDirs: string[] }
         <div className="space-y-1">
           <label className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Capsule path</label>
           <SuggestInput
+            aria-label="Capsule path"
             value={capsulePath}
             onChange={setCapsulePath}
             suggestions={capsuleDirs}

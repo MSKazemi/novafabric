@@ -114,7 +114,9 @@ function LineageGraphInner({
   useEffect(() => {
     if (prevMode.current === mode) return;
     prevMode.current = mode;
-    const t = setTimeout(() => fitView({ padding: '8%', duration: 400 }), 60);
+    // A JS-driven pan/zoom is not covered by the CSS prefers-reduced-motion rule.
+    const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const t = setTimeout(() => fitView({ padding: '8%', duration: reduce ? 0 : 400 }), 60);
     return () => clearTimeout(t);
   }, [mode, fitView]);
 

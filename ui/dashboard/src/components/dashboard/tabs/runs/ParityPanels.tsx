@@ -61,6 +61,7 @@ export function CapsuleTreePanel({ runIds }: { runIds: string[] }) {
       <div className="flex gap-2 items-start flex-wrap">
         <div className="flex-1 min-w-[220px] max-w-md">
           <SuggestInput
+            aria-label="Run ID"
             value={runId}
             onChange={setRunId}
             suggestions={runIds}
@@ -136,6 +137,7 @@ export function RunSpoolLineagePanel({ runIds }: { runIds: string[] }) {
       <div className="flex gap-2 items-start flex-wrap">
         <div className="flex-1 min-w-[220px] max-w-md">
           <SuggestInput
+            aria-label="Run ID"
             value={runId}
             onChange={setRunId}
             suggestions={runIds}
@@ -257,6 +259,7 @@ export function ScanSecretsPanel({ runIds }: { runIds: string[] }) {
       <div className="flex gap-2 items-start flex-wrap">
         <div className="flex-1 min-w-[220px] max-w-md">
           <SuggestInput
+            aria-label="Run ID"
             value={runId}
             onChange={setRunId}
             suggestions={runIds}

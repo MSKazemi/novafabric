@@ -18,7 +18,7 @@
     "test:e2e": "playwright test tests/e2e",
     "test:live": "playwright test -c playwright.live.config.ts",
     "test:visual": "playwright test tests/visual",
-    "test:a11y": "playwright test tests/e2e/a11y.spec.ts",
+    "test:a11y": "playwright test tests/e2e/a11y.spec.ts tests/e2e/dashboard-a11y.spec.ts",
     "lhci": "lhci autorun --config=.lighthouserc.json"
   },
   "dependencies": {

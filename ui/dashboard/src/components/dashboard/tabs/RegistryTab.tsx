@@ -164,6 +164,7 @@ export default function RegistryTab({
       </div>
       <div className="flex items-center gap-2">
         <input
+          aria-label="Search assets by name, type or version"
           type="search"
           value={search}
           onChange={e => setSearch(e.target.value)}
