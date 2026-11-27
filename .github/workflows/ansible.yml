@@ -1,0 +1,70 @@
+name: ansible
+
+# Lint and syntax-check the single-host Ansible role in deploy/ansible/ (#235).
+#
+# Static checks only: ansible-lint (production profile) and
+# `ansible-playbook --syntax-check` on the three playbooks. Nothing is installed on a
+# host here, so this does not prove that a re-run changes nothing; that needs a
+# Molecule (or equivalent) job, which is not part of this workflow yet.
+#
+# Ansible and ansible-lint run through uvx at exact versions. They are CI tools, not
+# dependencies of the novafabric package, and are not added to uv.lock.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/ansible/**"
+      - ".github/workflows/ansible.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/ansible/**"
+      - ".github/workflows/ansible.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ansible-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: ansible-lint and syntax check
+    runs-on: ubuntu-24.04
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: deploy/ansible
+    env:
+      ANSIBLE_CORE: "2.22.0"
+      ANSIBLE_LINT: "26.11.1"
+      # ansible-core 2.22 needs Python 3.13 on the controller; uv provides it.
+      UV_PYTHON: "3.13"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+
+      - name: Syntax check the playbooks
+        run: |
+          for playbook in site.yml restore.yml uninstall.yml; do
+            uvx --from "ansible-core==${ANSIBLE_CORE}" \
+              ansible-playbook -i inventory.example.yml "$playbook" --syntax-check
+          done
+
+      - name: ansible-lint (production profile)
+        run: |
+          uvx --from "ansible-lint==${ANSIBLE_LINT}" --with "ansible-core==${ANSIBLE_CORE}" \
+            ansible-lint --offline --strict site.yml restore.yml uninstall.yml roles/novafabric

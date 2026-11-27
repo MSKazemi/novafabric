@@ -1,0 +1,40 @@
+---
+# Opt-in: a daily `nova backup create` run by a systemd timer. Turning it off again
+# stops and disables the timer; existing backup sets are never removed.
+
+- name: Create the backup directory
+  ansible.builtin.file:
+    path: "{{ novafabric_backup_dir }}"
+    state: directory
+    owner: "{{ novafabric_user }}"
+    group: "{{ novafabric_group }}"
+    mode: "0700"
+  when: novafabric_backup_timer_enabled
+
+- name: Install the backup service and timer units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ novafabric_service_name }}-{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - backup.service
+    - backup.timer
+  notify: Reload systemd
+  when: novafabric_backup_timer_enabled
+
+- name: Reload systemd for the backup units
+  ansible.builtin.meta: flush_handlers
+
+- name: Check whether a backup timer is installed
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ novafabric_service_name }}-backup.timer"
+  register: novafabric_backup_timer_unit
+
+- name: Enable, or disable, the backup timer
+  ansible.builtin.systemd_service:
+    name: "{{ novafabric_service_name }}-backup.timer"
+    enabled: "{{ novafabric_backup_timer_enabled }}"
+    state: "{{ 'started' if novafabric_backup_timer_enabled else 'stopped' }}"
+  when: novafabric_backup_timer_enabled or novafabric_backup_timer_unit.stat.exists

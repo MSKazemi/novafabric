@@ -1,0 +1,34 @@
+---
+- name: Install the hardened systemd unit
+  ansible.builtin.template:
+    src: novafabric.service.j2
+    dest: "/etc/systemd/system/{{ novafabric_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart NovaFabric
+
+# Migrations and the unit reload must happen before the first start: the server
+# refuses to start on a schema behind the installed release.
+- name: Apply pending migrations and unit changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the service
+  ansible.builtin.systemd_service:
+    name: "{{ novafabric_service_name }}"
+    enabled: "{{ novafabric_service_enabled }}"
+    state: "{{ 'started' if novafabric_service_enabled else 'stopped' }}"
+
+- name: Wait for the server to report ready
+  ansible.builtin.uri:
+    url: "{{ novafabric_health_url }}"
+    status_code: 200
+    validate_certs: "{{ novafabric_health_validate_certs }}"
+  register: novafabric_health
+  until: novafabric_health.status == 200
+  retries: "{{ novafabric_health_retries }}"
+  delay: "{{ novafabric_health_delay }}"
+  changed_when: false
+  when: novafabric_service_enabled

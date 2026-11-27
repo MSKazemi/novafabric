@@ -1,0 +1,41 @@
+---
+- name: Create the configuration directory
+  ansible.builtin.file:
+    path: "{{ novafabric_config_dir }}"
+    state: directory
+    owner: root
+    group: "{{ novafabric_group }}"
+    mode: "0750"
+
+- name: Write server.yaml (no secrets; the server ignores secret keys in this file)
+  ansible.builtin.template:
+    src: server.yaml.j2
+    dest: "{{ novafabric_server_config_path }}"
+    owner: root
+    group: "{{ novafabric_group }}"
+    mode: "0640"
+  notify:
+    - Run the NovaFabric registry migrations
+    - Restart NovaFabric
+
+- name: Write the non-secret service environment
+  ansible.builtin.template:
+    src: novafabric.env.j2
+    dest: "{{ novafabric_env_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Restart NovaFabric
+
+- name: Write the secrets environment (0600, read by systemd as root only)
+  ansible.builtin.template:
+    src: secrets.env.j2
+    dest: "{{ novafabric_secrets_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: "{{ novafabric_no_log }}"
+  notify:
+    - Run the NovaFabric registry migrations
+    - Restart NovaFabric

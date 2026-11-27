@@ -1,0 +1,55 @@
+---
+- name: Require a pinned package version
+  ansible.builtin.assert:
+    that:
+      - novafabric_version is defined
+      - novafabric_version is string
+      - novafabric_version is match('^[0-9]+\.[0-9]+\.[0-9]+([.-]?[A-Za-z0-9.]+)?$')
+    fail_msg: >-
+      Set novafabric_version to the exact release to install (for example "0.109.0").
+      The role never installs an unpinned or "latest" version.
+    quiet: true
+
+- name: Check the server settings
+  ansible.builtin.assert:
+    that:
+      - novafabric_backend in ['sqlite', 'postgres']
+      - novafabric_log_format in ['text', 'json']
+      - novafabric_workers | int >= 1
+      - novafabric_workers | int == 1 or novafabric_backend == 'postgres'
+      - novafabric_port | int >= 1 and novafabric_port | int <= 65535
+      - (novafabric_tls_cert_path | length > 0) == (novafabric_tls_key_path | length > 0)
+      - (novafabric_oidc_issuer_url | length > 0) == (novafabric_oidc_audience | length > 0)
+      - novafabric_backup_profile in ['local', 'pg']
+      - novafabric_backup_profile == 'local' or novafabric_backend == 'postgres'
+      - novafabric_data_dir is match('^/')
+      - novafabric_home is match('^/')
+      - novafabric_audit_log_path is match('^/')
+      - novafabric_server_config_extra.keys() | intersect(novafabric_secret_config_keys) | length == 0
+    fail_msg: >-
+      Invalid server settings: backend is sqlite|postgres; workers > 1 needs postgres;
+      set both TLS paths or neither, both OIDC keys or neither; backup profile 'pg'
+      needs the postgres backend; paths must be absolute; secrets never go in
+      novafabric_server_config_extra.
+    quiet: true
+
+- name: Require a Postgres DSN for the postgres backend
+  ansible.builtin.assert:
+    that:
+      - novafabric_backend != 'postgres' or (novafabric_postgres_dsn | default('') | length > 0)
+    fail_msg: >-
+      novafabric_backend is postgres but novafabric_postgres_dsn is not set. Provide it
+      from ansible-vault; the role has no default DSN.
+    quiet: true
+  no_log: "{{ novafabric_no_log }}"
+
+- name: Check the optional secrets are well formed
+  ansible.builtin.assert:
+    that:
+      - novafabric_server_token | default('') | length == 0 or novafabric_server_token | length >= 32
+      - novafabric_secret_env.values() | select('search', '[\r\n]') | list | length == 0
+    fail_msg: >-
+      novafabric_server_token, when set, must be at least 32 characters, and no secret
+      may contain a line break.
+    quiet: true
+  no_log: "{{ novafabric_no_log }}"

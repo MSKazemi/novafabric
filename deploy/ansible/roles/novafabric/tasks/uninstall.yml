@@ -1,0 +1,49 @@
+---
+# Remove the service, its units and the virtualenv. The data directory, the backup
+# directory and the service user are always kept: this role never deletes evidence.
+
+- name: Find the installed units
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+  loop:
+    - "{{ novafabric_service_name }}-backup.timer"
+    - "{{ novafabric_service_name }}.service"
+  register: novafabric_uninstall_units
+
+- name: Stop and disable the installed units
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ novafabric_uninstall_units.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists
+
+- name: Remove the unit files
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - "{{ novafabric_service_name }}.service"
+    - "{{ novafabric_service_name }}-backup.service"
+    - "{{ novafabric_service_name }}-backup.timer"
+  notify: Reload systemd
+
+- name: Remove the virtualenv
+  ansible.builtin.file:
+    path: "{{ novafabric_venv_dir }}"
+    state: absent
+
+- name: Remove the configuration and secrets (opt-in)
+  ansible.builtin.file:
+    path: "{{ novafabric_config_dir }}"
+    state: absent
+  when: novafabric_uninstall_remove_config | bool
+
+- name: Say what was kept
+  ansible.builtin.debug:
+    msg: >-
+      Kept: data {{ novafabric_data_dir }}, backups {{ novafabric_backup_dir }}, user
+      {{ novafabric_user }}{{ '' if novafabric_uninstall_remove_config | bool else ', config ' ~ novafabric_config_dir }}.
+      Remove them by hand only after you have a verified backup elsewhere.

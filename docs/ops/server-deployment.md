@@ -1,6 +1,6 @@
 # Server Deployment Guide
 
-This guide covers six deployment scenarios. Each scenario
+This guide covers seven deployment scenarios. Each scenario
 is labelled with its current implementation status per the [docs honesty
 rule](../../CONTRIBUTING.md#documentation-status-labels): **works today**, **experimental**, **planned**, or
 **future design**.
@@ -489,6 +489,43 @@ In server mode the chart's readiness/liveness probes hit `/readyz` and `/livez`
 (both modes expose them); `/readyz` gates traffic on database reachability and
 schema-skew. Provide OIDC config as a mounted `server.yaml` (the `oidc:` block) —
 `extraEnv` cannot enable OIDC, because no OIDC environment variables exist.
+
+---
+
+## Scenario 7 — Single host under systemd (Ansible role)
+
+**Status: experimental.** CI lints the role and syntax-checks its playbooks; it does
+not yet install it on a host or check that a re-run changes nothing.
+
+For a VM or on-premises server without Kubernetes,
+[`deploy/ansible/`](../../deploy/ansible/README.md) installs `nova server start` with
+an Ansible role:
+
+- a `novafabric` system user, and `novafabric[server]==<version>` in a virtualenv at
+  `/opt/novafabric/venv`; the version has no default, you pin it;
+- `/etc/novafabric/server.yaml` without secrets, and the DSN and tokens in a
+  `secrets.env` (mode 0600, root) filled from your ansible-vault;
+- a systemd unit with `NoNewPrivileges`, `ProtectSystem=strict` and
+  `ReadWritePaths=/var/lib/novafabric` (the data directory) as the only writable path;
+- `nova db upgrade --track registry --backend <backend>` as a handler, run only when
+  the package or the config changed and always before the restart, then a wait for
+  `/readyz`;
+- an opt-in daily `nova backup create` timer, a `restore.yml` that runs
+  `nova backup verify` and `nova restore`, and an `uninstall.yml` that keeps data and
+  backups.
+
+```bash
+cd deploy/ansible
+cp inventory.example.yml inventory.yml     # host + novafabric_version
+ansible-playbook -i inventory.yml site.yml --ask-vault-pass
+```
+
+Postgres stays yours: the role takes `novafabric_postgres_dsn` and nothing else. It
+does not run the MetadataStore track (`nova db upgrade` without `--track`) against
+that database, for the reason in section 4a of the
+[upgrade guide](upgrade-guide.md). TLS certificates, a reverse proxy and where
+backup sets are kept are also yours. The README lists every variable and the recovery
+steps.
 
 ---
 

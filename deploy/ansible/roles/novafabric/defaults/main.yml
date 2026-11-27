@@ -1,0 +1,93 @@
+---
+# Defaults for the novafabric role: a single-host `nova server start` under systemd.
+#
+# Secrets have NO defaults here on purpose. Set them in your inventory, protected
+# with ansible-vault (see ../../README.md):
+#   novafabric_postgres_dsn   required when novafabric_backend == "postgres"
+#   novafabric_server_token   optional; pins the local bearer token (>= 32 chars).
+#                             Unset: the server generates one and keeps it at
+#                             <home>/.server-token (mode 0600) across restarts.
+#   novafabric_scim_token     optional; only when SCIM is enabled in the config.
+#
+# The package version has no default either: set novafabric_version to the exact
+# release you want (for example "0.109.0"). The role refuses to run without it.
+
+# --- Package -----------------------------------------------------------------
+novafabric_package_name: novafabric
+novafabric_package_extras: [server]
+novafabric_python: /usr/bin/python3
+novafabric_python_min_version: "3.12"
+novafabric_venv_dir: /opt/novafabric/venv
+# Offline / mirrored installs. Leave both empty to use pip's configured index.
+# novafabric_pip_find_links: a local directory of wheels on the target; implies --no-index.
+# novafabric_pip_index_url: an internal PyPI mirror URL.
+novafabric_pip_find_links: ""
+novafabric_pip_index_url: ""
+# OS packages the role needs on the target. Debian/Ubuntu names; override for other
+# distributions. python3-packaging is what ansible.builtin.pip needs on the target;
+# acl lets Ansible become the unprivileged service user.
+novafabric_os_packages:
+  - python3
+  - python3-venv
+  - python3-packaging
+  - acl
+
+# --- Service user and paths -------------------------------------------------------
+novafabric_user: novafabric
+novafabric_group: novafabric
+# The only directory the service may write to (systemd ReadWritePaths).
+novafabric_data_dir: /var/lib/novafabric
+# NOVAFABRIC_HOME: registry, capsules, keys, seal state, the local server token.
+novafabric_home: "{{ novafabric_data_dir }}/home"
+# The hash-chained audit log. NOVAFABRIC_HOME does not move it, so it is set explicitly.
+novafabric_audit_log_path: "{{ novafabric_data_dir }}/audit/audit.jsonl"
+novafabric_config_dir: /etc/novafabric
+
+# --- Server ------------------------------------------------------------------------
+novafabric_service_name: novafabric
+novafabric_backend: sqlite            # sqlite | postgres (Postgres is yours; the role only takes a DSN)
+novafabric_host: 127.0.0.1            # loopback by default; put TLS in front before exposing it
+novafabric_port: 7433
+novafabric_workers: 1                 # > 1 requires the postgres backend
+novafabric_log_format: text           # text | json
+novafabric_oidc_issuer_url: ""        # OIDC is on when both are set
+novafabric_oidc_audience: ""
+# Native listener TLS. Both paths must already exist on the target; the key must be
+# owned by novafabric_user at mode 0600 or the server refuses to start.
+novafabric_tls_cert_path: ""
+novafabric_tls_key_path: ""
+novafabric_rate_limits_enabled: false
+# Extra top-level keys merged into server.yaml (non-secret only: the server drops
+# postgres_dsn, offline_key_path, scim_token and local_token from the file).
+novafabric_server_config_extra: {}
+novafabric_service_enabled: true
+novafabric_health_path: /readyz
+# Host name the health check connects to. Empty: the bind address (loopback for a
+# wildcard bind). With native TLS, set it to a name on the certificate.
+novafabric_health_host: ""
+novafabric_health_retries: 30
+novafabric_health_delay: 2
+novafabric_health_validate_certs: true
+
+# --- Backups -----------------------------------------------------------------------
+# Opt-in daily `nova backup create` (systemd timer). Put the directory on another volume.
+novafabric_backup_timer_enabled: false
+novafabric_backup_dir: /var/backups/novafabric
+novafabric_backup_on_calendar: daily
+novafabric_backup_profile: local      # local | pg
+novafabric_backup_include_keys: false
+
+# --- Restore (restore.yml) -----------------------------------------------------------
+# Path of a `nova backup create` set ON THE TARGET, or a path on the controller in
+# novafabric_restore_set_src (copied into novafabric_backup_dir first).
+novafabric_restore_set: ""
+novafabric_restore_set_src: ""
+novafabric_restore_force: false       # move existing data aside (never deleted)
+novafabric_restore_keys: false        # restore key members of an --include-keys set
+
+# --- Uninstall (uninstall.yml) ---------------------------------------------------------
+# Data and backups are never removed by this role. Config removal is opt-in.
+novafabric_uninstall_remove_config: false
+
+# Hide task arguments and environment (DSNs, tokens) from Ansible output.
+novafabric_no_log: true

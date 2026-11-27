@@ -1,0 +1,52 @@
+# {{ ansible_managed }}
+[Unit]
+Description=NovaFabric server (nova server start)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User={{ novafabric_user }}
+Group={{ novafabric_group }}
+EnvironmentFile={{ novafabric_env_file }}
+EnvironmentFile={{ novafabric_secrets_file }}
+WorkingDirectory={{ novafabric_data_dir }}
+ExecStart={{ novafabric_nova_bin }} server start --config {{ novafabric_server_config_path }} --workers {{ novafabric_workers }} --log-format {{ novafabric_log_format }}
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+
+# Hardening. The data directory is the only writable path.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths={{ novafabric_data_dir }}
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+{% if novafabric_port | int < 1024 %}
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+{% else %}
+CapabilityBoundingSet=
+AmbientCapabilities=
+{% endif %}
+
+[Install]
+WantedBy=multi-user.target

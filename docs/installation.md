@@ -237,6 +237,7 @@ do not fork the capsule format for an enterprise or cloud variant.
 |---|---|
 | First capture, validate, replay and diff | [Getting Started](getting-started.md) |
 | Shared server and PostgreSQL setup | [Server Deployment](ops/server-deployment.md) |
+| One Linux host under systemd, with Ansible (experimental) | [Ansible role](../deploy/ansible/README.md) |
 | Local browser interface | [Dashboard](dashboard.md) |
 | Container, SLURM or Kubernetes capture | [Operator Guide](operator-guide.md) |
 | Offline installation | [Air-gapped installation](ops/air-gapped-install.md) |

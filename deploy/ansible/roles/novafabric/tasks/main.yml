@@ -1,0 +1,19 @@
+---
+# Install or update NovaFabric server mode on one host. Safe to re-run: every task
+# converges, migrations run only when the package or the config changed, and no
+# task removes data.
+
+- name: Validate inputs
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Install the pinned package
+  ansible.builtin.import_tasks: install.yml
+
+- name: Write the configuration
+  ansible.builtin.import_tasks: config.yml
+
+- name: Install and start the service
+  ansible.builtin.import_tasks: service.yml
+
+- name: Install the backup timer
+  ansible.builtin.import_tasks: backup.yml

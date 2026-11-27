@@ -1,0 +1,4 @@
+# {{ ansible_managed }}
+# NovaFabric server config, passed with `nova server start --config`.
+# Secrets are not read from this file: the DSN and tokens come from secrets.env.
+{{ novafabric_server_config | to_nice_yaml(indent=2) }}

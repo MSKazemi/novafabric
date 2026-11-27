@@ -1,0 +1,132 @@
+---
+# Restore this host from a `nova backup create` set with the real CLI:
+# verify offline -> stop the service -> nova restore -> migrate -> start -> health check.
+# Run site.yml first so the package, user, config and unit exist.
+
+- name: Validate inputs
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Require a backup set
+  ansible.builtin.assert:
+    that:
+      - (novafabric_restore_set | length > 0) != (novafabric_restore_set_src | length > 0)
+    fail_msg: >-
+      Set exactly one of novafabric_restore_set (a path on the target) or
+      novafabric_restore_set_src (a path on the controller).
+    quiet: true
+
+- name: Check that the role is installed
+  ansible.builtin.stat:
+    path: "{{ novafabric_nova_bin }}"
+  register: novafabric_restore_bin
+
+- name: Require an installed NovaFabric
+  ansible.builtin.assert:
+    that:
+      - novafabric_restore_bin.stat.exists
+    fail_msg: "{{ novafabric_nova_bin }} is missing. Run site.yml on this host first."
+    quiet: true
+
+- name: Create the backup directory
+  ansible.builtin.file:
+    path: "{{ novafabric_backup_dir }}"
+    state: directory
+    owner: "{{ novafabric_user }}"
+    group: "{{ novafabric_group }}"
+    mode: "0700"
+  when: novafabric_restore_set_src | length > 0
+
+- name: Copy the backup set from the controller
+  ansible.builtin.copy:
+    src: "{{ novafabric_restore_set_src }}"
+    dest: "{{ novafabric_backup_dir }}/{{ novafabric_restore_set_src | basename }}"
+    owner: "{{ novafabric_user }}"
+    group: "{{ novafabric_group }}"
+    mode: "0600"
+  when: novafabric_restore_set_src | length > 0
+
+- name: Resolve the backup set path on the target
+  ansible.builtin.set_fact:
+    novafabric_restore_target: >-
+      {{ novafabric_restore_set if novafabric_restore_set | length > 0
+         else novafabric_backup_dir ~ '/' ~ (novafabric_restore_set_src | basename) }}
+
+- name: Verify the backup set offline before touching any data
+  ansible.builtin.command:
+    argv:
+      - "{{ novafabric_nova_bin }}"
+      - backup
+      - verify
+      - "{{ novafabric_restore_target }}"
+    chdir: "{{ novafabric_data_dir }}"
+  environment: "{{ novafabric_runtime_env }}"
+  become: true
+  become_user: "{{ novafabric_user }}"
+  changed_when: false
+
+- name: Stop the server (one writer at a time)
+  ansible.builtin.systemd_service:
+    name: "{{ novafabric_service_name }}"
+    state: stopped
+
+- name: Restore and migrate
+  block:
+    # `nova restore` verifies the set, prepares the home, extracts, migrates to head,
+    # replays crypto-shreds and runs its verification chain; it exits 1 on any failed
+    # step. Without --force it refuses a non-empty home (or a non-empty database for
+    # a pg set); with --force existing data is moved aside, never deleted.
+    - name: Run nova restore
+      ansible.builtin.command:
+        argv: >-
+          {{ [novafabric_nova_bin, 'restore', novafabric_restore_target, '--home', novafabric_home]
+             + (['--force'] if novafabric_restore_force | bool else [])
+             + (['--restore-keys'] if novafabric_restore_keys | bool else []) }}
+        chdir: "{{ novafabric_data_dir }}"
+      environment: "{{ novafabric_runtime_env | combine(novafabric_secret_env) }}"
+      become: true
+      become_user: "{{ novafabric_user }}"
+      changed_when: true
+      no_log: "{{ novafabric_no_log }}"
+
+    - name: Bring the registry schema to this release's head
+      ansible.builtin.command:
+        argv:
+          - "{{ novafabric_nova_bin }}"
+          - db
+          - upgrade
+          - --track
+          - registry
+          - --backend
+          - "{{ novafabric_backend }}"
+        chdir: "{{ novafabric_data_dir }}"
+      environment: "{{ novafabric_runtime_env | combine(novafabric_secret_env) }}"
+      become: true
+      become_user: "{{ novafabric_user }}"
+      changed_when: true
+      no_log: "{{ novafabric_no_log }}"
+  rescue:
+    - name: Report the failed restore (the service stays stopped)
+      ansible.builtin.fail:
+        msg: >-
+          The restore did not complete and {{ novafabric_service_name }} was left stopped.
+          A non-empty target needs novafabric_restore_force=true (existing data is moved
+          aside under {{ novafabric_home }}/.pre-restore-*, never deleted). Re-run with
+          -e novafabric_no_log=false to see the nova output; it never prints the DSN.
+
+- name: Start the server again
+  ansible.builtin.systemd_service:
+    name: "{{ novafabric_service_name }}"
+    state: started
+  when: novafabric_service_enabled
+
+- name: Wait for the restored server to report ready
+  ansible.builtin.uri:
+    url: "{{ novafabric_health_url }}"
+    status_code: 200
+    validate_certs: "{{ novafabric_health_validate_certs }}"
+  register: novafabric_restore_health
+  until: novafabric_restore_health.status == 200
+  retries: "{{ novafabric_health_retries }}"
+  delay: "{{ novafabric_health_delay }}"
+  changed_when: false
+  when: novafabric_service_enabled

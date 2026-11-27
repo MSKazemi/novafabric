@@ -1,0 +1,13 @@
+---
+# Copy to inventory.yml and edit. Keep secrets out of this file: put them in
+# group_vars/novafabric_servers/vault.yml, encrypted with ansible-vault (README).
+novafabric_servers:
+  hosts:
+    nova01:
+      ansible_host: 192.0.2.10
+  vars:
+    novafabric_version: "0.109.0"   # the exact release; the role has no default
+    novafabric_backend: sqlite      # or postgres, with novafabric_postgres_dsn in the vault
+    novafabric_host: 127.0.0.1
+    novafabric_port: 7433
+    novafabric_backup_timer_enabled: true
