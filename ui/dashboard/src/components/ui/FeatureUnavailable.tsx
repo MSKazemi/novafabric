@@ -25,10 +25,13 @@ export interface FeatureUnavailableProps {
 function CommandLine({ label, command }: { label: string; command: string }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-[11px] font-medium text-[var(--color-text)]">{label}</span>
+      {/* The colon and spaces are real text: flex gaps are visual only, and
+          without them the label and command read as one run-on word to a
+          screen reader and to copy-paste ("How to enablepip install …"). */}
+      <span className="text-[11px] font-medium text-[var(--color-text)]">{label}:</span>{' '}
       <code className="font-mono text-[11px] text-[var(--color-text)] bg-[var(--color-bg-sunken)] border border-[var(--color-border)] rounded px-1.5 py-0.5 break-all">
         {command}
-      </code>
+      </code>{' '}
       <CopyButton text={command} label={`Copy ${label.toLowerCase()}`} />
     </div>
   );

@@ -119,8 +119,8 @@ describe('FeatureUnavailable', () => {
     const note = screen.getByRole('note', { name: /Sigstore keyless signing: not available here/ });
     expect(note).toHaveTextContent('Not available here:');
     expect(note).toHaveTextContent('Why: the sigstore extra is not installed on this server');
-    expect(note).toHaveTextContent("How to enable pip install 'novafabric[sigstore]'");
-    expect(note).toHaveTextContent('CLI equivalent nova seal sign');
+    expect(note).toHaveTextContent("How to enable: pip install 'novafabric[sigstore]'");
+    expect(note).toHaveTextContent('CLI equivalent: nova seal sign');
   });
 });
 
