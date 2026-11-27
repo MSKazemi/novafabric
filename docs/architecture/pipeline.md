@@ -2,6 +2,8 @@
 
 [Architecture, as built](README.md) › Pipeline
 
+> Verified against code on 2026-11-27.
+
 The five verbs are separate `nova` commands that all work on one capsule
 directory. Seal is the exception: it runs automatically at the end of
 `nova capture` when NovaSeal is configured. Any later step can run on another
@@ -23,7 +25,7 @@ sequenceDiagram
     W-->>D: model / tool / trace records (hooks)
     W-->>C: exit code, stdout, stderr
     C->>D: env.lock, scan + redact, replay.yaml, capsule.yaml, lineage.jsonl
-    C->>D: residual rescan → redaction-proof.json
+    C->>D: replayability.json, residual rescan → redaction-proof.json
     C->>D: evidence_digests → capsule.yaml (rewritten, gate-checked)
     opt NovaSeal configured
         C->>S: seal(manifest)
@@ -68,9 +70,10 @@ stages in order:
    command line is not written to disk. `lineage/_writer.py:LineageWriter` then
    writes `lineage.jsonl`, which is scanned and masked straight away, and the
    edges are indexed.
-7. **Residual pass and proof.** If the event recorder dropped any events,
-   `capture-health.json` is written first, so it is rescanned and digested like
-   every other file. `SecretScannerV0.residual_scan` then rescans every
+7. **Residual pass and proof.** First `capture-health.json` (only if the event
+   recorder dropped any events) and then `replayability.json` (always;
+   `capture/finalize.py:write_replayability`, experimental) are written, so both
+   are rescanned and digested like every other file. `SecretScannerV0.residual_scan` then rescans every
    file in the finished capsule except `capsule.yaml`, the proof and `.seal/`.
    That includes files written after step 5 (`replay.yaml`, the C2PA marker) and
    files a masker rewrote. A match is redacted and recorded like any other
@@ -121,12 +124,13 @@ Details: [Run Capsule anatomy](run-capsule.md).
 capture`, a framework adapter, the `@agent` decorator or OTLP trace ingest), but
 only if a NovaSeal configuration exists (`NOVAFABRIC_SEAL_CONFIG`, else
 `$NOVAFABRIC_HOME/novaseal.yaml`, default `~/.novafabric/novaseal.yaml`). Without one, sealing is skipped. A sealing
-failure prints a warning and never fails the capture. A seal produces three
-files in `.seal/`:
+failure prints a warning and never fails the capture. A seal writes three
+files in `.seal/` (`capture/finalize.py:seal_capsule`):
 
-- a DSSE signature over the manifest,
-- an RFC 3161 timestamp token,
-- an entry in an append-only Merkle log.
+- `manifest.dsse`, a DSSE signature over the manifest,
+- `manifest.dsse.tsr`, an RFC 3161 timestamp token; timestamping is opt-in, so
+  the file is empty unless a TSA is configured and reachable,
+- `log-entry.json`, an entry in an append-only Merkle log.
 
 `nova seal propose` / `approve` / `verify` add an optional maker-checker
 signature chain on top (`cli/seal_propose.py`).

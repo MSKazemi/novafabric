@@ -2,6 +2,8 @@
 
 [Architecture, as built](README.md) › Run Capsule
 
+> Verified against code on 2026-11-27.
+
 A Run Capsule is a plain directory named by a ULID. It holds every observable
 fact about one execution. You can copy it, archive it, attach it to a ticket or
 verify it without a server, an account or a database.
@@ -22,7 +24,7 @@ stay valid.
 | `NOVAFABRIC_CAPSULE_DIR` | — | `_paths.py:default_capsule_dir` |
 | `NOVAFABRIC_HOME` | `~/.novafabric` | `_paths.py:nova_home` |
 | Effective capsule root | `$NOVAFABRIC_HOME/capsules/` | |
-| Per-run override | `nova capture -o <dir>` | `cli/capture.py` |
+| Per-run base directory | `nova capture -o/--output-dir <dir>`; the capsule lands in `<dir>/<ULID>/` | `cli/capture.py`, `capture/capsule.py:CapsuleWriter` |
 
 The run ID is a 26-character [ULID](https://github.com/ulid/spec)
 (`capture/_ulid.py`; schema `$defs/Ulid`). ULIDs sort by creation time, so a
@@ -49,9 +51,10 @@ workload, so they treat the capsule as untrusted input (see
 | 5 | `capsule.yaml` | The run manifest, redacted as a data structure before it is written | orchestrator |
 | 6 | `lineage.jsonl` | Typed lineage edges for this run | `lineage/_writer.py:LineageWriter` |
 | 7 | `capture-health.json` | Dropped-event counts, only when the recorder dropped events — the orchestrator's own and those the workload process handed off at exit — or when the workload tampered with a capsule path (`tampered_entries`). Written before the residual pass, so it is scanned and listed in `evidence_digests` | `capture/event_recorder.py:EventRecorder.finalize_health`, `capture/workload_health.py` |
+| 7 | `replayability.json` | What a strict mocked replay would do with the capsule (experimental; see the next table). Written for every finalized capsule, before the residual pass, so it is scanned and listed in `evidence_digests` | `capture/finalize.py:write_replayability` |
 | 8 | `redaction-proof.json` | The secret-scan proof (see below), written once after the residual pass | `capture/secrets.py:SecretScannerV0` |
-| 9 | `capsule.yaml` (rewritten) | The manifest again, now with `evidence_digests` | orchestrator, `_evidence_digests` |
-| 10 | `.seal/manifest.dsse`, `.seal/manifest.dsse.tsr`, `.seal/log-entry.json` | The seal, only when NovaSeal is configured | orchestrator, `_seal_capsule` |
+| 9 | `capsule.yaml` (rewritten) | The manifest again, now with `evidence_digests` | `capture/finalize.py:finalize_capsule`, `evidence_digests` |
+| 10 | `.seal/manifest.dsse`, `.seal/manifest.dsse.tsr`, `.seal/log-entry.json` | The seal, only when NovaSeal is configured | `capture/finalize.py:seal_capsule` |
 
 These files appear only in some runs:
 
@@ -62,8 +65,19 @@ These files appear only in some runs:
 | `file-effects.json` | `nova capture` of a Python workload (ADR-0321 amendment, works today): the paths the workload's Python processes opened for writing (a CPython audit hook on `open`) and each file's state after the run (`sha256:` digest, or `absent`, `not_regular`, `too_large`, `unreadable`) — never contents. `complete: false` with a `reason` when a process ended without handing off its writes, or a cap was hit (1,024 paths per process, 4,096 per run). A container or batch runner writes none (its paths name another filesystem). Each observed process writes hidden `.file-effects.workload.<pid>.started` / `.json` hand-off files, which `nova capture` merges and deletes; they are self-reported by the recorded process. Scanned and listed in `evidence_digests` like every other file. Mocked replay compares it ([Fidelity verdict](replay-modes.md#fidelity-verdict-adr-0321-experimental)) |
 | `replayability.json` | Every capsule finalized by `nova capture`, a framework adapter, the `@agent` decorator or OpenTelemetry import (experimental): what a strict mocked replay would do with the capsule — `replayable` (`full` · `partial` · `none`), `strict_mocked` (`start` · `refuse`), the refusal it would record, and per-surface counts and reason codes. Classified from the redacted streams by the replay's own predicates, before the residual pass, so it is scanned and listed in `evidence_digests`. Absent on older capsules (unknown); replay never reads it. See [Replayability at capture time](replay-modes.md#replayability-at-capture-time-experimental) |
 | `c2pa-manifest.json` | `nova capture --mark-provenance` |
-| `otel-genai-spans.json` | `nova capture --emit-otel-genai` |
+| `otel-genai-spans.json` | `nova capture --emit-otel-genai`. Written by `cli/capture.py` after the orchestrator has finalized (and, when configured, sealed) the capsule, so it is **not** in `evidence_digests`; `nova verify` on a sealed capsule reports it as not covered by the seal |
 | `redaction_manifest.json` | `nova capture --pii-subject` (experimental, ADR-0314): one entry per protected span |
+
+Other commands add files to a capsule after capture. They are not part of the
+write order above; a file written after the digest step is not in
+`evidence_digests`, and `nova verify` on a sealed capsule reports it as not covered by the seal:
+
+| Path | Written by |
+|---|---|
+| `energy-receipts.jsonl` | `nova energy attest` (`energy/_attribution.py:write_receipts`) and the SLURM runner's sacct receipt (`runners/_slurm_energy.py`); experimental |
+| `attestations.jsonl` | `nova evidence attest-replay` appends one record per re-performance attestation (`cli/evidence.py`); experimental |
+| `scores.jsonl` | evaluation scores appended to the capsule (`eval/scores.py:SCORES_FILENAME`) |
+| `comments.jsonl` | the per-capsule comment log (`capsule/comments.py:COMMENTS_FILENAME`) |
 
 ### After the workload runs: the capsule is untrusted input
 
@@ -77,8 +91,10 @@ so from the moment the runner returns, capture treats the capsule as untrusted
    (`capture/tamper.py:inspect_capsule_after_workload`). Each capsule-managed path
    (every JSONL stream, `capsule.yaml`, `env.lock`, `replay.yaml`,
    `redaction-proof.json`, `capture-health.json`, `lineage.jsonl`,
-   `c2pa-manifest.json`, `redaction_manifest.json`, `outputs/stdout.txt`,
-   `outputs/stderr.txt`, the `inputs/` and `outputs/` directories, and `.seal/`)
+   `file-effects.json`, `c2pa-manifest.json`, `redaction_manifest.json`,
+   `outputs/stdout.txt`, `outputs/stderr.txt`, the `inputs/` and `outputs/`
+   directories, the optional `outputs/media/` directory, and `.seal/`;
+   `capture/tamper.py:_MANAGED_FILES`)
    is `lstat`-ed and never opened. A symlink, FIFO, socket or device there, a
    directory where a file belongs (or the reverse), or any `.seal/` at all is
    removed without being followed, the empty stream or directory
@@ -148,12 +164,13 @@ flowchart TB
     root --> r["redaction-proof.json"]
     root --> rp["replay.yaml"]
     root --> l["lineage.jsonl"]
+    root --> rb["replayability.json"]
     root --> io["inputs/ · outputs/"]
     root --> seal[".seal/ (optional)"]
     seal --> d["manifest.dsse"]
     seal --> t["manifest.dsse.tsr"]
     seal --> le["log-entry.json"]
-    m -. "sha256 of every file except<br/>capsule.yaml and .seal/" .-> s1 & s2 & s3 & s4 & e & r & rp & l & io
+    m -. "sha256 of every file except<br/>capsule.yaml and .seal/" .-> s1 & s2 & s3 & s4 & e & r & rp & l & rb & io
     d -. "signs" .-> m
 ```
 
@@ -164,10 +181,14 @@ The schema requires `schema_version`, `run_id`, `created_at`, `finished_at`,
 `working_directory`, `host`, the `*_ref` pointers to the files above,
 `trace_root_span_id`, `inputs`, `outputs`, and the call counters
 (`model_call_count`, `tool_call_count`, `mutating_tool_count`). `model_call_count`
-counts logical model calls, not records (see below). Optional refs —
-`lineage_ref`, `attestations_ref`, `content_provenance_ref`, and the event-stream
-refs `network_events_ref`, `file_events_ref`, `human_approvals_ref` — appear only
-when their file exists. The top level is closed (`additionalProperties: false`),
+counts logical model calls, not records (see below). Optional refs appear only
+when their file exists: `content_provenance_ref` (`--mark-provenance`) and the
+event-stream refs `network_events_ref`, `file_events_ref`, `human_approvals_ref`
+(`capture/orchestrator.py:_event_stream_refs`). The schema also defines
+`lineage_ref` and `attestations_ref`, but no capture path sets them: capture always
+writes `lineage.jsonl` without a ref, only `nova migrate` adds `lineage_ref`
+(`capsule_migration/_converter.py`), and `nova evidence attest-replay` appends
+`attestations.jsonl` without one. The top level is closed (`additionalProperties: false`),
 so every key a writer adds must be registered in all three schema copies
 (`src/novafabric/schemas/`, `schemas/`, `ui/dashboard/src/data/schemas/`);
 `tests/capture/test_event_stream_refs_schema.py` checks the event-stream refs
@@ -270,7 +291,7 @@ Some optional fields matter for the architecture:
 
 | Field | Purpose |
 |---|---|
-| `evidence_digests` | `{path: {sha256, size_bytes}}` for every file except `capsule.yaml` and `.seal/`. This field is what binds the whole directory to the seal. |
+| `evidence_digests` | `{path: {sha256, size_bytes}}` for every file present at the digest step except `capsule.yaml` and `.seal/`. This field is what binds the whole directory to the seal; a file added later (see below) is not in it. |
 | `parent_run_id`, `replay_of_run_id`, `replay_mode` | Relationships to other capsules. `replay_of_run_id` becomes a `replayed_from` lineage edge. |
 | `session_id`, `sequence` | Membership in a multi-turn session (experimental) |
 | `facets`, `extensions` | Additive extension points (`slurm`, `kubernetes`, …) that let the format grow without a new top-level format |
@@ -347,8 +368,10 @@ captured output.
 
 **Works today** (the streaming behaviour, the measured `host` block, the replay
 refusal and the shared finalization described here shipped in v0.105.0). The framework
-adapters (`src/novafabric/adapters/*.py`; LlamaIndex, Pydantic AI and Haystack share
-`adapters/_capsule.py:AdapterCapture`, the others write their own manifest) and the
+adapters (`src/novafabric/adapters/*.py`; LlamaIndex, Pydantic AI, Haystack,
+smolagents, Bedrock AgentCore and, through `adapters/_entry_points.py`, CrewAI,
+AutoGen and DSPy share `adapters/_capsule.py:AdapterCapture`; LangGraph, OpenAI
+Agents, Google ADK and A2A write their own manifest) and the
 `@agent` decorator (`novafabric.sdk.agent`, in `sdk/agent.py`) write a capsule from inside the
 Python process:
 

@@ -24,7 +24,9 @@ excludes network), and asserts p95 over 30 requests per endpoint (10 for the dee
 | same, ~50 pages deep via `cursor=` | 300 ms | keyset stays O(page), never O(offset) |
 | `GET /api/audit?limit=200` (100K-line log) | 100 ms | reverse-block tail reads (S1) |
 
-Changing a threshold is a release decision: update this table, the test, and
+Changing a threshold is a release decision: update this table, the
+`dashboard.*.p95` entry in `tests/bench/slo_catalog.toml` (the test reads its
+thresholds from that catalog, never from its own constants), and
 the "Scale characteristics" section of [`docs/dashboard.md`](../dashboard.md)
 in the same PR (docs honesty rule).
 
