@@ -8,8 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AssetType(str, Enum):
-    """The seven asset types the registry knows."""
-
     model = "model"
     agent = "agent"
     prompt = "prompt"
@@ -20,8 +18,6 @@ class AssetType(str, Enum):
 
 
 class AssetStatus(str, Enum):
-    """The six lifecycle states, in promotion order."""
-
     development = "development"
     validated = "validated"
     pending_approval = "pending_approval"

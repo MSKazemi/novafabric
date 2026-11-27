@@ -120,8 +120,8 @@ wrote every call into `capsule_dir` itself, so a second call overwrote
 **Behaviour**
 
 - Installs every built-in capture hook whose target SDK is importable (OpenAI,
-  Anthropic, OpenAI Agents, Google ADK, LangChain, MCP, httpx, requests, aiohttp)
-  plus registered third-party hooks, before calling the function.
+  Anthropic, OpenAI Agents, Google ADK, LangChain, MCP, httpx, httpx2, requests,
+  urllib3, aiohttp) plus registered third-party hooks, before calling the function.
 - Removes hooks after the function returns (including on exception).
 - On exception: writes a capsule with `status: failure` and re-raises. `sys.exit(n)`
   records `exit_code: n` (`sys.exit()`/`sys.exit(0)` is a success, a message is
@@ -810,7 +810,7 @@ truncating.
 from novafabric.lineage import (
     AbstractLineageStore,    # ABC: insert(edge), provenance(run_id, depth),
                              #      blast_radius(run_id, max_depth), replay_chain(run_id)
-    SqliteLineageStore,      # SqliteLineageStore(db_path, site_id="local"); db_path is required
+    SqliteLineageStore,      # SqliteLineageStore(db_path=None, site_id="local"); None raises ValueError
     PostgresLineageStore,    # PostgresLineageStore(dsn, site_id="local"); needs psycopg
     AGELineageStore,         # AGELineageStore(dsn, site_id="local"); Postgres with Apache AGE
     JanusGraphLineageStore,  # JanusGraphLineageStore(gremlin_endpoint="ws://localhost:8182/gremlin", site_id="local")
@@ -819,8 +819,8 @@ from novafabric.lineage import (
 
 These implement the backend interface `AbstractLineageStore`, which is narrower
 than `LineageStore` above (its traversals take a run id and a depth). `LineageStore`
-is the SQLite store the CLI uses and does not subclass it. `SqliteLineageStore`
-raises `ValueError` when `db_path` is `None`, so a test never writes into the
+is the SQLite store the CLI uses and does not subclass it. `SqliteLineageStore`'s
+`db_path` defaults to `None` but raises `ValueError` when left unset, so a test never writes into the
 developer database by accident. The Postgres-based backends import `psycopg` when
 constructed, and `JanusGraphLineageStore` opens its Gremlin connection on first use.
 
