@@ -50,7 +50,7 @@ export default function TruncationNotice({
         ) : (
           <>Showing {shown.toLocaleString()} — more available</>
         )}
-        {capped && <span> (display limit reached — narrow the filters to see the rest)</span>}
+        {capped && <span> (display limit reached)</span>}
       </span>
       <span className="flex items-center gap-2">
         {hint && <span>{hint}</span>}

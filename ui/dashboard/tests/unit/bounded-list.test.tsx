@@ -5,9 +5,12 @@
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AUDIT_ENTRIES_MAX,
   LIVE_RUNS_MAX,
   PAGINATED_MAX_ITEMS,
+  REGISTRY_ASSETS_MAX,
   appendBounded,
+  chunk,
   isAtCap,
   prependBounded,
   pruneRecord,
@@ -22,6 +25,11 @@ describe('named maxima', () => {
   it('are positive and the live list is the smaller one', () => {
     expect(LIVE_RUNS_MAX).toBeGreaterThan(0);
     expect(PAGINATED_MAX_ITEMS).toBeGreaterThanOrEqual(LIVE_RUNS_MAX);
+  });
+
+  it('the paged tabs stop on a whole page (no page is ever cut)', () => {
+    expect(AUDIT_ENTRIES_MAX % 200).toBe(0); // AuditTab PAGE_SIZE
+    expect(REGISTRY_ASSETS_MAX % 50).toBe(0); // useAssetsPage PAGE_SIZE
   });
 });
 
@@ -54,6 +62,19 @@ describe('prependBounded', () => {
     expect(list.some((r) => r.id.startsWith('old'))).toBe(false);
   });
 
+  it('never drops the kept (selected) entry; the oldest other one goes instead', () => {
+    const list = [{ id: 'c' }, { id: 'b' }, { id: 'a' }];
+    expect(prependBounded(list, { id: 'd' }, 3, id, 'a').map(id)).toEqual(['d', 'c', 'a']);
+    let l: { id: string }[] = list;
+    for (let i = 0; i < 10; i++) l = prependBounded(l, { id: `n${i}` }, 3, id, 'a');
+    expect(l.map(id)).toEqual(['n9', 'n8', 'a']);
+  });
+
+  it('a kept key that is not in the list changes nothing', () => {
+    expect(prependBounded([{ id: 'b' }, { id: 'a' }], { id: 'c' }, 2, id, 'zz').map(id)).toEqual(['c', 'b']);
+    expect(prependBounded([{ id: 'b' }, { id: 'a' }], { id: 'c' }, 2, id, null).map(id)).toEqual(['c', 'b']);
+  });
+
   it('clamps a nonsensical maximum to 1', () => {
     expect(prependBounded([{ id: 'a' }], { id: 'b' }, 0, id)).toEqual([{ id: 'b' }]);
     expect(prependBounded([{ id: 'a' }], { id: 'b' }, Number.NaN, id)).toEqual([{ id: 'b' }]);
@@ -82,6 +103,12 @@ describe('isAtCap / pruneRecord / reachesCap', () => {
     expect(isAtCap(null, 3)).toBe(false);
     expect(isAtCap(rows(2), 3)).toBe(false);
     expect(isAtCap(rows(3), 3)).toBe(true);
+  });
+
+  it('chunk splits into batches no larger than the size', () => {
+    expect(chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+    expect(chunk([], 100)).toEqual([]);
+    expect(chunk(Array.from({ length: 500 }, (_, i) => i), 100).map((b) => b.length)).toEqual([100, 100, 100, 100, 100]);
   });
 
   it('pruneRecord keeps only the listed keys', () => {

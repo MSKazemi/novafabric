@@ -14,7 +14,13 @@
 /** Most runs the Runs list keeps in memory (stream prepends + loaded pages). */
 export const LIVE_RUNS_MAX = 500;
 
-/** Default cap for lists accumulated by `usePaginatedQuery`. */
+/** Most audit entries the Audit tab keeps in memory (10 pages of 200). */
+export const AUDIT_ENTRIES_MAX = 2000;
+
+/** Most assets the Registry tab keeps in memory (20 pages of 50). */
+export const REGISTRY_ASSETS_MAX = 1000;
+
+/** Default cap for lists accumulated by `usePaginatedQuery` (no tab uses the hook yet). */
 export const PAGINATED_MAX_ITEMS = 2000;
 
 function clampMax(max: number): number {
@@ -24,20 +30,27 @@ function clampMax(max: number): number {
 /**
  * Put `item` at the head of a newest-first list. An item whose key is already
  * present is not added twice (the list is returned unchanged, same reference).
- * At most `max` items are kept; the oldest (tail) ones are dropped.
+ * At most `max` items are kept; the oldest (tail) ones are dropped, except the
+ * one whose key is `keep` (e.g. the selected row): it stays, as the last entry,
+ * and the oldest other entry is dropped instead.
  */
 export function prependBounded<T>(
   list: readonly T[] | null | undefined,
   item: T,
   max: number,
   key: (t: T) => string,
+  keep?: string | null,
 ): T[] {
   const cap = clampMax(max);
   const prev = list ?? [];
   const k = key(item);
   if (prev.some((x) => key(x) === k)) return prev as T[];
   const next = [item, ...prev];
-  return next.length > cap ? next.slice(0, cap) : next;
+  if (next.length <= cap) return next;
+  const kept = next.slice(0, cap);
+  if (keep == null || cap < 2 || kept.some((x) => key(x) === keep)) return kept;
+  const pinned = next.slice(cap).find((x) => key(x) === keep);
+  return pinned === undefined ? kept : [...kept.slice(0, cap - 1), pinned];
 }
 
 /**
@@ -60,6 +73,14 @@ export function appendBounded<T>(
 /** True once a list has reached its maximum (no further page may be appended). */
 export function isAtCap(list: readonly unknown[] | null | undefined, max: number): boolean {
   return (list?.length ?? 0) >= clampMax(max);
+}
+
+/** Split `items` into consecutive batches of at most `size` (a server-side id cap, say). */
+export function chunk<T>(items: readonly T[], size: number): T[][] {
+  const n = clampMax(size);
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += n) out.push(items.slice(i, i + n));
+  return out;
 }
 
 /**

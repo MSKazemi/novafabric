@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import { api } from '../../../lib/api';
 import DataTable, { type Column } from '../../ui/DataTable';
 import EmptyState from '../../ui/EmptyState';
+import { AUDIT_ENTRIES_MAX, appendBounded, isAtCap } from '../../../lib/boundedList';
 
 const PAGE_SIZE = 200;
 
@@ -86,18 +87,21 @@ export default function AuditTab({
 
   useEffect(() => { refresh(); }, [refresh, refreshTick]);
 
+  // Bounded (AUDIT_ENTRIES_MAX): at the cap Load more stops and the tab says so.
+  const capped = isAtCap(entries, AUDIT_ENTRIES_MAX);
+
   const loadMore = useCallback(() => {
-    if (nextCursor == null || loadingMore) return;
+    if (nextCursor == null || loadingMore || capped) return;
     setLoadingMore(true);
     api.audit(PAGE_SIZE, { cursor: nextCursor, action: actionFilter !== 'all' ? actionFilter : undefined })
       .then((r) => {
-        setEntries(prev => [...(prev ?? []), ...r.entries]);
+        setEntries(prev => appendBounded(prev, r.entries, AUDIT_ENTRIES_MAX).items);
         setNextCursor(r.next_cursor);
         mergeKnownActions(r.entries);
       })
       .catch((e) => setError((e as Error).message))
       .finally(() => setLoadingMore(false));
-  }, [nextCursor, loadingMore, actionFilter, mergeKnownActions]);
+  }, [nextCursor, loadingMore, capped, actionFilter, mergeKnownActions]);
 
   const availableActions = useMemo(
     () => ['all', ...knownActions],
@@ -274,7 +278,13 @@ export default function AuditTab({
       )}
 
       {/* Load more (byte-offset cursor pagination — ADR-0199) */}
-      {nextCursor != null && (
+      {nextCursor != null && capped && (
+        <p role="note" className="text-[10px] text-[var(--color-text-muted)]">
+          Showing the latest {AUDIT_ENTRIES_MAX.toLocaleString()} entries (display limit). Pick an action
+          filter to reach older entries of that kind; the full log is the file named above.
+        </p>
+      )}
+      {nextCursor != null && !capped && (
         <button
           onClick={loadMore}
           disabled={loadingMore}

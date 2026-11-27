@@ -46,6 +46,7 @@ export default function RegistryTab({
   const {
     assets, detailMap, evalResults, error, totalAssets, hasMore, loadingMore,
     refresh, loadMore, selectedIds, setSelectedIds,
+    capped,
   } = useAssetsPage({ refreshTick, onCountChange });
 
   // Lazy sparkline history via IntersectionObserver.
@@ -222,6 +223,7 @@ export default function RegistryTab({
         hasMore={hasMore}
         loadingMore={loadingMore}
         loadMore={loadMore}
+        capped={capped}
       />
 
       {/* Dialogs */}

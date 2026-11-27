@@ -134,7 +134,10 @@ export default function RunsTab({
     runs, setRuns, error, totalApprox, hasMore, loadingMore, liveConnected,
     costMap, refresh, loadMore,
     liveTracker, capped, listMax,
-  } = useRunSearch({ search, statusFilter, since, until, refreshTick, onCountChange });
+  } = useRunSearch({
+    search, statusFilter, since, until, refreshTick, onCountChange,
+    selectedRunId: selected?.run_id ?? null,
+  });
 
   const selectedId = selected?.run_id ?? null;
   useEffect(() => {

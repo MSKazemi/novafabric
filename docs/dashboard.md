@@ -811,7 +811,8 @@ The Runs list is the dashboard's one live list: it loads a page from
 `/api/runs/search` and then adds new runs pushed by the Server-Sent Events
 stream `/api/runs/stream`. Other tabs refresh by polling (the global
 auto-refresh every 30 s, a few cards more often; polling pauses while the browser
-tab is hidden) and replace their data on each poll, so they do not grow.
+tab is hidden) and replace their data on each poll. The Audit and Registry tabs
+grow only when you press **Load more**, and both stop at a display limit (below).
 
 **Freshness, in words.** The Runs list header says how current the list is:
 
@@ -834,7 +835,10 @@ is shown.
 **Reconnect.** The stream has no event IDs and no replay, so runs created while
 it was down are never delivered. After any reconnect the list therefore reloads
 its first page before it is called `live` again; pages loaded with **Load more**
-before the gap are dropped by that reload (the selected run stays selected).
+before the gap are dropped by that reload, as they are by every auto-refresh.
+This is deliberate: the stream only pushes new runs, never status changes of
+runs already listed, so keeping older pages would show rows whose status is not
+current next to a `live` label. The selected run stays selected.
 Reconnects use capped exponential backoff with jitter: 1 s, 2 s, 4 s, … up to
 30 s, each delay drawn from the upper half of its window so many open tabs do not
 reconnect at the same moment. The backoff resets only after a connection has
@@ -851,10 +855,16 @@ so a tab left open for hours does not grow without bound:
 | List | Maximum | When reached |
 |---|---|---|
 | Runs list (stream + **Load more**) | 500 runs (`LIVE_RUNS_MAX`) | The header says *Showing the latest 500 runs (display limit)*; new runs push the oldest out, **Load more** stops, and the footer still reports how many more the server holds. Narrow the search or date range to reach older runs, or use `nova query`. |
-| Per-run cost summaries shown in the Runs list | One entry per run in the list | Entries for runs that left the list are discarded. |
-| Lists built with `usePaginatedQuery` | 2,000 rows by default (`PAGINATED_MAX_ITEMS`) | Further pages are not fetched and the footer says *display limit reached*. |
+| Per-run cost summaries shown in the Runs list | One entry per run in the list | Entries for runs that left the list are discarded. Costs are asked for only for runs not asked about yet, plus running runs, in batches of 100 ids (the server's limit per request). |
+| Audit tab (**Load more**) | 2,000 entries (`AUDIT_ENTRIES_MAX`) | **Load more** is replaced by *Showing the latest 2,000 entries (display limit)*. Pick an action filter (applied on the server) to reach older entries of that kind; the full log is the file named at the top of the tab. |
+| Registry tab (**Load more**) | 1,000 assets (`REGISTRY_ASSETS_MAX`) | **Load more** stops; the footer reads *Showing 1,000 of N — K more (display limit reached)* and points to `nova list` for the full registry. |
 
-The maxima are constants in `ui/dashboard/src/lib/boundedList.ts`; the
+When the Runs list is at its limit, the selected run is never the one dropped:
+the oldest other run goes instead, so the selection and `j`/`k` keep their place.
+
+The maxima are constants in `ui/dashboard/src/lib/boundedList.ts` (it also
+holds `PAGINATED_MAX_ITEMS`, the 2,000-row default of the shared
+`usePaginatedQuery` hook, which no tab uses yet); the
 freshness rules are in `ui/dashboard/src/lib/freshness.ts`, and the reconnect
 loop is `openManagedRunStream` in `ui/dashboard/src/lib/api.ts`.
 

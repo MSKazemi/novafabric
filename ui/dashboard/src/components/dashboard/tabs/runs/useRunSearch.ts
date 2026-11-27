@@ -13,11 +13,29 @@ import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateA
 import { api, getConnection, openManagedRunStream, type RunStreamHandle } from '../../../../lib/api';
 import type { RunSummary } from '../../../../lib/api';
 import type { RunCostEntry, StatusFilter } from './types';
-import { LIVE_RUNS_MAX, appendBounded, isAtCap, prependBounded, pruneRecord } from '../../../../lib/boundedList';
+import { LIVE_RUNS_MAX, appendBounded, chunk, isAtCap, prependBounded, pruneRecord } from '../../../../lib/boundedList';
 import type { LiveTracker } from '../../../../lib/freshness';
 import { useLiveTracker } from '../../../../lib/useLiveTracker';
 
 const PAGE_SIZE = 50;
+
+/** `/api/runs/cost-summary` answers for at most 100 run ids per request. */
+export const COST_SUMMARY_BATCH = 100;
+
+/**
+ * Run ids whose cost still needs fetching: those not asked about yet, plus
+ * running runs (their cost is still growing). Finished runs already asked
+ * about are not asked again, so a pushed run costs one small request, not a
+ * re-fetch of every listed id.
+ */
+export function costIdsToFetch(
+  runs: readonly Pick<RunSummary, 'run_id' | 'status'>[],
+  asked: ReadonlySet<string>,
+): string[] {
+  return runs
+    .filter((r) => !asked.has(r.run_id) || r.status === 'running')
+    .map((r) => r.run_id);
+}
 
 /**
  * The server keeps rows whose `created_at <= until` as a string comparison, so a bare
@@ -55,6 +73,7 @@ export function useRunSearch({
   until,
   refreshTick,
   onCountChange,
+  selectedRunId = null,
 }: {
   search: string;
   statusFilter: StatusFilter;
@@ -62,6 +81,8 @@ export function useRunSearch({
   until: string;
   refreshTick: number;
   onCountChange?: (n: number) => void;
+  /** The selected run is never the one dropped when the list is at its cap. */
+  selectedRunId?: string | null;
 }): RunSearchState {
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +99,10 @@ export function useRunSearch({
   const [liveConnected, setLiveConnected] = useState(false);
   const sseRef = useRef<RunStreamHandle | null>(null);
   const [liveTracker, dispatchLive] = useLiveTracker();
+  const selectedRef = useRef(selectedRunId);
+  useEffect(() => { selectedRef.current = selectedRunId; }, [selectedRunId]);
+  // Run ids the cost endpoint has answered for (bounded: pruned to the list).
+  const costAskedRef = useRef<Set<string>>(new Set());
   const capped = isAtCap(runs, LIVE_RUNS_MAX);
 
   // Each refresh starts a new "generation"; a response from an older one is dropped, so
@@ -153,7 +178,7 @@ export function useRunSearch({
   useEffect(() => {
     const handle = openManagedRunStream(
       (newRun) => {
-        setRuns(prev => prependBounded(prev, newRun, LIVE_RUNS_MAX, r => r.run_id));
+        setRuns(prev => prependBounded(prev, newRun, LIVE_RUNS_MAX, r => r.run_id, selectedRef.current));
         dispatchLive({ type: 'stream-message', at: Date.now() });
         const next = totalApproxRef.current + 1;
         totalApproxRef.current = next;
@@ -178,25 +203,32 @@ export function useRunSearch({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fetch per-run cost summary whenever the run list changes.
+  // Fetch per-run cost summary whenever the run list changes: only ids not yet
+  // asked about (plus running runs), in batches the server accepts (100 ids each).
   // Degrades silently when ClickHouse is absent (endpoint returns {costs:{}}).
   useEffect(() => {
     if (!runs || runs.length === 0) return;
     const { token, base } = getConnection();
     if (!token) return;
-    const ids = runs.map(r => r.run_id).join(',');
-    const url = `${base}/api/runs/cost-summary?token=${encodeURIComponent(token)}&run_ids=${encodeURIComponent(ids)}`;
+    const keep = runs.map(r => r.run_id);
+    const listed = new Set(keep);
+    for (const id of costAskedRef.current) if (!listed.has(id)) costAskedRef.current.delete(id);
+    const wanted = costIdsToFetch(runs, costAskedRef.current);
     let cancelled = false;
-    fetch(url)
-      .then(res => res.ok ? res.json() : Promise.resolve({ costs: {} }))
-      .then((data: { costs?: Record<string, RunCostEntry> }) => {
-        if (!cancelled && data.costs && Object.keys(data.costs).length > 0) {
-          // Keep cost entries only for runs still in the (bounded) list.
-          const keep = runs.map(r => r.run_id);
-          setCostMap(prev => pruneRecord({ ...prev, ...data.costs }, keep));
-        }
-      })
-      .catch(() => { /* ClickHouse absent — degrade silently */ });
+    for (const batch of chunk(wanted, COST_SUMMARY_BATCH)) {
+      const url = `${base}/api/runs/cost-summary?token=${encodeURIComponent(token)}&run_ids=${encodeURIComponent(batch.join(','))}`;
+      fetch(url)
+        .then(res => res.ok ? res.json() : null)
+        .then((data: { costs?: Record<string, RunCostEntry> } | null) => {
+          if (cancelled || data === null) return; // a superseded effect re-asks these ids
+          for (const id of batch) costAskedRef.current.add(id);
+          if (data.costs && Object.keys(data.costs).length > 0) {
+            // Keep cost entries only for runs still in the (bounded) list.
+            setCostMap(prev => pruneRecord({ ...prev, ...data.costs }, keep));
+          }
+        })
+        .catch(() => { /* ClickHouse absent — degrade silently */ });
+    }
     return () => { cancelled = true; };
   }, [runs]);
 

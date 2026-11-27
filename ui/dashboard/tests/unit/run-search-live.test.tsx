@@ -9,11 +9,12 @@ import type { RunStreamStatus, RunSummary } from '@/lib/api';
 const searchRuns = vi.fn();
 let pushRun: (r: RunSummary) => void = () => {};
 let pushStatus: (connected: boolean, s: RunStreamStatus) => void = () => {};
+let token: string | null = null;
 
 vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
   api: { searchRuns: (...a: unknown[]) => searchRuns(...a) },
-  getConnection: () => ({ token: null, base: 'http://127.0.0.1:4321' }),
+  getConnection: () => ({ token, base: 'http://127.0.0.1:4321' }),
   openManagedRunStream: (
     onRun: (r: RunSummary) => void,
     onStatus?: (connected: boolean, s: RunStreamStatus) => void,
@@ -24,7 +25,7 @@ vi.mock('@/lib/api', async (orig) => ({
   },
 }));
 
-import { useRunSearch } from '@/components/dashboard/tabs/runs/useRunSearch';
+import { COST_SUMMARY_BATCH, costIdsToFetch, useRunSearch } from '@/components/dashboard/tabs/runs/useRunSearch';
 import { LIVE_RUNS_MAX } from '@/lib/boundedList';
 import { livePhase } from '@/lib/freshness';
 
@@ -40,7 +41,7 @@ const status = (connected: boolean, reconnected = false): RunStreamStatus => ({
 });
 
 describe('useRunSearch live list', () => {
-  beforeEach(() => searchRuns.mockReset());
+  beforeEach(() => { searchRuns.mockReset(); token = null; });
 
   it('keeps at most LIVE_RUNS_MAX runs, dropping the oldest', async () => {
     searchRuns.mockResolvedValueOnce(page(ids(50, 'old'), 'c1', 10_000));
@@ -107,5 +108,54 @@ describe('useRunSearch live list', () => {
     await act(async () => { pushStatus(true, status(true, true)); });
     await waitFor(() => expect(livePhase(result.current.liveTracker, Date.now())).toBe('stale'));
     expect(result.current.runs).toHaveLength(1); // the old data stays visible, labelled
+  });
+
+  it('keeps the selected run when the cap would drop it', async () => {
+    searchRuns.mockResolvedValueOnce(page(ids(LIVE_RUNS_MAX, 'old'), 'c1', 10_000));
+    const oldest = `old${LIVE_RUNS_MAX - 1}`;
+    const { result } = renderHook(() => useRunSearch({ ...props, selectedRunId: oldest }));
+    await waitFor(() => expect(result.current.runs).toHaveLength(LIVE_RUNS_MAX));
+    act(() => { for (let i = 0; i < 30; i++) pushRun({ run_id: `new${i}` } as RunSummary); });
+    const runs = result.current.runs!;
+    expect(runs).toHaveLength(LIVE_RUNS_MAX);
+    expect(runs.some((r) => r.run_id === oldest)).toBe(true);
+    expect(runs.some((r) => r.run_id === `old${LIVE_RUNS_MAX - 2}`)).toBe(false);
+  });
+});
+
+describe('per-run cost requests', () => {
+  beforeEach(() => { searchRuns.mockReset(); token = null; });
+
+  it('costIdsToFetch: unasked ids plus running runs only', () => {
+    const runs = [
+      { run_id: 'a', status: 'success' },
+      { run_id: 'b', status: 'running' },
+      { run_id: 'c', status: 'failure' },
+    ];
+    expect(costIdsToFetch(runs, new Set())).toEqual(['a', 'b', 'c']);
+    expect(costIdsToFetch(runs, new Set(['a', 'b', 'c']))).toEqual(['b']);
+  });
+
+  it('asks in batches the server accepts and does not re-ask finished runs', async () => {
+    token = 't';
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ costs: {} }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      searchRuns.mockResolvedValueOnce(page(ids(250, 'r'), 'c1', 1000));
+      const { result } = renderHook(() => useRunSearch(props));
+      await waitFor(() => expect(result.current.runs).toHaveLength(250));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      for (const [url] of fetchMock.mock.calls as unknown as [string][]) {
+        const idsParam = new URL(url).searchParams.get('run_ids') ?? '';
+        expect(idsParam.split(',').length).toBeLessThanOrEqual(COST_SUMMARY_BATCH);
+      }
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); // let the answers land
+      act(() => pushRun({ run_id: 'fresh', status: 'success' } as RunSummary));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+      const lastUrl = (fetchMock.mock.calls[3] as unknown as [string])[0];
+      expect(new URL(lastUrl).searchParams.get('run_ids')).toBe('fresh');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
