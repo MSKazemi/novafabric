@@ -248,6 +248,38 @@ def check_asset_status(
 
 
 class CaptureOrchestrator:
+    """Capture a command as a Run Capsule: the engine behind ``nova capture``.
+
+    The target program is not modified; capture hooks reach it through
+    ``sitecustomize`` on ``PYTHONPATH``. A capsule is written whether the
+    workload succeeds or fails.
+
+    Args:
+        base_dir: Capsule store; each run writes ``<base_dir>/<run_id>/``.
+            Defaults to ``./.novafabric/runs`` under the current directory (the
+            CLI passes its own capsule store instead).
+        runner: Where the workload runs (a ``RunnerSpec``); ``None`` runs it
+            locally.
+        pii_gate: Optional PII gate; with *legal_hold* it writes a redacted copy
+            of the manifest to ``<base_dir>/../legal_hold/<run_id>/``.
+        legal_hold: Enable that legal-hold copy (needs *pii_gate*).
+        mark_provenance: Write a C2PA synthetic-content manifest into the capsule
+            before sealing (``--mark-provenance``).
+        fast_emit: Install hooks only when the workload imports their SDK
+            (``--fast-emit``).
+        emit_spool: Also write run-boundary events to the spool
+            (``--emit-spool``); *spool_dir* overrides its location.
+        spool_dir: Spool directory for *emit_spool*.
+        masking_pipeline: Optional PII masking pipeline run after the built-in
+            secret scanner.
+        capture_media: Store multimodal media bytes, not only their digests
+            (``--capture-media``).
+
+    Raises:
+        CapsuleDirectoryError: *base_dir* cannot be created. No workload has
+            started.
+    """
+
     def __init__(
         self,
         base_dir: Path | None = None,
@@ -330,6 +362,31 @@ class CaptureOrchestrator:
         session_id: str | None = None,
         session_sequence: int | None = None,
     ) -> CaptureResult:
+        """Run *command* under capture and write its capsule.
+
+        Every parameter after *command* is optional and mirrors a ``nova
+        capture`` flag: *runner_options* (``--runner-option``, passed to the
+        runner uninterpreted), *timeout_s* (``--timeout``; ``None`` uses the
+        runner's default), the asset-status pre-flight (*asset_ref*,
+        *require_asset_statuses*, *warn_if_asset_statuses*,
+        *require_registered*, *registry_db_path*), the deployment-environment
+        tag (*environment*), the variant attribution (*experiment*, *variant*,
+        *variant_label*, *variant_source*, *variant_assigned_at*) and the session
+        back-reference (*session_id*, *session_sequence*).
+
+        A workload that fails is not an exception: the capsule records
+        ``status: failure`` and the result carries the exit code.
+
+        Raises:
+            AssetStatusCheckError: an asset-status check the caller opted into
+                failed. Raised before anything is written.
+            ValueError: an explicit environment, variant or session value is
+                invalid (a ``ValueError`` subclass). Raised before anything is
+                written.
+            KeyboardInterrupt, SystemExit: re-raised from the run; when the
+                runner reports that it stopped the workload, the capsule is
+                first finalised as ``aborted``.
+        """
         # ------------------------------------------------------------------
         # C-1.5: Pre-flight asset status check — must happen BEFORE anything
         # is written to disk.  Never blocks by default; only blocks when the

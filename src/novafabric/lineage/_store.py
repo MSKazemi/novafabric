@@ -74,6 +74,13 @@ class LineageGraphTooLargeError(RuntimeError):
 
 
 class LineageStore:
+    """SQLite-backed lineage graph: a rebuildable index of capsules' ``lineage.jsonl``.
+
+    *db_path* defaults to the registry database (``$NOVAFABRIC_HOME/registry.db``,
+    overridden by ``NOVAFABRIC_DB_PATH``). Traversals return node rows (dicts with
+    ``node_id``, ``kind``, ``ref`` and ``payload``); an unknown ref returns ``[]``.
+    """
+
     def __init__(self, db_path: Path | None = None) -> None:
         self._conn = get_connection(db_path)
         self._migrate()
@@ -246,6 +253,11 @@ class LineageStore:
         self, ref: str, kind: str | None = None, depth: int = 5,
         edge_type: EdgeTypeFilter = None,
     ) -> list[dict[str, Any]]:
+        """Descendants of *ref* up to *depth* hops: what depends on it (impact).
+
+        *kind* disambiguates a ref shared by nodes of different kinds;
+        *edge_type* (one type or a collection) restricts the whole traversal.
+        """
         start = self._node_id_for_ref(ref, kind)
         if start is None:
             return []
@@ -274,6 +286,11 @@ class LineageStore:
         self, ref: str, kind: str | None = None, depth: int = 5,
         edge_type: EdgeTypeFilter = None,
     ) -> list[dict[str, Any]]:
+        """Ancestors of *ref* up to *depth* hops: what it was derived from.
+
+        *kind* disambiguates a ref shared by nodes of different kinds;
+        *edge_type* (one type or a collection) restricts the whole traversal.
+        """
         start = self._node_id_for_ref(ref, kind)
         if start is None:
             return []
@@ -299,6 +316,10 @@ class LineageStore:
         return self._rows_to_dicts(rows)
 
     def replay_chain(self, run_id: str) -> list[dict[str, Any]]:
+        """The runs *run_id* was replayed from, following ``replayed_from`` edges.
+
+        At most 100 steps; each row also carries its ``step``.
+        """
         start = self._node_id_for_ref(run_id, "run")
         if start is None:
             return []
@@ -378,6 +399,7 @@ class LineageStore:
     def time_travel(
         self, ref: str, asof: str, kind: str | None = None, limit: int = 5000
     ) -> list[dict[str, Any]]:
+        """Edges touching *ref* created at or before *asof*, oldest first (at most *limit*)."""
         node_id = self._node_id_for_ref(ref, kind)
         if node_id is None:
             return []

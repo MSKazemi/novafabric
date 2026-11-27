@@ -80,6 +80,11 @@ def _md_code_cell(value: object) -> str:
 
 
 def generate_report(format_: str = "markdown", db_path: Path | None = None) -> str:
+    """Render the registry's asset inventory: the engine behind ``nova report``.
+
+    *format_* is ``"markdown"`` (grouped by asset type), ``"json"`` (every asset
+    record without ``spec_json``) or ``"html"``; any other value renders Markdown.
+    """
     assets = list_assets(asset_type=None, status=None, db_path=db_path)
 
     if format_ == "json":

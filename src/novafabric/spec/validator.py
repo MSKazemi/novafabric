@@ -13,6 +13,12 @@ from novafabric.spec.models import AssetSpec, AssetStatus, AssetType, BaseAssetS
 
 
 class SpecValidationError(Exception):
+    """An asset spec file could not be loaded or validated.
+
+    ``errors`` is the Pydantic error list (empty when the file is missing, not
+    YAML, or not a mapping); ``hint`` is a suggested fix.
+    """
+
     def __init__(
         self,
         message: str,
@@ -78,6 +84,14 @@ def _hint_for_error(error: Any) -> str | None:
 
 
 def validate_spec(yaml_path: Path) -> BaseAssetSpec:
+    """Load *yaml_path* and validate it as an asset spec.
+
+    Returns the concrete spec model selected by its ``asset_type``.
+
+    Raises:
+        SpecValidationError: the file is missing, not valid YAML, not a mapping,
+            or fails model validation.
+    """
     if not yaml_path.exists():
         raise SpecValidationError(
             f"File not found: {yaml_path}",

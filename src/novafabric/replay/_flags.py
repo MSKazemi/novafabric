@@ -77,6 +77,7 @@ class ReplayFlags:
 
     @property
     def divergence_policy(self) -> Literal["fail", "warn"]:
+        """``"warn"`` when *permissive* is set, else ``"fail"`` (ADR-0300)."""
         return "warn" if self.permissive else "fail"
 
     @property
@@ -99,6 +100,11 @@ class ReplayFlags:
         return by_field or by_ladder
 
     def permits(self, mutation_class: str) -> bool:
+        """Whether the ``allow_*`` ladder lets a tool of *mutation_class* run live.
+
+        The highest rung set decides; with no rung set only ``"none"`` is
+        permitted.
+        """
         if self.allow_unknown_mutation:
             return mutation_class in _ALLOW_UNKNOWN_CLASSES
         if self.allow_external_side_effects:
@@ -110,6 +116,7 @@ class ReplayFlags:
         return mutation_class == "none"
 
     def active_flag_names(self) -> list[str]:
+        """The ``nova replay`` flags these settings correspond to, e.g. ``--dry-run``."""
         flags = []
         if self.dry_run:
             flags.append("--dry-run")

@@ -49,7 +49,14 @@ equivalent exists it is noted so you can cross-check behaviour with
 | [NovaSeal signing](#novaseal-signing) | `novafabric.trust.novaseal` | `nova seal` / `nova verify` |
 | [Score submission](#score-submission) | `novafabric.scores` | `nova score submit` |
 | [REST client](#rest-client) | `novafabric.client` | — (server mode) |
+| [Compliance-export provenance](#compliance-export-provenance-experimental--adr-0197) | `novafabric.compliance.export.provenance` | — |
 | [Utility](#utility) | `novafabric.capture` | — |
+
+The top-level `novafabric` package exports only `__version__` (the installed
+distribution version, a `str`); every symbol on this page is imported from the
+submodule named in its section. `tests/docs/test_python_api_matches_the_code.py`
+fails when a name this page imports cannot be imported, or when a name in the
+`__all__` of one of the modules above is missing from this page.
 
 ---
 
@@ -57,9 +64,10 @@ equivalent exists it is noted so you can cross-check behaviour with
 
 ```python
 from novafabric.sdk.agent import agent
+from novafabric.sdk import agent  # the same function, re-exported (`novafabric.sdk.__all__`)
 ```
 
-### `@agent(name, version, capsule_dir=None, deployment_environment=None, variant=None, session_id=None, session_sequence=None)`
+### `@agent(name, version, capsule_dir=None, deployment_environment=None, variant=None, session_id=None, session_sequence=None) → Callable[[F], F]`
 
 Wraps an agent function with capture hooks. LLM calls made inside the
 function are recorded into a capsule. This is the in-process alternative to
@@ -111,7 +119,9 @@ wrote every call into `capsule_dir` itself, so a second call overwrote
 
 **Behaviour**
 
-- Installs OpenAI + Anthropic hooks before calling the function.
+- Installs every built-in capture hook whose target SDK is importable (OpenAI,
+  Anthropic, OpenAI Agents, Google ADK, LangChain, MCP, httpx, requests, aiohttp)
+  plus registered third-party hooks, before calling the function.
 - Removes hooks after the function returns (including on exception).
 - On exception: writes a capsule with `status: failure` and re-raises. `sys.exit(n)`
   records `exit_code: n` (`sys.exit()`/`sys.exit(0)` is a success, a message is
@@ -170,13 +180,37 @@ Only `base_dir` and `runner` are covered by examples here; the other keyword
 arguments mirror `nova capture` options — see `nova capture --help` and the
 constructor's docstring.
 
-### `CaptureOrchestrator.run(command) → CaptureResult`
+The constructor creates `base_dir` at once and raises `CapsuleDirectoryError`
+(`novafabric.capture.orchestrator`) when it cannot, before any workload starts.
 
-Captures a command execution as a capsule.
+### `CaptureOrchestrator.run(command, runner_options=None, timeout_s=None, ...) → CaptureResult`
 
-| Parameter | Type | Description |
-|---|---|---|
-| `command` | `list[str]` | Command + arguments |
+Captures a command execution as a capsule. Only `command` is required; every
+other parameter is optional and maps onto a `nova capture` flag.
+
+| Parameter | Type | Default | `nova capture` flag |
+|---|---|---|---|
+| `command` | `list[str]` | — (required) | the command after `--` |
+| `runner_options` | `dict[str, Any] \| None` | `None` | `--runner-option key=value` (passed to the runner uninterpreted) |
+| `timeout_s` | `float \| None` | `None` — the runner's own default | `--timeout` |
+| `asset_ref` | `str \| None` | `None` | `--asset` |
+| `require_asset_statuses` | `list[str] \| None` | `None` | `--require-asset-status` |
+| `warn_if_asset_statuses` | `list[str] \| None` | `None` | `--warn-if-asset-status` |
+| `require_registered` | `bool` | `False` | `--require-registered` |
+| `registry_db_path` | `Path \| None` | `None` — the default registry | — |
+| `environment` | `str \| None` | `None` | `--environment` |
+| `experiment`, `variant`, `variant_label`, `variant_source`, `variant_assigned_at` | `str \| None` | `None` | `--experiment`, `--variant`, `--variant-label`, `--variant-source`, `--variant-assigned-at` |
+| `session_id` | `str \| None` | `None` | `--session-id` |
+| `session_sequence` | `int \| None` | `None` | `--session-sequence` |
+
+Pre-flight checks raise **before anything is written to disk**:
+`AssetStatusCheckError` (`novafabric.capture.orchestrator`) when `asset_ref` is set
+and fails an asset-status check you opted into, and a `ValueError` subclass for an
+invalid explicit environment, variant or session value. A workload that fails is
+not an exception: the capsule is written with `status: failure` and `exit_code`
+carries the code. A `KeyboardInterrupt` or `SystemExit` during the run is
+re-raised; when the runner reports that it stopped the workload, the capsule is
+first finalised with `status: aborted`.
 
 ```python
 from pathlib import Path
@@ -206,6 +240,9 @@ class CaptureResult:
     exit_code: int
     runner_status: str | None = None   # e.g. "failed_setup": the workload never started
     runner_error: str | None = None    # the runner's own reason, when it gave one
+    sealed: bool | None = None         # was the capsule sealed; None if finalization never ran
+    unsealed_reason: str | None = None # why a sealable capsule was not sealed
+    replayability: dict[str, Any] | None = None  # the capsule's replayability.json, if written
 ```
 
 `exit_code` alone cannot tell *the workload ran and failed* from *the workload
@@ -393,7 +430,22 @@ class ReplayFlags:
     intervention_file: Path | None = None
     required_environment: str | None = None
     permissive: bool = False   # mocked mode only (ADR-0300): warn instead of fail
+    hermetic: bool = False     # mocked mode only, experimental (ADR-0322): sandbox the replayed process
+    hermetic_backend: str = "auto"  # "auto" (bwrap, then Landlock + seccomp) | "bwrap" | "landlock"
+
+    def permits(self, mutation_class: str) -> bool: ...  # does the allow_* ladder let this class run?
+    def active_flag_names(self) -> list[str]: ...         # the CLI flags these settings correspond to
+    @property
+    def divergence_policy(self) -> Literal["fail", "warn"]: ...  # "warn" iff permissive
+    @property
+    def permits_writes(self) -> bool: ...  # True if any flag may let a tool beyond read-only run
 ```
+
+`hermetic=True` (**experimental**, `nova replay --hermetic`) runs the replayed
+process tree in a sandbox with no network beyond its own loopback and a read-only
+host filesystem. When no sandbox backend is available the replay is refused before
+the command runs: `status: "aborted"` with `error["type"] == "HermeticUnavailable"`.
+The result's `hermetic` field describes the isolation used.
 
 **Modes**
 
@@ -428,13 +480,23 @@ sandbox or against test credentials.
 |---|---|
 | `capsule_dir` | `Path` |
 | `flags` | `ReplayFlags` |
-| `actor` | `str` — the identity the `replay_mutating` policy gate evaluates (`subject.user`, consulted when a write-permitting flag is set) and the audit log records; default `"cli"` |
 | `base_dir` | `Path \| None` — defaults to `$NOVAFABRIC_HOME/replays/` (`_paths.default_replays_dir()`; `./.novafabric/replays/` under the current directory up to v0.106.0) |
+| `actor` | `str` — the identity the `replay_mutating` policy gate evaluates (`subject.user`, consulted when a write-permitting flag is set) and the audit log records; default `"cli"` |
 
 ### `ReplayEngine.run() → ReplayResult`
 
 Replays the capsule according to the flags. Writes `replay_result.yaml` in the
 output directory.
+
+A replay that diverges or is refused is reported in the result (`status`
+`"failure"` or `"aborted"`, with `divergence_reason` or `error`), not raised.
+Before a replay starts, `run()` raises: `ValueError` when `capsule_dir` has no
+`capsule.yaml` (`CapsuleRequiredFileError` when it is a link, FIFO or directory);
+`ReplayEnvironmentMismatchError`
+(`novafabric.replay.environment_gate`) when `flags.required_environment` is set and
+the capsule recorded a different (or no) deployment environment; and
+`PolicyDeniedError` (`novafabric.policy`) when a write-permitting flag is set and
+the `replay_mutating` policy gate denies `actor`.
 
 ```python
 from pathlib import Path
@@ -464,10 +526,14 @@ print(result.tool_calls_mocked, "MCP tool results served;",
 ```
 
 The replayed process raises a `ReplayDivergenceError` subclass
-(`novafabric.replay._errors`: `ReplayQueueExhaustedError`,
+(`novafabric.replay._errors`: `ReplayQueueExhaustedError` and its subclass
 `ReplayProviderMismatchError`, `ReplayOrderMismatchError`,
 `ReplayUnsupportedSurfaceError`, `ReplayRecordMalformedError`,
-`ReplayToolUnmatchedError`) at the call that diverged.
+`ReplayWireRequestMismatchError`, `ReplayToolUnmatchedError`,
+`ReplayToolRecordNotServableError`, `AdapterRunCountMismatchError`,
+`ReplayRecordedErrorUnreconstructableError`) at the call that diverged. These
+are raised inside the replayed process, not by `ReplayEngine.run()`, which
+reports the divergence in the returned `ReplayResult`.
 
 **Example — how alike a capsule's recorded responses are (`semantic`)**
 
@@ -512,6 +578,7 @@ class ReplayResult:
     # mocked mode, ADR-0300 (all optional)
     model_calls_available: int | None = None
     model_calls_unmatched: int | None = None
+    model_calls_not_servable: int | None = None  # ADR-0319: recorded on a surface mocked replay cannot serve
     tool_calls_live: int | None = None
     tool_calls_unmatched: int | None = None
     queues_fully_consumed: bool | None = None
@@ -530,6 +597,14 @@ class ReplayResult:
     exact_reasons: list[str] | None = None
     # tool-call schema drift findings (ADR-0128; additive, optional)
     schema_drift: list[dict] | None = None
+    # mocked mode, ADR-0321 (additive, optional): outcome equivalence with the
+    # recorded run ({"verdict": ..., "checks": ...}); `status` still says how the
+    # replayed process ended, so a faithful replay of a failed run is
+    # status "failure" with fidelity["verdict"] == "faithful"
+    fidelity: dict | None = None
+    replay_capsule_ref: str | None = None  # the replay capsule beside this result (a `nova diff` input)
+    # mocked --hermetic only (ADR-0322): how the replayed process tree was isolated
+    hermetic: dict | None = None
 
     def as_dict(self) -> dict: ...
 ```
@@ -539,14 +614,23 @@ class ReplayResult:
 ## Diff
 
 ```python
-from novafabric.diff import DiffEngine, DiffReport
+from novafabric.diff import CapsuleFileError, DiffEngine, DiffReport
 ```
 
 `DiffEngine` structurally compares two capsules — aligning their model calls,
 tool calls, environment, and outputs — and reports what changed, was added, or
 was removed. This is the engine behind `nova diff --assert-no-regressions`.
+`DiffEngine()` takes no arguments.
 
 ### `DiffEngine.compare(capsule_a, capsule_b) → DiffReport`
+
+Raises `CapsuleFileError` (a `ValueError` subclass, constructed as
+`CapsuleFileError(path, reason)`) when a `capsule.yaml` or `env.lock` exists but
+cannot be read, is not UTF-8, is not valid YAML, or is not a mapping (also when
+a call-stream file is a link or special file, which is never followed), so the two
+capsules cannot be compared. A missing or empty file is not an error, and
+malformed lines in the JSONL call streams do not raise; they are counted (see
+below).
 
 ```python
 from pathlib import Path
@@ -599,12 +683,13 @@ if report.has_changes:
 class DiffReport:
     run_a_id: str
     run_b_id: str
+    # every list/dict field defaults to empty (field(default_factory=...))
     env_changes: list[dict]
     model_call_pairs: list[dict]
     tool_call_pairs: list[dict]
     output_changes: list[dict]
     skipped_malformed_lines: dict[str, dict[str, int]]  # {"a"|"b": {"model_calls", "tool_calls"}}
-    first_divergence: dict | None  # earliest changed/added/removed model or tool call; None if the call streams agree (also a top-level key of `as_dict()`)
+    first_divergence: dict | None = None  # earliest changed/added/removed model or tool call; None if the call streams agree (also a top-level key of `as_dict()`)
 
     @property
     def changed_count(self) -> int: ...
@@ -701,8 +786,43 @@ dependents = store.blast_radius(
 chain = store.replay_chain(run_id="01HXREPLAY...")
 ```
 
-Each result item is a dict: `{"kind": "run|asset|artifact", "ref": "..."}`.
-A `time_travel` query is also available for point-in-time graph reconstruction.
+Signatures: `provenance(ref, kind=None, depth=5, edge_type=None)` and
+`blast_radius(ref, kind=None, depth=5, edge_type=None)`, where `edge_type` is one
+edge type or a collection of them (`None`, `""` or an empty collection means no
+filter) and restricts the whole traversal to those edges; `replay_chain(run_id)`
+follows `replayed_from` edges (at most 100 steps).
+
+Each result item is a node row: a dict with `node_id`, `kind`
+(`"run" | "asset" | "artifact"`), `ref` and `payload` (the node's stored JSON
+payload, as a string); `replay_chain` items also carry `step`. An unknown `ref`
+returns `[]`, not an error.
+
+`time_travel(ref, asof, kind=None, limit=5000)` returns the edges touching `ref`
+created at or before the `asof` timestamp, oldest first, for point-in-time graph
+reconstruction. `all_nodes(*, limit=250000)` and `all_edges(*, limit=1000000)`
+read the whole graph and raise `LineageGraphTooLargeError`
+(`novafabric.lineage._store`, a `RuntimeError` subclass) above `limit` instead of
+truncating.
+
+### Pluggable lineage backends (experimental)
+
+```python
+from novafabric.lineage import (
+    AbstractLineageStore,    # ABC: insert(edge), provenance(run_id, depth),
+                             #      blast_radius(run_id, max_depth), replay_chain(run_id)
+    SqliteLineageStore,      # SqliteLineageStore(db_path, site_id="local"); db_path is required
+    PostgresLineageStore,    # PostgresLineageStore(dsn, site_id="local"); needs psycopg
+    AGELineageStore,         # AGELineageStore(dsn, site_id="local"); Postgres with Apache AGE
+    JanusGraphLineageStore,  # JanusGraphLineageStore(gremlin_endpoint="ws://localhost:8182/gremlin", site_id="local")
+)
+```
+
+These implement the backend interface `AbstractLineageStore`, which is narrower
+than `LineageStore` above (its traversals take a run id and a depth). `LineageStore`
+is the SQLite store the CLI uses and does not subclass it. `SqliteLineageStore`
+raises `ValueError` when `db_path` is `None`, so a test never writes into the
+developer database by accident. The Postgres-based backends import `psycopg` when
+constructed, and `JanusGraphLineageStore` opens its Gremlin connection on first use.
 
 ### `index_capsule_lineage(capsule_dir, db_path=None, *, run_id=None) → ImportResult`
 
@@ -771,6 +891,17 @@ Read-only and deterministic; oversize graphs raise `LineageGraphTooLargeError`
 instead of truncating. See the CLI reference for the command equivalents
 (`nova lineage metrics|root-cause|export-graph`, `nova insights`).
 
+| Function | Returns | Notes |
+|---|---|---|
+| `compute_graph_metrics(store, *, top_n=20, betweenness_sample_threshold=2000, seed=0)` | `GraphMetricsReport` | hubs and articulation points as `NodeMetric` rows; an empty graph gives an empty report |
+| `rank_root_causes(store, run_id, *, depth=5, capsule_dir=None, half_life_hours=24.0)` | `RootCauseReport` | upstream `SuspectNode`s for a failed run; raises `UnknownLineageRunError` (a `KeyError` subclass) when `run_id` has no lineage node |
+| `build_insights_report(store, *, top_n=10, seed=0, cost_db=None)` | `InsightsReport` | node/edge counts, hubs, communities, orphans, cost hot spots |
+| `to_graphml(nodes, edges)`, `to_gexf(nodes, edges)`, `to_cypher(nodes, edges)` | `str` | serialise `store.all_nodes()` / `store.all_edges()` |
+
+`GraphMetricsReport`, `RootCauseReport`, `InsightsReport`, `NodeMetric` and
+`SuspectNode` are dataclasses importable from `novafabric.lineage.analytics`.
+Scores are relative rankings for attention, not calibrated importance.
+
 ---
 
 ## Asset Registry
@@ -803,14 +934,19 @@ asset = register_asset(spec, spec_path=Path("my-model.yaml"))
 print(asset["id"])   # UUID
 ```
 
-`actor` is the identity recorded for the registration in the audit trail.
+`actor` is the identity recorded for the registration in the audit trail. A new
+asset is always registered in `development`.
 
-Raises `DuplicateAssetError` if `name@version` already exists.
+Raises (all importable from `novafabric.registry.service`):
+- `DuplicateAssetError` — `name@version` is already registered.
+- `VersionReuseError` (a `DuplicateAssetError` subclass) — `name@version` was in
+  `production` before; its version number can never be reused.
+- `RegistrationStatusError` — the spec declares a status other than `development`.
 
 ### `list_assets(asset_type, status, db_path=None) → list[dict]`
 
 `asset_type` and `status` are required positional-or-keyword arguments with no
-default; pass `None` to leave a filter off.
+default; pass `None` to leave a filter off. Results are newest first.
 
 ```python
 from novafabric.registry.service import list_assets
@@ -829,14 +965,17 @@ asset = get_asset("my-model", "1.0.0")
 # version is required; pass None (or "latest") for the latest registered version
 ```
 
-Raises `AssetNotFoundError` if not found.
+When the exact version is not registered, the normalised semver form is tried
+(`1.0` → `1.0.0`, `v1` → `v1.0.0`). Raises `AssetNotFoundError` if not found.
 
 ### `promote_asset(name, version, to_status, actor, force=False, db_path=None, significance_gate=False, ...) → dict`
 
-Advances an asset through the six-state lifecycle. The `to_status` argument is
-an `AssetStatus` enum member. The remaining keyword arguments (`sig_p0`, `sig_p1`,
-`sig_alpha`, `sig_beta`, `sig_scores_path`, `sig_scores_metric`) tune the opt-in
-significance gate (ADR-0080).
+Advances an asset through the six-state lifecycle and returns the updated asset
+record. The `to_status` argument is an `AssetStatus` enum member. The remaining
+parameters tune the opt-in significance gate (ADR-0080): `sig_p0=0.9`,
+`sig_p1=0.7`, `sig_alpha=0.05`, `sig_beta=0.05`, `sig_scores_path=None` (read the
+sequence from a `scores.jsonl` instead of the registry's eval results) and
+`sig_scores_metric="task_pass"`.
 
 > **Use `promote_asset_direct` for a single-actor promotion.** `promote_asset` is
 > the ungated core: it runs the lifecycle, `promote` policy, eval and significance
@@ -863,13 +1002,16 @@ asset = promote_asset(
 ```
 
 Raises:
+- `AssetNotFoundError` — `name@version` is not registered.
 - `InvalidLifecycleTransitionError` — the transition is not permitted by the
-  lifecycle state machine.
-- `PromotionBlockedError` — a gate refused and `force` does not override it: the
-  `promote` policy denied the promotion (any asset type), an `agent` has no
-  passing evaluation (its most recent eval must pass; with `significance_gate`
-  the whole recent sequence is judged instead), or the opt-in significance gate
-  found a significant regression (agents only).
+  lifecycle state machine (`force` does not override this).
+- `PromotionBlockedError` — a gate refused and `force=False`: the `promote`
+  policy denied the promotion (any asset type), an `agent` promoted to `staging`
+  or `production` has no passing evaluation (its most recent eval must pass; with
+  `significance_gate` the whole recent sequence is judged instead), or the opt-in
+  significance gate found a significant regression (agents only). With
+  `force=True` these gates are overridden; a policy denial is still audited and
+  alerted.
 
 > **Lifecycle:** `development → validated → pending_approval → staging →
 > production → archived`. Promotion of `agent` assets is eval-gated; the OPA/Rego
@@ -895,8 +1037,21 @@ spec = validate_spec(Path("my-agent.yaml"))
 print(spec.name, spec.version, spec.asset_type)
 ```
 
-Raises `SpecValidationError` with a Pydantic error list and a hint string on
-validation failure.
+Raises `SpecValidationError(message, errors=None, hint=None)` when the file does
+not exist, is not valid YAML, does not hold a mapping at the top level, or fails
+model validation. `str(exc)` is the message; `exc.errors` is the Pydantic error
+list (empty for the first three cases) and `exc.hint` a suggested fix. The
+returned object is the concrete spec model for the file's `asset_type`
+(`ModelSpec`, `AgentSpec`, ...).
+
+`novafabric.spec` re-exports the models below, plus `validate_asset_spec` (the
+same function as `validate_spec`) and `AssetSpec`, the discriminated union of the
+seven spec models keyed on `asset_type` (a type annotation, for use with
+Pydantic's `TypeAdapter`):
+
+```python
+from novafabric.spec import AssetSpec, validate_asset_spec
+```
 
 ### Asset type models
 
@@ -916,7 +1071,10 @@ from novafabric.spec.models import (
 ```
 
 `AssetType` has seven members (one per asset type). `AssetStatus` has the six
-lifecycle states listed above.
+lifecycle states listed above. Both are `str` enums, so a member compares equal
+to its value (`AssetStatus.staging == "staging"`). Every spec model rejects keys
+it does not define; vendor or user data belongs in the `extensions` block or in
+`tags` / `external_refs`.
 
 ---
 
@@ -929,8 +1087,10 @@ markdown = generate_report(format_="markdown")
 json_str = generate_report(format_="json")
 ```
 
-`generate_report(format_="markdown", db_path=None)` renders the current registry
-state. This is the engine behind `nova report`.
+`generate_report(format_="markdown", db_path=None) → str` renders the current
+registry state. This is the engine behind `nova report`. `format_` is
+`"markdown"` (an inventory grouped by asset type), `"json"` (every asset record
+without its `spec_json`) or `"html"`; any other value falls back to Markdown.
 
 ---
 
@@ -944,7 +1104,15 @@ NovaSeal is the cryptographic signing core for capsule manifests: a **DSSE
 envelope (ECDSA P-256 / SHA-256)**, an optional **RFC 3161 trusted timestamp**,
 and an entry appended to a **SQLite-backed append-only Merkle log**. The
 `local` key profile is the default; cloud-KMS profiles (`aws_kms`, `azure_kv`,
-`gcp_kms`) are also supported by the config loader.
+`gcp_kms`) are also supported by the config loader. A cloud profile has no local
+private key, so `NovaSeal` needs a signing `backend=` for it, built with
+`novafabric.trust.novaseal.config.build_signing_backend()`.
+
+`NovaSeal(config, tsa_url, db_path, tsa_urls=None, backend=None)`:
+`tsa_url=""` disables timestamping (no network call); `tsa_urls` is an ordered
+fallback list of TSA URLs, tried in turn; `db_path` is a SQLite path or a
+Postgres DSN for the Merkle log; `backend` is required only for the cloud
+profiles.
 
 > **Maturity — experimental.** NovaSeal is present and covered by tests, but its
 > interfaces (like the rest of the v0.x surface) may change before the v1.0
@@ -1010,6 +1178,17 @@ from novafabric.trust.novaseal import verify_seal_dir
 
 result = verify_seal_dir(".novafabric/runs/01HX.../.seal")  # merkle_log=None
 ```
+
+Signatures: `seal.verify(capsule_id, seal_dir, *, previous_logs=(), tsa_anchors_pem=None)`
+and `verify_seal_dir(seal_dir, merkle_log=None, *, previous_logs=(), tsa_anchors_pem=None)`.
+`verify()`'s `capsule_id` is unused and kept for compatibility: the capsule id is
+re-derived from the signed payload. `previous_logs` are this host's earlier Merkle
+logs (`previous_merkle_dbs` in `novaseal.yaml`), consulted like `merkle_log`.
+`tsa_anchors_pem` is operator TSA CA certificates (PEM): with it the token's TSA
+signature and chain are verified (`result.timestamp_trust` is `"anchored"` or
+`"invalid"`, and a missing token fails); without it a present, intact token is
+`"unanchored"`. `result.sealer_log` reports what the supplied logs said about
+this signer (one of the `SEALER_LOG_*` values below).
 
 `log_inclusion` is `not-checked` (and `valid` stays True) when the capsule carries no
 inclusion proof and no log holding its entry was supplied — a capsule sealed by v0.102.x
@@ -1078,6 +1257,32 @@ if profile:
     )
 ```
 
+### Errors, timestamp helpers and result constants
+
+Everything below is in `novafabric.trust.novaseal.__all__` (**experimental**, like
+the rest of NovaSeal).
+
+| Name | What it is |
+|---|---|
+| `SealError` | Raised by `seal()` when DSSE signing or the Merkle-log append fails. A TSA failure is not a `SealError`: the capsule is sealed without a timestamp. |
+| `TSAUnavailableError` | Raised by `request_timestamp()` when the TSA cannot be reached. |
+| `SealBundle`, `VerificationResult`, `RotationReceipt`, `KeyConfig`, `SigningIntent` | The dataclasses and enum used above. `SigningIntent` values: `authored`, `reviewed`, `approved`, `witnessed`, `verified`. |
+| `verify_with_profile(seal_dir, profile) → VerificationResult` | Verify with what a `novaseal.yaml` profile provides: its `merkle_db` and `previous_merkle_dbs` (opened only if they exist) and `tsa_ca_certs`. `profile=None` verifies from the capsule's own files. Raises `OSError` when a configured TSA CA file cannot be read. |
+| `unanchored_claims(result) → list[str]` | What a passed result still rests on without a trusted anchor (`identity-self-asserted`, `timestamp-unanchored`, `log-head-unanchored`, `log-inclusion-not-checked`, `sealer-log-other-version`). `nova verify --strict` fails when it is non-empty. |
+| `timestamp_trust_for(timestamp_ok, tsa_chain_ok) → str` | The `TIMESTAMP_TRUST_*` value for a token check and an optional anchored check. |
+| `request_timestamp(dsse_bytes, tsa_url, *, tsa_urls=None, nonce_store_path=None, offline_mode=False, verify_chain=True, tsa_cert_max_depth=4) → bytes` | Request an RFC 3161 token (DER) for an envelope, with a random nonce recorded in a `NonceStore` and an optional TSA chain check. |
+| `verify_timestamp(tsr_bytes, dsse_bytes) → bool` | Is the token a valid timestamp of these envelope bytes. |
+| `verify_tsa_cert_chain(tsr_bytes, max_depth=4) → CertChainResult` | Walk the TSA certificate chain embedded in a token. Never raises; failures are in `CertChainResult.error`. |
+| `CertChainResult` | `valid`, `depth`, `subject`, `issuer`, `eku_present`, `self_signed`, `chain_subjects`, `error`. |
+| `NonceStore(path=None, *, offline_mode=False)` | SQLite store of RFC 3161 request nonces, under `$NOVAFABRIC_HOME` by default; `offline_mode=True` makes it a no-op. |
+| `LOG_INCLUSION_LOCAL`, `LOG_INCLUSION_PROOF`, `LOG_INCLUSION_NOT_CHECKED`, `LOG_INCLUSION_FAILED` | The `log_inclusion` values: `"local-log"`, `"carried-proof"`, `"not-checked"`, `"failed"`. |
+| `SEALER_LOG_NO_LOG`, `SEALER_LOG_ENTRY_FOUND`, `SEALER_LOG_NOT_SEALERS`, `SEALER_LOG_OTHER_VERSION`, `SEALER_LOG_MISSING`, `SEALER_LOG_NOT_CONSULTED` | The `sealer_log` values: `"no-log"`, `"entry-found"`, `"not-sealer-log"`, `"unverifiable-other-version"`, `"missing"`, `"not-consulted"`. |
+| `TIMESTAMP_TRUST_ANCHORED`, `TIMESTAMP_TRUST_UNANCHORED`, `TIMESTAMP_TRUST_ABSENT`, `TIMESTAMP_TRUST_INVALID` | The `timestamp_trust` values: `"anchored"`, `"unanchored"`, `"absent"`, `"invalid"`. |
+
+`MerkleLog(db_path, *, root_version=None, read_only=False)` and
+`open_merkle_log(uri)` (a SQLite path or a Postgres DSN) are importable from
+`novafabric.trust.novaseal` too, but are not in its `__all__`.
+
 > The dedicated, hardened **NovaSeal signing *service*** (network service,
 > qualified timestamps, Sigstore-keyless mode) described in ADR-0041 is a
 > **planned** capability. The `novafabric.trust.novaseal` library documented here
@@ -1111,17 +1316,33 @@ result.idempotent_replay  # True → score_id already existed; no second line ap
 result.config_bound       # True → an ADR-0117 ScoreConfig validated the value
 ```
 
-Remaining keyword-only parameters: `source` (`"code"` default; `human` /
+Every parameter after `capsule_dir` is keyword-only. `value_type` is a
+`ScoreValueType` or its string (`boolean`, `categorical`, `numeric`). Remaining
+parameters: `source` (a `ScoreSource` or its string; `"code"` default, or `human` /
 `heuristic` / `judge`), `subject_kind` (`"span"` default), `run_id`,
 `significance` (an ADR-0080 `SignificanceBlock`), and `db_path` (registry
-override for score-config lookup).
+override for score-config lookup). `eval_card_digest` defaults to `None` in the
+signature but is required: omitting it raises `SubmissionInvalidError`.
 
 Validation is **fail-closed** — on any rejection nothing is written, and a named
 exception is raised (`SubmissionInvalidError`, `CapsuleNotFoundError`,
-`SubjectNotFoundError`, `SupersedesNotFoundError`, `IdempotencyConflictError`,
-`ScoreConfigViolation` — all importable from `novafabric.scores`). Corrections never
+`CapsuleUnusableError`, `SubjectNotFoundError`, `SupersedesNotFoundError`,
+`IdempotencyConflictError`, `ScoreConfigViolation` — all importable from
+`novafabric.scores`). All but `ScoreConfigViolation` subclass
+`ScoreSubmissionError`, so catch both to handle every rejection. Corrections never
 edit a prior record: submit a *new* score whose `supersedes` names the prior
 `score_id`; both lines stay in the log. CLI equivalent: `nova score submit`.
+
+| Name | What it is |
+|---|---|
+| `submit_request(capsule_dir, request, *, db_path=None) → SubmitResult` | The shared core `submit()` calls: validate a `ScoreSubmissionRequest` against the capsule and append it. |
+| `ScoreSubmissionRequest` | The submission envelope (the HTTP POST body and the SDK argument shape), a Pydantic model. |
+| `SubmitResult` | `score`, `idempotent_replay`, `config_bound` (see the example). |
+| `Score` | One evidence-grade score, one `scores.jsonl` line. |
+| `ScoreSource`, `ScoreValueType` | `str` enums: `human` / `heuristic` / `code` / `judge`; `boolean` / `categorical` / `numeric`. |
+| `SignificanceBlock` | Optional ADR-0080 significance context carried on a score. |
+| `ScoreSubmissionError` | Base class of the rejections above. Nothing was written. |
+| `CapsuleUnusableError` | The capsule holds a symlink, or a file swapped for a FIFO or device. |
 
 ---
 
@@ -1135,7 +1356,23 @@ sends no request other than the ones you invoke (no telemetry, no update
 checks). It mirrors the TypeScript SDK's contract (ADR-0194) and adds one
 operation TS does not have yet: **capsule upload**.
 
-### `novafabric.client.NovaFabricClient(base_url, *, api_key=None, token=None, timeout=None, retries=None, transport=None)`
+### `novafabric.client.NovaFabricClient(base_url=None, *, api_key=None, token=None, timeout=None, retries=None, transport=None)`
+
+`base_url=None` falls back to `NOVAFABRIC_SERVER_URL` (see *Config resolution*
+below). The client is a context manager; outside a `with` block call `close()`.
+
+| Method | Returns |
+|---|---|
+| `health()` | `ApiResult[ServerHealth]` |
+| `upload_capsule(source: Path \| bytes)` | `ApiResult[CapsuleSummary]` |
+| `get_capsule(run_id)` | `ApiResult[CapsuleDetail]` |
+| `list_capsules(*, limit=None, cursor=None)` | `ApiResult[Page[CapsuleSummary]]` |
+| `iter_capsules(*, limit=None)` | `Iterator[CapsuleSummary]` |
+| `get_asset(asset_id)` | `ApiResult[AssetDetail]` |
+| `list_assets(*, limit=None, cursor=None, asset_type=None, status=None)` | `ApiResult[Page[AssetSummary]]` |
+| `iter_assets(*, limit=None, asset_type=None, status=None)` | `Iterator[AssetSummary]` |
+| `submit_score(run_id, score: ScoreSubmission \| dict)` | `ApiResult[ScoreSubmissionResult \| None]` |
+| `close()` | `None` |
 
 ```python
 from pathlib import Path
@@ -1204,6 +1441,20 @@ Contract points (normative spec: `design/spec/python-client-v0.md` (private)):
 - **Testing seam** — pass any `httpx.BaseTransport` as `transport=` (e.g.
   `httpx.MockTransport`) for hermetic tests.
 
+Other names in `novafabric.client.__all__`:
+
+| Name | What it is |
+|---|---|
+| `ApiResult`, `ResponseMeta` | `ApiResult(data, meta)`; `ResponseMeta` is the per-response metadata described above. |
+| `Page` | One page of a cursor listing: `items`, `next_cursor`, `total`. |
+| `CapsuleSummary`, `CapsuleDetail`, `AssetSummary`, `AssetDetail`, `ServerHealth` | Response models (Pydantic v2, `extra="allow"`). |
+| `ScoreSubmission`, `ScoreSubmissionResult` | The score POST body and its `201` body. |
+| `RetryConfig(max_attempts=3, backoff_base=0.5, backoff_factor=2.0, backoff_max=8.0, jitter="full", retry_statuses=(429, 502, 503, 504))` | The retry policy; `max_attempts=1` disables retrying. |
+| `TokenProvider` | `Callable[[], str]`, the type of a refreshing `token=`. |
+| `NovaFabricClientError` | Base class of every error the client raises, including `NovaFabricConfigError`, `NovaFabricAPIError` and `NovaFabricTransportError`. |
+| `AuthenticationError`, `AuthorizationError`, `NotFoundError`, `ConflictError`, `PreconditionFailedError`, `ValidationFailedError`, `RateLimitedError`, `ServerError`, `NovaFabricTimeout` | The typed errors listed under *Errors*. |
+| `reset_deprecation_warnings()` | Test helper: clear the warn-once registry for `Deprecation` headers. |
+
 An async twin (`AsyncNovaFabricClient`) and artifact streaming are **planned**
 (ADR-0202 P2); SSE and an OTLP endpoint helper are **future design** (P3).
 
@@ -1234,6 +1485,18 @@ doc = AnnexIVExporter().build_annex_iv_document("dep-1", capsule_dir)
 validate_marked(doc.completeness_summary())
 ```
 
+Signatures: `build_capsule_ref(capsule_dir, verified_at, *, files=None,
+seal_envelope_path=None) → EvidenceSourceRef | None` (`None` when the capsule has
+no manifest, so nothing may be marked `capsule_verified`);
+`mark(source, *, ref=None) → tuple[EvidenceSource, EvidenceSourceRef | None]`;
+`validate_marked(entries, *, require=True) → None`; and
+`source_for_status(status, *, gap_states=frozenset()) → EvidenceSource`, the
+marker for a pure-projection field-group: a status naming a checked gap (such as
+`missing` or `not_evidenced`) maps to `unverifiable`, every other status to
+`operator_asserted`. `ProvenanceError` (a `ValueError` subclass) is the base class
+of `UnmarkedFieldGroupError` and `MissingReperformableRefError`; `mark()` raises it
+directly for a non-verified source that carries a `ref`.
+
 `operator_asserted` and `unverifiable` must **not** carry a ref (a reference
 would misrepresent them as a re-performed verification). The marker is additive
 and optional on the wire — a pre-ADR-0197 document deserializes with
@@ -1249,6 +1512,29 @@ from novafabric.capture import new_ulid, new_span_id
 run_id = new_ulid()      # str — ULID (26 chars, time-sortable)
 span_id = new_span_id()  # str — 16-char hex
 ```
+
+### Log-level helpers
+
+```python
+from novafabric.capture import (
+    LOG_LEVELS,            # ("debug", "info", "warn", "error")
+    LOG_LEVEL_SOURCES,     # ("framework", "span-status", "adapter", "user")
+    InvalidLogLevelError,  # ValueError subclass
+    normalize_log_level,
+    resolve_log_level,
+)
+
+normalize_log_level("WARNING")   # "warn"; CRITICAL/FATAL → "error", TRACE → "debug"
+resolve_log_level(framework="info", span_status="ERROR")  # the most severe source wins
+```
+
+`normalize_log_level(value) → str` is case-insensitive and raises
+`InvalidLogLevelError` for any value that does not map onto the four levels.
+`resolve_log_level(framework=None, span_status=None, adapter=None, user=None)`
+returns a `ResolvedLogLevel` (the level and the source it came from) or `None` when
+no source supplies a level; `span_status` is an OTel span status (`ERROR` / `OK` /
+`UNSET`), the others are level names. On a tie the higher-priority source in
+`LOG_LEVEL_SOURCES` order is recorded.
 
 ---
 

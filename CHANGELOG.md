@@ -94,6 +94,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **The Python API reference matches the code** (`docs/python-api.md`). Checked every documented
+  name against `inspect.signature` and the source: 25 corrections (among them the 15 optional
+  parameters of `CaptureOrchestrator.run`, `ReplayFlags.hermetic`/`hermetic_backend`, four missing
+  `ReplayResult` fields, `NovaSeal(tsa_urls=, backend=)`, the lineage traversal result shape, which
+  exceptions each call raises, and `NovaFabricClient(base_url=None)`), and short entries for the 65
+  of 140 names in the documented modules' `__all__` the page did not mention. 34 public docstrings
+  that were missing on documented names were added (docstrings only). A new guard,
+  `tests/docs/test_python_api_matches_the_code.py`, fails when a name the page imports does not
+  import or an `__all__` name is undocumented.
 
 ### Fixed
 

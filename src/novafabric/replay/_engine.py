@@ -219,6 +219,17 @@ def _load_env_lock(capsule_dir: Path) -> dict[str, Any]:
 
 
 class ReplayEngine:
+    """Replay or inspect one capsule: the engine behind ``nova replay``.
+
+    Args:
+        capsule_dir: The capsule to replay.
+        flags: Mode and safety settings (:class:`ReplayFlags`).
+        base_dir: Where replay output goes; defaults to
+            ``$NOVAFABRIC_HOME/replays`` (``default_replays_dir()``).
+        actor: The identity the ``replay_mutating`` policy gate evaluates and the
+            audit log records.
+    """
+
     def __init__(
         self,
         capsule_dir: Path,
@@ -232,6 +243,19 @@ class ReplayEngine:
         self._actor = actor
 
     def run(self) -> ReplayResult:
+        """Replay the capsule according to the flags; write ``replay_result.yaml``.
+
+        A replay that diverges or is refused is reported in the returned result
+        (``status`` ``failure`` or ``aborted``, with ``divergence_reason`` or
+        ``error``), not raised.
+
+        Raises:
+            ValueError: the capsule has no ``capsule.yaml``.
+            ReplayEnvironmentMismatchError: ``flags.required_environment`` is set
+                and the capsule recorded another deployment environment, or none.
+            PolicyDeniedError: a write-permitting flag is set and the
+                ``replay_mutating`` policy gate denied *actor*.
+        """
         manifest = _load_capsule(self._capsule_dir)
         # ADR-0126 opt-in gate: refuse before anything runs (no policy call,
         # no replay directory) unless the capsule recorded the environment.

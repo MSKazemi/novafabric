@@ -74,7 +74,7 @@ REGISTRATION_STATUS: AssetStatus = AssetStatus.development
 
 
 class DuplicateAssetError(Exception):
-    pass
+    """The asset ``name@version`` is already registered."""
 
 
 class VersionReuseError(DuplicateAssetError):
@@ -90,15 +90,15 @@ class RegistrationStatusError(Exception):
 
 
 class AssetNotFoundError(Exception):
-    pass
+    """No asset is registered under the requested ``name@version``."""
 
 
 class PromotionBlockedError(Exception):
-    pass
+    """A promotion gate (policy, eval, significance) refused and was not forced."""
 
 
 class InvalidLifecycleTransitionError(Exception):
-    pass
+    """The lifecycle state machine does not allow the requested transition."""
 
 
 class DirectPromotionDeniedError(PromotionBlockedError):
@@ -344,6 +344,10 @@ def list_assets(
     status: str | None,
     db_path: Path | None = None,
 ) -> list[dict[str, Any]]:
+    """Every registered asset, newest first, optionally filtered.
+
+    *asset_type* and *status* have no default; pass ``None`` to leave a filter off.
+    """
     conn = get_connection(db_path)
     init_schema(conn)
     try:
@@ -493,6 +497,15 @@ def get_asset(
     version: str | None,
     db_path: Path | None = None,
 ) -> dict[str, Any]:
+    """The asset record for ``name@version``.
+
+    *version* ``None`` or ``"latest"`` selects the newest registration. An exact
+    version that is not registered is retried in normalised semver form
+    (``1.0`` -> ``1.0.0``).
+
+    Raises:
+        AssetNotFoundError: no such asset.
+    """
     conn = get_connection(db_path)
     init_schema(conn)
     try:
@@ -678,6 +691,20 @@ def promote_asset(
     sig_scores_path: Path | None = None,
     sig_scores_metric: str = "task_pass",
 ) -> dict[str, Any]:
+    """Move ``name@version`` to *to_status* and return the updated asset record.
+
+    The ungated core: it runs the lifecycle, ``promote`` policy, agent eval and
+    opt-in significance checks (``significance_gate`` and the ``sig_*``
+    parameters, ADR-0080), but not the protected-stage gate of
+    :func:`promote_asset_direct`, which single-actor routes must use. *force*
+    overrides the policy and eval gates, not the lifecycle check. Promotion is
+    governance metadata only; nothing is deployed.
+
+    Raises:
+        AssetNotFoundError: no such asset.
+        InvalidLifecycleTransitionError: *to_status* is not reachable.
+        PromotionBlockedError: a gate refused and *force* is False.
+    """
     conn = get_connection(db_path)
     init_schema(conn)
     try:

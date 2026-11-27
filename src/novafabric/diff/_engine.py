@@ -217,6 +217,12 @@ def _error_type(record: dict[str, Any]) -> object:
 
 
 class DiffEngine:
+    """Structural diff of two capsules: the engine behind ``nova diff``.
+
+    Aligns model calls, tool calls, the environment and outputs and reports
+    what changed, was added or was removed (:class:`DiffReport`).
+    """
+
     def compare(self, capsule_a: Path, capsule_b: Path) -> DiffReport:
         """Structural diff of two capsules.
 
