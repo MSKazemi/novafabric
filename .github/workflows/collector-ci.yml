@@ -15,6 +15,8 @@ on:
       - "collector/**"
       - "schemas/event-envelope-v1/**"
       - "deploy/**"
+      # A pull request that edits this file runs it, as a push to main already does.
+      - ".github/workflows/collector-ci.yml"
 
 env:
   # go.mod requires Go ≥ 1.25 since the OTel 1.43.0 bump (Dependabot Phase C).
@@ -46,6 +48,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 10  # slowest of 15 green runs to 2026-11-27: 56 s
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -81,6 +84,7 @@ jobs:
   vuln:
     name: Vulnerability Scan
     runs-on: ubuntu-24.04
+    timeout-minutes: 10  # slowest of 15 green runs to 2026-11-27: 41 s
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -119,6 +123,7 @@ jobs:
   unit:
     name: Unit Tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 15  # slowest of 15 green runs to 2026-11-27: 125 s
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -146,6 +151,7 @@ jobs:
   spec:
     name: Spec Corpus Validation
     runs-on: ubuntu-24.04
+    timeout-minutes: 5  # slowest of 15 green runs to 2026-11-27: 15 s
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -176,6 +182,7 @@ jobs:
   build:
     name: Build Artifacts
     runs-on: ubuntu-24.04
+    timeout-minutes: 10  # slowest of 15 green runs to 2026-11-27: 57 s
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.
@@ -202,6 +209,7 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-24.04
+    timeout-minutes: 15  # slowest of 15 green runs to 2026-11-27: 104 s
     # CI and every other action belong to the PUBLIC repository. The private
     # mirror carries the same .github/ tree, so without this it runs the whole
     # suite again on billable minutes and leaves that repo permanently red.

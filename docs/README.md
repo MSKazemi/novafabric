@@ -180,6 +180,7 @@ implemented versus design intent.
 ## Releases
 
 - [Release process](release-process.md) — how a release is cut (quality gates, version bump, tag)
+- [CI workflows](ci.md) — every GitHub Actions workflow: trigger, jobs, what it gates, timeouts, permissions, and open findings
 - [Support policy](support-policy.md) — which versions get fixes, for how long, and what an upgrade promises
 - [Performance SLO catalog](slo.md) — every published performance number, labelled `gated` / `measured` / `target` (generated)
 - [Release notes](releases/) — per-version notes from v0.1.0 onward
