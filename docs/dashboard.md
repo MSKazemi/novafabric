@@ -253,6 +253,51 @@ Collect runs while you investigate, then export them as **one** signed Evidence 
 API: `POST /api/evidence/cart/export` (`admin` scope) with
 `{items: [{kind, ref, added_at, added_from?, note?}], confirmed: true, accept_unresolved?}`.
 
+### Lineage explorer: zoom levels, scoped neighbourhoods and a table view *(experimental)*
+
+The **Lineage** tab draws a bounded number of nodes at every level, so a large graph never puts thousands of nodes
+in the browser at once. The level, scope, depth and view are kept in the URL (`lineage_zoom`, `lineage_focus`,
+`lineage_depth`, `lineage_view`, `lineage_kind`). You can share a scoped view as a link, and the browser **Back**
+button undoes a scope change. For example, `?tab=lineage&lineage_focus=run:<run_id>&lineage_depth=2` opens the
+two-hop neighbourhood of one run.
+
+| Level | Shows | Bound |
+|---|---|---|
+| **Overview** | One group per node kind (runs, assets, artifacts) and, between groups, one edge per relationship type with its count | One node per kind |
+| **Runs & assets** (default) | Individual runs, assets and artifacts | 60 nodes. **Show 60 more** raises the bound up to 240. Past that, narrow the scope |
+| **Calls** | The model and tool calls recorded in the scoped run's capsule: id, model or tool name, status, start time and duration | 50 calls, raised 50 at a time up to 500. Needs a run scope |
+
+- **N more — narrow the scope.** Every level counts the nodes or calls it did not draw, so nothing is dropped
+  silently. Nodes are picked deterministically: the scope focus first, then the nearest hops, then the most
+  connected nodes.
+- **Scope.** Select a run or asset in the graph or table, then choose **Scope to selected node**. The view then shows only
+  that node's neighbourhood at depth 1, 2 or 3. A neighbourhood is the node's provenance plus its blast radius
+  to that depth, and the edges among those nodes. It is the same set `nova lineage export-graph --ref` exports, so a
+  run that only shares an asset with the focus run is not part of it. Clear the scope with **Clear scope**.
+- **CLI equivalent.** Every scope shows its commands, ready to copy:
+  `nova lineage export-graph --ref <ref> --kind <kind> --depth <n>` (export-graph is experimental), plus
+  `nova lineage provenance` and `nova lineage blast-radius` with the same flags. An unscoped view shows the
+  whole-graph `nova lineage export-graph`.
+- **Source and completeness.** The view says how many edges it loaded and how many the store holds
+  (`/api/lineage/edges` reports `total` and `truncated`). When a scope is set, the dashboard also runs the store's
+  own provenance and blast-radius queries for that ref, kind and depth, once per scope change (not on each search
+  keystroke), and names any node the store returns that the loaded edges do not contain. If that check fails, the error is shown with a **Retry** button.
+- **Table view (accessible alternative).** **Table** shows the same nodes and edges as two plain data tables with
+  captions and column headers, so a screen reader's table navigation works as usual. Rows are not focusable. Every
+  action is a button: in the node table, the reference selects that node (the ancestry breadcrumb follows) and
+  **Scope here** scopes to it. **Tab** moves through these buttons row by row; the table holds no more rows than the
+  level's node bound. The edge table has no controls. It lists each
+  relationship as *source → relationship → target*, with its recorded confidence (`observed`, `inferred` or
+  `declared`), the run that recorded it and the time it was recorded. An edge is a recorded association, not a
+  claim of cause.
+- **Calls are not lineage edges.** The Calls level reads `model-calls.jsonl` and `tool-calls.jsonl` from the run's
+  capsule (`GET /api/runs/{run_id}`). It never renders prompts, responses, tool arguments or tool results. Calls
+  are a flat list ordered by start time, so this level has a table view only.
+
+Not in the dashboard yet: a link into this view from the Runs inspector or the Registry, collapsible groups inside
+a level, and live cluster topology (the separate `/topology/` view, see
+[KG topology vs. Live Topology](#kg-topology-vs-live-topology)).
+
 ### Honest aggregates and the Runs aggregate strip *(experimental — ADR-0234)*
 
 Every run aggregate the dashboard serves now carries an `aggregate` verdict. When the number
@@ -427,7 +472,7 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Validate a capsule against its schema | `nova validate <capsule>` | ✅ Capsule view → "Validate" button | Same `run-capsule.schema.json` compiled in-browser via Ajv. |
 | List registered assets | `nova list [--type] [--status]` | ✅ Registry tab | Filters not yet exposed in UI; visible via the live API. |
 | Get a single asset | `nova inspect <name@version>` | ✅ Registry tab → click row | Eval results for the selected asset are lazy-fetched. |
-| Lineage queries | `nova lineage provenance / blast-radius / replay-chain` | ✅ Lineage tab | Full DAG render via React Flow + dagre. Click (or double-click) a node to see incoming/outgoing edges. **v0.12.6:** interactive QueryPanel — type a ref, pick mode (provenance / blast-radius / replay-chain), hit Run; results appear as a sortable table; CLI equivalent preview updates live. **v0.12.7:** ref input autocompletes `name@version` (provenance/blast-radius) or `run_id` (replay-chain) from loaded data. **v0.12.9 (DU-3):** when a node is selected, a breadcrumb row above the graph shows the full ancestry chain (root → … → parent → **selected**); each ancestor is clickable. **v0.13.4:** `zoomOnDoubleClick` disabled; double-clicking a node selects it (identical to single-click) instead of triggering zoom-to-fit. |
+| Lineage queries | `nova lineage provenance / blast-radius / replay-chain` | ✅ Lineage tab | DAG render via React Flow + dagre, bounded per zoom level with a scoped-neighbourhood view and a table alternative (see [Lineage explorer](#lineage-explorer-zoom-levels-scoped-neighbourhoods-and-a-table-view-experimental), experimental). Click (or double-click) a node to see incoming/outgoing edges. **v0.12.6:** interactive QueryPanel — type a ref, pick mode (provenance / blast-radius / replay-chain), hit Run; results appear as a sortable table; CLI equivalent preview updates live. **v0.12.7:** ref input autocompletes `name@version` (provenance/blast-radius) or `run_id` (replay-chain) from loaded data. **v0.12.9 (DU-3):** when a node is selected, a breadcrumb row above the graph shows the full ancestry chain (root → … → parent → **selected**); each ancestor is clickable. **v0.13.4:** `zoomOnDoubleClick` disabled; double-clicking a node selects it (identical to single-click) instead of triggering zoom-to-fit. |
 | Cluster-scale infrastructure status | *(no single command — consult each Phase 0–6 component separately)* | ✅ Infra tab (v0.12.6) | 10 component cards: NovaSeal, Collector, Object Store, Metadata DB, Lineage at Scale, Parent/Child Capsule, Server Mode, Eval Suites, Policy Gates, Run Capsule — each with a `shipped / partial / placeholder / planned` status badge plus the relevant CLI commands. Lets operators confirm which Phase 0–6 components are active without leaving the dashboard. |
 | CLI command reference with live preview | *(all `nova` sub-commands)* | ✅ Commands tab | **v0.8:** 13 command builders for core capture, registry, and replay. **v0.12.6:** expanded to 35 hand-curated builders across 4 journey tracks. **v0.60.0:** now mirrors the **complete** CLI — every `nova` command (374 today) has a fillable form. Hand-curated builders still provide richer copy for the most-used commands; the rest are auto-generated from the live Typer app (`ui/dashboard/scripts/gen-command-registry.py` → `generatedCommands.ts`), so the tab stays in sync as commands are added/removed (guarded by `tests/serve/test_command_registry_coverage.py`). Fields, choices, defaults and flags come from the CLI's own parameter metadata. Each builder renders a live command preview with a copy button; a filter box and per-group counts navigate the full surface. Copy-only (Layer C, ADR-0027) — the dashboard never executes commands. |
 | Structural diff | `nova diff <run-a> <run-b>` | ✅ Diff tab | **Experimental:** aligned A/B comparison with the first divergent step and a copy-the-CLI button ([details](#aligned-comparison-and-first-divergence-experimental)). Aligned with `diff-report.schema.json`; renders environment / model_calls / tool_calls / outputs sections. **v0.9 additions:** 'Compare against…' in CapsuleInspector, word-level diff for model responses, mutation badge on tool call pairs. **v0.12 addition (C-4):** Multi-select checkboxes in RunsTab — check any 2 rows, click "Compare selected ⊕", jumps directly to Diff tab with both IDs pre-filled and diff auto-triggered; no copy-paste. See [ADR-0036](./decisions.md). **v0.12.7:** both run A and run B inputs autocomplete from the loaded runs list. **v0.12.9 (DU-4):** last comparison (from/to/result) persisted in `sessionStorage` — navigating away and back restores the previous comparison without re-fetching. **v0.13.3 (C-5):** Checkbox cap lifted 2→5; selecting 3–5 runs triggers N-run mode — first run is the baseline, N-1 parallel diffs fire via `runMultiDiff`, results shown as stacked collapsible `MultiDiffCard` panels with change-count badges. URL format migrated from `?run_a=&run_b=` to `?run_ids=a,b,c` (old params still parsed for backward compat). |
@@ -439,8 +484,8 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Forensics timeline | `nova forensics timeline <capsule>` | ✅ Runs tab → **Forensics** view (v0.64.0, P5) | `GET /api/runs/{id}/forensics-timeline` reconstructs a deterministic timeline from the run's own sealed capsule via the same `merge_timeline` core. Honest scope: run-lifecycle + model/tool-call events only; missing timestamps and the absent lineage collector are shown as *gaps*, never fabricated. |
 | Cost attribution / fairness / usage-breakdown | `nova cost attribute` / `fairness` / `usage-breakdown` | ✅ Cost tab → tools panel (v0.64.0, P6) | Three pure POST endpoints (`/api/cost/{attribute,fairness,usage-breakdown}`) wrapping the same cores the CLI calls, given a document instead of a file path. Descriptive only — no cost verdict. |
 | Backup-set status | `nova backup verify` *(listing has no direct command)* | ✅ Infra tab → **Backups** card (v0.64.0, P7) | `GET /api/infra/backups` lists `NOVA_BACKUP_DIR` archives from their `manifest.json` (manifest-claimed, **not** hash-verified — that stays `nova backup verify`). Degrades to `{detected:false}` when unconfigured. |
-| Lineage time-travel queries | `nova lineage time-travel <ref> --asof <ts>` | ❌ — | Not yet wired into the dashboard; CLI-only in v0.7. |
-| Lineage OpenLineage emission | `nova lineage emit-openlineage` | ❌ — | Integration target; CLI-only. |
+| Lineage time-travel queries | `nova lineage time-travel <ref> --asof <ts>` | ✅ Lineage tab → query panel, **Time-Travel** mode | `GET /api/lineage/time-travel/{ref}?at=`; the panel reports when the backend does not support it. |
+| Lineage OpenLineage emission | `nova lineage emit-openlineage` | ✅ Lineage tab → **Export OpenLineage Events** | `GET /api/lineage/{run_id}/emit-openlineage` builds the events and returns them as JSON. Sending to an HTTP endpoint stays CLI-only. |
 
 ### Write operations (Layer B — confirm-gated, audit-logged)
 
@@ -496,7 +541,7 @@ These are intentionally not in the dashboard because the CLI is the right surfac
 A short list, for completeness — the dashboard is not strictly a subset:
 
 - **Live filtered runs view.** Search across `run_id` and command, filter by status, sort by time or duration. The CLI prints a single shell-friendly stream; the dashboard makes 200+ capsules navigable.
-- **Interactive lineage DAG.** React Flow + dagre layout, three highlight modes (provenance / blast-radius / replay-chain) without re-querying. CLI returns lineage as JSON; the dashboard visualises the graph.
+- **Interactive lineage DAG.** React Flow + dagre layout, three highlight modes (provenance / blast-radius / replay-chain) without re-querying, plus overview → runs & assets → calls zoom levels and a scoped neighbourhood view (experimental). CLI returns lineage as JSON; the dashboard visualises the graph.
 - **In-browser schema validation.** The Validate button compiles `run-capsule.schema.json` via Ajv in the browser and reports timing. Useful as a sanity check before sharing a capsule.
 - **In-browser ed25519 verification — showcase page only.** The static `/showcase/evidence` demo checks a bundled fixture with `SubtleCrypto.verify('Ed25519', …)` and has a tamper toggle that flips a byte. The live Evidence tab no longer verifies in the browser: a single DSSE signature check there ignored every member digest, so its Verify button shows the server verifier's verdict instead.
 - **Server-side bundle verification (v0.11).** `POST /api/evidence/{id}/verify` runs the same verifier as `nova verify <bundle>.zip` (artifact digests, `manifest_hash`, every attestation's DSSE signature, signed subjects recomputed from the bundle's content), plus the RFC 3161 TSR and NovaSeal Merkle log inclusion, and returns structured per-check results with `signer_trust`. To pin the signer offline, run `nova verify <bundle>.zip --public-key <pem>`.

@@ -615,6 +615,17 @@ export interface LineageEdgePayload {
   emitter: { name: string; version: string };
 }
 
+/** `/api/lineage/edges` page (ADR-0199 bounded paging; `total`/`truncated` are additive). */
+export interface LineageEdgesPage {
+  count: number;
+  edges: LineageEdgePayload[];
+  /** True edge count in the store; absent from older servers. */
+  total?: number;
+  next_cursor?: string | null;
+  /** True when older edges were not returned. */
+  truncated?: boolean;
+}
+
 // ---------- Policy check (DC-5) ----------
 
 export interface PolicySubject {
@@ -1310,19 +1321,21 @@ export const api = {
     request<StatsResult>('/api/stats'),
   getAsset: (id: string) =>
     request<AssetDetail>(`/api/assets/${encodeURIComponent(id)}`),
-  provenance: (ref: string, depth = 5, edge_type?: string) =>
+  // `kind` (run|asset|artifact) pins the start node like the CLI's --kind; without it the
+  // store resolves the ref to whichever node kind matches first.
+  provenance: (ref: string, depth = 5, edge_type?: string, kind?: string) =>
     request<{ ref: string; depth: number; ancestors: LineageRecord[] }>(
       `/api/lineage/provenance/${encodeURIComponent(ref)}`,
-      edge_type && edge_type !== 'all' ? { depth, edge_type } : { depth },
+      { depth, ...(edge_type && edge_type !== 'all' ? { edge_type } : {}), ...(kind ? { kind } : {}) },
     ),
-  blastRadius: (ref: string, depth = 5, edge_type?: string) =>
+  blastRadius: (ref: string, depth = 5, edge_type?: string, kind?: string) =>
     request<{ ref: string; depth: number; descendants: LineageRecord[] }>(
       `/api/lineage/blast-radius/${encodeURIComponent(ref)}`,
-      edge_type && edge_type !== 'all' ? { depth, edge_type } : { depth },
+      { depth, ...(edge_type && edge_type !== 'all' ? { edge_type } : {}), ...(kind ? { kind } : {}) },
     ),
   replayChain: (run_id: string) =>
     request<{ run_id: string; chain: LineageRecord[] }>(`/api/lineage/replay-chain/${encodeURIComponent(run_id)}`),
-  edges: (limit = 100) => request<{ count: number; edges: LineageEdgePayload[] }>('/api/lineage/edges', { limit: String(limit) }),
+  edges: (limit = 100) => request<LineageEdgesPage>('/api/lineage/edges', { limit: String(limit) }),
   diff: (run_a: string, run_b: string) =>
     request<unknown>('/api/diff', { run_a, run_b }),
 
