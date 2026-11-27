@@ -14,6 +14,7 @@
  * degrades to an empty cart, never a thrown error that breaks the tab.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { shareableViewRef } from './shareLink';
 
 export type CartKind =
   | 'run' | 'capsule' | 'lineage_query' | 'diff' | 'chart' | 'policy_decision' | 'audit_record';
@@ -61,10 +62,13 @@ function writeCart(items: CartEntry[]): void {
   } catch { /* non-browser */ }
 }
 
-/** The current view, as a relative URL — what `added_from` records. */
+/**
+ * The current view, as a relative URL — what `added_from` records. It is written
+ * into the exported bundle, so a `?token=` is removed first (#278).
+ */
 export function currentViewRef(): string {
   if (typeof window === 'undefined') return '';
-  return `${window.location.pathname}${window.location.search}`;
+  return shareableViewRef(window.location.pathname, window.location.search);
 }
 
 /** Pure: add a reference, idempotent on (kind, ref), order preserved. */
