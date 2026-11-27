@@ -1,11 +1,13 @@
 /**
- * Runs list header: title + live indicator, search box, status chips, sort,
- * date range, and the E2 saved-views preset bar.
- * Extracted verbatim from the former RunsTab monolith — behavior frozen.
+ * Runs list header: title + freshness indicator, display-limit note, search
+ * box, status chips, sort, date range, and the E2 saved-views preset bar.
+ * Extracted from the former RunsTab monolith.
  */
 import type { ReactNode } from 'react';
 import { clsx } from 'clsx';
 import RunsSavedViewsBar from './RunsSavedViewsBar';
+import FreshnessIndicator from '../../../ui/FreshnessIndicator';
+import type { LiveTracker } from '../../../../lib/freshness';
 import type { Tab } from '../../Sidebar';
 import type { StatusFilter, RunSort } from './types';
 
@@ -13,6 +15,13 @@ export interface RunFiltersProps {
   visibleCount: number;
   totalApprox: number;
   liveConnected: boolean;
+  /**
+   * Freshness of the streamed list ("live", "reconnecting…", "offline — showing
+   * data from HH:MM"). When given it replaces the bare "live" dot.
+   */
+  liveTracker?: LiveTracker;
+  /** The in-memory cap of the streamed list and whether it has been reached. */
+  listCap?: { max: number; capped: boolean };
   onNavigate?: (tab: Tab) => void;
   refresh: () => void;
   search: string;
@@ -39,6 +48,8 @@ export default function RunFilters({
   visibleCount,
   totalApprox,
   liveConnected,
+  liveTracker,
+  listCap,
   onNavigate,
   refresh,
   search,
@@ -67,7 +78,11 @@ export default function RunFilters({
           </span>
         </h3>
         <div className="flex items-center gap-2">
-          {liveConnected && (
+          {/* The filter bar's results come from a one-shot query, not the stream: no freshness claim. */}
+          {liveTracker && !filterActive && (
+            <FreshnessIndicator tracker={liveTracker} subject="Runs list" />
+          )}
+          {!liveTracker && liveConnected && (
             <span
               title="Live stream connected — new runs appear automatically"
               className="flex items-center gap-1 text-2xs font-mono text-[var(--color-status-success)]"
@@ -87,6 +102,12 @@ export default function RunFilters({
           <button onClick={refresh} className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">↻ refresh</button>
         </div>
       </div>
+      {listCap?.capped && !filterActive && (
+        <p className="text-2xs text-[var(--color-text-muted)]" role="note">
+          Showing the latest {listCap.max.toLocaleString()} runs (display limit); older ones drop off as new runs arrive.
+          Narrow the search or date range to reach older runs.
+        </p>
+      )}
       <input
         type="search"
         aria-label="Search run_id or command"

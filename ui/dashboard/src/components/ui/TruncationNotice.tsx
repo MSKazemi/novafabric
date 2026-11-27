@@ -18,6 +18,11 @@ export interface TruncationNoticeProps {
   onLoadMore?: () => void;
   /** Optional hint when there is no load-more path (e.g. "refine filters"). */
   hint?: string;
+  /**
+   * The list hit its in-memory display limit (`usePaginatedQuery().capped`):
+   * say so even when the server reported no total, so the cut is never silent.
+   */
+  capped?: boolean;
 }
 
 export default function TruncationNotice({
@@ -28,8 +33,9 @@ export default function TruncationNotice({
   loadingMore = false,
   onLoadMore,
   hint,
+  capped = false,
 }: TruncationNoticeProps) {
-  if (!hasMore && (total == null || shown >= total)) return null;
+  if (!capped && !hasMore && (total == null || shown >= total)) return null;
 
   const remaining = total != null && total > shown ? (total - shown).toLocaleString() : null;
 
@@ -44,6 +50,7 @@ export default function TruncationNotice({
         ) : (
           <>Showing {shown.toLocaleString()} — more available</>
         )}
+        {capped && <span> (display limit reached)</span>}
       </span>
       <span className="flex items-center gap-2">
         {hint && <span>{hint}</span>}
