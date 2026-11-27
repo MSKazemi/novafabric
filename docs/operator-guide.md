@@ -1514,9 +1514,9 @@ without any error.
 | `NOVAFABRIC_EVIDENCE_DIR` | `/data/capsules/evidence` | `$NOVAFABRIC_HOME/evidence` (`~/.novafabric/evidence`) | Where `nova export-evidence` writes ZIPs; where the Evidence tab reads them |
 | `NOVAFABRIC_SERVE_PATH_ROOTS` | *(unset)* | *(unset)* | Extra absolute directories (`:`-separated) that `nova serve` may read and write when a request names a path. Without it, writes are confined to `$NOVAFABRIC_HOME/exports`, `$NOVAFABRIC_HOME/evidence` and `$NOVAFABRIC_EVIDENCE_DIR`, and reads also to `$NOVAFABRIC_HOME` and the capsule dir. Reads never reach the server's secrets (token stores, `.env`, `dek.db`, ratchet state, `config.yaml`, audit logs, and for source paths key material), even under a listed root. Replaces `NOVAFABRIC_SERVE_ALLOW_ANY_PATH`, which is no longer honoured |
 | `NOVAFABRIC_METADATA_BACKEND` | `postgres` | `sqlite` | MetadataStore backend |
-| `NOVAFABRIC_METADATA_DSN` | `postgresql://nova:nova@postgres:5432/nova` | *(SQLite file)* | DB connection string |
+| `NOVAFABRIC_METADATA_DSN` | `postgresql://nova:${NOVA_POSTGRES_PASSWORD}@postgres:5432/nova` | *(SQLite file)* | DB connection string. The password is a required compose variable with no default (see 7.4) |
 | `NOVAFABRIC_SERVER_BACKEND` | `postgres` | `sqlite` | Server-mode (`nova server start`) backend selector: `sqlite` or `postgres` (overrides `backend:` in `server.yaml`) |
-| `NOVAFABRIC_POSTGRES_DSN` | `postgresql://nova:nova@postgres:5432/nova` | — | The Postgres DSN for server mode (when the backend is `postgres`), `nova db` and `nova migrate-to-postgres`, and the fallback DSN for `nova backup create --profile pg` and `nova restore` of a pg set when `NOVA_DSN` is unset |
+| `NOVAFABRIC_POSTGRES_DSN` | `postgresql://nova:${NOVA_POSTGRES_PASSWORD}@postgres:5432/nova` | — | The Postgres DSN for server mode (when the backend is `postgres`), `nova db` and `nova migrate-to-postgres`, and the fallback DSN for `nova backup create --profile pg` and `nova restore` of a pg set when `NOVA_DSN` is unset |
 | `NOVA_WATCHER_BACKEND` | `auto` | `auto` | `CapsuleWatcher` backend: `auto` (watchdog if installed, else polling), `polling`, `watchdog`. Any other value stops `nova serve` at startup (exit 2). An explicit `nova ingest-capsule --backend` wins. |
 | `NOVA_WATCHER_INTERVAL` | `2.0` | `2.0` | Poll interval in seconds for `PollingBackend` and `nova ingest-capsule --watch`; must be a finite number > 0. An explicit `--interval` wins. |
 
@@ -1540,11 +1540,16 @@ git pull
 # 2. Create the data directories on the host
 mkdir -p ~/novafabric-data/capsules ~/novafabric-data/nova
 
-# 3. Start the full stack (builds image, starts postgres + nova-serve)
+# 3. Generate the stack's secrets into deploy/docker/.env (mode 0600, git-ignored;
+#    keeps existing values, never prints them). The compose file has no password
+#    defaults, so step 4 fails closed until this has run.
+make compose-bootstrap
+
+# 4. Start the full stack (builds image, starts postgres + nova-serve)
 make dev-up
 # prints: Dashboard: http://localhost:4321/dashboard?token=<token>
 
-# 4. (Optional) SSH tunnel if running on a remote server
+# 5. (Optional) SSH tunnel if running on a remote server
 #    Run on your laptop:
 ssh -N -L 4321:localhost:4321 <user>@<server> &
 open http://localhost:4321/dashboard?token=<token>
@@ -1566,6 +1571,11 @@ If the dashboard opens but tabs are empty, check:
    `docker compose exec nova sh -c 'echo $NOVAFABRIC_EVIDENCE_DIR'`
 3. **Container stuck at "waiting for postgres"** — Postgres not running.
    Run `make dev-up` (not `make update`) to bring up the full stack.
+4. **`docker compose` refuses to start: "NOVA_POSTGRES_PASSWORD is not set"** —
+   run `make compose-bootstrap` first. For a stack whose volumes predate the
+   required-secret change, follow
+   [Upgrading a stack created before this change](installation.md#upgrading-a-stack-created-before-this-change)
+   instead: the Postgres volume keeps the password it was initialised with.
 
 ### 7.5 Remote access via SSH tunnel (`make nova-dashboard`)
 

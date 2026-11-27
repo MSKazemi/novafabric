@@ -473,6 +473,16 @@ docker run -e NOVA_MODE=server \
 For OIDC, mount a `server.yaml` with an `oidc:` block at
 `~/.config/novafabric/server.yaml` of the container user (see Scenario 3).
 
+**With the bundled Compose file** (`deploy/docker/docker-compose.yml`), the
+DSNs are assembled from `NOVA_POSTGRES_PASSWORD`, which has no default: Compose
+refuses to start until it is set. Generate it (and the stack's other secrets)
+once with `python3 scripts/compose_bootstrap.py`, which writes them into the
+git-ignored `deploy/docker/.env` with mode `0600` and never prints them, then
+start the stack. An existing stack's Postgres volume keeps the password it was
+initialised with; follow
+[Upgrading a stack created before this change](../installation.md#upgrading-a-stack-created-before-this-change)
+rather than generating a new one over it.
+
 ### Helm
 
 ```bash

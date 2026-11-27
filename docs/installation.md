@@ -117,6 +117,80 @@ Follow [Server Deployment](ops/server-deployment.md) for the exact
 configuration and migration sequence, [Server Administration](ops/server-admin-guide.md)
 for security/operations, and [Sizing](ops/sizing-guide.md) for capacity estimates.
 
+## Docker Compose stack: first run
+
+The bundled stack in `deploy/docker/docker-compose.yml` (default profile:
+PostgreSQL + the experimental dashboard; `prod` and `age` profiles add more
+services) has **no password defaults**. Every credential is a required
+variable written as `${VAR:?message}`, so until it is set, `docker compose`,
+`docker compose config` and every `make *-up` target stop with an
+interpolation error that carries this message:
+
+```text
+NOVA_POSTGRES_PASSWORD is not set - run python3 scripts/compose_bootstrap.py first (docs/installation.md)
+```
+
+Run the bootstrap script once, from the repository root, before the first
+`up` (works today; Python 3 standard library only, no Docker needed):
+
+```bash
+python3 scripts/compose_bootstrap.py          # or: make compose-bootstrap
+python3 scripts/compose_bootstrap.py --check  # exit 0 = every secret set, file is 0600
+make dev-up                                   # or: make prod-up / make age-up
+```
+
+What the script does:
+
+- writes `NOVA_POSTGRES_PASSWORD`, `NOVA_CLICKHOUSE_PASSWORD` and
+  `NOVA_AGE_PASSWORD` as random 256-bit hex values into `deploy/docker/.env`,
+  the file Compose reads automatically for this compose file. The file is
+  git-ignored, excluded from the Docker build context (`.dockerignore`), and
+  created with mode `0600` (an existing file is tightened to `0600`);
+- generates all three even if you only use the default profile: the always-on
+  `nova` service references the PostgreSQL and ClickHouse secrets, and Compose
+  can resolve variables for services outside the active profile too;
+- **never overwrites a value that is already set** and **never prints a
+  value**: it reports variable names only, so re-running it is safe;
+- refuses to write through a symlink.
+
+A variable exported in your shell overrides the file, so a secrets manager can
+inject the three variables instead of the script. `docker compose config`
+prints the resolved values, so treat its output as secret.
+
+### Upgrading a stack created before this change
+
+Earlier versions hardcoded the demo passwords `nova` (PostgreSQL, AGE) and
+`novapass` (ClickHouse). The PostgreSQL and AGE images apply their password
+variable **only when the data volume is first initialised**, so your existing
+`pg-data` / `age-data` volumes still expect the old value. Generating a new
+one would lock the dashboard out of its own database. Do this instead, and
+never use `docker compose down -v`, which deletes the volumes:
+
+1. Before running the script, put the passwords your volumes actually use into
+   `deploy/docker/.env`, e.g. `NOVA_POSTGRES_PASSWORD=nova`, plus
+   `NOVA_AGE_PASSWORD=nova` if you use the `age` profile.
+2. Run `python3 scripts/compose_bootstrap.py`. It keeps those values,
+   generates only the missing ones, and warns that a demo value is still in
+   use. `--check` keeps failing until you rotate it.
+3. Start the stack as before (`make dev-up`), then rotate deliberately. For
+   PostgreSQL, set a new password inside the database (psql prompts for it
+   and does not echo it):
+
+   ```bash
+   docker compose -f deploy/docker/docker-compose.yml exec postgres \
+     psql -U nova -d nova -c '\password nova'
+   ```
+
+4. Put the same value into `NOVA_POSTGRES_PASSWORD` in `deploy/docker/.env`,
+   then recreate the services that connect with it:
+   `docker compose -f deploy/docker/docker-compose.yml up -d --force-recreate nova`
+   (add `--profile prod` and `pgbouncer` if you run the `prod` profile).
+5. Repeat for AGE (`exec age psql -U nova -d nova_lineage -c '\password nova'`)
+   if you use it. ClickHouse takes its user from the container environment;
+   after changing `NOVA_CLICKHOUSE_PASSWORD`, recreate `clickhouse` and `nova`
+   and confirm the new password works with `clickhouse-client` (this path was
+   not exercised as part of this change).
+
 ## Enterprise / regulated: select controls, not a separate product
 
 This is a **target operating profile**, not a shipping enterprise package (there is
@@ -222,8 +296,12 @@ do not fork the capsule format for an enterprise or cloud variant.
   Do not claim stateless replicas or automatic failover.
 - **Compose's `prod` profile is an advanced integration/example stack**, with
   optional ClickHouse, NATS, Kafka, PgBouncer and JanusGraph. It is **not
-  proof that these services are required or that its example credentials are
-  production-safe**. See [Compose source](../deploy/docker/docker-compose.yml).
+  proof that these services are required or that the stack is
+  production-safe**. It no longer ships demo passwords (see
+  [Docker Compose stack: first run](#docker-compose-stack-first-run)), but its
+  PgBouncer service still sets `AUTH_TYPE: trust` on a loopback-only port, and
+  the containers receive their secrets as environment variables. See
+  [Compose source](../deploy/docker/docker-compose.yml).
 - **Helm defaults to authenticated server mode**; its bundled PostgreSQL is
   for evaluation. Production operators must supply appropriately secured
   persistence, secrets, TLS and recovery checks. See

@@ -28,7 +28,7 @@ COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age
         eval-list-smoke policy-list-smoke \
         wave2-smoke collector-smoke \
         collector-build collector-test collector-spec-test spec-test \
-        dev-up dev-down dev-logs \
+        compose-bootstrap dev-up dev-down dev-logs \
         prod-up prod-down prod-logs \
         age-up age-down \
         docker-up docker-build docker-down docker-logs docker-token update _wait-token
@@ -101,6 +101,7 @@ help:
 	@echo "  spec-test         Alias for collector-spec-test"
 	@echo ""
 	@echo "Docker stack:"
+	@echo "  compose-bootstrap Generate the stack's secrets into deploy/docker/.env (0600; run once, never prints them)"
 	@echo "  dev-up            Build and start dev stack (Postgres + novafabric-serve)"
 	@echo "  dev-down          Stop dev stack"
 	@echo "  dev-logs          Follow live logs (dev stack)"
@@ -400,6 +401,13 @@ spec-test: collector-spec-test
 
 # ── Docker stack ─────────────────────────────────────────────────────────────
 
+# Generate the compose stack's required secrets into deploy/docker/.env (mode
+# 0600, git-ignored). Idempotent: keeps every value already set, prints names
+# only. The compose file has no password defaults, so every *-up target below
+# fails closed until this has run (or the variables are exported).
+compose-bootstrap:
+	python3 scripts/compose_bootstrap.py
+
 # dev — Postgres + novafabric-serve only (fast, ~512 MB)
 dev-up:
 	$(COMPOSE) up --build -d
@@ -443,7 +451,7 @@ prod-logs:
 # this target never starts or touches.
 age-up:
 	$(COMPOSE_AGE) up -d age
-	@echo "novafabric-age is up: postgresql://nova:nova@localhost:5433/nova_lineage"
+	@echo "novafabric-age is up: postgresql://nova:<NOVA_AGE_PASSWORD>@localhost:5433/nova_lineage (password in deploy/docker/.env)"
 
 age-down:
 	$(COMPOSE_AGE) stop age

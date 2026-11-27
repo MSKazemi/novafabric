@@ -137,7 +137,8 @@ nova init --home /data/nova  # custom NOVAFABRIC_HOME
 ```
 
 This is not needed for docker-compose deployments — `make dev-up` handles
-all first-boot setup inside the container.
+all first-boot setup inside the container, after a one-time
+`make compose-bootstrap` that generates the stack's secrets (below).
 
 ### Docker-compose deployment targets
 
@@ -149,6 +150,7 @@ token.
 
 | Target | What it does |
 |--------|--------------|
+| `make compose-bootstrap` | Run once first: `python3 scripts/compose_bootstrap.py` writes the stack's required secrets into the git-ignored `deploy/docker/.env` (mode `0600`). Keeps existing values, never prints them. The compose file has no password defaults, so every `*-up` target fails closed without it. See [installation: Docker Compose first run](installation.md#docker-compose-stack-first-run). |
 | `make dev-up` | Build + start Postgres and `novafabric-serve` only (fast). |
 | `make prod-up` | Full stack: + ClickHouse, NATS, Kafka, PgBouncer, JanusGraph. |
 | `make update` | `git pull` → rebuild the `nova` image → rolling restart (databases untouched). Use for a normal release deploy from the tracked branch. |
@@ -1923,7 +1925,7 @@ against the SQLite reference via testcontainers (`tests/lineage/test_age_backend
 ```python
 from novafabric.lineage.backends.age import AGELineageStore
 
-store = AGELineageStore(dsn="postgresql://nova:nova@localhost:5433/nova_lineage")
+store = AGELineageStore(dsn="postgresql://nova:<NOVA_AGE_PASSWORD>@localhost:5433/nova_lineage")
 ```
 
 **Experimental:** a dedicated `age` docker-compose profile lets you run Apache AGE
@@ -1942,7 +1944,9 @@ that whole union. Naming `age` explicitly scopes every command to that one conta
 `make age-up`/`make age-down` never touch an already-running dev/prod stack's
 `novafabric-postgres` or `novafabric-serve` (verified live).
 
-DSN: `postgresql://nova:nova@localhost:5433/nova_lineage`. `AGELineageStore.__init__`
+DSN: `postgresql://nova:<NOVA_AGE_PASSWORD>@localhost:5433/nova_lineage`, where
+`NOVA_AGE_PASSWORD` is the value `make compose-bootstrap` wrote into
+`deploy/docker/.env` (the compose file has no default). `AGELineageStore.__init__`
 self-initializes the extension (`CREATE EXTENSION IF NOT EXISTS age`) and the graph
 (`create_graph`) on first connect — no manual setup or init-SQL mount step is required.
 Connecting from Python needs the `[server]` extra for `psycopg[binary]`:

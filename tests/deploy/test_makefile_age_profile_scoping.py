@@ -81,7 +81,8 @@ _APPROVED_AGE_RECIPES: dict[str, tuple[str, ...]] = {
     "age-up": (
         "$(COMPOSE_AGE) up -d age",
         '@echo "novafabric-age is up: '
-        'postgresql://nova:nova@localhost:5433/nova_lineage"',
+        "postgresql://nova:<NOVA_AGE_PASSWORD>@localhost:5433/nova_lineage "
+        '(password in deploy/docker/.env)"',
     ),
     "age-down": (
         "$(COMPOSE_AGE) stop age",
@@ -362,7 +363,8 @@ def test_pin_normalizes_only_whitespace_trivia() -> None:
         "\t$(COMPOSE_AGE) up -d age   \n"
         "\n"
         '\t@echo "novafabric-age is up: '
-        'postgresql://nova:nova@localhost:5433/nova_lineage"\n'
+        "postgresql://nova:<NOVA_AGE_PASSWORD>@localhost:5433/nova_lineage "
+        '(password in deploy/docker/.env)"\n'
         "\n"
         "age-down:\n"
         "\t  $(COMPOSE_AGE) stop age\n"
