@@ -39,7 +39,9 @@ Three rules, enforced not documented:
   registered backend gets a refused write with a typed error — a
   mis-configured region never silently lands elsewhere.
 - **Unmapped tenants keep today's behavior** (the default pool). Existing
-  single-store deployments observe zero change.
+  single-store deployments observe zero change. A router built without a
+  `default` backend refuses those writes too (`JurisdictionRoutingError`),
+  as it does for keys outside the `capsules/{tenant}/…` layout.
 - **Cross-border reads deny by default.** `get_object_checked(key, reader)`
   runs the ADR-0077 residency gate: same-jurisdiction always passes,
   cross-jurisdiction needs a directional grant, denial carries the reason.
@@ -47,10 +49,12 @@ Three rules, enforced not documented:
   and the caller uses `get_object_checked`; without a policy, or through plain
   `get_object`, reads are not checked.
 
-## What stays planned
+## What is not built yet
 
 Per-capsule jurisdiction labels (capture-time `--jurisdiction` override of
 the tenant default), the `nova lineage --jurisdiction` filter,
 `nova storage relocate` with sealed relocation evidence, and wiring the
-router into `make_adapter` env configuration — all **planned**, tracked in
-ADR-0247.
+router into `make_adapter` env configuration — all **future design**: they
+are the deferred slices recorded in ADR-0247, with no ROADMAP target version.
+None of these flags or commands exists today; the router is reachable only
+by constructing it in Python as shown above.
