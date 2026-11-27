@@ -88,7 +88,8 @@ Use `nova init --force` to regenerate the keypair (the old pair is archived unde
 capsule sealing stays off until you run it (see the sealing section below).
 
 > **docker-compose users:** skip this step. The container entrypoint handles
-> first-boot setup automatically (`make dev-up` is all you need).
+> first-boot setup automatically (`make compose-bootstrap` once to generate the
+> stack's secrets, then `make dev-up`).
 
 ---
 
