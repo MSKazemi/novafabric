@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { api, type CapsuleVerifyResult, type FullCapsule, type RunSummary } from '../../../../lib/api';
+import { shareableUrl } from '../../../../lib/shareLink';
 import StatusPill from '../../../ui/primitives/StatusPill';
 import Button from '../../../ui/primitives/Button';
 import CopyButton from '../../../ui/CopyButton';
@@ -56,7 +57,8 @@ export function CapsuleSummary({
   const toolCalls = capsule.tool_calls?.length ?? pick<number>('tool_call_count') ?? 0;
   const mutating = pick<number>('mutating_tool_count') ?? 0;
   const command = (run.command?.length ? run.command : (m.command as string[] | undefined)) ?? [];
-  const link = typeof window === 'undefined' ? '' : window.location.href;
+  // Never a token-bearing link, even if start-up left ?token= in the address bar (#278).
+  const link = typeof window === 'undefined' ? '' : shareableUrl(window.location.href);
 
   return (
     <section

@@ -185,6 +185,21 @@ longer forwards the submitting shell's environment (ADR-0270).
   - `bagit` still refuses a capsule holding a symbolic link first (exit 1), so a symlinked `.seal` is refused by that older rule. To preserve a capsule you know is damaged, copy it with an ordinary archive tool; the export is not a forensic copy.
   - **HTTP:** `POST /api/compliance/examiner/{pccp,bagit,iso42001}` and `POST /api/compliance/export/ropa` answer **409** with the refusal message for such a capsule; they answered 500, which reads as a server fault. Any other export failure is still 500. A client that treated 500 as the refusal signal should test for 409.
 
+### Security
+
+- **`nova serve` restricts scripts with a hash-based Content-Security-Policy, keeps tokens out of
+  its logs, and the dashboard's share links carry no token** (issue #278). Every response except
+  the Swagger UI page (`/api/docs`) now adds `script-src 'self' 'unsafe-eval' 'sha256-…'` and
+  `worker-src 'self' blob:` to the existing `object-src 'none'; base-uri 'none'; frame-ancestors
+  'none'; form-action 'self'`, next to `nosniff`, `X-Frame-Options: DENY` and
+  `Referrer-Policy: no-referrer`. The hashes are those of the inline scripts in the served HTML,
+  computed at start-up, so there is no `'unsafe-inline'`. `'unsafe-eval'` stays for the in-browser
+  Ajv capsule validation. A logging filter on uvicorn's loggers writes any `…token=` value as
+  `[REDACTED]` (the access log stays off). In the dashboard source, the run summary's **Copy link**
+  and the evidence cart's `added_from` drop `token`/`access_token`, and start-up strips `?token=`
+  from the address bar even when storing it fails. The bundled dashboard picks this up at its next
+  rebuild. The API requests and the `/api/runs/stream` event stream still send `?token=`.
+
 ## [0.109.0] - 2026-11-22
 
 **Replay that refuses rather than pretends: what it cannot serve, it names.**

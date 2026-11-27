@@ -80,10 +80,15 @@ function consumeTokenFromUrl(): boolean {
   const params = new URLSearchParams(window.location.search);
   const t = params.get('token');
   if (!t) return false;
-  setConnection(t, window.location.origin);
-  params.delete('token');
-  const cleaned = window.location.pathname + (params.toString() ? `?${params.toString()}` : '') + window.location.hash;
-  window.history.replaceState({}, '', cleaned);
+  try {
+    setConnection(t, window.location.origin);
+  } finally {
+    // Strip the token from the address bar even when storing it threw (blocked
+    // storage), so it never stays in history or in a copied link (#278).
+    params.delete('token');
+    const cleaned = window.location.pathname + (params.toString() ? `?${params.toString()}` : '') + window.location.hash;
+    window.history.replaceState({}, '', cleaned);
+  }
   return true;
 }
 
