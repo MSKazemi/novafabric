@@ -2,6 +2,8 @@
 
 [Architecture, as built](README.md) › Server data plane
 
+> Verified against code on 2026-11-27.
+
 This page covers three paths through the multi-user REST API (`nova server`,
 the `/v0` routes). All three are **experimental**, and the first two are **off
 by default**.
@@ -10,7 +12,7 @@ by default**.
 |---|---|---|
 | API-key workspace-binding enforcement | ADR-0294 D2 | off (`api_keys.enforce_workspace_binding`) |
 | Per-org budgets, with global and workspace budgets | ADR-0294 D1, ADR-0208, ADR-0179 | inert unless `rate_limits.enabled` and a non-zero limit are configured |
-| Keyset pagination of list routes | ADR-0206 | on for `GET /v0/capsules` and `GET /v0/lineage/nodes`; legacy offset cursors still served |
+| Keyset pagination of list routes | ADR-0206 | on for `GET /v0/capsules`, `GET /v0/lineage/nodes` and `GET /v0/assets`; legacy offset cursors still served |
 
 ![Server data plane: admission, budgets and keyset pages](../assets/architecture/server-data-plane.svg)
 
@@ -105,8 +107,9 @@ is off.
 
 Code: `server/pagination.py:parse_cursor`, `encode_keyset_cursor`;
 `registry/runs_cache.py:query_runs`; `server/routes/capsules.py:list_capsules`.
-`GET /v0/lineage/nodes` uses the same cursor format (`server/routes/lineage.py`,
-ADR-0206 P2), and `MetadataStore.query_runs` on both backends shares one seek
+`GET /v0/lineage/nodes` (`server/routes/lineage.py`) and `GET /v0/assets`
+(`server/routes/assets.py`, `registry/service.py:list_assets_keyset`) use keyset
+cursors too (ADR-0206 P2), and `MetadataStore.query_runs` on both backends shares one seek
 predicate (`metadata_store/_keyset.py`).
 
 ## Limits
@@ -114,8 +117,8 @@ predicate (`metadata_store/_keyset.py`).
 - All of this is `nova server`. `nova serve` (the local dashboard) has its own
   [request path](serve-request-path.md).
 - Binding enforcement and budgets meter and scope. They do not isolate tenants.
-- Routes other than capsules and lineage nodes still use the lenient offset
-  cursor (ADR-0206 P2 is partial).
+- Routes other than capsules, lineage nodes and assets still use the lenient
+  offset cursor (ADR-0206 P2 is partial).
 
 ## Read next
 
