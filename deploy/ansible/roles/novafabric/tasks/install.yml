@@ -1,0 +1,77 @@
+---
+- name: Install the OS packages the role needs
+  ansible.builtin.package:
+    name: "{{ novafabric_os_packages }}"
+    state: present
+
+- name: Read the target Python version
+  ansible.builtin.command:
+    argv:
+      - "{{ novafabric_python }}"
+      - -c
+      - "import sys; print('%d.%d' % sys.version_info[:2])"
+  register: novafabric_python_version
+  changed_when: false
+
+- name: Require a supported Python on the target
+  ansible.builtin.assert:
+    that:
+      - novafabric_python_version.stdout is version(novafabric_python_min_version, '>=')
+    fail_msg: >-
+      {{ novafabric_python }} is Python {{ novafabric_python_version.stdout }};
+      NovaFabric needs {{ novafabric_python_min_version }} or newer. Point
+      novafabric_python at a newer interpreter.
+    quiet: true
+
+- name: Create the service group
+  ansible.builtin.group:
+    name: "{{ novafabric_group }}"
+    system: true
+    state: present
+
+- name: Create the service user
+  ansible.builtin.user:
+    name: "{{ novafabric_user }}"
+    group: "{{ novafabric_group }}"
+    system: true
+    home: "{{ novafabric_data_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    comment: NovaFabric server
+    state: present
+
+- name: Create the data directories (owned by the service user, never removed)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ novafabric_user }}"
+    group: "{{ novafabric_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ novafabric_data_dir }}", mode: "0750" }
+    - { path: "{{ novafabric_home }}", mode: "0700" }
+    - { path: "{{ novafabric_audit_log_path | dirname }}", mode: "0700" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Create the virtualenv parent directory
+  ansible.builtin.file:
+    path: "{{ novafabric_venv_dir | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the pinned NovaFabric release into the virtualenv
+  ansible.builtin.pip:
+    name: "{{ novafabric_requirement }}"
+    virtualenv: "{{ novafabric_venv_dir }}"
+    virtualenv_command: "{{ novafabric_python }} -m venv"
+    extra_args: "{{ novafabric_pip_extra_args if novafabric_pip_extra_args | length > 0 else omit }}"
+    # Readable by the service user even on a host whose root umask is 0077.
+    umask: "0022"
+    state: present
+  notify:
+    - Stop NovaFabric before a SQLite migration
+    - Run the NovaFabric registry migrations
+    - Restart NovaFabric

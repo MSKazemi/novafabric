@@ -1,0 +1,38 @@
+# {{ ansible_managed }}
+[Unit]
+Description=NovaFabric backup set (nova backup create)
+After={{ novafabric_service_name }}.service
+
+[Service]
+Type=oneshot
+User={{ novafabric_user }}
+Group={{ novafabric_group }}
+EnvironmentFile={{ novafabric_env_file }}
+EnvironmentFile={{ novafabric_secrets_file }}
+WorkingDirectory={{ novafabric_data_dir }}
+# SQLite stores are snapshotted with the online-backup API, so the server keeps running.
+# The DSN of a pg set is read from the environment, never from this command line.
+ExecStart={{ novafabric_nova_bin }} backup create --home {{ novafabric_home }} --profile {{ novafabric_backup_profile }} -o {{ novafabric_backup_dir }}/{{ ' --include-keys' if novafabric_backup_include_keys | bool else '' }}
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths={{ novafabric_data_dir }} {{ novafabric_backup_dir }}
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=

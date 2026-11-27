@@ -1,0 +1,8 @@
+---
+# Install or update NovaFabric server mode on every host in novafabric_servers.
+#   ansible-playbook -i inventory.yml site.yml --ask-vault-pass
+- name: Install NovaFabric server
+  hosts: novafabric_servers
+  become: true
+  roles:
+    - role: novafabric

@@ -1,0 +1,42 @@
+---
+# Handlers run in the order they are listed here, not the order they were notified:
+# reload units, stop a SQLite writer, migrate, then (re)start.
+
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# A SQLite registry is migrated with no writer running (upgrade guide, section 2).
+# Postgres is migrated while the old writer still runs (expand-contract, section 3).
+- name: Stop NovaFabric before a SQLite migration
+  ansible.builtin.systemd_service:
+    name: "{{ novafabric_service_name }}"
+    state: stopped
+  when: novafabric_backend == 'sqlite'
+
+# Only the registry track: it is the database `nova server start` opens and its
+# schema-skew guard checks. The MetadataStore track shares Postgres's
+# alembic_version table, so running it against the same database makes the
+# server refuse to start (upgrade guide, section 4a).
+- name: Run the NovaFabric registry migrations
+  ansible.builtin.command:
+    argv:
+      - "{{ novafabric_nova_bin }}"
+      - db
+      - upgrade
+      - --track
+      - registry
+      - --backend
+      - "{{ novafabric_backend }}"
+    chdir: "{{ novafabric_data_dir }}"
+  environment: "{{ novafabric_runtime_env | combine(novafabric_secret_env) }}"
+  become: true
+  become_user: "{{ novafabric_user }}"
+  changed_when: true
+  no_log: "{{ novafabric_no_log }}"
+
+- name: Restart NovaFabric
+  ansible.builtin.systemd_service:
+    name: "{{ novafabric_service_name }}"
+    state: restarted
+  when: novafabric_service_enabled

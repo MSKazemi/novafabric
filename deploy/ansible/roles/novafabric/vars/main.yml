@@ -1,0 +1,61 @@
+---
+# Values derived from defaults/main.yml and the inventory. Internal: override the
+# inputs in defaults/main.yml, not these.
+
+novafabric_nova_bin: "{{ novafabric_venv_dir }}/bin/nova"
+novafabric_server_config_path: "{{ novafabric_config_dir }}/server.yaml"
+novafabric_env_file: "{{ novafabric_config_dir }}/novafabric.env"
+novafabric_secrets_file: "{{ novafabric_config_dir }}/secrets.env"
+novafabric_tls_enabled: "{{ (novafabric_tls_cert_path | length > 0) and (novafabric_tls_key_path | length > 0) }}"
+
+novafabric_requirement: >-
+  {{ novafabric_package_name
+     ~ ('[' ~ (novafabric_package_extras | join(',')) ~ ']' if novafabric_package_extras | length > 0 else '')
+     ~ '==' ~ (novafabric_version | default('')) }}
+
+novafabric_pip_extra_args: >-
+  {{ ((['--no-index', '--find-links', novafabric_pip_find_links] if novafabric_pip_find_links | length > 0 else [])
+      + (['--index-url', novafabric_pip_index_url] if novafabric_pip_index_url | length > 0 else []))
+     | join(' ') }}
+
+# Environment every `nova` process of this deployment runs with: the service, the
+# migration handler, backups and restores. HOME is the data dir, so nothing the
+# server writes under ~ lands outside ReadWritePaths.
+novafabric_runtime_env:
+  HOME: "{{ novafabric_data_dir }}"
+  NOVAFABRIC_HOME: "{{ novafabric_home }}"
+  NOVAFABRIC_AUDIT_LOG_PATH: "{{ novafabric_audit_log_path }}"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+# Secrets, only the ones that are set. Written to secrets.env (0600, root) and passed
+# to Ansible-run `nova` commands through the environment, never on a command line.
+novafabric_secret_env: >-
+  {{ {}
+     | combine({'NOVAFABRIC_POSTGRES_DSN': novafabric_postgres_dsn}
+               if (novafabric_postgres_dsn | default('') | length > 0) else {})
+     | combine({'NOVAFABRIC_SERVER_TOKEN': novafabric_server_token}
+               if (novafabric_server_token | default('') | length > 0) else {})
+     | combine({'NOVAFABRIC_SCIM_TOKEN': novafabric_scim_token}
+               if (novafabric_scim_token | default('') | length > 0) else {}) }}
+
+novafabric_health_target_host: >-
+  {{ novafabric_health_host if novafabric_health_host | length > 0
+     else '127.0.0.1' if novafabric_host in ['0.0.0.0', '']
+     else ('[::1]' if novafabric_host == '::'
+     else ('[' ~ novafabric_host ~ ']' if ':' in novafabric_host else novafabric_host)) }}
+novafabric_health_url: >-
+  {{ ('https' if novafabric_tls_enabled | bool else 'http') ~ '://' ~ novafabric_health_target_host
+     ~ ':' ~ novafabric_port ~ novafabric_health_path }}
+
+# server.yaml content. Keys are top-level (a nested `server:` block is ignored).
+novafabric_server_config: >-
+  {{ {'backend': novafabric_backend, 'host': novafabric_host, 'port': novafabric_port | int}
+     | combine({'oidc': {'issuer_url': novafabric_oidc_issuer_url, 'audience': novafabric_oidc_audience}}
+               if novafabric_oidc_issuer_url | length > 0 else {})
+     | combine({'tls': {'enabled': true, 'cert_path': novafabric_tls_cert_path, 'key_path': novafabric_tls_key_path}}
+               if novafabric_tls_enabled | bool else {})
+     | combine({'rate_limits': {'enabled': true}} if novafabric_rate_limits_enabled | bool else {})
+     | combine(novafabric_server_config_extra, recursive=true) }}
+
+# Keys the server drops from server.yaml; secrets go through the inventory/vault.
+novafabric_secret_config_keys: [postgres_dsn, offline_key_path, scim_token, local_token]

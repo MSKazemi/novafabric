@@ -1,0 +1,13 @@
+---
+# Restore one host from a `nova backup create` set. Limit it to one host.
+#   ansible-playbook -i inventory.yml restore.yml --limit nova01 \
+#     -e novafabric_restore_set=/var/backups/novafabric/nova-backup-<set_id>.tar.gz
+- name: Restore NovaFabric from a backup set
+  hosts: novafabric_servers
+  become: true
+  serial: 1
+  tasks:
+    - name: Restore from the backup set
+      ansible.builtin.import_role:
+        name: novafabric
+        tasks_from: restore

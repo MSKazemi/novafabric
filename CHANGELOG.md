@@ -78,6 +78,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **Single-host Ansible role for server mode (experimental)** (`deploy/ansible/`, #235). Installs
+  `novafabric[server]` at the exact `novafabric_version` you set (no default) into a virtualenv,
+  runs `nova server start` as a `novafabric` system user under a systemd unit with
+  `NoNewPrivileges`, `ProtectSystem=strict` and the data directory as its only writable path, and
+  keeps the DSN and tokens in a 0600 root-only `secrets.env` filled from your vault. `nova db upgrade
+  --track registry` runs as a handler only when the package or config changed, before the restart.
+  Also an opt-in daily `nova backup create` timer, `restore.yml` (`nova backup verify`, then
+  `nova restore`) and `uninstall.yml`, which keeps data and backups. Postgres stays yours: the role
+  only takes a DSN. CI (`.github/workflows/ansible.yml`) runs `ansible-lint` and `--syntax-check`;
+  a run against a real host, and a check that a second run changes nothing, are not in CI yet.
 
 ### Changed
 

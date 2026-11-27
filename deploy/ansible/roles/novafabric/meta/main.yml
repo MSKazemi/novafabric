@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  role_name: novafabric
+  namespace: novafabric
+  author: NovaFabric Contributors
+  description: >-
+    Single-host NovaFabric server (nova server start) in a pinned virtualenv under a
+    hardened systemd unit, with registry migrations, an opt-in backup timer and a
+    restore entry point.
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+    - name: Debian
+      versions:
+        - trixie
+  galaxy_tags:
+    - novafabric
+    - provenance
+    - systemd
+dependencies: []

@@ -1,0 +1,11 @@
+---
+# Remove the NovaFabric service and virtualenv. Data and backups are kept.
+#   ansible-playbook -i inventory.yml uninstall.yml
+- name: Uninstall NovaFabric server
+  hosts: novafabric_servers
+  become: true
+  tasks:
+    - name: Uninstall, keeping data
+      ansible.builtin.import_role:
+        name: novafabric
+        tasks_from: uninstall
