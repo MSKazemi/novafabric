@@ -309,3 +309,106 @@ def test_missing_files_never_500(
     r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
     assert r.status_code == 200
     assert r.json()["total"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Issue #276: the run link the alert source recorded (triage panel)
+# --------------------------------------------------------------------------- #
+
+
+def test_delivery_row_carries_the_recorded_run_link(client: TestClient, tmp_path: Path) -> None:
+    audit_path = tmp_path / "audit.jsonl"
+    log = AuditLog(audit_path)
+    log.append(
+        event_type=AuditEventType.ALERT_DELIVERY,
+        actor="alert-router",
+        resource_id="EVT-SEAL",
+        details={
+            "endpoint_id": "webhook-1",
+            "event_id": "EVT-SEAL",
+            "event_type": "ops.seal.verify_failed",
+            "outcome": "delivered",
+            "attempts": 1,
+            "severity": "critical",
+            "subject": "capsule:abc",
+            "run_id": "run-1",
+            "first_divergence": {
+                "path": "model-calls.jsonl",
+                "reason": "modified",
+                "stream": "model_calls",
+                "divergent_files": 1,
+                "extra": "dropped",
+            },
+        },
+    )
+    r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
+    alert = r.json()["alerts"][0]
+    assert alert["run_id"] == "run-1"
+    assert alert["first_divergence"] == {
+        "path": "model-calls.jsonl",
+        "reason": "modified",
+        "stream": "model_calls",
+        "divergent_files": 1,
+    }
+
+
+def test_row_without_a_recorded_run_says_none_never_a_guess(
+    client: TestClient, tmp_path: Path
+) -> None:
+    # The subject names a capsule, but the source recorded no run id: the row
+    # must not derive one from the subject.
+    _seed_delivery(
+        tmp_path / "audit.jsonl",
+        event_id="EVT-OLD",
+        event_type="ops.seal.verify_failed",
+        subject="capsule:run-1",
+    )
+    r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
+    alert = r.json()["alerts"][0]
+    assert alert["run_id"] is None
+    assert alert["first_divergence"] is None
+
+
+def test_emitted_row_carries_the_run_link_from_the_event_payload(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events_path = tmp_path / "events.jsonl"
+    event = LifecycleEvent(
+        event_id="E-SEAL",
+        type=EventType.OPS_SEAL_VERIFY_FAILED,
+        severity=EventSeverity.CRITICAL,
+        subject=Subject(kind=SubjectKind.OPS, ref="capsule:abc"),
+        occurred_at="2026-07-17T10:00:00.000000Z",
+        payload={"capsule_id": "abc", "run_id": "run-9"},
+        source="nova verify",
+    )
+    _write_events(events_path, [event])
+    monkeypatch.setenv("NOVA_EVENTS_LOG", str(events_path))
+    r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
+    alert = r.json()["alerts"][0]
+    assert alert["run_id"] == "run-9"
+    assert alert["first_divergence"] is None
+
+
+@pytest.mark.parametrize("bad", ["two words", "x" * 201, "", 7, None, "run\n1"])
+def test_a_run_id_that_is_not_a_plain_ref_is_dropped(
+    client: TestClient, tmp_path: Path, bad: object
+) -> None:
+    log = AuditLog(tmp_path / "audit.jsonl")
+    log.append(
+        event_type=AuditEventType.ALERT_DELIVERY,
+        actor="alert-router",
+        resource_id="EVT-BAD",
+        details={
+            "event_id": "EVT-BAD",
+            "event_type": "ops.seal.verify_failed",
+            "outcome": "delivered",
+            "subject": "capsule:abc",
+            "run_id": bad,
+            "first_divergence": {"path": 3},
+        },
+    )
+    r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
+    alert = r.json()["alerts"][0]
+    assert alert["run_id"] is None
+    assert alert["first_divergence"] is None

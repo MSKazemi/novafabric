@@ -123,7 +123,12 @@ def emit_drift_detected_alert(
 
 
 def emit_seal_verify_failed_alert(
-    *, capsule_id: str, errors: list[str], signature_ok: bool | None = None
+    *,
+    capsule_id: str,
+    errors: list[str],
+    signature_ok: bool | None = None,
+    run_id: str | None = None,
+    first_divergence: dict[str, Any] | None = None,
 ) -> None:
     """`ops.seal.verify_failed` — a capsule's seal did not verify.
 
@@ -131,17 +136,32 @@ def emit_seal_verify_failed_alert(
     capsule was altered or the trust chain is broken; both mean the run can
     no longer be proven. Errors are truncated — an alert is a notification,
     not a report.
+
+    ``run_id`` and ``first_divergence`` are additive and optional (issue
+    #276): the run id the capsule's manifest records and the first evidence
+    file the seal no longer matches, so the dashboard's triage panel can link
+    the alert to the run instead of guessing. Each key is present only when
+    known — an absent key means "not recorded", never a value.
     """
+    payload: dict[str, Any] = {
+        "capsule_id": capsule_id,
+        "signature_ok": signature_ok,
+        "errors": errors[:5],
+        "error_count": len(errors),
+    }
+    if run_id:
+        payload["run_id"] = run_id
+    if first_divergence:
+        # File granularity only (issue #74) — refs, enums and a count, no content.
+        payload["first_divergence"] = {
+            key: first_divergence.get(key)
+            for key in ("path", "reason", "stream", "divergent_files")
+        }
     _safe_emit(
         event_type="ops.seal.verify_failed",
         severity="critical",
         subject_ref=f"capsule:{capsule_id or 'unknown'}",
-        payload={
-            "capsule_id": capsule_id,
-            "signature_ok": signature_ok,
-            "errors": errors[:5],
-            "error_count": len(errors),
-        },
+        payload=payload,
         source="nova verify",
     )
 

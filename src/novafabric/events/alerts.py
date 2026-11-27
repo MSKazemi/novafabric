@@ -431,6 +431,15 @@ class AlertRouter:
             }
             if result.error is not None:
                 details["error"] = result.error
+            # Issue #276: carry the run link the source recorded (today only
+            # `ops.seal.verify_failed`), so the dashboard can open the run from
+            # a delivered alert. Absent when the source recorded none.
+            run_id = event.payload.get("run_id")
+            if isinstance(run_id, str) and run_id:
+                details["run_id"] = run_id
+            first_divergence = event.payload.get("first_divergence")
+            if isinstance(first_divergence, dict):
+                details["first_divergence"] = first_divergence
             self._audit.append(
                 event_type=AuditEventType.ALERT_DELIVERY,
                 actor="alert-router",

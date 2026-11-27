@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
@@ -604,8 +605,44 @@ def _verify_capsule_dir(
             capsule_id=capsule_id,
             errors=all_errors,
             signature_ok=result.signature_ok,
+            run_id=_manifest_run_id(capsule_dir),
+            first_divergence=first_divergence,
         )
         raise typer.Exit(code=1)
+
+
+#: A run id is a short ref; anything else in capsule.yaml's ``run_id`` is not
+#: forwarded into an alert.
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9._:@-]{1,200}\Z")
+
+
+def _manifest_run_id(capsule_dir: Path) -> str | None:
+    """The ``run_id`` the capsule's own ``capsule.yaml`` records, or None (issue #276).
+
+    Best-effort and never raises: a missing, linked, oversized or unparsable
+    manifest — or a value that is not a plain ref — means the alert carries no
+    run id, and the dashboard then says "no run linked" instead of guessing one
+    from the directory name. The seal that just failed no longer vouches for
+    this manifest, so the value is a lead for triage, not proof.
+    """
+    try:
+        import yaml  # noqa: PLC0415
+
+        from novafabric._capsule_fs import read_capsule_text  # noqa: PLC0415
+
+        # read_capsule_text follows no link and refuses special or oversized
+        # files; any refusal is simply "no run id" here (the verify report
+        # above already names a linked or special entry).
+        text = read_capsule_text(
+            capsule_dir, "capsule.yaml", operation="nova verify", max_bytes=1 << 20
+        )
+        data = yaml.safe_load(text)
+    except Exception:  # noqa: BLE001 — the alert must still fire without a run id
+        return None
+    run_id = data.get("run_id") if isinstance(data, dict) else None
+    if isinstance(run_id, str) and _RUN_ID_RE.match(run_id):
+        return run_id
+    return None
 
 
 def _print_identity(result: Any) -> None:

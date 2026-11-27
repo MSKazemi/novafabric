@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
+from novafabric._oneline import PATH_LIMIT, one_line
 from novafabric.serve.http_cache import conditional_json
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,37 @@ logger = logging.getLogger(__name__)
 _OUTCOME_MAP = {"error": "failed"}
 
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+#: Same bound `nova verify` applies before it records a run id (issue #276).
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9._:@-]{1,200}\Z")
+
+
+def alert_run_link(source: Any) -> dict[str, Any]:
+    """``run_id`` + ``first_divergence`` from an alert's details/payload (issue #276).
+
+    Additive row fields for the dashboard's triage panel. ``run_id`` is the run
+    the alert *source* recorded — today only ``ops.seal.verify_failed`` records
+    one — or ``None`` when it recorded none: the panel then says no run is
+    linked, it never derives one from the subject. ``first_divergence`` keeps
+    only file-granularity refs (path, reason, stream, divergent_files).
+    """
+    if not isinstance(source, dict):
+        return {"run_id": None, "first_divergence": None}
+    raw_run = source.get("run_id")
+    run_id = raw_run if isinstance(raw_run, str) and _RUN_ID_RE.match(raw_run) else None
+    raw_fd = source.get("first_divergence")
+    first_divergence: dict[str, Any] | None = None
+    if isinstance(raw_fd, dict) and isinstance(raw_fd.get("path"), str):
+        count = raw_fd.get("divergent_files")
+        first_divergence = {
+            "path": one_line(raw_fd["path"], PATH_LIMIT),
+            "reason": one_line(raw_fd.get("reason") or "", 32),
+            "stream": raw_fd.get("stream") if isinstance(raw_fd.get("stream"), str) else None,
+            "divergent_files": (
+                count if isinstance(count, int) and not isinstance(count, bool) else None
+            ),
+        }
+    return {"run_id": run_id, "first_divergence": first_divergence}
 
 
 def parse_alert_ts(value: str) -> datetime:
@@ -79,6 +112,7 @@ def delivery_rows(
             "outcome": _OUTCOME_MAP.get(outcome, outcome),
             "endpoint_id": details.get("endpoint_id"),
             "attempts": int(details.get("attempts", 0) or 0),
+            **alert_run_link(details),
         })
         if len(rows) >= limit:
             break
@@ -119,6 +153,7 @@ def emitted_rows(
             "outcome": "emitted",
             "endpoint_id": None,
             "attempts": 0,
+            **alert_run_link(rec.get("payload")),
         })
         if len(rows) >= limit:
             break

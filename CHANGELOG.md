@@ -78,6 +78,19 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **Dashboard: alert and incident triage panel (#276, experimental).** A **Triage** button on each
+  Alerts and Incidents row opens a read-only panel: the run(s) the record links to (status,
+  creation time, capsule directory, **Open run**, and a Diff link for two runs), the verification
+  state the record holds, a timeline in words, and the next safe actions as copyable commands
+  (`nova verify`, `nova export-evidence`, `nova diff`, `nova incident status|export`,
+  `nova audit-log export`). Nothing is executed from the panel. When no run is linked it says so
+  ("no run linked — the alert source did not record a run id") instead of guessing one from the
+  alert's subject. To make that link possible, `ops.seal.verify_failed` alerts now record the
+  `run_id` from the capsule's `capsule.yaml` and the seal's `first_divergence` (file granularity)
+  in their payload and `alert.delivery` audit details, and `GET /api/alerts/recent` rows carry
+  two additive fields, `run_id` and `first_divergence` (`null` when not recorded). Other alert
+  types record no run. The shipped bundle under `src/novafabric/serve/static` gains the panel when
+  it is next rebuilt.
 
 ### Changed
 

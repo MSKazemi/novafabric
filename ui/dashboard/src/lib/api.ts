@@ -120,6 +120,19 @@ export interface AlertRow {
   outcome: AlertOutcome;
   endpoint_id: string | null;
   attempts: number;
+  /** Issue #276: the run the alert *source* recorded (today only `ops.seal.verify_failed`);
+   *  null when it recorded none. Absent from servers older than this field. Never derived
+   *  from `subject`. */
+  run_id?: string | null;
+  /** Issue #276: first evidence file the seal no longer matches (file granularity, #74). */
+  first_divergence?: AlertFirstDivergence | null;
+}
+
+export interface AlertFirstDivergence {
+  path: string;
+  reason: string;
+  stream: string | null;
+  divergent_files: number | null;
 }
 
 export interface AlertsRecentResult {
@@ -938,6 +951,13 @@ export interface IncidentDeadline {
   overdue: boolean;
 }
 
+export interface IncidentTransition {
+  kind: 'status' | 'attestation' | (string & {});
+  from_value: string | null;
+  to_value: string;
+  at: string;
+}
+
 export interface IncidentView {
   id: string;
   title: string;
@@ -947,6 +967,11 @@ export interface IncidentView {
   occurred_at: string;
   aware_at: string | null;
   run_ids: string[];
+  /** When the record was opened in NovaFabric (server field; optional for older servers). */
+  created_at?: string;
+  /** Forward-only status / attestation transitions, oldest first. */
+  history?: IncidentTransition[];
+  attestation_ref?: string | null;
   deadlines: IncidentDeadline[];
   nearest_deadline?: string;
   nearest_obligation?: string;
