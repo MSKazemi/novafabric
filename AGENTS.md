@@ -22,15 +22,18 @@ This is the single most common wasted debugging session in this repo.
 ## Gates — all four must pass
 
 ```bash
-make test-fast     # ~4 min, parallel, no Docker (-m "not container")
+make test-fast     # ~31–37 min measured, parallel, no Docker (-m "not container")
 make lint          # ruff check src tests scripts
 make typecheck     # mypy src (strict)
 make check-links   # every relative link in a public doc resolves
 ```
 
 Before a release, or when you have touched storage or the server:
-`make test-par` — the whole suite as CI's sharded `unit` job runs it (~5 min). **Coverage must stay at or above
-90%.** Never run the ~11.6K-test suite serially during development.
+`make test-par` — the whole suite as CI's sharded `unit` job runs it (a superset of
+`test-fast`: it adds the Docker tier and coverage). **Coverage must stay at or above
+90%.** Never run the 25,000-plus-test suite serially during development; while you work,
+`make test-direct` runs the tests that directly cover your change (tiers and timings:
+[docs/developer-guide.md](docs/developer-guide.md#how-the-test-tiers-work)).
 
 For any CLI change, also smoke-test `uv run nova --help` and the affected
 sub-command.
@@ -89,8 +92,8 @@ Full architectural context: [docs/architecture.md](docs/architecture.md).
 - **`tests/<name>/__init__.py` shadows an installed distribution** via
   `pythonpath=tests`. Check before naming a new test package; this silently
   disabled the coverage gate for six weeks.
-- **A 300 s `pytest-timeout` makes hangs fail by name.** Read the timeout
-  failure; do not restart blindly.
+- **A 900 s `pytest-timeout` (`pyproject.toml`) makes hangs fail by name.** Read the
+  timeout failure; do not restart blindly.
 - Tests are hermetic — an autouse fixture strips ambient `NOVAFABRIC_*` vars, so
   a test never touches a developer's real capsule store. Do not work around it.
 
