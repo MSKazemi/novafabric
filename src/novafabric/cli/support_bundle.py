@@ -28,18 +28,30 @@ def support_bundle_cmd(
         int,
         typer.Option(
             "--log-window-hours",
-            help="Bound for the structured-log window recorded in the manifest.",
+            help=(
+                "Collect only *.log files modified within this many hours (from "
+                "NOVAFABRIC_LOG_DIR or $NOVAFABRIC_HOME/logs); recorded in the manifest."
+            ),
         ),
     ] = 24,
 ) -> None:
-    """Produce a secret-safe diagnostics tarball for support (experimental, ADR-0187).
+    """Write a redacted diagnostics tarball for support (experimental, ADR-0187).
 
-    Contains ONLY allowlisted members: doctor.json, versions.json, env.txt
+    Contains ONLY allowlisted members: MANIFEST.txt (what each file is and
+    why it is there), doctor.json, versions.json, env.txt
     (NOVAFABRIC_*/NOVA_* variable names only — never values), health.json,
     config.redacted.yaml (if a server config exists, with secret-keyed
-    values redacted), and a manifest.json with the SHA-256 of every member
-    plus the redaction ruleset version. No tokens, keys, credentials,
-    capsule payloads, prompts, or responses are ever included.
+    values redacted), the redacted tails of recent logs/*.log files (only if
+    you keep logs in NOVAFABRIC_LOG_DIR or $NOVAFABRIC_HOME/logs), and a
+    manifest.json with the SHA-256 of every member plus the rule versions.
+    No collector reads tokens, keys, capsule payloads, prompts or responses.
+    Your home directory becomes ~, your user name after a home, scratch or
+    tmp directory becomes [USER], and this host's name as a whole word
+    becomes [HOSTNAME] (versions.json is left as is).
+
+    The archive stays on this computer; nothing is uploaded. Redaction is
+    pattern-based, so review the files (log text especially) before you
+    share it.
 
     Scope: global (snapshots the whole installation).
 
@@ -66,3 +78,8 @@ def support_bundle_cmd(
     for name in result.members:
         console.print(f"  - {name}")
     console.print(f"[bold]Manifest SHA-256:[/bold] {result.manifest_sha256}")
+    console.print(
+        "[yellow]Review before sharing:[/yellow] MANIFEST.txt inside the archive says "
+        "what each file is. Redaction is pattern-based; read any logs/ files yourself. "
+        "Nothing was uploaded."
+    )

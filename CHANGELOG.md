@@ -281,6 +281,11 @@ longer forwards the submitting shell's environment (ADR-0270).
   the wrong path, such as `--db` on `nova rollback`/`nova unregister` ignoring `$NOVAFABRIC_HOME`, and
   `nova migrate`/`nova asset diff` describing formats they do not use). A new guard test fails when the
   reference shows a flag on a `nova …` invocation that the command does not accept.
+- **New troubleshooting guide, `docs/ops/troubleshooting.md`.** It goes from symptom to check to fix
+  for five failure modes, each traced to the message the code prints: server unreachable, token
+  rejected, Postgres DSN errors, a missing optional extra, and a NovaSeal key or config that is missing.
+  It also covers what `nova support-bundle` collects and what to review before sharing a bundle. The
+  incident runbook no longer calls a support bundle "safe to attach to a ticket as-is".
 
 ### Fixed
 
@@ -397,6 +402,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   and the evidence cart's `added_from` drop `token`/`access_token`, and start-up strips `?token=`
   from the address bar even when storing it fails. The bundled dashboard picks this up at its next
   rebuild. The API requests and the `/api/runs/stream` event stream still send `?token=`.
+- **`nova support-bundle` no longer shows who and where a bundle was made on, and says what is inside it (experimental).** The redaction rules removed credentials but not identity. `doctor.json` held the absolute registry path (`/home/<user>/…`), `logs/README.txt` the absolute log directory, and log lines the machine's host name. Every tar entry also carried the local account's user and group name, because `tarfile` records the owner. Each member is now scrubbed before it is written: the home directory becomes `~`, the name after a home prefix (`/home/`, `/Users/`, `C:\Users\`, also JSON-escaped or URL-encoded) and the current user name after `/scratch/`, `/work/`, `/tmp/` or `/var/tmp/` or in a `user=` field become `[USER]`, and this host's name, full and short, becomes `[HOSTNAME]` where it stands as a whole word (case-sensitive), in log file names too. The scrub is narrow so diagnostic text survives: a host named `linux` leaves `Linux-6.8` alone, a host joined by `-` or `_` is kept, and `versions.json` is not scrubbed. It is local-only (no DNS lookup). Tar entries carry uid/gid 0 and no owner names. The scrub is specific to the bundle, so audit-log and SIEM redaction are unchanged; `manifest.json` gains an additive `local_scrub_version` (`v1`). A new `MANIFEST.txt` member lists every file and why it is there, what is missing and why, what is never collected, which rules ran, and what to check before sharing. Remote host names, IP addresses and database user names are kept, because they are often the diagnosis. The command now ends with a review reminder. Its help text no longer says no secret can ever be included, and `--log-window-hours` is described as what it does: the window that selects which log files are collected. Tests: `tests/test_support_bundle_privacy.py`.
 
 ## [0.109.0] - 2026-11-22
 

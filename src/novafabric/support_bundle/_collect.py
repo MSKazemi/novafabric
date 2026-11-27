@@ -22,6 +22,7 @@ from typing import Any
 import yaml
 
 from novafabric.support_bundle._redact import redact_line, redact_value
+from novafabric.support_bundle._scrub import LocalIdentity, scrub_value
 
 #: Default server config location (ADR-0029; mirrors
 #: ``novafabric.server.config._DEFAULT_CONFIG_PATH`` without importing the
@@ -228,12 +229,18 @@ def _redacted_tail(path: Path, budget: int) -> tuple[str, int]:
     return body, len(data)
 
 
-def collect_redacted_config(config_path: Path | None = None) -> str | None:
+def collect_redacted_config(
+    config_path: Path | None = None,
+    identity: LocalIdentity | None = None,
+) -> str | None:
     """Redacted server config YAML, or ``None`` if no config exists.
 
     Every value whose key matches the deny patterns is replaced by
     ``[REDACTED]``. An unparseable config is omitted entirely rather than
-    included raw (deny-by-default, ADR-0187 D3).
+    included raw (deny-by-default, ADR-0187 D3). Home paths, user names in
+    paths and this host's name are then scrubbed (:mod:`._scrub`) — on the
+    parsed values, before dumping, because the YAML dumper may fold a long path
+    across lines where a text-level rewrite would miss it.
     """
     path = config_path or DEFAULT_SERVER_CONFIG_PATH
     if not path.exists():
@@ -244,4 +251,5 @@ def collect_redacted_config(config_path: Path | None = None) -> str | None:
         return None
     if not isinstance(raw, dict):
         return None
-    return yaml.safe_dump(redact_value(raw), sort_keys=True)
+    scrubbed = scrub_value(redact_value(raw), identity or LocalIdentity.current())
+    return yaml.safe_dump(scrubbed, sort_keys=True)
