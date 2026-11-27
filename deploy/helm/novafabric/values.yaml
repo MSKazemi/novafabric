@@ -73,6 +73,8 @@ mode: server
 # Alembic revision the migration initContainer upgrades to. Default "head":
 # the server refuses to start when stamped behind head, so pinning below head
 # breaks a server-mode deploy. Override only if you must hold a schema back.
+# In server mode this is a revision of the registry track (`--track registry`,
+# Postgres revisions p0001…); in dashboard mode, of the MetadataStore track.
 dbRevision: head
 
 serve:

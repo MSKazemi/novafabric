@@ -506,6 +506,15 @@ helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z> \
   --set externalDatabase.existingSecret=nova-db
 ```
 
+In server mode the chart's migration init container runs
+`nova db upgrade --track registry --backend postgres` — the registry track, which is
+what the server's schema-skew guard checks — and not the MetadataStore track. The
+chart used to run the bare `nova db upgrade --backend postgres` (MetadataStore track)
+against the same database; because both tracks share one `alembic_version` table,
+that stamped `v005` and `nova server start` refused with `SchemaSkewError`, so the
+stock chart crash-looped. A database already stamped that way is not repaired by
+the fixed chart ([upgrade guide §4a](upgrade-guide.md#4a-startup-schema-skew-guard-experimental-adr-0211)).
+
 In server mode the chart's readiness/liveness probes hit `/readyz` and `/livez`
 (both modes expose them); `/readyz` gates traffic on database reachability and
 schema-skew. Provide OIDC config as a mounted `server.yaml` (the `oidc:` block) —

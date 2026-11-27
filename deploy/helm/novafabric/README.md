@@ -155,9 +155,18 @@ See [`values.yaml`](values.yaml) for the full list.
 - Runs as non-root (uid/gid/fsGroup 1000), `allowPrivilegeEscalation: false`,
   all capabilities dropped.
 - No host networking, no privileged access, no node-level capabilities.
-- Schema migration runs in an init container (`nova db upgrade … --revision head`
-  by default, via `dbRevision`), matching the Docker entrypoint. The server
-  refuses to start when the schema is stamped behind head.
+- Schema migration runs in an init container. In server mode it runs
+  `nova db upgrade --track registry --backend postgres --revision head` (`dbRevision`
+  overrides the revision): the registry track is the one `nova server start` checks,
+  and the server refuses to start when it is stamped behind head. The MetadataStore
+  track is **not** run in server mode — both tracks share one `alembic_version`
+  table in the same database, and its stamp (`v005`) made the server refuse to start
+  with `SchemaSkewError` (fixed after v0.109.0). The server creates the
+  MetadataStore tables it uses itself on first use. Dashboard mode still runs
+  `nova db upgrade --backend postgres`, as the Docker entrypoint does.
+- A database already stamped `v005` by an earlier chart is **not** repaired by
+  upgrading the chart: `--track registry` cannot locate `v005`. See
+  [upgrade guide §4a](../../../docs/ops/upgrade-guide.md#4a-startup-schema-skew-guard-experimental-adr-0211).
 - Readiness/liveness probes use `/readyz` and `/livez` (HTTP GET).
 - The stock `values.yaml` keeps a writable root filesystem and a bundled Postgres
   whose password is the literal `nova`: an **evaluation** default. Use
