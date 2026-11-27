@@ -15,18 +15,30 @@ reasonable to need both.
 
 | | **NovaFabric** | Self-hosted observability (Langfuse, Arize Phoenix) | Hosted SaaS (LangSmith, W&B Weave, Helicone) | Experiment tracking (MLflow, DVC) |
 |---|---|---|---|---|
-| Deployment | Self-hosted CLI, server optional, **no account** | Self-hosted server + database (required) | Managed cloud | Self-hosted or managed |
-| Primary artifact | Portable evidence **capsule** — a folder | Trace row in a database | Trace row in a vendor cloud | Run record + artifacts |
-| Where your data lives | **Your machine** | Your server | Vendor cloud | Your store or vendor |
-| Replay a past run | **✓** recorded model replies (tools run live) + 3 inspection modes | ✗ | ✗ | partial — re-run a script |
-| Run-to-run structural diff | **✓** | partial (eval) | partial (eval) | metric comparison only |
-| Cryptographic signing / provenance | **✓** opt-in: DSSE seal, Sigstore, optional RFC 3161 | ✗ | ✗ | ✗ |
-| Capture with no code changes | **✓** hooks, wire-level, proxy | SDK instrumentation | SDK or proxy | explicit logging calls |
-| Works fully offline / air-gapped | **✓** | self-host only | ✗ | partial |
-| Real-time dashboards & alerting | ✗ **weak** | ✓ strong | ✓ strong | partial |
-| Hosted multi-user convenience | ✗ **none** | partial | ✓ strong | ✓ |
-| Prompt playground / A-B testing | ✗ no playground; local, record-only A/B attribution (`nova experiment`, `--variant`; experimental) | ✓ | ✓ | ✗ |
-| Maturity | **beta, pre-1.0, small** | mature | mature | very mature |
+| Deployment | Self-hosted CLI, server optional, **no account** | Self-hosted server; self-hosted Langfuse v3 needs Postgres, ClickHouse, Redis/Valkey and S3-compatible storage [1]. Langfuse also runs a managed cloud [1]; Phoenix runs locally with `phoenix serve` [2] | Managed cloud by default. LangSmith self-hosting is an Enterprise-plan add-on [3]; Helicone can be self-hosted [4]; W&B lists a Dedicated Cloud option [5] | not verified |
+| Primary artifact | Portable evidence **capsule** — a folder | not verified | not verified | not verified |
+| Where your data lives | **Your machine** | Your server (or Langfuse Cloud) [1] | Vendor cloud unless self-hosted [3][4] | not verified |
+| Replay a past run | **✓** recorded model replies (tools run live) + 3 inspection modes | not verified | LangSmith opens a traced LLM run in its Playground [6]; replay against recorded replies not verified | not verified |
+| Run-to-run structural diff | **✓** | not verified | not verified | not verified |
+| Cryptographic signing / provenance | **✓** opt-in: DSSE seal, Sigstore, optional RFC 3161 | not verified | not verified | not verified |
+| Capture with no code changes | **✓** hooks, wire-level, proxy | not verified | not verified | not verified |
+| Works fully offline / air-gapped | **✓** | Self-hosted deployments run on your infrastructure [1][2]; fully air-gapped operation not verified | not verified | not verified |
+| Real-time dashboards & alerting | ✗ **weak** (an experimental local dashboard; opt-in lifecycle webhooks and drift alerts, experimental; no live metric monitoring) | Langfuse documents metric alerts to Slack, PagerDuty and webhooks [7] | not verified | not verified |
+| Hosted multi-user convenience | ✗ **none** | Langfuse Cloud [1] | ✓ managed by default [3] | not verified |
+| Prompt playground / A-B testing | ✗ no playground; local, record-only A/B attribution (`nova experiment`, `--variant`; experimental) | Langfuse has a prompt playground and prompt management [8] | LangSmith has a Playground [6] | not verified |
+| Maturity | **beta, pre-1.0, small** | not verified | not verified | not verified |
+
+Competitor cells cite the vendor's own documentation, read on 2026-11-27; a cell marked
+*not verified* is one we have not checked against it, so check it yourself. Products change
+faster than this page:
+[1] [Langfuse self-hosting](https://langfuse.com/self-hosting) ·
+[2] [Phoenix terminal deployment](https://arize.com/docs/phoenix/self-hosting/deployment-options/terminal) ·
+[3] [LangSmith self-hosted](https://docs.langchain.com/langsmith/self-hosted) ·
+[4] [Helicone self-host](https://docs.helicone.ai/getting-started/self-host) ·
+[5] [W&B deployment options](https://wandb.ai/site/for-enterprise/deployment-options) ·
+[6] [LangSmith: log LLM traces](https://docs.langchain.com/langsmith/log-llm-trace) ·
+[7] [Langfuse alerts](https://langfuse.com/docs/metrics/features/alerts) ·
+[8] [Langfuse playground](https://langfuse.com/docs/prompt-management/features/playground).
 
 ---
 
@@ -35,14 +47,16 @@ reasonable to need both.
 Use something else if:
 
 - **You want live monitoring and alerting.** NovaFabric is not an APM and does not
-  try to be. Langfuse, Phoenix, LangSmith, and Helicone all do this properly.
+  try to be: it does no live metric monitoring. Langfuse, for one, documents metric alerts [7]; check
+  the other tools' docs for what they offer.
 - **You want a hosted service with a team UI and zero operations.** There is no
   SaaS, no account system, and no plan to build one.
 - **You want a prompt playground or a hosted A/B testing platform.** Not built, not planned. (Local, record-only variant attribution and dataset-experiment comparison exist — `nova capture --experiment/--variant`, `nova experiment run/compare`, `nova diff --group-by variant` — experimental.)
-- **You need a mature, battle-tested tool right now.** NovaFabric is pre-1.0. The
+- **You need a battle-tested tool right now.** NovaFabric is pre-1.0. The
   capsule format is not frozen and will change before v1.0.
 - **Your workload is a classic ML training sweep and you want metric comparison.**
-  MLflow and W&B are better at exactly that, and have been for years.
+  That is what experiment trackers such as MLflow and W&B are built for; NovaFabric
+  does not compare learning curves.
 
 ## Where NovaFabric is genuinely better
 
@@ -71,8 +85,10 @@ Use something else if:
   internet requirement for core features.
 - **HPC and SLURM workloads.** Capture works on a login node with no daemon and no
   privileged access — a genuinely under-served case.
-- **Regulatory evidence.** EU AI Act, ISO 42001, CycloneDX AI-BOM exporters run
-  off the same captured facts.
+- **Regulatory evidence.** EU AI Act, ISO/IEC 42001 and CycloneDX AI-BOM exporters
+  (experimental) run off the same captured facts. They produce evidence for your
+  assessment, never a compliance determination or a certification; see
+  [Standards and specifications](standards-conformance.md).
 
 ---
 
@@ -80,21 +96,22 @@ Use something else if:
 
 ### NovaFabric vs Langfuse
 
-**Use Langfuse if** you want self-hosted LLM observability with strong dashboards,
-cost and token analytics, prompt management, and a team UI. It is mature, widely
-deployed, and better than NovaFabric at all of it.
+**Use Langfuse if** you want LLM observability with a team UI, prompt management and a
+playground [8], and metric alerts [7], self-hosted or on Langfuse Cloud [1]. NovaFabric
+has no prompt management, no playground and no live metric alerts.
 
 **Use NovaFabric if** you need to replay a run, diff two runs structurally, or hand
 an auditor a signed Evidence Bundle that verifies without your infrastructure being up.
 
-**Use both:** NovaFabric emits OpenTelemetry GenAI spans and OpenLineage events, so
-it can feed a Langfuse deployment while keeping portable capsules for replay and
-audit. They are complementary; this is not a migration story.
+**Use both:** NovaFabric emits OpenTelemetry GenAI spans (`nova capture
+--emit-otel-genai`) and OpenLineage events, and keeps portable capsules for replay and
+audit. Whether your Langfuse deployment ingests those spans is a question for Langfuse's
+documentation (not verified here). They are complementary; this is not a migration story.
 
 ### NovaFabric vs LangSmith
 
-LangSmith is a hosted service tightly integrated with LangChain, with a mature
-evaluation and tracing product. Its data lives in LangSmith's cloud.
+LangSmith is LangChain's tracing and evaluation service. By default its data lives in
+LangSmith's cloud; self-hosting is an add-on to the Enterprise plan [3].
 
 The distinction is ownership: with NovaFabric the artifact is a folder on your
 filesystem that you can `tar` and archive for a decade. If your constraint is *"the
@@ -104,7 +121,7 @@ air-gapped cluster — that constraint alone decides it.
 ### NovaFabric vs MLflow / Weights & Biases
 
 Different eras of the same instinct. MLflow and W&B track *experiments*: parameters,
-metrics, artifacts, model versions, and they are excellent at it.
+metrics, artifacts, model versions.
 
 NovaFabric captures *executions*: the full call graph of an agent or job, the
 environment lock, the secret-scan proof, and, when you seal the capsule, a signature
@@ -131,7 +148,7 @@ secret leaked into the record. Those are the four things a capsule adds.
 ## Frequently asked
 
 **Is NovaFabric production-ready?** It is **beta**. Local capture, replay, diff,
-lineage, and the trust layer are stable and used daily. Server mode, the
+lineage and signed evidence are labelled *works today* in the README (sealing is opt-in). Server mode, the
 cluster-scale collector, and the dashboard are `experimental`. The capsule format
 is **not frozen** — expect schema changes before v1.0. Read
 [the roadmap](../ROADMAP.md) before betting a production pipeline on it.
@@ -150,7 +167,7 @@ content anywhere else: `--emit-otel-genai` exports spans without content unless 
 also pass `--capture-content`.
 
 **Which frameworks does it support?** Capture is framework-agnostic — it wraps a
-command. Twelve experimental adapters add richer detail (the smolagents one is not yet in a release): LangGraph, CrewAI, AutoGen,
+command. Twelve experimental adapters add richer detail (smolagents is new in v0.109.0): LangGraph, CrewAI, AutoGen,
 DSPy, LlamaIndex, Haystack, Pydantic AI, Hugging Face smolagents, the OpenAI Agents SDK, Google ADK, Bedrock
 AgentCore and A2A. MCP tool calls are captured by a hook and by the experimental
 `nova mcp-proxy`. See [the architecture map](architecture.md).
