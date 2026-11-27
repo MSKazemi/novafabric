@@ -1605,9 +1605,14 @@ selected by `NOVA_MODE`:
 | `dashboard` *(default)* | `nova serve --experimental --insecure --topology --tv5` — the experimental dashboard over HTTP with a printed token | Session token only; **put TLS in front of it** and never expose it directly |
 | `server` | `nova server start --backend postgres` — the multi-user REST API | On by default (OIDC via `NOVAFABRIC_SERVER_*`, else a generated local bearer token). The entrypoint never passes `--insecure-no-auth` |
 
-Both modes run the Alembic migration first (`nova db upgrade --backend postgres
---revision ${NOVA_DB_REVISION:-head}`) and both expose `/livez`, which is what
-the Compose healthcheck probes.
+Both modes run an Alembic migration first and both expose `/livez`, which is
+what the Compose healthcheck probes. Server mode migrates the registry track
+(`nova db upgrade --track registry --backend postgres --revision
+${NOVA_DB_REVISION:-head}`), the one the server's schema-skew guard checks;
+dashboard mode migrates the MetadataStore track (`nova db upgrade --backend
+postgres --revision ${NOVA_DB_REVISION:-head}`). Running the MetadataStore track
+in server mode stamped the shared `alembic_version` table `v005`, and
+`nova server start` then refused with `SchemaSkewError`.
 
 | Variable | Default | Effect |
 |---|---|---|

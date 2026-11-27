@@ -458,8 +458,11 @@ Set `NOVA_MODE=server` on the image. It listens on `NOVA_PORT` (default `7433`)
 and, with `NOVA_WORKERS>1`, runs that many uvicorn workers (requires Postgres):
 
 The entrypoint waits for Postgres with `pg_isready` against `PGHOST` (default
-`postgres`) / `PGPORT` / `PGUSER`, then runs `nova db upgrade --backend postgres`,
-which reads `NOVAFABRIC_METADATA_DSN` — so set all of them:
+`postgres`) / `PGPORT` / `PGUSER`, then, in server mode, runs
+`nova db upgrade --track registry --backend postgres` (the registry track, which
+reads `NOVAFABRIC_POSTGRES_DSN` and is what the server's schema-skew guard
+checks). The server creates the MetadataStore tables it uses (in
+`NOVAFABRIC_METADATA_DSN`) itself on first use, so set all of them:
 
 ```bash
 docker run -e NOVA_MODE=server \
