@@ -97,7 +97,11 @@ openssl req -new -x509 -key ~/.novafabric/keys/seal.key \
 
 **Security requirements for software key storage:**
 - Private key file must be `chmod 600` (owner read-only).
-- The directory must be `chmod 700`.
+- The directory must be `chmod 700`. `nova seal init` creates
+  `keys/novaseal/` at `0700` and its private keys at `0600`; `nova init`
+  creates `$NOVAFABRIC_HOME/keys/` itself at your umask (often `0755`), so
+  `chmod 700` it yourself. Every private key NovaFabric writes is an
+  unencrypted PEM at `0600`; there is no passphrase option.
 - The private key must NOT be committed to any version control system.
 - At rest encryption (LUKS / BitLocker / FileVault) is required for the partition.
 - Consider moving to a cloud KMS profile (`aws_kms` / `azure_kv` / `gcp_kms`) at the earliest opportunity.
@@ -496,13 +500,20 @@ Verifiers must pin the specific public key they trust — do not use a global
 
 ## Backups and key material (ADR-0216 D4)
 
-`nova backup create` excludes signing keys **by default** — data backups may
-spread widely; key backups must not. A full disaster-recovery set can opt in
-with `nova backup create --include-keys` (packs the signing keyring and
-`novaseal.yaml` + its key/cert PEMs under `external/…`, flagged
+`nova backup create` excludes signing key files **by default** — data backups
+may spread widely; key backups must not. The exclusion is by file name
+(`*.pem`, `*.key`, `keys/`): the default set still carries `dek.db` and, when
+the ratchet profile is used, the `seal/ratchet/` chain keys, so treat every set
+as a secret ([backup runbook §1.4](ops/backup-restore.md#14-keys--backed-up-separately-never-with-data)).
+A set can opt in with `nova backup create --include-keys` (packs the signing
+keyring and `novaseal.yaml` + its key/cert PEMs under `external/…`, flagged
 `key_material`), and restoring them requires the second opt-in
-`nova restore --restore-keys`. A set created with `--include-keys` must be
-handled under the custody rules in this document — encrypted cold storage,
-restricted access — never alongside ordinary data backups. The default
-posture is unchanged: keys are backed up separately per this procedure, and a
-restore without keys can verify everything but sign nothing.
+`nova restore --restore-keys`. Even then the set is **not** a complete
+key escrow: `keys/signing_key.pem` (Evidence Bundles), `keys/offline-key.pem`
+and the local seal CA key `keys/novaseal/ca.key.pem` are not included. A set
+created with `--include-keys` must be handled under the custody rules in this
+document — encrypted cold storage, restricted access — never alongside
+ordinary data backups. The default posture is unchanged: keys are backed up
+separately per this procedure. A restore without keys can verify, but cannot
+sign as the old identity (the dashboard's evidence export creates a new
+`signing_key.pem` if none exists — a different key).

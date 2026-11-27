@@ -2,6 +2,8 @@
 
 [Architecture, as built](README.md) › `nova serve` request path
 
+> Verified against code on 2026-11-27.
+
 `nova serve` is the local dashboard and its `/api/*` routes. This page follows
 one HTTP request from the socket to the handler and names every place it can be
 refused. Three decisions shape the path:
@@ -24,7 +26,7 @@ flowchart LR
     C["request"] --> H{"Host is localhost?"}
     H -->|no| H403["403 host_not_localhost"]
     H -->|yes| R["enforce_scope<br/>resolve_scope(credential)"]
-    R --> Q["required_scope(method, route)"]
+    R --> Q["effective_scope(method, route, params)<br/>ROUTE_SCOPES via required_scope"]
     Q -->|"public, or classified + unknown credential"| V["route's verify_token<br/>401 if missing/invalid"]
     Q --> S{"satisfies(held, required)?"}
     S -->|"no, or route unclassified"| D["403 + authz.denied audit record"]
@@ -39,12 +41,14 @@ flowchart LR
 | 1 | At start-up, before the token is minted or a socket is bound, `assert_multi_tenant_ready` reads `NOVAFABRIC_SERVE_TENANCY`. Anything but `multi` means single-tenant, the default. In `multi` mode, any store classed `unsafe` stops the process with exit code 2 and a message naming each store and why. | `cli/serve.py`, `serve/tenancy.py:assert_multi_tenant_ready` | experimental |
 | 2 | The `host_header_guard` middleware rejects a `Host` header other than `localhost`, `127.0.0.1` or `[::1]` with 403 `host_not_localhost`. It runs before any dependency, so no scope check and no audit record happen. This is the DNS-rebinding defence. | `serve/app.py:host_header_guard`, `serve/auth.py:is_localhost_host` | works today |
 | 3 | `enforce_scope` is one dependency mounted on the whole app, so routers added later inherit it. It reads the credential (`Authorization: Bearer`, else `?token=`) and maps it: the server's `.serve-token` holds `admin`; a token issued by `POST /api/admin/tokens` holds the scope it was minted with; a token record with no `scope` field (issued before scopes existed) reads as `admin`; a record whose `scope` is not recognised holds **no** scope. | `serve/authz.py:build_authz_dependency`, `resolve_scope`, `record_scope` | experimental |
-| 4 | `required_scope` looks up `(method, route template)` in `ROUTE_SCOPES`. A `public` route passes. On a **classified** route, a missing credential or one the server does not recognise also passes this step, so that the route's own `verify_token` answers **401**. An **unclassified** route is not deferred, because it may have no `verify_token` of its own. | `serve/authz.py:required_scope`, `ROUTE_SCOPES` | experimental |
+| 4 | `effective_scope` takes the scope `required_scope` looks up for `(method, route template)` in `ROUTE_SCOPES`. For a template listed in `DERIVED_ROUTE_BASES` (today `GET /api/reports/{report_id}/export`) it raises that scope to the named report's own route scope, and to `admin` when the report id is unknown or unclassified. A `public` route passes. On a **classified** route, a missing credential or one the server does not recognise also passes this step, so that the route's own `verify_token` answers **401**. An **unclassified** route is not deferred, because it may have no `verify_token` of its own. | `serve/authz.py:effective_scope`, `required_scope`, `ROUTE_SCOPES`, `DERIVED_ROUTE_BASES` | experimental |
 | 5 | `satisfies(held, required)` decides. If it fails, the credential holds no scope, or the route has no entry in the table (whoever is asking, anonymous callers included), the answer is **403**, and one `authz.denied` record is appended to the dashboard audit log. | `serve/authz.py:satisfies`, `_audit_denial`, `serve/audit.py:append` | experimental |
 | 6 | Otherwise the route's own `verify_token` dependency checks the credential again (401 if missing or invalid) and the handler runs. | `serve/app.py:verify_token` | works today |
 
 WebSocket routes (`/api/tv5/ws`, `/topology/stream`) are skipped by
-`enforce_scope` and keep their inline host and token checks. Scope on a
+`enforce_scope` and keep their inline host and token checks; any other WebSocket
+path hits the `/{ws_path:path}` catch-all, which closes it with code 1011
+(`serve/app.py:_ws_catchall`). Scope on a
 long-lived subscription is still an open question (ADR-0228 OQ-2).
 
 ## The scope rules

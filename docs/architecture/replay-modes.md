@@ -2,6 +2,8 @@
 
 [Architecture, as built](README.md) › Replay modes
 
+> Verified against code on 2026-11-27.
+
 `nova replay <capsule|run-id> --mode <mode>` (`cli/replay.py:replay_cmd`) loads a
 capsule and passes it to `replay/_engine.py:ReplayEngine.run`. There are five
 modes. Two of them, `mocked` and `intervention`, run the captured command again.
@@ -120,7 +122,7 @@ without a command, and `error.guard` names the guard:
 |---|---|
 | `facet_malformed` | the facet does not match its shape |
 | `entry_not_reproducible` | the process was a REPL, read its program from stdin, or its `sys.argv` did not match what it ran (rewritten argv, frozen app, a directory change before the adapter ran) |
-| `long_lived_host` | the entry is a known host (`ipykernel_launcher`, `jupyter`, `ipython`, `pytest`, `uvicorn`, `gunicorn`, `hypercorn`, `streamlit`, `celery`), or a notebook kernel, pytest session, xdist worker or Streamlit app was loaded |
+| `long_lived_host` | the entry is a known host (`replay/_replayability.py:LONG_LIVED_HOSTS`: `ipykernel_launcher`, `ipykernel`, `jupyter`, `jupyter-notebook`, `jupyter-lab`, `jupyter-execute`, `ipython`, `pytest`, `py.test`, `uvicorn`, `gunicorn`, `hypercorn`, `streamlit`, `celery`), or a notebook kernel, pytest session, xdist worker or Streamlit app was loaded |
 | `argv_redacted` | an argument was redacted as a secret at capture |
 | `not_first_adapter_run` | the capsule is the second or later adapter run of its process |
 | `entry_file_missing` / `entry_changed` / `entry_not_verifiable` | the entry file is not on this host, its SHA-256 differs from capture, or no digest was recorded |
@@ -685,10 +687,11 @@ differ from the recording.
 | Code | Meaning |
 |---|---|
 | `0` | the replay succeeded, or a `--dry-run` that the real run would not refuse |
-| `1` | the replay failed or was aborted: `CapsuleNotReplayable` or `ModelSurfaceNotServable` (both also under `--dry-run`), a divergence under the fail-closed default (even when the workload itself exited 0), a launch error or timeout |
+| `1` | the replay failed or was aborted: `CapsuleNotReplayable`, `ModelSurfaceNotServable` or `ToolSurfaceNotServed` (all also under `--dry-run`), a divergence under the fail-closed default (even when the workload itself exited 0), a launch error or timeout |
 | `2` | `--environment` did not match the capsule's recorded environment |
 | `3` | `mocked` refused to start (also under `--dry-run`): a `replay.yaml` `allow: false` override names a tool recorded on a transport replay cannot intercept (`status: aborted`, `error.type: ToolOverrideUnenforceable`; experimental, ADR-0306) |
 | `4` | `--require-faithful` (`mocked` only, experimental, ADR-0321): the fidelity verdict is not `faithful`. It replaces the code the replay would otherwise exit with; a faithful replay exits `0` under the flag even when the replayed command failed as it did at capture. A replay refused before it ran keeps its refusal code |
+| `5` | `--hermetic` could not set up a sandbox (`error.type: HermeticUnavailable`, also under `--dry-run`; experimental, ADR-0322; see [Hermetic replay](#hermetic-replay---hermetic-experimental-adr-0322)) |
 | `N` | `mocked` / `intervention`: the replayed command's own non-zero exit code, including `86` when the dispatcher could not be installed |
 
 ### Fidelity verdict (ADR-0321, experimental)
@@ -1026,12 +1029,40 @@ These limits are stated so you can rely on the parts that do work:
   that bypass Python's `socket` methods, and by non-Python child processes, are
   not seen; the latter are counted (`child_processes_unobserved`,
   `network_observation_coverage: partial`).
+- **Model requests are not compared**, except for the tool results they send
+  back (the echo check, since v0.106.0, report-only). Responses are served by
+  position per API surface; a changed prompt with the same call count and order
+  is not a divergence here. Use `nova diff` against a fresh capture.
+- **MCP results recorded by the in-process hook are lossy** for non-text content
+  (image `mimeType`, embedded resources, `structuredContent` are not recorded);
+  `nova mcp-proxy` records the verbatim envelope.
+- **Redact-then-hash has edges.** A recorded argument the capsule scanner
+  masked matches the replayed call carrying the real value (since slice 4 for
+  MCP, since v0.106.0). It still fails closed as unmatched when the capsule was
+  sealed with a non-`mask` strategy override, or when a rule match spans JSON
+  syntax (the scanner redacts the record file as text, the matcher redacts
+  values). Two different secrets caught by one rule are told apart only by
+  recorded order when no record holds the raw value. In v0.105.0 and earlier, a
+  redacted MCP argument never matched.
+- **Replays do not write lineage edges.** `intervention` and (since ADR-0321)
+  `mocked` write a capsule into the replay directory; its `replay_of_run_id`
+  becomes a `replayed_from` edge only if that capsule is indexed.
+- **The record-versus-replay comparison is the fidelity verdict** (mocked only,
+  experimental, ADR-0321): exit code, output stream digests (stdout after the
+  declared `volatile-ids/1` rule set), the end state of every file the recorded
+  workload wrote, and call sequences. Files written only by the replay and side
+  effects outside the filesystem are not compared. For `intervention`, the signals are its own checks and `nova diff`
+  on its capsule.
 
 ### Hermetic replay (`--hermetic`, experimental, ADR-0322)
 
 *Experimental, Linux only, new in v0.109.0.* `nova replay --hermetic` (mocked mode only) runs
-the replayed command and every process it starts inside a bubblewrap (`bwrap`)
-sandbox:
+the replayed command and every process it starts inside a sandbox. Two backends
+exist (`replay/_hermetic.py`): bubblewrap (`bwrap`), and Landlock + seccomp
+(`replay/_landlock_exec.py`; Linux >= 6.7, Landlock ABI >= 4), which needs no user
+namespace. `--hermetic-backend auto` (the default) tries bwrap, then Landlock;
+`--hermetic-backend bwrap` or `landlock` tries only that one. The bullets below
+describe the bwrap backend; how Landlock differs follows them:
 
 - **Network:** a private network namespace with only its own loopback. Nothing outside
   the sandbox is reachable -- host loopback services included (a host Ollama, Postgres
@@ -1051,23 +1082,35 @@ sandbox:
   namespace, killed with the replay; `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS` and
   `DOCKER_HOST` are not passed in.
 
+**Under Landlock** every TCP connect and bind is denied, loopback included (so a
+server the workload starts inside is not reachable either), and seccomp denies UDP,
+raw, ICMP, SCTP, MPTCP and Unix socket creation, `listen()`, TCP Fast Open sends and
+`io_uring_setup`. Writes outside the working directory and the result directory fail.
+Host `/tmp` and `/run` stay readable (`TMPDIR` points into the replay's temp
+directory), and a daemonised grandchild can outlive the replay; the result lists both
+in `hermetic.not_enforced`.
+
 The result carries `hermetic: {enabled: true, mechanism: bwrap, bwrap_version, network:
 none, filesystem: read-only, writable_paths: [{role: working_directory, path}, {role:
 replay_result_dir, path}], counting: none, …}` and `nova replay` prints a `hermetic:`
-line. If `bwrap` is missing, the platform is not Linux, or a preflight
-`bwrap … -- true` fails (an AppArmor user-namespace restriction, a disabled
-`kernel.unprivileged_userns_clone`, a container seccomp profile), the replay is refused
-before anything runs: `status: aborted`, `error.type: HermeticUnavailable` with the
-failed `check` and the preflight's `stderr`, exit **5**, also under `--dry-run`. It never
-runs un-isolated under `--hermetic`.
+line. Under Landlock, `mechanism` is `landlock`, with `landlock_abi`; both backends
+report `enforced` and `not_enforced`. If no backend can be set up -- the platform is
+not Linux, `bwrap` is missing or its preflight `bwrap … -- true` fails (an AppArmor
+user-namespace restriction, a disabled `kernel.unprivileged_userns_clone`, a container
+seccomp profile), and Landlock's self-test preflight fails too (`check: no-backend`,
+with every attempt) -- or the one backend `--hermetic-backend` names is unavailable,
+the replay is refused before anything runs: `status: aborted`, `error.type:
+HermeticUnavailable` with the failed `check`, exit **5**, also under `--dry-run`. It
+never runs un-isolated under `--hermetic`.
 
 **Platform note: bwrap needs unprivileged user namespaces.** Ubuntu 23.10 and later
 restrict them with AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`, the
 default on 24.04). There, a process whose AppArmor profile does not allow `userns`
 cannot build the sandbox. An unconfined login or SSH shell is such a process.
-`--hermetic` is then refused with exit 5 (the preflight's `stderr` reads, for example,
-`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`), and it is never
-downgraded to an un-isolated run. A process confined by a profile that does allow
+The bwrap preflight then fails (its `stderr` reads, for example,
+`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`), and `--hermetic`
+falls back to the Landlock backend; `--hermetic-backend bwrap` is refused with exit 5.
+Neither case is downgraded to an un-isolated run. A process confined by a profile that does allow
 `userns` (some desktop applications' terminals) is not affected. To allow bwrap, an
 administrator can give it its own AppArmor profile. This changes the host's security
 policy; it is an admin action, not something `nova` does. For example, put this in
@@ -1094,33 +1137,9 @@ Not yet (planned, ADR-0322): counting blocked attempts from outside the process
 (`counting: none`; `connections_blocked`, `unix_connects_outside` and `writes_blocked`
 are `null` -- not measured, never 0; the in-process observers still report the
 attempts they see), a copy-on-write overlay of the working directory (so a replay's
-writes there do not touch the real files), a fidelity `isolation` check, and a second
-backend for hosts where bwrap cannot create namespaces. A Unix socket under a path that
-stays visible (for example in `$HOME` or the working directory) remains connectable.
-- **Model requests are not compared**, except for the tool results they send
-  back (the echo check, since v0.106.0, report-only). Responses are served by
-  position per API surface; a changed prompt with the same call count and order
-  is not a divergence here. Use `nova diff` against a fresh capture.
-- **MCP results recorded by the in-process hook are lossy** for non-text content
-  (image `mimeType`, embedded resources, `structuredContent` are not recorded);
-  `nova mcp-proxy` records the verbatim envelope.
-- **Redact-then-hash has edges.** A recorded argument the capsule scanner
-  masked matches the replayed call carrying the real value (since slice 4 for
-  MCP, since v0.106.0). It still fails closed as unmatched when the capsule was
-  sealed with a non-`mask` strategy override, or when a rule match spans JSON
-  syntax (the scanner redacts the record file as text, the matcher redacts
-  values). Two different secrets caught by one rule are told apart only by
-  recorded order when no record holds the raw value. In v0.105.0 and earlier, a
-  redacted MCP argument never matched.
-- **Replays do not write lineage edges.** `intervention` and (since ADR-0321)
-  `mocked` write a capsule into the replay directory; its `replay_of_run_id`
-  becomes a `replayed_from` edge only if that capsule is indexed.
-- **The record-versus-replay comparison is the fidelity verdict** (mocked only,
-  experimental, ADR-0321): exit code, output stream digests (stdout after the
-  declared `volatile-ids/1` rule set), the end state of every file the recorded
-  workload wrote, and call sequences. Files written only by the replay and side
-  effects outside the filesystem are not compared. For `intervention`, the signals are its own checks and `nova diff`
-  on its capsule.
+writes there do not touch the real files), and a fidelity `isolation` check. Under
+bwrap, a Unix socket under a path that stays visible (for example in `$HOME` or the
+working directory) remains connectable.
 
 ## Related commands
 

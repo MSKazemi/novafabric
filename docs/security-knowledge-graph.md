@@ -45,7 +45,8 @@ The SPKG has two layers, built from the *same* capsule and kept in sync:
 
 The canonical layer is validated **first** (SHACL, ADR-0111 R11). On validation
 failure, nothing is written to the operational store — invalid provenance facts
-never reach the queryable graph. The operational graph holds no state that is not
+never reach the queryable graph. `--no-validate` (on `build` and
+`build-provenance`) skips this gate; the build then reports `unvalidated`. The operational graph holds no state that is not
 derivable from a capsule, so it can always be rebuilt from source.
 
 ### Findings map to ATT&CK / D3FEND
@@ -168,7 +169,7 @@ is built per-capsule and scoped to that capsule's lineage.
 - `nova kg attack-path` — bounded shortest-path query between two entities
 - `nova kg blast-radius` — downstream (impact) / upstream (provenance) traversal
 
-**Planned (design intent, not yet shipped):**
+**Future design (no target release in the [roadmap](../ROADMAP.md#security--provenance-knowledge-graph-spkg)):**
 
 - 1M-edge scale benchmarking
 - Apache AGE / pgvector server tier for graphs beyond a single node
@@ -180,3 +181,10 @@ is built per-capsule and scoped to that capsule's lineage.
 Scores from `nova kg detect` are **relative structural surprisal**, not calibrated
 probabilities, and findings are informational signals for a human reviewer — not
 an automated verdict.
+
+**The graph is only as trustworthy as the capsule's `lineage.jsonl`.** No `nova kg`
+command checks the capsule's seal: each reads `lineage.jsonl` as it finds it in the
+directory. A capsule from someone else, or from a workload you do not trust, can
+carry edited or invented edges, and `detect`, `attack-path` and `blast-radius` will
+reason over them. Run `nova verify` on the capsule first; a capsule that is not
+sealed has nothing to verify its lineage against.

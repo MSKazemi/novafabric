@@ -138,13 +138,17 @@ role is granted `SELECT, INSERT, UPDATE` on the tenant tables. Capsule deletion
 (`DELETE /v0/capsules/{run_id}`, `POST /v0/capsules/bulk-delete`) also needs `DELETE` on
 `runs`, `capsules` and `signatures`, which migration `v005` grants — run
 `nova db upgrade --backend postgres` after upgrading.
-A CI gate (`metadata_store_security_gate`) re-proves cross-tenant isolation on
-every change.
+A CI gate (`.github/workflows/metadata_store_security_gate.yml`) re-proves
+cross-tenant isolation on every pull request and push to `main` that touches
+`src/novafabric/metadata_store/`, its tests, `pyproject.toml` or `uv.lock`
+(path-filtered, plus manual dispatch).
 
-Tenancy today is a single flat `tenant_id` per deployment-defined scope. There
-is **no** organization/workspace/team hierarchy yet — that is
-[ADR-0178](../decisions.md)
-(`future design`), which keeps `tenant_id` as the sole RLS key.
+Row-level isolation keys on a single flat `tenant_id`. The organization /
+workspace layer of [ADR-0178](../decisions.md) (**experimental**, §3) is
+registry-tier scoping only: it does not change the RLS key, and the capsule
+store is **not** partitioned by organization — `nova server start` refuses to
+run more than one organization unless you pass
+`--i-accept-shared-capsule-store` (`NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE=1`).
 
 ## 5. Audit trails
 
@@ -162,9 +166,12 @@ is **no** organization/workspace/team hierarchy yet — that is
 ## 6. API behavior an admin should know
 
 - **Versioning:** all resource routes sit under `/v0`; the canonical contract
-  is [`api/openapi.yaml`](../../api/openapi.yaml). A formal deprecation/sunset
-  policy is proposed in [ADR-0188](../decisions.md)
-  (`future design`).
+  is [`api/openapi.yaml`](../../api/openapi.yaml). The deprecation/sunset
+  policy of [ADR-0188](../decisions.md) is **experimental**: the
+  `Deprecation`/`Sunset`/`Link` header mechanism and the removal gate ship
+  (`server/deprecation.py`, `server/deprecation_gate.py`), and no `/v0`
+  endpoint is deprecated today — the register in
+  [`docs/api-reference.md`](../api-reference.md) is empty.
 - **Ids in requests are names, never paths** (**works today**): a `run_id`
   in a request (`POST /v0/evidence`, `POST /v0/replays`, `GET|DELETE
   /v0/capsules/{run_id}`) and a `run_id`/`parent_run_id` in an uploaded
@@ -191,10 +198,13 @@ is **no** organization/workspace/team hierarchy yet — that is
   switch off (the default), plan capacity accordingly.
 - **Health and self-observability** (**experimental**,
   [ADR-0182](../decisions.md)): `GET /health` and `GET /livez` (unauthenticated
-  liveness), `GET /readyz` (database, migration-head and object-store checks),
-  `GET /v0/version` (`reader` role) and Prometheus `GET /metrics` (`reader` role
-  unless `observability.metrics_exempt: true`; needs `prometheus-client` from the
-  `[server]` extra). All four are exempt from rate limiting. For deeper diagnostics
+  liveness), `GET /readyz` (database and migration-head checks; its
+  `object_store` check always reports `skipped`, because the server has no
+  object-store configuration surface yet), `GET /v0/version` (`reader` role) and
+  Prometheus `GET /metrics` (`reader` role unless `observability.metrics_exempt:
+  true`; needs `prometheus-client` from the `[server]` extra). `/health`,
+  `/livez`, `/readyz` and `/metrics` are exempt from rate limiting;
+  `/v0/version` is not (it is a `read`-class route). For deeper diagnostics
   use `nova doctor` (add `--check-storage` for schema/migration state).
 
 ### 6a. Bulk capsule operations + keyset pagination (experimental, ADR-0206)
@@ -249,8 +259,8 @@ legacy `{"offset": N}` cursors served with `Deprecation: true` until
 insertion order and a garbage cursor silently restarted at page one. Cursors
 are not bound to the `kind` filter — reuse a cursor only with the filter it
 was issued under. With `kind=`, SQLite walks the primary key and filters; a
-`(kind, node_id)` index would make that seek O(page) (planned — registry
-schema change).
+`(kind, node_id)` index would make that seek O(page) (future design — a
+registry schema change with no ROADMAP target).
 
 **Governed deletion (`admin` role only — writer/reader/auditor get 403):**
 
@@ -442,7 +452,8 @@ Operating notes:
   `NOVAFABRIC_WEBHOOKS_KEK_PATH` names a local 256-bit KEK file; otherwise it
   is stored **as-is** in the 0600 registry DB (a documented fallback —
   `secret_at_rest: plaintext|wrapped` on every GET shows your posture).
-  Secret rotation is planned (P2); until then, delete + recreate.
+  Secret rotation is future design (ADR-0205 P2, no ROADMAP target); until
+  then, delete + recreate.
 - **Verify deliveries** with the `X-NovaFabric-Signature: t=<unix>,v1=<hex>`
   header: `v1 = HMAC-SHA256(secret, "{t}." + raw_body)`; reject when
   `|now − t| > 300 s`. A reference verifier ships as
