@@ -62,6 +62,11 @@ def test_files_exist() -> None:
         "deploy/helm/**",
         "src/novafabric/server/**",
         "deploy/docker/Dockerfile",
+        "alembic/**",
+        "src/novafabric/migrations/**",
+        "src/novafabric/metadata_store/**",
+        "pyproject.toml",
+        "uv.lock",
         ".github/workflows/helm-kind.yml",
         "scripts/helm_kind_smoke.sh",
     ],
@@ -188,19 +193,33 @@ def test_script_never_puts_a_secret_value_on_a_command_line_or_in_output() -> No
     assert "assert_no_secret_in" in text
 
 
-def test_chart_defect_workaround_stays_visible_and_ordered() -> None:
-    """The registry track is migrated before install, and the override is labelled.
+def test_ci_exercises_the_stock_single_database_path() -> None:
+    """No CI-only migration or DSN override: the chart's own init container is tested.
 
-    The stock chart migrates only the metadata track into the database the server's
-    schema-skew guard reads as the registry track, so the server refuses to start.
-    CI works around it; this keeps the workaround explicit until the chart is fixed.
+    The first run of this job found the chart migrating the MetadataStore track into
+    the database the server's schema-skew guard reads as the registry track. A CI
+    workaround would hide a regression of the chart fix, so none may come back.
     """
     text = _script()
-    assert "CHART DEFECT WORKAROUND" in text
-    assert '"--track", "registry"' in text
-    order = [text.index(f"\n  {step}\n") for step in ("migrate_registry_track", "install")]
-    assert order == sorted(order)
-    assert "- name: NOVAFABRIC_POSTGRES_DSN" in text
+    assert "--track" not in text
+    assert "NOVAFABRIC_POSTGRES_DSN" not in text
+    assert "NOVAFABRIC_METADATA_DSN" not in text
+    assert "CREATE DATABASE" not in text
+
+
+def test_smoke_covers_the_metadata_store_bootstrap() -> None:
+    text = _script()
+    assert re.search(
+        r'expect_status "\$phase" "metrics[^"]*" "200" /metrics "\$STATE_DIR/auth-header"', text
+    )
+    assert 'check_database "$phase"' in text
+    # Registry-track stamp, and the tenant tables with forced RLS (bootstrap's last step).
+    assert "^p[0-9]+$" in text
+    for table in ("runs", "capsules", "signatures", "retention_policies"):
+        assert f"'{table}'" in text
+    assert "relforcerowsecurity" in text
+    postgres = (REPO / "src" / "novafabric" / "metadata_store" / "postgres.py").read_text()
+    assert '_TENANT_TABLES = ("runs", "capsules", "signatures", "retention_policies")' in postgres
 
 
 def test_kind_cleanup_never_fails_the_job() -> None:

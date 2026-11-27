@@ -21,7 +21,9 @@
 #      (and so no evaluation default password) and neither generated value appears;
 #   4. `helm install`, waits for the rollout, and smokes the API through a
 #      port-forward: /livez and /readyz 200, GET /v0/version 200 with the token,
-#      401/403 without a token and with a wrong one;
+#      401/403 without a token and with a wrong one; GET /metrics 200, which opens
+#      the MetadataStore, then checks in Postgres that the database carries the
+#      registry-track stamp and the lazily bootstrapped MetadataStore tables;
 #   5. writes a marker file onto the data PVC;
 #   6. `helm upgrade` with a changed value, checks the value reached the Deployment,
 #      re-smokes, and checks the PVC and the marker survived;
@@ -54,7 +56,6 @@ FULLNAME="${RELEASE}-novafabric"
 DB_SECRET="${RELEASE}-ci-db"
 AUTH_SECRET="${RELEASE}-ci-auth"
 PG_NAME="${RELEASE}-ci-pg"
-REGISTRY_DB="nova_registry"
 MARKER_PATH="/data/ci-retention-marker"
 
 PF_PID=""
@@ -205,69 +206,7 @@ spec:
       targetPort: postgres
 EOF
   kc rollout status "deploy/$PG_NAME" --timeout=180s
-  # Second database for the registry track (see REGISTRY_DB). The image trusts
-  # local-socket connections, so no password is passed here.
-  kc exec "deploy/$PG_NAME" -c postgres -- \
-    psql -v ON_ERROR_STOP=1 -q -U nova -d nova -c "CREATE DATABASE ${REGISTRY_DB}" >/dev/null
-  summary "external Postgres stand-in ready (databases nova and ${REGISTRY_DB})"
-}
-
-# CHART DEFECT WORKAROUND (#224 CI; to be fixed in the chart, not here).
-#
-# The chart points NOVAFABRIC_METADATA_DSN and NOVAFABRIC_POSTGRES_DSN at the SAME
-# database, and its migrate init container runs only `nova db upgrade --backend
-# postgres`, which defaults to `--track metadata` and stamps alembic_version with
-# the metadata track's head (v005). The server's schema-skew guard (ADR-0211) reads
-# alembic_version in NOVAFABRIC_POSTGRES_DSN as the REGISTRY track (head p0003),
-# so it finds "v005 is not known to this build" and refuses to start: the stock
-# chart crash-loops in server mode. Seen on the first run of this job:
-#   SchemaSkewError: Database schema revision v005 is not known to this build (head: p0003)
-#
-# Until the chart migrates both tracks into separate databases, CI does that part
-# itself: the registry track gets its own database (REGISTRY_DB), migrated here by a
-# one-off pod with `nova db upgrade --track registry`, and the server's
-# NOVAFABRIC_POSTGRES_DSN is pointed at it through extraEnv (write_values).
-# The metadata track still goes through the chart's own init container.
-migrate_registry_track() {
-  local pod="${RELEASE}-ci-registry-migrate"
-  kc apply -f - >/dev/null <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${pod}
-spec:
-  restartPolicy: Never
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
-  containers:
-    - name: migrate
-      image: ${IMAGE_REPO}:${IMAGE_TAG}
-      imagePullPolicy: Never
-      command: ["nova", "db", "upgrade", "--track", "registry", "--backend", "postgres"]
-      env:
-        - name: PGPASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: ${DB_SECRET}
-              key: password
-        - name: HOME
-          value: /tmp
-        - name: NOVAFABRIC_HOME
-          value: /tmp/nova
-        - name: NOVAFABRIC_POSTGRES_DSN
-          value: "postgresql://nova:\$(PGPASSWORD)@${PG_NAME}:5432/${REGISTRY_DB}"
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-EOF
-  if ! kc wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$pod" --timeout=180s >/dev/null; then
-    kc logs "pod/$pod" >&2 || true
-    die "registry-track migration pod $pod did not succeed"
-  fi
-  summary "registry track migrated into ${REGISTRY_DB} (chart-defect workaround, see script)"
+  summary "external Postgres stand-in ready"
 }
 
 write_values() {
@@ -299,13 +238,6 @@ extraEnv:
       secretKeyRef:
         name: ${AUTH_SECRET}
         key: token
-  # CHART DEFECT WORKAROUND (see migrate_registry_track): the chart sets this to the
-  # metadata-track database, which the server's schema-skew guard rejects. This
-  # later entry overrides the chart's (the kubelet keeps the last definition of a
-  # name) and points the server at the registry-track database. Remove once the
-  # chart migrates both tracks into separate databases.
-  - name: NOVAFABRIC_POSTGRES_DSN
-    value: "postgresql://\$(PGUSER):\$(PGPASSWORD)@\$(PGHOST):\$(PGPORT)/${REGISTRY_DB}"
 EOF
   # The upgrade changes one value and acknowledges the v0.102.0 default flip, which
   # the chart requires on every `helm upgrade` (ADR-0230 D5).
@@ -391,8 +323,41 @@ smoke() {
     || die "$phase: /v0/version did not return a version string"
   expect_status "$phase" "no token" "401|403" /v0/version
   expect_status "$phase" "wrong token" "401|403" /v0/version "$STATE_DIR/wrong-auth-header"
+  # A MetadataStore-backed call. Only the registry track is migrated before start-up
+  # (by the chart's init container, in server mode); the MetadataStore tables are
+  # created lazily by PostgresMetadataStore.bootstrap() the first time
+  # the server asks for the store (server/deps.py). With the local admin token
+  # (no tenant) the upload and delete paths skip the MetadataStore, so the call that
+  # reaches it is /metrics, which samples the store's connection pool. That sampling
+  # swallows errors, so the table check below is what proves the bootstrap worked.
+  expect_status "$phase" "metrics (opens the MetadataStore)" "200" /metrics "$STATE_DIR/auth-header"
   stop_port_forward
-  summary "$phase: /livez 200, /readyz 200, /v0/version 200 with token, 401/403 without and with a wrong token"
+  check_database "$phase"
+  summary "$phase: /livez 200, /readyz 200, /v0/version 200 with token, 401/403 without and with a wrong token, /metrics 200, MetadataStore tables present"
+}
+
+# One database holds both schemas: the registry track (the server's own Alembic
+# stamp) and the MetadataStore tables. Checked through the Postgres pod over the
+# local socket, so no password is passed.
+psql_nova() {
+  kc exec "deploy/$PG_NAME" -c postgres -- psql -v ON_ERROR_STOP=1 -At -U nova -d nova -c "$1"
+}
+
+check_database() {
+  local phase="$1" stamp present
+  stamp=$(psql_nova "SELECT version_num FROM alembic_version")
+  # Registry-track revisions are p0001, p0002, ...; the MetadataStore track's are
+  # v001, v002, ... A v-stamp here is the defect that made the server refuse to start.
+  [[ "$stamp" =~ ^p[0-9]+$ ]] \
+    || die "$phase: alembic_version is '$stamp', expected a registry-track revision (p...)"
+  # The four tenant-scoped MetadataStore tables (metadata_store/postgres.py
+  # _TENANT_TABLES; no registry-track table shares these names), with row-level
+  # security enabled and forced: the last thing bootstrap() applies, so a partial
+  # bootstrap does not pass.
+  present=$(psql_nova "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname IN ('runs', 'capsules', 'signatures', 'retention_policies') AND c.relrowsecurity AND c.relforcerowsecurity")
+  [ "$present" = "4" ] \
+    || die "$phase: $present of the 4 MetadataStore tables exist with forced RLS after /metrics (lazy bootstrap)"
+  log "$phase: registry stamp $stamp; MetadataStore tables bootstrapped with forced RLS"
 }
 
 write_marker() {
@@ -464,7 +429,6 @@ cmd_run() {
   preflight
   new_secrets
   deploy_postgres
-  migrate_registry_track
   write_values
   render_check
   install

@@ -22,6 +22,14 @@ on:
       - "deploy/helm/**"
       - "src/novafabric/server/**"
       - "deploy/docker/Dockerfile"
+      # Schema and packaging inputs: the init container runs the registry-track
+      # migrations, the server bootstraps the MetadataStore, and the image is
+      # built from pyproject.toml / uv.lock.
+      - "alembic/**"
+      - "src/novafabric/migrations/**"
+      - "src/novafabric/metadata_store/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - ".github/workflows/helm-kind.yml"
       - "scripts/helm_kind_smoke.sh"
   schedule:
@@ -75,7 +83,10 @@ jobs:
           # Into the runner's Docker daemon, so `kind load` can copy it to the node.
           load: true
           tags: ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
-          cache-from: type=gha
+          # Own scope so this job never evicts or reuses publish-image.yml's cache.
+          # Pull-request runs read the scope written by nightly runs on main.
+          cache-from: type=gha,scope=helm-kind
+          cache-to: type=gha,scope=helm-kind,mode=max
         env:
           # No build-record artifact: it is not a zip, so a plain
           # `gh run download <run>` fails on it before reaching the diagnostics.

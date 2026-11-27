@@ -434,13 +434,15 @@ dropped) and applies schema migrations via an init container. See
 the full values reference.
 
 **Tested in CI (experimental).** The `helm-kind.yml` workflow installs the chart into a
-throwaway Kind cluster on pull requests that touch the chart, the server code or the Dockerfile,
-and nightly. It uses the image built from the same tree, an external-Postgres layout whose
-password comes from `externalDatabase.existingSecret`, and a random API token. It checks
-`/livez`, `/readyz` and an authenticated `GET /v0/version` (and that the same call is refused
-without the token), then does the same after a `helm upgrade` and a `helm rollback`, and checks
-that the data volume survives both. Upgrading from the previous published chart is not tested
-yet. Steps and local usage: the chart README's
+throwaway Kind cluster on pull requests that touch the chart, the server code, the migrations,
+the MetadataStore code, the dependency lock or the Dockerfile, and nightly. It uses the image
+built from the same tree, an external-Postgres layout whose password comes from
+`externalDatabase.existingSecret`, and a random API token. It checks `/livez`, `/readyz`, an
+authenticated `GET /v0/version` (and that the same call is refused without the token) and
+`GET /metrics`, after which it checks that the server bootstrapped the MetadataStore tables in
+the same database. It repeats these checks after a `helm upgrade` and a `helm rollback`, and
+checks that the data volume survives both. Upgrading from the previous published chart is not
+tested yet. Steps and local usage: the chart README's
 [CI section](../../deploy/helm/novafabric/README.md#ci-kind-install-upgrade-and-rollback).
 
 > **Dashboard vs. server mode.** The **chart** defaults to server mode

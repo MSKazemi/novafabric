@@ -102,9 +102,10 @@ See [`values.yaml`](values.yaml) for the full list.
 **Status: experimental** (the job is new). The
 [`helm-kind.yml`](../../../.github/workflows/helm-kind.yml) workflow installs this chart into a
 throwaway [Kind](https://kind.sigs.k8s.io/) cluster on a GitHub-hosted `ubuntu-24.04` runner.
-It runs on pull requests that touch `deploy/helm/**`, `src/novafabric/server/**`,
-`deploy/docker/Dockerfile` or the workflow itself, nightly, and on demand. No external cluster,
-registry login or paid account is involved, and nothing is pushed.
+It runs on pull requests that touch `deploy/helm/**`, `src/novafabric/server/**`, the
+migrations (`alembic/**`, `src/novafabric/migrations/**`), `src/novafabric/metadata_store/**`,
+`pyproject.toml`, `uv.lock`, `deploy/docker/Dockerfile` or the workflow itself, nightly, and on
+demand. No external cluster, registry login or paid account is involved, and nothing is pushed.
 
 The steps live in [`scripts/helm_kind_smoke.sh`](../../../scripts/helm_kind_smoke.sh):
 
@@ -116,17 +117,13 @@ The steps live in [`scripts/helm_kind_smoke.sh`](../../../scripts/helm_kind_smok
    with `postgres.enabled=false`, `externalDatabase.existingSecret` and the token pinned through
    `extraEnv` (`NOVAFABRIC_SERVER_TOKEN` from the Secret). Before installing, it checks that the
    rendered manifest contains no chart-managed Secret and no bundled Postgres.
-
-   **Known chart defect, worked around in CI only.** The chart points both
-   `NOVAFABRIC_METADATA_DSN` and `NOVAFABRIC_POSTGRES_DSN` at one database, and its init
-   container runs only `nova db upgrade --backend postgres`, which migrates the *metadata* track.
-   The server's schema-skew guard reads that database as the *registry* track and refuses to
-   start (`SchemaSkewError: Database schema revision v005 is not known to this build (head:
-   p0003)`), so a stock server-mode install crash-loops. Until the chart is fixed, the job
-   creates a second database, migrates it with `nova db upgrade --track registry --backend
-   postgres` in a one-off pod, and points `NOVAFABRIC_POSTGRES_DSN` at it through `extraEnv`.
 4. Smoke the API through `kubectl port-forward`: `/livez` and `/readyz` return 200,
    `GET /v0/version` returns 200 with the token and 401/403 without a token or with a wrong one.
+   `GET /metrics` returns 200; it is the call that opens the MetadataStore for a tenant-less local
+   token. The script then checks in Postgres that the one database carries a registry-track
+   Alembic stamp (`p…`) and the four MetadataStore tables, created by the server's lazy
+   bootstrap with row-level security forced. The job uses the chart's own migration step and
+   database layout; it adds no CI-only migration or DSN override.
 5. `helm upgrade` with a changed value (`resources.requests.memory`, plus
    `upgradeAcknowledged: true`), check the Deployment picked it up, smoke again, and check that
    the data PVC and a marker file written to it survived.
