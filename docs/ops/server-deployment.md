@@ -419,6 +419,27 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:4321/v0/version
 
 ### Production (external managed Postgres)
 
+The chart ships a layered production values file,
+[`values-production.yaml`](../../deploy/helm/novafabric/values-production.yaml): no bundled
+Postgres, the database password only from a Secret you create (`helm template` refuses
+anything else), a read-only root filesystem with an `emptyDir` at `/tmp`, seccomp
+`RuntimeDefault`, and explicit requests and a memory limit. It is rendered with real Helm in
+CI; installing it into a live cluster is not exercised by this repository's CI.
+
+```bash
+kubectl create secret generic nova-db --from-literal=password='<db password>'
+helm pull oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z> --untar
+helm install nova ./novafabric \
+  -f ./novafabric/values-production.yaml \
+  --set externalDatabase.host=my-pg.example.com \
+  --set externalDatabase.existingSecret=nova-db
+```
+
+It leaves ingress/TLS, OIDC (`server.yaml`), NetworkPolicy and Postgres operations to you;
+the chart README's [Production values](../../deploy/helm/novafabric/README.md#production-values)
+section lists exactly what it sets and what it does not. Without the file, the equivalent
+database settings are:
+
 ```bash
 helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z> \
   --set postgres.enabled=false \
@@ -484,6 +505,24 @@ helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z> \
   --set externalDatabase.host=my-pg.example.com \
   --set externalDatabase.existingSecret=nova-db
 ```
+
+In server mode the chart's migration init container runs
+`nova db upgrade --track registry --backend postgres` — the registry track, which is
+what the server's schema-skew guard checks — and not the MetadataStore track. The
+chart used to run the bare `nova db upgrade --backend postgres` (MetadataStore track)
+against the same database; because both tracks share one `alembic_version` table,
+that stamped `v005` and `nova server start` refused with `SchemaSkewError`, so the
+stock chart crash-looped. A database already stamped that way is not repaired by
+the fixed chart. It stays in `Init:CrashLoopBackOff`; recover it manually
+([upgrade guide §4b](upgrade-guide.md#4b-recovering-a-database-stamped-v005-by-an-earlier-chart-or-entrypoint)). `dbRevision` is now a registry-track
+revision (`p0001`…) in server mode.
+
+The MetadataStore tables the server uses are created on first use by
+`PostgresMetadataStore.bootstrap()`, not by the init container. This needs a role
+that can `CREATE ROLE … BYPASSRLS`, or administrator-pre-created roles. Without it
+`/readyz` still passes and the first MetadataStore call fails. The bootstrapped
+`runs` table is not partitioned and has no knowledge-graph tables
+([upgrade guide §4c](upgrade-guide.md#4c-metadatastore-tables-in-server-mode)).
 
 In server mode the chart's readiness/liveness probes hit `/readyz` and `/livez`
 (both modes expose them); `/readyz` gates traffic on database reachability and

@@ -1,5 +1,6 @@
 {{- include "novafabric.assertSecurePosture" . -}}
 {{- include "novafabric.assertUpgradeAcknowledged" . -}}
+{{- include "novafabric.assertExistingSecret" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,6 +31,17 @@ spec:
         # Wait for Postgres, then apply schema migrations. Upgrades to
         # .Values.dbRevision (default "head"): the server refuses to start when
         # stamped behind head, so pinning below head breaks a server-mode deploy.
+        #
+        # Server mode migrates the REGISTRY track (`--track registry`), the one
+        # `nova server start`'s schema-skew guard checks against
+        # NOVAFABRIC_POSTGRES_DSN. It must not also run the MetadataStore track
+        # (`nova db upgrade`'s default) here: both tracks keep their stamp in the
+        # same `alembic_version` table of this one database, so the metadata head
+        # (v005) overwrote the registry stamp and the server refused to start
+        # (SchemaSkewError: v005 is not known to this build). The server creates
+        # the MetadataStore tables it uses itself, idempotently, on first use
+        # (PostgresMetadataStore.bootstrap via server/deps.py).
+        # Dashboard mode (`nova serve`, SQLite registry) keeps the metadata track.
         - name: migrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -42,9 +54,18 @@ spec:
               echo "[nova] waiting for postgres at $PGHOST:$PGPORT ..."
               until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -q; do sleep 2; done
               echo "[nova] postgres ready; running migrations (--revision {{ .Values.dbRevision | default "head" }}) ..."
+              {{- if eq .Values.mode "server" }}
+              nova db upgrade --track registry --backend postgres --revision {{ .Values.dbRevision | default "head" | quote }}
+              {{- else }}
               nova db upgrade --backend postgres --revision {{ .Values.dbRevision | default "head" | quote }}
+              {{- end }}
           env:
             {{- include "novafabric.env" . | nindent 12 }}
+          {{- if .Values.securityContext.readOnlyRootFilesystem }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- end }}
       containers:
         - name: nova
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -117,6 +138,15 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.securityContext.readOnlyRootFilesystem }}
+            # Read-only root filesystem: tempfile spools (ingest uploads) need a
+            # writable /tmp.
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: data
           {{- if .Values.persistence.enabled }}
@@ -125,6 +155,18 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.securityContext.readOnlyRootFilesystem }}
+        - name: tmp
+          {{- if .Values.tmpVolume.sizeLimit }}
+          emptyDir:
+            sizeLimit: {{ .Values.tmpVolume.sizeLimit | quote }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

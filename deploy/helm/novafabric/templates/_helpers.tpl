@@ -168,3 +168,33 @@ install is unaffected because a fresh install has no previous behaviour to lose.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Issue #223 — production installs take the database password from an existing
+Secret only.
+
+`externalDatabase.requireExistingSecret` is opt-in (values-production.yaml sets
+it). When set, every path that would put a password into chart values — and so
+into the chart-managed `<release>-db` Secret and Helm's own release record — is
+refused at render time:
+
+  * postgres.enabled=true: the bundled evaluation Postgres takes its password
+    from postgres.auth.password (stock value: "nova");
+  * externalDatabase.existingSecret empty: the chart would build the Secret
+    from externalDatabase.password;
+  * externalDatabase.password non-empty: unused once existingSecret is set, but
+    still stored in the release record that `helm get values` prints.
+*/}}
+{{- define "novafabric.assertExistingSecret" -}}
+{{- if .Values.externalDatabase.requireExistingSecret -}}
+{{- if .Values.postgres.enabled -}}
+{{- fail "\n\nRefusing to render: externalDatabase.requireExistingSecret=true but postgres.enabled=true.\n\nThe bundled Postgres is for evaluation only; its password comes from\npostgres.auth.password in values. Set postgres.enabled=false and point\nexternalDatabase at a managed Postgres whose password lives in a Secret you\ncreate (externalDatabase.existingSecret). See deploy/helm/novafabric/README.md." -}}
+{{- end -}}
+{{- if not .Values.externalDatabase.existingSecret -}}
+{{- fail "\n\nRefusing to render: externalDatabase.requireExistingSecret=true but externalDatabase.existingSecret is empty.\n\nCreate the Secret yourself, e.g.\n\n  kubectl create secret generic nova-db --from-literal=password=...\n\nand set externalDatabase.existingSecret=nova-db (and existingSecretPasswordKey\nif the key is not `password`)." -}}
+{{- end -}}
+{{- if .Values.externalDatabase.password -}}
+{{- fail "\n\nRefusing to render: externalDatabase.requireExistingSecret=true but externalDatabase.password is set.\n\nThe password is read from externalDatabase.existingSecret; a value here is unused\nbut is still stored in the Helm release record (`helm get values`). Remove it." -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
