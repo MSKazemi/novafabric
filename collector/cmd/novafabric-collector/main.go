@@ -1,13 +1,18 @@
-// Command novafabric-collector is the OCB-built OTel Collector with the
-// NovaSeal batch signing processor pre-bundled.
+// Command novafabric-collector is an OpenTelemetry Collector distribution that
+// registers the NovaSeal batch signing processor (novaseal_batch_signer).
+//
+// Maturity: experimental, and it cannot run a pipeline today. It registers that
+// one processor and nothing else: no receivers, exporters or extensions, and no
+// configuration providers, so every --config fails with "at least one Provider
+// must be supplied" (exit 1). --help, --version and the components subcommand
+// work. The processor itself is unit-tested (stability Alpha).
 //
 // Usage:
 //
 //	novafabric-collector --config collector.yaml
+//	novafabric-collector components
 //
-// The collector accepts standard OTel Collector configuration syntax. The
-// novaseal_batch_signer processor is available in the processors section.
-// See deploy/k8s/configmap-collector.yaml for a reference configuration.
+// See docs/collector-reference.md.
 package main
 
 import (
@@ -38,12 +43,34 @@ func main() {
 		BuildInfo: info,
 		Factories: func() (otelcol.Factories, error) { return factories, nil },
 	})
+	cmd.Long = longHelp
 
 	if err := cmd.Execute(); err != nil {
 		slog.Error("collector exited with error", "error", err)
 		os.Exit(1)
 	}
 }
+
+// longHelp is the description shown by --help. Help text only: it does not
+// change what the command does.
+const longHelp = `novafabric-collector: an OpenTelemetry Collector distribution that registers the
+NovaSeal batch signing processor (novaseal_batch_signer).
+
+Maturity: experimental, and it cannot run a pipeline today. This build registers
+that one processor and nothing else: no receivers, no exporters, no extensions and
+no configuration providers. Every --config (and "validate") therefore fails with
+"at least one Provider must be supplied" and exits 1. --help, --version and
+"components" work.
+
+novaseal_batch_signer options (processors: section): local_wal (dev key in
+$HOME/.novafabric/dev-keys/, refused when NOVAFABRIC_ENV=production), fail_open
+(default false: refuse to start without a signer), keystore_endpoint (refused: not
+usable yet), timeout (per-batch signing deadline, default 5s). send_batch_size,
+cache_ttl and key_rotation_interval are accepted but have no effect yet.
+
+Exit codes: 0 success; 1 any error (no config, config load, pipeline start).
+
+See docs/collector-reference.md.`
 
 func buildFactories() (otelcol.Factories, error) {
 	factories := otelcol.Factories{}

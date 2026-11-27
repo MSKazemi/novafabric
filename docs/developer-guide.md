@@ -1474,6 +1474,10 @@ make spec-test
 | `collector/internal/processor/novasealbatchsigner` | OTel custom processor (cap-002) |
 | `collector/internal/hpc` | NATS leaf lifecycle wrapper |
 | `collector/internal/verifier` | Offline Ed25519 batch-signature verifier |
+| `collector/internal/forwarder` | Spool drain + NATS JetStream publisher behind `novafabric-spool-forwarder` |
+| `collector/pkg/cffi` | C ABI (`libnovaspool.so`) for writing spool segments from C or Python |
+
+Flags, environment variables and exit codes of every binary: [collector reference](collector-reference.md).
 
 **Development mode (no KMS required):**
 

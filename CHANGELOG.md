@@ -94,6 +94,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **A reference page for the Go collector binaries, and their `-h` text says what they do.** The new
+  `docs/collector-reference.md` gives `novafabric-spool-forwarder`, `novafabric-collector`,
+  `novafabric-verifier`, `libnovaspool` and the OCB config their usage, every flag and default,
+  environment variables, exit codes, files and maturity, and how spool → forwarder → NATS → consumers
+  fits together. It also records what the code does not do: `novafabric-collector` registers no
+  config provider, receiver or exporter, so every `--config` exits 1 with `at least one Provider must
+  be supplied`; the OCB config is not built by CI and does not compile as written; the forwarder's
+  `--max-bytes` has no effect; the forwarder publishes to stream `NOVA_EVIDENCE` while
+  `nova collector rebuild` defaults to `nova-evidence`; `--local-wal` generates a new dev key when none
+  exists; and the processor's `cache_ttl`, `key_rotation_interval` and `send_batch_size` are accepted
+  but unused. The CLI reference, developer guide, warm-capture page and cluster-scale tutorial no
+  longer say the tier signs forwarded events or exports to Kafka, or that metrics are served on
+  `:8888`. Help text only, no behaviour change. A docs test fails when a flag or environment variable
+  in a collector `main.go` is missing from the page.
 
 ### Fixed
 

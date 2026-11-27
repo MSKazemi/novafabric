@@ -116,6 +116,7 @@ Look up an exact detail — commands, flags, endpoints, and on-disk formats.
 | [CLI reference](cli-reference.md) | Exhaustive flag/option/example reference for every `nova` command, including the v0.59 experimental groups (`prompt`, `label`, `session`, `query`/`view`/`trend`, `annotate`, `score`, `retention`, `events`, `experiment`, `graph`, `pricing`, …) |
 | [Python API](python-api.md) | Programmatic API: `@agent` decorator, `CaptureOrchestrator`, Replay, Lineage, Registry, `novafabric.scores.submit` |
 | [REST API reference](api-reference.md) | The `nova serve` FastAPI route table — endpoints, methods, and auth |
+| [Collector reference](collector-reference.md) | The Go collector-tier binaries (`novafabric-spool-forwarder`, `novafabric-collector`, `novafabric-verifier`), `libnovaspool` and the OCB config: flags, environment, exit codes, files, maturity |
 
 ## NovaSeal (cryptographic sealing — regulated environments)
 

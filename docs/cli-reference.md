@@ -9385,29 +9385,34 @@ The SPA at `http://localhost:4321/topology/` auto-fetches the cluster layer on m
 
 ## Collector binaries (Phase 2 — cluster scale)
 
-Phase 2 ships three Go binaries (`collector/`) that form the cluster-deployable
-evidence ingestion tier. They are separate from the Python `nova` CLI and need
-Go 1.26.5 or newer. Install one directly:
+The Go module in `collector/` holds four binaries for the cluster ingestion tier:
+`novafabric-spool-forwarder`, `novafabric-collector`, `novafabric-verifier` and the
+`novafabric-hpc-hub` stub. They are separate from the Python `nova` CLI and need
+Go 1.26.5 or newer. Every flag, environment variable, exit code and maturity label is in
+the [collector reference](collector-reference.md). Install one directly:
 
 ```bash
 go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-collector@latest
 go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-verifier@latest
+go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-spool-forwarder@latest
 go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-hpc-hub@latest
 ```
 
 `@latest` resolves to the newest commit on `main`; the collector module has no
-release tags of its own yet. Or build all three from a checkout:
+release tags of its own yet. Or build them from a checkout:
 
 ```bash
 cd collector
 go build -o bin/novafabric-collector ./cmd/novafabric-collector
 go build -o bin/novafabric-verifier  ./cmd/novafabric-verifier
 go build -o bin/novafabric-hpc-hub   ./cmd/novafabric-hpc-hub
+go build -o bin/novafabric-spool-forwarder ./cmd/novafabric-spool-forwarder
 ```
 
-These binaries complement the Python SDK: agents continue to emit events via the
-existing `nova capture` / hook path; the collector tier signs and forwards those
-events to Kafka at cluster scale.
+These binaries complement the Python SDK: agents keep emitting events through
+`nova capture`. What works today (**experimental**) is `nova capture --emit-spool` →
+`novafabric-spool-forwarder` → NATS JetStream, with **unsigned** envelopes. Signing
+forwarded events at a hub and exporting them to Kafka are not implemented.
 
 ---
 
@@ -9421,11 +9426,14 @@ novafabric-collector --config collector.yaml
 novafabric-collector --config /etc/novafabric/collector.yaml
 ```
 
-**experimental.** Two builds exist, and neither runs the reference pipeline below as written:
-`collector/cmd/novafabric-collector` registers **only** the `novaseal_batch_signer` processor (no
-receivers or exporters), and the OCB build (`collector/ocb/builder-config.yaml`) adds the `otlp`
-receiver, `batch` and the `debug`/`otlp` exporters — but no `kafka` exporter (**planned**). Use the
-OCB build and an `otlp` exporter until then.
+**experimental, and it cannot run a pipeline today.** `collector/cmd/novafabric-collector`
+registers **only** the `novaseal_batch_signer` processor: no receivers, exporters or
+configuration providers. Every `--config` therefore exits `1` with `at least one Provider must
+be supplied`; `--help`, `--version` and `components` work. The OCB config
+(`collector/ocb/builder-config.yaml`, **future design**) lists the `otlp` receiver, `batch` and
+the `debug`/`otlp` exporters but no `kafka` exporter, CI does not build it, and as written it
+does not compile (details in the [collector reference](collector-reference.md#ocb-build-config)).
+The reference pipeline below shows the intended shape, not something you can run.
 
 **Reference pipeline** (see `deploy/k8s/configmap-collector.yaml`):
 ```yaml
@@ -9464,8 +9472,8 @@ service:
 |---|---|---|
 | `keystore_endpoint` | — | NovaSeal KMS mTLS endpoint. **Not yet usable** (**planned**): the KMS keystore needs an mTLS client certificate the processor config has no fields for, so a set `keystore_endpoint` makes the collector refuse to start rather than ignore it |
 | `fail_open` | `false` | `false` = fail-closed: with no signer the collector **refuses to start**, and a batch that fails to sign is dropped; `true` = forward without a signature (logged as `forwarding batches UNSIGNED`) |
-| `cache_ttl` | `5m` | How long a fetched key is cached |
-| `key_rotation_interval` | `1h` | How often to rotate signing key |
+| `cache_ttl` | `5m` | Accepted, no effect yet |
+| `key_rotation_interval` | `1h` | Accepted, no effect yet |
 | `local_wal` | `false` | **Dev only.** Use a local Ed25519 key from `~/.novafabric/dev-keys/`. Emits a WARN on every signing call. Refuses when `NOVAFABRIC_ENV=production`. |
 
 Today the only working signer is `local_wal: true`. Releases up to v0.107.0 built **no** signer from
@@ -9475,10 +9483,10 @@ The processor places each batch's signature and key ID in `Resource.attributes`:
 - `nova.batch.signature` — base64-encoded Ed25519 signature (88 chars)
 - `nova.batch.signing_key_id` — UUID of the signing key
 
-Prometheus metrics exposed at `:8888/metrics`:
-- `nova_batch_sign_latency_seconds` — histogram of per-batch signing time
-- `nova_batch_sign_errors_total{reason="..."}` — counter by error category
-- `nova_collector_forwarded_events_total` — events forwarded to Kafka
+Metrics: the processor records `nova_batch_sign_latency_seconds` (per-batch signing time) and
+`nova_invalid_envelope_version_total` in the Go Prometheus default registry. No binary serves
+that registry over HTTP today, and `nova_batch_sign_errors_total` and
+`nova_collector_forwarded_events_total` are defined but not incremented by any binary.
 
 **K8s deployment:** see `deploy/k8s/` for a complete namespace, ConfigMap,
 Deployment, DaemonSet (Fluent Bit node collector), and Service manifest set.
@@ -9507,7 +9515,7 @@ novafabric-verifier --batch batch.pb --local-wal
 | `--batch PATH` | yes | Path to a serialized OTLP `ResourceLogs` proto file |
 | `--pubkey PATH` | one of | PEM Ed25519 public key: the standard SPKI `PUBLIC KEY` encoding a KMS exports, or a raw 32-byte body |
 | `--key-id UUID` | with `--pubkey` | Key ID to verify against |
-| `--local-wal` | one of | Use the dev key from `~/.novafabric/dev-keys/` |
+| `--local-wal` | one of | Use the dev key from `~/.novafabric/dev-keys/`. If that directory holds no key, a new one is generated and the batch reports `INVALID` |
 
 **Output:**
 
