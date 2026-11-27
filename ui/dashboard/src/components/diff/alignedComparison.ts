@@ -232,6 +232,50 @@ export function buildAlignedComparison(raw: unknown, requested?: { runA?: string
   };
 }
 
+const PAIR_KEYS: Record<StreamKey, string[]> = {
+  model_calls: ['changed', 'added', 'removed', ...ASPECTS.model_calls.map(([flag]) => flag), 'changed_params',
+    ...ID_KEYS.model_calls, 'replay_placeholder_a', 'replay_placeholder_b'],
+  tool_calls: ['changed', 'added', 'removed', ...ASPECTS.tool_calls.map(([flag]) => flag), 'tool_name',
+    'status_a', 'status_b', ...ID_KEYS.tool_calls, 'replay_placeholder_a', 'replay_placeholder_b'],
+};
+
+function pick(item: unknown, keys: string[]): Obj {
+  const src = asObj(item);
+  const out: Obj = {};
+  for (const k of keys) if (k in src) out[k] = src[k];
+  return out;
+}
+
+/**
+ * The part of a `/api/diff` response this view reads, for the Diff tab's
+ * sessionStorage entry: pair flags and ids, the first divergence, the gate verdict
+ * and skipped-line counts. Environment and output changes keep only their count
+ * (as empty entries), so values are not stored twice. `buildAlignedComparison`
+ * gives the same result for the slim copy as for the full response.
+ */
+export function slimDiffResponse(raw: unknown): Obj {
+  const wrapper = asObj(raw);
+  const report = 'report' in wrapper ? asObj(wrapper.report) : wrapper;
+  const sections = asObj(wrapper.sections ?? report.sections);
+  const count = (list: unknown, section: unknown) => asList(list ?? asObj(section).changes).map(() => ({}));
+  const slimReport: Obj = {
+    run_a_id: report.run_a_id,
+    run_b_id: report.run_b_id,
+    model_call_pairs: asList(report.model_call_pairs ?? asObj(sections.model_calls).pairs).map(p => pick(p, PAIR_KEYS.model_calls)),
+    tool_call_pairs: asList(report.tool_call_pairs ?? asObj(sections.tool_calls).pairs).map(p => pick(p, PAIR_KEYS.tool_calls)),
+    env_changes: count(report.env_changes, sections.environment),
+    output_changes: count(report.output_changes, sections.outputs),
+  };
+  // Keep the key's absence: a missing first_divergence means "not derivable".
+  if ('first_divergence' in report) slimReport.first_divergence = report.first_divergence;
+  else if ('first_divergence' in wrapper) slimReport.first_divergence = wrapper.first_divergence;
+  const out: Obj = { run_a_id: wrapper.run_a_id, run_b_id: wrapper.run_b_id, report: slimReport };
+  const hasChanges = wrapper.has_changes ?? report.has_changes;
+  if (typeof hasChanges === 'boolean') out.has_changes = hasChanges;
+  out.skipped_malformed_lines = wrapper.skipped_malformed_lines ?? report.skipped_malformed_lines;
+  return out;
+}
+
 /** POSIX-shell quoting: bare when safe, else `'…'` (same rule as the Commands tab). */
 export function shellQuote(value: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
@@ -243,7 +287,9 @@ export function shellQuote(value: string): string {
  * text output; `--output-format json` gives the report this view reads.
  */
 export function diffCliCommand(runA: string, runB: string, opts: { json?: boolean } = {}): string {
-  const parts = ['nova', 'diff', shellQuote(runA), shellQuote(runB)];
+  // A missing id stays a visible, unquoted placeholder; only real refs are quoted.
+  const ref = (id: string, placeholder: string) => (id ? shellQuote(id) : placeholder);
+  const parts = ['nova', 'diff', ref(runA, '<run-a>'), ref(runB, '<run-b>')];
   if (opts.json) parts.push('--output-format', 'json');
   return parts.join(' ');
 }

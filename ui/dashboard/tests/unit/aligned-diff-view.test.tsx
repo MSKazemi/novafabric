@@ -15,7 +15,18 @@ import {
   describeRow,
   diffCliCommand,
   shellQuote,
+  slimDiffResponse,
 } from '@/components/diff/alignedComparison';
+import DiffTab from '@/components/dashboard/tabs/DiffTab';
+
+const { diffMock } = vi.hoisted(() => ({ diffMock: vi.fn() }));
+vi.mock('@/lib/api', () => ({
+  api: {
+    diff: diffMock,
+    listRuns: vi.fn().mockResolvedValue({ runs: [] }),
+    getRun: vi.fn().mockRejectedValue(new Error('not mocked')),
+  },
+}));
 
 const ZERO_SKIPPED = { a: { model_calls: 0, tool_calls: 0 }, b: { model_calls: 0, tool_calls: 0 } };
 
@@ -165,10 +176,74 @@ describe('buildAlignedComparison', () => {
   });
 });
 
+describe('slimDiffResponse', () => {
+  it('keeps what the view reads: the same comparison from the slim copy', () => {
+    for (const resp of [apiResponse(), IDENTICAL, apiResponse({ has_changes: true }, {
+      output_changes: [{ path: 'stdout.txt', before_hash: 'a', after_hash: 'b' }],
+      env_changes: [{ field: 'python', before: '3.11', after: '3.12' }],
+    })]) {
+      expect(buildAlignedComparison(slimDiffResponse(resp))).toEqual(buildAlignedComparison(resp));
+    }
+  });
+
+  it('keeps a missing first_divergence missing (still "not derivable")', () => {
+    const resp = apiResponse();
+    const { first_divergence: _fd, ...report } = resp.report;
+    const slim = slimDiffResponse({ ...resp, report });
+    expect('first_divergence' in (slim.report as object)).toBe(false);
+    expect(buildAlignedComparison(slim).firstDivergence.kind).toBe('not_derivable');
+  });
+
+  it('drops values the view does not read', () => {
+    const resp = apiResponse({ sections: { environment: { changes: [{ field: 'python', before: 'SECRET-BEFORE' }] } } }, {
+      env_changes: [{ field: 'python', before: 'SECRET-BEFORE', after: 'x' }],
+      model_call_pairs: [{ changed: true, model_call_id_a: 'MC-1', model_call_id_b: 'MC-1', span_id: 'span-xyz' }],
+    });
+    const text = JSON.stringify(slimDiffResponse(resp));
+    expect(text).not.toContain('SECRET-BEFORE');
+    expect(text).not.toContain('span-xyz');
+    expect(text.length).toBeLessThan(JSON.stringify(resp).length);
+  });
+});
+
+describe('DiffTab session save', () => {
+  afterEach(() => sessionStorage.clear());
+
+  it('still saves the main diff when the aligned-view copy would exceed the quota', async () => {
+    diffMock.mockResolvedValue(apiResponse());
+    const realSet = Storage.prototype.setItem;
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (value.includes('"raw"')) throw new DOMException('quota', 'QuotaExceededError');
+      realSet.call(this, key, value);
+    });
+    render(<DiffTab initialIds={['RUN-A', 'RUN-B']} />);
+    await waitFor(() => expect(diffMock).toHaveBeenCalledWith('RUN-A', 'RUN-B'));
+    await waitFor(() => expect(sessionStorage.getItem('nova_diff_last')).not.toBeNull());
+    const stored = JSON.parse(sessionStorage.getItem('nova_diff_last')!);
+    expect(stored.fromId).toBe('RUN-A');
+    expect(stored.result.summary.changed).toBe(2);
+    expect(stored.raw).toBeUndefined();
+    expect(setItem).toHaveBeenCalledTimes(2);
+  });
+
+  it('saves the slim aligned-view copy beside the main diff', async () => {
+    diffMock.mockResolvedValue(apiResponse());
+    render(<DiffTab initialIds={['RUN-A', 'RUN-B']} />);
+    await waitFor(() => expect(sessionStorage.getItem('nova_diff_last')).not.toBeNull());
+    const stored = JSON.parse(sessionStorage.getItem('nova_diff_last')!);
+    expect(stored.raw).toEqual(slimDiffResponse(apiResponse()));
+  });
+});
+
 describe('diffCliCommand', () => {
   it('builds the nova diff invocation with run ids as positional refs', () => {
     expect(diffCliCommand('01KZA', '01KZB')).toBe('nova diff 01KZA 01KZB');
     expect(diffCliCommand('01KZA', '01KZB', { json: true })).toBe('nova diff 01KZA 01KZB --output-format json');
+  });
+
+  it('leaves a missing ref as an unquoted placeholder', () => {
+    expect(diffCliCommand('', '')).toBe('nova diff <run-a> <run-b>');
+    expect(diffCliCommand('01KZA', '')).toBe('nova diff 01KZA <run-b>');
   });
 
   it('shell-quotes a ref that is not shell-safe', () => {

@@ -132,7 +132,7 @@ function StreamTable({
 
 function CopyCliCommand({ runA, runB }: { runA: string; runB: string }) {
   const [message, setMessage] = useState('');
-  const command = diffCliCommand(runA || '<run-a>', runB || '<run-b>');
+  const command = diffCliCommand(runA, runB);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(command);

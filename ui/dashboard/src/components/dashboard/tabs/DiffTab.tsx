@@ -6,6 +6,7 @@ import type { DiffReport } from '../../../lib/fixtures';
 import { DiffSection } from '../../replay/ReplayViewer';
 import TraceDiffGraph from '../../diff/TraceDiffGraph';
 import AlignedDiffView from '../../diff/AlignedDiffView';
+import { slimDiffResponse } from '../../diff/alignedComparison';
 import { ErrorBox } from '../helpers';
 import { runLabel, shortTs } from '../../../lib/runUtils';
 import { SuggestInput } from '../../ui/SuggestInput';
@@ -192,9 +193,18 @@ export default function DiffTab({ initialIds }: { initialIds?: string[] } = {}) 
       setRawDiff(r);
       if (ca) setCapsuleA(ca);
       if (cb) setCapsuleB(cb);
+      const saved = { fromId: runA, toId: runB, result: adapted, capsuleA: ca ?? null, capsuleB: cb ?? null };
       try {
-        sessionStorage.setItem(DIFF_SESSION_KEY, JSON.stringify({ fromId: runA, toId: runB, result: adapted, capsuleA: ca ?? null, capsuleB: cb ?? null, raw: r }));
-      } catch { /* ignore */ }
+        // Only what the aligned view reads (issue #270), not a second full copy.
+        sessionStorage.setItem(DIFF_SESSION_KEY, JSON.stringify({ ...saved, raw: slimDiffResponse(r) }));
+      } catch {
+        // Over quota (QuotaExceededError): still keep the main diff; the aligned
+        // view then reappears after the next Diff instead of on restore.
+        try { sessionStorage.setItem(DIFF_SESSION_KEY, JSON.stringify(saved)); } catch {
+          // Never leave the previous pair's entry to be restored as this one.
+          try { sessionStorage.removeItem(DIFF_SESSION_KEY); } catch { /* ignore */ }
+        }
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally { setBusy(false); }
