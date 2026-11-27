@@ -215,9 +215,11 @@ This is **slice A** of the resident-emitter work. Status:
 - **Slice C — C0 experimental:** `nova capture --emit-spool` writes run-boundary
   EventEnvelope v1 records to a local spool (`$NOVAFABRIC_SPOOL_DIR`), and the
   resident Go binary `novafabric-spool-forwarder` drains it and publishes to a NATS
-  JetStream stream on `<prefix>.<run_id>`. Signing happens at the **hub**, not the
-  edge — compute nodes hold no NovaSeal keystore (hub-sign default; preserves the HPC
-  air-gap). Exactly-once in steady state; restart-based no-loss on publish failure.
+  JetStream stream on `<prefix>.<run_id>` (flags and exit codes:
+  [collector reference](collector-reference.md#novafabric-spool-forwarder)). Signing is
+  designed to happen at the **hub**, not the edge — compute nodes hold no NovaSeal keystore
+  (hub-sign default; preserves the HPC air-gap) — so the published envelopes are unsigned
+  until the hub exists. Exactly-once in steady state; restart-based no-loss on publish failure.
   Remaining: hub-sign + offline verify (C1), the OTel-Arrow gateway hop (C2,
   `deploy/collector-arrow/`), and Slurm/K8s rollout (C3).
 - **Deployment artifacts** — a Kubernetes DaemonSet manifest and a Slurm

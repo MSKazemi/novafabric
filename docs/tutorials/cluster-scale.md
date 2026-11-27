@@ -66,11 +66,14 @@ it is **also built now** (experimental, not yet proven at 1M-agent scale): a
 Go node-collector (`collector/`, Lustre-safe spool + NovaSeal batch signing,
 295K events/sec measured) and a lighter Python FastAPI receiver
 (`collector_app/`, `POST /capsule`) both exist. They do different jobs: the Go
-spool forwarder publishes events over NATS (the event bus) to a hub that
-batch-signs them, while `collector_app` accumulates the events it receives into
+spool forwarder publishes events over NATS (the event bus) for a hub to
+batch-sign, while `collector_app` accumulates the events it receives into
 DuckDB (in-memory by default) or ClickHouse (when `NOVA_CLICKHOUSE_URL` is set).
 Neither writes capsules to the object store; that tier (`ObjectCapsuleStore`) is
-a separate library and server component.
+a separate library and server component. The hub signing step is **future design**: the
+forwarder's envelopes reach NATS unsigned, and the Go collector binary that carries the
+signing processor cannot run a pipeline yet (see the
+[collector reference](../collector-reference.md)).
 
 ### Running the Python collector receiver securely
 
