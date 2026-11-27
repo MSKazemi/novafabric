@@ -19,6 +19,8 @@ import CopyButton from '../../../ui/CopyButton';
 import EmptyState from '../../../ui/EmptyState';
 import { ErrorBox, Loading } from '../../helpers';
 import type { RunAction } from './types';
+import TrustChecks from '../../trust/TrustChecks';
+import { buildTrustChecks, trustVerdict } from '../../trust/checks';
 
 function fmtDuration(ms: number | null | undefined): string {
   if (ms == null) return '—';
@@ -92,9 +94,12 @@ type Check = { label: string; ok: boolean | null | undefined };
 export function IntegrityPanel({
   runId,
   verify = api.capsuleVerify,
+  capsulePath,
 }: {
   runId: string;
   verify?: (runId: string) => Promise<CapsuleVerifyResult>;
+  /** The capsule directory, for the offline `nova verify` commands (issue #271). */
+  capsulePath?: string | null;
 }) {
   const [state, setState] = useState<{ busy: boolean; result: CapsuleVerifyResult | null; error: string | null }>({
     busy: false, result: null, error: null,
@@ -140,6 +145,9 @@ export function IntegrityPanel({
         { label: 'Merkle log inclusion', ok: r.log_integrity_ok },
       ]
     : [];
+  // `nova verify` exits 0 while some checks rest on nothing the verifier trusts:
+  // the headline must not read as if every check passed (issue #271).
+  const partial = !!r && r.valid === true && trustVerdict(r, buildTrustChecks(r)).tone === 'partial';
 
   return (
     <section aria-label="Seal verification" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 space-y-3">
@@ -177,6 +185,7 @@ export function IntegrityPanel({
               className={clsx('text-xs font-medium', r?.valid ? 'text-[var(--color-status-success)]' : 'text-[var(--color-status-failure)]')}
             >
               {r?.valid ? 'Seal verified' : 'Seal verification FAILED'}
+              {partial && ' by nova verify’s default rules — not every check is established (see each check below)'}
             </p>
             {r?.configured === false && (
               <p className="text-[10px] text-[var(--color-text-faint)]" data-testid="integrity-scope">
@@ -201,6 +210,8 @@ export function IntegrityPanel({
           </div>
         )}
       </div>
+      {/* Outside the live region: the per-check list is read on demand, not announced. */}
+      {r && <TrustChecks result={r} runId={runId} capsulePath={capsulePath} />}
     </section>
   );
 }

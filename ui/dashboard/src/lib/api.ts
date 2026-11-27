@@ -806,7 +806,8 @@ export interface CapsuleVerifyResult {
   configured: boolean | null;
   capsule_id?: string;
   signature_ok?: boolean;
-  timestamp_ok?: boolean;
+  // null when the capsule carries no RFC 3161 token (ADR-0301): absent, not passed.
+  timestamp_ok?: boolean | null;
   // ADR-0297 Am.2: timestamp_ok is token integrity; only 'anchored' is trusted time.
   timestamp_trust?: 'anchored' | 'unanchored' | 'absent' | 'invalid';
   log_integrity_ok?: boolean;
@@ -816,6 +817,38 @@ export interface CapsuleVerifyResult {
   valid?: boolean;
   errors?: string[];
   message?: string;
+  // Per-check fields (issue #271). Names follow `nova verify --json` where it has
+  // one. Absent (older server, config error) means "not reported", never "passed".
+  timestamp_gen_time?: string | null;
+  tsa_subject?: string | null;
+  capsule_binding_ok?: boolean;
+  identity_trust?: 'none' | 'self-asserted' | 'local-ca-pinned' | 'ca-anchored';
+  identity_statement?: string | null;
+  signer_subject?: string | null;
+  local_seal_identity?: boolean;
+  pae_encoding?: string | null;
+  signing_intent?: string | null;
+  signing_intent_status?: 'signed' | 'label-only' | 'mismatch' | 'absent';
+  timestamp_present?: boolean;
+  timestamp_strict?: boolean;
+  log_notes?: string[];
+  capsule_id_ok?: boolean;
+  manifest_file?: string;
+  manifest_present?: boolean;
+  manifest_ok?: boolean;
+  unsealed_manifests?: string[];
+  unsealed_refs?: string[];
+  evidence_digests_present?: boolean;
+  evidence_digests_ok?: boolean;
+  binding_errors?: string[];
+  ca_chain_checked?: boolean;
+  ca_chain_ok?: boolean | null;
+  ca_chain_reason?: string | null;
+  tsa_chain_checked?: boolean;
+  tsa_chain_ok?: boolean | null;
+  tsa_chain_reason?: string | null;
+  capture_tampered?: string | null;
+  special_entries?: string[];
 }
 
 // ---------- OpenLineage export result (v0.26.5) ----------

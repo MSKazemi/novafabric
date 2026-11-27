@@ -162,6 +162,46 @@ keyboard tablist (←/→, Home/End):
   to open it (even if it is not in the loaded list) or **Compare** it with this run.
 - **Secrets / Forensics / Children** — unchanged.
 
+### Per-check verification — Trust Center, first slice *(experimental)*
+
+After **Verify seal** in a run's **Integrity** view, the panel lists **every check
+`nova verify <capsule-dir>` performs**, one row each, in the order its text report prints
+them: signature (DSSE ECDSA P-256), timestamp token (RFC 3161), trusted time (TSA trust
+anchor), Merkle log inclusion, the sealer's Merkle log, manifest binding, evidence binding
+(per-file sha256), log-entry `capsule_id`, signer identity (CA trust anchor), capture
+integrity (no workload tampering recorded) and no links or special files. Each row shows:
+
+- its **status in words** — the icon beside it is decorative:
+
+  | Status | Meaning |
+  |---|---|
+  | **Passed** | the server reported that the check ran and passed |
+  | **Failed** | the check ran and failed; `nova verify` exits 1 |
+  | **Not established** | the check did not run, the server did not report it, or it rests on nothing the verifier trusts: a self-asserted signer (no CA bundle), an unanchored timestamp, no sealer log, a seal made before `evidence_digests`, an unsealed capsule |
+  | **Not applicable** | there is nothing to judge (no timestamp token, so no time to anchor) |
+
+- the **reason**, **what it looked at** (capsule files such as `.seal/manifest.dsse`,
+  `.seal/manifest.dsse.tsr`, `.seal/log-entry.json`, the signed `evidence_digests`, the
+  anchors on the verifying host), and
+- the **`nova verify` command** an auditor runs offline to check it independently, with the
+  capsule path shell-quoted and a copy button. Checks that need an anchor point at the flag
+  that supplies it (`--ca-bundle`, `--tsa-ca-bundle`, `--seal-config`); replace each `<…>`
+  with your own file. `nova verify` needs no server and no network.
+
+The verdict above the list is never stronger than its weakest row: **Every check passed**
+only when all rows passed; a capsule that `nova verify` accepts while some rows are not
+established reads **Partially established** (and names what `nova verify --strict` would fail
+on), and the Integrity headline adds "not every check is established". A passed check states
+what the cryptography established about these files — not that their content is correct,
+compliant or certified. **Copy summary** copies a plain-text list of every row for a review
+ticket.
+
+The rows come from additive fields on `POST /api/runs/{run_id}/verify` (see
+[API reference](api-reference.md)); a server that does not send a field shows that row as
+*not established*. Evidence Bundle ZIPs (`nova verify <bundle>.zip`), export and the Seal
+tab panels are not part of this slice. The bundled static dashboard picks this up after the
+next dashboard rebuild.
+
 ### Evidence cart *(experimental — ADR-0239)*
 
 Collect runs while you investigate, then export them as **one** signed Evidence Bundle.

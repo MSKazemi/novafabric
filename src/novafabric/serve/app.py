@@ -2163,6 +2163,11 @@ def create_app(
             "identity_trust": result.identity_trust,
             "signer_subject": result.signer_subject,
             "local_seal_identity": result.local_seal_identity,
+            # Additive (issue #271, the dashboard's per-check list): each check
+            # `nova verify` prints, with the same names as `nova verify --json`
+            # where that output has one, so a check that did not run reads as
+            # "not established" instead of being folded into a pass.
+            **_per_check_fields(report),
         }
 
     @app.get("/api/assets", dependencies=[Depends(verify_token)])
@@ -10589,6 +10594,46 @@ def _resolve_sealed_capsule(run_id: str, capsule_dir: Path) -> Path:
         if not (candidate / ".seal").is_dir():
             raise
         return _refuse_top_level_links(candidate)
+
+
+def _per_check_fields(report: Any) -> dict[str, Any]:
+    """The per-check facts of one ``verify_capsule`` report (additive fields)."""
+    from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
+        IDENTITY_TRUST_STATEMENTS,
+    )
+
+    result = report.result
+    binding = report.binding
+    intent = result.signing_intent
+    return {
+        "identity_statement": IDENTITY_TRUST_STATEMENTS.get(result.identity_trust),
+        "pae_encoding": result.pae_encoding,
+        "signing_intent": intent.value if intent is not None else None,
+        "signing_intent_status": result.signing_intent_status,
+        "timestamp_present": result.timestamp_present,
+        "timestamp_strict": result.timestamp_strict,
+        "log_notes": list(result.log_notes),
+        "capsule_id_ok": report.capsule_id_ok,
+        # Which manifest the seal binds, and whether each half of the
+        # ADR-0251 binding ran: `*_present` False is "not checked", never a pass.
+        "manifest_file": binding.manifest_name,
+        "manifest_present": binding.manifest_present,
+        "manifest_ok": binding.manifest_ok,
+        "unsealed_manifests": list(binding.unsealed_manifests),
+        "unsealed_refs": list(binding.unsealed_refs),
+        "evidence_digests_present": binding.digests_present,
+        "evidence_digests_ok": binding.digests_ok,
+        "binding_errors": binding.failure_reasons(),
+        # Chain checks run only against anchors novaseal.yaml supplies here.
+        "ca_chain_checked": report.chain_check is not None,
+        "ca_chain_ok": report.chain_ok if report.chain_check is not None else None,
+        "ca_chain_reason": report.chain_check.reason if report.chain_check is not None else None,
+        "tsa_chain_checked": report.tsa_check is not None,
+        "tsa_chain_ok": report.tsa_ok if report.tsa_check is not None else None,
+        "tsa_chain_reason": report.tsa_check.reason if report.tsa_check is not None else None,
+        "capture_tampered": report.capture_tampered,
+        "special_entries": list(report.special_entries),
+    }
 
 
 def _strip_spec(asset_row: dict[str, Any]) -> dict[str, Any]:
