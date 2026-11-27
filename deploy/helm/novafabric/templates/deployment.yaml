@@ -1,5 +1,6 @@
 {{- include "novafabric.assertSecurePosture" . -}}
 {{- include "novafabric.assertUpgradeAcknowledged" . -}}
+{{- include "novafabric.assertExistingSecret" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -45,6 +46,11 @@ spec:
               nova db upgrade --backend postgres --revision {{ .Values.dbRevision | default "head" | quote }}
           env:
             {{- include "novafabric.env" . | nindent 12 }}
+          {{- if .Values.securityContext.readOnlyRootFilesystem }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- end }}
       containers:
         - name: nova
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -117,6 +123,15 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.securityContext.readOnlyRootFilesystem }}
+            # Read-only root filesystem: tempfile spools (ingest uploads) need a
+            # writable /tmp.
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: data
           {{- if .Values.persistence.enabled }}
@@ -125,6 +140,18 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.securityContext.readOnlyRootFilesystem }}
+        - name: tmp
+          {{- if .Values.tmpVolume.sizeLimit }}
+          emptyDir:
+            sizeLimit: {{ .Values.tmpVolume.sizeLimit | quote }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -225,9 +225,10 @@ do not fork the capsule format for an enterprise or cloud variant.
   proof that these services are required or that its example credentials are
   production-safe**. See [Compose source](../deploy/docker/docker-compose.yml).
 - **Helm defaults to authenticated server mode**; its bundled PostgreSQL is
-  for evaluation. Production operators must supply appropriately secured
-  persistence, secrets, TLS and recovery checks. See
-  [Helm deployment](../deploy/helm/novafabric/README.md).
+  for evaluation. `values-production.yaml` in the chart removes it, takes the
+  database password only from an existing Secret and hardens the pod; operators
+  still supply TLS, OIDC, network policy, Postgres backups and recovery checks. See
+  [Helm deployment](../deploy/helm/novafabric/README.md#production-values).
 - Installation does not equal production validation, regulatory compliance
   certification or a managed hosted service.
 

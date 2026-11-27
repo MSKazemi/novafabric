@@ -1,0 +1,140 @@
+# Production starting point for the novafabric chart (experimental chart).
+#
+# Layer it over the stock values and supply the two required fields:
+#
+#   kubectl create secret generic nova-db --from-literal=password='<db password>'
+#   helm install nova deploy/helm/novafabric \
+#     -f deploy/helm/novafabric/values-production.yaml \
+#     --set externalDatabase.host=my-pg.example.com \
+#     --set externalDatabase.existingSecret=nova-db
+#
+# What this file changes relative to values.yaml:
+#   * no bundled evaluation Postgres; the DB password comes ONLY from a Secret you
+#     create (externalDatabase.requireExistingSecret makes `helm template` refuse
+#     anything else);
+#   * read-only root filesystem, with an emptyDir at /tmp;
+#   * RuntimeDefault seccomp profile at pod and container level;
+#   * explicit requests and a memory limit;
+#   * the hash-chained audit log and the signing keyring on the data volume
+#     instead of $HOME.
+#
+# It does NOT configure ingress or TLS, OIDC, a NetworkPolicy (the chart has no
+# NetworkPolicy template), backups, or Postgres high availability. Those are the
+# operator's to provide; see deploy/helm/novafabric/README.md "Production values".
+# Rendered in CI by the release-toolchain workflow; not exercised in a live cluster
+# by this repository's CI.
+
+# The multi-user REST API (`nova server start`) with auth on. Never `dashboard`
+# in production: its shared token holds `admin` scope (ADR-0230).
+mode: server
+
+serve:
+  insecure: false
+  acknowledgeInsecureExposure: ""
+
+# One writer over the data volume (ADR-0180). Do not scale out.
+replicaCount: 1
+
+image:
+  # Empty = Chart.yaml appVersion (equal to the released package version).
+  # Pinning a digest instead, e.g. "0.109.0@sha256:...", makes the deploy immune
+  # to a re-pushed tag.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  # Skip the recursive chown of /data on every start when ownership is already right.
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  runAsNonRoot: true
+  privileged: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+tmpVolume:
+  sizeLimit: 1Gi
+
+server:
+  port: 7433
+  workers: 1
+
+service:
+  type: ClusterIP
+  port: 4321
+
+# Off here on purpose: the TLS and exposure policy is the operator's decision.
+# Enable it with your own ingressClassName, hosts and a `tls:` block.
+ingress:
+  enabled: false
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  # Starting point only; size from docs/ops/sizing-guide.md.
+  size: 20Gi
+
+# Estimates, not benchmarks (docs/ops/sizing-guide.md section 6 says no published
+# memory/CPU benchmarks exist). No CPU limit, so the server is not throttled
+# under bursts; set one if your cluster policy requires it.
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 2Gi
+
+# No bundled Postgres in production.
+postgres:
+  enabled: false
+
+externalDatabase:
+  host: ""            # REQUIRED, e.g. --set externalDatabase.host=my-pg.example.com
+  port: 5432
+  username: nova
+  password: ""        # must stay empty; the password lives in existingSecret
+  database: nova
+  existingSecret: ""  # REQUIRED, a Secret you create in the release namespace
+  existingSecretPasswordKey: password
+  requireExistingSecret: true
+
+extraEnv:
+  # The audit log resolver defaults to ~/.local/share/novafabric/audit.jsonl and
+  # the signing keyring to ~/.config/novafabric/keyring; both sit on the
+  # read-only root filesystem here. Keep them on the persistent data volume so
+  # they are writable and survive pod restarts.
+  - name: NOVAFABRIC_AUDIT_LOG_PATH
+    value: /data/audit/audit.jsonl
+  - name: NOVAFABRIC_KEYRING_DIR
+    value: /data/keyring
+
+# OIDC: mount a server.yaml with an `oidc:` block from a Secret at the default
+# config path of the image user (uid 1000, HOME=/home/nova). Example, not yet
+# exercised in a cluster by this repository:
+#   extraVolumes:
+#     - name: server-config
+#       secret:
+#         secretName: nova-server-config
+#   extraVolumeMounts:
+#     - name: server-config
+#       mountPath: /home/nova/.config/novafabric/server.yaml
+#       subPath: server.yaml
+#       readOnly: true
+# Without it the server runs in local-token mode (auth still on).
+extraVolumes: []
+extraVolumeMounts: []

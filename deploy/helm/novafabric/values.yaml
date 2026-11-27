@@ -37,7 +37,15 @@ securityContext:
   capabilities:
     drop:
       - ALL
+  # values-production.yaml sets this true. When true, the chart mounts an
+  # emptyDir at /tmp (sized by tmpVolume.sizeLimit) in the app and migration
+  # containers, because the server spools uploads through tempfile.
   readOnlyRootFilesystem: false
+
+# Writable /tmp, mounted only when securityContext.readOnlyRootFilesystem is true.
+tmpVolume:
+  # e.g. "1Gi"; empty means no limit beyond the node's ephemeral storage.
+  sizeLimit: ""
 
 # Deployment mode (ADR-0230):
 #   server (default)  — `nova server start`, the multi-user REST API with
@@ -154,9 +162,19 @@ externalDatabase:
   # Read the password from an existing secret instead of externalDatabase.password.
   existingSecret: ""
   existingSecretPasswordKey: password
+  # When true, `helm template` refuses to render unless the password comes from
+  # existingSecret: it fails on postgres.enabled=true (the bundled evaluation
+  # Postgres, whose password sits in values), on an empty existingSecret, and on
+  # a non-empty externalDatabase.password. values-production.yaml sets it true.
+  requireExistingSecret: false
 
 # Extra environment variables for the nova container, e.g. [{ name: FOO, value: bar }].
 extraEnv: []
+
+# Extra pod volumes and nova-container mounts, e.g. a Secret holding server.yaml
+# (OIDC is configured only through server.yaml; see the chart README).
+extraVolumes: []
+extraVolumeMounts: []
 
 nodeSelector: {}
 tolerations: []

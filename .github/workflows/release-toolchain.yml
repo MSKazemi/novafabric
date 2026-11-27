@@ -164,6 +164,44 @@ jobs:
       - name: Lint chart
         run: helm lint deploy/helm/novafabric
 
+      - name: Render production values
+        # values-production.yaml must lint and render with its two required
+        # fields, produce the hardened pod spec, and refuse every path that
+        # would put a database password into chart values.
+        shell: bash
+        run: |
+          set -euo pipefail
+          chart=deploy/helm/novafabric
+          prod="$chart/values-production.yaml"
+          req=(--set externalDatabase.host=pg.example.invalid --set externalDatabase.existingSecret=nova-db)
+          refuse() {
+            if helm template t "$chart" -f "$prod" "$@" >/dev/null 2>&1; then
+              echo "::error::production values rendered with: $*" >&2
+              exit 1
+            fi
+          }
+          helm lint "$chart" -f "$prod" "${req[@]}"
+          out=$(helm template t "$chart" -f "$prod" "${req[@]}")
+          grep -q 'readOnlyRootFilesystem: true' <<<"$out"
+          grep -q 'mountPath: /tmp' <<<"$out"
+          grep -q 'type: RuntimeDefault' <<<"$out"
+          grep -q 'name: nova-db' <<<"$out"
+          if grep -q '^kind: Secret' <<<"$out"; then
+            echo "::error::production values rendered a chart-managed Secret" >&2; exit 1
+          fi
+          if grep -q 'app.kubernetes.io/component: postgres' <<<"$out"; then
+            echo "::error::production values rendered the bundled Postgres" >&2; exit 1
+          fi
+          refuse --set externalDatabase.host=pg.example.invalid
+          refuse "${req[@]}" --set postgres.enabled=true
+          refuse "${req[@]}" --set externalDatabase.password=x
+          # Stock values stay as they were: no /tmp volume unless the root
+          # filesystem is read-only.
+          stock=$(helm template t "$chart")
+          if grep -q 'name: tmp$' <<<"$stock"; then
+            echo "::error::stock values rendered a /tmp volume" >&2; exit 1
+          fi
+
       - name: Package chart
         # Mirrors publish-chart.yml. The real step derives the version from the
         # tag; a pull request has none, so a placeholder proves packaging works.

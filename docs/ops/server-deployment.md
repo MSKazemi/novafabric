@@ -419,6 +419,27 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:4321/v0/version
 
 ### Production (external managed Postgres)
 
+The chart ships a layered production values file,
+[`values-production.yaml`](../../deploy/helm/novafabric/values-production.yaml): no bundled
+Postgres, the database password only from a Secret you create (`helm template` refuses
+anything else), a read-only root filesystem with an `emptyDir` at `/tmp`, seccomp
+`RuntimeDefault`, and explicit requests and a memory limit. It is rendered with real Helm in
+CI; installing it into a live cluster is not exercised by this repository's CI.
+
+```bash
+kubectl create secret generic nova-db --from-literal=password='<db password>'
+helm pull oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z> --untar
+helm install nova ./novafabric \
+  -f ./novafabric/values-production.yaml \
+  --set externalDatabase.host=my-pg.example.com \
+  --set externalDatabase.existingSecret=nova-db
+```
+
+It leaves ingress/TLS, OIDC (`server.yaml`), NetworkPolicy and Postgres operations to you;
+the chart README's [Production values](../../deploy/helm/novafabric/README.md#production-values)
+section lists exactly what it sets and what it does not. Without the file, the equivalent
+database settings are:
+
 ```bash
 helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z> \
   --set postgres.enabled=false \

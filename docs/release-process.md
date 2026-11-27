@@ -144,10 +144,21 @@ Edit `pyproject.toml`:
 version = "x.y.z"
 ```
 
+and set the same version in `deploy/helm/novafabric/Chart.yaml`:
+
+```yaml
+version: x.y.z
+appVersion: "x.y.z"
+```
+
+`tests/docs/test_release_metadata_is_consistent.py` fails when the chart and the
+package disagree, and `publish-chart.yml` refuses to publish a tag that does not
+match `Chart.yaml`.
+
 ## 7. Commit and tag
 
 ```bash
-git add CHANGELOG.md pyproject.toml
+git add CHANGELOG.md pyproject.toml deploy/helm/novafabric/Chart.yaml
 git commit -m "chore: release vx.y.z"
 git tag vx.y.z
 git push origin main --tags
