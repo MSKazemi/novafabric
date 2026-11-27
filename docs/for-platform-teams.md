@@ -9,7 +9,8 @@ If you want the product story instead, start at the [README](../README.md). If y
 are evaluating for a paper, [For researchers](for-researchers.md) is the better page.
 If you are evaluating for an audit or compliance function, read
 [Assurance cases](assurance-cases.md) — it explains why NovaFabric emits receipts and
-never verdicts.
+never verdicts — and [Standards and specifications](standards-conformance.md), which lists
+each exporter, its maturity, and which exporters refuse a capsule whose seal fails.
 
 ---
 
@@ -18,7 +19,7 @@ never verdicts.
 | Question | Answer |
 |---|---|
 | **License** | Apache-2.0. No CLA required to *use*; a CLA applies to contributions ([CLA.md](../CLA.md)). |
-| **Maturity** | **Beta, v0.109.0.** Local capture/replay/diff/lineage are stable and used daily. Server mode, the collector, the dashboard, and the at-scale lineage backends are `experimental`. |
+| **Maturity** | **Beta, v0.109.0.** Local capture, replay, diff and lineage are labelled *works today* in the README. Server mode, the collector, the dashboard, and the at-scale lineage backends are `experimental`. |
 | **Format stability** | On-disk capsule and evidence-bundle formats are **not frozen** until the v1.0 schema freeze. Do not build a long-lived external contract on capsule internals yet. |
 | **Runtime dependency on us** | **None.** No accounts, no telemetry, no license server, no phone-home, no update check. If this project disappeared tomorrow, your capsules keep working — they are folders. |
 | **Where data lives** | Your infrastructure only. Local mode writes to `~/.novafabric/` (`nova capture`) or `./.novafabric/runs/` (SDK, adapters, `nova api-proxy`/`mcp-proxy`) — `NOVAFABRIC_HOME` / `NOVAFABRIC_CAPSULE_DIR` override; server mode writes to your own Postgres. |
@@ -70,9 +71,10 @@ What is in place today:
 
 What is **not** claimed:
 
-- No SOC 2, ISO 27001, HIPAA, or FedRAMP certification, and none is planned during
-  v0.x. This is a deliberate decision, not an oversight — see
-  [Assurance cases](assurance-cases.md).
+- The project holds no SOC 2 report, ISO/IEC 27001 certificate, FedRAMP authorization,
+  or HIPAA attestation. Its compliance exporters (EU AI Act, ISO/IEC 42001, NIST AI RMF,
+  GDPR and others, all experimental) produce evidence for your own assessment; they do not
+  certify you or NovaFabric — see [Assurance cases](assurance-cases.md).
 - Capture is defence-in-depth, not a sandbox. NovaFabric does not claim to contain a
   hostile workload.
 
