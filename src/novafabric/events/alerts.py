@@ -66,7 +66,7 @@ from novafabric.events.emitter import (
     _nova_version,
     build_emitter_from_env,
 )
-from novafabric.events.hygiene import sanitize_record
+from novafabric.events.hygiene import sanitize_record, strip_local_only
 from novafabric.events.model import (
     EventSeverity,
     EventType,
@@ -352,7 +352,9 @@ class AlertRouter:
             return
         if self._suppressed(type_value, event.subject.ref):
             return
-        record = sanitize_record(event.to_record())
+        # Every alert endpoint is outbound: local-only payload keys (#276) are
+        # stripped before signing. The audit entry below still records them.
+        record = strip_local_only(sanitize_record(event.to_record()))
         if self._config.sign_secret:
             record = sign_record(
                 record, self._config.sign_secret, self._config.sign_keyid
@@ -431,6 +433,16 @@ class AlertRouter:
             }
             if result.error is not None:
                 details["error"] = result.error
+            # Issue #276: carry the triage refs the source recorded (today only
+            # `ops.seal.verify_failed`) into the delivery entry. Absent when the
+            # source recorded none; `claimed_run_id` stays labelled unverified.
+            for key in ("capsule_dir", "claimed_run_id"):
+                value = event.payload.get(key)
+                if isinstance(value, str) and value:
+                    details[key] = value
+            first_divergence = event.payload.get("first_divergence")
+            if isinstance(first_divergence, dict):
+                details["first_divergence"] = first_divergence
             self._audit.append(
                 event_type=AuditEventType.ALERT_DELIVERY,
                 actor="alert-router",

@@ -10,7 +10,10 @@ import { useMutation } from '../../../lib/useMutation';
 import TabShell from './TabShell';
 import DataTable, { type Column } from '../../ui/DataTable';
 import ActionButton from '../../ui/ActionButton';
+import Button from '../../ui/primitives/Button';
 import EmptyState from '../../ui/EmptyState';
+import TriagePanel from '../triage/TriagePanel';
+import { incidentTriage } from '../triage/triageModel';
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 const NEXT_STATUS: Record<string, string | null> = { open: 'reported', reported: 'closed', closed: null };
@@ -38,6 +41,10 @@ export default function IncidentsTab({ onCountChange }: { onCountChange?: (n: nu
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [showForm, setShowForm] = useState(false);
+  // Issue #276: the incident whose triage panel is open (read-only drill-down).
+  const [triage, setTriage] = useState<IncidentView | null>(null);
+  // Stable, so the 30 s clock's re-render does not re-run the drawer's focus trap.
+  const closeTriage = useCallback(() => setTriage(null), []);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -124,7 +131,7 @@ export default function IncidentsTab({ onCountChange }: { onCountChange?: (n: nu
       title="Incidents"
       subtitle="EU AI Act Art. 73 serious-incident records with a live reporting-deadline clock."
       cli={['nova incident open', 'nova incident list', 'nova incident status', 'nova incident export']}
-      help="The clock anchors to awareness (or occurrence). Deadlines: 15 days standard (Art.73(2)), 10 days for death (73(4)), 2 days for widespread/critical-infra (73(3)). Operational aid, not legal advice."
+      help="The clock anchors to awareness (or occurrence). Deadlines: 15 days standard (Art.73(2)), 10 days for death (73(4)), 2 days for widespread/critical-infra (73(3)). Operational aid, not legal advice. Triage (per row, experimental) opens a read-only panel: linked runs, a timeline, and copyable next commands; it runs nothing."
       actions={
         <>
           <ActionButton onClick={load} variant="ghost" size="sm">Refresh</ActionButton>
@@ -171,6 +178,7 @@ export default function IncidentsTab({ onCountChange }: { onCountChange?: (n: nu
           const next = NEXT_STATUS[r.status];
           return (
             <>
+              <Button onClick={() => setTriage(r)} size="sm" variant="ghost" aria-label={`Triage incident ${r.title}`}>Triage</Button>
               {next && (
                 <ActionButton onClick={() => transition.run(r.id, next)} pending={transition.pending} size="sm">→ {next}</ActionButton>
               )}
@@ -187,6 +195,7 @@ export default function IncidentsTab({ onCountChange }: { onCountChange?: (n: nu
           <pre className="whitespace-pre-wrap font-mono text-[10px] text-[var(--color-text-muted)] max-h-72 overflow-auto">{JSON.stringify(exportInc.result.report, null, 2)}</pre>
         </section>
       )}
+      {triage && <TriagePanel model={incidentTriage(triage, now)} onClose={closeTriage} />}
     </TabShell>
   );
 }
