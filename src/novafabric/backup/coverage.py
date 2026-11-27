@@ -20,7 +20,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 from novafabric import _capsule_fs
 from novafabric._capsule_fs import CapsuleLinkError, open_capsule_file
@@ -94,6 +94,7 @@ def copy_tree_files(
     *,
     skip: Callable[[str], bool] | None = None,
     error: type[CapsuleLinkError] = CapsuleLinkError,
+    empty_dirs: list[str] | None = None,
 ) -> list[str]:
     """Copy every regular file under *src_dir* into *dest_dir*; return the copied paths.
 
@@ -103,6 +104,10 @@ def copy_tree_files(
     *src_dir* itself may be reached through a link. Special files (FIFOs,
     sockets) are skipped, as ``is_file`` skipped them. *skip* drops paths, given
     relative to *src_dir*, before they are opened.
+
+    When *empty_dirs* is given, the directories (relative to *src_dir*) that hold
+    no copied file, at any depth, are appended to it. A tar of file members alone
+    loses them, and a capsule's empty ``inputs/`` is part of its layout.
     """
     listing = _capsule_fs.list_capsule(src_dir, operation=_COPY_OPERATION, error=error)
     copied: list[str] = []
@@ -116,7 +121,24 @@ def copy_tree_files(
         ) as fsrc, open(dst, "xb") as fdst:
             shutil.copyfileobj(fsrc, fdst)
         copied.append(rel)
+    if empty_dirs is not None:
+        empty_dirs.extend(_dirs_without_files(listing.dirs, copied, skip=skip))
     return copied
+
+
+def _dirs_without_files(
+    dirs: Iterable[str], files: Iterable[str], *, skip: Callable[[str], bool] | None
+) -> list[str]:
+    """Directories in *dirs* that are no copied file's ancestor (sorted, skips applied)."""
+    occupied: set[str] = set()
+    for rel in files:
+        parent = PurePosixPath(rel).parent
+        while parent != PurePosixPath("."):
+            occupied.add(parent.as_posix())
+            parent = parent.parent
+    return sorted(
+        d for d in dirs if d not in occupied and not (skip is not None and skip(d))
+    )
 
 
 @dataclass(frozen=True)

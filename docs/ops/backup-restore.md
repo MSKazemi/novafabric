@@ -390,6 +390,13 @@ else `<target home>/capsules`. An existing capsule file is never overwritten
 without `--force`, which moves it aside under `.pre-restore-…/external/capsule-dir/`.
 Before this fix a Docker deployment's set recorded `capsules: absent`.
 
+**Empty capsule directories (works today):** tar members are regular files only, so
+the manifest (schema 0.2.2) lists the empty directories of the capsule trees in
+`empty_dirs`, which the signature covers, and `nova restore` recreates them. A capsule's
+`inputs/` is often empty, and `nova validate` requires it. Sets made before this release
+do not carry the list. A capsule restored from such a set fails `nova validate` with
+`missing directory: inputs`, and `mkdir <capsule>/inputs` repairs it.
+
 > **Custody note:** because `dek.db` (raw per-subject DEKs) travels in the
 > default set, a backup set is a **sensitive artifact** — store it encrypted
 > at rest with restricted access. Crypto-shred replay on restore guarantees

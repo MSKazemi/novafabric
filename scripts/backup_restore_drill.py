@@ -268,6 +268,11 @@ def _python_beside(nova: str) -> str:
     return str(candidate) if candidate.is_file() else sys.executable
 
 
+def _absolute(command: str) -> str:
+    """A path-like command made absolute (symbolic links kept); a bare name stays for PATH."""
+    return os.path.abspath(command) if os.sep in command else command
+
+
 def _default_nova() -> str:
     beside = Path(sys.executable).parent / "nova"
     return str(beside) if beside.is_file() else (shutil.which("nova") or "nova")
@@ -452,8 +457,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--report", type=Path, default=None, help="Write the JSON report here")
     args = parser.parse_args(argv)
 
-    nova = args.nova or _default_nova()
-    backup_nova = args.backup_nova or nova
+    # Commands run with cwd=<work dir>, so a relative path to nova must be made absolute.
+    nova = _absolute(args.nova or _default_nova())
+    backup_nova = _absolute(args.backup_nova) if args.backup_nova else nova
     keep = args.work_dir is not None
     if args.work_dir is not None:
         if args.work_dir.exists() and any(args.work_dir.iterdir()):
