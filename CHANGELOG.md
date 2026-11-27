@@ -78,6 +78,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **`nova doctor --check-server`: a read-only preflight for a `nova server start` deployment
+  (experimental, #232).** One PASS / FAIL / WARN / SKIP line per check, each with a one-line
+  fix: the server extra, the config (parsed and validated by the server's own loader, env
+  overrides included), the data and capsule directories (exist, writable, not world-writable),
+  secret-file permissions (`.server-token`, the evidence signing key, the offline-token private
+  key), the database (the Postgres DSN is reachable and the registry migration track is at head,
+  mirroring the server's own start-up schema guard), the listen port, TLS material and
+  certificate expiry, the local auth token, the audit log path, and the NovaSeal key when sealing
+  is configured. `--server-config PATH` names the file. Exits 1 on any FAIL. It writes nothing,
+  never binds a port, resolves no host name and contacts no external service; with the Postgres
+  backend it opens at most two short `SELECT`-only connections to the configured DSN, which it
+  never prints. It also catches a mistake the server does not: `nova server start --config
+  <missing file>` silently starts on built-in defaults, and the preflight reports that file as
+  a FAIL.
 
 ### Changed
 
