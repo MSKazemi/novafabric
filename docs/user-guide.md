@@ -1202,6 +1202,11 @@ with no NovaFabric runtime. This is the compliance-supporting surface of the
 product — it produces evidence that *supports* compliance workflows; it does not
 certify or guarantee compliance.
 
+The framework exporters built on it (EU AI Act, ISO/IEC 42001, NIST AI RMF, GDPR, BagIt and
+others, all experimental) are listed, with what each produces and which of them refuse a
+capsule whose `.seal` fails verification, in
+[Standards and specifications](standards-conformance.md).
+
 ### nova redact
 
 Re-scan a capsule and update its `redaction-proof.json`. Use this if you want
@@ -2061,8 +2066,10 @@ them yet, so build against the module, not a shipped command:
 | Causal-graph back-trace (ADR-0101 NF-019/022) | Python API only | `diagnose.causal_root_candidates()` — used internally by `--search-root-cause`; no direct CLI verb |
 | Span-level claim-grounding audit (ADR-0101 NF-021) | Python API only | `diagnose.audit_claims()` — flags a model-span claim `ungrounded` when no tool-span evidence precedes it; not wired into `nova diagnose` output yet |
 | NATS lineage consumer (cap-006, ADR-0061/0066/0219) | **CLI**, experimental | [`nova lineage consume`](#nova-lineage-consume-experimental) |
-| EU AI Act Art. 12 record-keeping export | **CLI**, experimental | `nova euaiact export` / `nova euaiact status` |
-| Compliance cohort (ISO 42001/42005, Art.72 PMM, GPAI Art.53, NIST GenAI/CSA) | **CLI**, experimental | `nova export-compliance {iso42001,pmm,gpai53,genai-profile}` |
+| EU AI Act per-run log records for an authority's access request (Art. 21(2)) | **CLI**, experimental | `nova euaiact export` / `nova euaiact status` (configuration only) |
+| EU AI Act Art. 12 record-keeping report per capsule (refuses a capsule whose seal fails) | Python API only | `compliance/export/euaiact_art12.py` (`build_art12_report`) |
+| Compliance cohort (ISO 42001, Art.72 PMM, GPAI Art.53, NIST GenAI/CSA) | **CLI**, experimental | `nova export-compliance {iso42001,pmm,gpai53,genai-profile}` |
+| ISO/IEC 42005 impact-assessment skeleton | Python API only | `compliance/export/iso42001.py` (`build_iso42005_impact_assessment`) |
 | Portable agent-passport projection (ADR-0149) | **CLI**, experimental | `nova passport issue` / `nova passport verify` |
 | SAML SSO (ADR-0138) | **CLI**, experimental, partial | `nova server saml-metadata` emits SP metadata only; assertion-consumption is opt-in server config, not a CLI verb |
 | x509 certificate-pinned signing identity (ADR-0055) | Python API only | `trust/novaseal/x509_identity.py` |
