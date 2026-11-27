@@ -31,9 +31,10 @@ when a complete fix needs longer than the window.
 
 ### Dependency scanning and waivers
 
-- CI runs [pip-audit](https://pypi.org/project/pip-audit/) against the locked
-  Python dependency set on every pull request and weekly; HIGH/CRITICAL
-  findings block merges.
+- CI runs [pip-audit](https://pypi.org/project/pip-audit/) against every
+  tracked Python lockfile (the root `uv.lock` and
+  `examples/plugin-hook-reference/uv.lock`) on every pull request and weekly;
+  HIGH/CRITICAL findings block merges.
 - CI runs `npm audit` against every tracked npm lockfile (`ui/dashboard/`,
   `packages/nova-dashboard/`, `packages/nova-sdk-ts/`) on lockfile changes
   and weekly, behind the same severity gate; HIGH/CRITICAL advisories fail the job.
