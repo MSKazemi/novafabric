@@ -54,6 +54,7 @@ CLAIM_SURFACES: tuple[str, ...] = (
     "docs/user-guide.md",
     "examples/capsules/README.md",
     ".github/actions/capture/action.yml",
+    ".claude-plugin/marketplace.json",
     "integrations/claude-plugin/README.md",
     "integrations/claude-plugin/.claude-plugin/plugin.json",
     "integrations/claude-plugin/skills/novafabric-instrument/SKILL.md",

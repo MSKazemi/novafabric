@@ -1,75 +1,121 @@
 # NovaFabric — Claude Code plugin
 
-A Claude Code plugin that lets you **instrument** an AI agent with NovaFabric and
-**deploy** the NovaFabric dashboard — by just asking Claude Code, in plain language.
+A Claude Code plugin that helps you **instrument** a Python AI agent with NovaFabric and
+**deploy** a NovaFabric service, by asking Claude Code in plain language. Status:
+**experimental**. The skills only run the `nova` CLI and `helm`/`kubectl`/`docker`
+commands they describe, through Claude Code's normal permission prompts. The plugin has no
+hooks, no MCP server, no executables and no network endpoints of its own.
 
 It bundles two skills:
 
 | Skill | What it does | Say something like |
 |---|---|---|
-| `novafabric-instrument` | Add NovaFabric capture to your Python agent: record runs as replayable Run Capsules you own, then validate them (and verify them once sealing is configured). | *"instrument my agent with NovaFabric"*, *"capture my agent runs"*, *"make my agent auditable"* |
-| `novafabric-deploy` | Deploy `nova serve` (the experimental dashboard + REST API) to Docker or Kubernetes via the published image and Helm chart. | *"deploy NovaFabric"*, *"install the NovaFabric helm chart"*, *"host the dashboard on k8s"* |
+| `novafabric-instrument` | Capture a Python agent's runs as Run Capsules (replayable folders you own), validate them, verify the seal once sealing is configured, then replay or export a signed Evidence Bundle. | *"instrument my agent with NovaFabric"*, *"capture my agent runs"*, *"make my agent auditable"* |
+| `novafabric-deploy` | Deploy the Helm chart's default multi-user REST API server (`nova server start`), or the experimental dashboard (`nova serve`), to Kubernetes or Docker. | *"deploy NovaFabric"*, *"install the NovaFabric helm chart"*, *"run NovaFabric on k8s"* |
 
 ## Install
 
-In Claude Code:
+The repository root carries the marketplace file (`.claude-plugin/marketplace.json`); the
+plugin itself lives in `integrations/claude-plugin/`. In a Claude Code session:
 
 ```text
 /plugin marketplace add MSKazemi/novafabric
 /plugin install novafabric@novafabric
 ```
 
-That's it — the two skills are now available. Claude Code invokes them automatically
-when your request matches, or you can ask for one by name.
+Or from your shell: `claude plugin marketplace add MSKazemi/novafabric`, then
+`claude plugin install novafabric@novafabric`. The GitHub shorthand reads
+`.claude-plugin/marketplace.json` from the default branch.
+
+Observed output, Claude Code 2.1.332, installing from a local clone of this repository:
+
+```console
+$ claude plugin marketplace add ./novafabric
+✔ Successfully added marketplace: novafabric (declared in user settings)
+$ claude plugin install novafabric@novafabric
+✔ Successfully installed plugin: novafabric@novafabric (scope: user)
+$ claude plugin details novafabric
+novafabric 0.2.0
+...
+Component inventory
+  Skills (2)  novafabric-deploy, novafabric-instrument
+  Agents (0)
+  Hooks (0)
+  MCP servers (0)
+  LSP servers (0)
+```
+
+Claude Code invokes a skill when your request matches its description, or you can ask for
+one by name (`/novafabric:novafabric-instrument`, `/novafabric:novafabric-deploy`).
+
+To check a checkout yourself before installing:
+
+```bash
+claude plugin validate .                          # the marketplace file
+claude plugin validate integrations/claude-plugin # the plugin and its skills
+```
+
+## Using it to instrument an agent
+
+- **"Add NovaFabric to this agent."** Claude installs `novafabric` into the agent's own
+  Python environment (the capture hooks load inside that interpreter), runs `nova init`,
+  captures the entrypoint with `nova capture -- python <entrypoint>`, then runs
+  `nova validate` on the capsule. It runs `nova verify` too, which reports the seal, or
+  exits 1 and says the capsule is unsealed when sealing was never configured
+  (`nova seal init`, experimental). No change to your agent's code is needed and no
+  server is involved.
 
 ## Using it to deploy
 
-Once installed, just describe what you want. The `novafabric-deploy` skill walks
-Claude Code through it. Examples:
-
-- **"Deploy the NovaFabric dashboard to my Kubernetes cluster."**
-  Claude runs, roughly:
+- **"Deploy NovaFabric to my Kubernetes cluster."** Claude runs, roughly:
   ```bash
   helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z>
   kubectl rollout status deploy/nova-novafabric
   kubectl port-forward svc/nova-novafabric 4321:4321
-  # token: kubectl logs deploy/nova-novafabric | grep -i token
+  TOKEN=$(kubectl exec deploy/nova-novafabric -- sh -c 'cat "$NOVAFABRIC_HOME/.server-token"')
+  curl -H "Authorization: Bearer $TOKEN" http://localhost:4321/v0/version
   ```
+  That is **server mode**, the chart default: an authenticated REST API, not a web
+  dashboard. The token is not printed to the pod logs.
 
-- **"Deploy NovaFabric for production with my own Postgres and TLS."**
-  Claude adds `--set postgres.enabled=false --set externalDatabase.host=… --set ingress.enabled=true …`
-  and reminds you to terminate TLS at the ingress (`nova serve` is experimental and
-  serves plain HTTP behind a bearer token; the chart refuses an insecure non-loopback
-  dashboard unless you acknowledge it, ADR-0230).
+- **"I want the dashboard on Kubernetes."** Claude explains that `mode: dashboard` serves
+  plain HTTP with an admin-scope shared token, and that the chart refuses to render it
+  without `serve.insecure=true` plus an explicit acknowledgement value. It sets those
+  only after you agree, and only behind TLS.
 
-- **"Run NovaFabric locally with Docker to try it."**
-  Claude uses the `ghcr.io/mskazemi/novafabric` image (or the repo's
-  `deploy/docker/docker-compose.yml` / `make dev-up` for a Postgres + dashboard
-  stack) and fetches the access token from the container logs.
+- **"Run NovaFabric locally with Docker to try it."** From a checkout: `make dev-up`
+  (Postgres + the dashboard on `127.0.0.1:4321`), then `make docker-token` for the
+  dashboard URL.
 
-> **Note:** the GHCR image and Helm chart must be **publicly visible** for anonymous
-> `docker pull` / `helm install`. If a pull returns 401/403, the package owner must
-> set the GHCR package visibility to Public.
+- **"Deploy it for production."** Claude uses an external Postgres with its password in a
+  Secret (`postgres.enabled=false`, `externalDatabase.existingSecret=…`) and an ingress
+  with TLS. It also says that the bundled Postgres password (`nova`) is for demos only.
 
-## Using it to instrument an agent
-
-- **"Add NovaFabric to this agent."** Claude installs `novafabric`, runs `nova init`,
-  captures your entrypoint with `nova capture python <entrypoint>`, then
-  `nova validate`s the resulting capsule (and `nova verify`s it if you configured sealing) — no changes to your agent's
-  code required. NovaFabric is self-hosted; no server is needed for capture.
+> **Note:** anonymous `docker pull` / `helm install` works only while the GHCR image and
+> chart packages are public. A 401/403 on pull means the package owner has to change
+> the GHCR package visibility.
 
 ## What is NovaFabric?
 
-Open-source (Apache-2.0), self-hosted replay and evidence infrastructure for AI agents:
-capture an agent/LLM run as a portable Run Capsule you own (sealable with your own key),
-then replay, diff, trace lineage, and gate promotion on policy. See the [main repository](https://github.com/MSKazemi/novafabric) and
+Open-source (Apache-2.0), self-hosted replay and evidence infrastructure for AI agents.
+It captures an agent or LLM run as a portable Run Capsule you own (sealable with your own
+key), then replays it, diffs it, traces lineage, and gates promotion on policy. See the
+[main repository](https://github.com/MSKazemi/novafabric) and its
 [`docs/`](https://github.com/MSKazemi/novafabric/tree/main/docs).
 
 ## Honest status
 
-`nova serve` (the deployed dashboard) is **experimental**, and it has write endpoints
-(run deletion, PII erasure, role management), so put it behind TLS and its token.
-Automatic model-call capture is for **Python** workloads (`nova api-proxy` covers other
-clients), capture is **self-hosted** (no server needed), and a capture is **unsealed**
-until you configure a signing key. Both skills state these limits inline so you
-deploy and instrument with eyes open.
+- The plugin is **experimental**, and so are both services it deploys. The dashboard
+  (`nova serve`) is **not read-only**: its token can delete runs, erase PII and manage
+  roles, so put TLS and authentication in front of any non-loopback exposure.
+- **Capture records prompt and response text by default.** The SDK and wire model-call
+  hooks write it to `model-calls.jsonl`. Treat a capsule as sensitive data.
+- A capsule is **unsealed** until you run `nova seal init` (or configure
+  `novaseal.yaml`), and that local identity is self-asserted.
+- Automatic model-call capture is for **Python** workloads. `nova api-proxy` and
+  `nova mcp-proxy` cover other clients.
+- `nova replay` defaults to `mocked`, which re-runs the agent: recorded model responses and
+  supported tool surfaces are served, and every other tool runs live.
+
+Both skills state these limits inline so you deploy and instrument with eyes open. This
+plugin is not submitted to any public plugin directory.
