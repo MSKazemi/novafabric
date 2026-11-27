@@ -195,7 +195,7 @@ def satisfies(held: Scope, required: Scope) -> bool:
 #
 # Every HTTP route this app can mount, keyed by ``(method, path_template)`` —
 # the template exactly as FastAPI reports it on ``request.scope["route"].path``,
-# router prefixes included. 225 entries at the time of writing: 150 ``read``,
+# router prefixes included. 226 entries at the time of writing: 151 ``read``,
 # 31 ``admin``, 31 ``operate``, 7 ``public``, 6 ``audit``.
 #
 # How a route earned its classification, so the next person can apply the same
