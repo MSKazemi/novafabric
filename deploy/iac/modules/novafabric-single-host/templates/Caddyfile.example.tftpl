@@ -1,0 +1,10 @@
+# EXAMPLE ONLY - not installed or enabled by cloud-init.
+# Rendered by deploy/iac/modules/novafabric-single-host. TLS is the operator's
+# responsibility: install Caddy yourself, review this file, then copy it to
+# /etc/caddy/Caddyfile. Caddy obtains a certificate for the site address
+# automatically when the name resolves to this host and ports 80/443 are
+# reachable by the CA; otherwise configure `tls <cert> <key>` with your own.
+${hostname} {
+	encode zstd gzip
+	reverse_proxy ${listen_host}:${port}
+}

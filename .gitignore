@@ -208,3 +208,13 @@ design/publications/**/*.run.xml
 
 # Generated cache for scripts/testsel.py (rebuilt automatically; ~2.5 s)
 .testsel-index.json
+
+# OpenTofu/Terraform working state under deploy/iac/ (never commit state or
+# real variable files; only *.tfvars.example is tracked).
+deploy/iac/**/.terraform/
+deploy/iac/**/.terraform.lock.hcl
+deploy/iac/**/*.tfstate
+deploy/iac/**/*.tfstate.*
+deploy/iac/**/*.tfplan
+deploy/iac/**/*.tfvars
+deploy/iac/**/*.tfvars.json

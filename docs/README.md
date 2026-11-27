@@ -135,6 +135,7 @@ implemented versus design intent.
 | Document | What it covers |
 |---|---|
 | [Server deployment](ops/server-deployment.md) | Deployment scenarios from local SQLite to Postgres and Kubernetes |
+| [Infrastructure as code](ops/infrastructure-as-code.md) | OpenTofu templates for one server host: a provider-neutral cloud-init module and thin AWS/GCP examples, validated offline (experimental, never applied) |
 | [Server admin guide](ops/server-admin-guide.md) | Operating `nova server` in production — auth, tokens, RBAC, quotas, observability endpoints |
 | [Backup & restore runbook](ops/backup-restore.md) | `nova backup` / `nova restore`, verification, DR procedure (works today + planned sections) |
 | [Sizing guide](ops/sizing-guide.md) | Capacity planning — storage growth drivers, SQLite vs Postgres, rough sizing tables (estimates), single-writer limits |

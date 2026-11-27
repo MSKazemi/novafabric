@@ -1,0 +1,66 @@
+# NovaFabric server (`nova server start`) - experimental, single-tenant.
+# Rendered by deploy/iac/modules/novafabric-single-host. Listens on
+# ${listen_host}:${port} only; put a TLS reverse proxy in front of it
+# (examples in ${config_dir}/reverse-proxy/).
+[Unit]
+Description=NovaFabric server (experimental)
+Documentation=man:systemd.exec(5)
+After=network-online.target
+Wants=network-online.target
+# Skipped (not failed) when the pinned install did not complete.
+ConditionPathExists=${venv_dir}/bin/nova
+%{ if backend == "postgres" ~}
+# Skipped until the operator has written the DSN from the secret store.
+ConditionPathExists=${env_file}
+%{ endif ~}
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=${service}
+Group=${service}
+StateDirectory=novafabric
+StateDirectoryMode=0750
+WorkingDirectory=${state_dir}
+Environment=HOME=${state_dir}
+Environment=NOVAFABRIC_HOME=${state_dir}/home
+Environment=NOVAFABRIC_CAPSULE_DIR=${state_dir}/capsules
+Environment=NOVAFABRIC_SERVER_BACKEND=${backend}
+%{ if backend == "postgres" ~}
+Environment=NOVAFABRIC_METADATA_BACKEND=postgres
+# Secrets (NOVAFABRIC_POSTGRES_DSN, NOVAFABRIC_METADATA_DSN) come only from
+# this root-owned 0600 file, read by systemd before privileges are dropped.
+EnvironmentFile=${env_file}
+%{ else ~}
+EnvironmentFile=-${env_file}
+%{ endif ~}
+ExecStartPre=${venv_dir}/bin/nova db upgrade --backend ${backend}
+ExecStart=${venv_dir}/bin/nova server start --config ${config_dir}/server.yaml --backend ${backend} --host ${listen_host} --port ${port} --workers ${workers} --log-format json
+Restart=on-failure
+RestartSec=5
+
+# Hardening (systemd.exec(5)). The process can write only its state directory.
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=${state_dir}
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

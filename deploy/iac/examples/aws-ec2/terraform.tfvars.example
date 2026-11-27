@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. Every value below is a
+# placeholder; none is a secret. Never put a DSN, password or token here.
+region             = "eu-south-1"
+vpc_id             = "vpc-0123456789abcdef0"
+subnet_id          = "subnet-0123456789abcdef0"
+ami_id             = "ami-0123456789abcdef0" # an Ubuntu 24.04 LTS AMI for the region
+novafabric_version = "0.109.0"
+
+# Nothing is reachable from outside until you name ranges:
+# admin_cidrs  = ["203.0.113.0/24"]   # SSH
+# client_cidrs = ["198.51.100.0/24"]  # HTTPS to your reverse proxy
+
+# Existing PostgreSQL (optional):
+# backend                 = "postgres"
+# postgres_dsn_secret_ref = "novafabric/pilot/postgres-dsn"  # a secret NAME
+# postgres_cidrs          = ["10.0.20.0/24"]
