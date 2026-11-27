@@ -101,6 +101,10 @@ jobs:
       # dependencies, which can lag the root lock. It once carried a vulnerable
       # cryptography release while the root lock was clean.
       - name: Export the example plugin's locked dependency set
+        # !cancelled(): run even when the root gate above failed, so a run with
+        # a blocking root finding still reports the example lock's verdict. The
+        # job still fails if either gate fails (a failed step fails the job).
+        if: ${{ !cancelled() }}
         # --no-emit-package novafabric: the example takes novafabric from the
         # working tree as an editable path dependency (`-e ../../`), which
         # pip-audit cannot look up; its dependencies are still exported.
@@ -110,6 +114,7 @@ jobs:
           -o requirements-audit-example-plugin.txt
 
       - name: Run pip-audit against the example plugin's locked set
+        if: ${{ !cancelled() }}
         run: |
           uvx --from "pip-audit==2.10.1" pip-audit -r requirements-audit-example-plugin.txt --no-deps \
             --format json --output pip-audit-report-example-plugin.json \
@@ -117,6 +122,7 @@ jobs:
           test -s pip-audit-report-example-plugin.json
 
       - name: Severity + waiver gate (example plugin)
+        if: ${{ !cancelled() }}
         run: |
           python3 scripts/pip_audit_gate.py \
             --report pip-audit-report-example-plugin.json \

@@ -109,3 +109,61 @@ def test_a_lock_missing_from_the_workflow_is_reported(monkeypatch: pytest.Monkey
     monkeypatch.setattr(sys.modules[__name__], "_exports", lambda: {".": "r.txt"})
     with pytest.raises(AssertionError, match="no `uv export` step"):
         test_every_tracked_uv_lock_is_audited_and_gated("examples/not-audited")
+
+
+def _pipeline_steps(lock_dir: str) -> list[dict[str, object]]:
+    """The export, pip-audit and gate steps that handle one lock directory, in order."""
+    steps = [step for step in _steps() if "run" in step]
+    requirements = _exports()[lock_dir]
+    export = [
+        s
+        for s in steps
+        if "uv export" in str(s["run"]) and f"-o {requirements}" in " ".join(str(s["run"]).split())
+    ]
+    audit = [
+        s
+        for s in steps
+        if "pip-audit -r" in str(s["run"]) and f"-r {requirements}" in str(s["run"])
+    ]
+    match = re.search(r"--output\s+(\S+)", str(audit[0]["run"])) if audit else None
+    report = match.group(1) if match else None
+    gate = [
+        s
+        for s in steps
+        if report and "pip_audit_gate.py" in str(s["run"]) and f"--report {report}" in str(s["run"])
+    ]
+    return export + audit + gate
+
+
+def _runs_after_an_earlier_failure(step: dict[str, object]) -> bool:
+    condition = str(step.get("if", ""))
+    return "!cancelled()" in condition or "always()" in condition
+
+
+@pytest.mark.parametrize("lock_dir", [d for d in _tracked_lock_dirs() if d != "."])
+def test_a_root_gate_failure_does_not_hide_another_locks_verdict(lock_dir: str) -> None:
+    """Steps for a non-root lock run even when an earlier gate failed.
+
+    Without `if: ${{ !cancelled() }}`, a blocking finding in the root lock skips
+    every later step, so the run that matters most reports nothing about the
+    other lockfile. A failed gate step still fails the job either way.
+    """
+    pipeline = _pipeline_steps(lock_dir)
+    assert len(pipeline) == 3, f"expected export, audit and gate steps for {lock_dir}"
+    skipped = [str(s.get("name")) for s in pipeline if not _runs_after_an_earlier_failure(s)]
+    assert not skipped, (
+        f"these steps for {lock_dir}/uv.lock are skipped when the root gate fails; "
+        f"add `if: ${{{{ !cancelled() }}}}`: {skipped}"
+    )
+
+
+def test_a_step_without_the_condition_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Failure case: a pipeline step with no `if:` is named in the failure."""
+    fake = [
+        {"name": "export", "run": "uv export --project x --frozen -o r.txt"},
+        {"name": "audit", "if": "${{ !cancelled() }}", "run": "pip-audit -r r.txt --output o.json"},
+        {"name": "gate", "if": "${{ !cancelled() }}", "run": "pip_audit_gate.py --report o.json"},
+    ]
+    monkeypatch.setattr(sys.modules[__name__], "_steps", lambda: fake)
+    with pytest.raises(AssertionError, match=r"\['export'\]"):
+        test_a_root_gate_failure_does_not_hide_another_locks_verdict("x")
