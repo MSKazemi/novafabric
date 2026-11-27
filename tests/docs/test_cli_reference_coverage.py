@@ -134,9 +134,11 @@ def test_every_subcommand_is_mentioned_somewhere() -> None:
 #
 # Scope: invocations only — a line (fenced or inline code) that names a
 # `nova <path>` the CLI registers, followed by `--flag` tokens. Prose that
-# mentions a flag without a command is not checked. Scanning stops at `--`
-# (end of options) and, for a pass-through command such as `nova capture`, at
-# the first positional token, because what follows belongs to the workload.
+# mentions a flag without a command is not checked. An option that takes a
+# value consumes it (by the option's arity). Scanning stops at `--` (end of
+# options) and, for a pass-through command such as `nova capture`, at the first
+# positional token, because what follows belongs to the workload. A path that
+# stops at a group followed by a word is reported as an unknown subcommand.
 # ---------------------------------------------------------------------------
 
 #: Options every command accepts, plus the root's own.
@@ -150,6 +152,20 @@ _DOCUMENTED_AS_ABSENT = frozenset(
     {
         # replay-equivalence section: explains why the verdict is a separate command.
         ("nova replay", "--check-equivalence"),
+    }
+)
+
+#: Subcommand paths the reference names on purpose as planned / future design
+#: (each sits in a sentence that labels it so). Remove an entry when it ships.
+_DOCUMENTED_AS_UNSHIPPED = frozenset(
+    {
+        "nova memstore mutation",  # ADR-0171 remaining surfaces: planned
+        "nova lineage memstore",  # ADR-0171: planned
+        "nova assure-baseline list",  # "Not in this slice"
+        "nova embodied sensors",  # ADR-0162 remaining surfaces: planned
+        "nova lineage embodied",  # ADR-0162: planned
+        "nova settlement bind",  # settlement sub-commands: planned
+        "nova policy budget",  # ADR-0136 P2/P3: future design
     }
 )
 
@@ -170,16 +186,22 @@ def _command_index() -> dict[str, object]:
     return index
 
 
-def _flags_of(path: str, index: dict[str, object]) -> set[str]:
-    """Flags of ``path``; for a group, the flags of every command under it."""
-    flags: set[str] = set()
-    for other, command in index.items():
-        if other == path or other.startswith(path + " "):
-            for param in getattr(command, "params", []):
-                for opt in [*param.opts, *getattr(param, "secondary_opts", [])]:
-                    if opt.startswith("-"):
-                        flags.add(opt)
-    return flags
+def _options_of(command: object) -> dict[str, object]:
+    """The command's OWN options by spelling (a group's children are not included)."""
+    options: dict[str, object] = {}
+    for param in getattr(command, "params", []):
+        for opt in [*param.opts, *getattr(param, "secondary_opts", [])]:
+            if opt.startswith("-"):
+                options[opt] = param
+    return options
+
+
+def _value_count(param: object) -> int:
+    """How many following tokens the option consumes as its value."""
+    if getattr(param, "is_flag", False) or getattr(param, "count", False):
+        return 0
+    nargs = getattr(param, "nargs", 1)
+    return nargs if isinstance(nargs, int) and nargs > 0 else 1
 
 
 def _passes_through(command: object) -> bool:
@@ -190,32 +212,63 @@ def _passes_through(command: object) -> bool:
     )
 
 
+_SUBCOMMAND_NAME = re.compile(r"[a-z][a-z0-9-]*")
+_FLAG_SPELLING = re.compile(r"--[a-z0-9][a-z0-9-]*|-[A-Za-z]")
+
+
 def documented_flag_problems(text: str, index: dict[str, object]) -> list[str]:
-    """Every ``nova <path> … --flag`` in ``text`` whose flag ``<path>`` lacks."""
+    """Every ``nova <path> … --flag`` in ``text`` that ``<path>`` does not accept.
+
+    Also reports ``nova <group> <word>`` where ``<word>`` is not a subcommand of
+    that group: such a path resolves only as far as the group, and checking its
+    flags against the group would hide the typo.
+    """
+    from novafabric.cli.introspect import subcommands
+
     problems: list[str] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
         for match in _INVOCATION.finditer(line):
-            tokens = [t.strip("[]()") for t in match.group(1).split()]
+            raw = match.group(1).split()
+            # A parenthetical ends the invocation: "### nova x (experimental)" is prose.
+            cut = next((k for k, t in enumerate(raw) if t.startswith("(")), len(raw))
+            tokens = [t.strip("[]") for t in raw[:cut]]
             tokens = [t for t in tokens if t]
             path, i = "nova", 0
             while i < len(tokens) and f"{path} {tokens[i]}" in index:
                 path, i = f"{path} {tokens[i]}", i + 1
             if path == "nova":
                 continue
-            known = _flags_of(path, index) | _UNIVERSAL_FLAGS
-            passthrough = _passes_through(index[path])
+            command = index[path]
+            is_group = subcommands(command) is not None
+            if is_group and i < len(tokens) and _SUBCOMMAND_NAME.fullmatch(tokens[i]):
+                if f"{path} {tokens[i]}" in _DOCUMENTED_AS_UNSHIPPED:
+                    continue
+                problems.append(f"line {lineno}: `{path} {tokens[i]}` is not a subcommand")
+                continue
+            options = _options_of(command)
+            passthrough = _passes_through(command)
+            skip = 0
             for token in tokens[i:]:
+                if skip:
+                    skip -= 1
+                    continue
                 if token == "--":
                     break
                 if not token.startswith("-"):
                     if passthrough:
                         break
                     continue
-                for flag in token.split("=", 1)[0].rstrip(",.:").split("/"):
-                    if not re.fullmatch(r"--[a-z0-9][a-z0-9-]*|-[A-Za-z]", flag):
+                spelled, has_value = token.split("=", 1)[0].rstrip(",.:"), "=" in token
+                flags = [f for f in spelled.split("/") if _FLAG_SPELLING.fullmatch(f)]
+                for flag in flags:
+                    if flag in _UNIVERSAL_FLAGS or (path, flag) in _DOCUMENTED_AS_ABSENT:
                         continue
-                    if flag not in known and (path, flag) not in _DOCUMENTED_AS_ABSENT:
+                    if flag not in options:
                         problems.append(f"line {lineno}: `{path} {flag}`")
+                # A single option that takes a value consumes the next token(s), so a
+                # flag written after an option value is still checked.
+                if len(flags) == 1 and flags[0] in options and not has_value:
+                    skip = _value_count(options[flags[0]])
     return problems
 
 
@@ -224,6 +277,27 @@ def test_flag_check_catches_a_missing_flag() -> None:
     index = _command_index()
     sample = "nova asset diff a@1 b@2 --no-such-flag\nnova capture -- python x.py --anything"
     assert documented_flag_problems(sample, index) == ["line 1: `nova asset diff --no-such-flag`"]
+
+
+def test_flag_check_reports_a_mistyped_subcommand() -> None:
+    """A path that stops at a group must not borrow its children's flags."""
+    index = _command_index()
+    # --output-format belongs to `nova asset diff`, not to the `nova asset` group.
+    assert documented_flag_problems("nova asset dif a@1 b@2 --output-format json", index) == [
+        "line 1: `nova asset dif` is not a subcommand"
+    ]
+    assert documented_flag_problems("nova asset --output-format json", index) == [
+        "line 1: `nova asset --output-format`"
+    ]
+
+
+def test_flag_check_skips_option_values_on_pass_through_commands() -> None:
+    """An option's value is not the workload: flags after it are still checked."""
+    index = _command_index()
+    sample = "nova capture --runner kubernetes --bogus -- python x.py"
+    assert documented_flag_problems(sample, index) == ["line 1: `nova capture --bogus`"]
+    # The workload still ends option scanning.
+    assert documented_flag_problems("nova capture python train.py --lr 0.1", index) == []
 
 
 def test_every_documented_flag_exists_on_its_command() -> None:
