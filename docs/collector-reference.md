@@ -114,7 +114,9 @@ A flag given on the command line overrides its environment variable.
 
 **Other environment.** `NOVA_DLQ_DIR` set to a path makes the spool open a dead-letter
 directory there (created at start). The forwarder never writes to it, because only a
-spool *write* routes an event to the dead-letter queue.
+spool *write* routes an event to the dead-letter queue. `NOVAFABRIC_HPC_STORAGE` is read by
+the NATS leaf-node code in the same Go package (`collector/internal/hpc`); the forwarder
+never calls that code, so the variable has no effect on it.
 
 **Behaviour.**
 

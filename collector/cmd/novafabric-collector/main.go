@@ -35,7 +35,7 @@ func main() {
 
 	info := component.BuildInfo{
 		Command:     "novafabric-collector",
-		Description: "NovaFabric Collector — NovaSeal batch signing + OTLP ingestion",
+		Description: "NovaFabric Collector — NovaSeal batch signing processor only (experimental; no receivers or exporters)",
 		Version:     "0.1.0",
 	}
 
