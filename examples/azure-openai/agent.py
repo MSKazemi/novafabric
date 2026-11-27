@@ -75,7 +75,7 @@ def main() -> int:
 
     _call_azure()
     print("\nInspect the capsule:")
-    print("  ls .novafabric/runs/  # or your --output-dir")
+    print("  ls ~/.novafabric/capsules/  # or your --output-dir")
     print("  cat <capsule>/model-calls.jsonl")
     return 0
 

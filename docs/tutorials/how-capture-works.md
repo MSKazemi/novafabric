@@ -215,7 +215,8 @@ patterns:
 Only URLs that match a known LLM provider pattern are recorded into
 `model-calls.jsonl`. Everything else passes through unrecorded. The vendored
 registry ships classifiers for providers including OpenAI, Anthropic, Cohere,
-Together, Mistral, Replicate, Bedrock, and Ollama.
+Together, Mistral, Replicate, the Hugging Face Inference Providers router and
+Inference Endpoints, Google Gemini and Vertex AI, Bedrock, and Ollama.
 
 You can supply your own registry as `$NOVAFABRIC_HOME/url_registry.yaml`
 (`~/.novafabric/url_registry.yaml` by default), or point `$NOVAFABRIC_URL_REGISTRY`
@@ -292,7 +293,8 @@ row in a hosted database, is the unit you own, tar, archive, and read air-gapped
 OS/arch/CPU/mem; GPU detection is not implemented), `redaction-proof.json`, `replay.yaml`,
 `lineage.jsonl`, and `inputs/` + `outputs/`. Determinism-relevant request
 parameters — including `gen_ai.request.temperature`, `gen_ai.request.top_p`, and
-`gen_ai.request.seed` — are recorded so that `exact` replay can be judged eligible.
+`gen_ai.request.seed` — are recorded when the call sets them, so that `exact` replay
+can be judged eligible.
 
 Before the capsule is finalized, a secret scanner redacts matches in place
 (`[REDACTED:rule-id]`) and writes `redaction-proof.json`. A capsule without that
@@ -330,7 +332,7 @@ your workload, ADR-0021), and prints a `✗ capture integrity` line on stderr:
 $ nova capture --runner docker --runner-option image=my/agent -- python agent.py
 [novafabric] ✗ capture integrity: the workload replaced 1 capsule path(s) with a
 link or special file: model-calls.jsonl (symlink). None was followed; ...
-$ nova validate .novafabric/runs/<run-id>/
+$ nova validate ~/.novafabric/capsules/<run-id>/
 ✗ capsule.yaml: capture recorded tampering by the workload (metadata.capture_tampered: model-calls.jsonl (symlink)); see capture-health.json
 ```
 

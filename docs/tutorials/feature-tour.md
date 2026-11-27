@@ -191,6 +191,7 @@ diff. For this example (only the printed score differs) the real output is:
 ```
 Diff: 01M5KZR9DSKYKFN68BX9T43B8X → 01M5KZRCZWQNNVXN6CGVQ99MMX
   changed=1  added=0  removed=0
+  First divergence: none in model or tool calls
 
 Outputs:
   ~ outputs/stdout.txt
@@ -242,8 +243,10 @@ The five modes, and when to reach for each:
 > drift, so `semantic` is the honest mode for them. See the
 > [replay section of the user guide](../user-guide.md) for the full mode reference.
 
-A `mocked`, `forensic`, `semantic` or `exact` replay records a `replay_result.yaml`,
-not a new capsule (only the experimental `intervention` mode writes one). To quantify
+Every replay records a `replay_result.yaml`. A `mocked` replay also writes a minimal
+replay capsule (`capsule.yaml` with `replay_mode: mocked`) beside it (ADR-0321,
+experimental), and so does the experimental `intervention` mode; `forensic`, `semantic`
+and `exact` write none. To quantify
 what drifted between two executions, capture the run again and diff the two capsules:
 
 ```bash
@@ -450,7 +453,7 @@ agent did — and verify the recorded run has not been altered since it was sign
 
 ```bash
 nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ~/.novafabric/keys/signing_key.pem
-# → bundle.zip  (ed25519-signed)
+# ✓ evidence bundle written: bundle.zip (… bytes)
 ```
 
 > `--output`/`-o` and `--key` are both **required** — `--key` a PEM-encoded ed25519
@@ -469,8 +472,8 @@ To also publish the DSSE envelope to the Rekor transparency log (requires
 ```bash
 export NOVA_REKOR_URL=https://rekor.sigstore.dev
 nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ~/.novafabric/keys/signing_key.pem --sigstore
-# ✓ evidence bundle written: bundle.zip
 # ✓ Rekor transparency log entry: 24296fb24b3c…
+# ✓ evidence bundle written: bundle.zip (… bytes)
 ```
 
 If `NOVA_REKOR_URL` is not set the step is skipped with a warning
@@ -733,7 +736,9 @@ nova pii erase <subject_id>
 nova pii status <capsule-id-or-path>
 ```
 
-Status — **experimental** (ADR-0314). For a capsule captured with `--pii-subject`, the
+Status — **experimental** (ADR-0314; per-subject encryption and `nova pii erase` are a
+separate capability from the cap-003 split and do not read `NOVA_CAP003_ENABLED`). For a
+capsule captured with `--pii-subject`, the
 audit trail (hashes, signatures, lineage) survives while the subject's PII becomes
 undecryptable: readers show `[erased]`. PII in capsules captured without `--pii-subject`
 is not encrypted and erasure does not affect it. Dashboard
@@ -759,9 +764,9 @@ covering four audience groups:
 | Group | Report types |
 |---|---|
 | Developer | Run History, Eval Regression, Capsule Compare |
-| Ops | Cost Burn, Throughput |
-| Compliance | Evidence Inventory, Policy Audit, Seal Verification |
-| Management | Executive Summary, Release Comparison |
+| Ops | Cost Burn by Agent, Throughput, Alert Digest |
+| Compliance | Evidence Inventory, Policy Audit, Seal Verification, API Key Inventory, Dashboard Audit |
+| Management | Executive Summary, Release Comparison, Compliance Posture (Annex IV) |
 
 Select a report on the left, set date-range and optional filters in the filter bar, then
 export as **CSV**, **JSON**, or **PDF** (via browser print).
@@ -1388,11 +1393,11 @@ EOF
 so no conversion step is needed.
 
 Rebuild, then read the claims with `export --format markdown` (`build` itself prints
-only the output path), verify, and render the regulatory views:
+only the output path and the top claim's state), verify, and render the regulatory views:
 
 ```bash
 nova safety-case build $BASE --template clymer-generic-v0 --output /tmp/nova-tour/case.json
-# ✓ Safety case (clymer-generic-v0) → /tmp/nova-tour/case.json
+# ✓ Safety case (clymer-generic-v0) → /tmp/nova-tour/case.json [top claim: …]
 nova safety-case export /tmp/nova-tour/case.json --format markdown
 # - **C-record-integrity** [SUPPORTED] — The recorded run is faithfully reproducible (record integrity).
 #   - evidence `E-replay-1` (replay_attestation): `attestations/reperformance.json` `sha256:343f6a1d…`
@@ -1617,6 +1622,7 @@ nova prompt compose support-reply
 edges: 1
 max_depth: 1
 assembled_prompt_hash: sha256:cc660c29dc5f…
+resolved_at: …
 ```
 
 ```bash
@@ -1825,6 +1831,10 @@ with `NOVAFABRIC_SUGGEST=0`.)
 
 ### Filter and aggregate (`nova query`, ADR-0129)
 
+`nova query` always prints a column table followed by a `N row(s) — …` summary line
+(the second example shows the full form); the one-line `#` comments in this section
+summarise each table's rows.
+
 ```bash
 nova query --select 'count()' --capsule-dir runs
 # count() = 5
@@ -1855,7 +1865,7 @@ production              350         1565    3
 > the capsule directory scan is 86-89% of the time and the engine is ~3%.
 > Its fast path also needs `pyarrow`, which `[query]` does not install; without
 > it the old row-by-row cost returns and the log says so once. See
-> `bench/query/MEASURED_CEILING.md`. If you want DuckDB anyway, ask for it
+> the `_detect_engine` docstring in `src/novafabric/query/engine.py`. If you want DuckDB anyway, ask for it
 > explicitly with `NOVAFABRIC_QUERY_ENGINE=duckdb` and the line reads
 > `engine duckdb`.
 
@@ -1892,8 +1902,8 @@ nova view save staging-latency --select 'p95(latency) AS p95_ms, count()' \
 
 nova view list
 nova view run staging-latency --capsule-dir runs
-# p95_ms=3737.5  count()=2
-#   — view 'staging-latency' (sha256:62f5699b3270…), 5 capsule(s) scanned, engine sqlite
+# p95_ms=3737.5  count()=2   (a one-row table)
+#   1 row(s) — view 'staging-latency' (sha256:62f5699b3270…), 5 capsule(s) scanned, engine sqlite
 nova view show staging-latency        # prints the stored query; never executes it
 ```
 
@@ -1955,7 +1965,7 @@ estimated amounts are derived from the local pricing catalog (sha256:adc56cc2d8d
 Run the same command on a llama capsule and the row reads `basis=recorded` — a
 recorded `nova.cost` is reported **verbatim, never recomputed**; only cost-free
 calls are priced from the catalog, and models absent from every catalog layer stay
-honestly unpriced (0.0).
+honestly unpriced (`basis=unpriced`, a blank amount, left out of the totals).
 
 ### Usage-type accounting (ADR-0132)
 
@@ -2016,10 +2026,10 @@ nova session show $SID
 Session 01KXMZ5H2HXSSC2ZTDEJXPQZCS (conversation, created 2026-07-16T08:02:25…)
 user_ref: customer-4021
                                 Turns (3)
- seq  run_id                      integrity  run status  duration  role
-   0  01KXMZ5HH677Z09ZNARA68Y5X6  ok         success        27ms   user-turn
-   1  01KXMZ5J3VPGTZ4ADSB3QDBWZW  ok         success        25ms   user-turn
-   2  01KXMZ5JNZVQS88WTEKQ089H6P  ok         success        29ms   user-turn
+ seq  run_id                      started_at  integrity  run status  duration  role
+   0  01KXMZ5HH677Z09ZNARA68Y5X6  2026-07-16… ok         success        27ms   user-turn
+   1  01KXMZ5J3VPGTZ4ADSB3QDBWZW  2026-07-16… ok         success        25ms   user-turn
+   2  01KXMZ5JNZVQS88WTEKQ089H6P  2026-07-16… ok         success        29ms   user-turn
 turns=3  resolved=3  missing=0  tampered=0  duration=81ms  tokens=1050  cost=-
 ```
 
@@ -2046,10 +2056,11 @@ Session replay result written: session-replays/session-replay-…/session_replay
 ```
 
 Each turn runs through the single-capsule replay engine from
-[§3](#3-replay-a-past-run) (any of the five modes via `--mode`) and writes its own
+[§3](#3-replay-a-past-run) (`--mode` takes the four single-capsule modes
+`forensic|mocked|semantic|exact`; `intervention` is not offered) and writes its own
 `replay_result.yaml` under `--output-dir`; the `replay capsule` column shows that
-replay's id (a replay is a result record, not a new capsule, except in the
-experimental `intervention` mode). The session gets one `SessionReplayResult` with ordered per-turn
+replay's id (in `mocked` mode each turn's replay directory also holds a minimal replay
+capsule, ADR-0321). The session gets one `SessionReplayResult` with ordered per-turn
 verdicts plus a whole-session verdict. Exit code is `0` only when the whole session
 is `reproduced`; `--on-divergence continue` records drift and keeps going, and a
 missing or tampered member is an honest per-turn **refusal**, never a silent skip.
@@ -2177,6 +2188,8 @@ nova annotate confirm 01KXMZ6JSKBR… --as dana             # refused (exit 1):
 # checker equals the maker — a distinct reviewer must confirm (ADR-0118 D4 / ADR-0003)
 
 nova promote keygen --identity erin                      # once per checker: confirm never mints a key
+# if promote-signers.yaml exists (§22), bind erin's printed entry with the approver role,
+# or confirm refuses the checker
 nova annotate confirm 01KXMZ6JSKBR… --as erin
 # Confirmed item 01KXMZ6JSKBR… by erin (maker: dana) — completed.
 

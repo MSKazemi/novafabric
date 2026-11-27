@@ -1,8 +1,7 @@
 # Hugging Face
 
-**Status: experimental.** Implemented and tested offline against the real `smolagents` 1.26.0 and
-`huggingface_hub` 2.3.0 libraries, but **not yet in a release** — the entry points below exist on
-`main` only. Every feature on this page is labelled with exactly one of *works today*,
+**Status: experimental.** Shipped in v0.109.0; implemented and tested offline against the real
+`smolagents` 1.26.0 and `huggingface_hub` 2.3.0 libraries. Every feature on this page is labelled with exactly one of *works today*,
 *experimental*, *planned* or *future design*; where a label is not stated, it is **experimental**.
 
 NovaFabric is an independent open-source project. It is not affiliated with, certified by or endorsed
@@ -312,5 +311,5 @@ show that the benchmark is uncontaminated.
 - **Hub receipts** are validated for internal consistency, not authenticity: anyone can write a
   well-formed receipt, so a receipt is evidence only together with the capsule it travels in.
 - **Hub formats:** `.eval_results` is a work-in-progress Hub format.
-- **Release:** none of this is in a published release yet. The `huggingface_hub` and `smolagents`
+- **Release:** first shipped in v0.109.0, as experimental. The `huggingface_hub` and `smolagents`
   packages are optional and are not NovaFabric extras.

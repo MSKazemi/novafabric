@@ -19,7 +19,7 @@
 v0.7 works for one team on one cluster:
 
 - `nova capture` writes capsules to local disk
-- `nova serve` reads them into Postgres on a single server
+- `nova server start --backend postgres` ingests them into Postgres on a single server
 - The lineage graph lives in that Postgres instance
 
 At 1,000,000 concurrent agents this breaks in three places:
@@ -136,7 +136,7 @@ uvicorn --factory novafabric.collector_app:create_collector_app --host 0.0.0.0 -
                                    │
            ┌───────────────────────┼────────────────────────┐
            ▼                       ▼                        ▼
-  [Cluster A — nova serve]  [Cluster B — nova serve]   [Cluster C]
+  [Cluster A — nova server] [Cluster B — nova server]  [Cluster C]
     Postgres + REST API        Postgres + REST API        ...
            │                       │
   ┌────────┴───────┐      ┌────────┴───────┐
@@ -170,17 +170,19 @@ Responsibility: pull, validate, and forward.
 - Deduplicates content and repeated deliveries — **future design**: the shipped Go
   forwarder delivers at least once, and nothing downstream deduplicates by `event_id`
   yet (prompt-level content dedup: see below)
-- Forwards metadata to cluster server, raw events to object storage
+- Forwards metadata to cluster server, raw events to object storage — **future design**
+  (today the Go forwarder publishes to NATS and `collector_app` writes DuckDB/ClickHouse)
 - Runs as a daemon process on a dedicated rack-level node
 
 ### Layer 3 — Cluster server (per cluster)
 
-The current `nova serve` (v0.7) with Postgres. Responsibilities:
+The current `nova server` (v0.7, `--backend postgres`). Responsibilities:
 
 - Stores run metadata (not raw events — those live in object storage)
 - Maintains the lineage graph for this cluster
 - Serves the REST API and dashboard
-- Issues short-lived credentials to agents
+- Issues short-lived credentials to agents — **future design** (today: offline Ed25519 CI
+  tokens from `nova server issue-token`)
 
 ### Layer 4 — Federation (cross-cluster, cross-org)
 
@@ -237,7 +239,7 @@ unusable. At scale, the lineage graph needs:
 
 **Corrected 2026-07-30 — this is no longer undecided.** All four tiered
 backends are implemented and testcontainers-verified: SQLite (<1M edges,
-local default), Postgres recursive-CTE (v0.68.0), embedded KuzuDB (v0.17.0,
+local default), Postgres recursive-CTE (v0.68.0), embedded KuzuDB (v0.14.8,
 benchmark-cleared at 45.5ms p99 blast-radius @10M edges), Apache AGE openCypher
 (v0.69.0), and JanusGraph Gremlin for billion-edge scale (v0.70.0, needs the
 GraphSON serializer and `.emit()` on traversals — see `lineage/backends/`).
@@ -247,7 +249,7 @@ not an open research question.
 
 ### 3. Agent identity at scale
 
-Currently: one `nova serve` instance issues tokens. One server = one failure point.
+Currently: one `nova server` instance issues tokens (`nova server issue-token`). One server = one failure point.
 
 At 1M agents, each agent needs a **short-lived, scoped credential**:
 
@@ -267,8 +269,8 @@ access to the issuer.
 
 | Capability | Status |
 |---|---|
-| Local capture with zero network overhead | ✓ shipped (v0.1) |
-| Portable capsule format (self-contained directory) | ✓ shipped (v0.1) |
+| Local capture with zero network overhead | ✓ shipped (v0.2) |
+| Portable capsule format (self-contained directory) | ✓ shipped (v0.2) |
 | Single-cluster server with Postgres | ✓ shipped (v0.7) |
 | `runs_cache` index — O(1) `/api/runs` at 100K capsules (Scale-S1) | ✓ shipped (v0.32.0) |
 | Background capsule watcher + `nova ingest-capsule` (Scale-S3) | ✓ shipped (v0.36.0) |
@@ -276,7 +278,7 @@ access to the issuer.
 | Content-addressed capsule storage (an identical whole-capsule blob stored once, `cas.py`) | ✓ shipped experimental (Phase 4, v0.14.5) — SHA-256 CAS key `capsules/<tenant>/<sha[0:4]>/<sha>/data.zst`. Prompt-level dedup and `event_id` dedup of collector deliveries are future design |
 | Hot/cold storage split (Postgres metadata + object storage events) | ✓ shipped experimental (Phase 4, `object_capsule_store/`, v0.14.5) |
 | Rack/node-level collector daemon | ✓ shipped experimental (Phase 2, v0.14.3 — Go `collector/`, 295K events/sec p99 4.7ms; plus a lighter Python `collector_app/` FastAPI receiver, v0.29.0) |
-| Graph traversal indexes for lineage at scale | ✓ shipped experimental — all four at-scale backends (KuzuDB v0.17.0/Phase 6, Postgres recursive-CTE v0.68.0, Apache AGE v0.69.0, JanusGraph v0.70.0), all testcontainers-verified; zero remaining stub backends |
+| Graph traversal indexes for lineage at scale | ✓ shipped experimental — all four at-scale backends (KuzuDB v0.14.8/Phase 6, Postgres recursive-CTE v0.68.0, Apache AGE v0.69.0, JanusGraph v0.70.0), all testcontainers-verified; zero remaining stub backends |
 | Short-lived agent credentials (offline-verifiable, scoped per-agent-namespace) | — needs design + build. (A related but narrower piece exists: `nova server` issues Ed25519 offline service-account tokens for CI, not per-agent scoped compute-node identity at 1M scale.) |
 | Multi-cluster federation | — not yet designed (Phase 6; depends on 2–5 being stable in production, per `design/architecture/cluster-scale.md` (private)) |
 | Cross-org lineage and identity | — not yet designed |

@@ -144,7 +144,13 @@ You should see:
 
 ```
 ✓ Capsule written: ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
+✓ replay: strict mocked replay would serve every recorded call (0 model, 0 tool)
 ```
+
+The path is printed in full (your home directory, not `~`). The second line says what a
+strict mocked replay of this capsule would do. You may also see a dimmed
+`Unregistered assets detected: …` hint pointing at `nova suggest-register`; it is
+optional (silence it with `NOVAFABRIC_SUGGEST=0`).
 
 The ID in the path is a **ULID** — a time-sortable identifier unique to your run.
 Every capture produces a fresh one, so capsule directories sort chronologically.
@@ -166,11 +172,13 @@ finishes.
   env.lock              ← frozen environment: Python, packages, OS, CPU
   redaction-proof.json  ← proof that the secret scan ran (required to validate)
   replay.yaml           ← replay constraints and policy
+  replayability.json    ← what a strict mocked replay would serve or refuse
+  file-effects.json     ← paths the workload's Python process opened for writing, with digests
   lineage.jsonl         ← lineage edges emitted by this run
   inputs/
   outputs/
-    stdout.txt
-    stderr.txt
+    stdout.txt          ← only when the command printed something
+    stderr.txt          ← only when it wrote to stderr
 ```
 
 The capsule captures **both success and failure**. If your command exits
@@ -203,7 +211,7 @@ Capsules are written under `~/.novafabric/capsules/` by default. Set
 `NOVAFABRIC_CAPSULE_DIR` to put them somewhere else — if you do, use that path
 here instead.
 
-`env.lock` records the Python version, up to 200 installed packages, safe
+`env.lock` records the Python version, every installed package, safe
 environment variables (secrets excluded), and OS / arch / CPU / memory (GPU
 detection is not implemented — the `gpu` fields are always empty) — enough to reason about whether a run is reproducible on another
 machine.
@@ -269,7 +277,6 @@ You will see one JSON record per LLM call, following the
   "schema_version": "0.1.0",
   "gen_ai.system": "anthropic",
   "gen_ai.request.model": "claude-haiku-4-5-20251001",
-  "gen_ai.request.temperature": 1.0,
   "gen_ai.request.max_tokens": 64,
   "gen_ai.request.messages": [...],
   "gen_ai.response.choices": [...],
@@ -283,8 +290,9 @@ You will see one JSON record per LLM call, following the
 
 This record is what `nova replay` uses to mock the call (Step 6), and what
 `nova diff` aligns when comparing two runs (Step 7). Sampling parameters such as
-`temperature`, `top_p`, and `seed` are captured because they are what an exact,
-deterministic replay would need to reproduce.
+`temperature`, `top_p`, and `seed` are captured when the call sets them (this example
+sets only `max_tokens`), because they are what an exact, deterministic replay would
+need to reproduce.
 
 ### What NovaFabric captures automatically
 
@@ -296,15 +304,18 @@ anything — if the library is installed, the hook fires:
 | `openai` SDK | `chat.completions.create` calls |
 | `anthropic` SDK | `messages.create` calls |
 | `httpx` (sync and async) | Requests to known LLM API URLs |
+| `httpx2` | Same, for clients built on `httpx2` (the `openai` 3.x default); only when it is installed |
 | `requests` | Same URL classification as `httpx` |
 | `aiohttp` | Async requests to known LLM API URLs |
 | `urllib3` | Low-level requests; covers `boto3` / Bedrock |
 | `mcp` SDK | Every `call_tool` invocation |
 
 URL classification uses a **vendored registry** of known LLM provider hostnames
-(OpenAI, Anthropic, Cohere, Together, Mistral, Replicate, AWS Bedrock, and Ollama
-on `localhost:11434`). Extend it with `~/.novafabric/url_registry.yaml` to cover
-private endpoints. Third-party plugins can also register hooks via the
+(OpenAI, Anthropic, Cohere, Together, Mistral, Replicate, the Hugging Face
+Inference Providers router and Inference Endpoints, Google Gemini and Vertex AI,
+AWS Bedrock, and Ollama on `localhost:11434`). To cover private endpoints, supply
+`~/.novafabric/url_registry.yaml`: it **replaces** the vendored registry rather than
+extending it, so copy in the provider entries you still need. Third-party plugins can also register hooks via the
 `novafabric.hooks` entry-point group.
 
 If none of these libraries are installed, the capsule is still written — you get
@@ -361,9 +372,11 @@ pulled from a CI artifact store.
 
 Results are written to `$NOVAFABRIC_HOME/replays/<replay-ulid>/replay_result.yaml`
 (default `~/.novafabric/replays/`; pass `--output-dir` to choose). Up to v0.106.0 they
-went under the current directory instead. A replay result is not a capsule (only the
-experimental `intervention` mode also writes a counterfactual capsule) — to diff
-behaviour, capture the run again and `nova diff` the two capsules.
+went under the current directory instead. A forensic replay writes only that result.
+A `mocked` replay (and the experimental `intervention` mode) also writes a replay
+capsule into its result directory, so `nova diff <capsule> <replay-dir>` compares a run
+with its replay (experimental, since v0.109.0); to compare two executions, capture the
+run again and `nova diff` the two capsules.
 
 The other modes each answer a different question:
 
@@ -409,6 +422,8 @@ Output:
 ```
 Diff: 01HX... → 01HY...
   changed=1  added=0  removed=0
+  First divergence: none in model or tool calls
+
 Outputs:
   ~ outputs/stdout.txt
 ```
@@ -456,10 +471,13 @@ nova lineage blast-radius local:datasets/training-set@1.0.0
 
 ```
 Blast radius of local:datasets/training-set@1.0.0
-├── run:01K…  (train-v1)
-├── run:01K…  (eval-v1)
-└── run:01K…  (promote-v1)
+├── run:01K…
+├── run:01K…
+└── run:01K…
 ```
+
+One `run:` line per capture (train-v1, eval-v1, promote-v1); the output names runs by
+id only.
 
 **Provenance** — *"What did this specific run depend on?"*
 

@@ -33,7 +33,7 @@ uv pip install -e examples/plugin-hook-reference/
 nova capture python -m novafabric_example_plugin.demo
 
 # Inspect the captured record (look for io.novafabric.plugin_name):
-RUN=$(ls -dt .novafabric/runs/*/ | head -1)
+RUN=$(ls -dt "${NOVAFABRIC_CAPSULE_DIR:-${NOVAFABRIC_HOME:-$HOME/.novafabric}/capsules}"/*/ | head -1)
 jq '.extensions, .["gen_ai.system"], .["gen_ai.request.model"]' \
    $RUN/model-calls.jsonl
 ```
@@ -93,7 +93,7 @@ mv src/novafabric_example_plugin src/novafabric_<your_name>
 
 ## Status
 
-The `HookProtocol` surface is **experimental in v0.5.x and v0.6.x**.
-Stability is queued for v0.7. This reference is updated alongside the
-contract; clone at the v0.6.x tag if you need a stable reference for
-that minor version.
+The `HookProtocol` surface is **experimental** (introduced in v0.5.x; no
+stability decision has been recorded since). This reference is updated
+alongside the contract; pin your plugin's `novafabric` dependency to the
+version you tested against.

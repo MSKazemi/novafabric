@@ -155,8 +155,8 @@ flowchart TD
     C -- no --> U["Upload the capsule artifact"]
     C -- yes --> V{"nova validate<br/>passes?"}
     V -- yes --> U
-    V -- no --> X["step fails, upload skipped<br/>(known gap, fix tracked)"]
-    U --> E["Re-raise your command's exit code"]
+    V -- "no: verdict recorded, never aborts" --> U
+    U --> E["Last step: fail with your command's exit code,<br/>or exit 1 if the capsule was invalid"]
 ```
 
 The ordering is load-bearing. A composite action abandons its remaining steps

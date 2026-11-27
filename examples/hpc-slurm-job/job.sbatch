@@ -22,8 +22,8 @@ set -euo pipefail
 # Where capsules land. On a cluster this MUST be a shared filesystem the login
 # node can also read — /tmp on a compute node is gone by the time you look.
 #
-# --output-dir, not NOVAFABRIC_HOME: a config file can override the environment
-# variable, and a batch job that silently writes its evidence somewhere else is
+# --output-dir, not NOVAFABRIC_HOME: an exported NOVAFABRIC_CAPSULE_DIR overrides
+# it, and a batch job that silently writes its evidence somewhere else is
 # the one failure mode this example cannot afford. The flag is unambiguous.
 CAPSULE_DIR="${NOVAFABRIC_CAPSULE_OUT:-${SLURM_SUBMIT_DIR:-$PWD}/novafabric-capsules}"
 mkdir -p "${CAPSULE_DIR}"

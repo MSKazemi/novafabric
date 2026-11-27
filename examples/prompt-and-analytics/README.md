@@ -48,7 +48,9 @@ nova label set prompt:support-triage production 1
 
 ```
 ✓ Registered prompt support-triage@1 (12ac865740fa…)
+  ref: prompt:support-triage@1+sha256:12ac865740fa…
 ✓ Registered prompt support-triage@2 (a89b6646ad06…)
+  ref: prompt:support-triage@2+sha256:a89b6646ad06…
 ✓ moved production: (unset) → 1  (moved_by=you, at 2026-07-16T07:55:55Z)
 ```
 
@@ -142,7 +144,7 @@ Session 01KXMYTVKR… (workflow, created 2026-07-16T07:56:35Z)
  seq  run_id                      … run status  duration
    0  01KXMYTW33TTECAA7MQJM9116S  … success     2.5s
    1  01KXMYVA02DG3YEKF0H3XV8VGA  … success     1.4s
-turns=2  resolved=2  missing=0  tampered=0  cost=0.0007 USD
+turns=2  resolved=2  missing=0  tampered=0  duration=…  tokens=…  cost=0.0007 USD
 ```
 
 **What exactly changed between the arms?** (`nova diff --group-by variant`)

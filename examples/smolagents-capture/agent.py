@@ -1,4 +1,4 @@
-"""Credential-free smolagents capture example (experimental, unreleased).
+"""Credential-free smolagents capture example (experimental, since v0.109.0).
 
 No network, no Hugging Face token, no model: a scripted model answers a toy stock question in two
 steps. It shows what ``wrap_agent`` writes -- one Run Capsule, a span per step, a record per tool
