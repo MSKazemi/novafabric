@@ -94,6 +94,12 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **Deployment matrix** (`docs/ops/deployment-matrix.md`, linked from the docs map): one row per deployment path
+  (local CLI, local dashboard, pip server, the three Compose profiles, the Helm chart, SLURM capture, the HPC
+  collector tier, offline install, plus three paths still in review). For each it gives maturity, platform,
+  services, storage, auth, TLS, backup, upgrade, the CI job that exercises it ("nothing" where none does) and known
+  gaps, each read from code or a workflow. It also lists the resource sizing the repo documents and says cloud cost
+  is not measured.
 
 ### Fixed
 
