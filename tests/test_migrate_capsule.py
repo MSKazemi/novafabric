@@ -305,7 +305,10 @@ def test_migration_error_as_dict_minimal() -> None:
 def test_cli_migrate_help() -> None:
     result = runner.invoke(app, ["migrate", "--help"])
     assert result.exit_code == 0
-    assert "0.1.x" in result.output
+    # Only 0.1.0 is accepted (0.1.3 is refused, see the storage-backup-06 test
+    # above), so the help must name that version, not a "0.1.x" range.
+    assert "0.1.0" in result.output
+    assert "0.1.x" not in result.output
     assert_flag_in_help(result, "--output")
 
 
