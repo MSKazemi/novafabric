@@ -337,6 +337,57 @@ two-hop neighbourhood of one run.
 Not in the dashboard yet: a link into this view from the Runs inspector or the Registry, collapsible groups inside
 a level, and live cluster topology (the separate `/topology/` view, see
 [KG topology vs. Live Topology](#kg-topology-vs-live-topology)).
+### Alert and incident triage panel *(experimental — issue #276)*
+From a row in **Alerts** or **Incidents**, the **Triage** button opens a read-only side panel
+(a dialog: focus moves into it, **Esc** closes it and returns focus to the button). It answers
+three questions without leaving the page:
+- **Which run?** For an incident, the runs its `run_ids` name. Each is loaded with
+  `GET /api/runs/{id}` (at most 5; the rest are listed by id) and shows its status, creation
+  time and capsule directory, with an **Open run** link to the Runs tab (a normal link:
+  **Back** returns to the incident). With two or more runs, a link opens the first two in
+  **Diff**. When the server refuses or cannot find a run, the panel shows the HTTP status and
+  the server's message and fills nothing in. For a seal alert, the panel shows the **capsule
+  that failed** (its directory and seal capsule id) and, separately, the run that capsule's own
+  `capsule.yaml` *claims* — badged **unverified** (see below), never loaded as the alert's
+  subject. A run id that is not a plain ref (only dots, or containing `/`) is listed but never
+  put into a request or a link.
+- **What happened?** A timeline in words, built only from fields the record holds: for an
+  alert, when it was raised (emitted rows) or delivered (delivery rows — the feed keeps only
+  the delivery time), the endpoint, attempts and outcome; for an incident, occurrence,
+  awareness, when the record was opened, every status/attestation transition, and the next
+  Art. 73 deadline while it is open (an operational aid, not legal advice).
+- **What next?** Copyable CLI commands, each with what it does and whether it writes
+  anything. For a seal alert: `nova verify <failed-capsule-dir> --json` — the capsule that
+  failed, never the claimed run — and `nova audit-log export --since <time>`. For an incident:
+  `nova incident status <id>`, `nova verify <capsule-dir> --json` and
+  `nova export-evidence <capsule-dir> --output <run>-evidence.zip` per linked run,
+  `nova diff <run-a> <run-b> --json` (two linked runs) and
+  `nova incident export <id> --format aim`. A run's capsule directory is filled in once the run
+  loads; until then — or for a seal alert raised before the failed directory was recorded — a
+  visible `<capsule-dir-of-…>` placeholder stands in. **Nothing is
+  executed from the panel** — it issues no POST, and every command and flag is checked against
+  the generated CLI catalog by a unit test.
+**No guessing.** When a record links no run, the panel says so: *"No run linked — the alert
+source did not record a run id"* (or, for an incident, that it was opened without run ids).
+Today only `ops.seal.verify_failed` records anything run-related: the directory that failed
+(`capsule_dir`), the first evidence file that no longer matches the seal (`first_divergence`,
+file granularity), and `claimed_run_id` — the run id **named by the failed capsule's own
+`capsule.yaml`, which the failed seal does not vouch for**. A tampered capsule can name an
+innocent run, so the panel labels it *unverified — verify independently*, does not load it,
+and points every command at the failed capsule instead. A seal alert's subject
+`capsule:<id>` is the seal's capsule id, a digest of the signed payload, and is never turned
+into a run id. Alerts raised before this change carry none of these fields. Quota, rate-limit, policy, drift and backup alerts are
+about a system condition, not one run. An incident links runs only when it is opened with
+`nova incident open … --run-id <run>` (the dashboard's form does not set run ids yet).
+**Verification status** is what the record says: a seal alert is shown as a *recorded* failure
+with its time; everything else reads **not checked here** — the panel never runs a check.
+API: `GET /api/alerts/recent` rows carry three additive, nullable fields: `capsule_dir`,
+`claimed_run_id` (unverified, as above) and `first_divergence`
+(`{path, reason, stream, divergent_files}`); see
+[Monitoring](ops/monitoring.md) (§ “Dashboard read endpoint”).
+Not in this slice — **future design** (tracked in issue #276, not implemented): tenant-scoped
+alert feeds in server mode, linking an alert to the exact event inside a run, and adding run
+ids to an existing incident.
 
 ### Honest aggregates and the Runs aggregate strip *(experimental — ADR-0234)*
 
@@ -375,7 +426,7 @@ bars to filter (ADR-0234 D1 navigation) is **planned**.
 |---|---|---|---|
 | Home | Overview | v0.8 | Journey cards, status bar, resume session |
 | Analytics | Overview | v0.62.0 | Time-bucketed run analytics from the runs index: volume + failure stacked bars, duration p50/p95 lines, stat tiles, 7/30/90-day ranges, chart/table toggle (`/api/analytics/summary`) |
-| Alerts | Platform | v0.63.0 | Operational alerts feed (quota/rate-limit/policy/drift/seal/backup) + delivery outcomes from the audit log; severity badges, stat tiles, live refresh (`/api/alerts/recent`, ADR-0192) |
+| Alerts | Platform | v0.63.0 | Operational alerts feed (quota/rate-limit/policy/drift/seal/backup) + delivery outcomes from the audit log; severity badges, stat tiles, live refresh (`/api/alerts/recent`, ADR-0192); per-row **Triage** panel (experimental, see [triage panel](#alert-and-incident-triage-panel-experimental--issue-276)) |
 | Runs | Runs & Debug | v0.7 | Run list, search/filter, inspect capsule, validate, replay, verify; capsule tree, run lineage edges, secret scan (v0.46.0); **v0.64.0:** per-run **Forensics** timeline view (`/api/runs/{id}/forensics-timeline`, P5) + saved filter presets (E2); **v0.103.0 (experimental):** filter bar (`/api/filter/*`, ADR-0232/0233), full view state in the URL, capsule explorer with summary strip + **Integrity** and **Lineage** views — see [Runs view state](#dashboard-tabs-complete-inventory) |
 | Diff | Runs & Debug | v0.7 | N-run comparison (2–5), word-level diff, mutation badges; **experimental:** aligned A/B comparison with the first divergent step (see [Aligned comparison](#aligned-comparison-and-first-divergence-experimental)) |
 | Registry | Govern & Promote | v0.7 | Asset lifecycle: eval, promote, rollback, register, suggest-register, unregister |
@@ -394,7 +445,7 @@ bars to filter (ADR-0234 D1 navigation) is **planned**.
 | Seal | Provenance & Trust | v0.13.0 | NovaSeal verify, Sigstore sign/verify, linked-envelope proposals, bypass; **v0.98.0:** trust-surface views — **Trust Radar** SVG glyph (ADR-0173) and **Redaction X-Ray** heat overlay + coverage meter (ADR-0174), reading `/api/runs/{run_id}/{trust-radar,redaction-xray}`. An unverifiable guarantee renders `n/a` (hollow tick, excluded from the claim polygon), never `fail`; the X-Ray shows paths and states only — never a field value |
 | Spine | Provenance & Trust | v0.56.0 | Accountability Spine: per-run energy receipts + conservation check (ADR-0093), append-only ledger verify (ADR-0094), structured safety case (ADR-0095) — read-only (`/api/runs/{id}/{energy,ledger,safety-case}`) |
 | Compliance | Compliance | v0.15.2 | GDPR RoPA, AI-SBOM, NIST RMF, CRA coverage, erasure, audit bundle/verify (8+ panels) |
-| Incidents | Compliance | v0.55.0 | EU AI Act Art. 73 incident records with a live reporting-deadline clock; open/list/transition/export (AIM, NIS2) |
+| Incidents | Compliance | v0.55.0 | EU AI Act Art. 73 incident records with a live reporting-deadline clock; open/list/transition/export (AIM, NIS2); per-row **Triage** panel (experimental) |
 | Capture | Runs & Debug | v0.7 | Capture matrix (4 runners + distributed + MCP/API proxies), adapters, recent capsules |
 | Infra | Platform | v0.12.6 | Phase 0–6 component status cards (NovaSeal, Collector, OCS, MetaDB, Lineage, …); **v0.64.0:** **Backups** card (`/api/infra/backups`, P7 — read-only manifest listing) + **Maintenance** card of idempotent confirm-gated safe mutations (reindex-runs / topology re-seed / KG rebuild, P8-P10) |
 | Storage | Platform | v0.55.0 | WORM object-store stats/validate/inspect, manifest chain, collector status, gated DB upgrade + rebuild-metadata-db, system-card export |

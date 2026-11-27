@@ -32,7 +32,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from novafabric.events.hygiene import sanitize_record
+from novafabric.events.hygiene import sanitize_record, strip_local_only
 from novafabric.events.model import EventType, LifecycleEvent, Subject, SubjectKind
 from novafabric.events.signing import sign_record
 from novafabric.events.sinks import (
@@ -43,6 +43,7 @@ from novafabric.events.sinks import (
     MultiSink,
     NullSink,
     WebhookSink,
+    is_outbound,
 )
 
 logger = logging.getLogger(__name__)
@@ -170,10 +171,18 @@ class LifecycleEventEmitter:
         if not self.enabled:
             return
         try:
-            record = sanitize_record(event.to_record())
+            local = sanitize_record(event.to_record())
+            # Local-only payload keys (an absolute capsule path) stay on this
+            # host: outbound sinks get a copy without them, signed on its own
+            # so each signature covers exactly the bytes that sink receives.
+            outbound = strip_local_only(local)
             if self._sign_secret:
-                record = sign_record(record, self._sign_secret, self._sign_keyid)
-            self._sink.send(record)
+                local = sign_record(local, self._sign_secret, self._sign_keyid)
+                outbound = sign_record(outbound, self._sign_secret, self._sign_keyid)
+            if isinstance(self._sink, MultiSink):
+                self._sink.send_split(local, outbound)
+            else:
+                self._sink.send(outbound if is_outbound(self._sink) else local)
         except Exception as exc:  # noqa: BLE001 — must never block the workload
             logger.warning("lifecycle event emission failed: %s", exc)
 

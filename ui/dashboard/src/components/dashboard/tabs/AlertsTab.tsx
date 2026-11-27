@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { api, type AlertRow, type AlertSeverity } from '../../../lib/api';
 import TabShell from './TabShell';
 import DataTable, { type Column } from '../../ui/DataTable';
@@ -7,6 +7,8 @@ import Badge from '../../ui/primitives/Badge';
 import Button from '../../ui/primitives/Button';
 import { useQuery } from '../../../lib/useQuery';
 import { usePolling } from '../../../lib/usePolling';
+import TriagePanel from '../triage/TriagePanel';
+import { alertTriage } from '../triage/triageModel';
 
 // Operational alerts feed (ADR-0192). Reads /api/alerts/recent — the
 // hash-chained audit log's alert.delivery entries merged with recent ops.*
@@ -119,6 +121,10 @@ const COLUMNS: Column<AlertRow>[] = [
 export default function AlertsTab() {
   const [auto, setAuto] = useState(true);
   const [tick, setTick] = useState(0);
+  // Issue #276: the alert whose triage panel is open (read-only drill-down).
+  const [triage, setTriage] = useState<AlertRow | null>(null);
+  // Stable, so the 15 s poll's re-render does not re-run the drawer's focus trap.
+  const closeTriage = useCallback(() => setTriage(null), []);
 
   const query = useQuery(() => api.alertsRecent(ALERTS_LIMIT), [tick]);
   usePolling(() => setTick((t) => t + 1), 15_000, auto);
@@ -139,7 +145,7 @@ export default function AlertsTab() {
       icon="alerts"
       subtitle="Operational alerts (quota, rate-limit, policy, drift, seal, backup) and their delivery outcomes"
       cli={['nova audit-log export', 'nova events emit']}
-      help="Read-only feed from the hash-chained audit log + ops.* events. Configure outbound delivery server-side with NOVA_ALERTS_* (Slack/PagerDuty/email/webhook). Alerting is OFF by default (ADR-0192)."
+      help="Read-only feed from the hash-chained audit log + ops.* events. Configure outbound delivery server-side with NOVA_ALERTS_* (Slack/PagerDuty/email/webhook). Alerting is OFF by default (ADR-0192). Triage (per row, experimental) opens a read-only panel: the run the alert source recorded — or “no run linked” — a timeline, and copyable next commands; it runs nothing."
       actions={
         <Button size="sm" variant={auto ? 'secondary' : 'ghost'} onClick={() => setAuto((a) => !a)}>
           {auto ? 'live' : 'paused'}
@@ -176,6 +182,16 @@ export default function AlertsTab() {
           error={query.error}
           onRetry={query.reload}
           rowHeight={36}
+          rowActions={(row) => (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setTriage(row)}
+              aria-label={`Triage alert ${row.event_type} about ${row.subject}`}
+            >
+              Triage
+            </Button>
+          )}
           empty={
             <p className="text-[11px] font-mono text-[var(--color-text-faint)] py-4">
               No operational alerts recorded. Alerts appear here when a quota breach, sustained
@@ -192,6 +208,7 @@ export default function AlertsTab() {
           }
         />
       </div>
+      {triage && <TriagePanel model={alertTriage(triage)} onClose={closeTriage} />}
     </TabShell>
   );
 }

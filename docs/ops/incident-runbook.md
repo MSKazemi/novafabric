@@ -129,6 +129,20 @@ are no distinct per-cause exit codes; read the itemized ✓/✗ output).
 | `Merkle log inclusion … FAIL` | `log-entry.json` is inconsistent: its entry does not hash to `leaf_hash`, names a different capsule, carries an inclusion proof that does not recompute its root, or the local log holds the entry at a different index — or the local log itself is damaged. (A log that simply lacks the entry is *not checked*, not failed.) | Treat as a potential integrity incident; audit the log itself with `nova seal log verify` (sampled; `--full` for O(N) re-hash) |
 | Sigstore backend errors | `--backend sigstore` needs the `novafabric[sigstore]` extra and a stored bundle; Rekor/Fulcio need network | Use the local backend in air-gapped deployments ([Air-gapped guide](air-gapped-install.md)) |
 
+**From an alert (experimental).** With alerting configured (`NOVA_ALERTS_*`), a failed
+`nova verify` raises a critical `ops.seal.verify_failed` alert that records the failed capsule's
+directory, the first evidence file that no longer matches the seal, and the run id the capsule's
+own `capsule.yaml` claims. In the dashboard, **Alerts → Triage** on that row shows the failed
+capsule, the recorded failure and first divergence, a timeline, and copyable next commands
+(`nova verify <failed-capsule-dir> --json`, `nova audit-log export --since <time>`). It executes
+nothing. The claimed run is badged **unverified**: the failed seal does not vouch for that
+manifest, so a tampered capsule can name an innocent run — confirm which run is affected
+independently (e.g. compare against backups) before acting on it. If it says *"No run linked —
+the alert source did not record a run id"*, the alert predates these fields or the manifest had
+no readable `run_id`; for an older alert, find the capsule from its `capsule:<id>` subject by
+hand — that id is a digest of the signed payload, not a run id. See
+[Alert and incident triage panel](../dashboard.md#alert-and-incident-triage-panel-experimental--issue-276).
+
 Escalation: repeated signature failures across capsules ⇒ treat as key
 compromise until proven otherwise —
 [NovaSeal key management](../novaseal-key-management.md) has the compromise

@@ -91,6 +91,77 @@ def test_seal_verify_alert_is_critical_and_truncates_errors(
     assert call["payload"]["error_count"] == 20  # ...but the count is exact
 
 
+def test_seal_verify_alert_records_the_run_link_only_when_known(
+    captured: list[dict[str, Any]],
+) -> None:
+    """Issue #276: capsule_dir/claimed_run_id/first_divergence are additive, absent when unknown."""
+    sources.emit_seal_verify_failed_alert(
+        capsule_id="cap-1",
+        errors=["e"],
+        capsule_dir="/data/capsules/run-42",
+        claimed_run_id="run-42",
+        first_divergence={
+            "path": "tool-calls.jsonl",
+            "reason": "modified",
+            "stream": "tool_calls",
+            "event_type": "tool_call",
+            "index": None,
+            "granularity": "file",
+            "divergent_files": 2,
+        },
+    )
+    sources.emit_seal_verify_failed_alert(capsule_id="cap-2", errors=["e"])
+    linked, unlinked = captured
+    # The manifest's run id rides under a name that says it is a claim.
+    assert linked["payload"]["claimed_run_id"] == "run-42"
+    assert "run_id" not in linked["payload"]
+    assert linked["payload"]["capsule_dir"] == "/data/capsules/run-42"
+    # Only file-granularity refs and a count — never more than the alert needs.
+    assert linked["payload"]["first_divergence"] == {
+        "path": "tool-calls.jsonl",
+        "reason": "modified",
+        "stream": "tool_calls",
+        "divergent_files": 2,
+    }
+    assert "claimed_run_id" not in unlinked["payload"]
+    assert "capsule_dir" not in unlinked["payload"]
+    assert "first_divergence" not in unlinked["payload"]
+
+
+def test_verify_reads_the_run_id_from_the_capsule_manifest(tmp_path: Any) -> None:
+    """`nova verify` forwards the manifest's run_id, and nothing it cannot trust as a ref."""
+    from novafabric.cli.verify import _manifest_run_id
+
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "capsule.yaml").write_text("run_id: run-7\nstatus: success\n")
+    assert _manifest_run_id(good) == "run-7"
+
+    missing = tmp_path / "missing"
+    missing.mkdir()
+    assert _manifest_run_id(missing) is None  # no manifest: no run link, no guess
+
+    odd = tmp_path / "odd"
+    odd.mkdir()
+    (odd / "capsule.yaml").write_text("run_id: 'two words; rm -rf /'\n")
+    assert _manifest_run_id(odd) is None  # not a plain ref
+
+    # Only dots, or a slash, would address another path under /api/runs/.
+    for bad in (".", "..", "...", "a/b", "../x"):
+        (odd / "capsule.yaml").write_text(f"run_id: '{bad}'\n")
+        assert _manifest_run_id(odd) is None, bad
+
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "capsule.yaml").write_text("run_id: [unclosed\n")
+    assert _manifest_run_id(broken) is None  # unparsable never raises
+
+    linked = tmp_path / "linked"
+    linked.mkdir()
+    (linked / "capsule.yaml").symlink_to(good / "capsule.yaml")
+    assert _manifest_run_id(linked) is None  # a linked manifest is never followed
+
+
 def test_backup_alert_is_critical(captured: list[dict[str, Any]]) -> None:
     sources.emit_backup_failed_alert(
         operation="verify", target="/backups/set-1", reason="3 mismatched"

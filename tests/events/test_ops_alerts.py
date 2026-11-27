@@ -571,6 +571,51 @@ class TestAuditTrail:
             assert entry.details["attempts"] == 1
         assert log.verify() == []  # hash chain intact
 
+    def test_run_link_rides_into_the_delivery_entry_only_when_recorded(
+        self, tmp_path: Path, webhook_server: Any
+    ) -> None:
+        """Issue #276: the triage panel reads the failed capsule + claimed run from the entry."""
+        audit_path = tmp_path / "a.jsonl"
+        router = AlertRouter(
+            _config(_endpoint(webhook_server.url, endpoint_id="webhook-1"), audit_path=audit_path)
+        )
+        divergence = {
+            "path": "model-calls.jsonl",
+            "reason": "modified",
+            "stream": "model_calls",
+            "divergent_files": 1,
+        }
+        router.route(
+            _ops_event(
+                event_type=EventType.OPS_SEAL_VERIFY_FAILED,
+                ref="capsule:abc",
+                payload={
+                    "capsule_id": "abc",
+                    "capsule_dir": "/data/capsules/abc",
+                    "claimed_run_id": "run-1",
+                    "first_divergence": divergence,
+                },
+            )
+        )
+        router.route(_ops_event(ref="quota:other"))  # a source that records no run
+        entries = AuditLog(audit_path).query()
+        by_type = {e.details["event_type"]: e.details for e in entries}
+        assert by_type["ops.seal.verify_failed"]["claimed_run_id"] == "run-1"
+        assert by_type["ops.seal.verify_failed"]["capsule_dir"] == "/data/capsules/abc"
+        assert by_type["ops.seal.verify_failed"]["first_divergence"] == divergence
+        assert "claimed_run_id" not in by_type["ops.quota.breached"]
+        # The local audit entry keeps the path; the outbound webhook body does not.
+        seal_bodies = [
+            json.loads(r["body"])
+            for r in webhook_server.received
+            if json.loads(r["body"])["type"] == "ops.seal.verify_failed"
+        ]
+        assert seal_bodies and all("capsule_dir" not in b["payload"] for b in seal_bodies)
+        assert b"/data/capsules/abc" not in b"".join(r["body"] for r in webhook_server.received)
+        assert seal_bodies[0]["payload"]["capsule_id"] == "abc"  # the id still goes out
+        assert "capsule_dir" not in by_type["ops.quota.breached"]
+        assert "first_divergence" not in by_type["ops.quota.breached"]
+
     def test_audit_failure_swallowed_delivery_still_happens(
         self, tmp_path: Path, webhook_server: Any
     ) -> None:
@@ -680,3 +725,87 @@ class TestQuotaBreachWiring:
         assert decision.outcome == "warn"
         time.sleep(0.2)
         assert webhook_server.received == []
+
+
+# --------------------------------------------------------------------------- #
+# Issue #276: the absolute capsule path never leaves the host
+# --------------------------------------------------------------------------- #
+
+
+class TestLocalOnlyPayloadKeys:
+    _PAYLOAD: dict[str, Any] = {
+        "capsule_id": "abc",
+        "capsule_dir": "/home/alice/.novafabric/capsules/run-1",
+        "claimed_run_id": "run-1",
+    }
+
+    def test_signed_alert_webhook_body_has_no_capsule_dir_and_still_verifies(
+        self, tmp_path: Path, webhook_server: Any
+    ) -> None:
+        router = AlertRouter(
+            _config(
+                _endpoint(webhook_server.url),
+                audit_path=tmp_path / "a.jsonl",
+                sign_secret=b"s3cret",
+            )
+        )
+        router.route(
+            _ops_event(
+                event_type=EventType.OPS_SEAL_VERIFY_FAILED,
+                ref="capsule:abc",
+                payload=dict(self._PAYLOAD),
+            )
+        )
+        (received,) = webhook_server.received
+        assert b"/home/alice" not in received["body"]
+        record = json.loads(received["body"])
+        assert "capsule_dir" not in record["payload"]
+        assert record["payload"]["capsule_id"] == "abc"
+        assert verify_record(record, b"s3cret")  # signed over what was sent
+        # The local audit trail, which the dashboard reads, keeps the path.
+        (entry,) = AuditLog(tmp_path / "a.jsonl").query()
+        assert entry.details["capsule_dir"] == self._PAYLOAD["capsule_dir"]
+
+    def test_emitter_keeps_the_path_in_the_local_log_only(
+        self, tmp_path: Path, webhook_server: Any
+    ) -> None:
+        from novafabric.events.emitter import LifecycleEventEmitter
+        from novafabric.events.sinks import FileSink, MultiSink, WebhookSink
+
+        log_path = tmp_path / "events.jsonl"
+        emitter = LifecycleEventEmitter(
+            MultiSink([FileSink(log_path), WebhookSink(webhook_server.url, max_retries=0)]),
+            sign_secret=b"k",
+        )
+        emitter.emit(
+            _ops_event(
+                event_type=EventType.OPS_SEAL_VERIFY_FAILED,
+                ref="capsule:abc",
+                payload=dict(self._PAYLOAD),
+            )
+        )
+        local = json.loads(log_path.read_text().splitlines()[0])
+        assert local["payload"]["capsule_dir"] == self._PAYLOAD["capsule_dir"]
+        assert verify_record(local, b"k")
+        (received,) = webhook_server.received
+        assert b"/home/alice" not in received["body"]
+        outbound = json.loads(received["body"])
+        assert "capsule_dir" not in outbound["payload"]
+        assert verify_record(outbound, b"k")
+
+    def test_a_sink_that_does_not_declare_itself_local_is_treated_as_outbound(self) -> None:
+        from novafabric.events.emitter import LifecycleEventEmitter
+
+        class CustomSink:  # no `outbound` attribute
+            def __init__(self) -> None:
+                self.records: list[dict[str, Any]] = []
+
+            def send(self, record: dict[str, Any]) -> None:
+                self.records.append(record)
+
+        sink = CustomSink()
+        LifecycleEventEmitter(sink).emit(
+            _ops_event(event_type=EventType.OPS_SEAL_VERIFY_FAILED, payload=dict(self._PAYLOAD))
+        )
+        (record,) = sink.records
+        assert "capsule_dir" not in record["payload"]
