@@ -180,6 +180,82 @@ def changed_files(base: str | None = None) -> list[str]:
     return paths
 
 
+def _tests_module(path: Path) -> list[str]:
+    """`tests/a/b/_h.py` -> `["a", "b", "_h"]`; a package `__init__.py` -> its package."""
+    parts = list(path.relative_to(REPO / "tests").with_suffix("").parts)
+    return parts[:-1] if parts and parts[-1] == "__init__" else parts
+
+
+def _tests_imports(path: Path) -> set[str] | None:
+    """Every module *path* can import, in `pythonpath = tests` form; None if unparseable.
+
+    Covers `import a.b._h`, `from a.b._h import x`, `from a.b import _h`
+    (recorded as `a.b._h`), multi-line and relative imports, and the
+    `tests.a.b._h` spelling some files use.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"), str(path))
+    except (SyntaxError, ValueError, OSError):
+        return None
+    own = _tests_module(path)
+    package = own if path.name == "__init__.py" else own[:-1]
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                keep = len(package) - (node.level - 1)
+                if keep < 0:
+                    continue
+                base = ".".join([*package[:keep], *(node.module or "").split(".")]).strip(".")
+            else:
+                base = node.module or ""
+            if base:
+                names.add(base)
+            names.update(f"{base}.{alias.name}".strip(".") for alias in node.names)
+    return {n.removeprefix("tests.") for n in names}
+
+
+def _dependents_of_test_modules(changed: list[str], index: dict[str, list[str]]) -> set[str]:
+    """Test files that can import any of *changed* (repo-relative `.py` paths under
+    tests/), directly or through other helpers and conftests.
+
+    A conftest that imports a changed module brings in its whole subtree, and a
+    helper that imports one is followed in turn. A file that cannot be parsed counts
+    as an importer: ambiguity selects more, never less.
+    """
+    # REPO / "tests", not TESTS: resolved at call time, so a test can point REPO elsewhere.
+    graph = {f: _tests_imports(f) for f in (REPO / "tests").rglob("*.py")}
+    pending = [".".join(_tests_module(REPO / p)) for p in changed]
+    pending = [d for d in pending if d]
+    done: set[str] = set()
+    matched: set[Path] = set()
+    selected: set[str] = set()
+    while pending:
+        target = pending.pop()
+        if target in done:
+            continue
+        done.add(target)
+        for f, names in graph.items():
+            if f in matched:
+                continue
+            prefix = target + "."
+            if names is not None and not any(n == target or n.startswith(prefix) for n in names):
+                continue
+            matched.add(f)
+            rel = str(f.relative_to(REPO))
+            if f.name.startswith("test_"):
+                selected.add(rel)
+            elif f.name == "conftest.py":
+                subtree = str(Path(rel).parent) + "/"
+                selected |= {t for t in index if t.startswith(subtree)}
+            dotted = ".".join(_tests_module(f))
+            if dotted:
+                pending.append(dotted)
+    return selected
+
+
 def select(paths: list[str], index: dict[str, list[str]]) -> tuple[list[str], str]:
     """Return (test files to run, human-readable reason)."""
     if not paths:
@@ -187,6 +263,7 @@ def select(paths: list[str], index: dict[str, list[str]]) -> tuple[list[str], st
 
     changed_modules: set[str] = set()
     selected: set[str] = set()
+    tests_py: list[str] = []
 
     for raw in paths:
         p = raw.strip()
@@ -195,12 +272,19 @@ def select(paths: list[str], index: dict[str, list[str]]) -> tuple[list[str], st
         if p in GLOBAL_TRIGGERS:
             return [SENTINEL_ALL], f"{p} changed — blast radius is the whole suite"
         if p.startswith("tests/"):
-            if Path(p).name == "conftest.py":
-                # A conftest governs its whole subtree.
+            if not p.endswith(".py"):
+                continue
+            if Path(p).name.startswith("test_"):
+                selected.add(p)
+            else:
+                # A conftest governs its whole subtree. A helper module (`_harness.py`,
+                # `__init__.py`, a fixture factory) is not a test file: handed to pytest it
+                # collects nothing, or crashes when it reads its environment at import,
+                # while the tests that use it go unrun. Select its subtree too (it may be
+                # used by file path, not import), and below, everything that imports it.
                 subtree = str(Path(p).parent) + "/"
                 selected |= {t for t in index if t.startswith(subtree)}
-            elif p.endswith(".py"):
-                selected.add(p)
+            tests_py.append(p)
             continue
         if p.startswith("src/novafabric/") and p.endswith(".py"):
             name = _module_name(REPO / p)
@@ -211,6 +295,9 @@ def select(paths: list[str], index: dict[str, list[str]]) -> tuple[list[str], st
             return [SENTINEL_ALL], f"{p} is Python outside src/tests — cannot scope it"
         # Non-Python (docs, schemas, workflows): no test mapping, select nothing
         # for it, but never let it suppress another path's selection.
+
+    if tests_py:
+        selected |= _dependents_of_test_modules(tests_py, index)
 
     if changed_modules:
         for test, reachable in index.items():
