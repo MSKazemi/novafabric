@@ -78,6 +78,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **Read-only stdio MCP evidence server (experimental, issue #244).** `python -m novafabric.mcp.evidence_server --scope DIR`
+  lets an MCP client call three read-only tools on the capsules directly under the directories you name:
+  `list_capsules` (paged), `get_capsule_summary` (allowlisted manifest fields; `command`, `host`, paths and
+  free-text fields are withheld and named) and `verify_capsule` (the `nova verify` check from the capsule alone,
+  with `verification_level` and `unanchored_claims` saying what no anchor vouches for). `--scope` is required and
+  has no default. A capsule name must be one path segment, linked entries are refused, returned strings are
+  secret-redacted and capped, and the scope's absolute paths are never returned. No tool returns prompt or
+  response content, writes a file, starts a subprocess or uses the network. MCP revisions 2025-11-25, 2025-06-18
+  and 2025-03-26. It is separate from `nova mcp-proxy` and is not advertised by the `nova serve` Server Card.
+  There is no `nova` sub-command for it, and no diff or lineage tools yet. Guide: `docs/integrations/mcp-evidence-server.md`.
 
 ### Changed
 
