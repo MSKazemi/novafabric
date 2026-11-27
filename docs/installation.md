@@ -178,14 +178,14 @@ never use `docker compose down -v`, which deletes the volumes:
 
    ```bash
    docker compose -f deploy/docker/docker-compose.yml exec postgres \
-     psql -U nova -d nova -c '\password nova'
+     psql --username=nova --dbname=nova --command='\password nova'
    ```
 
 4. Put the same value into `NOVA_POSTGRES_PASSWORD` in `deploy/docker/.env`,
    then recreate the services that connect with it:
    `docker compose -f deploy/docker/docker-compose.yml up -d --force-recreate nova`
    (add `--profile prod` and `pgbouncer` if you run the `prod` profile).
-5. Repeat for AGE (`exec age psql -U nova -d nova_lineage -c '\password nova'`)
+5. Repeat for AGE (`exec age psql --username=nova --dbname=nova_lineage --command='\password nova'`)
    if you use it. ClickHouse takes its user from the container environment;
    after changing `NOVA_CLICKHOUSE_PASSWORD`, recreate `clickhouse` and `nova`
    and confirm the new password works with `clickhouse-client` (this path was
