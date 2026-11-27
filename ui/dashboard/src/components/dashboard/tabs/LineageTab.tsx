@@ -588,10 +588,9 @@ export default function LineageTab({ refreshTick, onCountChange }: { refreshTick
     setError(null);
     try {
       const [e, a] = await Promise.all([api.edges(limit), api.listAssets()]);
-      const page = e as typeof e & { total?: number; truncated?: boolean };
       setEdges(e.edges);
-      setStoreTotal(typeof page.total === 'number' ? page.total : undefined);
-      setTruncated(page.truncated === true);
+      setStoreTotal(typeof e.total === 'number' ? e.total : undefined);
+      setTruncated(e.truncated === true);
       setAssets(a.assets);
       onCountChangeRef.current?.(e.count);
     } catch (e) {

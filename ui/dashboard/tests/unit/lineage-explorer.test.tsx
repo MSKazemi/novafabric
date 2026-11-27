@@ -1,14 +1,16 @@
 /**
  * Lineage explorer (#274): bounded levels with an "N more — narrow the scope" control, a
- * scoped neighbourhood read from the URL with its CLI equivalent, a keyboard-navigable
- * table alternative, a store cross-check, and a call level that never shows call content.
+ * scoped neighbourhood read from the URL with its CLI equivalent, a plain-table alternative
+ * whose actions are real buttons, a scope-keyed store cross-check, and a call level that never
+ * shows call content.
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LineageEdgeRecord } from '@/lib/fixtures';
 
-const provenance = vi.fn(async (ref: string, depth?: number) => ({ ref, depth: depth ?? 5, ancestors: [] as Array<{ node_id: string; kind: string; ref: string; payload: string }> }));
-const blastRadius = vi.fn(async (ref: string, depth?: number) => ({ ref, depth: depth ?? 5, descendants: [] as Array<{ node_id: string; kind: string; ref: string; payload: string }> }));
+type Rec = { node_id: string; kind: string; ref: string; payload: string };
+const provenance = vi.fn(async (ref: string, depth?: number, _edgeType?: string, _kind?: string) => ({ ref, depth: depth ?? 5, ancestors: [] as Rec[] }));
+const blastRadius = vi.fn(async (ref: string, depth?: number, _edgeType?: string, _kind?: string) => ({ ref, depth: depth ?? 5, descendants: [] as Rec[] }));
 const getRun = vi.fn(async (id: string) => ({
   run_id: id, capsule_path: `/c/${id}`, manifest: {}, trace: [], lineage: [], assets: [], inputs: [], outputs: [],
   model_calls: [{
@@ -20,8 +22,8 @@ const getRun = vi.fn(async (id: string) => ({
 
 vi.mock('@/lib/api', () => ({
   api: {
-    provenance: (ref: string, depth?: number) => provenance(ref, depth),
-    blastRadius: (ref: string, depth?: number) => blastRadius(ref, depth),
+    provenance: (ref: string, depth?: number, edgeType?: string, kind?: string) => provenance(ref, depth, edgeType, kind),
+    blastRadius: (ref: string, depth?: number, edgeType?: string, kind?: string) => blastRadius(ref, depth, edgeType, kind),
     getRun: (id: string) => getRun(id),
   },
   ServeApiError: class ServeApiError extends Error {},
@@ -58,10 +60,12 @@ function setUrl(qs: string) {
   window.history.replaceState({}, '', `/dashboard${qs ? `?${qs}` : ''}`);
 }
 
+function explorer(edges: LineageEdgeRecord[], extra: Partial<Parameters<typeof LineageExplorer>[0]> = {}) {
+  return <LineageExplorer edges={edges} assets={[]} loadedCount={edges.length} truncated={false} filtered={false} {...extra} />;
+}
+
 function renderExplorer(edges: LineageEdgeRecord[], extra: Partial<Parameters<typeof LineageExplorer>[0]> = {}) {
-  return render(
-    <LineageExplorer edges={edges} assets={[]} loadedCount={edges.length} truncated={false} filtered={false} {...extra} />,
-  );
+  return render(explorer(edges, extra));
 }
 
 beforeEach(() => {
@@ -111,8 +115,22 @@ describe('scoped view', () => {
     expect(screen.getByText('$ nova lineage export-graph --ref r1 --kind run --depth 1')).toBeInTheDocument();
     expect(screen.getByText('$ nova lineage provenance r1 --kind run --depth 1')).toBeInTheDocument();
     expect(screen.getByText('$ nova lineage blast-radius r1 --kind run --depth 1')).toBeInTheDocument();
-    await waitFor(() => expect(provenance).toHaveBeenCalledWith('r1', 1));
-    expect(blastRadius).toHaveBeenCalledWith('r1', 1);
+    // The store is asked with the same --kind the copied CLI commands carry.
+    await waitFor(() => expect(provenance).toHaveBeenCalledWith('r1', 1, undefined, 'run'));
+    expect(blastRadius).toHaveBeenCalledWith('r1', 1, undefined, 'run');
+  });
+
+  it('queries the store once per scope, not on every change to the loaded edges', async () => {
+    setUrl('lineage_focus=run:r1&lineage_view=table');
+    const { rerender } = renderExplorer(SMALL);
+    await waitFor(() => expect(provenance).toHaveBeenCalledTimes(1));
+    // Typing in the tab's search box hands the explorer a new filtered array each keystroke.
+    rerender(explorer([...SMALL], { filtered: true }));
+    rerender(explorer(SMALL.slice(0, 2), { filtered: true }));
+    rerender(explorer([...SMALL]));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(provenance).toHaveBeenCalledTimes(1);
+    expect(blastRadius).toHaveBeenCalledTimes(1);
   });
 
   it('changes depth through the URL and the CLI follows', () => {
@@ -146,23 +164,35 @@ describe('scoped view', () => {
   });
 });
 
-describe('table view keyboard use', () => {
-  it('moves between rows with the arrow keys and scopes with Enter', () => {
+describe('table view', () => {
+  it('is a plain table: rows are not focusable, every action is a button', () => {
     setUrl('lineage_view=table');
     renderExplorer(SMALL);
-    const rows = within(screen.getByRole('table', { name: /Nodes/ })).getAllByRole('row').slice(1);
-    expect(rows[0]).toHaveAttribute('tabindex', '0');
-    expect(rows[1]).toHaveAttribute('tabindex', '-1');
-    rows[0].focus();
-    fireEvent.keyDown(rows[0], { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(rows[1]);
-    fireEvent.keyDown(rows[1], { key: 'End' });
-    expect(document.activeElement).toBe(rows[rows.length - 1]);
-    const target = document.activeElement as HTMLElement;
-    const ref = within(target).getAllByRole('cell')[1].textContent ?? '';
-    const kind = within(target).getAllByRole('cell')[0].textContent ?? '';
-    fireEvent.keyDown(target, { key: 'Enter' });
-    expect(new URLSearchParams(window.location.search).get('lineage_focus')).toBe(`${kind}:${ref}`);
+    const table = screen.getByRole('table', { name: /Nodes/ });
+    expect(screen.queryByRole('grid')).toBeNull();
+    for (const row of within(table).getAllByRole('row')) expect(row).not.toHaveAttribute('tabindex');
+    expect(within(table).getAllByRole('button', { name: /^Scope here/ })).toHaveLength(4);
+  });
+
+  it('selects with the reference button and tells the tab, so the breadcrumb follows', () => {
+    const onNodeSelect = vi.fn();
+    setUrl('lineage_view=table');
+    renderExplorer(SMALL, { onNodeSelect });
+    const ref = screen.getByRole('button', { name: 'r3' });
+    expect(ref).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(ref);
+    expect(screen.getByRole('button', { name: 'r3' })).toHaveAttribute('aria-pressed', 'true');
+    expect(onNodeSelect).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'run:r3' }));
+    // The toolbar now offers to scope to the selection.
+    fireEvent.click(screen.getByRole('button', { name: 'Scope to selected node' }));
+    expect(new URLSearchParams(window.location.search).get('lineage_focus')).toBe('run:r3');
+  });
+
+  it('scopes from a row button', () => {
+    setUrl('lineage_view=table');
+    renderExplorer(SMALL);
+    fireEvent.click(screen.getByRole('button', { name: /^Scope here\s*\(a@1\)$/ }));
+    expect(new URLSearchParams(window.location.search).get('lineage_focus')).toBe('asset:a@1');
   });
 
   it('lists edges with their recorded confidence and an association-not-cause caption', () => {

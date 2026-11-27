@@ -226,11 +226,13 @@ two-hop neighbourhood of one run.
   whole-graph `nova lineage export-graph`.
 - **Source and completeness.** The view says how many edges it loaded and how many the store holds
   (`/api/lineage/edges` reports `total` and `truncated`). When a scope is set, the dashboard also runs the store's
-  own provenance and blast-radius queries for that depth and names any node the store returns that the loaded edges
-  do not contain. If that check fails, the error is shown with a **Retry** button.
-- **Table view (accessible alternative).** **Table** shows the same nodes and edges as two tables. Each table is
-  one tab stop. Use **↑/↓** to move between rows, **Home/End** to jump to the first or last row, **Enter** to scope
-  to a row's node and **Space** to select it. Each row also has a **Scope here** button. The edge table lists each
+  own provenance and blast-radius queries for that ref, kind and depth, once per scope change (not on each search
+  keystroke), and names any node the store returns that the loaded edges do not contain. If that check fails, the error is shown with a **Retry** button.
+- **Table view (accessible alternative).** **Table** shows the same nodes and edges as two plain data tables with
+  captions and column headers, so a screen reader's table navigation works as usual. Rows are not focusable. Every
+  action is a button: in the node table, the reference selects that node (the ancestry breadcrumb follows) and
+  **Scope here** scopes to it. **Tab** moves through these buttons row by row; the table holds no more rows than the
+  level's node bound. The edge table has no controls. It lists each
   relationship as *source → relationship → target*, with its recorded confidence (`observed`, `inferred` or
   `declared`), the run that recorded it and the time it was recorded. An edge is a recorded association, not a
   claim of cause.

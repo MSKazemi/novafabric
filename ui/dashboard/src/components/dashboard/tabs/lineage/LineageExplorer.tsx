@@ -108,34 +108,59 @@ function CliBlock({ commands, note }: { commands: string[]; note?: string }) {
   );
 }
 
-type StoreCheck =
+type StoreQuery =
   | { state: 'idle' }
   | { state: 'loading' }
-  | { state: 'done'; storeCount: number; missing: string[] }
+  | { state: 'done'; ids: string[] }
   | { state: 'error'; message: string };
 
-/** Ask the store's own provenance + blast-radius traversals for the scope's node set. */
-function useStoreCheck(focus: string | null, depth: number, local: Map<string, number> | null) {
-  const [check, setCheck] = useState<StoreCheck>({ state: 'idle' });
+type StoreCheck =
+  | Exclude<StoreQuery, { state: 'done' }>
+  | { state: 'done'; storeCount: number; missing: string[] };
+
+/** Wait this long after the scope or depth last changed before querying the store. */
+export const STORE_CHECK_DEBOUNCE_MS = 300;
+
+/**
+ * Ask the store's own provenance + blast-radius traversals for the scope's node set.
+ * Keyed on the scope alone (ref, kind, depth) and debounced: typing in the search box or
+ * reloading edges never re-queries; the comparison with the loaded edges is recomputed
+ * locally by the caller.
+ */
+function useStoreNeighbourhood(focus: string | null, depth: number) {
+  const [query, setQuery] = useState<StoreQuery>({ state: 'idle' });
   const [nonce, setNonce] = useState(0);
   useEffect(() => {
-    if (!focus || !local) { setCheck({ state: 'idle' }); return; }
+    if (!focus) { setQuery({ state: 'idle' }); return; }
     let cancelled = false;
-    setCheck({ state: 'loading' });
-    const { ref } = splitNodeId(focus);
-    Promise.all([api.provenance(ref, depth), api.blastRadius(ref, depth)])
-      .then(([p, b]) => {
-        if (cancelled) return;
-        const ids = [...p.ancestors, ...b.descendants].map((r) => `${r.kind}:${r.ref}`);
-        setCheck({ state: 'done', ...compareWithStore(local, ids, focus) });
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setCheck({ state: 'error', message: e instanceof Error ? e.message : String(e) });
-      });
-    return () => { cancelled = true; };
-    // `local` changes identity whenever the loaded edges change; that is when to re-check.
-  }, [focus, depth, local, nonce]);
-  return { check, retry: () => setNonce((n) => n + 1) };
+    setQuery({ state: 'loading' });
+    const { kind, ref } = splitNodeId(focus);
+    const timer = setTimeout(() => {
+      Promise.all([
+        api.provenance(ref, depth, undefined, kind || undefined),
+        api.blastRadius(ref, depth, undefined, kind || undefined),
+      ])
+        .then(([p, b]) => {
+          if (!cancelled) setQuery({ state: 'done', ids: [...p.ancestors, ...b.descendants].map((r) => `${r.kind}:${r.ref}`) });
+        })
+        .catch((e: unknown) => {
+          if (!cancelled) setQuery({ state: 'error', message: e instanceof Error ? e.message : String(e) });
+        });
+    }, STORE_CHECK_DEBOUNCE_MS);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [focus, depth, nonce]);
+  return { query, retry: () => setNonce((n) => n + 1) };
+}
+
+/** Build the minimal graph node the tab's breadcrumb needs for a table selection. */
+function tableSelectionNode(id: string): LineageNode {
+  const { kind, ref } = splitNodeId(id);
+  return {
+    id,
+    type: 'lineage',
+    position: { x: 0, y: 0 },
+    data: { kind: (kind || 'asset') as LineageNode['data']['kind'], ref, label: ref },
+  };
 }
 
 type CallsState =
@@ -206,7 +231,13 @@ export default function LineageExplorer({
   );
   const boundedEdges = useMemo(() => bounded.edges as LineageEdgeRecord[], [bounded]);
   const ov = useMemo(() => overview(scopedEdges), [scopedEdges]);
-  const { check, retry: retryCheck } = useStoreCheck(focus, depth, scope?.hops ?? null);
+  const { query: storeQuery, retry: retryCheck } = useStoreNeighbourhood(focus, depth);
+  // Re-compared locally whenever the loaded edges change; the store is not asked again.
+  const check = useMemo((): StoreCheck => {
+    if (storeQuery.state !== 'done') return storeQuery;
+    if (!focus || !scope) return { state: 'idle' };
+    return { state: 'done', ...compareWithStore(scope.hops, storeQuery.ids, focus) };
+  }, [storeQuery, focus, scope]);
   const { calls, retry: retryCalls } = useRunCalls(zoom === 'call' ? runScope : null);
 
   const tableNodes: TableNode[] = useMemo(() => {
@@ -214,11 +245,16 @@ export default function LineageExplorer({
     return bounded.nodeIds.map((id) => ({ id, hop: scope?.hops.get(id), degree: deg.get(id) ?? 0 }));
   }, [bounded, scope]);
 
+  const selectFromTable = useCallback((id: string) => {
+    setSelected(id);
+    onNodeSelect?.(tableSelectionNode(id));
+  }, [onNodeSelect]);
+
   const enterScope = useCallback((id: string) => {
     setFocus(id);
-    setSelected(id);
+    selectFromTable(id);
     if (requestedZoom === 'overview') setZoomRaw('entity');
-  }, [setFocus, setZoomRaw, requestedZoom]);
+  }, [setFocus, setZoomRaw, requestedZoom, selectFromTable]);
 
   const handleGraphSelect = useCallback((n: LineageNode | null) => {
     setSelected(n?.id ?? null);
@@ -441,7 +477,7 @@ export default function LineageExplorer({
                 nodes={tableNodes}
                 focus={focus}
                 selected={selected}
-                onSelect={setSelected}
+                onSelect={selectFromTable}
                 onScope={enterScope}
               />
               <EdgeTable edges={bounded.edges} />
