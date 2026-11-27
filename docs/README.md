@@ -140,6 +140,7 @@ implemented versus design intent.
 | [Sizing guide](ops/sizing-guide.md) | Capacity planning — storage growth drivers, SQLite vs Postgres, rough sizing tables (estimates), single-writer limits |
 | [Upgrade guide](ops/upgrade-guide.md) | Version-to-version upgrades — expand-contract N/N+1 rule, Alembic dual-track, migrations, downgrade honesty |
 | [Incident runbook](ops/incident-runbook.md) | On-call symptom → diagnosis → action tables — probes, auth lockout, 429s, WORM/disk, index drift, seal failures |
+| [Troubleshooting](ops/troubleshooting.md) | Local install and `nova serve`: symptom → `nova doctor` / check → fix for an unreachable server, a rejected token, Postgres DSN errors, missing extras and a missing NovaSeal key; what a support bundle holds and what to review before sharing it |
 | [Air-gapped install](ops/air-gapped-install.md) | Offline deployment — wheel mirroring, offline ed25519 tokens, no-phone-home guarantee, private-endpoint configuration |
 | [Monitoring & self-observability](ops/monitoring.md) | Prometheus `/metrics`, `/livez` vs `/readyz`, `/v0/version`, opt-in self-tracing (experimental) |
 | [Quotas & rate limits](ops/quotas-and-rate-limits.md) | API token-bucket rate limiting (429 contract) + warn-then-reject storage quotas (experimental, off by default) |
