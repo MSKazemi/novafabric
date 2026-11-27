@@ -52,8 +52,8 @@ nova validate $RUN
 
 # Read each LLM round-trip
 cat $RUN/model-calls.jsonl | jq -c '{
-  call: .gen_ai.request.messages[-1].content,
-  response: .gen_ai.response.choices[0].message
+  call: .["gen_ai.request.messages"][-1].content,
+  response: .["gen_ai.response.choices"][0].message
 }'
 
 # Replay forensically

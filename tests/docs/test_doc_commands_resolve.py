@@ -21,8 +21,10 @@ What it deliberately does not check: positional-argument arity (doc synopses use
 ``--`` separator or after the first positional of a pass-through command such as
 ``nova capture`` — those flags belong to the wrapped program, not to ``nova``.
 
-Scope: ``README.md``, ``llms.txt``, ``examples/**/*.md`` and ``docs/**/*.md`` except
-``docs/releases/**`` — historical release notes describe the CLI as it was on the day they shipped
+Scope: ``README.md``, ``llms.txt``, ``examples/**/*.md``, ``docs/**/*.md`` except
+``docs/releases/**``, and the how-to guides kept beside what they document:
+``.github/actions/**/*.md``, ``integrations/**/*.md`` and ``deploy/**/README*.md``.
+Historical release notes describe the CLI as it was on the day they shipped
 and stay historical, as does ``CHANGELOG.md`` (not scanned).
 
 An invocation that is *intentionally* not runnable (a planned command, or a
@@ -134,6 +136,15 @@ def scanned_files() -> list[Path]:
     # The examples are the one tree a reader copies verbatim, so their READMEs
     # are held to the same bar as the docs.
     files += sorted((REPO_ROOT / "examples").rglob("*.md"))
+    # How-to guides that live next to what they document rather than under
+    # docs/: the GitHub Action's README, the integration packages (the Claude
+    # Code plugin and its skills) and the deployment READMEs. A reader copies
+    # their commands just as verbatim.
+    files += sorted((REPO_ROOT / ".github" / "actions").rglob("*.md"))
+    files += sorted(
+        p for p in (REPO_ROOT / "integrations").rglob("*.md") if "node_modules" not in p.parts
+    )
+    files += sorted((REPO_ROOT / "deploy").rglob("README*.md"))
     return [p for p in files if p.is_file()]
 
 
@@ -329,6 +340,20 @@ def test_the_scan_is_not_vacuous(scan: tuple[list[Finding], int]) -> None:
     """Guard the guard: an extractor that finds nothing passes trivially."""
     _, count = scan
     assert count > 500, f"only {count} `nova` invocations extracted from the docs"
+
+
+@pytest.mark.parametrize(
+    "guide",
+    [
+        ".github/actions/capture/README.md",
+        "integrations/claude-plugin/README.md",
+        "deploy/helm/novafabric/README.md",
+    ],
+)
+def test_how_to_guides_outside_docs_are_scanned(guide: str) -> None:
+    """A guide kept beside its code is held to the same bar as docs/."""
+    scanned = {p.relative_to(REPO_ROOT).as_posix() for p in scanned_files()}
+    assert guide in scanned
 
 
 @pytest.mark.parametrize(

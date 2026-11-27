@@ -33,7 +33,7 @@ behavior change, and produces a cryptographic seal.
 Install NovaFabric (dev install includes `openai`):
 
 ```sh
-pip install novafabric
+pip install novafabric openai
 # or in the repo:
 uv sync
 ```
@@ -93,7 +93,7 @@ Terminal 1 — start the mock server:
 
 ```sh
 python examples/blackbox_demo/mock_llm_server.py
-# Listening on http://127.0.0.1:9099
+# mock_llm: SYNTHETIC fixture listening on http://127.0.0.1:9099
 ```
 
 Terminal 2 — run the steps:
@@ -117,7 +117,7 @@ FIXED_RUN=~/.novafabric/capsules/<run_id-from-output>
 
 nova diff $BAD_RUN $FIXED_RUN
 nova lineage provenance $(basename $BAD_RUN)
-nova verify $BAD_RUN      # needs NovaSeal config + internet
+nova verify $BAD_RUN      # needs a capsule sealed at capture (run `nova seal init` first); verifying is offline
 ```
 
 ---
@@ -132,7 +132,7 @@ nova verify $BAD_RUN      # needs NovaSeal config + internet
 | `capsule_path.sh` | Helper `run_demo.sh` sources: capsule path from `nova capture` output |
 | `fixtures/service.yaml` | Fake service config (no real values) |
 | `fixtures/prompt.txt` | System prompt for the agent |
-| `fixtures/fake_api_key.txt` | Deliberately fake API key — triggers redaction scanner |
+| `fixtures/fake_api_key.txt` | Deliberately fake API key placeholder (not read by `agent.py`, so it never reaches a capsule) |
 | `expected/bad_decision.json` | Expected `decision.json` for bad run |
 | `expected/fixed_decision.json` | Expected `decision.json` for fixed run |
 
@@ -160,7 +160,7 @@ lineage, register the assets the run consumed. `nova register` takes an asset
 capsule's evidence for you to review:
 
 ```sh
-nova capture -- python agent.py --mode bad
+nova capture -- python examples/blackbox_demo/agent.py --mode bad
 nova suggest-register --draft-only --output-dir drafts/ <run_id>
 nova register drafts/<spec>.yaml        # each draft you accept
 nova lineage provenance <run_id>

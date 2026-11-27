@@ -28,7 +28,7 @@ examples/docker-run/run.sh /tmp/caps     # or choose the output directory
 nova validate /tmp/caps/<run_id>
 ```
 
-`run.sh` runs exactly this, from the repository root:
+`run.sh` runs this, plus `--output-dir <dir>` (default `examples/docker-run/capsules/`), from the repository root:
 
 ```bash
 nova capture \

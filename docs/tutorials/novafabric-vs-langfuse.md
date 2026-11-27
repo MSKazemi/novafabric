@@ -92,9 +92,11 @@ nova replay --mode mocked capsules/01KR9Q2AD…
 
 The command runs again, and its OpenAI / Anthropic chat calls are answered from the
 capsule instead of the live API, so no model call is made. Since v0.105.0 (ADR-0300,
-ADR-0304) that covers sync, async, streamed and Responses API calls, recorded MCP tool
-results are served too, **every other tool still runs live**, and the replay reports the
-network connections it made. In v0.104.0 only synchronous, non-streaming calls were
+ADR-0304) that covers sync, async, streamed and Responses API calls, and recorded MCP tool
+results are served too; so are `record.tool` functions (since v0.105.0) and tools passed
+through NovaFabric's framework tool seams (v0.106.0–v0.109.0), both experimental. **Every other tool still
+runs live**: a connection past loopback fails a strict replay (`unserved_network`), and
+`--permissive` only reports it. In v0.104.0 only synchronous, non-streaming calls were
 served and every tool ran live. `--mode forensic` inspects the capsule without
 re-running anything. If the replayed run diverges, something drifted: code, a
 tool's behaviour, or the environment.
@@ -114,6 +116,8 @@ Output:
 ```
 Diff: 01KR9Q2A… → 01KRB4F7…
   changed=3  added=0  removed=0
+  First divergence: step 0 model_call changed (…) [A #0 …; B #0 …]
+    (step counts model and tool calls, by started_at)
 
 Model calls:
   ~ call at span 1a9c989341748be5
@@ -162,7 +166,10 @@ exactly which runs to re-validate:
 
 ```bash
 nova lineage blast-radius local:slurm-logs/job-42819-oom@v1   # asset refs carry their registry prefix
-# → run:01KR9Q2AD…  run:01KRB4F7…  run:01KRC3X9…
+# → Blast radius of local:slurm-logs/job-42819-oom@v1
+#   ├── run:01KR9Q2AD…
+#   ├── run:01KRB4F7…
+#   └── run:01KRC3X9…
 ```
 
 ---
@@ -221,7 +228,7 @@ genuinely Langfuse-only.
 | Production alerting | ✓ | — |
 | Prompt management | ✓ (hosted) | ✓ (local, experimental — `nova prompt`/`nova label`) |
 | Portable capsule (no server to read) | — | ✓ |
-| Re-run against recorded model responses | — | ✓ (tools run live) |
+| Re-run against recorded model responses | — | ✓ (MCP and wrapped tools served; other tools run live) |
 | Structural diff between runs | — | ✓ |
 | Data lineage / blast radius | — | ✓ |
 | Signed evidence bundles | — | ✓ |

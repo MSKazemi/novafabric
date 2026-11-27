@@ -22,7 +22,8 @@ agents inside a single Python process. One `nova capture` wraps the whole thing:
 nova capture python orchestrator.py
 ```
 
-Because NovaFabric hooks into `requests` and `aiohttp` at the process level, every
+Because NovaFabric hooks the HTTP clients (`requests`, `httpx`, `httpx2`, `aiohttp`,
+`urllib3`) and the OpenAI and Anthropic SDKs at the process level, every
 LLM call from every agent — orchestrator, analyst, writer, reviewer — goes through
 the same hook. All of them land in one capsule, in chronological order:
 
@@ -101,11 +102,12 @@ was created because capsule A triggered it.
 
 The parent/child primitive itself **is implemented** (ADR-0039): capsules carry
 `parent_run_id` and `capsule_role`, and the env-var contract
-(`capture/env_contract.py`) reads `NOVAFABRIC_PARENT_RUN_ID`. It is wired today for
+(`capsule/env_contract.py`) reads `NOVAFABRIC_PARENT_RUN_ID`. It is wired today for
 **distributed-job WORKER capsules** (the DRIVER/WORKER model of `cluster-scale.md`).
 What is **not yet wired** is auto-population from the plain `nova capture` path: the
-capture orchestrator does not read `NOVAFABRIC_PARENT_RUN_ID`, so the subprocess
-pattern below sets the linkage intent but the emitted capsule does not yet record it.
+capture orchestrator passes `NOVAFABRIC_PARENT_RUN_ID` only to its opt-in spool event,
+not into `capsule.yaml`, so the subprocess pattern below sets the linkage intent but
+the emitted capsule does not yet record it.
 
 The intended shape uses an environment variable:
 

@@ -17,7 +17,7 @@
   where NovaFabric stops (what is shipped today vs. what is still planned).
 
 Everything below runs locally, offline, with no accounts and no telemetry. NovaFabric
-is local-first, open-source (Apache-2.0), and has shipped v0.1 through v0.106. Where a
+is local-first, open-source (Apache-2.0), and has shipped v0.1 through v0.109. Where a
 capability is design intent rather than code, this guide labels it **PLANNED** — it
 never claims a roadmap item as done.
 
@@ -59,9 +59,9 @@ schema-valid, secret-scanned record of what capture observed, written on both su
 |---|---|---|
 | **Asset Registry** | Local SQLite registry of versioned assets (`name@version`), pinned to a git SHA, with a six-state lifecycle | v0.1 |
 | **Run Capsule** | The unit of capture: a ULID-named directory holding every observable fact of one execution | v0.2 |
-| **Replay** | Re-execute or inspect a capsule under control, in four honest modes: `forensic`, `mocked`, `semantic`, `exact` | v0.3 |
+| **Replay** | Re-execute or inspect a capsule under control, in four honest modes (`forensic`, `mocked`, `semantic`, `exact`) plus the experimental `intervention` mode | v0.3 |
 | **Lineage** | A directed provenance graph (SQLite) derived from capsules: `provenance`, `blast-radius`, `replay-chain`, `time-travel` | v0.4 |
-| **Evidence Bundle** | A signed, self-contained ZIP an auditor can verify offline with only `sha256sum` + an ed25519 verifier | v0.4 |
+| **Evidence Bundle** | A signed, self-contained ZIP an auditor can verify offline with only `sha256sum` + an ed25519 verifier | v0.5 |
 
 Cryptographic sealing is part of the Evidence Bundle / trust layer, not a sixth
 primitive, and sealing is opt-in. Two journeys branch from the Run Capsule:
@@ -142,6 +142,8 @@ changed, call by call:
 ```
 Diff: 01KR9Q2A… → 01KRB4F7…
   changed=3  added=0  removed=0
+  First divergence: step 0 model_call changed (…) [A #0 …; B #0 …]
+    (step counts model and tool calls, by started_at)
 
 Model calls:
   ~ call at span 1a9c989341748be5
@@ -176,13 +178,14 @@ find out if something drifted.
 **Without NovaFabric:** You'd have to hope the same log file is still there, hope the
 model hasn't changed, and re-run manually.
 
-**With NovaFabric:** Replay has four honest, falsifiable modes — pick the one that
+**With NovaFabric:** Replay has four honest, falsifiable modes (plus the experimental
+`intervention` mode) — pick the one that
 matches what you're trying to establish:
 
 | Mode | What it does | Use it for |
 |---|---|---|
 | `forensic` | Read-only inspection, no subprocess, no network | Audit / post-incident |
-| `mocked` | Re-spawns the command (Python workloads). Recorded replies are served for OpenAI `chat.completions` / Responses API and Anthropic `messages` calls — sync or async, streamed or not (ADR-0304) — and recorded results for MCP `call_tool`. **Other tools run live** (HTTP, shell, files, framework-native); their connections are reported. Fails closed on divergence — an extra, unmatched or unsupported call fails the replay instead of reaching the network (ADR-0300) | CI / regression |
+| `mocked` | Re-spawns the command (Python workloads). Recorded replies are served for OpenAI `chat.completions` / Responses API and Anthropic `messages` calls — sync or async, streamed or not (ADR-0304) — and recorded results for MCP `call_tool`, for functions declared with `record.tool`, and for tools passed through NovaFabric's framework tool seams (experimental). **Other tools run live** (HTTP, shell, files); a connection past loopback fails a strict replay (`unserved_network`) and is only reported under `--permissive`. Fails closed on divergence — an extra, unmatched or unsupported call fails the replay instead of reaching the network (ADR-0300) | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
 
@@ -202,11 +205,13 @@ intercept still run live, so a change in their behaviour shows up here too.
 
 > **Honesty note:** NovaFabric does **not** claim byte-exact replay of *remote* LLM
 > calls. `exact` mode is for deterministic local/on-prem execution; for drifting remote
-> models, `semantic` mode judges meaning instead of tokens.
+> models, `semantic` mode scores how textually similar the recorded responses are
+> without calling any model; it does not judge meaning.
 
-A replay writes a replay result (`replay_result.yaml`), not a capsule (only the
-experimental `intervention` mode also writes a counterfactual capsule) — to see what
-moved between two runs, capture both and `nova diff` the two capsules.
+A replay writes a replay result (`replay_result.yaml`); a `mocked` replay and the
+experimental `intervention` mode also write a replay capsule into that directory, so
+`nova diff <capsule> <replay-dir>` compares a run with its replay. To see what moved
+between two executions, capture both and `nova diff` the two capsules.
 
 ---
 
@@ -242,7 +247,10 @@ every run downstream of the bad file:
 
 ```bash
 nova lineage blast-radius local:slurm-logs/job-42819-oom@v1   # asset refs carry their registry prefix
-# → run:01KR9Q2AD…  run:01KRB4F7…  run:01KRC3X9…
+# → Blast radius of local:slurm-logs/job-42819-oom@v1
+#   ├── run:01KR9Q2AD…
+#   ├── run:01KRB4F7…
+#   └── run:01KRC3X9…
 ```
 
 You now re-run exactly those capsules with the corrected log — no guesswork, no
@@ -348,7 +356,7 @@ The same five primitives work from a laptop to a cluster:
   lineage all work offline and air-gapped.
 - **Multi-target runners (shipped, v0.6):** Local, Docker, non-privileged Kubernetes
   Job, and Slurm (`sbatch` + `sacct`).
-- **Server mode (shipped, experimental, v0.7):** a FastAPI service backed by Postgres,
+- **Server mode (shipped, experimental, v0.7):** a FastAPI service (`nova server`; SQLite by default, Postgres with `--backend postgres`),
   with OIDC, RBAC (`reader < writer < admin`, plus an orthogonal `auditor`), and
   offline CI tokens. Local mode never *requires* server mode.
 - **`nova serve --experimental` (v0.7):** a local-only dashboard that binds
@@ -392,7 +400,7 @@ The system earns its value the first time you hit one of these:
 |---|---|---|
 | "Why did this agent output change?" | `nova diff` | Structured, aligned comparison in seconds |
 | "Which runs must I re-validate after a data update?" | `nova lineage blast-radius` | Exact downstream set, not "everything is suspect" |
-| "Can I reproduce this result from months ago?" | `nova replay --mode forensic` | Read-only re-drive against the stored inputs |
+| "Can I reproduce this result from months ago?" | `nova replay --mode forensic` | Read-only inspection of the stored inputs (re-run them with `--mode mocked`) |
 | "Prove to the auditor what happened." | `nova export-evidence` | Signed ZIP, verifiable offline with `sha256sum` + a verifier |
 
 Without NovaFabric, each of those questions costs hours of forensic work — if it's

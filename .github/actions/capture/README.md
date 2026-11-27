@@ -67,7 +67,7 @@ folder that verifies with no server and no network.
 | `run` | — | **Required.** The command to capture. |
 | `environment` | `test` | Recorded on the capsule. See the note below. |
 | `timeout` | — | Wall-clock deadline in seconds. |
-| `validate` | `true` | Run `nova validate` and fail the step if the capsule is invalid. |
+| `validate` | `true` | Run `nova validate`. An invalid capsule is still uploaded; the action then fails (exit 1, or the command's own exit code if it failed too). |
 | `upload-artifact` | `true` | Upload the capsule as a workflow artifact. |
 | `artifact-name` | `novafabric-capsule` | Artifact name. |
 | `retention-days` | `90` | Artifact retention. |
@@ -89,6 +89,7 @@ folder that verifies with no server and no network.
 | `capsule-path` | `$NOVAFABRIC_CAPSULE_PATH` | Path to the capsule directory |
 | `status` | `$NOVAFABRIC_STATUS` | `success` or `failure` — the command's own outcome |
 | `exit-code` | — | The captured command's exit code |
+| `valid` | `$NOVAFABRIC_VALID` | `true` or `false` — whether `nova validate` accepted the capsule; empty when `validate: false` |
 
 > **Use the environment variables if the capture may fail.** GitHub leaves a
 > composite action's declared `outputs` **empty to the caller when the action
@@ -109,8 +110,8 @@ nothing**, because a composite action aborts its remaining steps once one fails
 (`always()` does not rescue them). So the capsule from a crashing run, the one
 this action exists to preserve, was the one case that lost it.
 
-The capture step now always exits 0; validation and upload run; and a final step
-re-raises the captured command's exit code. `.github/workflows/capture-action.yml`
+The capture and validate steps now always exit 0; upload runs; and a final step
+re-raises the captured command's exit code (or exits 1 when the capsule was invalid). `.github/workflows/capture-action.yml`
 proves it end to end by downloading the artifact from the failed run and asserting
 it contains `status: failure` and `exit_code: 3`.
 

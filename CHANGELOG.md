@@ -190,6 +190,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   longer say the tier signs forwarded events or exports to Kafka, or that metrics are served on
   `:8888`. Help text only, no behaviour change. A docs test fails when a flag or environment variable
   in a collector `main.go` is missing from the page.
+- **Tutorials, guides and example READMEs match the code again.** A truth pass over `docs/getting-started.md`,
+  `docs/tutorials/`, `docs/integrations/`, `examples/*/README.md` and the capture Action's README fixed 86
+  statements in 24 files: sample output that the CLI does not print (`nova capture`, `nova diff`, `nova lineage
+  blast-radius`, `nova export-evidence`, `nova query`/`view`, `nova session show`, prompt and safety-case lines),
+  stale paths (`.novafabric/runs` where `nova capture` writes `~/.novafabric/capsules`), "a replay is not a capsule"
+  (a `mocked` replay writes one, ADR-0321), the Hugging Face guide calling v0.109.0 features unreleased, `nova serve`
+  named where `nova server` is meant, wrong `jq` paths for flat `gen_ai.*` keys, and misdated release markers. The
+  doc-command guard now also scans `.github/actions/`, `integrations/` and `deploy/**/README*.md`.
 
 ### Fixed
 
