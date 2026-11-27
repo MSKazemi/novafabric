@@ -341,9 +341,9 @@ deployable entrypoint anywhere in the CLI.
 # Install the scale extra (nats-py) and the KuzuDB extra (kuzu).
 pip install 'novafabric[scale,lineage-kuzu]'
 
-# The Go `novafabric-hpc-hub` binary (collector side) reads
-# NOVAFABRIC_CLUSTER_ID (required — it exits 2 without it) and
-# NOVAFABRIC_HUB_ADDRESS. The Python consumer below reads NOVA_NATS_URL.
+# The Go `novafabric-hpc-hub` binary (collector side; future design — a stub
+# that exits 1 as not implemented) reads NOVAFABRIC_CLUSTER_ID (required — it
+# exits 2 without it) and NOVAFABRIC_HUB_ADDRESS. The Python consumer below reads NOVA_NATS_URL.
 export NOVAFABRIC_CLUSTER_ID="my-cluster-01"
 
 # Run the live lineage consumer (works today, given a reachable NATS server —

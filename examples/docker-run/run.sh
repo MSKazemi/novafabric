@@ -6,7 +6,24 @@
 # no Docker, and that must not read as a failure of the example.
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# This script's own directory, resolved with shell built-ins only: `dirname` is
+# a coreutils binary, and the skip below must work on a PATH that has none. A
+# symlinked script is followed to its target (with `readlink`, when present).
+src="${BASH_SOURCE[0]}"
+hops=0
+while [ -L "${src}" ] && [ "${hops}" -lt 40 ] && command -v readlink >/dev/null 2>&1; do
+  link="$(readlink "${src}")"
+  case "${link}" in
+    /*) src="${link}" ;;
+    *) case "${src}" in */*) src="${src%/*}/${link}" ;; *) src="${link}" ;; esac ;;
+  esac
+  hops=$((hops + 1))
+done
+case "${src}" in
+  */*) here="${src%/*}" ;;
+  *) here="." ;;
+esac
+here="$(CDPATH='' cd -P -- "${here:-/}" && pwd -P)"
 out_dir="${1:-${here}/capsules}"
 image="python:3.12-slim"   # stock, public, no build step
 

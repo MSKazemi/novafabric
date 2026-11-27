@@ -237,7 +237,7 @@ because each one is load-bearing for a promise the project makes to users.
 
 Every mode reads the same capsule format. Moving up a tier is a deployment
 change, not a migration. Component-by-component maturity — including what is
-not implemented yet, such as hub signing (planned) and serving capsules from
+not implemented yet, such as hub signing (future design) and serving capsules from
 object storage in server mode — is in [Deployment topologies](architecture/deployment-topologies.md).
 
 ---

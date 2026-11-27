@@ -46,7 +46,10 @@ bind-mounted capsule stays owned by you on the host. The runner never adds
 `--privileged`, host namespaces or the Docker socket.
 
 **Without Docker,** `run.sh` prints a `skip:` line and exits 0 — both when there is
-no `docker` binary and when `docker info` cannot reach a daemon. Calling
+no `docker` binary and when `docker info` cannot reach a daemon. The skip needs
+nothing else on `PATH`: `run.sh` finds its own directory with shell built-ins, not
+`dirname`, so it works from any directory and through a symlink (a symlink is
+followed to the real example directory when `readlink` is available). Calling
 `nova capture --runner docker` directly with no `docker` binary does *not* skip: it
 prints `Workload never started: [Errno 2] No such file or directory: 'docker'`,
 exits 127, and still writes a `status: failure` capsule recording that (measured).

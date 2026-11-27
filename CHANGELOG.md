@@ -94,6 +94,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **CONTRIBUTING.md no longer recommends `make test-changed`** (#210), which is disabled and always exits 1. It now
+  points at `make test-direct`, `make test-impacted` and `make test-gate`, and says which push-gate tier
+  (`none`, `docs`, `scoped`, `full`) a change runs. The `pytest-testmon` comment in `pyproject.toml` no longer
+  calls `test-changed` the inner loop.
+- **`novafabric-hpc-hub` is labelled future design everywhere**, matching `ROADMAP.md` (a stub that exits 1, no
+  target version): the developer guide, the CLI reference, `deploy/hpc/README.md`, the architecture overview and
+  topology diagram, the cluster-scale migration guide, and the binary's own comment and message
+  (`novafabric-hpc-hub is not implemented (future design): …`) called it planned.
 
 ### Fixed
 
@@ -183,6 +191,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   - A capsule with no `.seal` still exports, and a valid seal keeps the current output. A valid seal means the bytes it names are unchanged since sealing; it does not say who signed them.
   - `bagit` still refuses a capsule holding a symbolic link first (exit 1), so a symlinked `.seal` is refused by that older rule. To preserve a capsule you know is damaged, copy it with an ordinary archive tool; the export is not a forensic copy.
   - **HTTP:** `POST /api/compliance/examiner/{pccp,bagit,iso42001}` and `POST /api/compliance/export/ropa` answer **409** with the refusal message for such a capsule; they answered 500, which reads as a server fault. Any other export failure is still 500. A client that treated 500 as the refusal signal should test for 409.
+- **The example entry scripts skip cleanly on a PATH without coreutils** (#209). `examples/docker-run/run.sh`, `examples/hpc-slurm-job/submit.sh` and `examples/notebook-capture/run.sh` found their own directory with `dirname`, a coreutils binary, before checking for Docker, Slurm or Jupyter, so with no coreutils on `PATH` the skip died with `dirname: command not found`. They now use shell built-ins, work when invoked by bare name, and follow a symlinked script to the real example directory (with `readlink`, when present). Tests: `tests/test_example_docker_run.py`, `tests/test_example_scripts_resolve_without_coreutils.py`.
 
 ## [0.109.0] - 2026-11-22
 
