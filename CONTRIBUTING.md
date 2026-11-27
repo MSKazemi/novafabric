@@ -49,9 +49,21 @@ VS Code and the setup above runs for you.
 
 ```bash
 uv run pytest tests/<the-area-you-touched>   # fast, targeted
-make test-changed                            # only what your diff can affect
-make test-fast                               # the whole fast tier (~4 min)
+make test-direct                             # the tests directly covering your diff (~17 s)
+make test-impacted                           # wider: every test whose imports reach your change
+make test-gate                               # the push gate: the tier your change needs, then a stamp
 ```
+
+`make test-gate` (`scripts/test-gate.sh`) compares your tree with its merge base
+on `origin/main` and runs the smallest tier that change needs: **none** (nothing
+differs), **docs** (only Markdown, `docs/` or `ui/dashboard/` changed — `tests/docs`
+plus every test that names a changed path), **scoped** (Python under
+`src/novafabric/` or `tests/` — that plus the import closure of the changed
+code), or **full** (`make test-fast`, for anything it cannot classify, such as
+`pyproject.toml`, `Makefile`, `scripts/` or `.github/`). It stamps a green result
+so the push that follows does not re-run it. `make test-fast` runs the whole fast
+tier directly. CI runs the whole suite on every pull request either way. Details
+and timings: [developer guide, "Running tests"](docs/developer-guide.md).
 
 Write the test first if you can. If you are fixing a bug, a test that fails
 before your fix and passes after it is the most persuasive thing you can put in a
@@ -60,7 +72,7 @@ PR.
 ### 4. Run the gates and open the PR — 3 minutes
 
 ```bash
-make test-fast     # tests
+make test-gate     # tests: the tier your change needs (make test-fast for all of it)
 make lint          # ruff
 make typecheck     # mypy
 make check-links   # docs links resolve
@@ -108,6 +120,8 @@ The suite is ~20K tests — use the tiered targets instead of a serial full run:
 ```bash
 make test-direct   # inner loop: the tests directly covering your change (~17 s)
 make test-watch    # the same, on every save
+make test-impacted # every test whose static import closure reaches your change
+make test-gate     # the push gate: none/docs/scoped/full tier for your diff, stamped
 make test-fast     # dev loop: parallel (-n auto), no coverage, no Docker (~4 min)
 make test-container # the Docker tier on its own
 make test-par      # release gate — the whole suite as CI's `unit` shards run it (~5 min)

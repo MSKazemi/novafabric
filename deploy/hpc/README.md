@@ -7,8 +7,10 @@ and an Ansible playbook for deploying the NovaFabric collector tier on HPC clust
 
 **planned** — The HPC collector (Slurm + NATS profile) is Phase 2 of the NovaFabric
 cluster-scale roadmap. The scripts and configuration templates in this directory are
-reference artifacts for implementers. The `novafabric-hpc-hub` binary is not yet
-shipped; see `collector/` for the Go module build target.
+reference artifacts for implementers. The `novafabric-hpc-hub` binary is
+**future design**: it builds from `collector/` but is a stub that exits `1` as not
+implemented (it does not subscribe, sign or publish), so when the Prolog finds it on `PATH`
+the process exits at once and no leaf NATS instance runs.
 
 ---
 
@@ -18,7 +20,7 @@ shipped; see `collector/` for the Go module build target.
 |---|---|---|
 | Slurm | 22.05 | Required for `PrologFlags=Alloc` |
 | NATS Server | 2.10 | JetStream enabled; leaf node support |
-| `novafabric-hpc-hub` | 0.1.0 | Built from `collector/cmd/novafabric-hpc-hub` |
+| `novafabric-hpc-hub` | 0.1.0 | Built from `collector/cmd/novafabric-hpc-hub`; **future design** — a stub that exits `1` |
 | `nats` CLI | 0.1.0 | Used by epilog for stream flush |
 
 ---

@@ -9529,7 +9529,7 @@ signer and verifier, the signature will fail.
 
 ### novafabric-hpc-hub
 
-**planned — not implemented.** The binary exists so the build target and the Prolog hook are in
+**future design — not implemented** (no target version on the roadmap). The binary exists so the build target and the Prolog hook are in
 place, but it does nothing yet: it parses the flags below and **exits `1`** with
 `novafabric-hpc-hub is not implemented`. It does not subscribe to NATS, sign, or publish to Kafka,
 and it does not read or create a signing key or contact a KMS. (Up to v0.107.0 it took a key,
@@ -9575,7 +9575,7 @@ PrologFlags=Alloc
 ```
 
 **Per-job lifecycle:**
-1. **Prolog** — creates `/tmp/novafabric/$SLURM_JOB_ID/` and, if a `novafabric-hpc-hub` binary is on `PATH`, starts it. **planned:** that binary is not implemented yet (it exits `1`), so no leaf NATS instance is started by it today. Exits 0.
+1. **Prolog** — creates `/tmp/novafabric/$SLURM_JOB_ID/` and, if a `novafabric-hpc-hub` binary is on `PATH`, starts it. **future design:** that binary is a stub that exits `1` as not implemented, so no leaf NATS instance is started by it today. Exits 0.
 2. **Job runs** — agents write events to the spool via SDK hooks; the leaf node buffers and forwards to the cluster hub.
 3. **Epilog** — calls `nats stream flush --timeout=${NOVAFABRIC_EPILOG_FLUSH_TIMEOUT:-50}s` to drain the spool, stops the leaf process. **Always exits 0** to prevent Slurm from draining the node.
 

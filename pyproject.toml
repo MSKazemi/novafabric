@@ -416,12 +416,12 @@ dev = [
     # pytest-xdist (MIT) — Tier A under ADR-0024.  Parallel test execution for
     # the 5.5K-test suite (suite-health backlog item 3); dev runs use `-n auto`.
     "pytest-xdist>=3.8.0",
-    # pytest-testmon (MIT) — Tier A under ADR-0024.  Change-driven selection for
-    # the inner loop: it tracks which lines each test covers and reruns only the
-    # tests a diff can actually affect.  On an 11K-test suite that is the
-    # difference between a 90 s gate and a sub-second one; `make test-changed`.
-    # Advisory only — no gate depends on it, and `make test-fast`/`test-par`
-    # remain full runs.
+    # pytest-testmon (MIT) — Tier A under ADR-0024.  Change-driven selection by
+    # line coverage.  ⚠ Not used by any target: `make test-changed` is DISABLED
+    # (it always exits 1) — testmon cannot run under pytest-xdist, so its
+    # baseline is a serial run, measured at over 10 minutes.  The inner loop is
+    # `make test-direct` / `make test-impacted`, the push gate `make test-gate`.
+    # No gate depends on it.
     "pytest-testmon>=2.2.0",
     # pytest-watcher (MIT) — Tier A under ADR-0024.  Reruns the selected tests on
     # save (`make test-watch`).  Uses the watchdog already in this group.
