@@ -26,7 +26,9 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import {
+  EXTRAS_MAX_AGE_MS,
   FEATURE_EXTRAS,
+  FEATURE_NEEDS,
   adapterFrameworkLabel,
   extraState,
   installCommand,
@@ -99,6 +101,17 @@ describe('extraState', () => {
     expect(extraState([], 'sigstore')).toEqual({ state: 'unknown' });
   });
 
+  it('`needs` gates only on the packages a feature uses', () => {
+    const onlyCachetools = [{ name: 'scale-kg', installed: false, missing: ['cachetools'] }];
+    expect(extraState(onlyCachetools, 'scale-kg', FEATURE_NEEDS.knowledgeGraph)).toEqual({ state: 'available' });
+    const noKuzu = [{ name: 'scale-kg', installed: false, missing: ['cachetools', 'kuzu'], install: "pip install 'novafabric[scale-kg]'" }];
+    expect(extraState(noKuzu, 'scale-kg', FEATURE_NEEDS.knowledgeGraph)).toEqual({
+      state: 'unavailable', missing: ['kuzu'], install: "pip install 'novafabric[scale-kg]'",
+    });
+    // No missing list: which package is absent cannot be told — unknown, not missing.
+    expect(extraState([{ name: 'scale-kg', installed: false }], 'scale-kg', ['kuzu'])).toEqual({ state: 'unknown' });
+  });
+
   it('falls back to the quoted install command when the row has none', () => {
     const s = extraState([{ name: 'sigstore', installed: false }], 'sigstore');
     expect(s).toEqual({ state: 'unavailable', missing: [], install: installCommand('sigstore') });
@@ -113,7 +126,7 @@ describe('FeatureUnavailable', () => {
         feature="Sigstore keyless signing"
         reason="the sigstore extra is not installed on this server"
         enable="pip install 'novafabric[sigstore]'"
-        cli="nova seal sign <capsule_dir>/manifest.json --backend sigstore"
+        cli="nova seal sign <capsule_dir>/capsule.yaml --backend sigstore"
       />,
     );
     const note = screen.getByRole('note', { name: /Sigstore keyless signing: not available here/ });
@@ -155,7 +168,8 @@ describe('Seal tab: Sigstore panels', () => {
   it('the CLI equivalent names the positional argument the command needs', () => {
     doctor.mockResolvedValue({ ok: true, checks: [] });
     render(<SigstoreSignPanel runIds={[]} />);
-    expect(screen.getByText(/nova seal sign <capsule_dir>\/manifest\.json --backend sigstore/)).toBeInTheDocument();
+    // `nova capture` writes capsule.yaml; there is no manifest.json to sign.
+    expect(screen.getByText(/nova seal sign <capsule_dir>\/capsule\.yaml --backend sigstore/)).toBeInTheDocument();
   });
 });
 
@@ -163,10 +177,46 @@ describe('KG tab', () => {
   it('replaces the panels with one unavailable state when scale-kg is missing', async () => {
     doctor.mockResolvedValue(missingSigstore);
     render(<ToastProvider><KGTab /></ToastProvider>);
-    const note = await screen.findByRole('note', { name: /Capsule Knowledge Graph: not available here/ });
+    const note = await screen.findByRole('note', { name: /Capsule Knowledge Graph store: not available here/ });
     expect(note).toHaveTextContent("pip install 'novafabric[scale-kg]'");
     expect(note).toHaveTextContent('nova kg status');
-    expect(screen.queryByText('KG Alias Management')).toBeNull();
+    // Store panels are replaced; the SQLite-backed panels stay visible.
+    expect(screen.queryByText('Multi-Layer Topology')).toBeNull();
+    expect(screen.getByText('KG Alias Management')).toBeInTheDocument();
+  });
+
+  it('a missing cachetools alone does not hide the store panels', async () => {
+    doctor.mockResolvedValue({
+      ok: true, checks: [],
+      extras: [{ name: 'scale-kg', installed: false, requires: ['cachetools', 'kuzu'], missing: ['cachetools'], install: "pip install 'novafabric[scale-kg]'" }],
+    });
+    render(<ToastProvider><KGTab /></ToastProvider>);
+    await waitFor(() => expect(doctor).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId('feature-unavailable')).toBeNull();
+    expect(screen.getByText('Multi-Layer Topology')).toBeInTheDocument();
+  });
+});
+
+describe('extras report refresh', () => {
+  it('re-reads on window focus once the copy is stale, so an installed extra clears the state', async () => {
+    const now = vi.spyOn(Date, 'now');
+    let t = 1_000_000;
+    now.mockImplementation(() => t);
+    doctor.mockResolvedValueOnce(missingSigstore).mockResolvedValue({
+      ok: true, checks: [], extras: [{ name: 'sigstore', installed: true, requires: ['sigstore'], missing: [] }],
+    });
+    render(<SigstoreSignPanel runIds={[]} />);
+    expect(await screen.findByTestId('feature-unavailable')).toBeInTheDocument();
+
+    window.dispatchEvent(new Event('focus'));          // fresh copy: no re-read
+    expect(doctor).toHaveBeenCalledTimes(1);
+
+    t += EXTRAS_MAX_AGE_MS + 1;
+    window.dispatchEvent(new Event('focus'));          // stale: re-read
+    await waitFor(() => expect(screen.queryByTestId('feature-unavailable')).toBeNull());
+    expect(doctor).toHaveBeenCalledTimes(2);
+    now.mockRestore();
   });
 });
 

@@ -452,16 +452,16 @@ never the only signal) and is exposed to screen readers as a note named
 
 **Where the dashboard learns this.** `GET /api/doctor` (token required) returns an `extras` list — the
 same rows `nova doctor --check-extras` prints: `name`, `installed`, `requires`, `missing` and `install`.
-The dashboard reads it once per page load. Extras that the server does not report — an older
+The dashboard reads it once and reuses it; when the window regains focus and the copy is older than 30 seconds it reads it again, so a `nova serve` restarted with the extra installed is picked up without reloading the page. Extras that the server does not report — an older
 server without the field, a source checkout with no package metadata, or a failed call — count as
 **unknown**: the feature behaves exactly as before and the server's own answer stays authoritative.
 Unknown is never shown as "missing".
 
 | Where | Needs | Unavailable state | CLI equivalent |
 |---|---|---|---|
-| Seal tab → Sigstore keyless sign | `sigstore` extra | Banner; **Sign with Sigstore** disabled | `nova seal sign <capsule_dir>/manifest.json --backend sigstore --capsule-id <id>` |
+| Seal tab → Sigstore keyless sign | `sigstore` extra | Banner; **Sign with Sigstore** disabled | `nova seal sign <capsule_dir>/capsule.yaml --backend sigstore --capsule-id <id>` (the file `nova capture` writes; the server route signs the first of `manifest.json`, `capsule.json`, `capsule.yaml` it finds, and `nova verify --backend sigstore` checks that file) |
 | Seal tab → Sigstore bundle verify | `sigstore` extra | Banner; **Verify Sigstore Bundle** disabled | `nova verify --backend sigstore --capsule-id <id> <capsule_dir>` |
-| KG tab (all panels) | `scale-kg` extra (KuzuDB) | One banner replaces the panels, which would each fail | `nova kg status` |
+| KG tab: store panels (status, topology, agent query, init, ingest, query, audit) | `kuzu` from the `scale-kg` extra | One banner replaces those panels, which would each fail. A missing `cachetools` alone does not trigger it. **KG Alias Management** and the **entity review queue** are SQLite and stay visible | `nova kg status` |
 | Capture tab → Framework Adapters | the framework each adapter wraps | Each row says **framework installed** / **framework not installed** / **install state not reported**, plus the server-supplied install command | — |
 
 Every adapter module ships with NovaFabric; the framework it wraps is yours to install. `GET /api/adapters`

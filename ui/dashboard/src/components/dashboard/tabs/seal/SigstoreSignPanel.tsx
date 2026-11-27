@@ -46,10 +46,13 @@ export default function SigstoreSignPanel({ runIds }: { runIds: string[] }) {
     }
   }, [capsuleId]);
 
-  // `nova seal sign` takes the capsule's manifest.json as its positional argument.
+  // `nova seal sign` signs the bytes of the file it is given. The server route
+  // signs the first of manifest.json / capsule.json / capsule.yaml it finds
+  // (sigstore_signing_payload), and `nova capture` writes capsule.yaml, so that
+  // is the file whose signature `nova verify --backend sigstore` will check.
   const cliCmd = capsuleId.trim()
-    ? `nova seal sign <capsule_dir>/manifest.json --backend sigstore --capsule-id ${capsuleId.trim()}`
-    : 'nova seal sign <capsule_dir>/manifest.json --backend sigstore --capsule-id <capsule_id>';
+    ? `nova seal sign <capsule_dir>/capsule.yaml --backend sigstore --capsule-id ${capsuleId.trim()}`
+    : 'nova seal sign <capsule_dir>/capsule.yaml --backend sigstore --capsule-id <capsule_id>';
 
   const unavailable = (
     <FeatureUnavailable

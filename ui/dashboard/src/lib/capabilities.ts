@@ -44,6 +44,15 @@ export const FEATURE_EXTRAS = {
 } as const;
 
 /**
+ * The packages of each extra a feature really uses (see `extraState`). The KG
+ * store panels need KuzuDB only; the alias table and the entity review queue
+ * are SQLite and need nothing from `scale-kg`, so they are never gated.
+ */
+export const FEATURE_NEEDS = {
+  knowledgeGraph: ['kuzu'],
+} as const;
+
+/**
  * Words, not colour: what the server says about the framework an adapter
  * wraps. `undefined` is an older server that does not report it.
  */
@@ -58,27 +67,55 @@ export function installCommand(extra: string): string {
   return `pip install 'novafabric[${extra}]'`;
 }
 
-/** Pure mapping — the state of `extra` given the server's report. */
-export function extraState(rows: ExtraRow[] | null | undefined, extra: string): ExtraState {
+/**
+ * Pure mapping — the state of `extra` given the server's report.
+ *
+ * `needs` narrows the check to the packages a feature really uses. An extra
+ * can bundle more than one feature needs (`scale-kg` = `kuzu` + `cachetools`;
+ * the KG store needs only `kuzu`), so a feature is unavailable only when one of
+ * ITS packages is missing — not whenever the extra as a whole is incomplete.
+ */
+export function extraState(
+  rows: ExtraRow[] | null | undefined,
+  extra: string,
+  needs?: readonly string[],
+): ExtraState {
   if (!rows || rows.length === 0) return { state: 'unknown' };
   const row = rows.find((r) => r.name === extra);
   if (!row || typeof row.installed !== 'boolean') return { state: 'unknown' };
   if (row.installed) return { state: 'available' };
-  return {
-    state: 'unavailable',
-    missing: Array.isArray(row.missing) ? row.missing : [],
-    install: row.install || installCommand(extra),
-  };
+  const missing = Array.isArray(row.missing) ? row.missing : [];
+  if (needs && needs.length > 0) {
+    const norm = (n: string) => n.toLowerCase().replace(/[-_.]+/g, '-');
+    const wanted = new Set(needs.map(norm));
+    // Without a `missing` list we cannot tell which package is absent: unknown.
+    if (missing.length === 0) return { state: 'unknown' };
+    const blocking = missing.filter((m) => wanted.has(norm(m)));
+    if (blocking.length === 0) return { state: 'available' };
+    return { state: 'unavailable', missing: blocking, install: row.install || installCommand(extra) };
+  }
+  return { state: 'unavailable', missing, install: row.install || installCommand(extra) };
 }
 
+/**
+ * How long a fetched report is reused. Installing an extra means restarting
+ * `nova serve`; re-reading on window focus after this long picks that up
+ * without a manual page reload.
+ */
+export const EXTRAS_MAX_AGE_MS = 30_000;
+
 let extrasCache: Promise<ExtraRow[] | null> | null = null;
+let extrasFetchedAt = 0;
 
 /**
- * The server's extras report, fetched once per page load. A failure resolves
- * to `null` (→ `unknown`) and clears the cache so a later mount retries.
+ * The server's extras report, shared by every panel. Reused while younger
+ * than `maxAgeMs` (default: until the cache is reset). A failure resolves to
+ * `null` (→ `unknown`) and clears the cache so a later call retries.
  */
-export function loadExtras(): Promise<ExtraRow[] | null> {
+export function loadExtras(maxAgeMs = Number.POSITIVE_INFINITY): Promise<ExtraRow[] | null> {
+  if (extrasCache && Date.now() - extrasFetchedAt > maxAgeMs) extrasCache = null;
   if (!extrasCache) {
+    extrasFetchedAt = Date.now();
     // Called inside .then so a synchronous throw (no doctor route on a stub
     // api, a malformed base URL) also lands in .catch and maps to `unknown`.
     extrasCache = Promise.resolve()
@@ -95,24 +132,41 @@ export function loadExtras(): Promise<ExtraRow[] | null> {
 /** Test seam: forget the cached report. */
 export function resetExtrasCache(): void {
   extrasCache = null;
+  extrasFetchedAt = 0;
 }
 
-/** React hook: the state of one extra; `unknown` while loading. */
-export function useExtraState(extra: string): ExtraState & { loading: boolean } {
+/**
+ * React hook: the state of one extra (optionally narrowed to `needs`);
+ * `unknown` while loading. Re-reads the report when the window regains focus
+ * and the cached copy is older than EXTRAS_MAX_AGE_MS, so a server restarted
+ * with the extra installed is picked up. A failed re-read keeps the last
+ * report rather than flipping a known state to unknown.
+ */
+export function useExtraState(
+  extra: string,
+  needs?: readonly string[],
+): ExtraState & { loading: boolean } {
   const [rows, setRows] = useState<ExtraRow[] | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let live = true;
-    loadExtras().then((r) => {
-      if (!live) return;
-      setRows(r);
-      setLoading(false);
-    });
+    const read = (maxAgeMs?: number) =>
+      loadExtras(maxAgeMs).then((r) => {
+        if (!live) return;
+        setRows((prev) => r ?? prev);
+        setLoading(false);
+      });
+    read();
+    const onFocus = () => {
+      read(EXTRAS_MAX_AGE_MS);
+    };
+    window.addEventListener('focus', onFocus);
     return () => {
       live = false;
+      window.removeEventListener('focus', onFocus);
     };
   }, []);
 
-  return { ...extraState(rows, extra), loading };
+  return { ...extraState(rows, extra, needs), loading };
 }

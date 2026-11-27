@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api';
-import { FEATURE_EXTRAS, useExtraState } from '../../../lib/capabilities';
+import { FEATURE_EXTRAS, FEATURE_NEEDS, useExtraState } from '../../../lib/capabilities';
 import FeatureUnavailable from '../../ui/FeatureUnavailable';
 import {
   AgentQueryPanel,
@@ -26,9 +26,11 @@ export default function KGTab() {
   const [status, setStatus] = useState<KGStatus | null>(null);
   const [statusErr, setStatusErr] = useState<string | null>(null);
   const [runIds, setRunIds] = useState<string[]>([]);
-  // #283: every panel below needs the scale-kg extra (KuzuDB). When the server
-  // reports it missing, say so once instead of ten panels that each fail.
-  const kgExtra = useExtraState(FEATURE_EXTRAS.knowledgeGraph);
+  // #283: the store panels need KuzuDB (`kuzu`, from the scale-kg extra). When
+  // the server reports kuzu missing, say so once instead of eight panels that
+  // each fail. A missing `cachetools` alone does not gate them. The alias table
+  // and the entity review queue are SQLite and stay visible either way.
+  const kgExtra = useExtraState(FEATURE_EXTRAS.knowledgeGraph, FEATURE_NEEDS.knowledgeGraph);
 
   useEffect(() => {
     api.kgStatus()
@@ -62,12 +64,8 @@ export default function KGTab() {
 
       {kgExtra.state === 'unavailable' ? (
         <FeatureUnavailable
-          feature="Capsule Knowledge Graph"
-          reason={
-            kgExtra.missing.length > 0
-              ? `the scale-kg extra is not installed on this server (missing: ${kgExtra.missing.join(', ')})`
-              : 'the scale-kg extra is not installed on this server'
-          }
+          feature="Capsule Knowledge Graph store"
+          reason={`the KG store needs KuzuDB from the scale-kg extra, and this server is missing: ${kgExtra.missing.join(', ')}. Alias management and the entity review queue below do not need it.`}
           enable={kgExtra.install}
           cli="nova kg status"
         />
@@ -85,10 +83,10 @@ export default function KGTab() {
           }} />
           <KGQueryPanel />
           <KGAuditPanel />
-          <EntityQueuePanel />
-          <KGAliasPanel />
         </>
       )}
+      <EntityQueuePanel />
+      <KGAliasPanel />
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 space-y-2">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
