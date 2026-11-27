@@ -148,9 +148,10 @@ What is done for you:
   and no collector reads tokens, keys, capsule payloads, prompts or responses.
 - Values under secret-like keys, known credential shapes and URL passwords are
   replaced with `[REDACTED]`.
-- Your home directory becomes `~`, your user name inside a path becomes `[USER]`,
-  and this computer's host name becomes `[HOSTNAME]`. Archive entries carry no owner
-  name.
+- Your home directory becomes `~`. Your user name becomes `[USER]` after a home,
+  scratch or tmp directory and in a `user=` field. This computer's host name becomes
+  `[HOSTNAME]` where it stands as a whole word, so `serve-<host>.log` keeps it.
+  Archive entries carry no owner name.
 
 What you still need to check, because redaction is pattern-based and is not a guarantee:
 

@@ -19,7 +19,7 @@ opt-in ``NOVAFABRIC_LOG_DIR`` / ``$NOVAFABRIC_HOME/logs`` convention
 (:func:`collect_recent_logs`); when none exist, ``logs/README.txt``
 records that honestly.
 
-Privacy-review slice (2026-11-27): every member is also passed through the
+Privacy-review slice (2026-11-27): every member except ``versions.json`` is passed through the
 local-identity scrub (:mod:`novafabric.support_bundle._scrub` — home directory,
 user name in a path, this host's name), tar entries carry no owner name or id,
 and ``MANIFEST.txt`` tells the human reading the archive what each file is, what
@@ -178,7 +178,9 @@ def _build_in(
     created_at = datetime.now(timezone.utc).isoformat()
 
     _write_json(staging / "doctor.json", scrub_value(collect_doctor(), identity))
-    _write_json(staging / "versions.json", scrub_value(collect_versions(), identity))
+    # Not scrubbed: versions and platform strings hold no path, and a host named
+    # like a distribution or a kernel ("ubuntu", "linux") would rewrite them.
+    _write_json(staging / "versions.json", collect_versions())
     _write_json(staging / "health.json", scrub_value(collect_health(), identity))
     (staging / "env.txt").write_text(scrub_text(collect_env_names(), identity), encoding="utf-8")
     redacted_config = collect_redacted_config(config_path, identity=identity)
@@ -286,15 +288,17 @@ def render_manifest_text(present: list[str], *, created_at: str, log_window_hour
         f"- redaction ruleset {REDACTION_RULESET_VERSION}: values under secret-like keys "
         "(token, secret, password, key, dsn, credential), known credential shapes and the "
         "password in a URL (scheme://user:password@host) become [REDACTED]",
-        f"- local identity scrub {LOCAL_SCRUB_VERSION}: your home directory becomes ~, your "
-        "user name inside a path becomes [USER], this computer's host name becomes "
-        "[HOSTNAME]; archive entries carry no owner name or id",
+        f"- local identity scrub {LOCAL_SCRUB_VERSION}: your home directory becomes ~, the "
+        "user name after a home, scratch or tmp directory or in a user= field becomes "
+        "[USER], and this computer's host name, as a whole word, becomes [HOSTNAME] "
+        "(versions.json is left as is); archive entries carry no owner name or id",
         "",
         "Check before sharing",
         "--------------------",
         "Redaction is pattern-based. It cannot recognise every secret, and it keeps",
         "remote host names, IP addresses and database user names because they are",
-        "often the diagnosis.",
+        "often the diagnosis. A host name joined to other text by - or _ (for",
+        "example serve-<host>.log) and a user name elsewhere in free text are kept.",
     ]
     if any(name.startswith("logs/") and name.endswith(".log") for name in present):
         lines += [

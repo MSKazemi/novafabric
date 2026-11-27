@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import socket
 import tarfile
 from pathlib import Path
@@ -133,6 +134,63 @@ def test_scrub_value_walks_nested_structures_and_keeps_keys() -> None:
     }
 
 
+def test_host_and_user_named_like_system_words_do_not_rewrite_diagnostics() -> None:
+    # Review finding: with host `linux` and user `lib`, a case-insensitive host
+    # match and an any-path-segment user match produced `[HOSTNAME]-6.8` and
+    # `/var/[USER]/[HOSTNAME]_x`. Neither value names this user or machine.
+    identity = LocalIdentity(user="lib", hostnames=("linux", "nova"))
+    for text in ("kernel Linux-6.8.0", "linux-6.8 build", "/var/lib/nova_x", "nova-serve ok"):
+        assert scrub_text(text, identity) == text, text
+
+
+def test_host_match_is_case_sensitive() -> None:
+    assert scrub_text(HOST_SHORT.upper(), _identity()) == HOST_SHORT.upper()
+
+
+def test_host_joined_by_hyphen_or_underscore_is_kept_but_dot_is_a_boundary() -> None:
+    identity = _identity()
+    assert scrub_text(f"serve-{HOST_SHORT}.log", identity) == f"serve-{HOST_SHORT}.log"
+    assert scrub_text(f"{HOST_SHORT}_cache", identity) == f"{HOST_SHORT}_cache"
+    assert scrub_text(f"logs/{HOST_SHORT}.log", identity) == f"logs/{HOST_PLACEHOLDER}.log"
+
+
+def test_user_name_is_scrubbed_only_after_a_home_or_per_user_root() -> None:
+    identity = _identity()
+    assert scrub_text(f"/opt/{USER}/bin", identity) == f"/opt/{USER}/bin"
+    assert scrub_text(f"/tmp/{USER}/sock", identity) == f"/tmp/{USER_PLACEHOLDER}/sock"
+    assert scrub_text(f"/work/{USER}", identity) == f"/work/{USER_PLACEHOLDER}"
+
+
+def test_a_dot_ends_the_user_name_in_a_path() -> None:
+    out = scrub_text(f"/tmp/{USER}.d/sock", _identity())
+    assert out == f"/tmp/{USER_PLACEHOLDER}.d/sock"
+
+
+def test_user_name_in_a_known_user_field_is_scrubbed() -> None:
+    identity = _identity()
+    line = f'password authentication failed for user "{USER}"'
+    assert (
+        scrub_text(line, identity)
+        == f'password authentication failed for user "{USER_PLACEHOLDER}"'
+    )
+    assert scrub_text(f"host=db user={USER} dbname=nova", identity) == (
+        f"host=db user={USER_PLACEHOLDER} dbname=nova"
+    )
+
+
+def test_json_escaped_windows_home_loses_the_name() -> None:
+    text = r'{"path": "C:\\Users\\bob\\data"}'
+    assert scrub_text(text, LocalIdentity()) == r'{"path": "C:\\Users\\[USER]\\data"}'
+
+
+def test_url_encoded_home_loses_the_name() -> None:
+    identity = LocalIdentity()
+    assert (
+        scrub_text("/f?p=%2Fhome%2Fbob%2Fx", identity) == f"/f?p=%2Fhome%2F{USER_PLACEHOLDER}%2Fx"
+    )
+    assert scrub_text("%2fUsers%2fbob", identity) == f"%2fUsers%2f{USER_PLACEHOLDER}"
+
+
 def test_an_empty_identity_changes_only_generic_home_prefixes() -> None:
     text = "plain line with no paths 01HXAY7M5JZ8R7K4P9DPBYK2WX sha256:" + "ab" * 32
     assert scrub_text(text, LocalIdentity()) == text
@@ -187,7 +245,7 @@ def test_bundle_carries_no_home_path_user_or_host(
 ) -> None:
     log_dir = fake_home / ".novafabric" / "logs"
     log_dir.mkdir(parents=True)
-    (log_dir / f"serve-{HOST_SHORT}.log").write_text(
+    (log_dir / f"{HOST_SHORT}.log").write_text(
         f"INFO started on {HOST_FQDN} with capsule dir {fake_home}/.novafabric/capsules\n"
         f"INFO wrote /scratch/{USER}/run-1\n"
     )
@@ -198,7 +256,7 @@ def test_bundle_carries_no_home_path_user_or_host(
     result = build_support_bundle(out, config_path=config)
     contents, infos = _read(out)
 
-    log_member = f"logs/serve-{HOST_PLACEHOLDER}.log"
+    log_member = f"logs/{HOST_PLACEHOLDER}.log"
     assert log_member in contents
     assert log_member in result.members
     for name, data in contents.items():
@@ -215,6 +273,16 @@ def test_bundle_carries_no_home_path_user_or_host(
         assert info.gname == ""
         assert info.uid == 0
         assert info.gid == 0
+
+
+def test_versions_json_is_never_scrubbed(fake_home: Path, tmp_path: Path) -> None:
+    # A host named like the OS (here: exactly platform.system()) must not
+    # rewrite the platform block; versions.json holds no path to scrub.
+    system = platform.system()
+    out = tmp_path / "bundle.tar.gz"
+    build_support_bundle(out, identity=LocalIdentity(hostnames=(system,)))
+    versions = json.loads(_read(out)[0]["versions.json"])
+    assert versions["platform"]["system"] == system
 
 
 def test_no_logs_readme_does_not_reveal_the_absolute_log_dir(

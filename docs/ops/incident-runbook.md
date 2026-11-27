@@ -195,7 +195,7 @@ Allowlist-only and deny-by-default: doctor output, versions, env-var
 (via `NOVAFABRIC_LOG_DIR` / `$NOVAFABRIC_HOME/logs`), plus a manifest with
 the SHA-256 of every member and the redaction-ruleset version. No collector
 reads tokens, keys, capsule payloads, prompts, responses or env-var values;
-the home directory, user name in paths and this host's name are replaced by
+the home directory, the user name after a home or scratch directory and this host's name are replaced by
 `~`, `[USER]` and `[HOSTNAME]`. Redaction is pattern-based and log text is
 copied as written, so **review the archive before attaching it to a ticket**:
 `MANIFEST.txt` inside it lists every file and why it is there. See

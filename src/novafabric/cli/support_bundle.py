@@ -45,8 +45,9 @@ def support_bundle_cmd(
     you keep logs in NOVAFABRIC_LOG_DIR or $NOVAFABRIC_HOME/logs), and a
     manifest.json with the SHA-256 of every member plus the rule versions.
     No collector reads tokens, keys, capsule payloads, prompts or responses.
-    Your home directory, your user name in paths and this host's name are
-    replaced by ~, [USER] and [HOSTNAME].
+    Your home directory becomes ~, your user name after a home, scratch or
+    tmp directory becomes [USER], and this host's name as a whole word
+    becomes [HOSTNAME] (versions.json is left as is).
 
     The archive stays on this computer; nothing is uploaded. Redaction is
     pattern-based, so review the files (log text especially) before you

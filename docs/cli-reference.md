@@ -8522,10 +8522,15 @@ Two passes run on every member. **Redaction** (ruleset `v4`) replaces values
 under secret-like keys, known credential shapes and the password of a URL's
 userinfo (`postgresql://nova:[REDACTED]@db/nova`) whatever key holds them; `v3`
 and earlier went by key names only, so a `database_url` with a password shipped
-verbatim. The **local identity scrub** (`v1`) replaces your home directory with `~`,
-your user name inside a path with `[USER]`, and this host's name with
-`[HOSTNAME]` (no DNS lookup is made). Tar entries carry no owner name or id. No
-collector reads tokens, keys, capsule payloads, prompts or responses.
+verbatim. The **local identity scrub** (`v1`) replaces your home directory with `~`;
+the name after any home prefix (`/home/`, `/Users/`, `C:\Users\`, also JSON-escaped
+or URL-encoded), your user name right after `/scratch/`, `/work/`, `/tmp/` or
+`/var/tmp/`, and your user name in a `user=` or `for user "…"` field with `[USER]`;
+and this host's name, as a whole word matched case-sensitively, with `[HOSTNAME]`
+(no DNS lookup is made). It is narrow on purpose so that diagnostic text survives: a
+host name joined by `-` or `_` (`serve-<host>.log`) is kept, and `versions.json` is
+not scrubbed. Tar entries carry no owner name or id. No collector reads tokens, keys,
+capsule payloads, prompts or responses.
 
 Redaction is pattern-based and is not a guarantee. Remote host names, IP
 addresses and database user names are kept on purpose because they are often the
