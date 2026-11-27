@@ -93,6 +93,7 @@ export function IssueTokenDialog({
                 Label
               </label>
               <input
+                aria-label="Label"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="dashboard-issued"

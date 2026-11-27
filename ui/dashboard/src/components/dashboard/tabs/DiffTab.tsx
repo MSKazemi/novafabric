@@ -304,6 +304,7 @@ export default function DiffTab({ initialIds }: { initialIds?: string[] } = {}) 
 
       <form onSubmit={onQuery} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 grid sm:grid-cols-[1fr_1fr_auto] gap-3">
         <SuggestInput
+          aria-label="Run A"
           value={a}
           onChange={v => { setA(v); setReport(null); sessionStorage.removeItem(DIFF_SESSION_KEY); }}
           suggestions={runs?.map(r => r.run_id) ?? []}
@@ -312,6 +313,7 @@ export default function DiffTab({ initialIds }: { initialIds?: string[] } = {}) 
           required
         />
         <SuggestInput
+          aria-label="Run B"
           value={b}
           onChange={v => { setB(v); setReport(null); sessionStorage.removeItem(DIFF_SESSION_KEY); }}
           suggestions={runs?.map(r => r.run_id) ?? []}
@@ -354,6 +356,7 @@ export default function DiffTab({ initialIds }: { initialIds?: string[] } = {}) 
           <div className="flex items-center gap-2 mb-2">
             <p className="text-[11px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide shrink-0">Recent runs</p>
             <input
+              aria-label="Filter recent runs"
               type="search"
               value={runSearch}
               onChange={e => setRunSearch(e.target.value)}

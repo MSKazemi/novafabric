@@ -56,6 +56,7 @@ export default function SavedViewsBar<T>({
         </span>
       ))}
       <input
+        aria-label="Name for the new saved view"
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && doSave()}

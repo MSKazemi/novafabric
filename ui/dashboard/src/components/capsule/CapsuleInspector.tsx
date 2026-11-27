@@ -326,6 +326,7 @@ export default function CapsuleInspector({ capsuleData, onCompareTo }: CapsuleIn
                   <div className="absolute right-0 top-full mt-1 z-50 w-72 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-lg overflow-hidden">
                     <div className="p-2 border-b border-[var(--color-border)]">
                       <input
+                        aria-label="Filter runs to compare against"
                         autoFocus
                         type="search"
                         value={pickerSearch}

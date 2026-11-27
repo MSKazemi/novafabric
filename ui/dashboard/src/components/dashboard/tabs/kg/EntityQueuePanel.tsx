@@ -87,6 +87,7 @@ export default function EntityQueuePanel() {
                 <div className="text-[10px] text-[var(--color-text-faint)]">Suggested: {String(item.suggested_canonical ?? '—')}</div>
                 <div className="flex gap-2 items-center mt-1">
                   <input
+                    aria-label={`Canonical to approve for ${id}`}
                     type="text"
                     placeholder="canonical to approve"
                     value={approveInputs[id] ?? ''}

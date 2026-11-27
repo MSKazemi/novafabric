@@ -2,7 +2,7 @@
  * Right-side drawer for detail inspection (run details, key details) —
  * same trap/scrim semantics as Modal, panel anchored to the edge.
  */
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { clsx } from 'clsx';
 import Icon from './Icon';
 import { useFocusTrap } from './Modal';
@@ -16,17 +16,19 @@ export interface DrawerProps {
 
 export default function Drawer({ title, onClose, widthClass = 'max-w-xl', children }: DrawerProps) {
   const containerRef = useFocusTrap(true, onClose);
+  const titleId = useId();
 
   return (
     <div
       className="fixed inset-0 z-[60] flex justify-end bg-[var(--color-bg-overlay)]"
       role="dialog"
       aria-modal="true"
-      aria-label={typeof title === 'string' ? title : undefined}
+      aria-labelledby={title !== undefined ? titleId : undefined}
       onClick={onClose}
     >
       <div
         ref={containerRef}
+        tabIndex={-1}
         className={clsx(
           'h-full w-full border-l border-[var(--color-border)] bg-[var(--color-bg)] shadow-[var(--shadow-2)] flex flex-col',
           widthClass,
@@ -34,7 +36,7 @@ export default function Drawer({ title, onClose, widthClass = 'max-w-xl', childr
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 px-4 h-11 border-b border-[var(--color-border)] shrink-0">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">{title}</h3>
+          <h3 id={titleId} className="text-sm font-semibold text-[var(--color-text)] truncate">{title}</h3>
           <button
             type="button"
             onClick={onClose}

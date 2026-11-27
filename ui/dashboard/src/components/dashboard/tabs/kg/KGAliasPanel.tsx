@@ -62,6 +62,7 @@ export default function KGAliasPanel() {
         <p className={labelClass}>List Aliases</p>
         <div className="flex gap-2">
           <input
+            aria-label="Filter by canonical (optional)"
             type="text"
             value={canonical}
             onChange={(e) => setCanonical(e.target.value)}
@@ -115,9 +116,9 @@ export default function KGAliasPanel() {
       <div className="space-y-2 border-t border-[var(--color-border)] pt-3">
         <p className={labelClass}>Register Alias</p>
         <div className="grid grid-cols-3 gap-2">
-          <input type="text" value={regAlias} onChange={(e) => setRegAlias(e.target.value)} placeholder="alias (gpt4)" className={inputClass} />
-          <input type="text" value={regCanonical} onChange={(e) => setRegCanonical(e.target.value)} placeholder="canonical (openai/gpt-4)" className={inputClass} />
-          <input type="text" value={regEntityType} onChange={(e) => setRegEntityType(e.target.value)} placeholder="entity_type (model)" className={inputClass} />
+          <input aria-label="Alias" type="text" value={regAlias} onChange={(e) => setRegAlias(e.target.value)} placeholder="alias (gpt4)" className={inputClass} />
+          <input aria-label="Canonical" type="text" value={regCanonical} onChange={(e) => setRegCanonical(e.target.value)} placeholder="canonical (openai/gpt-4)" className={inputClass} />
+          <input aria-label="Entity type" type="text" value={regEntityType} onChange={(e) => setRegEntityType(e.target.value)} placeholder="entity_type (model)" className={inputClass} />
         </div>
         <button
           onClick={handleRegister}

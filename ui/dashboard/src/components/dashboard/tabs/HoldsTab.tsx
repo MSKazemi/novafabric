@@ -121,6 +121,7 @@ function PlaceHoldForm({ onCreated, registryNames }: { onCreated: () => void; re
             Registry
           </label>
           <SuggestInput
+            aria-label="Registry"
             value={registry}
             onChange={setRegistry}
             suggestions={registryNames}
@@ -134,6 +135,7 @@ function PlaceHoldForm({ onCreated, registryNames }: { onCreated: () => void; re
             Reason
           </label>
           <input
+            aria-label="Reason"
             type="text"
             value={reason}
             onChange={e => setReason(e.target.value)}
@@ -147,6 +149,7 @@ function PlaceHoldForm({ onCreated, registryNames }: { onCreated: () => void; re
             Days (optional)
           </label>
           <input
+            aria-label="Days (optional)"
             type="number"
             min={1}
             value={days}

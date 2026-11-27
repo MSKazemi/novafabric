@@ -63,6 +63,7 @@ export default function PiiErasePanel({ runIds }: { runIds: string[] }) {
         <div className="flex-1 min-w-[180px]">
           <label className="text-[9px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1 block">Subject ID</label>
           <SuggestInput
+            aria-label="Subject ID"
             value={subjectId}
             onChange={setSubjectId}
             suggestions={[...mruSubjects, ...runIds]}
@@ -75,6 +76,7 @@ export default function PiiErasePanel({ runIds }: { runIds: string[] }) {
             Retention window (months, Art.17(3)(b))
           </label>
           <input
+            aria-label="Retention window (months, Art.17(3)(b))"
             type="number"
             min={1}
             value={retentionMonths}

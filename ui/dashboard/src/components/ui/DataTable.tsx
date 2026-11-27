@@ -6,7 +6,7 @@
  * loading/empty/error states mean new tabs get a consistent, performant table
  * without re-implementing it each time.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { clsx } from 'clsx';
 import { SkeletonRows } from './Skeleton';
@@ -73,6 +73,12 @@ export default function DataTable<T>({
   className = '',
 }: DataTableProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
+  /**
+   * Key of the body row that holds keyboard focus. Virtualization unmounts rows
+   * scrolled out of view; when the focused one goes, focus would fall to
+   * <body>. The layout effect below parks it on the scroller instead.
+   */
+  const focusedRowKey = useRef<string | null>(null);
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
 
   const sorted = useMemo(() => {
@@ -118,6 +124,16 @@ export default function DataTable<T>({
     }
   }, [lastVisibleIndex, sorted.length]);
 
+  // Runs after every commit: if the focused row was unmounted (scrolled out,
+  // filtered away) and focus fell to <body>, move it to the scroll container.
+  useLayoutEffect(() => {
+    if (focusedRowKey.current === null) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    focusedRowKey.current = null;
+    parentRef.current?.focus({ preventScroll: true });
+  });
+
   if (error) return <ErrorBox message={error} onRetry={onRetry} />;
   if (loading) return <SkeletonRows rows={8} />;
   if (sorted.length === 0) {
@@ -125,12 +141,24 @@ export default function DataTable<T>({
   }
 
   return (
-    <div className={clsx('rounded border border-[var(--color-border)] overflow-hidden', className)}>
+    // ARIA table semantics on the div layout: the body is virtualized, so
+    // aria-rowcount / aria-rowindex give screen readers the real size and position.
+    <div
+      role="table"
+      aria-rowcount={sorted.length + 1}
+      className={clsx('rounded border border-[var(--color-border)] overflow-hidden', className)}
+    >
       {/* Header */}
-      <div className="flex items-center gap-3 px-3 py-2 bg-[var(--color-bg-sunken)] border-b border-[var(--color-border)] text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
+      <div
+        role="row"
+        aria-rowindex={1}
+        className="flex items-center gap-3 px-3 py-2 bg-[var(--color-bg-sunken)] border-b border-[var(--color-border)] text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-faint)]"
+      >
         {columns.map((col) => (
           <div
             key={col.key}
+            role="columnheader"
+            aria-sort={sort?.key === col.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
             className={clsx('flex items-center gap-1', col.className ?? 'flex-1', ALIGN[col.align ?? 'left'])}
           >
             {col.sortValue ? (
@@ -149,27 +177,48 @@ export default function DataTable<T>({
             )}
           </div>
         ))}
-        {rowActions && <div className="w-px" aria-hidden="true" />}
+        {rowActions && (
+          <div role="columnheader" className="w-px">
+            <span className="sr-only">Actions</span>
+          </div>
+        )}
       </div>
 
-      {/* Virtualized body */}
-      <div ref={parentRef} className="overflow-y-auto" style={{ maxHeight }}>
-        <div style={{ height: virt.getTotalSize(), position: 'relative' }}>
+      {/* Virtualized body. tabIndex=-1: focus lands here when a focused row unmounts. */}
+      <div ref={parentRef} role="rowgroup" tabIndex={-1} className="overflow-y-auto focus:outline-none" style={{ maxHeight }}>
+        <div role="presentation" style={{ height: virt.getTotalSize(), position: 'relative' }}>
           {virt.getVirtualItems().map((vi) => {
             const row = sorted[vi.index];
+            const key = rowKey(row, vi.index);
             return (
               <div
-                key={rowKey(row, vi.index)}
+                key={key}
+                role="row"
+                aria-rowindex={vi.index + 2}
                 className={clsx(
                   'absolute left-0 right-0 flex items-center gap-3 px-3 border-b border-[var(--color-border)] text-xs text-[var(--color-text)]',
-                  onRowClick && 'cursor-pointer hover:bg-[var(--color-bg-raised)] transition-colors',
+                  onRowClick && 'cursor-pointer hover:bg-[var(--color-bg-raised)] transition-colors focus-visible:outline-offset-[-2px]',
                 )}
                 style={{ top: 0, transform: `translateY(${vi.start}px)`, height: vi.size }}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
+                // A clickable row must be reachable and operable from the keyboard
+                // too (WCAG 2.1.1): Tab to it, Enter or Space activates it. Its
+                // accessible name is its cells' text (rows take name from content).
+                tabIndex={onRowClick ? 0 : undefined}
+                // Focus on the row or inside it (row actions). On blur, a row still
+                // in the document means focus moved on (Tab, click); a detached row
+                // was unmounted, so the key stays for the layout effect to handle.
+                onFocus={() => { focusedRowKey.current = key; }}
+                onBlur={(e) => { if (e.currentTarget.isConnected) focusedRowKey.current = null; }}
+                onKeyDown={onRowClick ? (e) => {
+                  if (e.target !== e.currentTarget) return; // keys inside row actions
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(row); }
+                } : undefined}
               >
                 {columns.map((col) => (
                   <div
                     key={col.key}
+                    role="cell"
                     className={clsx('truncate flex items-center', col.className ?? 'flex-1', ALIGN[col.align ?? 'left'])}
                   >
                     {col.render ? col.render(row, vi.index) : String((row as Record<string, unknown>)[col.key] ?? '')}
@@ -177,6 +226,7 @@ export default function DataTable<T>({
                 ))}
                 {rowActions && (
                   <div
+                    role="cell"
                     className="flex items-center gap-1 shrink-0"
                     onClick={(e) => e.stopPropagation()}
                   >

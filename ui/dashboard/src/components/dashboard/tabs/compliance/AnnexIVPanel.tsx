@@ -57,6 +57,7 @@ export default function AnnexIVPanel({ runIds }: { runIds: string[] }) {
 
       <div className="grid grid-cols-2 gap-2">
         <SuggestInput
+          aria-label="Capsule run ID"
           value={runId}
           onChange={v => setRunId(v)}
           suggestions={runIds}
@@ -65,6 +66,7 @@ export default function AnnexIVPanel({ runIds }: { runIds: string[] }) {
           className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2.5 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none"
         />
         <SuggestInput
+          aria-label="Deployment ID"
           value={deploymentId}
           onChange={setDeploymentId}
           suggestions={deploymentSuggestions}

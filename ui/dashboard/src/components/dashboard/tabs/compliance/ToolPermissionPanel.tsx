@@ -58,6 +58,7 @@ export default function ToolPermissionPanel({ runIds }: { runIds: string[] }) {
 
       <div className="flex gap-2">
         <SuggestInput
+          aria-label="Capsule run ID"
           value={runId}
           onChange={v => setRunId(v)}
           suggestions={runIds}

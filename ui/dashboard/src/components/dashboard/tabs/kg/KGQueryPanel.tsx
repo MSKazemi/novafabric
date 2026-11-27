@@ -37,6 +37,7 @@ export default function KGQueryPanel() {
       <div className="space-y-1">
         <label className={labelClass}>Agent ID</label>
         <input
+          aria-label="Agent ID"
           type="text"
           value={agentId}
           onChange={(e) => setAgentId(e.target.value)}

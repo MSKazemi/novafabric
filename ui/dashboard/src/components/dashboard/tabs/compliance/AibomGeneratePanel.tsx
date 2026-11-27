@@ -41,6 +41,7 @@ export default function AibomGeneratePanel({ runIds }: { runIds: string[] }) {
       <div className="flex gap-2 items-end">
         <div className="flex-1">
           <SuggestInput
+            aria-label="Run ID"
             value={runId}
             onChange={setRunId}
             suggestions={runIds}

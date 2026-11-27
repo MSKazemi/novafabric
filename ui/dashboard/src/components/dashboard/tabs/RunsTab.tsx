@@ -27,6 +27,7 @@ import FilterBar from './runs/FilterBar';
 import AggregateStrip from './runs/AggregateStrip';
 import { useFilteredRuns } from './runs/useFilteredRuns';
 import { useUrlState, URL_STATE_CHANGED } from '../../../lib/useUrlState';
+import { ignoreSingleKeyShortcut, isTypingTarget, modalDialogOpen } from '../../../lib/shortcuts';
 import {
   LINKABLE_VIEWS, parseDate, parseScope, parseSort, parseStatus, parseView, type FilterScope,
 } from './runs/viewState';
@@ -172,8 +173,13 @@ export default function RunsTab({
   // Keyboard: j/k to move selection in the run list
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (isTypingTarget(e.target)) return;
       if (!runs || runs.length === 0) return;
+      // Escape belongs to an open dialog (confirm, palette) — it must not also
+      // drop the run selection underneath it.
+      if (e.key === 'Escape') { if (!modalDialogOpen()) setSelected(null); return; }
+      // Ctrl/Cmd+K (palette) used to move the selection up as a side effect.
+      if (ignoreSingleKeyShortcut(e)) return;
       if (e.key === 'j' || e.key === 'k') {
         const visible = visibleRuns;
         if (visible.length === 0) return;
@@ -181,7 +187,6 @@ export default function RunsTab({
         const next = e.key === 'j' ? Math.min(idx + 1, visible.length - 1) : Math.max(idx - 1, 0);
         setSelected(visible[next]);
       }
-      if (e.key === 'Escape') setSelected(null);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

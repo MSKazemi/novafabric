@@ -67,7 +67,7 @@ export default function AdminTab() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="text-sm font-semibold text-[var(--color-text)] mb-0.5">Admin Panel</h1>
+        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-0.5">Admin Panel</h2>
         <p className="text-xs text-[var(--color-text-muted)]">
           Token and role management for this NovaFabric server session.
         </p>

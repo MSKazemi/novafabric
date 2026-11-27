@@ -94,7 +94,7 @@ export default function CommandBuilder({ cmd }: { cmd: CommandDef }) {
                 </div>
               )}
 
-              <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+              <label htmlFor={`cmd-field-${field.key}`} className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
                 <span className="font-mono">{field.label}</span>
                 {field.required && (
                   <span className="ml-1.5 text-[var(--color-status-failure)] text-[10px]">required</span>
@@ -103,6 +103,7 @@ export default function CommandBuilder({ cmd }: { cmd: CommandDef }) {
 
               {field.type === 'select' && (
                 <select
+                  id={`cmd-field-${field.key}`}
                   value={values[field.key] ?? field.defaultValue ?? ''}
                   onChange={(e) => setField(field.key, e.target.value)}
                   className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-1.5 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
@@ -116,6 +117,7 @@ export default function CommandBuilder({ cmd }: { cmd: CommandDef }) {
               {field.type === 'toggle' && (
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
+                    id={`cmd-field-${field.key}`}
                     type="checkbox"
                     checked={values[field.key] === 'true'}
                     onChange={(e) => setField(field.key, e.target.checked ? 'true' : '')}
@@ -132,6 +134,7 @@ export default function CommandBuilder({ cmd }: { cmd: CommandDef }) {
                 return (
                   <>
                     <input
+                      id={`cmd-field-${field.key}`}
                       type={field.type}
                       list={listId}
                       value={values[field.key] ?? ''}

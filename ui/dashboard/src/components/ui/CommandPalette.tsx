@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useFocusTrap } from './primitives/Modal';
 
 export interface Command {
   id: string;
@@ -48,6 +49,12 @@ function found_offset(t: string, q: string): number {
 /**
  * Global command palette (Cmd/Ctrl+K). Fuzzy-search across navigation targets
  * and actions, arrow keys to move, Enter to run, Esc to close.
+ *
+ * Accessibility: the input is an ARIA combobox that owns a listbox; the
+ * highlighted row is exposed through aria-activedescendant so a screen reader
+ * announces it while focus stays in the input. Focus is trapped in the dialog
+ * and returns to the element that opened it on close; the result count is
+ * announced through a polite live region.
  */
 export default function CommandPalette({ commands, onClose, search }: Props) {
   const [query, setQuery] = useState('');
@@ -56,6 +63,10 @@ export default function CommandPalette({ commands, onClose, search }: Props) {
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Traps Tab inside the panel, closes on Escape, restores focus on unmount.
+  const panelRef = useFocusTrap(true, onClose);
+  const listboxId = useId();
+  const optionId = (i: number) => `${listboxId}-opt-${i}`;
 
   // Live entity search: debounced, min 2 chars. Stale responses are dropped.
   useEffect(() => {
@@ -83,6 +94,13 @@ export default function CommandPalette({ commands, onClose, search }: Props) {
   useEffect(() => { setActive(0); }, [query]);
   useEffect(() => { inputRef.current?.focus(); }, []);
 
+  const activeId = results.length > 0 && active < results.length ? optionId(active) : undefined;
+  const statusText = searching && results.length === 0
+    ? 'Searching…'
+    : results.length === 0
+      ? 'No matches.'
+      : `${results.length} result${results.length === 1 ? '' : 's'}${searching ? ', searching for more…' : ''}`;
+
   // Keep the active row in view.
   useEffect(() => {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${active}"]`);
@@ -105,6 +123,8 @@ export default function CommandPalette({ commands, onClose, search }: Props) {
       aria-label="Command palette"
     >
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className="w-full max-w-xl mx-4 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-raised)] shadow-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
@@ -115,15 +135,26 @@ export default function CommandPalette({ commands, onClose, search }: Props) {
           onKeyDown={onKeyDown}
           placeholder="Jump to a view or action…"
           aria-label="Search commands"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={results.length > 0}
+          aria-controls={listboxId}
+          aria-activedescendant={activeId}
           className="w-full px-4 py-3 bg-transparent text-sm text-[var(--color-text)] outline-none border-b border-[var(--color-border)] placeholder:text-[var(--color-text-faint)]"
         />
-        <div ref={listRef} className="max-h-80 overflow-y-auto py-1">
+        <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{statusText}</p>
+        <div ref={listRef} id={listboxId} role="listbox" aria-label="Commands" className="max-h-80 overflow-y-auto py-1">
           {results.length === 0 ? (
-            <p className="px-4 py-6 text-center text-xs text-[var(--color-text-faint)]">{searching ? 'Searching…' : 'No matches.'}</p>
+            <p aria-hidden="true" className="px-4 py-6 text-center text-xs text-[var(--color-text-faint)]">{searching ? 'Searching…' : 'No matches.'}</p>
           ) : (
             results.map((c, i) => (
               <button
                 key={c.id}
+                id={optionId(i)}
+                type="button"
+                role="option"
+                aria-selected={i === active}
+                tabIndex={-1}
                 data-idx={i}
                 onMouseEnter={() => setActive(i)}
                 onClick={() => { c.run(); onClose(); }}
@@ -140,7 +171,7 @@ export default function CommandPalette({ commands, onClose, search }: Props) {
             ))
           )}
         </div>
-        <div className="px-4 py-2 border-t border-[var(--color-border)] text-[10px] font-mono text-[var(--color-text-faint)] flex gap-3">
+        <div aria-hidden="true" className="px-4 py-2 border-t border-[var(--color-border)] text-[10px] font-mono text-[var(--color-text-faint)] flex gap-3">
           <span>↑↓ navigate</span><span>↵ select</span><span>esc close</span>
         </div>
       </div>

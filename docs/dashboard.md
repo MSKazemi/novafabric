@@ -773,8 +773,106 @@ Badge colours: **shipped** (green), **partial** (accent), **placeholder** (amber
 - **Token-in-URL flow.** Click the URL `nova serve` prints (it embeds the token); the SPA consumes it, saves to `localStorage`, and strips it from the visible URL so it doesn't sit in browser history.
 - **Auto-bounce on 401.** Any in-flight request that returns 401 (e.g. server restart, token rotation) clears the cached token and shows the connect screen again.
 - **Confirm dialogs for every mutation.** Each shows a one-line description, the action's arguments where editable (e.g. promote target dropdown), the equivalent CLI command, and the audit-log notice.
-- **Toast notifications** for success and failure of mutations — visible bottom-right for ~4 seconds.
+- **Toast notifications** for success and failure of mutations — visible bottom-right for ~4.5 seconds; hovering or focusing a toast keeps it on screen, and clicking it dismisses it.
 - **Auto-refresh on the runs tab.** Opt-in 5-second polling; off by default.
+
+---
+
+## Accessibility and keyboard use *(experimental — #280)*
+
+The dashboard is built **towards** WCAG 2.2 level AA. It has **not** been audited against it or
+certified, and nothing here is a conformance claim. This section says what works today, how it
+is checked, and what is still missing.
+
+### Keyboard shortcuts *(works today)*
+
+| Keys | Where | Does |
+|---|---|---|
+| `Tab` / `Shift+Tab` | everywhere | Move between controls. The first `Tab` on a page reaches **Skip to main content**. |
+| `Ctrl+K` / `⌘K` | everywhere, also inside fields | Open or close the command palette |
+| `↑` / `↓`, `Enter`, `Esc` | command palette | Move the highlighted entry, run it, close the palette |
+| `?` | outside fields | Open or close the keyboard-shortcut reference |
+| `g` then a key | outside fields | Go to a view (`g h` Home, `g r` Runs, `g c` Compliance, …; the full list is in the `?` overlay) |
+| `r` | outside fields | Refresh the current view |
+| `j` / `k` | Runs view | Move the run selection down / up |
+| `Esc` | dialogs, Runs view | Close the innermost dialog; with no dialog open, clear the run selection |
+| `Enter` / `Space` | Audit rows, Evidence run IDs | Open the row's detail |
+
+Single-key shortcuts (`g …`, `r`, `?`, `j`/`k`) never fire while you type in a field, while a
+modifier key is held, or while a dialog is open (inside the `?` overlay only `?` and `Esc` act,
+and both close it). **Turn them off** under **Appearance › Keyboard › Single-key shortcuts** if you use
+speech input or tend to trigger them by accident (WCAG 2.1.4). The setting is stored per browser
+in `localStorage` (`novafabric.single-key-shortcuts`). `Ctrl+K`/`⌘K`, `Tab`, arrows and `Esc`
+keep working either way.
+
+### Screen-reader notes *(works today; not yet verified with a screen reader, see gaps)*
+
+- **Landmarks and headings.** The sidebar is a `complementary` region ("Dashboard navigation")
+  holding the `navigation` landmark; the current view is in `main`. The page has one `h1`, the
+  name of the current view (the bar above the content); each view titles its content with an
+  `h2`, and dialogs carry their own heading.
+- **Navigation is announced.** After the page has loaded, changing view by any route (sidebar,
+  `g` shortcut, command palette) is announced politely as "*<View>* view". Focus stays where it was (on the sidebar button
+  you activated, for instance); use the skip link to jump to the content.
+- **Command palette.** The search field is a combobox over a listbox of commands. The highlighted
+  entry is announced as you press `↑`/`↓`, and the number of results ("12 results", "No
+  matches.") is a polite live region. Focus stays inside the palette and returns to where you
+  were when it closes.
+- **Dialogs** (confirmations, keyboard reference) are named by their title, take focus when they
+  open, keep `Tab` inside, and give focus back on close.
+- **Toasts** are a polite live region. Each is spoken with its tone in words ("Error: …",
+  "Success: …"). Hovering or focusing a toast stops the auto-dismiss.
+- **Verification verdicts are spoken, not only coloured.** In the Evidence list the manifest
+  column reads "Manifest hash matches" / "Manifest hash mismatch", and each badge reads
+  *passed*, *failed* or *not established* after its label. An **untrusted** signer ("signer
+  untrusted … failed") is distinct from an **unanchored** one ("signer unanchored … not
+  established"), which only means no trust list pins the key. After **Verify**, the result is
+  announced and focus returns to that bundle's row.
+- **Form fields** in every view have an accessible name; a unit test (`form-control-names`) scans
+  every tab for unnamed inputs, selects and text areas.
+
+### Motion and colour *(works today)*
+
+- With the operating-system **reduce motion** setting on, CSS transitions and animations collapse
+  to ~0 ms and the Lineage graph's zoom-to-fit jumps instead of panning.
+- Text tokens measured against the page, raised and sunken backgrounds (WCAG contrast formula):
+  dark theme ≥ 5.5:1 for the faintest text, light theme ≥ 5.7:1. The light-mode **cyan** accent
+  was darkened to `#0d7490` (4.47:1 → 4.84:1 on the sunken background). Tinted backgrounds
+  (`color-mix` status chips) were **not** measured.
+
+### How this is checked
+
+- **Unit tests** (vitest, run in CI): `tests/unit/a11y-keyboard-and-announcements.test.tsx`
+  (shortcut guard, focus trap, palette semantics, toasts, Evidence verdict text) and
+  `tests/unit/form-control-names.test.ts`.
+- **Playwright + axe** (`npm run test:a11y` in `ui/dashboard/`): `tests/e2e/a11y.spec.ts` covers
+  the showcase pages; `tests/e2e/dashboard-a11y.spec.ts` covers the authenticated `/dashboard`
+  route against fixture data (seven views, palette, keyboard reference, skip link, shortcut
+  toggle, reduced motion). **Playwright suites are not part of CI**; run them locally.
+- **Manual screen-reader walkthrough (NVDA / VoiceOver): not done yet.**
+
+### Known gaps
+
+- **Graph views have no table alternative** *(future design)*. The Lineage graph and the Live
+  Topology page are canvas/SVG/3D views with no structured table of nodes and edges for screen
+  readers or keyboard-only use.
+- **No manual screen-reader or zoom verification** *(not done)*: NVDA/VoiceOver output, 200 %
+  zoom, 390 px/768 px widths, Windows high-contrast (`forced-colors`) mode.
+- **Only part of the 30 views was audited by reading the code** (shell, sidebar, dialogs,
+  palette, toasts, Evidence list, data table, form labels everywhere). Status pills, charts and
+  panels in other views may still carry state by colour alone.
+- **Details live in `title` tooltips** in places (e.g. the error list behind an *invalid*
+  badge), which keyboard and screen-reader users often cannot reach.
+- **Shared data tables** (Audit, Alerts, Incidents, Storage) expose ARIA table, row, column-header
+  and cell roles with the real row count, and clickable rows are focusable. They are not a
+  `grid`, so there is no arrow-key movement between cells. When a focused row scrolls out of
+  the virtualised list, focus moves to the list itself rather than the page.
+- **Very small text** (`9–10 px`) is used in many panels; it scales with browser zoom but is hard
+  to read at 100 %.
+- **The Appearance panel is a non-modal popover**: focus does not move into it when it opens
+  (it follows its button in tab order).
+- **Error toasts are polite, not assertive**, and a dismissed toast is not kept anywhere.
+- **No right-to-left or translated UI**; English only.
 
 ---
 

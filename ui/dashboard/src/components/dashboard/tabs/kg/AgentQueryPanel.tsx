@@ -95,6 +95,7 @@ export default function AgentQueryPanel({ runIds }: { runIds: string[] }) {
       <div className="space-y-1">
         <label className={labelClass}>Agent ID</label>
         <SuggestInput
+          aria-label="Agent ID"
           value={agentId}
           onChange={setAgentId}
           suggestions={runIds}

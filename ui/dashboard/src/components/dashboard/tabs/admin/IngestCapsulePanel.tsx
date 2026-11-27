@@ -46,6 +46,7 @@ export default function IngestCapsulePanel() {
           <div>
             <label className={labelClass}>Run ID</label>
             <input
+              aria-label="Run ID"
               value={runId}
               onChange={(e) => setRunId(e.target.value)}
               placeholder="01JXYZ…"

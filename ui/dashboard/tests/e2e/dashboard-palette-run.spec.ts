@@ -26,8 +26,8 @@ test('live run result from Home opens that run, including an ID outside the init
 
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
-  await palette.getByRole('textbox', { name: 'Search commands' }).fill('run-042');
-  await palette.getByRole('button', { name: /^Run run-042\b/ }).click();
+  await palette.getByRole('combobox', { name: 'Search commands' }).fill('run-042');
+  await palette.getByRole('option', { name: /^Run run-042\b/ }).click();
 
   await expect(tabButton(page, 'Runs')).toHaveAttribute('aria-current', 'page');
   await expect.poll(() => urlParam(page, 'run')).toBe('run-042');
@@ -47,8 +47,8 @@ test('live run result changes the mounted Runs inspector, not just the URL', asy
 
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
-  await palette.getByRole('textbox', { name: 'Search commands' }).fill('run-002');
-  await palette.getByRole('button', { name: /^Run run-002\b/ }).press('Enter');
+  await palette.getByRole('combobox', { name: 'Search commands' }).fill('run-002');
+  await palette.getByRole('option', { name: /^Run run-002\b/ }).press('Enter');
 
   await expect(inspectorRun(page)).toHaveText('run-002');
   await expect.poll(() => urlParam(page, 'run')).toBe('run-002');
@@ -70,8 +70,8 @@ test('palette selection never displays the previous capsule while a new run load
 
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
-  await palette.getByRole('textbox', { name: 'Search commands' }).fill('run-002');
-  await palette.getByRole('button', { name: /^Run run-002\b/ }).click();
+  await palette.getByRole('combobox', { name: 'Search commands' }).fill('run-002');
+  await palette.getByRole('option', { name: /^Run run-002\b/ }).click();
 
   await expect.poll(() => urlParam(page, 'run')).toBe('run-002');
   await expect.poll(() => releaseRequest !== null).toBe(true);
@@ -101,8 +101,8 @@ test('a denied run result never reuses the previous run inspector', async ({ pag
 
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
-  await palette.getByRole('textbox', { name: 'Search commands' }).fill('run-003');
-  await palette.getByRole('button', { name: /^Run run-003\b/ }).click();
+  await palette.getByRole('combobox', { name: 'Search commands' }).fill('run-003');
+  await palette.getByRole('option', { name: /^Run run-003\b/ }).click();
 
   await expect.poll(() => urlParam(page, 'run')).toBe('run-003');
   await expect(page.getByRole('alert')).toContainText('Could not load run detail');
