@@ -431,12 +431,13 @@ class AlertRouter:
             }
             if result.error is not None:
                 details["error"] = result.error
-            # Issue #276: carry the run link the source recorded (today only
-            # `ops.seal.verify_failed`), so the dashboard can open the run from
-            # a delivered alert. Absent when the source recorded none.
-            run_id = event.payload.get("run_id")
-            if isinstance(run_id, str) and run_id:
-                details["run_id"] = run_id
+            # Issue #276: carry the triage refs the source recorded (today only
+            # `ops.seal.verify_failed`) into the delivery entry. Absent when the
+            # source recorded none; `claimed_run_id` stays labelled unverified.
+            for key in ("capsule_dir", "claimed_run_id"):
+                value = event.payload.get(key)
+                if isinstance(value, str) and value:
+                    details[key] = value
             first_divergence = event.payload.get("first_divergence")
             if isinstance(first_divergence, dict):
                 details["first_divergence"] = first_divergence

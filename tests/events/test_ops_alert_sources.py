@@ -94,11 +94,12 @@ def test_seal_verify_alert_is_critical_and_truncates_errors(
 def test_seal_verify_alert_records_the_run_link_only_when_known(
     captured: list[dict[str, Any]],
 ) -> None:
-    """Issue #276: run_id/first_divergence are additive and absent when unknown."""
+    """Issue #276: capsule_dir/claimed_run_id/first_divergence are additive, absent when unknown."""
     sources.emit_seal_verify_failed_alert(
         capsule_id="cap-1",
         errors=["e"],
-        run_id="run-42",
+        capsule_dir="/data/capsules/run-42",
+        claimed_run_id="run-42",
         first_divergence={
             "path": "tool-calls.jsonl",
             "reason": "modified",
@@ -111,7 +112,10 @@ def test_seal_verify_alert_records_the_run_link_only_when_known(
     )
     sources.emit_seal_verify_failed_alert(capsule_id="cap-2", errors=["e"])
     linked, unlinked = captured
-    assert linked["payload"]["run_id"] == "run-42"
+    # The manifest's run id rides under a name that says it is a claim.
+    assert linked["payload"]["claimed_run_id"] == "run-42"
+    assert "run_id" not in linked["payload"]
+    assert linked["payload"]["capsule_dir"] == "/data/capsules/run-42"
     # Only file-granularity refs and a count — never more than the alert needs.
     assert linked["payload"]["first_divergence"] == {
         "path": "tool-calls.jsonl",
@@ -119,7 +123,8 @@ def test_seal_verify_alert_records_the_run_link_only_when_known(
         "stream": "tool_calls",
         "divergent_files": 2,
     }
-    assert "run_id" not in unlinked["payload"]
+    assert "claimed_run_id" not in unlinked["payload"]
+    assert "capsule_dir" not in unlinked["payload"]
     assert "first_divergence" not in unlinked["payload"]
 
 
@@ -140,6 +145,11 @@ def test_verify_reads_the_run_id_from_the_capsule_manifest(tmp_path: Any) -> Non
     odd.mkdir()
     (odd / "capsule.yaml").write_text("run_id: 'two words; rm -rf /'\n")
     assert _manifest_run_id(odd) is None  # not a plain ref
+
+    # Only dots, or a slash, would address another path under /api/runs/.
+    for bad in (".", "..", "...", "a/b", "../x"):
+        (odd / "capsule.yaml").write_text(f"run_id: '{bad}'\n")
+        assert _manifest_run_id(odd) is None, bad
 
     broken = tmp_path / "broken"
     broken.mkdir()

@@ -119,12 +119,48 @@ export default function TriagePanel({ model, onClose, loadRun = api.getRun }: Tr
 
         <section aria-labelledby={ids.runs}>
           <h4 id={ids.runs} className={sectionTitle}>Linked runs</h4>
-          {model.noRunReason ? (
+          {model.failedCapsule && (
+            <dl className="mb-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[var(--color-text-muted)]">
+              <dt>failed capsule</dt>
+              <dd className="font-mono break-all text-[var(--color-text)]">
+                {model.failedCapsule.dir ?? 'directory not recorded (alert predates this field)'}
+              </dd>
+              <dt>seal capsule id</dt>
+              <dd className="font-mono break-all">{model.failedCapsule.capsuleId ?? 'not recorded'}</dd>
+            </dl>
+          )}
+          {model.claimedRun && (
+            <div role="note" aria-label="Unverified run claim" className="mb-2 rounded border border-[color-mix(in_oklab,var(--color-status-pending)_45%,transparent)] bg-[var(--color-pending-tint)] px-3 py-2 space-y-1">
+              <p className="text-[var(--color-text)]">
+                <Badge tone="pending">unverified</Badge>{' '}
+                Claimed run <code className="font-mono">{model.claimedRun.runId}</code>
+              </p>
+              <p className="text-[var(--color-text-muted)]">{model.claimedRun.caveat}</p>
+              <p>
+                <a
+                  href={runHref(model.claimedRun.runId)}
+                  className={linkClass}
+                  aria-label={`Open claimed run ${model.claimedRun.runId} (unverified) in the Runs tab`}
+                >
+                  Open claimed run (unverified)
+                </a>
+              </p>
+            </div>
+          )}
+          {model.unsafeRunIds.length > 0 && (
+            <p role="note" className="mb-2 text-[var(--color-status-failure)]">
+              Not a plain run id, so not loaded or linked:{' '}
+              {model.unsafeRunIds.map((id, i) => (
+                <span key={id}>{i > 0 && ', '}<code className="font-mono">{JSON.stringify(id)}</code></span>
+              ))}
+            </p>
+          )}
+          {model.runIds.length === 0 ? (model.noRunReason ? (
             <div role="note" className="rounded border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 space-y-1">
               <p className="font-semibold text-[var(--color-text)]">{model.noRunReason}</p>
               {model.noRunHint && <p className="text-[var(--color-text-muted)]">{model.noRunHint}</p>}
             </div>
-          ) : (
+          ) : null) : (
             <ul className="space-y-2">
               {loaded.map((id) => {
                 const s = runs[id] ?? { state: 'loading' };

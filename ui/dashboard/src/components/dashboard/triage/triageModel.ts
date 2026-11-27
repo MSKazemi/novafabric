@@ -6,9 +6,15 @@
  * words, and the next safe actions as copyable CLI commands.
  *
  * Honesty rules this module holds:
- *  - A run is linked only when the backend recorded its id (`AlertRow.run_id`,
- *    `IncidentView.run_ids`). It is never derived from an alert's subject — a
+ *  - A run is linked (and loaded) only when the record names it authoritatively:
+ *    `IncidentView.run_ids`. It is never derived from an alert's subject — a
  *    seal alert's `capsule:<id>` is a digest of the signed payload, not a run id.
+ *  - A seal alert's `claimed_run_id` comes from the FAILED capsule's own
+ *    capsule.yaml, which the failed seal no longer vouches for: a tampered
+ *    capsule can name an innocent run. It is shown labelled unverified, never
+ *    loaded as the subject, and commands target the capsule that failed.
+ *  - A run id that is not a plain ref (only dots, a slash, …) is never put into
+ *    a request path or a link: `/api/runs/..` would resolve to another route.
  *  - Verification status is what the record says (a seal alert *is* a recorded
  *    failure); otherwise "not checked here". The panel never runs a check.
  *  - Every command uses only subcommands and flags verified against `--help`
@@ -48,8 +54,14 @@ export interface TriageModel {
   recordId: string;
   /** Run ids the record links to, in record order (deduplicated). */
   runIds: string[];
-  /** Why no run is linked — set exactly when `runIds` is empty. */
+  /** Why no run is linked — set when `runIds` is empty and no run is claimed. */
   noRunReason: string | null;
+  /** A run the record only *claims* (seal alert: the failed capsule's manifest). Unverified. */
+  claimedRun: { runId: string; caveat: string } | null;
+  /** The capsule that failed verification (seal alerts only). */
+  failedCapsule: { capsuleId: string | null; dir: string | null } | null;
+  /** Run ids the record carries that are not plain refs; never loaded or linked. */
+  unsafeRunIds: string[];
   /** Extra context for the no-run case (what the subject is, how to link next time). */
   noRunHint: string | null;
   verify: VerifyState;
@@ -60,6 +72,18 @@ export interface TriageModel {
 
 /** Placeholder token replaced by a run's capsule directory once it is known. */
 export const CAPSULE_DIR_TOKEN = '{{capsule-dir}}';
+
+/** Shown wherever a claimed run id appears. */
+export const CLAIM_CAVEAT =
+  "Named by the failed capsule's own capsule.yaml, which the failed seal does not vouch for — " +
+  'a tampered capsule can name any run. Verify independently before treating it as the affected run.';
+
+const RUN_ID_RE = /^(?!\.+$)[A-Za-z0-9._:@-]{1,200}$/;
+
+/** A plain run ref: safe in a URL path segment (no slash, never only dots). */
+export function isSafeRunId(id: unknown): id is string {
+  return typeof id === 'string' && RUN_ID_RE.test(id);
+}
 
 const EVENT_WORDS: Record<string, string> = {
   'ops.quota.breached': 'a capsule write was rejected by a hard storage quota',
@@ -136,8 +160,12 @@ function unique(ids: Array<string | null | undefined>): string[] {
 }
 
 export function alertTriage(row: AlertRow): TriageModel {
-  const runIds = unique([row.run_id]);
   const isSeal = row.event_type === 'ops.seal.verify_failed';
+  const claimedId = isSafeRunId(row.claimed_run_id) ? row.claimed_run_id : null;
+  const unsafeRunIds = typeof row.claimed_run_id === 'string' && row.claimed_run_id && !claimedId
+    ? [row.claimed_run_id] : [];
+  const capsuleDir = typeof row.capsule_dir === 'string' && row.capsule_dir ? row.capsule_dir : null;
+  const capsuleId = row.subject.startsWith('capsule:') ? row.subject.slice('capsule:'.length) || null : null;
   const sev = row.severity ?? 'no severity';
   const timeline: TimelineEntry[] = [];
   const what = `${describeEvent(row.event_type)} (${row.event_type}, ${sev}), about ${row.subject || 'no recorded subject'}`;
@@ -153,14 +181,29 @@ export function alertTriage(row: AlertRow): TriageModel {
           : `Delivery outcome for ${where}: ${row.outcome}.`;
     timeline.push({ at: row.timestamp, text: outcome });
   }
-  if (runIds.length) {
-    timeline.push({ at: null, text: `The alert source recorded run ${runIds[0]}.` });
+  if (capsuleDir) timeline.push({ at: null, text: `The capsule that failed verification is ${capsuleDir}.` });
+  if (claimedId) {
+    timeline.push({
+      at: null,
+      text: `Its own capsule.yaml names run ${claimedId} — unverified: the failed seal does not vouch for that manifest.`,
+    });
   }
   if (row.first_divergence) {
     timeline.push({ at: null, text: divergenceSentence(row.first_divergence) });
   }
 
-  const commands: SafeCommand[] = runIds.flatMap(runCommands);
+  const commands: SafeCommand[] = [];
+  if (isSeal) {
+    const target = capsuleDir ? shellQuote(capsuleDir) : `<capsule-dir-of-capsule:${capsuleId ?? 'unknown'}>`;
+    commands.push({
+      name: 'nova verify',
+      flags: ['--json'],
+      template: `nova verify ${target} --json`,
+      purpose:
+        'Re-check the capsule that failed (the directory `nova verify` reported) — not the run its manifest ' +
+        'names. Reads only; if alerting is configured, a failed check raises a new alert.',
+    });
+  }
   commands.push({
     name: 'nova audit-log export',
     flags: ['--since'],
@@ -170,10 +213,11 @@ export function alertTriage(row: AlertRow): TriageModel {
       'records and other audited actions. Read-only.',
   });
 
+  const noRun = !claimedId;
   let noRunHint: string | null = null;
-  if (!runIds.length) {
+  if (noRun) {
     noRunHint = isSeal
-      ? `The subject ${row.subject} names the seal's capsule id — a digest of the signed payload, not a run id — so no run is guessed from it. Seal alerts raised by this version record the run id from the capsule's manifest; older alerts do not.`
+      ? `The subject ${row.subject} names the seal's capsule id — a digest of the signed payload, not a run id — so no run is guessed from it. Seal alerts raised by this version record the failed capsule's directory and the run its manifest claims (unverified); older alerts record neither.`
       : 'This alert type is about a system condition, not one run.';
   }
 
@@ -181,9 +225,12 @@ export function alertTriage(row: AlertRow): TriageModel {
     kind: 'alert',
     title: row.event_type,
     recordId: row.id,
-    runIds,
-    noRunReason: runIds.length ? null : 'No run linked — the alert source did not record a run id.',
+    runIds: [],
+    noRunReason: noRun ? 'No run linked — the alert source did not record a run id.' : null,
     noRunHint,
+    claimedRun: claimedId ? { runId: claimedId, caveat: CLAIM_CAVEAT } : null,
+    failedCapsule: isSeal ? { capsuleId, dir: capsuleDir } : null,
+    unsafeRunIds,
     verify: isSeal ? { kind: 'failed-recorded', at: row.timestamp, source: 'nova verify' } : { kind: 'not-checked' },
     firstDivergence: row.first_divergence ?? null,
     timeline,
@@ -192,7 +239,9 @@ export function alertTriage(row: AlertRow): TriageModel {
 }
 
 export function incidentTriage(inc: IncidentView, nowMs: number = Date.now()): TriageModel {
-  const runIds = unique(inc.run_ids ?? []);
+  const all = unique(inc.run_ids ?? []);
+  const runIds = all.filter(isSafeRunId);
+  const unsafeRunIds = all.filter((id) => !isSafeRunId(id));
   const timeline: TimelineEntry[] = [
     { at: inc.occurred_at, text: 'The incident occurred (time declared when the record was opened).' },
   ];
@@ -245,10 +294,13 @@ export function incidentTriage(inc: IncidentView, nowMs: number = Date.now()): T
     title: inc.title,
     recordId: inc.id,
     runIds,
-    noRunReason: runIds.length ? null : 'No run linked — the incident was opened without run ids.',
-    noRunHint: runIds.length
+    noRunReason: all.length ? null : 'No run linked — the incident was opened without run ids.',
+    noRunHint: all.length
       ? null
       : 'Incidents link runs only when opened: `nova incident open … --run-id <run>` (repeatable). The dashboard form does not set run ids yet.',
+    claimedRun: null,
+    failedCapsule: null,
+    unsafeRunIds,
     verify: { kind: 'not-checked' },
     firstDivergence: null,
     timeline,

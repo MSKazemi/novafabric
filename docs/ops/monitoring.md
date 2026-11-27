@@ -319,7 +319,7 @@ fail-safe — a missing audit log or events file yields an empty list, never a
       "event_type": "ops.quota.breached", "severity": "critical",
       "subject": "quota:capsules", "outcome": "delivered",
       "endpoint_id": "webhook-1", "attempts": 1,
-      "run_id": null, "first_divergence": null
+      "capsule_dir": null, "claimed_run_id": null, "first_divergence": null
     }
   ],
   "total": 1,
@@ -329,15 +329,21 @@ fail-safe — a missing audit log or events file yields an empty list, never a
 
 `alerting_configured` reflects whether a `NOVA_ALERTS_*` endpoint is configured.
 
-Two additive row fields link an alert to its run for the dashboard's triage panel
-(**experimental**, issue #276): `run_id` is the run the alert's *source* recorded, or `null`
-when it recorded none — it is never derived from `subject`; `first_divergence` is
-`{path, reason, stream, divergent_files}` (file granularity) or `null`. Today only
-`ops.seal.verify_failed` records them: `nova verify` reads `run_id` from the capsule's own
-`capsule.yaml` (a manifest the failed seal no longer vouches for — a lead, not proof) and adds
-the first evidence file that no longer matches the seal. Both ride in the event `payload` and,
-for delivered alerts, in the `alert.delivery` audit entry's details. Alerts raised before this
-change carry neither.
+Three additive, nullable row fields feed the dashboard's triage panel (**experimental**, issue
+#276); none is ever derived from `subject`. Today only `ops.seal.verify_failed` records them:
+
+- `capsule_dir` — the directory `nova verify` found failing (absolute path on the host that ran
+  it): the thing to re-verify.
+- `claimed_run_id` — the run id **named by the failed capsule's own `capsule.yaml`, which the
+  failed seal does not vouch for**. A tampered capsule can name any run: treat it as an
+  unverified claim and verify independently. Only a plain ref is kept (`[A-Za-z0-9._:@-]`, at
+  most 200 characters, never only dots), so the value cannot address another API path.
+- `first_divergence` — `{path, reason, stream, divergent_files}`: the first evidence file that
+  no longer matches the seal (file granularity).
+
+They ride in the event `payload` and, for delivered alerts, in the `alert.delivery` audit
+entry's details. A generic webhook endpoint receives the payload, so it now also sees the
+failed capsule's directory path. Alerts raised before this change carry none of them.
 
 Decision record: [ADR-0192 — Alerting & notification bus](../decisions.md). The
 full variable reference and normative semantics live in a spec in the maintainers'

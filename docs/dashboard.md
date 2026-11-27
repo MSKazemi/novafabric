@@ -205,44 +205,52 @@ From a row in **Alerts** or **Incidents**, the **Triage** button opens a read-on
 (a dialog: focus moves into it, **Esc** closes it and returns focus to the button). It answers
 three questions without leaving the page:
 
-- **Which run?** The run(s) the record itself links to — an incident's `run_ids`, or the
-  `run_id` an alert's source recorded. Each linked run is loaded with `GET /api/runs/{id}`
-  (at most 5; the rest are listed by id) and shows its status, creation time and capsule
-  directory, with an **Open run** link to the Runs tab (a normal link: **Back** returns to the
-  alert or incident). With two or more runs, a link opens the first two in **Diff**. When the
-  server refuses or cannot find a run, the panel shows the HTTP status and the server's message
-  and fills nothing in.
+- **Which run?** For an incident, the runs its `run_ids` name. Each is loaded with
+  `GET /api/runs/{id}` (at most 5; the rest are listed by id) and shows its status, creation
+  time and capsule directory, with an **Open run** link to the Runs tab (a normal link:
+  **Back** returns to the incident). With two or more runs, a link opens the first two in
+  **Diff**. When the server refuses or cannot find a run, the panel shows the HTTP status and
+  the server's message and fills nothing in. For a seal alert, the panel shows the **capsule
+  that failed** (its directory and seal capsule id) and, separately, the run that capsule's own
+  `capsule.yaml` *claims* — badged **unverified** (see below), never loaded as the alert's
+  subject. A run id that is not a plain ref (only dots, or containing `/`) is listed but never
+  put into a request or a link.
 - **What happened?** A timeline in words, built only from fields the record holds: for an
   alert, when it was raised (emitted rows) or delivered (delivery rows — the feed keeps only
   the delivery time), the endpoint, attempts and outcome; for an incident, occurrence,
   awareness, when the record was opened, every status/attestation transition, and the next
   Art. 73 deadline while it is open (an operational aid, not legal advice).
 - **What next?** Copyable CLI commands, each with what it does and whether it writes
-  anything: `nova verify <capsule-dir> --json`,
-  `nova export-evidence <capsule-dir> --output <run>-evidence.zip`,
-  `nova diff <run-a> <run-b> --json` (two linked runs),
-  `nova incident status <id>`, `nova incident export <id> --format aim`, and
-  `nova audit-log export --since <time>` for an alert. The capsule directory is filled in once
-  the run loads; until then a visible `<capsule-dir-of-…>` placeholder stands in. **Nothing is
+  anything. For a seal alert: `nova verify <failed-capsule-dir> --json` — the capsule that
+  failed, never the claimed run — and `nova audit-log export --since <time>`. For an incident:
+  `nova incident status <id>`, `nova verify <capsule-dir> --json` and
+  `nova export-evidence <capsule-dir> --output <run>-evidence.zip` per linked run,
+  `nova diff <run-a> <run-b> --json` (two linked runs) and
+  `nova incident export <id> --format aim`. A run's capsule directory is filled in once the run
+  loads; until then — or for a seal alert raised before the failed directory was recorded — a
+  visible `<capsule-dir-of-…>` placeholder stands in. **Nothing is
   executed from the panel** — it issues no POST, and every command and flag is checked against
   the generated CLI catalog by a unit test.
 
 **No guessing.** When a record links no run, the panel says so: *"No run linked — the alert
 source did not record a run id"* (or, for an incident, that it was opened without run ids).
-Today only `ops.seal.verify_failed` records a run id: `nova verify` reads it from the
-capsule's own `capsule.yaml` — which the failed seal no longer vouches for, so treat it as a
-lead — and also records the first evidence file that no longer matches the seal
-(`first_divergence`, file granularity). A seal alert's subject `capsule:<id>` is the seal's
-capsule id, a digest of the signed payload, and is never turned into a run id. Alerts raised
-before this change carry neither field. Quota, rate-limit, policy, drift and backup alerts are
+Today only `ops.seal.verify_failed` records anything run-related: the directory that failed
+(`capsule_dir`), the first evidence file that no longer matches the seal (`first_divergence`,
+file granularity), and `claimed_run_id` — the run id **named by the failed capsule's own
+`capsule.yaml`, which the failed seal does not vouch for**. A tampered capsule can name an
+innocent run, so the panel labels it *unverified — verify independently*, does not load it,
+and points every command at the failed capsule instead. A seal alert's subject
+`capsule:<id>` is the seal's capsule id, a digest of the signed payload, and is never turned
+into a run id. Alerts raised before this change carry none of these fields. Quota, rate-limit, policy, drift and backup alerts are
 about a system condition, not one run. An incident links runs only when it is opened with
 `nova incident open … --run-id <run>` (the dashboard's form does not set run ids yet).
 
 **Verification status** is what the record says: a seal alert is shown as a *recorded* failure
 with its time; everything else reads **not checked here** — the panel never runs a check.
 
-API: `GET /api/alerts/recent` rows carry two additive fields, `run_id` (string or `null`) and
-`first_divergence` (`{path, reason, stream, divergent_files}` or `null`); see
+API: `GET /api/alerts/recent` rows carry three additive, nullable fields: `capsule_dir`,
+`claimed_run_id` (unverified, as above) and `first_divergence`
+(`{path, reason, stream, divergent_files}`); see
 [Monitoring](ops/monitoring.md) (§ “Dashboard read endpoint”).
 
 Not in this slice — **future design** (tracked in issue #276, not implemented): tenant-scoped

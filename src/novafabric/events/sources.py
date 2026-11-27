@@ -127,7 +127,8 @@ def emit_seal_verify_failed_alert(
     capsule_id: str,
     errors: list[str],
     signature_ok: bool | None = None,
-    run_id: str | None = None,
+    claimed_run_id: str | None = None,
+    capsule_dir: str | None = None,
     first_divergence: dict[str, Any] | None = None,
 ) -> None:
     """`ops.seal.verify_failed` — a capsule's seal did not verify.
@@ -137,11 +138,15 @@ def emit_seal_verify_failed_alert(
     no longer be proven. Errors are truncated — an alert is a notification,
     not a report.
 
-    ``run_id`` and ``first_divergence`` are additive and optional (issue
-    #276): the run id the capsule's manifest records and the first evidence
-    file the seal no longer matches, so the dashboard's triage panel can link
-    the alert to the run instead of guessing. Each key is present only when
-    known — an absent key means "not recorded", never a value.
+    ``capsule_dir``, ``claimed_run_id`` and ``first_divergence`` are additive
+    and optional (issue #276), for the dashboard's triage panel:
+    ``capsule_dir`` is the directory that failed verification (what to
+    re-verify); ``claimed_run_id`` is the run id the capsule's own
+    ``capsule.yaml`` names — **unverified**, since the seal that just failed
+    no longer vouches for that manifest, so a tampered capsule can name any
+    run; ``first_divergence`` is the first evidence file the seal no longer
+    matches. Each key is present only when known — an absent key means "not
+    recorded", never a value.
     """
     payload: dict[str, Any] = {
         "capsule_id": capsule_id,
@@ -149,8 +154,10 @@ def emit_seal_verify_failed_alert(
         "errors": errors[:5],
         "error_count": len(errors),
     }
-    if run_id:
-        payload["run_id"] = run_id
+    if capsule_dir:
+        payload["capsule_dir"] = capsule_dir
+    if claimed_run_id:
+        payload["claimed_run_id"] = claimed_run_id
     if first_divergence:
         # File granularity only (issue #74) — refs, enums and a count, no content.
         payload["first_divergence"] = {

@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { GENERATED_COMMANDS } from '@/components/dashboard/commands/generatedCommands';
 import TriagePanel, { MAX_LOADED_RUNS, diffHref, formatAt, runHref } from '@/components/dashboard/triage/TriagePanel';
-import { alertTriage, incidentTriage, renderCommand } from '@/components/dashboard/triage/triageModel';
+import { alertTriage, incidentTriage, isSafeRunId, renderCommand } from '@/components/dashboard/triage/triageModel';
 import { ServeApiError, type AlertRow, type FullCapsule, type IncidentView } from '@/lib/api';
 
 const sealAlert: AlertRow = {
@@ -20,7 +20,8 @@ const sealAlert: AlertRow = {
   outcome: 'delivered',
   endpoint_id: 'webhook-1',
   attempts: 2,
-  run_id: 'run-1',
+  capsule_dir: '/data/capsules/3f2a',
+  claimed_run_id: 'run-1',
   first_divergence: { path: 'model-calls.jsonl', reason: 'modified', stream: 'model_calls', divergent_files: 3 },
 };
 
@@ -62,14 +63,47 @@ function capsule(runId: string, extra: Partial<FullCapsule> = {}): FullCapsule {
 const catalog = new Map(GENERATED_COMMANDS.map((c) => [c.name, c]));
 
 describe('triage model', () => {
-  it('links an alert to a run only when the source recorded one', () => {
-    expect(alertTriage(sealAlert).runIds).toEqual(['run-1']);
-    const unlinked = alertTriage({ ...sealAlert, run_id: null, first_divergence: null });
+  it("labels a seal alert's manifest run id as an unverified claim, never the subject", () => {
+    const m = alertTriage(sealAlert);
+    // A tampered capsule can name an innocent run: it is not loaded as a linked run.
+    expect(m.runIds).toEqual([]);
+    expect(m.claimedRun?.runId).toBe('run-1');
+    expect(m.claimedRun?.caveat).toMatch(/does not vouch for/);
+    expect(m.noRunReason).toBeNull();
+    expect(m.failedCapsule).toEqual({ capsuleId: '3f2a', dir: '/data/capsules/3f2a' });
+    expect(m.timeline.some((t) => /names run run-1 — unverified/.test(t.text))).toBe(true);
+    expect(m.timeline.some((t) => /source recorded run/.test(t.text))).toBe(false);
+  });
+
+  it('never offers a command against the claimed run — only the capsule that failed', () => {
+    const lines = alertTriage(sealAlert).commands.map((c) => renderCommand(c, null));
+    expect(lines).toContain('nova verify /data/capsules/3f2a --json');
+    expect(lines.some((l) => l.includes('run-1'))).toBe(false);
+    const older = alertTriage({ ...sealAlert, capsule_dir: null, claimed_run_id: null });
+    expect(older.commands.map((c) => renderCommand(c, null))).toContain(
+      'nova verify <capsule-dir-of-capsule:3f2a> --json',
+    );
+  });
+
+  it('rejects run ids that are only dots or contain a slash', () => {
+    for (const bad of ['.', '..', '...', 'a/b', '../x', '', 'two words']) expect(isSafeRunId(bad)).toBe(false);
+    for (const ok of ['run-1', 'r.1', '01HZ:abc@x']) expect(isSafeRunId(ok)).toBe(true);
+    const m = alertTriage({ ...sealAlert, claimed_run_id: '..' });
+    expect(m.claimedRun).toBeNull();
+    expect(m.unsafeRunIds).toEqual(['..']);
+    const inc = incidentTriage({ ...incident, run_ids: ['run-a', '..', 'a/b'] });
+    expect(inc.runIds).toEqual(['run-a']);
+    expect(inc.unsafeRunIds).toEqual(['..', 'a/b']);
+  });
+
+  it('says no run is linked when the alert recorded none', () => {
+    const unlinked = alertTriage({ ...sealAlert, claimed_run_id: null, capsule_dir: null, first_divergence: null });
     expect(unlinked.runIds).toEqual([]);
     expect(unlinked.noRunReason).toBe('No run linked — the alert source did not record a run id.');
     // The subject's capsule id is a seal digest, never promoted to a run id.
     expect(unlinked.noRunHint).toMatch(/not a run id/);
-    expect(unlinked.commands.some((c) => c.name === 'nova verify')).toBe(false);
+    // The failed capsule is still re-verifiable by hand, via a visible placeholder.
+    expect(unlinked.commands.find((c) => c.name === 'nova verify')?.template).toMatch(/<capsule-dir-of-capsule:3f2a>/);
   });
 
   it('treats a field missing on an older server like an unrecorded run', () => {
@@ -103,9 +137,11 @@ describe('triage model', () => {
   });
 
   it('shell-quotes values and shows a visible placeholder until the capsule dir is known', () => {
-    const verify = alertTriage(sealAlert).commands.find((c) => c.name === 'nova verify')!;
-    expect(renderCommand(verify, null)).toBe('nova verify <capsule-dir-of-run-1> --json');
-    expect(renderCommand(verify, '/data/my capsules/run-1')).toBe("nova verify '/data/my capsules/run-1' --json");
+    const verify = incidentTriage(incident).commands.find((c) => c.name === 'nova verify')!;
+    expect(renderCommand(verify, null)).toBe('nova verify <capsule-dir-of-run-a> --json');
+    expect(renderCommand(verify, '/data/my capsules/run-a')).toBe("nova verify '/data/my capsules/run-a' --json");
+    const seal = alertTriage({ ...sealAlert, capsule_dir: '/data/my capsules/3f2a' });
+    expect(seal.commands.map((c) => renderCommand(c, null))).toContain("nova verify '/data/my capsules/3f2a' --json");
   });
 
   it('builds an incident timeline in time order and offers a diff for two linked runs', () => {
@@ -125,18 +161,39 @@ describe('triage model', () => {
 });
 
 describe('TriagePanel', () => {
-  it('shows the linked run, its capsule path, the divergence and copyable commands', async () => {
+  it('shows the failed capsule, the claimed run as unverified, and loads no run for an alert', () => {
     const loadRun = vi.fn(async (id: string) => capsule(id));
     render(<TriagePanel model={alertTriage(sealAlert)} onClose={() => {}} loadRun={loadRun} />);
     expect(screen.getByRole('dialog', { name: /Triage — ops.seal.verify_failed/ })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText('/data/capsules/run-1')).toBeTruthy());
-    expect(loadRun).toHaveBeenCalledWith('run-1');
+    expect(loadRun).not.toHaveBeenCalled(); // the claimed run is never loaded as the subject
+    expect(screen.getByText('/data/capsules/3f2a')).toBeTruthy();
+    const claim = screen.getByRole('note', { name: 'Unverified run claim' });
+    expect(within(claim).getByText('unverified')).toBeTruthy();
+    expect(claim.textContent).toMatch(/does not vouch for/);
+    expect(within(claim).getByRole('link', { name: /Open claimed run run-1 \(unverified\)/ }).getAttribute('href'))
+      .toMatch(/\?tab=runs&run=run-1$/);
     expect(screen.getByText('seal failed')).toBeTruthy();
     expect(screen.getByText('model-calls.jsonl')).toBeTruthy();
-    expect(screen.getByText('nova verify /data/capsules/run-1 --json')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Copy nova verify /data/capsules/run-1 --json' })).toBeTruthy();
-    const open = screen.getByRole('link', { name: 'Open run run-1 in the Runs tab' });
-    expect(open.getAttribute('href')).toMatch(/\?tab=runs&run=run-1$/);
+    expect(screen.getByText('nova verify /data/capsules/3f2a --json')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy nova verify /data/capsules/3f2a --json' })).toBeTruthy();
+  });
+
+  it('puts a non-plain run id into no request and no link', () => {
+    const loadRun = vi.fn(async (id: string) => capsule(id));
+    render(<TriagePanel model={incidentTriage({ ...incident, run_ids: ['..', 'run-a'] })} onClose={() => {}} loadRun={loadRun} />);
+    expect(loadRun).toHaveBeenCalledTimes(1);
+    expect(loadRun).toHaveBeenCalledWith('run-a');
+    expect(screen.getByText(/Not a plain run id/)).toBeTruthy();
+    for (const a of screen.getAllByRole('link')) expect(a.getAttribute('href')).not.toMatch(/run=\.\./);
+  });
+
+  it('shows an incident run with its capsule path and run-scoped commands', async () => {
+    const loadRun = vi.fn(async (id: string) => capsule(id));
+    render(<TriagePanel model={incidentTriage({ ...incident, run_ids: ['run-a'] })} onClose={() => {}} loadRun={loadRun} />);
+    await waitFor(() => expect(screen.getByText('/data/capsules/run-a')).toBeTruthy());
+    expect(screen.getByText('nova verify /data/capsules/run-a --json')).toBeTruthy();
+    const open = screen.getByRole('link', { name: 'Open run run-a in the Runs tab' });
+    expect(open.getAttribute('href')).toMatch(/\?tab=runs&run=run-a$/);
   });
 
   it('says "no run linked" and loads nothing when the alert recorded no run', () => {
@@ -150,17 +207,17 @@ describe('TriagePanel', () => {
 
   it('reports a refused run with the server message and invents no status or path', async () => {
     const loadRun = vi.fn(async () => { throw new ServeApiError(403, 'forbidden for this workspace'); });
-    render(<TriagePanel model={alertTriage(sealAlert)} onClose={() => {}} loadRun={loadRun} />);
+    render(<TriagePanel model={incidentTriage({ ...incident, run_ids: ['run-a'] })} onClose={() => {}} loadRun={loadRun} />);
     await waitFor(() => expect(screen.getByText(/HTTP 403/)).toBeTruthy());
     expect(screen.getByText(/forbidden for this workspace/)).toBeTruthy();
     expect(screen.queryByText('success')).toBeNull();
     // The command keeps its placeholder rather than a guessed directory.
-    expect(screen.getByText('nova verify <capsule-dir-of-run-1> --json')).toBeTruthy();
+    expect(screen.getByText('nova verify <capsule-dir-of-run-a> --json')).toBeTruthy();
   });
 
   it('flags a capsule that is missing on disk', async () => {
     const loadRun = vi.fn(async (id: string) => capsule(id, { capsule_available: false }));
-    render(<TriagePanel model={alertTriage(sealAlert)} onClose={() => {}} loadRun={loadRun} />);
+    render(<TriagePanel model={incidentTriage({ ...incident, run_ids: ['run-a'] })} onClose={() => {}} loadRun={loadRun} />);
     await waitFor(() => expect(screen.getByText(/missing on disk/)).toBeTruthy());
   });
 

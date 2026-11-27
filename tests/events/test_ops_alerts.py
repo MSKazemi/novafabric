@@ -574,7 +574,7 @@ class TestAuditTrail:
     def test_run_link_rides_into_the_delivery_entry_only_when_recorded(
         self, tmp_path: Path, webhook_server: Any
     ) -> None:
-        """Issue #276: the triage panel reads the run link from the audit entry."""
+        """Issue #276: the triage panel reads the failed capsule + claimed run from the entry."""
         audit_path = tmp_path / "a.jsonl"
         router = AlertRouter(
             _config(_endpoint(webhook_server.url, endpoint_id="webhook-1"), audit_path=audit_path)
@@ -589,15 +589,22 @@ class TestAuditTrail:
             _ops_event(
                 event_type=EventType.OPS_SEAL_VERIFY_FAILED,
                 ref="capsule:abc",
-                payload={"capsule_id": "abc", "run_id": "run-1", "first_divergence": divergence},
+                payload={
+                    "capsule_id": "abc",
+                    "capsule_dir": "/data/capsules/abc",
+                    "claimed_run_id": "run-1",
+                    "first_divergence": divergence,
+                },
             )
         )
         router.route(_ops_event(ref="quota:other"))  # a source that records no run
         entries = AuditLog(audit_path).query()
         by_type = {e.details["event_type"]: e.details for e in entries}
-        assert by_type["ops.seal.verify_failed"]["run_id"] == "run-1"
+        assert by_type["ops.seal.verify_failed"]["claimed_run_id"] == "run-1"
+        assert by_type["ops.seal.verify_failed"]["capsule_dir"] == "/data/capsules/abc"
         assert by_type["ops.seal.verify_failed"]["first_divergence"] == divergence
-        assert "run_id" not in by_type["ops.quota.breached"]
+        assert "claimed_run_id" not in by_type["ops.quota.breached"]
+        assert "capsule_dir" not in by_type["ops.quota.breached"]
         assert "first_divergence" not in by_type["ops.quota.breached"]
 
     def test_audit_failure_swallowed_delivery_still_happens(

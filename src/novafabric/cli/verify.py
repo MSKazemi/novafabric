@@ -605,15 +605,17 @@ def _verify_capsule_dir(
             capsule_id=capsule_id,
             errors=all_errors,
             signature_ok=result.signature_ok,
-            run_id=_manifest_run_id(capsule_dir),
+            capsule_dir=str(capsule_dir.resolve()),
+            claimed_run_id=_manifest_run_id(capsule_dir),
             first_divergence=first_divergence,
         )
         raise typer.Exit(code=1)
 
 
 #: A run id is a short ref; anything else in capsule.yaml's ``run_id`` is not
-#: forwarded into an alert.
-_RUN_ID_RE = re.compile(r"^[A-Za-z0-9._:@-]{1,200}\Z")
+#: forwarded into an alert. No ``/``, and never only dots: ``.`` or ``..`` as a
+#: path segment would resolve ``/api/runs/..`` to another API route.
+_RUN_ID_RE = re.compile(r"^(?!\.+\Z)[A-Za-z0-9._:@-]{1,200}\Z")
 
 
 def _manifest_run_id(capsule_dir: Path) -> str | None:
@@ -621,9 +623,9 @@ def _manifest_run_id(capsule_dir: Path) -> str | None:
 
     Best-effort and never raises: a missing, linked, oversized or unparsable
     manifest — or a value that is not a plain ref — means the alert carries no
-    run id, and the dashboard then says "no run linked" instead of guessing one
-    from the directory name. The seal that just failed no longer vouches for
-    this manifest, so the value is a lead for triage, not proof.
+    run id. The seal that just failed no longer vouches for this manifest, so
+    a tampered capsule can name any run: the alert carries it as
+    ``claimed_run_id`` and the dashboard labels it unverified.
     """
     try:
         import yaml  # noqa: PLC0415

@@ -35,36 +35,55 @@ _OUTCOME_MAP = {"error": "failed"}
 
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
-#: Same bound `nova verify` applies before it records a run id (issue #276).
-_RUN_ID_RE = re.compile(r"^[A-Za-z0-9._:@-]{1,200}\Z")
+#: Same bound `nova verify` applies before it records a run id (issue #276): no
+#: ``/`` and never only dots, so the id cannot address another API path.
+_RUN_ID_RE = re.compile(r"^(?!\.+\Z)[A-Za-z0-9._:@-]{1,200}\Z")
+
+_EMPTY_LINK: dict[str, Any] = {
+    "claimed_run_id": None,
+    "capsule_dir": None,
+    "first_divergence": None,
+}
 
 
 def alert_run_link(source: Any) -> dict[str, Any]:
-    """``run_id`` + ``first_divergence`` from an alert's details/payload (issue #276).
+    """Triage refs from an alert's details/payload (issue #276), all nullable.
 
-    Additive row fields for the dashboard's triage panel. ``run_id`` is the run
-    the alert *source* recorded — today only ``ops.seal.verify_failed`` records
-    one — or ``None`` when it recorded none: the panel then says no run is
-    linked, it never derives one from the subject. ``first_divergence`` keeps
-    only file-granularity refs (path, reason, stream, divergent_files).
+    Additive row fields for the dashboard's triage panel; today only
+    ``ops.seal.verify_failed`` records them, and an absent key is ``None`` —
+    nothing is derived from the subject.
+
+    - ``capsule_dir``: the directory that failed verification (what to re-verify).
+    - ``claimed_run_id``: the run id the failed capsule's own ``capsule.yaml``
+      names. **Unverified** — the seal that failed no longer vouches for that
+      manifest, so a tampered capsule can name any run.
+    - ``first_divergence``: file-granularity refs only (path, reason, stream,
+      divergent_files).
     """
     if not isinstance(source, dict):
-        return {"run_id": None, "first_divergence": None}
-    raw_run = source.get("run_id")
-    run_id = raw_run if isinstance(raw_run, str) and _RUN_ID_RE.match(raw_run) else None
+        return dict(_EMPTY_LINK)
+    raw_run = source.get("claimed_run_id")
+    claimed = raw_run if isinstance(raw_run, str) and _RUN_ID_RE.match(raw_run) else None
+    raw_dir = source.get("capsule_dir")
+    capsule_dir = one_line(raw_dir, PATH_LIMIT) if isinstance(raw_dir, str) and raw_dir else None
     raw_fd = source.get("first_divergence")
     first_divergence: dict[str, Any] | None = None
     if isinstance(raw_fd, dict) and isinstance(raw_fd.get("path"), str):
         count = raw_fd.get("divergent_files")
+        stream = raw_fd.get("stream")
         first_divergence = {
             "path": one_line(raw_fd["path"], PATH_LIMIT),
             "reason": one_line(raw_fd.get("reason") or "", 32),
-            "stream": raw_fd.get("stream") if isinstance(raw_fd.get("stream"), str) else None,
+            "stream": one_line(stream, 64) if isinstance(stream, str) else None,
             "divergent_files": (
                 count if isinstance(count, int) and not isinstance(count, bool) else None
             ),
         }
-    return {"run_id": run_id, "first_divergence": first_divergence}
+    return {
+        "claimed_run_id": claimed,
+        "capsule_dir": capsule_dir,
+        "first_divergence": first_divergence,
+    }
 
 
 def parse_alert_ts(value: str) -> datetime:

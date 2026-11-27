@@ -120,10 +120,13 @@ export interface AlertRow {
   outcome: AlertOutcome;
   endpoint_id: string | null;
   attempts: number;
-  /** Issue #276: the run the alert *source* recorded (today only `ops.seal.verify_failed`);
-   *  null when it recorded none. Absent from servers older than this field. Never derived
-   *  from `subject`. */
-  run_id?: string | null;
+  /** Issue #276 (today only `ops.seal.verify_failed`; null when not recorded, absent from
+   *  older servers, never derived from `subject`): the directory that failed verification. */
+  capsule_dir?: string | null;
+  /** Issue #276: the run id the FAILED capsule's own capsule.yaml names. UNVERIFIED — the
+   *  seal that failed no longer vouches for that manifest, so a tampered capsule can name
+   *  any run. Never treat it as the alert's subject. */
+  claimed_run_id?: string | null;
   /** Issue #276: first evidence file the seal no longer matches (file granularity, #74). */
   first_divergence?: AlertFirstDivergence | null;
 }

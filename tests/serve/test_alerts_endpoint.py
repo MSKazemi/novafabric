@@ -312,7 +312,7 @@ def test_missing_files_never_500(
 
 
 # --------------------------------------------------------------------------- #
-# Issue #276: the run link the alert source recorded (triage panel)
+# Issue #276: the triage refs the alert source recorded (triage panel)
 # --------------------------------------------------------------------------- #
 
 
@@ -331,7 +331,8 @@ def test_delivery_row_carries_the_recorded_run_link(client: TestClient, tmp_path
             "attempts": 1,
             "severity": "critical",
             "subject": "capsule:abc",
-            "run_id": "run-1",
+            "capsule_dir": "/data/capsules/abc",
+            "claimed_run_id": "run-1",
             "first_divergence": {
                 "path": "model-calls.jsonl",
                 "reason": "modified",
@@ -343,7 +344,11 @@ def test_delivery_row_carries_the_recorded_run_link(client: TestClient, tmp_path
     )
     r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
     alert = r.json()["alerts"][0]
-    assert alert["run_id"] == "run-1"
+    # Carried under a name that says what it is: a claim the failed seal no
+    # longer vouches for, next to the capsule that actually failed.
+    assert alert["claimed_run_id"] == "run-1"
+    assert alert["capsule_dir"] == "/data/capsules/abc"
+    assert "run_id" not in alert
     assert alert["first_divergence"] == {
         "path": "model-calls.jsonl",
         "reason": "modified",
@@ -365,7 +370,8 @@ def test_row_without_a_recorded_run_says_none_never_a_guess(
     )
     r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
     alert = r.json()["alerts"][0]
-    assert alert["run_id"] is None
+    assert alert["claimed_run_id"] is None
+    assert alert["capsule_dir"] is None
     assert alert["first_divergence"] is None
 
 
@@ -379,18 +385,20 @@ def test_emitted_row_carries_the_run_link_from_the_event_payload(
         severity=EventSeverity.CRITICAL,
         subject=Subject(kind=SubjectKind.OPS, ref="capsule:abc"),
         occurred_at="2026-07-17T10:00:00.000000Z",
-        payload={"capsule_id": "abc", "run_id": "run-9"},
+        payload={"capsule_id": "abc", "claimed_run_id": "run-9"},
         source="nova verify",
     )
     _write_events(events_path, [event])
     monkeypatch.setenv("NOVA_EVENTS_LOG", str(events_path))
     r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
     alert = r.json()["alerts"][0]
-    assert alert["run_id"] == "run-9"
+    assert alert["claimed_run_id"] == "run-9"
     assert alert["first_divergence"] is None
 
 
-@pytest.mark.parametrize("bad", ["two words", "x" * 201, "", 7, None, "run\n1"])
+@pytest.mark.parametrize(
+    "bad", ["two words", "x" * 201, "", 7, None, "run\n1", ".", "..", "...", "a/b", "../x"]
+)
 def test_a_run_id_that_is_not_a_plain_ref_is_dropped(
     client: TestClient, tmp_path: Path, bad: object
 ) -> None:
@@ -404,11 +412,29 @@ def test_a_run_id_that_is_not_a_plain_ref_is_dropped(
             "event_type": "ops.seal.verify_failed",
             "outcome": "delivered",
             "subject": "capsule:abc",
-            "run_id": bad,
+            "claimed_run_id": bad,
             "first_divergence": {"path": 3},
         },
     )
     r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
     alert = r.json()["alerts"][0]
-    assert alert["run_id"] is None
+    assert alert["claimed_run_id"] is None
     assert alert["first_divergence"] is None
+
+
+def test_first_divergence_stream_is_bounded(client: TestClient, tmp_path: Path) -> None:
+    log = AuditLog(tmp_path / "audit.jsonl")
+    log.append(
+        event_type=AuditEventType.ALERT_DELIVERY,
+        actor="alert-router",
+        resource_id="EVT-LONG",
+        details={
+            "event_id": "EVT-LONG",
+            "event_type": "ops.seal.verify_failed",
+            "outcome": "delivered",
+            "subject": "capsule:abc",
+            "first_divergence": {"path": "x.jsonl", "reason": "modified", "stream": "s" * 5000},
+        },
+    )
+    r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
+    assert len(r.json()["alerts"][0]["first_divergence"]["stream"]) <= 64
