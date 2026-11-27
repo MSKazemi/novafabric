@@ -78,6 +78,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **Dashboard: aligned A/B comparison in the Diff tab** (experimental, issue #270, first slice). After a
+  two-run diff, an **Aligned comparison** panel lists the server's model-call and tool-call pairs in
+  alignment order, each marked in words (`Changed`, `Added in B`, `Removed in B`, `Unchanged`) with what
+  differs (request, response, provider, params, arguments, result, status). The first divergent step that
+  `nova diff` reports is named, highlighted and scrolled into view; **Go to first divergence** moves
+  keyboard focus to it. The pair is matched by record id; when the server sends no first divergence, or the
+  pair cannot be identified, the panel says so and does not guess. A comparison with skipped malformed
+  record lines is shown as incomplete, never as identical. A **Copy command** button gives the equivalent
+  `nova diff <run-a> <run-b>`. No API change: the view reads `report.first_divergence` from `GET /api/diff`.
 
 ### Changed
 
