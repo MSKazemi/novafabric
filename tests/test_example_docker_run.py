@@ -274,7 +274,9 @@ def _bash() -> str:
     return shutil.which("bash") or "/bin/bash"
 
 
-def _run_sh_with_stub(tmp_path: Path, **extra_env: str) -> subprocess.CompletedProcess[str]:
+def _run_sh_with_stub(
+    tmp_path: Path, script: Path = RUN_SH, **extra_env: str
+) -> subprocess.CompletedProcess[str]:
     bin_dir = Path(sys.executable).parent
     if not (bin_dir / "nova").is_file():
         pytest.skip(f"no `nova` console script beside {sys.executable}")
@@ -291,7 +293,7 @@ def _run_sh_with_stub(tmp_path: Path, **extra_env: str) -> subprocess.CompletedP
         **extra_env,
     }
     return subprocess.run(
-        [_bash(), str(RUN_SH), str(tmp_path / "capsules")],
+        [_bash(), str(script), str(tmp_path / "capsules")],
         capture_output=True, text=True, env=env, timeout=300,
     )
 
@@ -312,6 +314,40 @@ def test_run_sh_skips_cleanly_without_docker(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.startswith("skip: 'docker' is not on PATH"), proc.stdout
     assert not (tmp_path / "capsules").exists(), "a skip must not start a capture"
+
+
+def test_run_sh_skips_without_docker_when_invoked_by_bare_name(tmp_path: Path) -> None:
+    """`bash run.sh` from the example dir: a path with no slash, and no coreutils on PATH.
+
+    Issue #209: the directory used to come from `dirname`, a coreutils binary,
+    so an empty PATH failed with "dirname: command not found" before the skip.
+    """
+    env = {"PATH": "/nonexistent", "HOME": str(tmp_path)}
+    proc = subprocess.run(
+        [_bash(), "run.sh", str(tmp_path / "capsules")],
+        capture_output=True, text=True, env=env, timeout=60, cwd=EXAMPLE_DIR,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("skip: 'docker' is not on PATH"), proc.stdout
+    assert "command not found" not in proc.stderr, proc.stderr
+
+
+def test_run_sh_does_not_call_dirname() -> None:
+    """The directory is resolved with shell built-ins, never a coreutils binary."""
+    code = [ln for ln in RUN_SH.read_text().splitlines() if not ln.lstrip().startswith("#")]
+    assert not [ln for ln in code if "dirname" in ln], code
+
+
+def test_run_sh_through_a_symlink_mounts_the_real_example_dir(tmp_path: Path) -> None:
+    """A symlinked run.sh still mounts the directory holding payload.py, not the link's."""
+    link = tmp_path / "linked" / "run-docker-example.sh"
+    link.parent.mkdir()
+    link.symlink_to(RUN_SH)
+    proc = _run_sh_with_stub(tmp_path, script=link)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    argv = (tmp_path / "docker-argv.txt").read_text().splitlines()
+    volumes = [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "-v"]
+    assert f"{EXAMPLE_DIR}:/work:ro" in volumes, volumes
 
 
 def test_run_sh_skips_cleanly_when_the_daemon_is_down(tmp_path: Path) -> None:

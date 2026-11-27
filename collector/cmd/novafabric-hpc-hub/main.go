@@ -1,8 +1,8 @@
-// Command novafabric-hpc-hub is the planned HPC cluster-hub NATS message handler.
+// Command novafabric-hpc-hub is a stub for the HPC cluster-hub NATS message handler.
 //
-// STATUS: planned, not implemented. The intended design subscribes to
-// nova.<cluster_id>.aggregate, signs each batch with NovaSeal, and publishes the signed
-// batches to a Kafka regional topic. No part of that is written: this binary parses its flags
+// STATUS: future design, not implemented (no target version on the roadmap). The intended
+// design subscribes to nova.<cluster_id>.aggregate, signs each batch with NovaSeal, and
+// publishes the signed batches to a Kafka regional topic. No part of that is written: this binary parses its flags
 // and then exits non-zero. It used to obtain a signing key (generating a dev private key on
 // disk with --local-wal, or contacting the KMS with an EMPTY mTLS client certificate with
 // --kms), log "starting", and wait for SIGTERM while processing nothing — and the docs
@@ -27,7 +27,7 @@ const (
 	exitUsage          = 2
 )
 
-const notImplemented = "novafabric-hpc-hub is not implemented (planned): it does not subscribe to " +
+const notImplemented = "novafabric-hpc-hub is not implemented (future design): it does not subscribe to " +
 	"the hub, sign batches or publish to Kafka, and was exiting only after waiting for a signal. " +
 	"Nothing was started and no signing key was read or created"
 

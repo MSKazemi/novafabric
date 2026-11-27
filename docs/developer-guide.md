@@ -1518,7 +1518,7 @@ reachable from two places today: the collector's `novaseal_batch_signer` process
 ./bin/novafabric-verifier --batch batch.pb --local-wal
 ```
 
-`novafabric-hpc-hub` does **not** use it: that binary is planned and exits `1` as not implemented.
+`novafabric-hpc-hub` does **not** use it: that binary is **future design** — a stub that exits `1` as not implemented.
 
 On first use it generates an Ed25519 key at `~/.novafabric/dev-keys/<uuid>.pem` (mode 0400)
 and logs a `USING LOCAL DEV KEY — NOT FOR PRODUCTION` warning; it refuses to run when
