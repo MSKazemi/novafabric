@@ -135,6 +135,7 @@ implemented versus design intent.
 | Document | What it covers |
 |---|---|
 | [Server deployment](ops/server-deployment.md) | Deployment scenarios from local SQLite to Postgres and Kubernetes |
+| [Deployment matrix](ops/deployment-matrix.md) | Every deployment path side by side: maturity, OS/Python, services, storage, auth, TLS, backup, upgrade, what CI actually runs for it, known gaps, documented resource sizing |
 | [Server admin guide](ops/server-admin-guide.md) | Operating `nova server` in production — auth, tokens, RBAC, quotas, observability endpoints |
 | [Backup & restore runbook](ops/backup-restore.md) | `nova backup` / `nova restore`, verification, DR procedure (works today + planned sections) |
 | [Sizing guide](ops/sizing-guide.md) | Capacity planning — storage growth drivers, SQLite vs Postgres, rough sizing tables (estimates), single-writer limits |
