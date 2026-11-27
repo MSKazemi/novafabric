@@ -8,6 +8,7 @@ integration's own source of truth and says plainly what it does **not** cover.
 | [GitHub Actions](github-actions.md) | **works today** | Capture a CI step as a capsule and upload it as a build artifact. |
 | [Hugging Face](huggingface.md) | **experimental** (new in v0.109.0) | Capture `smolagents` agent runs and Inference Providers calls; opt-in Hub revision receipts and evaluation receipts. Mocked replay serves recorded Inference Providers calls from their recorded bytes; `smolagents` tools always run live. |
 | [Writing a hook plugin](writing-a-hook-plugin.md) | **experimental** | The wire-level capture plugin contract, for instrumenting an SDK NovaFabric does not know about. |
+| [MCP evidence server (stdio)](mcp-evidence-server.md) | **experimental** (unreleased) | Let an MCP client list, summarize and verify local capsules offline, read-only, within directories you name. No prompt or response content is returned. |
 
 ## Not here yet
 
