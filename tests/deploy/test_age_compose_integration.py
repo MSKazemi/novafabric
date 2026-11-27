@@ -88,7 +88,21 @@ from novafabric.lineage.backends.sqlite import SqliteLineageStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "docker" / "docker-compose.yml"
-DSN = "postgresql://nova:nova@localhost:5433/nova_lineage"
+# The compose file has no password defaults (every secret is `${VAR:?...}`),
+# so this test hands its own throwaway values to the `docker compose`
+# subprocess. They apply only to this test's isolated compose project (below),
+# never to an operator's deploy/docker/.env. The AGE value stays the one older
+# runs initialised `novafabric-age-test-project_age-data` with, because a
+# Postgres volume keeps its first password; override with
+# NOVAFABRIC_AGE_TEST_PASSWORD.
+AGE_TEST_PASSWORD = os.environ.get("NOVAFABRIC_AGE_TEST_PASSWORD", "nova")
+_COMPOSE_TEST_SECRETS = {
+    "NOVA_AGE_PASSWORD": AGE_TEST_PASSWORD,
+    # Not used by the `age` service, but Compose interpolates the whole file.
+    "NOVA_POSTGRES_PASSWORD": "age-compose-test-unused",
+    "NOVA_CLICKHOUSE_PASSWORD": "age-compose-test-unused",
+}
+DSN = f"postgresql://nova:{AGE_TEST_PASSWORD}@localhost:5433/nova_lineage"
 CONTAINER_NAME = "novafabric-age"
 
 # Isolated from the "docker" project an operator's own `docker compose -f
@@ -128,6 +142,7 @@ def _compose(*args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         timeout=180,
+        env={**os.environ, **_COMPOSE_TEST_SECRETS},
     )
 
 

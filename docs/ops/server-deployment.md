@@ -479,8 +479,11 @@ Set `NOVA_MODE=server` on the image. It listens on `NOVA_PORT` (default `7433`)
 and, with `NOVA_WORKERS>1`, runs that many uvicorn workers (requires Postgres):
 
 The entrypoint waits for Postgres with `pg_isready` against `PGHOST` (default
-`postgres`) / `PGPORT` / `PGUSER`, then runs `nova db upgrade --backend postgres`,
-which reads `NOVAFABRIC_METADATA_DSN` — so set all of them:
+`postgres`) / `PGPORT` / `PGUSER`, then, in server mode, runs
+`nova db upgrade --track registry --backend postgres` (the registry track, which
+reads `NOVAFABRIC_POSTGRES_DSN` and is what the server's schema-skew guard
+checks). The server creates the MetadataStore tables it uses (in
+`NOVAFABRIC_METADATA_DSN`) itself on first use, so set all of them:
 
 ```bash
 docker run -e NOVA_MODE=server \
@@ -493,6 +496,16 @@ docker run -e NOVA_MODE=server \
 
 For OIDC, mount a `server.yaml` with an `oidc:` block at
 `~/.config/novafabric/server.yaml` of the container user (see Scenario 3).
+
+**With the bundled Compose file** (`deploy/docker/docker-compose.yml`), the
+DSNs are assembled from `NOVA_POSTGRES_PASSWORD`, which has no default: Compose
+refuses to start until it is set. Generate it (and the stack's other secrets)
+once with `python3 scripts/compose_bootstrap.py`, which writes them into the
+git-ignored `deploy/docker/.env` with mode `0600` and never prints them, then
+start the stack. An existing stack's Postgres volume keeps the password it was
+initialised with; follow
+[Upgrading a stack created before this change](../installation.md#upgrading-a-stack-created-before-this-change)
+rather than generating a new one over it.
 
 ### Helm
 

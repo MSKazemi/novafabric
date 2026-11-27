@@ -305,7 +305,7 @@ Connect from Python (requires `pip install novafabric[server]` for `psycopg[bina
 ```python
 from novafabric.lineage.backends.age import AGELineageStore
 
-store = AGELineageStore(dsn="postgresql://nova:nova@localhost:5433/nova_lineage")
+store = AGELineageStore(dsn="postgresql://nova:<NOVA_AGE_PASSWORD>@localhost:5433/nova_lineage")
 ```
 
 `AGELineageStore.__init__` self-initializes the AGE extension and graph

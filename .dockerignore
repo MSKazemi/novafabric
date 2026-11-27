@@ -89,3 +89,9 @@ bench/
 
 # Compiled Python from the host — never belongs in the image build context.
 **/__pycache__/
+
+# Compose secrets (scripts/compose_bootstrap.py writes deploy/docker/.env).
+# The Dockerfile never COPYs them, but the build context is sent to the daemon
+# and cached, so keep every env file out of it.
+**/.env
+**/.env.*

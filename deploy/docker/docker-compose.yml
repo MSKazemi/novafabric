@@ -23,6 +23,7 @@
 #   export NOVAFABRIC_CAPSULE_DIR="${NOVA_DATA_DIR:-$HOME/novafabric-data}/capsules"
 #
 # Quick start (dev — Postgres + dashboard only):
+#   python3 scripts/compose_bootstrap.py   # once: writes deploy/docker/.env (0600)
 #   make dev-up
 #   docker compose -f deploy/docker/docker-compose.yml up --build -d
 #
@@ -30,9 +31,33 @@
 #   make prod-up
 #   docker compose -f deploy/docker/docker-compose.yml --profile prod up --build -d
 #
-# Run experiments on the host:
+# Secrets (no defaults — the stack fails closed)
+# ──────────────────────────────────────────────
+# Every password below is a REQUIRED variable (`${VAR:?message}`): there is no
+# demo default, so `docker compose` (including `config`) stops with that message
+# until it is set. The always-on `nova` service uses the Postgres and
+# ClickHouse secrets, and Compose can resolve variables for services outside
+# the active profile, so set all of them for every profile. Generate them once:
+#
+#   python3 scripts/compose_bootstrap.py
+#
+# That writes NOVA_POSTGRES_PASSWORD, NOVA_CLICKHOUSE_PASSWORD and
+# NOVA_AGE_PASSWORD as random 256-bit values into deploy/docker/.env (the file
+# Compose reads automatically; git-ignored, excluded from the build context,
+# mode 0600). It never overwrites a value that is already set and never prints
+# one. A value exported in your shell overrides the file.
+#
+# Existing deployments (volumes created before this change): Postgres and AGE
+# fixed their password when the volume was first initialised (the old demo
+# value), and changing the variable does NOT change it. Put the password your
+# volume actually uses into deploy/docker/.env before running the script, then
+# rotate deliberately — see docs/installation.md, "Upgrading a stack created
+# before this change". Never `docker compose down -v`: it deletes the volumes.
+#
+# Run experiments on the host (the Postgres port is not published; use the
+# container network or add a 127.0.0.1-bound port yourself):
 #   export NOVAFABRIC_METADATA_BACKEND=postgres
-#   export NOVAFABRIC_METADATA_DSN=postgresql://nova:nova@localhost:5432/nova
+#   export NOVAFABRIC_METADATA_DSN="postgresql://nova:<NOVA_POSTGRES_PASSWORD>@localhost:5432/nova"
 #   nova capture python my_scenario.py
 #
 # Access dashboard via SSH tunnel:
@@ -54,7 +79,7 @@ services:
     container_name: novafabric-postgres
     environment:
       POSTGRES_USER: nova
-      POSTGRES_PASSWORD: nova
+      POSTGRES_PASSWORD: ${NOVA_POSTGRES_PASSWORD:?NOVA_POSTGRES_PASSWORD is not set - run python3 scripts/compose_bootstrap.py first (docs/installation.md)}
       POSTGRES_DB: nova
     volumes:
       - pg-data:/var/lib/postgresql/data
@@ -84,13 +109,13 @@ services:
       NOVAFABRIC_EVIDENCE_DIR: /data/capsules/evidence
       # MetadataStore backend
       NOVAFABRIC_METADATA_BACKEND: postgres
-      NOVAFABRIC_METADATA_DSN: postgresql://nova:nova@postgres:5432/nova
+      NOVAFABRIC_METADATA_DSN: postgresql://nova:${NOVA_POSTGRES_PASSWORD:?NOVA_POSTGRES_PASSWORD is not set - run python3 scripts/compose_bootstrap.py first (docs/installation.md)}@postgres:5432/nova
       # Server-mode backend
       NOVAFABRIC_SERVER_BACKEND: postgres
-      NOVAFABRIC_POSTGRES_DSN: postgresql://nova:nova@postgres:5432/nova
+      NOVAFABRIC_POSTGRES_DSN: postgresql://nova:${NOVA_POSTGRES_PASSWORD:?NOVA_POSTGRES_PASSWORD is not set - run python3 scripts/compose_bootstrap.py first (docs/installation.md)}@postgres:5432/nova
       # ClickHouse cost attribution (cap-002 / ADR-0066)
       # Absent in dev → CostTab degrades to stub; present in prod → live cost data
-      NOVA_CLICKHOUSE_URL: http://nova:novapass@clickhouse:8123/nova
+      NOVA_CLICKHOUSE_URL: http://nova:${NOVA_CLICKHOUSE_PASSWORD:?NOVA_CLICKHOUSE_PASSWORD is not set - run python3 scripts/compose_bootstrap.py first (docs/installation.md)}@clickhouse:8123/nova
       # JanusGraph lineage-v2 (ADR-0053 / Phase 6)
       # Absent in dev → lineage falls back to KuzuDB; present in prod → JanusGraph active
       NOVA_JANUSGRAPH_URL: ws://janusgraph:8182/gremlin
@@ -126,13 +151,15 @@ services:
     container_name: novafabric-clickhouse
     environment:
       CLICKHOUSE_USER: nova
-      CLICKHOUSE_PASSWORD: novapass
+      CLICKHOUSE_PASSWORD: ${NOVA_CLICKHOUSE_PASSWORD:?NOVA_CLICKHOUSE_PASSWORD is not set - run python3 scripts/compose_bootstrap.py first (docs/installation.md)}
       CLICKHOUSE_DB: nova
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
       - ch-data:/var/lib/clickhouse
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --user nova --password novapass --query 'SELECT 1'"]
+      # `$$` keeps Compose from interpolating: the container's shell reads its
+      # own CLICKHOUSE_PASSWORD, so the secret is not written into the check.
+      test: ["CMD-SHELL", "clickhouse-client --user nova --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'"]
       interval: 5s
       timeout: 10s
       retries: 12
@@ -207,7 +234,7 @@ services:
       DB_PORT: "5432"
       DB_NAME: nova
       DB_USER: nova
-      DB_PASSWORD: nova
+      DB_PASSWORD: ${NOVA_POSTGRES_PASSWORD:?NOVA_POSTGRES_PASSWORD is not set - run python3 scripts/compose_bootstrap.py first (docs/installation.md)}
       POOL_MODE: transaction
       MAX_CLIENT_CONN: "200"
       DEFAULT_POOL_SIZE: "20"
@@ -271,7 +298,7 @@ services:
     container_name: novafabric-age
     environment:
       POSTGRES_USER: nova
-      POSTGRES_PASSWORD: nova
+      POSTGRES_PASSWORD: ${NOVA_AGE_PASSWORD:?NOVA_AGE_PASSWORD is not set - run python3 scripts/compose_bootstrap.py first (docs/installation.md)}
       POSTGRES_DB: nova_lineage
     ports:
       - "127.0.0.1:5433:5432"

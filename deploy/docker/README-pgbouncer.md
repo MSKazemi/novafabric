@@ -25,15 +25,26 @@ optional for local development.
 ## Quick start
 
 ```bash
+# Once: generate the stack's secrets into deploy/docker/.env (mode 0600). The
+# compose file has no password defaults and refuses to start without them.
+python3 scripts/compose_bootstrap.py
+
 # Start the full production stack (includes pgBouncer on port 6432):
-docker compose --profile prod up -d pgbouncer postgres
+docker compose -f deploy/docker/docker-compose.yml --profile prod up -d pgbouncer postgres
 
 # Connect directly through pgBouncer to verify. This repo's compose service
-# is configured with DB_NAME=nova/DB_USER=nova/DB_PASSWORD=nova; AUTH_TYPE:
-# trust means pgBouncer does not check the password, but the database name
-# must still be "nova" to route correctly:
-psql "postgresql://nova:nova@localhost:6432/nova"
+# is configured with DB_NAME=nova/DB_USER=nova and
+# DB_PASSWORD=${NOVA_POSTGRES_PASSWORD}; AUTH_TYPE: trust means pgBouncer does
+# not check the client's password (see the warning below), but the database
+# name must still be "nova" to route correctly:
+psql "postgresql://nova@localhost:6432/nova"
 ```
+
+> **Warning — `AUTH_TYPE: trust`.** Any process that can reach
+> `127.0.0.1:6432` on the Docker host connects as `nova` without a password.
+> The port is bound to loopback only, but on a shared host that is every local
+> user. Moving this service to `scram-sha-256` client authentication is not
+> part of the required-secret change and is still open.
 
 ---
 
@@ -100,20 +111,21 @@ placeholder with the actual string returned by `rolpassword`.
 
 Point your NovaFabric installation at pgBouncer (port **6432**) instead of
 Postgres (port 5432). Against this repo's compose service
-(`DB_NAME=nova`/`DB_USER=nova`/`DB_PASSWORD=nova`, `AUTH_TYPE: trust`):
+(`DB_NAME=nova`/`DB_USER=nova`/`DB_PASSWORD=${NOVA_POSTGRES_PASSWORD}`,
+`AUTH_TYPE: trust`), with the password taken from `deploy/docker/.env`:
 
 ```bash
 # MetadataStore
-export NOVAFABRIC_METADATA_DSN="postgresql+asyncpg://nova:nova@pgbouncer:6432/nova"
+export NOVAFABRIC_METADATA_DSN="postgresql+asyncpg://nova:${NOVA_POSTGRES_PASSWORD}@pgbouncer:6432/nova"
 
 # Legacy registry DSN (nova migrate-to-postgres)
-export NOVAFABRIC_POSTGRES_DSN="postgresql://nova:nova@pgbouncer:6432/nova"
+export NOVAFABRIC_POSTGRES_DSN="postgresql://nova:${NOVA_POSTGRES_PASSWORD}@pgbouncer:6432/nova"
 ```
 
 For a standalone pgBouncer deployment with your own Postgres roles and
 database (e.g. the `novafabric_app`/`novafabric_migrator` split from
 "Generating SCRAM-SHA-256 password hashes" above), substitute your own
-role, password, and database name in place of `nova:nova@.../nova`.
+role, password, and database name in place of `nova:${NOVA_POSTGRES_PASSWORD}@.../nova`.
 
 ---
 
@@ -121,11 +133,13 @@ role, password, and database name in place of `nova:nova@.../nova`.
 
 This repo's compose `prod` service has no mounted `userlist.txt`/`pgbouncer.ini`
 to reload — it uses `AUTH_TYPE: trust` and reads its settings from
-`environment:` in `docker-compose.yml`. To change them, edit that block and
-recreate the service:
+`environment:` in `docker-compose.yml`, whose `DB_PASSWORD` comes from
+`NOVA_POSTGRES_PASSWORD` in `deploy/docker/.env`. After rotating the Postgres
+password (see `docs/installation.md`, "Upgrading a stack created before this
+change"), update that variable and recreate the service:
 
 ```bash
-docker compose --profile prod up -d --force-recreate pgbouncer
+docker compose -f deploy/docker/docker-compose.yml --profile prod up -d --force-recreate pgbouncer
 ```
 
 The command below applies to a **standalone** pgBouncer deployment where you

@@ -29,10 +29,17 @@ until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -q; do
 done
 echo "[nova] postgres ready."
 
-echo "[nova] running schema migrations (nova db upgrade --backend postgres --revision ${NOVA_DB_REVISION})..."
-nova db upgrade --backend postgres --revision "$NOVA_DB_REVISION"
-
 if [ "$NOVA_MODE" = "server" ]; then
+    # Server mode migrates the REGISTRY track, the one `nova server start`'s
+    # schema-skew guard checks against NOVAFABRIC_POSTGRES_DSN. It must not
+    # also run the MetadataStore track (`nova db upgrade`'s default): both
+    # tracks keep their stamp in the same `alembic_version` table, and in the
+    # bundled compose stack both DSNs name the same database, so the metadata
+    # head (v005) would overwrite the registry stamp and the server would
+    # refuse to start (SchemaSkewError: v005 is not known to this build). The
+    # server creates the MetadataStore tables it uses itself on first use.
+    echo "[nova] running schema migrations (nova db upgrade --track registry --backend postgres --revision ${NOVA_DB_REVISION})..."
+    nova db upgrade --track registry --backend postgres --revision "$NOVA_DB_REVISION"
     NOVA_PORT="${NOVA_PORT:-7433}"
     echo "[nova] starting multi-user REST API server (OIDC/RBAC/Postgres) on 0.0.0.0:${NOVA_PORT} [workers=${NOVA_WORKERS:-1}] ..."
     exec nova server start \
@@ -41,6 +48,10 @@ if [ "$NOVA_MODE" = "server" ]; then
         --port "${NOVA_PORT}" \
         --workers "${NOVA_WORKERS:-1}"
 fi
+
+# Dashboard mode (`nova serve`, SQLite registry) keeps the MetadataStore track.
+echo "[nova] running schema migrations (nova db upgrade --backend postgres --revision ${NOVA_DB_REVISION})..."
+nova db upgrade --backend postgres --revision "$NOVA_DB_REVISION"
 
 echo "[nova] starting dashboard on 0.0.0.0:${NOVA_PORT:-4321} ..."
 exec nova serve --experimental \
