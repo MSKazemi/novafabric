@@ -1,4 +1,6 @@
 // Command novafabric-verifier verifies NovaSeal Ed25519 batch signatures offline.
+// Maturity: experimental. Run with -h for every flag and exit code, or see
+// docs/collector-reference.md.
 //
 // Usage:
 //
@@ -27,6 +29,41 @@ import (
 	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 )
 
+// verifierUsageText is printed by -h/--help and on a usage error.
+const verifierUsageText = `novafabric-verifier: verify a NovaSeal Ed25519 batch signature offline.
+
+Maturity: experimental. Reads one OTLP ResourceLogs batch, recomputes its canonical
+bytes (the nova.batch.signature and nova.batch.signing_key_id resource attributes
+removed, attributes sorted, deterministic protobuf) and checks the signature. It
+needs no network and no KMS.
+
+Usage:
+  novafabric-verifier --batch FILE --pubkey KEY.pem --key-id ID
+  novafabric-verifier --batch FILE --local-wal
+
+Flags:
+`
+
+// verifierUsageFooter follows the flag list in the help output.
+const verifierUsageFooter = `
+Output (stdout):
+  OK key_id=<id>                       the signature verifies
+  INVALID key_id=<id> error=<reason>   it does not (wrong key, key ID mismatch,
+                                       missing signature attributes, altered batch)
+
+Environment:
+  HOME             locates the dev-keys directory for --local-wal
+  NOVAFABRIC_ENV   "production" makes --local-wal refuse to run
+
+Exit codes:
+  0  the signature verifies
+  1  it does not, or an input could not be read or parsed
+  2  usage error: --batch missing, neither --pubkey nor --local-wal, --pubkey without
+     --key-id, an unknown flag, or -h
+
+See docs/collector-reference.md.
+`
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -40,10 +77,20 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("novafabric-verifier", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	batchPath := fs.String("batch", "", "Path to serialized OTLP ResourceLogs proto file (required)")
-	pubkeyPath := fs.String("pubkey", "", "Path to a PEM Ed25519 public key (SPKI \"PUBLIC KEY\", or a raw 32-byte body)")
-	localWAL := fs.Bool("local-wal", false, "Use local dev key from ~/.novafabric/dev-keys/ for verification")
-	keyID := fs.String("key-id", "", "Key ID to verify against (required with --pubkey)")
+	batchPath := fs.String("batch", "",
+		"Path to one serialized OTLP ResourceLogs protobuf message, signed by the novaseal_batch_signer processor (required)")
+	pubkeyPath := fs.String("pubkey", "",
+		"Path to a PEM Ed25519 public key: SPKI \"PUBLIC KEY\" or a raw 32-byte body. Needs --key-id")
+	localWAL := fs.Bool("local-wal", false,
+		"Verify with the local dev key in $HOME/.novafabric/dev-keys/ (exactly one *.pem; one is generated if none exists). Wins over --pubkey. Refused when NOVAFABRIC_ENV=production")
+	keyID := fs.String("key-id", "",
+		"Key ID the batch must carry in nova.batch.signing_key_id (required with --pubkey)")
+	fs.Usage = func() {
+		out := fs.Output()
+		_, _ = fmt.Fprint(out, verifierUsageText)
+		fs.PrintDefaults()
+		_, _ = fmt.Fprint(out, verifierUsageFooter)
+	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
