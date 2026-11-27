@@ -1,5 +1,7 @@
 # Architecture
 
+> Verified against code on 2026-11-27.
+
 A contributor's map of the codebase: what the subsystems are, where they live,
 and which invariants you must not break. For the *conceptual* model — what a Run
 Capsule is, how replay modes differ — read [concepts.md](concepts.md) first.
@@ -70,9 +72,9 @@ weight is, not a quality signal.
 | Module | What it does |
 |---|---|
 | `capture/` | The capture orchestrator, hook installation, and the event recorder. **The hot path** — changes here need benchmarks. |
-| `runners/` | Where the captured workload actually executes: local process, container, SLURM, Kubernetes. |
+| `runners/` | Where the captured workload actually executes: local process (the default), Docker container, SLURM, Kubernetes, LSF and PBS (`runners/_registry.py`). |
 | `proxy/` | Transparent HTTP proxies for providers that cannot be hooked in-process. |
-| `adapters/` | Framework/integration adapters including LangGraph, AutoGen, CrewAI, DSPy, OpenAI Agents, Google ADK, Bedrock AgentCore, A2A, LlamaIndex, Pydantic AI, Haystack, Git, Langfuse, and MLflow. MCP capture lives under the capture/proxy paths rather than this adapter directory. |
+| `adapters/` | Framework/integration adapters including LangGraph, AutoGen, CrewAI, DSPy, OpenAI Agents, Google ADK, Bedrock AgentCore, A2A, LlamaIndex, Pydantic AI, Haystack, smolagents, the LangChain tool seam (`langchain_tools.py`), Git, Langfuse, and MLflow. MCP capture lives under the capture/proxy paths (`capture/hooks/_mcp.py`, `proxy/mcp_proxy.py`) rather than this adapter directory. |
 | `capsule/` | Capsule construction, validation, parent/child relationships. |
 | `spec/`, `registry/` | Asset Spec models and the local asset registry. |
 | `masking/`, `pii/` | Redaction pipeline and pluggable maskers. |
@@ -83,7 +85,7 @@ weight is, not a quality signal.
 |---|---|
 | `trust/` | NovaSeal — signing, Merkle trees, timestamping, transparency witnesses. |
 | `evidence/`, `evidence_fabric/` | Evidence Bundle construction and export. |
-| `provenance/`, `supplychain/` | Attestations, AI-BOM, in-toto/SLSA envelopes. |
+| `provenance/`, `supplychain/`, `envelopes/` | Attestations and AI-BOM; `envelopes/` holds the DSSE, in-toto and SLSA attestation envelopes (not to be confused with `envelope/`, below). |
 | `audit/`, `governance/`, `policies/`, `policy/` | Policy gates and the audit trail. |
 
 ### Reasoning over runs
@@ -112,8 +114,9 @@ weight is, not a quality signal.
 | `ui/dashboard/` (repository root, not under `src/`) | The dashboard frontend — Astro + React, with its own vitest suite. Its dashboard build is copied into `src/novafabric/serve/static/` (`ui/dashboard/scripts/copy-dashboard.mjs`), which ships in the wheel. |
 | `metadata_store/` | SQLite and Postgres metadata backends, including row-level security. `dsn.py` is the canonical place a Postgres DSN is normalised — see [below](#one-dsn-two-consumers). |
 | `object_capsule_store/` | S3-compatible object storage for capsules at scale. |
-| `collector_app/`, `collector/` (repo root, Go) | The cluster-scale collector and node spool. |
-| `events/`, `envelope/`, `envelopes/` | Event Envelope v1 and the event bus. |
+| `collector_app/`, `collector/` (repo root, Go), `collector_cffi/` | `collector_app/` is the Python collector (`POST /capsule` into an in-memory DuckDB accumulator, or ClickHouse when `NOVA_CLICKHOUSE_URL` is set). `collector/` is the Go module for the node spool, the spool forwarder, the collector and the verifier (`collector/cmd/`). `collector_cffi/` is the Python binding to the Go spool (with a pure-Python fallback) that `nova capture --emit-spool` writes through (`capture/spool_sink.py`; off by default). |
+| `envelope/` | EventEnvelope v1, the per-event wire format (with CloudEvents interop) that the spool carries. |
+| `events/` | The opt-in lifecycle event emitter: a local `events.jsonl` and optional webhooks. Nothing is emitted until a sink is configured (`NOVA_EVENTS_LOG` / `NOVA_EVENTS_WEBHOOK`); the default is a no-op sink. |
 
 ### Compliance and reporting
 
@@ -121,6 +124,66 @@ weight is, not a quality signal.
 ISO 42001, CycloneDX AI-BOM, and others), each mapping capsule facts to a
 standard's required form. `report/`, `export_blob/`, `viewer/`, `viz/` handle
 presentation and portability.
+
+### Other subsystems
+
+Packages the tables above do not cover. Each maturity label comes from the
+package's docstring, its `nova --help` line or the page that documents it;
+"library only" means no `nova` command calls it yet.
+
+**Capture runtime, storage and clients**
+
+| Module | What it does | Maturity |
+|---|---|---|
+| `sdk/` | The `@agent` decorator (`novafabric.sdk.agent`): in-process capture through the same finalization as `nova capture`, without maskers. | works today |
+| `daemon/` | The warm capture daemon behind `nova daemon start/stop/status`: a prefork `AF_UNIX` server that forks one isolated worker per run. Linux only, opt-in. See [warm-capture-daemon.md](warm-capture-daemon.md). | experimental |
+| `otel/` | OpenTelemetry GenAI spans out (`nova capture --emit-otel-genai`, `otel/genai_emitter.py`) and OTLP in (`nova serve`'s `/api/otlp/v1/traces` and `/logs`, `otel/genai_ingest.py`, `otel/logs_ingest.py`). See [OTLP ingest](architecture/otlp-ingest.md). | experimental |
+| `session/` | `nova session`: a content-addressed `session.json` that groups N independent capsules in order, and replays them in sequence. It copies no capsule data. | experimental |
+| `jobs/` | Durable background jobs: a SQLite `JobStore` (`$NOVAFABRIC_HOME/jobs.db`) whose workers claim jobs by atomic lease. Used by the server's replay routes (`server/routes/replays.py`). | experimental |
+| `ha/` | The writer lease with fencing tokens (`ha/lease.py`). Automated promotion and write-path fencing are not built. | experimental, library only |
+| `storage/` | The `StorageBackend` interface (SQLite, Postgres), WORM adapters (local, S3, GCS, Azure Blob), retention and legal-hold primitives, and the dual-object compliance/PII split (`dual_object_store.py`, off by default). | experimental |
+| `schemas/` | The packaged JSON Schemas in force at runtime, including `run-capsule.schema.json`, which `nova validate` checks. | works today |
+| `migrations/` | Helpers for the registry migration track (`nova db upgrade --track registry`); see [Schema migrations](#schema-migrations). | experimental |
+| `capsule_migration/` | `nova migrate`: copies a v0.1.x capsule to a v1.0.0-format copy and appends a `migration_source` lineage edge. The source is never modified. | experimental |
+| `import_blob/` | `nova import`: the inverse of `export_blob/`. Verifies, unpacks and re-indexes a batch export, and writes a receipt. | experimental |
+| `backup/` | `nova backup create/verify` and `nova restore`: evidence-grade backup sets with a signed coverage table. Key material travels only under an explicit opt-in. | experimental |
+| `support_bundle/` | `nova support-bundle`: a redacted, hash-manifested diagnostics tarball, deny-by-default. | experimental |
+| `client/` | A typed, synchronous Python client for the server's `/v0` REST API. Server-mode tooling only; no local-mode feature depends on it. | experimental |
+
+**Reading, reporting and governance over runs**
+
+| Module | What it does | Maturity |
+|---|---|---|
+| `agent_graph/` | `nova graph agent`: a read-only DAG of one run's control flow, rebuilt from `model-calls.jsonl`, `tool-calls.jsonl` and `trace.jsonl`. | experimental |
+| `forensics/` | `nova forensics timeline`: a deterministically ordered incident timeline over sealed evidence. Evidence it cannot rebuild is recorded as gaps. | experimental |
+| `views/` | `nova view`: saved queries stored as plain files under `.novafabric/views/`. | experimental |
+| `trend/` | `nova trend`: an offline cost, score or latency trend report over local capsules, as JSON and optional static HTML. | experimental |
+| `dashboards/` | `nova dashboard`: dashboards and widgets stored as portable, versioned JSON files rather than database rows. | experimental |
+| `cost/` | `nova cost`: record-only cost estimation, attribution, fairness and roll-up. It never enforces a budget. | experimental |
+| `energy/` | `nova energy probe/attest/verify/report`: energy receipts that are measured, or marked unavailable, never invented (`energy-receipts.jsonl`). | experimental |
+| `promote/` | The maker-checker seal workflow behind `nova seal propose/approve/verify`: linked Proposal and Approval DSSE envelopes. | experimental |
+| `retention/` | `nova retention plan/apply/status/explain`: a WORM-aware retention sweep. `plan` is a dry run. There is no daemon; run it from cron or systemd. | experimental |
+| `interop/` | Portable projections: the agent passport (`nova passport`) and Hugging Face Hub revision receipts. | experimental |
+| `mcp/`, `mcp_scanner/` | `nova mcp card` (the MCP Server Card at `/.well-known/mcp.json`), `nova mcp conformance`, and the OWASP LLM supply-chain scanner behind `nova mcp scan` and `nova mcp risk-report`. MCP capture itself is in `capture/hooks/_mcp.py` and `proxy/mcp_proxy.py`. | experimental |
+| `safetycase/` | The safety-case compiler behind `nova safety-case`: a Claims-Arguments-Evidence tree assembled from existing evidence and carried inside the Evidence Bundle, so it is not a third format. | experimental |
+
+**Record-only evidence facets.** Each of these packages records evidence that
+another system produced. None of them decides, enforces or adjudicates anything.
+
+| Module | Records | CLI | Maturity |
+|---|---|---|---|
+| `hitl/` | Human–agent interaction: hand-offs, overrides, rationale, consent | `nova hitl`, `nova consent` | experimental |
+| `frontier_safety/` | Decisions from external control protocols, tripwires and alignment signals | `nova safety` | experimental |
+| `federation/` | Cross-org exchanges and pinned foreign trust anchors, plus an offline walk of a transitive trust path | `nova trust-path` | experimental |
+| `embodied/` | Sensor and command streams, the operational design domain (ODD) and its excursions, sim-to-real and tele-operation | `nova embodied` | experimental |
+| `memstore/` | Changes to an external shared knowledge store. It never hosts the store | `nova memstore` | experimental |
+| `preservation/` | Fixity checks, custody hops, seal renewal and format-migration hops | `nova preservation`, `nova migrate-format` | experimental |
+| `risk_transfer/` | Insurance, liability and actuarial evidence | `nova insurance` | experimental |
+| `settlement/` | The provenance of payments another system made | `nova settlement` | experimental |
+| `science/` | Provenance for research and reproducibility, including FAIR RO-Crate | `nova science`, `nova export-rocrate-science` | experimental |
+| `context/` | A digest-only manifest of what entered a context window, and the support map a producer claimed | — | experimental, library only |
+| `retrieval/` | Where retrieved sources came from (also used by `capture/events.py`) | — | experimental, library only |
+| `safety/` | Guardrail decisions that other systems made | — | experimental, library only |
 
 ---
 

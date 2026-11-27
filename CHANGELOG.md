@@ -104,9 +104,82 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **Deployment matrix** (`docs/ops/deployment-matrix.md`, linked from the docs map): one row per deployment path
+  (local CLI, local dashboard, pip server, the three Compose profiles, the Helm chart, SLURM capture, the HPC
+  collector tier, offline install, plus three paths still in review). For each it gives maturity, platform,
+  services, storage, auth, TLS, backup, upgrade, the CI job that exercises it ("nothing" where none does) and known
+  gaps, each read from code or a workflow. It also lists the resource sizing the repo documents and says cloud cost
+  is not measured.
+- **The architecture docs were checked against the code** (`docs/architecture.md`, every page in
+  `docs/architecture/`, and the README's architecture paragraph). 42 stale or wrong claims are fixed, among them:
+  `--hermetic` has a Landlock + seccomp backend and `--hermetic-backend` (it is not bwrap only); exit 5 is in the
+  replay exit table; `replayability.json` is in the capsule write order; `otel-genai-spans.json` is written after
+  the seal, so the seal does not cover it; GCS is a selectable object-store backend; keyset paging covers
+  `GET /v0/assets`; lineage federation exists as a library; and `nova lineage consume` writes to Kuzu. 40
+  subsystems that were in `src/novafabric/` but not in the subsystem map now have an entry with a maturity
+  label, and the cluster table adds 2 components (`collector_app`, `novafabric-verifier`). 5 Mermaid diagrams are
+  corrected (serve request path, encryption read path, capsule tree, seal chain, capture sequence).
+- **Developer guide truth pass.** 23 corrections in `docs/developer-guide.md`, 4 in `AGENTS.md` and 3
+  Makefile comments/help strings, each checked against the code: test timings now match the measured
+  tier table (`make test-fast` ~31–37 min, not ~4 min; no invented `make test-par` figure); the
+  suite is over 25,000 tests; the bare serial `pytest` recipe is gone; the push-gate and selector
+  triggers name `tests/conftest.py`; and the extension recipes now list the steps their guard tests
+  enforce — a `commandParity.json` entry and docs coverage for a new CLI command, the dashboard
+  OpenAPI contract for a new serve route, `KNOWN_ADAPTERS`/`__all__`/docs/capsule-core rules for a
+  new adapter, the OpenAPI + SDK regeneration for a new asset type. Also: the recorder has no
+  `record_event`, four adapters (not eight) still carry their own manifest, the KG has six node
+  tables, and the pytest timeout is 900 s.
+- **Operator playbook for v0.109.0** (`docs/ops/playbook.md`, linked from `docs/README.md`). One page of
+  numbered checklists: find the installed version, check the release artifacts, install, smoke-test in an
+  isolated home, back up, restore, upgrade, roll back, and recover from common failures. It links to the
+  detailed guides and does not copy them. The artifact checks cover the PyPI SHA-256 digests, the wheel's
+  GitHub attestation pinned to `publish-pypi.yml` and the tag, and cosign plus attestation for the image
+  with an exact signer identity. It also says what is missing: the chart has no signature, and there is
+  no yank procedure. v0.109.0's digests are listed. The artifact checks and the local checklists were
+  run against the published v0.109.0 wheel. The page also records three things that run found. A restored
+  capsule whose `inputs/` was empty fails `nova validate` with `missing directory: inputs` (a workaround
+  is given). `nova db upgrade` needs the `server` extra, although `nova doctor --check-storage` suggests
+  it on a base install. `nova ledger verify` exits 10 on a capsule that was never anchored, which is
+  expected and not a failed restore.
+- **Security docs checked against the code.** `SECURITY.md` now gives the real bind defaults and auth
+  paths of `nova serve` and `nova server`, says `--insecure` lifts only the bind refusal, lists every
+  outbound network path (the lifecycle webhook was called the only one), says SAML verifies an
+  assertion but cannot log anyone in, names the six fixes listed as "next release" as v0.107.0's,
+  says what `nova verify` proves (sealing is opt-in, an unanchored signer is self-asserted, a file
+  added after sealing is reported but not fatal), and lists four missing escape hatches. It also
+  corrects that the trivy gate runs after the image is pushed, that the audit jobs are not required
+  checks, and that MD5 and SHA-1 do appear. The trust surfaces, concepts, key management and SPKG
+  pages carry the matching limits.
+- **New glossary; concepts and FAQ checked against the code.** `docs/glossary.md` defines every product
+  term with its maturity label and source page. `docs/concepts.md` gains a capture-level section (prompts
+  and responses are stored at every level) and a local-vs-server-mode section, and corrects the capsule
+  file list, lineage edge writers and confidence, the lineage backend selection, the lifecycle meaning of
+  `validated` / `pending_approval`, the registry tables and how eval suites are pinned. `docs/faq.md`
+  corrects the replay-mode table, the signing and portability answers, and adds answers for replay
+  refusals, fidelity, capture levels, unsealed capsules, `nova validate` vs `nova verify` and the
+  evidence key.
+- **Six `docs/ops/` pages checked against the code: 23 claims fixed, `quotas-and-rate-limits.md`
+  unchanged.** The server admin guide no longer calls the shipped org/workspace layer and the ADR-0188
+  deprecation mechanism "future design", no longer counts `/v0/version` as exempt from rate limiting,
+  and says `/readyz` always reports its object-store check as `skipped`. The sizing guide no longer
+  names a `nova-bench` command that does not exist or a `query_runs` latency gate that no test runs,
+  and labels two old benchmark numbers `target`, as `docs/slo.md` does. The encryption page counts the
+  cloud-KMS wrapping tests correctly (11, not 31). Items with no ROADMAP target are relabelled
+  `future design` instead of `planned` (data residency, per-tenant KEKs, webhook secret rotation).
+- **Compliance and comparison docs say what the exporters actually do.** `docs/standards-conformance.md`
+  lists `nova euaiact export`, the Python-API-only Art. 12 report, `export-compliance gpai53/pmm/genai-profile`,
+  BagIt and FDA PCCP; explains that `export-compliance iso42001` marks a control `evidenced` from the kinds you
+  pass with `--evidence` (it does not inspect the capsule) and that `export-examiner iso42001` marks every
+  clause `documented` whatever the capsules hold; names which exporters refuse a capsule whose seal fails; and
+  counts the WORM suite's 11 cases and five framework tags (it said 10 and four). `docs/comparison.md` cites
+  vendor docs for each competitor cell and marks the rest "not verified", and no longer says smolagents is
+  unreleased. The AIUC-1 crosswalk mentions `seal_unbound`/`seal_invalid`, the platform-teams page no longer
+  calls HIPAA a certification, the NF-086 link is "future design" (no ROADMAP target), and the user guide
+  marks the ISO/IEC 42005 skeleton as Python API only. Exports remain evidence, never certification.
 
 ### Fixed
 
+- **The push gate's scoped tier tests a changed test helper through the tests that import it (developer tooling).** `scripts/testsel.py` used to hand a changed helper under `tests/` (`_harness.py`, `__init__.py`, a fixture module) to pytest as if it were a test file. pytest then collected nothing from it, or failed on import when the module read its environment (`KeyError: 'FIDELITY_PHASE'` from `tests/replay/fidelity/_workload.py`), and the tests that import the helper were not selected. A helper that imports cleanly therefore passed the gate with none of its tests run. The selector now picks the helper's directory subtree, as it already did for a `conftest.py`, plus everything that imports it, found from an import graph of `tests/` (parsed, not text-matched): test files directly, a conftest's whole subtree, and other helpers followed in turn. A changed `conftest.py` now also brings in the subtrees of conftests that import it (`tests/trend/conftest.py` imports `query.conftest`). A file that cannot be parsed counts as an importer.
 - **A load-sensitive seal-bypass test keeps its margin on a busy machine (tests only).** `tests/serve/test_seal_bypass_notify_off_loop.py` checks that a slow bypass webhook does not block `/livez`. Its fake webhook now blocks 4 s instead of 1.5 s, so the latency bound (half of that) sits far above an unblocked `/livez` under load (1.35 s seen once) and far below a blocked one (~3.7 s). The ordering check is unchanged, and moving the notification back onto the event loop still fails the test.
 - **A flaky NATS ack test waits until its messages settle (tests only).** `TestNatsAckAfterIngest` stopped the consumer after a fixed 0.15 s; under a loaded run the loop had sometimes not reached the second message, and the test failed on a missing nak (seen once in a full local run, 2026-11-25). It now waits until every message is acked or nacked, at most 10 s.
 - **A flaky runner test no longer counts other threads' sleeps (tests only).** `tests/test_runners_interrupt_cancels_the_job.py` patches `time.sleep` for the whole process, so a stray thread on the same xdist worker could add a sleep to the recorded list and fail the settle-count assertion (CI recorded an extra exact 0.5 s sleep, which no 1.0 s ±15% settle poll produces). The fake now records only the test's own thread.
