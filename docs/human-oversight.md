@@ -21,7 +21,7 @@ human-agent conversation ([ADR-0150](./decisions.md)).
 | Acted-on-behalf binding to an NF-084 delegation hop (`facets.conversation.acted_on_behalf`) | NF-186 | **experimental** — library + `nova hitl acted-as` (by reference; NF-084 state surfaced, never re-derived) |
 | Feedback labels | NF-184 | **future design** |
 | Dispute bundle, right-to-explanation export | NF-185/190 | **future design** |
-| Linking a receipt to an NF-086 approval record | NF-182 | **planned** — the `nf086_approval_ref` field is carried as an opaque digest; NF-086 itself is not built |
+| Linking a receipt to an NF-086 approval record | NF-182 | **future design** — the `nf086_approval_ref` field is carried as an opaque digest; NF-086 itself is not built and has no ROADMAP target |
 
 Nothing captures these records automatically yet: your review UI or agent harness calls the library
 to record them (`nova consent record` and `nova consent withdraw` are the CLI writers; `nova consent attest`
