@@ -94,6 +94,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **Compliance and comparison docs say what the exporters actually do.** `docs/standards-conformance.md`
+  lists `nova euaiact export`, the Python-API-only Art. 12 report, `export-compliance gpai53/pmm/genai-profile`,
+  BagIt and FDA PCCP; explains that `export-compliance iso42001` marks a control `evidenced` from the kinds you
+  pass with `--evidence` (it does not inspect the capsule) and that `export-examiner iso42001` marks every
+  clause `documented` whatever the capsules hold; names which exporters refuse a capsule whose seal fails; and
+  counts the WORM suite's 11 cases and five framework tags (it said 10 and four). `docs/comparison.md` cites
+  vendor docs for each competitor cell and marks the rest "not verified", and no longer says smolagents is
+  unreleased. The AIUC-1 crosswalk mentions `seal_unbound`/`seal_invalid`, the platform-teams page no longer
+  calls HIPAA a certification, the NF-086 link is "future design" (no ROADMAP target), and the user guide
+  marks the ISO/IEC 42005 skeleton as Python API only. Exports remain evidence, never certification.
 
 ### Fixed
 

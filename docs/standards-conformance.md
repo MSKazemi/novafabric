@@ -38,6 +38,7 @@ are the part of the system that must keep working offline in five years.
 | **SLSA** | provenance for released artefacts | Build provenance and signed release artefacts in the publish pipeline | release attestations on the GitHub release | works today |
 | **CycloneDX** | 1.7, AI/ML profile | AI Bill of Materials built from the capsule's evidence files: one `machine-learning-model` component per distinct model in `model-calls.jsonl` with tokens summed per model, plus every tool in `tool-calls.jsonl` | `nova export-aibom <capsule-dir>` | experimental |
 | **C2PA** | v2.3 content credentials | Provenance manifest for generated media, emitted as **unsigned** JSON (signing deferred) | `nova export-c2pa <capsule-dir>` | experimental |
+| **BagIt** | RFC 8493, SHA-256 manifests | Packages every regular file of one capsule as the bag payload, with `manifest-sha256.txt`, `tagmanifest-sha256.txt` and a `verify.sh` script. Refuses a capsule holding a symbolic link (exit 1) or one whose `.seal` fails verification (exit 2); nothing is written | `nova export-examiner bagit <capsule-id> --data-dir <capsule-dir> --output-dir <dir>`, then any BagIt validator | experimental |
 
 **Why this section matters most.** An Evidence Bundle is designed to be verifiable with
 `sha256sum` and an ed25519 verifier — **no NovaFabric installation required**. If you can
@@ -68,10 +69,11 @@ these instruments.
 
 | Framework | What NovaFabric produces | Command | Maturity |
 |---|---|---|---|
-| **EU AI Act** | Annex IV technical-documentation export; risk-tier classification | `nova export-annex-iv` · `nova classify run` | experimental |
-| **NIST AI RMF 1.0** | Risk report mapped from capsule facts | `nova export-nist-rmf` | experimental |
-| **ISO/IEC 42001** | AI management-system evidence export; examiner package | `nova export-compliance iso42001` · `nova export-examiner iso42001` | experimental |
+| **EU AI Act** | Annex IV technical-documentation export; risk-tier classification; per-run log records for an authority's request for access to logs (Art. 21(2)); Art. 53 GPAI documentation form; Art. 72 post-market-monitoring report. The per-capsule Art. 12 record-keeping report (one row per Art. 12 paragraph, plus Arts. 13(3)(f), 19(1), 21(2) and 26(6), each `complete` / `partial` / `missing`) is **Python API only**: `novafabric.compliance.export.euaiact_art12.build_art12_report` | `nova export-annex-iv` · `nova classify run` · `nova euaiact export` · `nova export-compliance gpai53` · `nova export-compliance pmm` | experimental |
+| **NIST AI RMF 1.0** | Risk report mapped from capsule facts; NIST GenAI profile + CSA agentic overlay over that report | `nova export-nist-rmf` · `nova export-compliance genai-profile` | experimental |
+| **ISO/IEC 42001** | Two different exports. `export-compliance iso42001` maps a control catalog **you supply** (JSON `[{control_id, evidence_kind}]`; no ISO text ships): a control is `evidenced` when its `evidence_kind` is one of the kinds you list with `--evidence` *and* you pass `--capsule`, which binds it to a digest of that capsule. It does not inspect the capsule for that kind. `export-examiner iso42001` packages the capsules created in an audit period with a fixed NovaFabric narrative per clause; every clause it knows is marked `documented` and lists every in-period capsule, so it says nothing about whether a capsule evidences that clause. The ISO/IEC 42005 impact-assessment skeleton is Python API only (`build_iso42005_impact_assessment`) | `nova export-compliance iso42001` · `nova export-examiner iso42001` | experimental |
 | **GDPR** | Art. 30 Records of Processing; Art. 17 crypto-shredding of PII captured with `nova capture --pii-subject` (ADR-0314; other capsules are not encrypted); DSAR assembly | `nova export-ropa` · `nova pii erase` · `nova dsar assemble` | experimental |
+| **FDA PCCP** | Predetermined Change Control Plan document comparing a baseline and a proposed capsule | `nova export-examiner pccp` | experimental |
 | **NIS2** | Incident report export | `nova export-nis2` | experimental |
 | **HIPAA** | Safe Harbor de-identification proof | `nova export-hipaa-proof` | experimental |
 | **OMB M-24-10** | Risk-tier vocabulary in classification | `nova classify list-vocabularies` | experimental |
@@ -80,14 +82,33 @@ these instruments.
 | **ECOA / Reg B (12 CFR 1002.9)** | Credit-decision specific-reasons evidence pack from a sealed capsule: model call digests, digest-bound inputs, recorded feature-attribution reasons in recorded order (`missing` when no attribution facet — always, today, since `feature_attribution` is not yet a registered run-capsule facet; not a notice, no credit decision, no legal verdict) | `nova export-adverse-action` | experimental |
 | **SEC Rule 613 / CAT NMS Plan (event-lifecycle pattern only)** | Firm-owned, lifecycle-ordered agent-event trail from a sealed capsule (origination / decision / authorization / action / disposition, recorded actor identity refs and timestamps; missing required stage → `partial`). Modelled on the CAT event lifecycle — not a CAT submission, not in CAT technical-spec format, never connects to the CAT central repository | `nova export-cat` | experimental |
 
+### Which exporters refuse a broken seal
+
+A capsule whose `.seal` exists but fails verification (edited after sealing, or a damaged or
+substituted seal) is **refused**, with nothing written, by `nova export-examiner bagit`,
+`pccp` (if either capsule's seal fails) and `iso42001` (any capsule inside the audit period),
+`nova export-compliance iso42001 --capsule` and `nova export-ropa` (all exit 2), and by
+`build_art12_report` (raises `CapsuleSealInvalidError`). `nova export-compliance iso42001`
+also refuses a seal made before evidence digests, which signs the manifest only.
+`nova audit map` and `nova audit coverage` report a `seal_invalid` finding and exit 1. A
+capsule with no `.seal` still exports, visibly unsigned. A valid seal means the bytes it
+names are unchanged since sealing; it does not identify the signer unless you pin a CA
+(`nova verify --ca-bundle`). The other §3 exporters (Annex IV, NIST AI RMF, NIS2, HIPAA,
+`nova euaiact export` among them) do not check the seal, so run `nova verify <capsule>`
+before you hand any of their output over.
+
 ### Records-retention (WORM) conformance
 
 A separate, installable behavioural test suite that verifies an **object-storage backend**
 meets write-once-read-many requirements. It tests the storage, not your compliance.
 
-Ten mandatory cases covering immutability, retention locks, legal holds, and lifecycle
-exemptions, referenced against **SEC 17a-4**, **MiFID II**, **CFTC 1.31** and
-**FINRA 4370**. Backends: S3, MinIO, Ceph RGW (S3-compatible) and Azure Blob.
+Eleven cases covering immutability, retention locks, legal holds, lifecycle exemptions,
+conditional writes and backend SHA-256 checksum enforcement. Every framework tag runs all
+eleven; the tags are **SEC 17a-4**, **MiFID II**, **CFTC 1.31**, **FINRA 4370** and
+**FDA 21 CFR Part 11** (`--framework sec-17a-4 | mifid-ii | cftc-1.31 | finra-4370 |
+fda-21cfr-11`). A passing report says the storage behaved as the cases expect; it is not a
+determination that you meet any of those rules. Backends: S3, MinIO, Ceph RGW
+(S3-compatible) and Azure Blob.
 
 ```bash
 pip install "git+https://github.com/MSKazemi/novafabric#subdirectory=packages/nova_worm_conformance"
