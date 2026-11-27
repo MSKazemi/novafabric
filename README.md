@@ -203,7 +203,8 @@ verifier, with **no NovaFabric runtime required**
 **Architecture.** There are exactly two top-level formats, the Run Capsule and the
 Evidence Bundle. The capsule is the source of truth; the registry, metadata database
 and lineage graph are derived, rebuildable indexes. Local mode uses SQLite and never
-needs a server. Server mode (Postgres) is optional and additive. See the
+needs a server. Server mode (SQLite by default, Postgres for row-level security and
+more than one worker) is optional and additive. See the
 [architecture overview](docs/architecture.md).
 
 ## When to use NovaFabric

@@ -1,5 +1,7 @@
 # Architecture, as built
 
+> Verified against code on 2026-11-27.
+
 This folder is the illustrated, as-built companion to the
 [architecture overview](../architecture.md). Each page describes what the code
 in `src/novafabric/` does **today**, names the modules it was checked against,
