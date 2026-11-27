@@ -142,10 +142,44 @@ describe('splitCommandLine', () => {
     ['tilde', 'python ~/agent.py'],
     ['comment', 'python a.py #note'],
     ['variable in double quotes', 'python "$AGENT"'],
+    ['bracket glob', 'pytest tests/test_x.py::test[a]'],
+    ['brace expansion', 'python {a,b}.py'],
+    ['history expansion', 'python a.py --msg hi!'],
+    ['history expansion in double quotes', 'python a.py --msg "hi!"'],
+    ['tilde after = in an argument', 'python a.py --config=~/cfg.yaml'],
+    ['tilde in a NAME=~ word', 'python a.py x=~/y'],
+    ['tilde after :', 'python a.py PATH=/bin:~/bin'],
+    ['zsh =cmd expansion', 'python =agent'],
   ])('refuses shell syntax: %s', (_name, line) => {
     const r = splitCommandLine(line);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/shell syntax/);
+  });
+
+  it.each([
+    ['one assignment', 'OPENAI_API_KEY=x python agent.py'],
+    ['two assignments', 'A=1 B=2 python agent.py'],
+    ['assignment with quoted value', `MODE='fast' python agent.py`],
+  ])('refuses a leading environment assignment: %s', (_name, line) => {
+    const r = splitCommandLine(line);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/environment assignment/);
+  });
+
+  it('keeps NAME=value as a literal argument after the program name', () => {
+    expect(splitCommandLine('python agent.py MODE=fast --out=dir/x')).toEqual({
+      ok: true, argv: ['python', 'agent.py', 'MODE=fast', '--out=dir/x'],
+    });
+  });
+
+  it('accepts a quoted bracket, brace, bang or tilde as literal text', () => {
+    expect(splitCommandLine(`pytest 'tests/x.py::t[a]' '{a,b}' 'hi!' '~/x' "--c=~/y"`)).toEqual({
+      ok: true, argv: ['pytest', 'tests/x.py::t[a]', '{a,b}', 'hi!', '~/x', '--c=~/y'],
+    });
+  });
+
+  it('accepts a closing bracket or brace on its own as plain text', () => {
+    expect(splitCommandLine('python a.py x] y}')).toEqual({ ok: true, argv: ['python', 'a.py', 'x]', 'y}'] });
   });
 
   it('accepts shell characters inside single quotes as literals', () => {

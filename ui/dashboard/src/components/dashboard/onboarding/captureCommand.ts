@@ -69,16 +69,29 @@ export const ENVIRONMENT_TAGS = ['development', 'test', 'staging', 'production']
 
 export type SplitResult = { ok: true; argv: string[] } | { ok: false; error: string };
 
-// Characters a POSIX shell would interpret outside single quotes. The builder emits a
-// literal argument list, so it refuses them rather than silently changing their meaning.
-const UNQUOTED_SPECIAL = new Set([';', '|', '&', '<', '>', '(', ')', '$', '`', '*', '?']);
-const DOUBLE_QUOTED_SPECIAL = new Set(['$', '`']);
+// Characters bash or zsh would interpret outside single quotes: operators, redirects,
+// substitutions, globs (`*`, `?`, `[`), brace expansion (`{`) and history expansion (`!`).
+// The builder emits a literal argument list, so it refuses them rather than silently
+// changing their meaning.
+const UNQUOTED_SPECIAL = new Set([';', '|', '&', '<', '>', '(', ')', '$', '`', '*', '?', '[', '{', '!']);
+// Inside double quotes the shell still expands `$`, backticks and (interactive bash) `!`.
+const DOUBLE_QUOTED_SPECIAL = new Set(['$', '`', '!']);
+// Special only at the start of a word: `~` (tilde expansion), `#` (comment), `=` (zsh
+// `=cmd` path expansion).
+const WORD_START_SPECIAL = new Set(['~', '#', '=']);
+const ASSIGNMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
  * Split one command line into argv the way a POSIX shell would for plain words,
- * single quotes, double quotes and backslash escapes. Shell syntax (pipes, redirects,
- * `;`, `&&`, substitutions, globs, a leading `~` or `#`) and control characters are refused
- * with an explanation, never passed through.
+ * single quotes, double quotes and backslash escapes. Anything the shell would expand
+ * or interpret is refused with an explanation, never passed through:
+ *
+ * - unquoted `;` `|` `&` `<` `>` `(` `)` `$` `*` `?` `[` `{` `!` and backticks, and `$`, a
+ *   backtick or `!` inside double quotes;
+ * - an unquoted `~`, `#` or `=` at the start of a word, and an unquoted `~` right after
+ *   an unquoted `=` or `:` (bash expands `x=~/y`);
+ * - a leading `NAME=value` environment assignment;
+ * - line breaks and other control characters.
  */
 export function splitCommandLine(input: string): SplitResult {
   // Newlines too: a multi-line paste is several commands, not one.
@@ -89,11 +102,17 @@ export function splitCommandLine(input: string): SplitResult {
   let cur = '';
   let inToken = false;
   let quote: "'" | '"' | null = null;
+  // Whether the current word has had any quoting or escaping so far (an assignment
+  // needs an unquoted NAME), and the last character appended unquoted (null after a
+  // quoted or escaped one).
+  let wordQuoted = false;
+  let prevUnquoted: string | null = null;
   for (let i = 0; i < input.length; i++) {
     const ch = input[i];
     if (quote === "'") {
       if (ch === "'") quote = null;
       else cur += ch;
+      prevUnquoted = null;
       continue;
     }
     if (quote === '"') {
@@ -106,28 +125,45 @@ export function splitCommandLine(input: string): SplitResult {
       } else {
         cur += ch;
       }
+      prevUnquoted = null;
       continue;
     }
     if (ch === ' ' || ch === '\t') {
       if (inToken) argv.push(cur);
       cur = '';
       inToken = false;
+      wordQuoted = false;
+      prevUnquoted = null;
       continue;
     }
     if (ch === "'" || ch === '"') {
       quote = ch;
       inToken = true;
+      wordQuoted = true;
       continue;
     }
     if (ch === '\\') {
       if (i + 1 >= input.length) return { ok: false, error: 'The command ends with a lone backslash.' };
       cur += input[++i];
       inToken = true;
+      wordQuoted = true;
+      prevUnquoted = null;
       continue;
     }
-    if (UNQUOTED_SPECIAL.has(ch) || ((ch === '~' || ch === '#') && !inToken)) return shellSyntax(ch);
+    if (UNQUOTED_SPECIAL.has(ch)) return shellSyntax(ch);
+    if (!inToken && WORD_START_SPECIAL.has(ch)) return shellSyntax(ch);
+    if (ch === '~' && (prevUnquoted === '=' || prevUnquoted === ':')) return shellSyntax(ch);
+    if (ch === '=' && argv.length === 0 && !wordQuoted && ASSIGNMENT_NAME.test(cur)) {
+      return {
+        ok: false,
+        error:
+          `The command starts with an environment assignment (${cur}=…). The builder would pass it as the program name. ` +
+          `Export the variable before running the copied command, or put it in front of it: ${cur}=value nova capture …`,
+      };
+    }
     cur += ch;
     inToken = true;
+    prevUnquoted = ch;
   }
   if (quote) return { ok: false, error: `The command has an unclosed ${quote === "'" ? 'single' : 'double'} quote.` };
   if (inToken) argv.push(cur);

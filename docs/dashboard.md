@@ -40,10 +40,21 @@ Every flag the builder emits is checked against the generated `nova capture` ent
 registry (`ui/dashboard/src/components/dashboard/commands/generatedCommands.ts`, generated from the CLI).
 A flag missing from it is not emitted, and the builder shows an error. The output uses bash/zsh syntax.
 
-The builder writes a single literal command. It refuses shell syntax it would otherwise have to rewrite
-(pipes, redirects, `;`, `&&`, `$` expansions, backticks, unquoted globs, a leading `~` or `#`, line breaks)
-and explains why. Quote the character if it belongs to an argument, or put the shell logic in a script
-and capture the script.
+The builder writes a single literal command. It refuses, with an explanation, anything bash or zsh
+would expand or interpret, because quoting it literally would change what you typed:
+
+- unquoted `;` `|` `&` `<` `>` `(` `)` `$` `*` `?` `[` `{` `!` and backticks (operators, redirects,
+  substitutions, globs, brace and history expansion);
+- `$`, a backtick or `!` inside double quotes;
+- an unquoted `~`, `#` or `=` at the start of a word, and an unquoted `~` right after an unquoted `=` or
+  `:` (for example `--config=~/cfg.yaml`);
+- a leading environment assignment such as `OPENAI_API_KEY=… python agent.py` (export the variable, or
+  put it in front of the copied command);
+- line breaks and other control characters.
+
+Inside single quotes all of these are literal text and accepted. A closing `]` or `}` on its own is plain
+text. Quote the character if it belongs to an argument, or put the shell logic in a script and capture
+the script.
 
 At every capture level, model-call capture stores full prompts and responses in the capsule, so treat the
 capsule directory as sensitive. The panel never includes the session token in a command.

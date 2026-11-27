@@ -121,8 +121,8 @@ export default function OnboardingPanel({ onRunsFound, onNavigate }: OnboardingP
           Capture your first run
         </h2>
         <p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">
-          This server has no runs yet. A run appears here after <code className="font-mono text-[var(--color-text)]">nova capture</code> writes
-          its Run Capsule. The dashboard reads capsules; it never starts a capture itself.
+          Runs appear in this dashboard after <code className="font-mono text-[var(--color-text)]">nova capture</code> writes
+          a Run Capsule. Build the command here and run it in your terminal: the dashboard reads capsules; it never starts a capture itself.
         </p>
       </div>
 
