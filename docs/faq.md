@@ -125,7 +125,8 @@ reported as `env_warnings`. For a third party, export a signed
 | `intervention` | You want to ask "if this one recorded event had been different, would the outcome change?" — substitutes one event from an `InterventionSpec` and re-runs under mocked semantics | experimental |
 
 To block the network and keep writes inside the working directory during a mocked
-replay, add `--hermetic` (experimental, Linux only, needs `bwrap`). NovaFabric does
+replay, add `--hermetic` (experimental, Linux only; it uses `bwrap`, or Landlock + seccomp
+when `bwrap` is unavailable, chosen with `--hermetic-backend`). NovaFabric does
 **not** claim exact replay of remote LLM calls. A remote model is not deterministic;
 `mocked` and `semantic` exist precisely because pretending otherwise would be
 dishonest. Full contract: [Replay modes](architecture/replay-modes.md).
