@@ -133,6 +133,25 @@ def test_config_invalid_yaml_fails(tmp_path: Path) -> None:
     assert cfg is None
 
 
+@pytest.mark.parametrize(
+    "broken_line",
+    [
+        'postgres_dsn: "postgresql://u:YAML-SECRET-PW@db/nova\n',
+        "scim_token: 'YAML-SECRET-PW\n",
+        "local_token: [YAML-SECRET-PW\n",
+    ],
+)
+def test_config_yaml_error_never_quotes_the_file(tmp_path: Path, broken_line: str) -> None:
+    """A YAML error's own text carries a snippet of the broken line; a secret can sit there."""
+    path = tmp_path / "server.yaml"
+    path.write_text("host: 127.0.0.1\n" + broken_line + "port: 7433\n")
+    result, cfg = pf.check_config(path)
+    assert result.status == "FAIL"
+    assert cfg is None
+    assert "YAML-SECRET-PW" not in result.detail + result.fix
+    assert "line" in result.detail
+
+
 def test_config_non_mapping_yaml_fails(tmp_path: Path) -> None:
     path = tmp_path / "server.yaml"
     path.write_text("- a\n- b\n")
@@ -414,6 +433,58 @@ def test_database_sqlite_foreign_stamp_fails(tmp_path: Path) -> None:
         assert "refuses to start" in result.detail
 
 
+def _wal_registry(path: Path, stamp: str | None) -> None:
+    """A WAL-mode registry closed cleanly, so no -wal/-shm file remains (the normal state)."""
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    if stamp is not None:
+        conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
+        conn.execute("INSERT INTO alembic_version VALUES (?)", (stamp,))
+    else:
+        conn.execute("CREATE TABLE assets (id TEXT)")
+    conn.commit()
+    conn.close()
+    assert not Path(f"{path}-wal").exists()
+    assert not Path(f"{path}-shm").exists()
+
+
+@pytest.mark.parametrize("stamp", ["not-a-real-revision", None])
+def test_database_sqlite_wal_read_creates_no_sidecar_files(
+    tmp_path: Path, stamp: str | None
+) -> None:
+    """mode=ro alone creates registry.db-wal/-shm (root-owned under sudo); preflight must not."""
+    data = tmp_path / "data"
+    data.mkdir()
+    db = data / "registry.db"
+    _wal_registry(db, stamp)
+    before = sorted(p.name for p in data.iterdir())
+    result = pf.check_database(ServerConfig(db_path=str(db)))
+    assert sorted(p.name for p in data.iterdir()) == before
+    assert result.status in ("FAIL", "WARN")
+
+
+def test_database_sqlite_wal_read_sees_the_stamp(tmp_path: Path) -> None:
+    from novafabric.migrations import registry_track
+
+    head = registry_track.script_head("sqlite")
+    if head is None:
+        pytest.skip("migration scripts not resolvable in this install")
+    db = tmp_path / "registry.db"
+    _wal_registry(db, head)
+    result = pf.check_database(ServerConfig(db_path=str(db)))
+    assert result.status == "PASS"
+    assert not Path(f"{db}-shm").exists()
+
+
+def test_database_sqlite_tilde_path_warns_like_the_server_opens_it() -> None:
+    result = pf.check_database(ServerConfig(db_path="~/nova/registry.db"))
+    assert result.status == "WARN"
+    assert "does not expand" in result.detail
+    assert "absolute path" in result.fix
+
+
 def test_database_postgres_without_dsn_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     result = pf.check_database(_pg_cfg(monkeypatch, dsn=None))
     assert result.status == "FAIL"
@@ -531,8 +602,10 @@ def test_listen_port_wildcard_probes_loopback(monkeypatch: pytest.MonkeyPatch) -
         return errno.ECONNREFUSED
 
     monkeypatch.setattr(pf, "_connect_probe", probe)
-    assert pf.check_listen_port("0.0.0.0", 8080).status == "PASS"
+    result = pf.check_listen_port("0.0.0.0", 8080)
+    assert result.status == "PASS"
     assert seen == [("127.0.0.1", 8080)]
+    assert "probed 127.0.0.1 only" in result.detail
 
 
 def test_listen_port_never_binds(monkeypatch: pytest.MonkeyPatch) -> None:

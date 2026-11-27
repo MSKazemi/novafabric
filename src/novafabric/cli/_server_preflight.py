@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from novafabric.server import schema_skew
     from novafabric.server.config import ServerConfig
 
 Status = Literal["PASS", "FAIL", "WARN", "SKIP"]
@@ -77,6 +78,23 @@ def _result(name: str, status: Status, detail: str, fix: str = "") -> PreflightR
 
 def _mode(st: os.stat_result) -> str:
     return oct(stat.S_IMODE(st.st_mode))
+
+
+def _describe_load_error(exc: BaseException) -> str:
+    """Name a config load error without quoting the file.
+
+    A YAML error's text carries a snippet of the offending line, and a broken line
+    may hold a secret (an unclosed quote after ``postgres_dsn:`` echoes the DSN).
+    Only the error type and, for YAML, its line and column are reported.
+    """
+    mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
+    line = getattr(mark, "line", None)
+    column = getattr(mark, "column", None)
+    if isinstance(line, int) and isinstance(column, int):
+        return f"{type(exc).__name__} at line {line + 1}, column {column + 1}"
+    if isinstance(exc, OSError) and exc.strerror:
+        return f"{type(exc).__name__}: {exc.strerror}"
+    return type(exc).__name__
 
 
 def _nearest_existing_ancestor(path: Path) -> Path | None:
@@ -164,7 +182,7 @@ def check_config(config_path: Path | None) -> tuple[PreflightResult, ServerConfi
             _result(
                 "config",
                 "FAIL",
-                f"{path}: could not be loaded ({type(exc).__name__}: {exc})",
+                f"{path}: could not be loaded ({_describe_load_error(exc)})",
                 "make the file a YAML mapping of server keys (see docs/ops/server-deployment.md)",
             ),
             None,
@@ -379,7 +397,17 @@ def check_database(cfg: ServerConfig) -> PreflightResult:
     elif backend == "sqlite":
         from novafabric import _paths
 
-        target = Path(cfg.db_path).expanduser() if cfg.db_path else _paths.registry_db_path()
+        # The exact path the server opens (server/app.py: Path(config.db_path),
+        # unexpanded), so a literal "~" is reported rather than silently fixed here.
+        target = Path(cfg.db_path) if cfg.db_path else _paths.registry_db_path()
+        if str(target).startswith("~"):
+            return _result(
+                "database",
+                "WARN",
+                f"sqlite: db_path {target} starts with '~', which the server does not "
+                "expand; it would open a relative path under its working directory",
+                "use an absolute path in db_path / NOVAFABRIC_SERVER_DB_PATH",
+            )
         if not Path(target).exists():
             return _result(
                 "database",
@@ -394,7 +422,10 @@ def check_database(cfg: ServerConfig) -> PreflightResult:
             "set backend to 'sqlite' or 'postgres'",
         )
 
-    report = schema_skew.compare_revisions(backend, target)
+    if backend == "sqlite":
+        report = _compare_sqlite_read_only(Path(target))
+    else:
+        report = schema_skew.compare_revisions(backend, target)
     where = backend if backend == "postgres" else f"sqlite {target}"
     revs = f"db={report.db_revision or '-'} head={report.head_revision or '-'}"
 
@@ -465,6 +496,69 @@ def check_database(cfg: ServerConfig) -> PreflightResult:
         f"{where}: revision not determinable ({report.detail})",
         "nova doctor --check-storage",
     )
+
+
+def _sqlite_ro_uri(path: Path) -> str:
+    """A read-only SQLite URI for *path* that creates no ``-wal`` / ``-shm`` file.
+
+    The registry is always WAL. ``mode=ro`` alone still creates both sidecars when
+    they are absent (and under ``sudo`` they would be root-owned, locking the service
+    user out). When neither sidecar exists the last writer closed cleanly and
+    checkpointed, so ``immutable=1`` reads the complete database without them. When
+    they exist, nothing is created and plain ``mode=ro`` sees uncheckpointed pages.
+    """
+    sidecars = (Path(f"{path}-wal"), Path(f"{path}-shm"))
+    query = "mode=ro" if any(p.exists() for p in sidecars) else "mode=ro&immutable=1"
+    return f"{path.resolve().as_uri()}?{query}"
+
+
+def _compare_sqlite_read_only(path: Path) -> schema_skew.SkewReport:
+    """``schema_skew.compare_revisions("sqlite", path)`` without touching the directory.
+
+    Same five states and the same packaged script head; only the stamp read differs
+    (:func:`_sqlite_ro_uri`). The server's own start-up comparator is unchanged.
+    """
+    import sqlite3
+
+    from novafabric.migrations import registry_track
+    from novafabric.server import schema_skew
+
+    def report(
+        status: schema_skew.SkewStatus, stamp: str | None, head: str | None, detail: str
+    ) -> schema_skew.SkewReport:
+        return schema_skew.SkewReport(
+            status=status,
+            backend="sqlite",
+            track="registry",
+            db_revision=stamp,
+            head_revision=head,
+            detail=detail,
+        )
+
+    head = registry_track.script_head("sqlite")
+    try:
+        conn = sqlite3.connect(_sqlite_ro_uri(path), uri=True, timeout=2)
+        try:
+            row = conn.execute("SELECT version_num FROM alembic_version LIMIT 1").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return report(schema_skew.STATUS_UNSTAMPED, None, head, "no alembic_version stamp")
+        return report(schema_skew.STATUS_UNKNOWN, None, head, "database unreadable")
+    except sqlite3.Error:
+        return report(schema_skew.STATUS_UNKNOWN, None, head, "database unreadable")
+    if row is None or not row[0]:
+        return report(schema_skew.STATUS_UNSTAMPED, None, head, "no alembic_version stamp")
+    stamp = str(row[0])
+    if head is None:
+        return report(schema_skew.STATUS_UNKNOWN, stamp, None, "migration script head unresolvable")
+    if stamp == head:
+        return report(schema_skew.STATUS_OK, stamp, head, "database stamp matches the script head")
+    ancestry = registry_track.head_ancestry("sqlite")
+    if ancestry is not None and stamp in ancestry:
+        return report(schema_skew.STATUS_BEHIND, stamp, head, "stamp is an ancestor of head")
+    return report(schema_skew.STATUS_AHEAD, stamp, head, "stamp is not known to this build")
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +635,12 @@ def check_listen_port(host: str, port: int) -> PreflightResult:
             f"{host}:{port} is free but privileged; binding it needs root or CAP_NET_BIND_SERVICE",
             "use a port >= 1024 behind a reverse proxy",
         )
-    return _result("listen-port", "PASS", f"{host}:{port} is free")
+    scope = (
+        ""
+        if address == host
+        else f" (probed {address} only; a listener on another interface is not seen)"
+    )
+    return _result("listen-port", "PASS", f"{host}:{port} is free{scope}")
 
 
 def check_tls(cfg: ServerConfig) -> PreflightResult:
@@ -698,7 +797,7 @@ def check_seal_key() -> PreflightResult:
         return _result(
             "seal-key",
             "FAIL",
-            f"novaseal.yaml could not be read ({type(exc).__name__}: {exc})",
+            f"novaseal.yaml could not be read ({_describe_load_error(exc)})",
             "fix novaseal.yaml (NOVAFABRIC_SEAL_CONFIG)",
         )
     if profile is None:

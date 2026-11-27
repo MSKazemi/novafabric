@@ -7574,7 +7574,10 @@ warning as WARN; `NOVAFABRIC_ALLOW_SCHEMA_SKEW=1` turns those FAILs into WARNs, 
 the server.
 
 **Read-only.** `--check-server` creates, changes and deletes nothing: no directory, no token,
-no schema stamp. It never binds a socket: the port check makes one TCP connect to the
+no schema stamp. The SQLite registry is read without creating its `-wal` / `-shm` files, and
+at the exact `db_path` the server opens (a leading `~` is not expanded by the server, so
+preflight WARNs about it). A config file that fails to parse is reported by error type and
+line/column only, never quoted, because the broken line may hold a secret. It never binds a socket: the port check makes one TCP connect to the
 configured address (loopback for `0.0.0.0` / `::`) and does not resolve host names (a host
 name is SKIP). It contacts no external service. The only connection off the host is the one
 you configured: with the `postgres` backend, at most two short connections to
