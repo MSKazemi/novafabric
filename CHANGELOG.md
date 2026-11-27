@@ -91,6 +91,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   is never shown as zero. The panel shows no sample data. Keyboard and screen-reader accessible, with no
   animation. See `docs/dashboard.md`.
 - **Dashboard: the live Runs list is bounded and says how current it is (experimental).** The Runs list header now reads `live`, `connecting…`, `reconnecting…` (with `last updated 2 min ago`), `reconnected — refreshing…`, `offline — showing data from HH:MM` or `update failed — showing data from HH:MM`, in a polite live region; only `live` is green. The list keeps at most 500 runs (`LIVE_RUNS_MAX`): new runs from the stream push the oldest out, **Load more** stops at the limit and the header says *Showing the latest 500 runs*; the selected run is never the one dropped. Per-run cost entries are pruned with the list and asked for only when new (or still running), in batches of 100 ids, the server's per-request limit (before, a list over 100 runs got costs for the first 100 only). The Audit tab's **Load more** stops at 2,000 entries (`AUDIT_ENTRIES_MAX`) and the Registry tab's at 1,000 assets (`REGISTRY_ASSETS_MAX`), each saying so; the shared `usePaginatedQuery` hook (no tab uses it yet) gets a 2,000-row default cap. The `/api/runs/stream` reconnect now closes the connection on any error and retries with capped exponential backoff plus jitter (1 s to 30 s, at most one connection, no attempt while the browser is offline, backoff reset only after a stable connection); because the stream has no replay, the list reloads after every reconnect before it is called live again. No server or API change. See `docs/dashboard.md`, "Live data, freshness and limits". Tests: `ui/dashboard/tests/unit/{bounded-list,freshness,run-search-live,run-stream-reconnect,paged-tabs-bounded}.test.*`.
+- **Dashboard: aligned A/B comparison in the Diff tab** (experimental, issue #270, first slice). After a
+  two-run diff, an **Aligned comparison** panel lists the server's model-call and tool-call pairs in
+  alignment order, each marked in words (`Changed`, `Added in B`, `Removed in B`, `Unchanged`) with what
+  differs (request, response, provider, params, arguments, result, status). The first divergent step that
+  `nova diff` reports is named, highlighted and scrolled into view; **Go to first divergence** moves
+  keyboard focus to it. The pair is matched by record id; when the server sends no first divergence, or the
+  pair cannot be identified, the panel says so and does not guess. A comparison with skipped malformed
+  record lines is shown as incomplete, never as identical. A **Copy command** button gives the equivalent
+  `nova diff <run-a> <run-b>`. No API change: the view reads `report.first_divergence` from `GET /api/diff`.
 
 ### Changed
 

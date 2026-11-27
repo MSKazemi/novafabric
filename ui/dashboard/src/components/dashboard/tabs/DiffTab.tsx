@@ -5,6 +5,8 @@ import type { RunSummary, FullCapsule } from '../../../lib/api';
 import type { DiffReport } from '../../../lib/fixtures';
 import { DiffSection } from '../../replay/ReplayViewer';
 import TraceDiffGraph from '../../diff/TraceDiffGraph';
+import AlignedDiffView from '../../diff/AlignedDiffView';
+import { slimDiffResponse } from '../../diff/alignedComparison';
 import { ErrorBox } from '../helpers';
 import { runLabel, shortTs } from '../../../lib/runUtils';
 import { SuggestInput } from '../../ui/SuggestInput';
@@ -156,18 +158,22 @@ export default function DiffTab({ initialIds }: { initialIds?: string[] } = {}) 
   const [autoRun, setAutoRun] = useState(false);
   const didAutoRunRef = useRef(false);
   const [multiResults, setMultiResults] = useState<MultiDiffResult[] | null>(null);
+  // The raw `/api/diff` response, for the aligned A/B view (issue #270). It is shown
+  // only beside `report`, so every place that clears `report` hides it too.
+  const [rawDiff, setRawDiff] = useState<unknown>(null);
 
   useEffect(() => {
     if (initialIds?.length) return;
     try {
       const raw = sessionStorage.getItem(DIFF_SESSION_KEY);
       if (!raw) return;
-      const stored = JSON.parse(raw) as { fromId: string; toId: string; result: DiffReport; capsuleA: FullCapsule | null; capsuleB: FullCapsule | null };
+      const stored = JSON.parse(raw) as { fromId: string; toId: string; result: DiffReport; capsuleA: FullCapsule | null; capsuleB: FullCapsule | null; raw?: unknown };
       if (stored.fromId) setA(stored.fromId);
       if (stored.toId) setB(stored.toId);
       if (stored.result) setReport(stored.result);
       if (stored.capsuleA) setCapsuleA(stored.capsuleA);
       if (stored.capsuleB) setCapsuleB(stored.capsuleB);
+      if (stored.raw) setRawDiff(stored.raw);
     } catch { /* ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -175,6 +181,7 @@ export default function DiffTab({ initialIds }: { initialIds?: string[] } = {}) 
   const runDiff = useCallback(async (runA: string, runB: string) => {
     setError(null); setBusy(true); setReport(null);
     setCapsuleA(null); setCapsuleB(null); setTraceExpanded(false);
+    setRawDiff(null);
     try {
       const [r, ca, cb] = await Promise.all([
         api.diff(runA, runB),
@@ -183,11 +190,21 @@ export default function DiffTab({ initialIds }: { initialIds?: string[] } = {}) 
       ]);
       const adapted = adaptDiffReport(r);
       setReport(adapted);
+      setRawDiff(r);
       if (ca) setCapsuleA(ca);
       if (cb) setCapsuleB(cb);
+      const saved = { fromId: runA, toId: runB, result: adapted, capsuleA: ca ?? null, capsuleB: cb ?? null };
       try {
-        sessionStorage.setItem(DIFF_SESSION_KEY, JSON.stringify({ fromId: runA, toId: runB, result: adapted, capsuleA: ca ?? null, capsuleB: cb ?? null }));
-      } catch { /* ignore */ }
+        // Only what the aligned view reads (issue #270), not a second full copy.
+        sessionStorage.setItem(DIFF_SESSION_KEY, JSON.stringify({ ...saved, raw: slimDiffResponse(r) }));
+      } catch {
+        // Over quota (QuotaExceededError): still keep the main diff; the aligned
+        // view then reappears after the next Diff instead of on restore.
+        try { sessionStorage.setItem(DIFF_SESSION_KEY, JSON.stringify(saved)); } catch {
+          // Never leave the previous pair's entry to be restored as this one.
+          try { sessionStorage.removeItem(DIFF_SESSION_KEY); } catch { /* ignore */ }
+        }
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally { setBusy(false); }
@@ -381,6 +398,11 @@ export default function DiffTab({ initialIds }: { initialIds?: string[] } = {}) 
       )}
 
       {error && <ErrorBox message={error} />}
+      {report && rawDiff != null && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5">
+          <AlignedDiffView raw={rawDiff} />
+        </div>
+      )}
       {report && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5">
           <DiffSection report={report} />
