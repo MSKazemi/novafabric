@@ -113,6 +113,7 @@ Look up an exact detail — commands, flags, endpoints, and on-disk formats.
 | Document | What it covers |
 |---|---|
 | [Concepts](concepts.md) | Capsule format, capture hooks, replay modes, lineage edges — the mental model and the five primitives |
+| [Glossary](glossary.md) | Every product term in one or two sentences, with its maturity label and the page that explains it |
 | [CLI reference](cli-reference.md) | Exhaustive flag/option/example reference for every `nova` command, including the v0.59 experimental groups (`prompt`, `label`, `session`, `query`/`view`/`trend`, `annotate`, `score`, `retention`, `events`, `experiment`, `graph`, `pricing`, …) |
 | [Python API](python-api.md) | Programmatic API: `@agent` decorator, `CaptureOrchestrator`, Replay, Lineage, Registry, `novafabric.scores.submit` |
 | [REST API reference](api-reference.md) | The `nova serve` FastAPI route table — endpoints, methods, and auth |
@@ -135,6 +136,7 @@ implemented versus design intent.
 | Document | What it covers |
 |---|---|
 | [Server deployment](ops/server-deployment.md) | Deployment scenarios from local SQLite to Postgres and Kubernetes |
+| [Deployment matrix](ops/deployment-matrix.md) | Every deployment path side by side: maturity, OS/Python, services, storage, auth, TLS, backup, upgrade, what CI actually runs for it, known gaps, documented resource sizing |
 | [Server admin guide](ops/server-admin-guide.md) | Operating `nova server` in production — auth, tokens, RBAC, quotas, observability endpoints |
 | [Backup & restore runbook](ops/backup-restore.md) | `nova backup` / `nova restore`, verification, DR procedure (works today + planned sections) |
 | [Sizing guide](ops/sizing-guide.md) | Capacity planning — storage growth drivers, SQLite vs Postgres, rough sizing tables (estimates), single-writer limits |
@@ -146,6 +148,7 @@ implemented versus design intent.
 | [Encryption at rest](ops/encryption-at-rest.md) | Opt-in envelope encryption for the object capsule store — KMS-wrapped DEKs, crypto-shred (experimental, never the default) |
 | [Data residency](ops/data-residency.md) | Jurisdiction-aware capsule placement — fail-closed regional routing + the deny-by-default cross-border read gate (experimental) |
 | [Cluster-scale migration](ops/cluster-scale-migration.md) | Migrating from SQLite + filesystem toward Postgres + object storage + graph DB |
+| [Operator playbook (v0.109.0)](ops/playbook.md) | Numbered checklists from install to recovery: find your version, verify the PyPI wheel, image and chart (hashes, attestations, cosign identity), smoke-test in an isolated home, back up, restore, upgrade, roll back, and the common failures, each with its maturity label |
 | [Lineage store migration](lineage/migration-guide.md) | Migrating the lineage store from SQLite to KuzuDB |
 
 ## Decide (evaluating NovaFabric)

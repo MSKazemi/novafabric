@@ -49,7 +49,7 @@ flowchart TB
 
 These nine steps exercise all five NovaFabric primitives — **Asset Registry, Run
 Capsule, Replay, Lineage, and Evidence Bundle** — end to end. For the concepts
-behind each, see [docs/concepts.md](concepts.md).
+behind each, see [docs/concepts.md](concepts.md); for any single term, see the [Glossary](glossary.md).
 
 ---
 
