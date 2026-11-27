@@ -40,6 +40,7 @@ def _placeholder_note(pair: dict[str, Any]) -> str:
 
 
 def format_text(report: DiffReport) -> str:
+    """Render *report* as the human-readable text ``nova diff`` prints."""
     lines: list[str] = []
     lines.append(f"Diff: {report.run_a_id} → {report.run_b_id}")
     lines.append(
@@ -104,6 +105,7 @@ def format_text(report: DiffReport) -> str:
 
 
 def format_json(report: DiffReport) -> str:
+    """Render *report* as indented JSON (``report.as_dict()``)."""
     return json.dumps(report.as_dict(), indent=2)
 
 
@@ -118,6 +120,10 @@ def _annotation_data(message: str) -> str:
 
 
 def format_github_annotations(report: DiffReport) -> str:
+    """Render *report* as GitHub Actions workflow-command annotations.
+
+    The level is ``error`` when ``report.has_changes``, else ``notice``.
+    """
     # Severity follows DiffReport.has_changes, the property the gate uses. It was
     # derived from changed_count alone, so a diff whose only differences were
     # added or removed calls was annotated as a mere ``notice``.
