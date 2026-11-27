@@ -17,6 +17,60 @@ The support bundle uses an allowlisted, redacted file set, but **inspect its con
 
 This guidance works locally and needs no additional server endpoint, cloud account or telemetry. Connectivity, authentication and failure states are still determined by the existing server and session checks.
 
+## First-run guide and capture-command builder (experimental)
+
+When the connected server reports **zero runs** (`GET /api/stats` returns `run_count: 0`), the Home tab
+opens with a **Capture your first run** panel. It is not shown when runs exist, and it is not shown when
+the run count is refused or unknown (`run_count: null`): an unknown count is not treated as zero.
+
+The panel builds a `nova capture` command for you to **copy and run in your own terminal**. It is
+copy-only: the dashboard never runs the command, adds no server endpoint, and makes only the existing
+`GET /api/runs` (to learn the capsule directory) and `GET /api/stats` (for **Check for runs**) requests.
+You choose:
+
+| Control | What it emits |
+|---|---|
+| **Workload** (Python script, Python module, uv-managed project, pytest suite, other) | Fills **Command to capture** with a starting command you can edit. |
+| **Command to capture** | Your command, after `--`, with each argument shell-quoted. |
+| **Capture level** (experimental) | `NOVA_CAPTURE_LEVEL=<level>` before `nova capture` for any level other than `standard`. The capture level comes only from that variable (`nova policy capture-level get --help`). Today only `forensic` and `air_gapped` change capture (they keep tool payloads instead of digests); `minimal` behaves like `standard`, and `air_gapped` blocks no network call. |
+| **Write the capsule where this server reads** | `--output-dir <dir>`, where `<dir>` is the capsule directory the server reports. Shown only when the server reports one; on by default. |
+| **More options** | `--timeout <seconds>` and `--environment <tag>` (development, test, staging, production). |
+
+Every flag the builder emits is checked against the generated `nova capture` entry in the command
+registry (`ui/dashboard/src/components/dashboard/commands/generatedCommands.ts`, generated from the CLI).
+A flag missing from it is not emitted, and the builder shows an error. The output uses bash/zsh syntax.
+
+The builder writes a single literal command. It refuses, with an explanation, anything bash or zsh
+would expand or interpret, because quoting it literally would change what you typed:
+
+- unquoted `;` `|` `&` `<` `>` `(` `)` `$` `*` `?` `[` `{` `!` and backticks (operators, redirects,
+  substitutions, globs, brace and history expansion);
+- `$`, a backtick or `!` inside double quotes;
+- an unquoted `~`, `#` or `=` at the start of a word, and an unquoted `~` right after an unquoted `=` or
+  `:` (for example `--config=~/cfg.yaml`);
+- a leading environment assignment such as `OPENAI_API_KEY=… python agent.py` (export the variable, or
+  put it in front of the copied command);
+- line breaks and other control characters.
+
+Inside single quotes all of these are literal text and accepted. A closing `]` or `}` on its own is plain
+text. Quote the character if it belongs to an argument, or put the shell logic in a script and capture
+the script.
+
+At every capture level, model-call capture stores full prompts and responses in the capsule, so treat the
+capsule directory as sensitive. The panel never includes the session token in a command.
+
+After you run the command, **Check for runs** reads the run count again. When runs are found, the panel
+disappears. If none are found, the panel names the directory it looked in. If your capsules are in another directory,
+restart with `nova serve --experimental --capsule-dir <dir>`. The panel also lists the next steps and
+their CLI equivalents: inspect (Runs tab, or `nova replay --mode forensic <run-id>`, which is read-only),
+compare (Diff tab, or `nova diff <run-a> <run-b>`) and verify (`nova verify <capsule-dir>`, which applies
+only to capsules sealed by a configured NovaSeal).
+
+The panel shows **no sample or synthetic data**. A labelled sample mode is **future design** (issue #265),
+not implemented. Keyboard and screen-reader behaviour: every control has a visible label, the capture
+levels form a radio group (arrow keys move between them), copy and re-check results are announced
+through polite live regions, focus order follows the visual order, and the panel uses no animation.
+
 ---
 
 ## Dashboard tabs (complete inventory)

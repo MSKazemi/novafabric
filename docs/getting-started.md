@@ -598,6 +598,7 @@ A few directions to explore:
 | Register and lifecycle-manage AI assets (eval-gated promotion) | [User guide: asset registry](user-guide.md#asset-registry) |
 | Gate promotion with OPA/Rego policy and maker-checker approval | [CLI reference: nova promote](cli-reference.md#nova-promote) |
 | Browse capsules in a local web dashboard | [User guide: nova serve](user-guide.md#nova-serve-experimental) |
+| Build your first `nova capture` command in the dashboard (copy-only, shown while it has no runs; experimental) | [Dashboard: first-run guide](dashboard.md#first-run-guide-and-capture-command-builder-experimental) |
 | Hands-on tour of every capability (proxies, providers, KG, compliance) | [tutorials/feature-tour.md](tutorials/feature-tour.md) |
 | Prove supply-chain provenance & eval integrity (dataset cards, contamination checks, SLSA-for-ML, OTel export) | [feature tour §17](tutorials/feature-tour.md#17-prove-supply-chain-provenance--eval-integrity) |
 | Group runs into multi-turn sessions and replay them in order (experimental) | [CLI reference: nova session](cli-reference.md#nova-session-experimental-adr-0122) |
