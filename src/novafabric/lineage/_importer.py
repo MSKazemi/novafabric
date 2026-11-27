@@ -204,6 +204,10 @@ def import_capsule_dir(
     runs_dir: Path,
     db_path: Path | None = None,
 ) -> list[ImportResult]:
+    """Index every capsule directly under *runs_dir* (each subdirectory with a ``capsule.yaml``).
+
+    Returns one :class:`ImportResult` per capsule, in directory-name order.
+    """
     results: list[ImportResult] = []
     for entry in sorted(runs_dir.iterdir()):
         if entry.is_dir() and (entry / "capsule.yaml").exists():

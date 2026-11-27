@@ -198,6 +198,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   (a `mocked` replay writes one, ADR-0321), the Hugging Face guide calling v0.109.0 features unreleased, `nova serve`
   named where `nova server` is meant, wrong `jq` paths for flat `gen_ai.*` keys, and misdated release markers. The
   doc-command guard now also scans `.github/actions/`, `integrations/` and `deploy/**/README*.md`.
+- **The Python API reference matches the code** (`docs/python-api.md`). Checked every documented
+  name against `inspect.signature` and the source: 25 corrections (among them the 15 optional
+  parameters of `CaptureOrchestrator.run`, `ReplayFlags.hermetic`/`hermetic_backend`, four missing
+  `ReplayResult` fields, `NovaSeal(tsa_urls=, backend=)`, the lineage traversal result shape, which
+  exceptions each call raises, and `NovaFabricClient(base_url=None)`), and short entries for the 65
+  of 140 names in the documented modules' `__all__` the page did not mention. 32 public docstrings
+  that were missing on documented names were added (docstrings only). A new guard,
+  `tests/docs/test_python_api_matches_the_code.py`, fails when a name the page imports does not
+  import or an `__all__` name is undocumented.
 
 ### Fixed
 

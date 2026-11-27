@@ -43,12 +43,22 @@ def _output_artifact_ref(entry: object, run_id: str) -> dict[str, Any] | None:
 
 
 class LineageWriter:
+    """Infer a capsule's lineage edges and write them to ``lineage.jsonl``.
+
+    Args:
+        capsule_dir: The capsule to read and write.
+        run_id: The run the edges belong to.
+        version: The ``emitter.version`` of each edge; defaults to the installed
+            ``novafabric`` version.
+    """
+
     def __init__(self, capsule_dir: Path, run_id: str, version: str | None = None) -> None:
         self._capsule_dir = capsule_dir
         self._run_id = run_id
         self._version = version if version is not None else default_emitter()["version"]
 
     def infer(self) -> list[LineageEdge]:
+        """Edges from the capsule: consumed inputs, ``produced_by`` outputs, ``replayed_from``."""
         edges: list[LineageEdge] = []
         edges.extend(self._consumed_edges())
         edges.extend(self._produced_by_edges())
@@ -60,6 +70,7 @@ class LineageWriter:
         return edges
 
     def write(self, edges: list[LineageEdge]) -> Path:
+        """Atomically replace the capsule's ``lineage.jsonl`` with *edges*; return its path."""
         path = self._capsule_dir / "lineage.jsonl"
         lines = [json.dumps(e.as_dict(), ensure_ascii=False) for e in edges]
         # An atomic rename: never written through a link planted at the name.
