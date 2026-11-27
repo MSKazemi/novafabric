@@ -1,0 +1,140 @@
+name: Helm Kind smoke
+
+# Installs the Helm chart into a throwaway Kind cluster on a GitHub-hosted runner
+# and exercises it the way an operator would (#224): build the image from this
+# tree, `helm install` with a randomly generated API token and database password
+# held in Kubernetes Secrets, wait for the rollout, smoke the API with and without
+# the token, `helm upgrade` with a changed value, `helm rollback`, and re-smoke
+# after each step. The lifecycle itself lives in scripts/helm_kind_smoke.sh so it
+# can be read and reviewed on its own.
+#
+# release-toolchain.yml lints, renders and packages the chart; this is the job
+# that installs it. No external cluster, registry login or paid account is used,
+# and nothing is pushed: the image is built with `load: true` and copied into the
+# Kind node with `kind load docker-image`.
+#
+# Not covered yet (see the PR that added this file): upgrading from the previous
+# PUBLISHED chart and image, and installing with values-production.yaml.
+
+on:
+  pull_request:
+    paths:
+      - "deploy/helm/**"
+      - "src/novafabric/server/**"
+      - "deploy/docker/Dockerfile"
+      # Schema and packaging inputs: the init container runs the registry-track
+      # migrations, the server bootstraps the MetadataStore, and the image is
+      # built from pyproject.toml / uv.lock.
+      - "alembic/**"
+      - "src/novafabric/migrations/**"
+      - "src/novafabric/metadata_store/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/helm-kind.yml"
+      - "scripts/helm_kind_smoke.sh"
+  schedule:
+    - cron: "41 3 * * *" # nightly, 03:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes the older run. Scheduled and
+# dispatched runs each get their own group, so one never cancels another.
+concurrency:
+  group: helm-kind-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  helm-smoke:
+    name: helm-smoke
+    # Pinned, never -latest (#207, tests/docs/test_workflow_runner_images_are_pinned.py).
+    runs-on: ubuntu-24.04
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
+    timeout-minutes: 40
+    env:
+      IMAGE_REPO: novafabric-ci
+      IMAGE_TAG: kind
+      KIND_CLUSTER: nova-helm-ci
+      HELM_VERSION: v3.22.1
+      # sha256 of helm-v3.22.1-linux-amd64.tar.gz, as published both at
+      # get.helm.sh/<file>.sha256sum and in the v3.22.1 GitHub release notes.
+      HELM_SHA256: 896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the image from this tree (no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: linux/amd64
+          push: false
+          # Into the runner's Docker daemon, so `kind load` can copy it to the node.
+          load: true
+          tags: ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
+          # Own scope so this job never evicts or reuses publish-image.yml's cache.
+          # Pull-request runs read the scope written by nightly runs on main.
+          cache-from: type=gha,scope=helm-kind
+          cache-to: type=gha,scope=helm-kind,mode=max
+        env:
+          # No build-record artifact: it is not a zip, so a plain
+          # `gh run download <run>` fails on it before reaching the diagnostics.
+          DOCKER_BUILD_RECORD_UPLOAD: false
+
+      - name: Install Helm (checksum-verified)
+        # Helm 3, the major publish-chart.yml packages the released chart with. The
+        # tarball is verified against the pinned sha256 before anything is run.
+        run: |
+          set -euo pipefail
+          tarball="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$tarball" "https://get.helm.sh/$tarball"
+          echo "${HELM_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/helm-bin"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" linux-amd64/helm
+          mv "$RUNNER_TEMP/linux-amd64/helm" "$RUNNER_TEMP/helm-bin/helm"
+          echo "$RUNNER_TEMP/helm-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/helm-bin/helm" version --short
+
+      - name: Create Kind cluster
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          cluster_name: ${{ env.KIND_CLUSTER }}
+          wait: 120s
+          # The post step also tries to remove a `kind-registry` container, which
+          # this job never creates (registry: false), and prints "No such
+          # container: kind-registry". The runner is discarded anyway, so a
+          # cleanup error must never turn a green run red.
+          ignore_failed_clean: true
+
+      - name: Load the image into the Kind node
+        run: kind load docker-image "${IMAGE_REPO}:${IMAGE_TAG}" --name "${KIND_CLUSTER}"
+
+      - name: Install, smoke, upgrade, rollback
+        run: bash scripts/helm_kind_smoke.sh run
+
+      - name: Collect diagnostics
+        if: failure()
+        run: bash scripts/helm_kind_smoke.sh diagnostics "$RUNNER_TEMP/helm-kind-diagnostics"
+
+      - name: Upload diagnostics
+        # Pod logs (tail), events, resource descriptions and Helm history only.
+        # Secret values are never collected: the script lists Secret names only and
+        # drops any file that contains a generated value.
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: helm-kind-diagnostics
+          path: ${{ runner.temp }}/helm-kind-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
