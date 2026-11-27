@@ -2,6 +2,8 @@
 
 [Architecture, as built](README.md) › Sealing and verification
 
+> Verified against code on 2026-11-27.
+
 A capsule is tamper-evident once it is sealed. NovaFabric has two independent
 mechanisms:
 
@@ -17,7 +19,7 @@ Both rest on SHA-256 and canonical JSON, and both cover the redaction proof.
 
 ```mermaid
 flowchart LR
-    subgraph seal["At capture: _seal_capsule (if configured)"]
+    subgraph seal["At capture: finalize.seal_capsule (if configured)"]
         F["capsule files<br/>(all but capsule.yaml, .seal/)"] -->|SHA-256 + size| ED["evidence_digests<br/>in capsule.yaml"]
         ED --> CJ["canonical JSON manifest<br/>capsule_id = SHA-256"]
         CJ -->|ECDSA P-256 or Ed25519| DSSE[".seal/manifest.dsse"]
@@ -424,7 +426,7 @@ publication of the run envelope with `--sigstore` when `NOVA_REKOR_URL` is also 
 | Witness cosigning of tree heads | experimental, library only | `trust/novaseal/witness.py` |
 | Ledger checkpoint Merkle inclusion, `nova ledger verify --merkle-db` | experimental | `trust/ledger/_verify.py` — without `--merkle-db`, exit 0 only means the checkpoint's (unsigned) `merkle` block is self-consistent; a fabricated one-leaf tree passes. With it, the log must hold the checkpoint and reproduce the recorded tree head |
 | PII redaction manifest (`RedactionManifest`, with its `legal_hold_mode` field; there is no capture flag for it) | experimental, library only | `compliance/pii/manifest.py` |
-| Signed subject-proof reports (`nova verify --check-redaction`) | experimental | `cli/redact.py` |
+| Signed subject-proof reports: produced by `nova subject-proof`, checked by `nova verify --check-redaction` | experimental | `cli/redact.py:subject_proof_cmd` (producer), `cli/verify.py` (`--check-redaction`) |
 
 The roadmap and the [decisions index](../decisions.md) track which further
 seal-layer capabilities are planned (for example, a dedicated network signing
