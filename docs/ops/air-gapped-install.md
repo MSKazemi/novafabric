@@ -310,6 +310,9 @@ python3 -m venv ./nova-venv
 ./nova-venv/bin/nova --version
 ```
 
+`uv pip install` with the same flags works too; the `airgap-bundle` CI job
+installs that way, because this repository's CI installs with `uv`.
+
 The verifier needs only Python 3.12 and either the `cryptography` package or
 the `openssl` command (OpenSSL 3.0 or later) for the ed25519 check; with
 neither, it refuses rather than skipping the signature. It exits `0` only

@@ -13,7 +13,8 @@ name: airgap-bundle
 #   2. proves the verifier fails closed on an unsigned extra member and on the
 #      wrong public key;
 #   3. installs from the extracted wheelhouse inside a network namespace with
-#      no route out (`unshare --net`), with `--no-index --require-hashes`, and
+#      no route out (`unshare --net`), with `uv pip install --no-index
+#      --require-hashes` (the flags the docs give pip; CI installs with uv), and
 #      runs `nova --version`, one `nova capture` and `nova validate` there.
 #
 # The signing key is ephemeral, generated in the runner's temp dir, and never
@@ -102,21 +103,22 @@ jobs:
         env:
           PY: ${{ steps.py.outputs.python-path }}
         run: |
-          set -uo pipefail
+          # GitHub runs this with `bash -e`: each expected failure is caught with `|| rc=$?`.
+          set -euo pipefail
           B="$RUNNER_TEMP/bundle/novafabric-airgap-core.tar"
           W="$RUNNER_TEMP/negative"
           mkdir -p "$W" && cd "$W"
           V="$RUNNER_TEMP/offline/verify_airgap_bundle.py"
           cp "$B" extra.tar && echo stowaway > stowaway.txt && tar -rf extra.tar stowaway.txt
+          rc=0
           "$PY" -I "$V" --bundle extra.tar \
-            --public-key "$RUNNER_TEMP/airgap-keys/ed25519.pub.pem" --extract-to "$W/x"
-          rc=$?
+            --public-key "$RUNNER_TEMP/airgap-keys/ed25519.pub.pem" --extract-to "$W/x" || rc=$?
           [ "$rc" -eq 1 ] || { echo "::error::extra member: expected exit 1, got $rc"; exit 1; }
           [ ! -e "$W/x" ] || { echo "::error::a failed verify left files behind"; exit 1; }
           openssl genpkey -algorithm ed25519 -out other.pem
           openssl pkey -in other.pem -pubout -out other.pub.pem
-          "$PY" -I "$V" --bundle "$B" --public-key other.pub.pem
-          rc=$?
+          rc=0
+          "$PY" -I "$V" --bundle "$B" --public-key other.pub.pem || rc=$?
           [ "$rc" -eq 1 ] || { echo "::error::wrong key: expected exit 1, got $rc"; exit 1; }
           echo "both negatives refused"
 
@@ -135,7 +137,8 @@ jobs:
           fi
           echo "no route out: confirmed"
           "$PY" -m venv "$T/venv"
-          "$T/venv/bin/python" -m pip install --no-index --disable-pip-version-check \
+          # uv pip with the flags the docs give pip (repo rule: CI installs with uv).
+          uv pip install --python "$T/venv/bin/python" --offline --no-index \
             --find-links "$A/wheels" --require-hashes -r "$A/requirements.txt"
           export PATH="$T/venv/bin:$PATH"
           nova --version
@@ -144,9 +147,11 @@ jobs:
           CAPSULE="$(ls -d "$NOVAFABRIC_CAPSULE_DIR"/*/ | head -n 1)"
           nova validate "$CAPSULE"
           SH
-          sudo unshare --net -- env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+          UV_DIR="$(dirname "$(command -v uv)")"
+          sudo unshare --net -- env -i PATH="$UV_DIR:/usr/sbin:/usr/bin:/sbin:/bin" \
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" \
             PY="$PY" T="$T" A="$RUNNER_TEMP/offline/nova-airgap" \
             HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_DATA_HOME="$T/home/.local/share" \
             NOVAFABRIC_HOME="$T/home/.novafabric" NOVAFABRIC_CAPSULE_DIR="$T/capsules" \
-            NOVAFABRIC_AUDIT_LOG_PATH="$T/home/audit.jsonl" PIP_ROOT_USER_ACTION=ignore \
+            NOVAFABRIC_AUDIT_LOG_PATH="$T/home/audit.jsonl" UV_CACHE_DIR="$T/uv-cache" \
             bash "$T/offline.sh"

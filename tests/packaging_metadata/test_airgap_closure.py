@@ -304,12 +304,10 @@ def test_openssl_backend_agrees_with_cryptography(tmp_path: Path, keys: tuple[Pa
     priv, pub = keys
     _, other = generate_keypair(tmp_path / "other")
     bundle = _bundle(tmp_path, priv, FILES)
-    try:
-        good = verifier.verify_bundle(bundle, public_key_pem=pub.read_bytes(), backend="openssl")
-    except verifier.SignatureUnavailable:  # pragma: no cover — OpenSSL < 3 has no -rawin
-        pytest.skip("openssl lacks pkeyutl -rawin")
+    # verify_bundle reports SignatureUnavailable as a "cannot check" error, never raises it.
+    good = verifier.verify_bundle(bundle, public_key_pem=pub.read_bytes(), backend="openssl")
     if not good.ok and any("cannot check" in e for e in good.errors):
-        pytest.skip("openssl lacks pkeyutl -rawin")
+        pytest.skip("openssl lacks pkeyutl -rawin (OpenSSL < 3)")
     assert good.ok and good.signature_checked, good.errors
     bad = verifier.verify_bundle(bundle, public_key_pem=other.read_bytes(), backend="openssl")
     assert not bad.ok
@@ -337,11 +335,11 @@ def test_verifier_imports_only_the_standard_library() -> None:
             top_level.add(node.module.split(".")[0])
     assert top_level - {"__future__"} <= set(sys.stdlib_module_names), top_level
     everywhere: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            everywhere.update(a.name.split(".")[0] for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            everywhere.add(node.module.split(".")[0])
+    for walked in ast.walk(tree):
+        if isinstance(walked, ast.Import):
+            everywhere.update(alias.name.split(".")[0] for alias in walked.names)
+        elif isinstance(walked, ast.ImportFrom) and walked.module:
+            everywhere.add(walked.module.split(".")[0])
     assert everywhere - set(sys.stdlib_module_names) - {"__future__"} <= {"cryptography"}
 
 
