@@ -78,6 +78,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   prints its evidence-binding line as NOT PRESENT for it). It cites control IDs only. The IDs-only catalog `examples/catalogs/aiuc-1-ids-only.yaml`
   has empty titles and descriptions for you to fill in from your licensed copy, and loads with
   `nova audit map --profile`. NovaFabric is not affiliated with AIUC. A guard test keeps standard text out of both files.
+- **Dashboard: Replay workspace** (experimental, issue #269). The Runs inspector has a **Replay modes**
+  view (`view=replay-modes`, linkable) that explains, for the selected run, what each `nova replay` mode
+  executes, whether tools run live, whether the network is reachable and what it writes, with the
+  exact command to copy (capsule path shell-quoted). It shows the run's replayability report from the
+  new read-only `GET /api/runs/{run_id}/replayability` (`read` scope): what a strict mocked replay would
+  do, classified now with the same rules as `nova replay` (servable and not-servable calls, the refusal,
+  each reason), beside the capsule's own `replayability.json`. Opening the view starts nothing. The
+  modes that re-run the workload (mocked strict, mocked `--permissive`, intervention) are marked
+  side-effecting and are copy-only, since `nova serve` has no endpoint that runs them; forensic,
+  semantic and exact eligibility can be started through the existing confirm dialog when the server's
+  `dashboard_modes` lists them. The bundled static dashboard picks it up after the next dashboard rebuild.
 
 ### Changed
 

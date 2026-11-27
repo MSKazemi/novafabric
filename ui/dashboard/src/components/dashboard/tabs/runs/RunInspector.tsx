@@ -1,6 +1,6 @@
 /**
  * Run detail area: parent/child hierarchy block, view switcher
- * (Inspect / Trace / Secrets / Forensics / Children / Replay result) and the
+ * (Inspect / Trace / Secrets / Forensics / Replay modes / Children / Replay result) and the
  * per-view panes. Extracted verbatim from the former RunsTab monolith —
  * behavior frozen.
  */
@@ -16,6 +16,7 @@ import SecretScanPanel from './SecretScanPanel';
 import SegmentedControl from '../../../ui/primitives/SegmentedControl';
 import { CapsuleSummary, IntegrityPanel, LineageNeighbours } from './ExplorerPanels';
 import { ForensicResultPane, SemanticResultPane, ExactResultPane } from './ReplayResultPanes';
+import ReplayWorkspace from '../../../replay/ReplayWorkspace';
 import type { DetailView, ReplayResult, RunAction } from './types';
 
 export interface SecretsState {
@@ -159,6 +160,7 @@ export default function RunInspector({
                 { value: 'lineage', label: 'Lineage' },
                 { value: 'secrets', label: 'Secrets' },
                 { value: 'forensics', label: 'Forensics' },
+                { value: 'replay-modes', label: 'Replay modes' },
                 ...(isDistributed ? [{ value: 'children' as DetailView, label: 'Children' }] : []),
                 ...(replayResult?.runId === selected.run_id ? [{ value: 'replay' as DetailView, label: 'Replay result' }] : []),
               ]}
@@ -267,6 +269,9 @@ export default function RunInspector({
               </div>
             );
           })()}
+          {detailView === 'replay-modes' && (
+            <ReplayWorkspace run={selected} capsulePath={capsule.capsule_path} onAction={onAction} />
+          )}
           {detailView === 'replay' && replayResult?.runId === selected.run_id && (
             replayResult.result.mode === 'semantic'
               ? <SemanticResultPane result={replayResult.result} />

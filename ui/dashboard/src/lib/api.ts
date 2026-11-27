@@ -1006,6 +1006,40 @@ export interface ForensicsTimeline {
   honesty_line: string;
 }
 
+// Replay workspace (issue #269): GET /api/runs/{run_id}/replayability, read-only.
+// `current` is what a strict mocked replay would do, classified now by the server
+// with the same predicates `nova replay` uses; `recorded` is the capsule's own
+// replayability.json (the capturing version's prediction; absent on older capsules).
+export interface ReplayabilityReason {
+  code: string;
+  count: number;
+  refuses_strict: boolean;
+  summary: string;
+  detail: string;
+  [extra: string]: unknown;
+}
+export interface ReplayabilitySummary {
+  schema: string;
+  classifier_version: string;
+  replayable: 'full' | 'partial' | 'none';
+  strict_mocked: 'start' | 'refuse';
+  refusal: ({ type?: string; message?: string; guard?: string | null } & Record<string, unknown>) | null;
+  reexecution: { reexecutable: boolean; source: string | null; guard: string | null };
+  model_calls: Record<string, number>;
+  tool_calls: Record<string, number>;
+  reasons: ReplayabilityReason[];
+}
+export interface ReplayabilityView {
+  run_id: string;
+  current: ReplayabilitySummary | null;
+  current_error: string | null;
+  recorded: ReplayabilitySummary | null;
+  recorded_state: 'present' | 'absent' | 'invalid';
+  recorded_error: string | null;
+  /** Modes the dashboard may start; none of them re-runs the workload. */
+  dashboard_modes: Record<string, boolean>;
+}
+
 // Trust surfaces (ADR-0173 radar / ADR-0174 redaction x-ray), read-only.
 // A guarantee the capsule cannot evidence is reported "na", never "fail" —
 // an unsealed capsule is unverified, not failed.
@@ -1276,6 +1310,8 @@ export const api = {
       `/api/runs/${encodeURIComponent(run_id)}/replay/semantic`,
       { confirmed },
     ),
+  getReplayability: (run_id: string) =>
+    request<ReplayabilityView>(`/api/runs/${encodeURIComponent(run_id)}/replayability`),
   exactReplay: (run_id: string, confirmed = true) =>
     postJson<{ ok: boolean; result: Record<string, unknown> }>(
       `/api/runs/${encodeURIComponent(run_id)}/replay/exact`,

@@ -92,6 +92,7 @@ from novafabric.serve.routers.forensics import build_forensics_router
 from novafabric.serve.routers.holds import build_holds_router
 from novafabric.serve.routers.maintenance import build_maintenance_router
 from novafabric.serve.routers.query_panel import build_query_panel_router
+from novafabric.serve.routers.replay_workspace import build_replay_workspace_router
 from novafabric.serve.routers.report_export import build_report_export_router
 from novafabric.serve.routers.saved_views import build_saved_views_router
 from novafabric.serve.routers.trust_surfaces import build_trust_surfaces_router
@@ -3210,6 +3211,15 @@ def create_app(
     # the ADR-0183 freeze — the inline-count guard enforces it.
     app.include_router(
         build_trust_surfaces_router(
+            verify_token, capsule_dir=capsule_dir, resolve_capsule=_resolve_capsule
+        )
+    )
+
+    # ---------- replay workspace read surface (issue #269) ----------
+    # What a strict mocked replay would do (classified now + the capsule's own
+    # replayability.json) and which modes the dashboard may start. Read-only.
+    app.include_router(
+        build_replay_workspace_router(
             verify_token, capsule_dir=capsule_dir, resolve_capsule=_resolve_capsule
         )
     )

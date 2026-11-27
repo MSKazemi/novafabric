@@ -9,6 +9,14 @@ The other three read the capsule and execute nothing.
 
 Every flag of these commands: [CLI reference — nova replay, diff and diagnose](../cli-reference.md#replay-commands-v03).
 
+In the local dashboard (**experimental**), the Runs inspector's **Replay modes** view shows
+this page's per-mode contract for one run — what each mode executes, whether tools run live,
+whether the network is reachable — with the run's replayability report (classified now by
+`replay/_replayability_summary.py:assess_capsule`, beside the capsule's own
+`replayability.json`) and the exact command to copy. It starts only modes that execute
+nothing; `mocked` and `intervention` are copy-only. See
+[the dashboard reference](../dashboard.md#replay-workspace-experimental).
+
 > **Release scope.** This page describes **v0.109.0**, the current release. The following
 > shipped in v0.105.0: recorded MCP `call_tool` results served (ADR-0300), the fail-closed
 > contract and `--permissive`, async / streamed / Responses API serving and live-network

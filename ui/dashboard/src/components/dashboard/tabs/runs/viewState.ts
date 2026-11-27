@@ -28,10 +28,11 @@ export const FILTER_SCOPES: readonly FilterScope[] = ['node', 'root', 'tree'];
 /**
  * Inspector views that may be deep-linked. `replay` is excluded on purpose:
  * its content is the result of an action run in *this* session, so a link to
- * it would open on nothing.
+ * it would open on nothing. `replay-modes` (the Replay workspace) is linkable: it
+ * only reads the capsule, so a link opens on the same report.
  */
 export const LINKABLE_VIEWS: readonly DetailView[] = [
-  'inspect', 'trace', 'integrity', 'lineage', 'secrets', 'forensics', 'children',
+  'inspect', 'trace', 'integrity', 'lineage', 'secrets', 'forensics', 'children', 'replay-modes',
 ];
 
 function oneOf<T extends string>(allowed: readonly T[], raw: string, fallback: T): T {

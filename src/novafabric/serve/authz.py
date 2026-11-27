@@ -436,6 +436,7 @@ ROUTE_SCOPES: Final[dict[tuple[str, str], Scope]] = {
     ("POST", "/api/runs/{run_id}/replay/exact"): Scope.admin,
     ("POST", "/api/runs/{run_id}/replay/forensic"): Scope.admin,
     ("POST", "/api/runs/{run_id}/replay/semantic"): Scope.admin,
+    ("GET", "/api/runs/{run_id}/replayability"): Scope.read,
     ("GET", "/api/runs/{run_id}/run-lineage"): Scope.read,
     ("GET", "/api/runs/{run_id}/safety-case"): Scope.read,
     ("GET", "/api/runs/{run_id}/scan-secrets"): Scope.read,

@@ -911,6 +911,52 @@ components:
       - holds
       title: RegistryHolds
       type: object
+    ReplayabilityResponse:
+      description: Body of ``GET /api/runs/{run_id}/replayability``.
+      properties:
+        current:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Current
+        current_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Current Error
+        dashboard_modes:
+          additionalProperties:
+            type: boolean
+          title: Dashboard Modes
+          type: object
+        recorded:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Recorded
+        recorded_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Recorded Error
+        recorded_state:
+          enum:
+          - present
+          - absent
+          - invalid
+          title: Recorded State
+          type: string
+        run_id:
+          title: Run Id
+          type: string
+      required:
+      - run_id
+      - recorded_state
+      - dashboard_modes
+      title: ReplayabilityResponse
+      type: object
     RollbackRequest:
       properties:
         actor:
@@ -9979,6 +10025,48 @@ paths:
           description: Validation Error
       summary: Semantic Replay Endpoint
       x-nova-contract: pending
+  /api/runs/{run_id}/replayability:
+    get:
+      operationId: dashboardGetReplayability
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          title: Run Id
+          type: string
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplayabilityResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Replayability
+      tags:
+      - replay
   /api/runs/{run_id}/run-lineage:
     get:
       description: List spool lineage edges for a distributed run — nova run lineage.
