@@ -41,7 +41,7 @@ exits 0, rather than failing on a laptop, a CI runner or a fresh clone.
 2. **Write capsules to a shared filesystem.** `job.sbatch` passes an explicit
    `--output-dir` under `SLURM_SUBMIT_DIR`. A capsule written to a compute node's
    `/tmp` is gone by the time you look for it, and `NOVAFABRIC_HOME` is not enough
-   on its own because a config file can override the environment variable.
+   on its own because an exported `NOVAFABRIC_CAPSULE_DIR` overrides it.
 
 `--experiment` is deliberately **not** used here. It is A/B attribution
 (ADR-0116) and requires `--variant` and `--variant-source` alongside it; it is not

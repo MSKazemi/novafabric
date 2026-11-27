@@ -1,4 +1,4 @@
-"""Regression test for examples/smolagents-capture (experimental, unreleased).
+"""Regression test for examples/smolagents-capture (experimental, since v0.109.0).
 
 The no-library path always runs; the live path runs wherever ``smolagents`` is importable (it is not a
 NovaFabric dependency), so the example cannot silently rot once it is installed in some environment.

@@ -1,4 +1,4 @@
-# smolagents capture (experimental, unreleased)
+# smolagents capture (experimental, since v0.109.0)
 
 Wrap a [smolagents](https://github.com/huggingface/smolagents) agent and every `run()` writes one
 Run Capsule: a span per step and a record per tool call. This example needs **no network, no

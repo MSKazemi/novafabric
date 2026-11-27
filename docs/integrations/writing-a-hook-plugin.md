@@ -140,7 +140,8 @@ nova capture <cmd>
    └─ orchestrator opens capsule writer
       └─ install_all() called in subprocess
          ├─ Built-in hooks (`_BUILT_IN_HOOKS`: OpenAI, Anthropic, MCP, record.tool,
-         │  Google ADK + OpenAI Agents tool seams, requests, httpx, aiohttp, urllib3) install
+         │  Google ADK + OpenAI Agents + LangChain tool seams, requests, httpx,
+         │  httpx2, aiohttp, urllib3) install
          └─ Plugins discovered + installed (one isolated try/except per plugin)
                                  ↓
             agent runs, hooks record into capsule

@@ -94,6 +94,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
 - **The public decision index lists ADR-0319 to ADR-0325** (accepted 2026-11-22): the replay decisions
   v0.109.0 ships.
+- **Tutorials, guides and example READMEs match the code again.** A truth pass over `docs/getting-started.md`,
+  `docs/tutorials/`, `docs/integrations/`, `examples/*/README.md` and the capture Action's README fixed 86
+  statements in 24 files: sample output that the CLI does not print (`nova capture`, `nova diff`, `nova lineage
+  blast-radius`, `nova export-evidence`, `nova query`/`view`, `nova session show`, prompt and safety-case lines),
+  stale paths (`.novafabric/runs` where `nova capture` writes `~/.novafabric/capsules`), "a replay is not a capsule"
+  (a `mocked` replay writes one, ADR-0321), the Hugging Face guide calling v0.109.0 features unreleased, `nova serve`
+  named where `nova server` is meant, wrong `jq` paths for flat `gen_ai.*` keys, and misdated release markers. The
+  doc-command guard now also scans `.github/actions/`, `integrations/` and `deploy/**/README*.md`.
 
 ### Fixed
 

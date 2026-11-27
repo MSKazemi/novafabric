@@ -36,8 +36,9 @@ and the local lineage DB has been updated as each capture finished.
 nova lineage blast-radius local:datasets/training-set@1.0.0
 ```
 
-You should see all three runs (`train-v1`, `eval-v1`, `promote-v1`) listed
-as dependents of the shared dataset. This is the "if I change this asset,
+You should see three `run:01K…` lines under `Blast radius of
+local:datasets/training-set@1.0.0`, one per capture (`train-v1`, `eval-v1`,
+`promote-v1`); the output names runs by id only. This is the "if I change this asset,
 what do I need to re-evaluate?" question.
 
 ### Provenance: what did this run depend on?
@@ -47,7 +48,7 @@ what do I need to re-evaluate?" question.
 nova lineage provenance <run-id>
 ```
 
-You should see the run's edge to `local:datasets/training-set@1.0.0`.
+You should see `asset:local:datasets/training-set@1.0.0` under `Provenance of <run-id>`.
 
 ### Re-import (if you ever lose the local DB)
 
