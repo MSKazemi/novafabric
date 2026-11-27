@@ -2,12 +2,15 @@ apiVersion: v2
 name: novafabric
 description: NovaFabric — replayable AI infrastructure. Deploys the multi-user REST API (nova server start) by default, or the experimental dashboard, backed by a metadata store.
 type: application
-# Chart version. The publish-chart.yml workflow overrides this with the git tag
-# at release time, so the chart version tracks the application version.
-version: 0.1.0
-# Default container image tag when image.tag is unset. Overridden to the git tag
-# by the release workflow.
-appVersion: "0.58.0"
+# Chart version and appVersion both equal the package version in pyproject.toml.
+# Bump all three together when cutting a release (docs/release-process.md step 6).
+# publish-chart.yml packages with --version/--app-version taken from the git tag
+# and refuses to publish when the tag disagrees with these two fields, so the
+# chart in a checkout and the chart on GHCR describe the same release.
+# Guarded by tests/docs/test_release_metadata_is_consistent.py.
+version: 0.109.0
+# Default container image tag when image.tag is unset.
+appVersion: "0.109.0"
 keywords:
   - novafabric
   - ai

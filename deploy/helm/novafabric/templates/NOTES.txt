@@ -1,17 +1,24 @@
-NovaFabric is installed. The dashboard + API run as Deployment {{ include "novafabric.fullname" . }}.
+NovaFabric is installed. {{ if eq .Values.mode "server" }}The multi-user REST API (`nova server start`){{ else }}The experimental dashboard (`nova serve`){{ end }} runs as Deployment {{ include "novafabric.fullname" . }}.
 
 1. Wait for the pod to become ready:
 
    kubectl --namespace {{ .Release.Namespace }} rollout status deploy/{{ include "novafabric.fullname" . }}
 
-2. Reach the dashboard:
+2. Reach the {{ if eq .Values.mode "server" }}API{{ else }}dashboard{{ end }}:
 {{- if .Values.ingress.enabled }}
    {{- range .Values.ingress.hosts }}
    http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
    {{- end }}
 {{- else }}
    kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "novafabric.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+{{- if eq .Values.mode "server" }}
+   # Without OIDC the server uses a generated local bearer token (only its
+   # fingerprint is logged). Read it from the pod:
+   TOKEN=$(kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "novafabric.fullname" . }} -- sh -c 'cat "$NOVAFABRIC_HOME/.server-token"')
+   curl -H "Authorization: Bearer $TOKEN" http://localhost:{{ .Values.service.port }}/v0/version
+{{- else }}
    # then open http://localhost:{{ .Values.service.port }}/dashboard
+{{- end }}
 {{- end }}
 
 {{- if .Values.serve.insecure }}

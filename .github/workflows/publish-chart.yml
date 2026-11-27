@@ -60,6 +60,20 @@ jobs:
       - name: Lint chart
         run: helm lint deploy/helm/novafabric
 
+      - name: Chart.yaml must match the tag
+        # Chart.yaml's version/appVersion are kept equal to pyproject.toml on
+        # main (tests/docs/test_release_metadata_is_consistent.py). A tag that
+        # disagrees with them would publish a chart whose OCI version differs
+        # from the one a checkout of the same tag describes, so refuse.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          chart_version=$(sed -n 's/^version:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}[[:space:]]*$/\1/p' deploy/helm/novafabric/Chart.yaml)
+          app_version=$(sed -n 's/^appVersion:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}[[:space:]]*$/\1/p' deploy/helm/novafabric/Chart.yaml)
+          if [ "$chart_version" != "$version" ] || [ "$app_version" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME but Chart.yaml has version=$chart_version appVersion=$app_version" >&2
+            exit 1
+          fi
+
       - name: Package chart
         id: package
         run: |

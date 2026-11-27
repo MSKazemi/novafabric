@@ -11,10 +11,13 @@ Cutting v0.102.0 on 2026-09-27 exposed that nothing tied these together:
   the published repository would have hit a dead link. ``test_doc_links`` caught
   that one only because the link was already written.
 
-``deploy/helm/novafabric/Chart.yaml`` is deliberately NOT checked. Its own
-comments record that ``publish-chart.yml`` overrides both ``version`` and
-``appVersion`` from the git tag at release time, so the in-repo values are
-placeholders by design, not drift.
+* ``deploy/helm/novafabric/Chart.yaml`` used to be exempt, on the grounds that
+  ``publish-chart.yml`` overrides ``version`` and ``appVersion`` from the git tag.
+  The in-repo values had nonetheless drifted to ``0.1.0`` / ``0.58.0`` while the
+  package was at ``0.109.0`` — so ``helm install`` from a checkout pulled a
+  months-old image by default, and ``helm template`` labelled every object
+  with the wrong ``app.kubernetes.io/version``. Both fields now equal the
+  package version, and ``publish-chart.yml`` refuses a tag that disagrees.
 """
 
 from __future__ import annotations
@@ -24,7 +27,11 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+CHART_YAML = REPO_ROOT / "deploy" / "helm" / "novafabric" / "Chart.yaml"
+PUBLISH_CHART = REPO_ROOT / ".github" / "workflows" / "publish-chart.yml"
 
 
 def _project_version() -> str:
@@ -94,3 +101,53 @@ def test_release_notes_exist_and_are_publicly_tracked() -> None:
         "of the published repository cannot open it. This exact state shipped a "
         "dead README link during the v0.102.0 preparation."
     )
+
+
+def _chart() -> dict[str, object]:
+    data = yaml.safe_load(CHART_YAML.read_text(encoding="utf-8"))
+    assert isinstance(data, dict), f"{CHART_YAML} is not a YAML mapping"
+    return data
+
+
+def test_chart_version_matches_pyproject() -> None:
+    version = _project_version()
+    chart_version = str(_chart().get("version"))
+    assert chart_version == version, (
+        f"Chart.yaml version is {chart_version} but pyproject.toml says {version}. "
+        "Bump deploy/helm/novafabric/Chart.yaml together with pyproject.toml "
+        "(docs/release-process.md step 6)."
+    )
+
+
+def test_chart_app_version_matches_pyproject() -> None:
+    """appVersion is the default image tag: drift here deploys the wrong release."""
+    version = _project_version()
+    app_version = str(_chart().get("appVersion"))
+    assert app_version == version, (
+        f"Chart.yaml appVersion is {app_version} but pyproject.toml says {version}. "
+        "With image.tag unset the chart deploys ghcr.io/...:<appVersion>, so a stale "
+        "appVersion installs an old image from a current checkout."
+    )
+
+
+def test_chart_app_version_is_quoted() -> None:
+    """An unquoted appVersion like 0.110 would parse as a float and lose digits."""
+    text = CHART_YAML.read_text(encoding="utf-8")
+    assert re.search(r'^appVersion:\s*"[^"]+"\s*$', text, re.M), (
+        "Chart.yaml appVersion must be a quoted string"
+    )
+
+
+def test_publish_chart_refuses_a_tag_that_disagrees_with_chart_yaml() -> None:
+    """The tag override and the in-repo values must not be able to diverge silently."""
+    workflow = yaml.safe_load(PUBLISH_CHART.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["chart"]["steps"]
+    names = [step.get("name", "") for step in steps]
+    assert "Chart.yaml must match the tag" in names, (
+        "publish-chart.yml lost the step that compares the tag to Chart.yaml"
+    )
+    check = names.index("Chart.yaml must match the tag")
+    package = names.index("Package chart")
+    assert check < package, "the tag check must run before the chart is packaged"
+    script = steps[check]["run"]
+    assert "Chart.yaml" in script and "exit 1" in script
