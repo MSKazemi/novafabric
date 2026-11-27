@@ -3,7 +3,9 @@
  * plus the per-page detail fetch that feeds the RegistryBrowser adapter and
  * the flattened eval-result list.
  *
- * Extracted verbatim from the former RegistryTab monolith — behavior frozen.
+ * Extracted from the former RegistryTab monolith. The loaded list is bounded
+ * to `REGISTRY_ASSETS_MAX` assets: at the cap Load more stops (`capped`), and
+ * the per-asset detail map only holds assets that are in the list.
  * Stays a bespoke hook rather than adopting `usePaginatedQuery` because each
  * page fans out into three coupled stores (assets, detailMap, evalResults)
  * and refresh() must also clear the row selection.
@@ -12,6 +14,7 @@ import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateA
 import { api } from '../../../../lib/api';
 import type { AssetSummary, AssetDetail } from '../../../../lib/api';
 import type { EvalResult } from '../../../../lib/fixtures';
+import { REGISTRY_ASSETS_MAX, appendBounded, isAtCap } from '../../../../lib/boundedList';
 
 const PAGE_SIZE = 50;
 
@@ -22,6 +25,10 @@ export interface AssetsPageState {
   error: string | null;
   totalAssets: number;
   hasMore: boolean;
+  /** The list holds `listMax` assets; no further page is loaded. */
+  capped: boolean;
+  /** The named in-memory maximum (`REGISTRY_ASSETS_MAX`). */
+  listMax: number;
   loadingMore: boolean;
   refresh: () => Promise<void>;
   loadMore: () => Promise<void>;
@@ -58,7 +65,7 @@ export function useAssetsPage({
         setAssets(r.assets);
         setSelectedIds(new Set());
       } else {
-        setAssets(prev => [...(prev ?? []), ...r.assets]);
+        setAssets(prev => appendBounded(prev, r.assets, REGISTRY_ASSETS_MAX).items);
       }
       setTotalAssets(r.total);
       setHasMore(r.has_more);
@@ -67,7 +74,8 @@ export function useAssetsPage({
       // Load details for newly-fetched assets
       const details = await Promise.all(r.assets.map(a => api.getAsset(a.id).catch(() => null)));
       setDetailMap(prev => {
-        const next = new Map(prev);
+        // A replace starts over, so details of assets no longer listed are dropped.
+        const next = replace ? new Map<string, AssetDetail>() : new Map(prev);
         for (let i = 0; i < r.assets.length; i++) {
           const d = details[i];
           if (d) next.set(r.assets[i].id, d);
@@ -105,20 +113,23 @@ export function useAssetsPage({
     await _loadPage(0, true);
   }, [_loadPage]);
 
+  const capped = isAtCap(assets, REGISTRY_ASSETS_MAX);
+
   const loadMore = useCallback(async () => {
-    if (!hasMore || loadingMore) return;
+    if (!hasMore || loadingMore || capped) return;
     setLoadingMore(true);
     try {
       await _loadPage(loadedOffset, false);
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, _loadPage, loadedOffset]);
+  }, [hasMore, loadingMore, capped, _loadPage, loadedOffset]);
 
   useEffect(() => { refresh(); }, [refresh, refreshTick]);
 
   return {
-    assets, detailMap, evalResults, error, totalAssets, hasMore, loadingMore,
+    assets, detailMap, evalResults, error, totalAssets,
+    hasMore: hasMore && !capped, capped, listMax: REGISTRY_ASSETS_MAX, loadingMore,
     refresh, loadMore, selectedIds, setSelectedIds,
   };
 }

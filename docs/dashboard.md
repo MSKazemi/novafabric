@@ -957,6 +957,74 @@ command lands unclassified — parity can no longer regress silently. Destructiv
 operations staying `cli-only` *with a recorded reason* is the intended honest
 end-state, not a gap.
 
+## Live data, freshness and limits (experimental)
+
+The Runs list is the dashboard's one live list: it loads a page from
+`/api/runs/search` and then adds new runs pushed by the Server-Sent Events
+stream `/api/runs/stream`. Other tabs refresh by polling (the global
+auto-refresh every 30 s, a few cards more often; polling pauses while the browser
+tab is hidden) and replace their data on each poll. The Audit and Registry tabs
+grow only when you press **Load more**, and both stop at a display limit (below).
+
+**Freshness, in words.** The Runs list header says how current the list is:
+
+| Shown | Meaning |
+|---|---|
+| `connecting…` | The live stream has not opened yet. The list is as of its last load. |
+| `live` | The stream is open and the list has been loaded since the last gap. New runs appear automatically. |
+| `reconnecting…` · `last updated 2 min ago` | The stream dropped. The dashboard is retrying; the list is not updating meanwhile. |
+| `reconnected — refreshing…` | The stream is back and the list is reloading (see below). Not yet current. |
+| `offline — showing data from HH:MM` | The browser reports no network, or the stream has been down for 30 s or more. The list shows what was loaded before, and the time it was last known to be current. |
+| `update failed — showing data from HH:MM` | Reloading the list failed while the stream was open. Press **↻ refresh** to retry. |
+
+Only `live` uses the green dot. The state word is in a polite live region
+(`role="status"`), so a screen reader announces it when it changes; the ageing
+`last updated …` text is not in that region and is not re-announced. The words
+carry the meaning; the dot is decorative. When the filter bar is applied, the
+list comes from a one-shot filter query, not the stream, and no freshness label
+is shown.
+
+**Reconnect.** The stream has no event IDs and no replay, so runs created while
+it was down are never delivered. After any reconnect the list therefore reloads
+its first page before it is called `live` again; pages loaded with **Load more**
+before the gap are dropped by that reload, as they are by every auto-refresh.
+This is deliberate: the stream only pushes new runs, never status changes of
+runs already listed, so keeping older pages would show rows whose status is not
+current next to a `live` label. The selected run stays selected.
+Reconnects use capped exponential backoff with jitter: 1 s, 2 s, 4 s, … up to
+30 s, each delay drawn from the upper half of its window so many open tabs do not
+reconnect at the same moment. The backoff resets only after a connection has
+stayed up for 10 s or delivered a run, so a server that accepts and drops at once
+cannot cause a reconnect loop, and at most one connection is open per list.
+While the browser reports it is offline no attempt is made; the next one follows
+its `online` event. The server can also drop pushed runs for a slow consumer
+(its per-connection queue holds 64); **↻ refresh** and the periodic reload are
+authoritative, the stream is best effort.
+
+**Limits.** In-memory lists have a named maximum and drop their oldest entries,
+so a tab left open for hours does not grow without bound:
+
+| List | Maximum | When reached |
+|---|---|---|
+| Runs list (stream + **Load more**) | 500 runs (`LIVE_RUNS_MAX`) | The header says *Showing the latest 500 runs (display limit)*; new runs push the oldest out, **Load more** stops, and the footer still reports how many more the server holds. Narrow the search or date range to reach older runs, or use `nova query`. |
+| Per-run cost summaries shown in the Runs list | One entry per run in the list | Entries for runs that left the list are discarded. Costs are asked for only for runs not asked about yet, plus running runs, in batches of 100 ids (the server's limit per request). |
+| Audit tab (**Load more**) | 2,000 entries (`AUDIT_ENTRIES_MAX`) | **Load more** is replaced by *Showing the latest 2,000 entries (display limit)*. Pick an action filter (applied on the server) to reach older entries of that kind; the full log is the file named at the top of the tab. |
+| Registry tab (**Load more**) | 1,000 assets (`REGISTRY_ASSETS_MAX`) | **Load more** stops; the footer reads *Showing 1,000 of N — K more (display limit reached)* and points to `nova list` for the full registry. |
+
+When the Runs list is at its limit, the selected run is never the one dropped:
+the oldest other run goes instead, so the selection and `j`/`k` keep their place.
+
+The maxima are constants in `ui/dashboard/src/lib/boundedList.ts` (it also
+holds `PAGINATED_MAX_ITEMS`, the 2,000-row default of the shared
+`usePaginatedQuery` hook, which no tab uses yet); the
+freshness rules are in `ui/dashboard/src/lib/freshness.ts`, and the reconnect
+loop is `openManagedRunStream` in `ui/dashboard/src/lib/api.ts`.
+
+Not covered yet: the stream pushes every new run into the list, even one that
+does not match the current search or status filter, until the next reload.
+Clearing cached data on token revocation or a scope change, and a measured
+memory baseline for a long-running session, are not part of this work yet.
+
 ## Scale characteristics and known limits
 
 Understanding these limits prevents surprises when you grow beyond a small local

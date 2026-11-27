@@ -134,7 +134,11 @@ export default function RunsTab({
   const {
     runs, setRuns, error, totalApprox, hasMore, loadingMore, liveConnected,
     costMap, refresh, loadMore,
-  } = useRunSearch({ search, statusFilter, since, until, refreshTick, onCountChange });
+    liveTracker, capped, listMax,
+  } = useRunSearch({
+    search, statusFilter, since, until, refreshTick, onCountChange,
+    selectedRunId: selected?.run_id ?? null,
+  });
 
   const selectedId = selected?.run_id ?? null;
   useEffect(() => {
@@ -340,6 +344,8 @@ export default function RunsTab({
           visibleCount={visibleRuns.length}
           totalApprox={filterActive ? (filtered.result?.matched ?? 0) : totalApprox}
           liveConnected={liveConnected}
+          liveTracker={liveTracker}
+          listCap={{ max: listMax, capped }}
           onNavigate={onNavigate}
           refresh={refresh}
           search={search}

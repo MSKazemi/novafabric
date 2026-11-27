@@ -35,6 +35,8 @@ export interface AssetListProps {
   bulkBusy: boolean;
   onBulkPromote: () => void;
   hasMore: boolean;
+  /** The loaded list hit its display limit (`useAssetsPage().capped`). */
+  capped?: boolean;
   loadingMore: boolean;
   loadMore: () => void;
 }
@@ -57,6 +59,7 @@ export default function AssetList({
   bulkBusy,
   onBulkPromote,
   hasMore,
+  capped = false,
   loadingMore,
   loadMore,
 }: AssetListProps) {
@@ -209,6 +212,8 @@ export default function AssetList({
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={loadMore}
+        capped={capped}
+        hint={capped ? 'use `nova list` for the full registry' : undefined}
       />
 
 
