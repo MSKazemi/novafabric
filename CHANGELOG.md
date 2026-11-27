@@ -140,6 +140,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   corrects that the trivy gate runs after the image is pushed, that the audit jobs are not required
   checks, and that MD5 and SHA-1 do appear. The trust surfaces, concepts, key management and SPKG
   pages carry the matching limits.
+- **New glossary; concepts and FAQ checked against the code.** `docs/glossary.md` defines every product
+  term with its maturity label and source page. `docs/concepts.md` gains a capture-level section (prompts
+  and responses are stored at every level) and a local-vs-server-mode section, and corrects the capsule
+  file list, lineage edge writers and confidence, the lineage backend selection, the lifecycle meaning of
+  `validated` / `pending_approval`, the registry tables and how eval suites are pinned. `docs/faq.md`
+  corrects the replay-mode table, the signing and portability answers, and adds answers for replay
+  refusals, fidelity, capture levels, unsealed capsules, `nova validate` vs `nova verify` and the
+  evidence key.
 
 ### Fixed
 
