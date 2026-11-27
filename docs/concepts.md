@@ -15,7 +15,8 @@ signed evidence is produced.
 - The exact on-disk anatomy of a **Run Capsule** and why it is the source of
   truth (everything else is a rebuildable index).
 - How **zero-code-change capture** works via a `sitecustomize.py` loader and
-  per-SDK plus wire-level hooks.
+  per-SDK plus wire-level hooks, and what each **capture level** stores — model
+  prompts and responses are stored at every level.
 - The **five replay modes** — `forensic`, `mocked`, `semantic`, `exact`, and experimental
   `intervention` — and what each one honestly promises. Only `mocked` and `intervention`
   re-execute the workload; `forensic`, `semantic` and `exact` are checks over the capsule
@@ -32,13 +33,18 @@ signed evidence is produced.
 > Anything labeled **PLANNED** or **FUTURE DESIGN** below is documented design
 > intent (in the ADRs) and is **not implemented** — never treat it as shipped.
 
+Looking up a single term? The [Glossary](glossary.md) defines every product term in one
+or two sentences, with its maturity label and the page that explains it.
+
 ---
 
 ## The five primitives at a glance
 
-NovaFabric is framed around exactly five primitives, each with a public spec and
-JSON Schema. Cryptographic sealing is part of the Evidence Bundle / trust layer,
-not a sixth primitive.
+NovaFabric is framed around exactly five primitives. Four have a JSON Schema
+packaged in `src/novafabric/schemas/` (`run-capsule`, `replay-result`,
+`lineage-edge`, `evidence-bundle`); asset specs are checked by typed models
+(`novafabric.spec.models`), not a JSON Schema. Cryptographic sealing is part of the
+Evidence Bundle / trust layer, not a sixth primitive.
 
 | # | Primitive | What it is | Since |
 |---|---|---|---|
@@ -71,29 +77,43 @@ variable is set, otherwise to `$NOVAFABRIC_HOME/capsules/<ulid>/`
 
 ```
 ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
-  capsule.yaml          ← run manifest
+  capsule.yaml          ← run manifest (with evidence_digests of every other file)
   trace.jsonl           ← execution spans (OTel)
-  model-calls.jsonl     ← LLM API calls (OTel GenAI semconv)
+  model-calls.jsonl     ← LLM API calls (OTel GenAI semconv), prompts and responses included
   tool-calls.jsonl      ← tool invocations
-  assets.jsonl          ← asset references
+  assets.jsonl          ← asset consumption records (empty unless your code records one)
   env.lock              ← environment snapshot
-  redaction-proof.json  ← secret scan proof
-  replay.yaml           ← replay constraints
+  redaction-proof.json  ← what the secret scan scanned and redacted
+  replay.yaml           ← replay policy
   lineage.jsonl         ← lineage edges
-  inputs/
+  replayability.json    ← what a strict mocked replay would do (experimental)
+  capture-health.json   ← only when events were dropped or the workload tampered with the capsule
+  file-effects.json     ← nova capture of a Python workload: files it wrote, digests only
+  inputs/               ← created empty; capture does not populate it
   outputs/
-    stdout.txt
+    stdout.txt          ← only when the stream was non-empty
     stderr.txt
+  .seal/                ← only when NovaSeal sealing is configured (experimental)
 ```
+
+Other files appear only for some runs (`network_events.jsonl` and the other event
+streams, `c2pa-manifest.json`, `otel-genai-spans.json`, …). The authoritative
+file-by-file list, in write order, is
+[Run Capsule anatomy](architecture/run-capsule.md#the-files-in-write-order). The
+workload's own output files are **not** copied into `outputs/`.
 
 Capsules are written on success **and** failure. A failed run produces a
 complete capsule with `status: failure` and an `error` block — the evidence of a
 failure is just as durable as the evidence of a success.
 
-Capsules support additive, optional `extensions:` blocks (for example `slurm`,
-`kubernetes`, `ray`, `openlineage`) so the schema can grow without introducing a
-new top-level format. Readers tolerate unknown fields; old capsules stay readable
-forever.
+The manifest schema is closed at the top level (`additionalProperties: false`), so
+`nova validate` rejects a key it does not define. It grows in two ways without a new
+top-level format: optional fields added in a schema release, and two open
+containers — `extensions` for vendor data (keys reverse-DNS-prefixed, for example
+`com.amazonaws.bedrock`, which the Bedrock AgentCore adapter writes) and `facets` for
+NovaFabric-recorded evidence ([below](#evidence-facets-experimental)). Changes so far
+have been additive and optional, so older capsules stay valid; the format is not
+frozen until the v1.0 schema freeze.
 
 ### Links inside a capsule are never followed (works today)
 
@@ -103,7 +123,7 @@ writes a link into a capsule, and neither a ZIP entry nor the capsule Merkle roo
 can represent one. So nothing that copies, archives or serves capsule files
 follows one. They all share one module (`novafabric._capsule_fs`):
 
-- **Refused with a named error, nothing written:** `nova export-evidence`,
+- **Refused with a named error, nothing written:** `nova export-evidence` (exit 1),
   `nova export-blob` (exit 2, "Export refused"), `nova migrate` and
   `/api/capsule-migrate`, `nova export-rocrate` and
   `/api/compliance/export/rocrate` (HTTP 422), `nova backup create` (also for
@@ -279,7 +299,8 @@ Two distinct, composable ways of relating capsules exist — do not conflate the
   packs a session with its members into one verifiable ZIP for another
   machine (experimental). `nova session replay` (experimental, ADR-0123)
   replays the members in sequence order, whole or as a `--from/--to` slice.
-- **Parent/child (prototype, ADR-0039).** A *physical, distributed-run*
+- **Parent/child (experimental; the ROADMAP calls it a prototype — implemented,
+  not yet validated at target scale; ADR-0039).** A *physical, distributed-run*
   hierarchy: one logical execution fanned out across nodes (e.g. a Slurm DDP
   job) recorded as a PARENT capsule plus N WORKER capsules under a single
   `global_run_id`.
@@ -446,11 +467,41 @@ Runner details:
 
 > **Note.** The single-node runner is the smallest case of a distributed run.
 > The cluster-scale tiers shipped in v0.10+ with honest maturity labels:
-> parent/child capsules (`nova run …`) are a **prototype** — implemented and
-> tested, not yet validated at target scale — and the collector tier, object
-> capsule store, and Postgres metadata DB are **experimental**. See
-> [ROADMAP.md](../ROADMAP.md) for per-component labels; the federation and
-> at-scale graph tiers remain **future design**.
+> parent/child capsules (`nova run …`) are **experimental** (the ROADMAP's
+> *prototype*: implemented and tested, not yet validated at target scale), and the
+> collector tier, object capsule store, Postgres metadata DB and at-scale lineage
+> backends are **experimental**. See [ROADMAP.md](../ROADMAP.md) and
+> [Deployment topologies](architecture/deployment-topologies.md) for
+> per-component labels; cross-cluster federation of capsules and lineage remains
+> **future design**.
+
+---
+
+## Capture levels — what a capsule stores (experimental)
+
+The capture level comes from the `NOVA_CAPTURE_LEVEL` environment variable of the
+process that captures; it defaults to `standard`, and an unknown value falls back to
+`standard` (`policies/capture_level.py`). `nova policy capture-level get` prints it;
+`nova policy capture-level set` only validates a level and prints the `export` line —
+there is no policy store.
+
+| Level | What it changes today | Not implemented |
+|---|---|---|
+| `minimal` | Nothing: same behaviour as `standard` | a metadata-only capture |
+| `standard` (default) | Adapter, tool-hook and `record` façade paths keep digests, not payloads | redacted model-call content |
+| `forensic` | Those paths also keep payloads (tool arguments and results, state, documents) — which mocked replay needs to serve `record.tool` and framework tools | — |
+| `air_gapped` | Same as `forensic` | blocking external network calls |
+
+**No level keeps prompts out of a capsule.** Model-call capture writes the full
+request messages and the response text to `model-calls.jsonl` at every level,
+including `minimal`; mocked replay serves those recorded responses. Since v0.109.0
+responses of every model-provider host in the URL registry are stored as well
+(experimental); `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` stops storing those HTTP-layer
+response bodies (the dedicated OpenAI, Anthropic, Ollama and Bedrock surfaces are not
+affected, and a strict replay then refuses those calls). Request messages are stored
+either way. Treat a capsule as you treat the conversation it captured
+([SECURITY.md](../SECURITY.md)). Full reference:
+[`nova policy capture-level`](cli-reference.md#nova-policy-capture-level-set).
 
 ---
 
@@ -493,8 +544,9 @@ the per-SDK hooks (`_openai`, `_anthropic`) and the wire-level hooks
 (`_httpx`, `_requests`, `_aiohttp`, `_urllib3`) when present in the request
 body — so `nova replay --mode exact` has the determinism inputs it needs
 (temperature, top_p, seed) regardless of which transport the captured call
-took. See `design/spec/model-call-v0.md` (private) for the full
-field reference.
+took. The field reference is the packaged JSON Schema,
+`src/novafabric/schemas/model-call.schema.json`; record roles and how the records
+are counted are in [Run Capsule anatomy](architecture/run-capsule.md#model-call-record-roles).
 
 This format is stable across providers and is the basis for two things:
 
@@ -542,9 +594,14 @@ JWTs, passwords, connection-string credentials, …) are listed in
 
 After scanning, `redaction-proof.json` is written. It records:
 
-- How many findings were detected
-- Which files were scanned
-- A cryptographic chain hash proving the scan ran
+- Which files were scanned, with each file's SHA-256 before redaction and as written
+- Each finding: rule ID, offset, length, redaction strategy and the SHA-256 of the
+  matched value (never the value itself)
+- The hash of the rule pack, and a `chain_hash` over the canonical proof (on its own
+  anyone can recompute it; an edit becomes detectable once a seal's
+  `evidence_digests` or an Evidence Bundle's redaction attestation covers the proof)
+
+It records what was scanned and redacted; it is not proof that no secret remains.
 
 Capsules without `redaction-proof.json` are considered invalid by
 `nova validate` and **cannot be exported** into an Evidence Bundle. Verifiable
@@ -878,7 +935,8 @@ recomputed or fetched; the capsule directory is never written. See the
 The lineage graph is a directed graph stored in SQLite — a rebuildable cache
 derived from each capsule's `lineage.jsonl`. It has two table types:
 
-- **`lineage_nodes`** — runs, assets, and artifacts. Each node has a
+- **`lineage_nodes`** — runs, assets and artifacts (the edge schema also allows
+  `external` and `attestation` nodes for other producers). Each node has a
   deterministic ID: the first 26 hex characters of SHA-256(`kind:ref`)
   (`lineage/_types.py::node_id_for`).
 - **`lineage_edges`** — typed, directional edges between nodes.
@@ -886,14 +944,19 @@ derived from each capsule's `lineage.jsonl`. It has two table types:
 Because the graph is derived from the capsules, it can always be rebuilt from
 them — the capsules remain the source of truth. The SQLite backend is the
 local-mode default and is crash-safe (WAL); it is well suited below roughly one
-million edges. Four **at-scale backends** exist for larger graphs, all
-**experimental** and testcontainers-verified, selected via `nova lineage-store
-migrate` / `profile`: **Kuzu** (embedded, benchmark-cleared at 10M edges, p99
-`blast_radius` 45.5ms), **Postgres** (recursive-CTE, no extension needed),
-**Apache AGE** (openCypher on Postgres), and **JanusGraph** (Gremlin, needs the
-GraphSON serializer). There are currently zero `NotImplementedError` stubs
-among them. Billion-edge cross-cluster **federation** remains **FUTURE
-DESIGN**, not implemented.
+million edges (a documented guideline, not a measured limit). Four **at-scale
+backends** exist for larger graphs, all **experimental** and library-level:
+**Kuzu** (embedded), **Postgres** (recursive CTE, no extension needed), **Apache
+AGE** (openCypher on Postgres) and **JanusGraph** (Gremlin, needs the GraphSON
+serializer). Each is implemented with integration tests, but **no `nova` command
+selects one**: the `nova lineage` CLI always uses SQLite, `nova lineage-store
+migrate` imports into the SQLite store, and `nova lineage-store profile` prints a
+docker-compose profile. Use the backend classes from Python
+([Lineage graph](architecture/lineage-graph.md#storage-backends)). A Kuzu
+blast-radius p99 of 45.5 ms at 10M edges was measured once (2026-05-16) in an
+external benchmark and is now listed as a target, not a measurement
+([SLO catalog](slo.md)). Billion-edge cross-cluster **federation** remains
+**future design**, not implemented.
 
 ### Edge types
 
@@ -902,8 +965,8 @@ labelled by who writes each type today:
 
 | Edge type | Meaning | Written by |
 |---|---|---|
-| `consumed` | The run read/used this asset | `nova capture`, from `assets.jsonl` |
-| `produced_by` | This artifact was produced by the run | `nova capture`, from the capsule's outputs (or `produced.jsonl`) |
+| `consumed` | The run read/used this asset | `nova capture`, from `assets.jsonl` — which holds a record only when your code called `record_asset_consumption()`; capture does not detect which assets a run used |
+| `produced_by` | This artifact was produced by the run | `nova capture`, from the `outputs` list in `capsule.yaml` (for `nova capture` that list holds only captured media blobs, not the workload's own files), or from a `produced.jsonl` in the capsule (read if present; no NovaFabric API writes it today) |
 | `replayed_from` | This run is a replay of the referenced run | `nova capture`, from `replay_of_run_id` in `capsule.yaml` |
 | `depends_on` | This asset depends on another asset | the registry, from an asset's declared dependencies |
 | `migration_source` | This v1.0.0 capsule was upgraded from a v0.1.x capsule (same run) | `nova migrate` (ADR-0034 §6) |
@@ -919,11 +982,16 @@ edges are **derived on demand** from a capsule's memory-operation events
 
 ### Confidence levels
 
-| Confidence | Meaning |
-|---|---|
-| `observed` | Directly recorded at runtime (e.g., an explicit asset reference in `assets.jsonl`) |
-| `inferred` | Derived from capsule structure (e.g., output file presence) |
-| `declared` | Stated by a record the run or capsule carries (e.g., `produced.jsonl`, `replay_of_run_id`) |
+Every edge carries one confidence value (`lineage/_writer.py`, `registry/service.py`):
+
+| Confidence | Meaning | Edges that carry it today |
+|---|---|---|
+| `observed` | Recorded while the run executed | `consumed` — but the record is written by your own call to `record_asset_consumption()`, so it is what the run *reported* at runtime, not an access NovaFabric watched |
+| `inferred` | Derived from capsule structure | `produced_by` from the manifest's `outputs` list |
+| `declared` | Stated by a record or a spec, not checked against execution | `replayed_from` (`replay_of_run_id`), `produced_by` from `produced.jsonl`, `depends_on` (an asset spec's `dependencies`), `migration_source` |
+
+Read a lineage answer accordingly: NovaFabric does not watch file or dataset access,
+so a run's provenance contains only what its records state.
 
 ### Graph queries
 
@@ -932,7 +1000,7 @@ edges are **derived on demand** from a capsule's memory-operation events
 | `provenance` | Backward (ancestors) | "What did this run depend on?" |
 | `blast-radius` | Forward (descendants) | "What runs consume this asset?" |
 | `replay-chain` | Backward via `replayed_from` | "What is the original run for this replay?" |
-| `time-travel` | Backward, filtered by timestamp | "What was the lineage state as of time T?" |
+| `time-travel` | One hop, filtered by timestamp | "Which edges touched this node as of time T?" (edges directly incident to the node recorded up to T, at most 5,000) |
 
 ---
 
@@ -1025,8 +1093,8 @@ All six statuses in plain language:
 | Status | Meaning |
 |---|---|
 | `development` | Work in progress. Default when registered. No constraints. |
-| `validated` | Passed automated checks (`nova validate`). Spec is well-formed, secrets are clean. |
-| `pending_approval` | Waiting for a human sign-off (`nova approve`). Useful in regulated environments. |
+| `validated` | A label you set with `nova promote direct` once your own checks pass. NovaFabric does not run `nova validate` or any other check to grant it. |
+| `pending_approval` | Waiting for a human sign-off. `nova approve` records an approval only for an asset in this state; promoting out of it does not itself require one, so enforce the sign-off with a policy or with `nova promote propose` + `nova promote approve`. |
 | `staging` | Cleared for pre-production use. **Agents require a passing eval to reach here:** the agent's most recent eval must have passed (an earlier pass does not clear a later failure). |
 | `production` | Live. **Agents require a passing eval to reach here** (same rule). |
 | `archived` | Retired. No further promotion possible. Capsules and lineage are still readable. |
@@ -1116,6 +1184,8 @@ registry tells your agent loader which version is `production`.
 
 ```python
 # agent startup code
+import json
+
 from novafabric.registry.service import get_asset
 
 asset = get_asset("system-prompt-v2", version="latest")
@@ -1131,9 +1201,12 @@ rather than silently loading a bad prompt.
 **Use case 3 — Audit trail for a regulated environment**
 
 Your company needs to demonstrate that no AI model reached production without
-a human sign-off. Every promotion through `pending_approval` creates an
-approval record (approver, timestamp, note) and an audit log entry. At audit
-time:
+a human sign-off. Each `nova approve` on an asset in `pending_approval` writes an
+approval record (approver, timestamp, note) and an audit log entry, and every
+promotion writes its policy decision to the audit log. Because leaving
+`pending_approval` does not by itself require an approval record, route
+`production` through `nova promote propose` + `nova promote approve` (the default
+for that protected stage). At audit time:
 
 ```bash
 python -c 'import json; from novafabric.registry.service import get_asset
@@ -1191,6 +1264,12 @@ The registry is a local SQLite database at `~/.novafabric/registry.db`
 | `assets` | Every registered asset — name, version, type, status, full spec JSON, git SHA, promotion history |
 | `eval_results` | Pass/fail eval results per asset, per suite |
 | `approvals` | Human sign-off records: approver, timestamp, note |
+| `promotion_proposals` | Maker-checker proposals from `nova promote propose` |
+| `asset_status_history` | Append-only record of lifecycle transitions (registration, promotion, rollback) |
+
+Further tables hold asset comments, deployment labels and their history, and
+protected-label approvals (`registry/store.py`, `registry/labels.py`,
+`registry/protected_labels.py`).
 
 The registry is entirely local. There is no server, no credentials, and no
 network dependency for local mode.
@@ -1216,10 +1295,14 @@ forced promotion is recorded as such (`forced_promotion = true`) and appears
 in `nova inspect` output and the audit log — the escape hatch is visible,
 not silent.
 
-Standard eval suites ship OCI-pinned for reproducibility: **GAIA, SWE-bench,
-AgentBench, MMLU, TruthfulQA, and a Smoke suite** (v0.9; the `novafabric.evals`
-entry points in `pyproject.toml`). Promotion can be Rego-gated to
-block on a regression against a prior result.
+Six standard eval suites ship as `novafabric.evals` entry points (v0.9,
+`pyproject.toml`): **GAIA, SWE-bench Verified, AgentBench, MMLU, TruthfulQA, and a
+Smoke suite**. The five benchmark adapters run in a container pinned by an OCI image
+digest **you supply** (`NOVAFABRIC_GAIA_OCI_DIGEST`, `NOVAFABRIC_MMLU_OCI_DIGEST`, …);
+without one they refuse to start (ADR-0308). The Smoke suite runs in the host
+environment. Every promotion passes the policy gate, whose input carries the latest
+eval score, and `nova promote direct --significance-gate` (opt-in) blocks only on a
+statistically significant regression over the recent eval sequence (ADR-0080).
 
 ---
 
@@ -1243,10 +1326,15 @@ rather than a row in someone else's database. A capsule missing its
 `redaction-proof.json` cannot be exported (see
 [Secret Scanning and Redaction](#secret-scanning-and-redaction)).
 
-**Shipped trust-layer surfaces (v0.4+):** ed25519-signed Evidence Bundles,
-in-toto DSSE attestations, secret scanning with verifiable redaction proofs,
-OPA/Rego policy gates with maker-checker promotion, and WORM storage adapters
-(S3 Object Lock / Azure immutable blob / GCS Bucket Lock, with legal holds).
+**Shipped trust-layer surfaces:** Ed25519-signed Evidence Bundles with in-toto
+DSSE attestations, secret scanning with redaction proofs, and OPA/Rego policy gates
+with maker-checker promotion work today (v0.4 and v0.8). The WORM storage adapters
+(S3 Object Lock / Azure immutable blob / GCS Bucket Lock) and legal holds
+(`nova hold`) are **experimental** (v0.8).
+
+The two signing keys are separate: `nova init` writes the Ed25519 key that signs
+Evidence Bundles (`$NOVAFABRIC_HOME/keys/signing_key.pem`), and `nova seal init`
+creates the ECDSA P-256 NovaSeal identity that seals capsules at capture.
 
 **Compliance-export cohort (experimental, ADR-0107 + related).** Beyond the
 general-purpose Evidence Bundle, `nova export-compliance` and a long tail of
@@ -1269,7 +1357,7 @@ declared.
 > `tsa_url` is set — ADR-0292), and an append-only SQLite Merkle log,
 > verified offline by `nova verify` (`signature_ok` / `timestamp_ok` /
 > `log_integrity_ok`, plus `timestamp_trust`), plus the maker-checker `nova seal propose/approve/verify`
-> chain (ADR-0059). Still **PLANNED / FUTURE DESIGN** per
+> chain (ADR-0059). Still **future design** (no implementation, no ROADMAP target) per
 > [ADR-0041](./decisions.md): the
 > dedicated network signing *service*, qualified timestamps, Sigstore-keyless
 > signing as the default path, WORM-backed retention at the seal layer, and
@@ -1278,12 +1366,33 @@ declared.
 
 ---
 
+## Local mode and server mode
+
+All tiers read and write the same Run Capsule, so moving up is a deployment change,
+not a data migration ([Deployment topologies](architecture/deployment-topologies.md)).
+
+| | What it is | Maturity |
+|---|---|---|
+| **Local mode** | The `nova` CLI on one machine: capsules under `$NOVAFABRIC_HOME/capsules/`, the SQLite registry and lineage index in `registry.db`. No server, account, database server or network. | works today |
+| **`nova serve`** | A single-user web dashboard over the local capsule directory. Binds to `127.0.0.1`, needs `--experimental` and the `serve` extra. Not read-only: mutations are confirm-gated and audit-logged. | experimental |
+| **`nova server start`** (server mode) | The multi-user REST API (`/v0/...`): SQLite by default or Postgres, bearer-token auth (OIDC, offline tokens, API keys), RBAC. Capsules reach it through `POST /v0/capsules` or directory indexing. Organizations and workspaces scope the registry tier, not capsule bytes. | experimental |
+| **Cluster scale** | Compute nodes append to a local spool; a Go forwarder drains it to NATS JetStream; consumers build indexes off-node. It does not feed the server today. | experimental, partial |
+
+Local mode never requires server mode, Postgres or the cluster components.
+
+---
+
 ## SDK Decorator
 
 The `@agent` decorator (`from novafabric.sdk.agent import agent`) is an in-process alternative to `nova capture`. It wraps
-an agent function with the same capture hooks used by the CLI, recording all
-LLM calls into a capsule. Without `capsule_dir`, it emits OTel spans only —
-this is the v0.1 observability mode.
+an agent function with the same capture hooks used by the CLI, recording the LLM
+calls those hooks see into a capsule. `capsule_dir` is a capsule *store*, like
+`nova capture --output-dir`: each call writes a fresh capsule to
+`<capsule_dir>/<run_id>/`. Without `capsule_dir`, it emits OTel spans only — this is
+the v0.1 observability mode. A decorator capsule records no command: `mocked`
+replay re-runs it only from the process invocation it records, when every replay
+guard passes (experimental, new in v0.109.0), and otherwise refuses it
+(`CapsuleNotReplayable`); `forensic`, `semantic` and `exact` read it either way.
 
 ---
 
@@ -1323,12 +1432,17 @@ You now have the vocabulary NovaFabric is built on:
   **experimental**, as is the Accountability Spine (energy receipts, ledger,
   safety case) and the EU AI Act / ISO / NIST compliance-export cohort, while
   the dedicated signing service and seal-layer WORM retention remain
-  **PLANNED**.
+  **future design**.
+- **Capture levels** — `NOVA_CAPTURE_LEVEL` changes what tool, adapter and `record`
+  paths keep; model prompts and responses are stored at every level.
+- **Local and server mode** — local mode needs nothing but the CLI; `nova serve`
+  and `nova server start` are experimental and additive.
 
 Where to go next:
 
 - **CLI reference** — every command and flag: [`docs/cli-reference.md`](cli-reference.md)
 - **Writing a hook plugin** — [`docs/integrations/writing-a-hook-plugin.md`](integrations/writing-a-hook-plugin.md)
-- **Model-call field reference** — `design/spec/model-call-v0.md` (private)
+- **Model-call field reference** — `src/novafabric/schemas/model-call.schema.json` and [Run Capsule anatomy](architecture/run-capsule.md)
+- **Every term in one place** — [Glossary](glossary.md)
 - **Runner design and anti-patterns** — ADR-0025
 - **Trust-layer and sealing design intent** — [ADR-0041](./decisions.md)

@@ -1,8 +1,9 @@
 # FAQ — the longer answers
 
-The [README FAQ](../README.md#faq) answers the ten questions people ask *before*
-trying NovaFabric: what it is, what a capsule is, whether it phones home, whether it
-is production-ready.
+The [README FAQ](../README.md#faq) answers the four questions people ask *before*
+trying NovaFabric: whether it sends data anywhere, whether you have to change your
+code, whether it is free, and whether it is production-ready. Terms used here are
+defined in the [Glossary](glossary.md).
 
 **This page answers the questions people ask after that** — while evaluating it,
 while it is misbehaving, and while deciding whether to contribute. Nothing here is
@@ -71,9 +72,20 @@ deliberately omit most extras, so incompleteness is information, not failure.
 ### Do I need server mode?
 
 Almost certainly not, to start. Local mode — capture, validate, replay, diff,
-lineage — is the stable core and needs nothing but the CLI. Server mode exists for
-multi-user and cluster-scale deployments and is `experimental`. Postgres is never
-required for local mode.
+lineage — works today (beta, formats not frozen before v1.0) and needs nothing but the
+CLI. Server mode (`nova server start`) exists for multi-user deployments and is
+`experimental`; so is the cluster-scale tier, which does not feed the server today.
+Postgres is never required for local mode.
+
+### What is the difference between `nova serve` and `nova server start`?
+
+`nova serve` is the single-user dashboard over your local capsule directory: it binds
+to `127.0.0.1`, needs `--experimental` and the `serve` extra, and its mutations
+(register, promote, redact, export) are confirm-gated and audit-logged.
+`nova server start` is the multi-user REST API (server mode): SQLite by default or
+Postgres, OIDC / offline-token / API-key authentication and RBAC
+(`reader`, `writer`, `admin`, `auditor`). Both are experimental. See
+[Local mode and server mode](concepts.md#local-mode-and-server-mode).
 
 ### Can I capture something that is not Python?
 
@@ -84,32 +96,109 @@ level and are language-agnostic.
 ### Where does everything get written?
 
 Local mode writes to `~/.novafabric/` (or `$NOVAFABRIC_HOME`) — capsules under
-`capsules/<ulid>/`, replays under `replays/<ulid>/`. Up to v0.106.0 replays landed in
-`./.novafabric/replays/` relative to where you ran the command. Both paths are
-configurable; see the [CLI reference](cli-reference.md).
+`capsules/<ulid>/`, replays under `replays/<ulid>/`, the registry and lineage index in
+`registry.db`. Up to v0.106.0 replays landed in `./.novafabric/replays/` relative to
+where you ran the command. `NOVAFABRIC_CAPSULE_DIR`, when set, wins over
+`$NOVAFABRIC_HOME/capsules/`, and `nova capture -o <dir>` overrides both for one run.
+If capsules land somewhere unexpected, check for a stale `NOVAFABRIC_CAPSULE_DIR`
+exported in your shell. Every variable is in the
+[CLI reference](cli-reference.md#environment-variables).
 
 ### Can I move a capsule to another machine?
 
 That is the entire point. A capsule is a self-contained folder. Copy it, tar it, put
-it in object storage, email it to an auditor — it validates and replays anywhere the
-CLI runs, offline.
+it in object storage, email it to an auditor — `nova validate`, `nova verify` and the
+`forensic`, `semantic` and `exact` replay modes work on it anywhere the CLI runs,
+offline. `mocked` replay re-runs the recorded command, so the other machine also needs
+the workload's code and dependencies; differences from the recorded `env.lock` are
+reported as `env_warnings`. For a third party, export a signed
+[Evidence Bundle](concepts.md#evidence-bundle) instead of the bare folder.
 
 ### Which replay mode should I use?
 
-| Mode | Use when |
-|---|---|
-| `exact` | You want to know whether the run is *eligible* for a byte-exact re-run — it checks and reports reasons; it does not re-execute |
-| `mocked` | You want to re-run the command with the recorded OpenAI/Anthropic replies and MCP tool results served from the capsule; other tools run live, and network use is observed, not blocked |
-| `semantic` | You want a similarity score over the capsule's recorded responses — it does not re-execute and makes no model call |
-| `forensic` | You want to inspect without executing anything — read-only, no network, no subprocess |
+| Mode | Use when | Maturity |
+|---|---|---|
+| `forensic` | You want to inspect without executing anything — read-only, no network, no subprocess | works today |
+| `mocked` (default) | You want to re-run the command with recorded responses served from the capsule: OpenAI and Anthropic calls (sync or async, streamed or not), MCP tool results, and — experimental — `record.tool` functions, framework tools through the adapters, and other registered model hosts. Anything else runs live; network use is observed, and a strict replay fails on a connection past loopback after the fact | works today (Python workloads, supported surfaces only) |
+| `semantic` | You want a text-similarity score over the capsule's recorded responses — it does not re-execute and makes no model call | works today |
+| `exact` | You want to know whether the run is *eligible* for a byte-exact re-run — it checks and reports reasons; it does not re-execute | works today |
+| `intervention` | You want to ask "if this one recorded event had been different, would the outcome change?" — substitutes one event from an `InterventionSpec` and re-runs under mocked semantics | experimental |
 
-NovaFabric does **not** claim exact replay of remote LLM calls. A remote model is not
-deterministic; `mocked` and `semantic` exist precisely because pretending otherwise
-would be dishonest.
+To block the network and keep writes inside the working directory during a mocked
+replay, add `--hermetic` (experimental, Linux only, needs `bwrap`). NovaFabric does
+**not** claim exact replay of remote LLM calls. A remote model is not deterministic;
+`mocked` and `semantic` exist precisely because pretending otherwise would be
+dishonest. Full contract: [Replay modes](architecture/replay-modes.md).
+
+### Why does `nova replay` refuse my capsule?
+
+A strict `mocked` replay refuses before anything runs when it could not serve the
+run faithfully, and names the reason: `CapsuleNotReplayable` (the capsule records no
+command to re-run — for example one written by a framework adapter or the `@agent`
+decorator without a usable process invocation, or imported from OpenTelemetry),
+`ModelSurfaceNotServable` (a recorded model call on a surface replay cannot serve),
+`ToolSurfaceNotServed` (LangChain tools observed but not servable from the capsule),
+or `ToolOverrideUnenforceable` (a `replay.yaml` `allow: false` on a tool replay cannot
+intercept). Run `nova replay <capsule> --dry-run` to see the decision without running
+anything. Capsules captured since v0.109.0 also carry `replayability.json`, and
+`nova capture` prints its verdict after `Capsule written`; add
+`nova capture --require-replayable` to make capture exit `4` unless a strict replay
+would serve everything (experimental). `--permissive` starts anyway, runs the
+unservable calls live and counts them.
+
+### My mocked replay exited 0 — did it reproduce the run?
+
+Not necessarily. The replay `status` says how the replayed **process** ended. The
+`fidelity` verdict in `replay_result.yaml` (experimental, new in v0.109.0) says
+whether it **reproduced** the recording: exit code, normalized stdout, the files the
+workload wrote, and the model and tool call sequence, with no divergence and no live
+call. `nova replay --require-faithful` exits `4` unless the verdict is `faithful`. See
+[Fidelity verdict](architecture/replay-modes.md#fidelity-verdict-adr-0321-experimental).
+
+### Why does `nova lineage provenance` not show the dataset my run read?
+
+Capture does not watch which files or datasets a run reads. A `consumed` edge exists
+only when your code called `record_asset_consumption()` (`novafabric.registry.service`)
+during the run, and `depends_on` edges come from an asset spec's `dependencies`. The
+confidence labels (`observed`, `inferred`, `declared`) say where each edge came from:
+see [Lineage Graph](concepts.md#lineage-graph).
 
 ---
 
 ## When something goes wrong
+
+### I mistyped the command and `nova capture` still wrote a capsule
+
+That is deliberate: a run that never started is evidence too. When the runner could
+not start the workload (for example, the command does not exist), `nova capture`
+prints `✗ Workload never started: <reason>` before the `Capsule written` line and
+exits `127`. A workload that ran and failed gets only the `✗ Capsule written` line
+and exits with the workload's own code.
+
+### `nova verify` says "No .seal/ directory found"
+
+Sealing is opt-in, so a default capture is unsealed and `nova verify` exits `1` on it.
+Run `nova seal init` once (it creates a local, self-asserted ECDSA P-256 identity and
+a `novaseal.yaml` with no network access), then capture again. Sealing never blocks
+a capture: if it fails, `nova capture` prints `✗ Capsule not sealed: …` and keeps the
+capsule. See [Sealing and verification](architecture/sealing-and-verification.md).
+
+### What is the difference between `nova validate` and `nova verify`?
+
+`nova validate` checks that a capsule is well-formed: `capsule.yaml`, `env.lock` and
+`redaction-proof.json` against their schemas, no links or special files inside, and
+no capture-time tampering recorded. It needs no key. `nova verify` checks the NovaSeal
+seal: the signature, the RFC 3161 timestamp when present, Merkle log inclusion, and
+that every file still matches the digest the seal signed; when one does not, it names
+the first divergent file. An unsealed capsule can pass `nova validate` and fail
+`nova verify`.
+
+### `nova export-evidence` says `--key is required`
+
+An Evidence Bundle is always signed with a local Ed25519 key, and there is no default
+key until you create one. Run `nova init`, which writes
+`$NOVAFABRIC_HOME/keys/signing_key.pem` (mode 600), and pass it with `--key`. This
+key is separate from the NovaSeal identity that `nova seal init` creates.
 
 ### ~30 tests fail right after I clone and set up
 
@@ -123,6 +212,13 @@ The conventional set is `{development, test, staging, production}`. A custom val
 like `ci` is legitimate and recorded verbatim, but validate warns on anything outside
 that set — deliberately, because a warning on every single run just teaches people to
 ignore warnings.
+
+### `make test-changed` always fails
+
+It is disabled on purpose and always exits `1`: pytest-testmon cannot parallelise
+and took more than ten minutes on this suite. Use `make test-direct` (the tests that
+directly cover your change), `make test-impacted` (everything whose import closure
+reaches it) or `make test-fast` (the parallel suite, no Docker) instead.
 
 ### The test suite hangs
 
@@ -150,10 +246,27 @@ you have something actionable: a bug with a reproduction, or a defined feature.
 
 ### How do I verify redaction actually happened?
 
-Do not trust it — test it. Put a fake secret in the environment, capture a run, then
-grep the capsule for that string. Every capsule also carries a redaction proof
-recording that redaction ran. If you find a leak, that is a security issue: follow
-[SECURITY.md](../SECURITY.md) and do **not** open a public issue.
+Do not trust it — test it. Have the workload print, or send to a model, a fake key
+in a format the scanner knows (for example a string shaped like an OpenAI or GitHub
+token), capture the run, then grep the whole capsule for that string. Every capsule
+also carries `redaction-proof.json`, which records what was scanned and what was
+redacted. If you find a leak of a format the scanner claims to detect, that is a
+security issue: follow [SECURITY.md](../SECURITY.md) and do **not** open a public
+issue.
+
+### Does a lower capture level keep my prompts out of the capsule?
+
+No. Model-call capture stores the full request messages and response text in
+`model-calls.jsonl` at every capture level, including `minimal` and the default
+`standard` — mocked replay needs them. `NOVA_CAPTURE_LEVEL` changes only what the
+adapter, tool-hook and `record` paths keep (digests at `standard`, payloads at
+`forensic` and `air_gapped`); `minimal` behaves like `standard`, and `air_gapped`
+does not block the network. `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` stops storing the
+HTTP-layer response bodies of generic model hosts (not the OpenAI, Anthropic, Ollama
+and Bedrock surfaces), and request messages are stored either way. There is no
+setting today that leaves model-call content out of a capsule, so treat a capsule as
+you treat the conversation it captured. See
+[Capture levels](concepts.md#capture-levels--what-a-capsule-stores-experimental).
 
 ### What does the secret scan not catch?
 
@@ -178,11 +291,14 @@ experimental) and keep testing with planted values.
 
 Different things at different layers, and it is worth being precise:
 
-- **Capsules** can carry in-toto DSSE attestations, Sigstore signatures, and RFC 3161
-  trusted timestamps, once you configure sealing — a default capture is **unsealed**,
-  and timestamping is optional even when sealing is on. See
-  [Trust surfaces](trust-surfaces.md).
-- **Evidence Bundles** (`nova export-evidence`) are always signed.
+- **Capsules** are **unsealed** by default. Once you configure NovaSeal (`nova seal
+  init`, experimental), capture writes a DSSE envelope over the manifest into
+  `.seal/` (ECDSA P-256 by default), appends it to a local Merkle log, and adds an
+  RFC 3161 timestamp only when a `tsa_url` is set. A Sigstore keyless signature is a
+  separate, opt-in path (`nova seal sign --backend sigstore`). See
+  [Sealing and verification](architecture/sealing-and-verification.md).
+- **Evidence Bundles** (`nova export-evidence`) are always signed: in-toto DSSE
+  attestations signed with a local Ed25519 key, verifiable offline.
 - **Container images** are signed keylessly with cosign and carry SLSA build
   provenance plus an SBOM as OCI artifacts.
 - **Air-gap bundles** are one tar whose members are inventoried in a DSSE-signed
@@ -190,6 +306,17 @@ Different things at different layers, and it is worth being precise:
 
 A signature proves origin and integrity. It does not prove the contents are *correct*
 — nothing does, and any tool claiming otherwise is selling something.
+
+### What is the difference between a Run Capsule, a seal and an Evidence Bundle?
+
+The **Run Capsule** is the folder `nova capture` writes: the evidence itself. A
+**seal** (NovaSeal, experimental, opt-in) is written *into* the capsule's `.seal/`
+directory and makes later edits detectable with `nova verify`. An **Evidence Bundle**
+is a separate signed ZIP built *from* a capsule by `nova export-evidence`, holding a
+copy of the whole capsule, its lineage edges, the JSON schemas and signed
+attestations ([full list](architecture/sealing-and-verification.md#what-is-in-the-bundle)),
+for handing to a third party who verifies it offline. They are the only two
+top-level formats.
 
 ### Does NovaFabric certify us as compliant?
 

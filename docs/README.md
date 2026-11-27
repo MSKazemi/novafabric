@@ -113,6 +113,7 @@ Look up an exact detail — commands, flags, endpoints, and on-disk formats.
 | Document | What it covers |
 |---|---|
 | [Concepts](concepts.md) | Capsule format, capture hooks, replay modes, lineage edges — the mental model and the five primitives |
+| [Glossary](glossary.md) | Every product term in one or two sentences, with its maturity label and the page that explains it |
 | [CLI reference](cli-reference.md) | Exhaustive flag/option/example reference for every `nova` command, including the v0.59 experimental groups (`prompt`, `label`, `session`, `query`/`view`/`trend`, `annotate`, `score`, `retention`, `events`, `experiment`, `graph`, `pricing`, …) |
 | [Python API](python-api.md) | Programmatic API: `@agent` decorator, `CaptureOrchestrator`, Replay, Lineage, Registry, `novafabric.scores.submit` |
 | [REST API reference](api-reference.md) | The `nova serve` FastAPI route table — endpoints, methods, and auth |
