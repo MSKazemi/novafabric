@@ -162,10 +162,17 @@ export default function DataTable<T>({
                 key={rowKey(row, vi.index)}
                 className={clsx(
                   'absolute left-0 right-0 flex items-center gap-3 px-3 border-b border-[var(--color-border)] text-xs text-[var(--color-text)]',
-                  onRowClick && 'cursor-pointer hover:bg-[var(--color-bg-raised)] transition-colors',
+                  onRowClick && 'cursor-pointer hover:bg-[var(--color-bg-raised)] transition-colors focus-visible:outline-offset-[-2px]',
                 )}
                 style={{ top: 0, transform: `translateY(${vi.start}px)`, height: vi.size }}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
+                // A clickable row must be reachable and operable from the keyboard
+                // too (WCAG 2.1.1): Tab to it, Enter or Space activates it.
+                tabIndex={onRowClick ? 0 : undefined}
+                onKeyDown={onRowClick ? (e) => {
+                  if (e.target !== e.currentTarget) return; // keys inside row actions
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(row); }
+                } : undefined}
               >
                 {columns.map((col) => (
                   <div

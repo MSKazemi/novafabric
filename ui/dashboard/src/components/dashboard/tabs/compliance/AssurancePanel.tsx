@@ -59,6 +59,7 @@ export default function AssurancePanel({ runIds }: { runIds: string[] }) {
       </div>
       <div className="space-y-1.5">
         <SuggestInput
+          aria-label="Run ID"
           value={runId}
           onChange={setRunId}
           suggestions={runIds}
@@ -67,6 +68,7 @@ export default function AssurancePanel({ runIds }: { runIds: string[] }) {
           className="w-full text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2.5 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none"
         />
         <input
+          aria-label="Capsule path (optional)"
           value={capsulePath}
           onChange={e => setCapsulePath(e.target.value)}
           placeholder="Capsule path (optional — auto-resolved from run ID if blank)"

@@ -37,6 +37,7 @@ function DbUpgradeSection() {
       </p>
       <div className="flex items-center gap-2">
         <input
+          aria-label="Alembic target revision"
           value={revision}
           onChange={(e) => setRevision(e.target.value)}
           placeholder="head"
@@ -112,6 +113,7 @@ function CapsuleMigrateSection() {
         <div>
           <label className={labelClass}>Source path (v0.1.x capsule directory)</label>
           <input
+            aria-label="Source path (v0.1.x capsule directory)"
             value={source}
             onChange={(e) => setSource(e.target.value)}
             placeholder="/path/to/capsule-v01x"
@@ -121,6 +123,7 @@ function CapsuleMigrateSection() {
         <div>
           <label className={labelClass}>Output path (must not already exist)</label>
           <input
+            aria-label="Output path (must not already exist)"
             value={output}
             onChange={(e) => setOutput(e.target.value)}
             placeholder="/path/to/capsule-v100"

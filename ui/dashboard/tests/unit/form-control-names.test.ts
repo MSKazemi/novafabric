@@ -15,7 +15,18 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const TABS = join(__dirname, '../../src/components/dashboard/tabs');
-const SCOPES = ['Analytics', 'Cost', 'Governance', 'Policy', 'Infra', 'Seal', 'Audit', 'Lineage', 'Commands'];
+// Every tab is in scope since #280's audit labelled the remaining controls
+// (Compliance, KG, Admin, Holds, Diff, Registry, Runs parity panels). The
+// shared editors outside tabs/ are listed in EXTRA_FILES.
+const COMPONENTS = join(__dirname, '../../src/components');
+const EXTRA_FILES = [
+  'dashboard/commands/CommandBuilder.tsx',
+  'dashboard/CostToolsPanel.tsx',
+  'dashboard/SavedViewsBar.tsx',
+  'dashboard/AppearancePanel.tsx',
+  'capsule/CapsuleInspector.tsx',
+  'ui/CommandPalette.tsx',
+].map((f) => join(COMPONENTS, f));
 const CONTROLS = new Set(['input', 'textarea', 'select', 'Input', 'Select', 'Textarea', 'SuggestInput']);
 
 function files(): string[] {
@@ -24,12 +35,8 @@ function files(): string[] {
     if (statSync(p).isDirectory()) readdirSync(p).forEach((c) => walk(join(p, c)));
     else if (p.endsWith('.tsx')) out.push(p);
   };
-  for (const name of readdirSync(TABS)) {
-    const full = join(TABS, name);
-    const base = name.replace(/\.tsx$/, '').replace(/Tab$/, '');
-    const dir = statSync(full).isDirectory() ? name.toLowerCase() : base.toLowerCase();
-    if (SCOPES.some((s) => s.toLowerCase() === dir)) walk(full);
-  }
+  walk(TABS);
+  out.push(...EXTRA_FILES);
   return out.sort();
 }
 
@@ -111,9 +118,9 @@ describe('scanner self-test', () => {
 describe('dashboard tab form controls have accessible names', () => {
   const list = files();
   it('scans a non-trivial set of files', () => {
-    expect(list.length).toBeGreaterThan(9);
+    expect(list.length).toBeGreaterThan(60);
   });
-  it.each(list.map((f) => [relative(TABS, f), f]))('%s', (_rel, f) => {
+  it.each(list.map((f) => [relative(COMPONENTS, f), f]))('%s', (_rel, f) => {
     const bad = unnamedControls(readFileSync(f, 'utf8'));
     expect(bad.map((b) => `line ${b.line}: <${b.tag}> has no accessible name`)).toEqual([]);
   });

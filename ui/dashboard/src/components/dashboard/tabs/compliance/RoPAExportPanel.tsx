@@ -42,6 +42,7 @@ export default function RoPAExportPanel({ runIds }: { runIds: string[] }) {
 
       <div className="space-y-2">
         <SuggestInput
+          aria-label="Run ID"
           value={runId}
           onChange={setRunId}
           suggestions={runIds}
@@ -49,6 +50,7 @@ export default function RoPAExportPanel({ runIds }: { runIds: string[] }) {
           className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2.5 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none w-full"
         />
         <input
+          aria-label="Controller name (optional)"
           type="text"
           value={controllerName}
           onChange={e => setControllerName(e.target.value)}
@@ -56,6 +58,7 @@ export default function RoPAExportPanel({ runIds }: { runIds: string[] }) {
           className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2.5 py-1.5 focus:border-[var(--color-accent)] focus:outline-none w-full"
         />
         <input
+          aria-label="Controller contact details (optional)"
           type="text"
           value={controllerContact}
           onChange={e => setControllerContact(e.target.value)}

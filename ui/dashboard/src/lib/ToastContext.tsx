@@ -37,6 +37,11 @@ const TONE_STYLES: Record<ToastTone, string> = {
 
 const TONE_GLYPH: Record<ToastTone, string> = { success: '✓', error: '✗', info: 'ℹ' };
 
+/** Spoken prefix: the glyph is aria-hidden and the tone is otherwise colour-only. */
+const TONE_LABEL: Record<ToastTone, string> = { success: 'Success:', error: 'Error:', info: 'Info:' };
+
+const TOAST_MS = 4500;
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const seq = useRef(0);
@@ -48,23 +53,44 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     if (handle) { clearTimeout(handle); timers.current.delete(id); }
   }, []);
 
+  const schedule = useCallback((id: number) => {
+    const old = timers.current.get(id);
+    if (old) clearTimeout(old);
+    timers.current.set(id, setTimeout(() => dismiss(id), TOAST_MS));
+  }, [dismiss]);
+
+  // Hovering or focusing a toast holds it on screen (WCAG 2.2.1): a reader who
+  // needs longer than 4.5 s is not raced by the auto-dismiss.
+  const hold = useCallback((id: number) => {
+    const handle = timers.current.get(id);
+    if (handle) { clearTimeout(handle); timers.current.delete(id); }
+  }, []);
+
   const toast = useCallback((tone: ToastTone, text: string): number => {
     const id = ++seq.current;
     setToasts((prev) => [...prev.slice(-3), { id, tone, text }]);
-    const handle = setTimeout(() => dismiss(id), 4500);
-    timers.current.set(id, handle);
+    schedule(id);
     return id;
-  }, [dismiss]);
+  }, [schedule]);
 
   return (
     <ToastContext.Provider value={{ toast, dismiss }}>
       {children}
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 items-end pointer-events-none">
+      {/* Always mounted, so screen readers announce each toast as it is added. */}
+      <div
+        aria-live="polite"
+        aria-relevant="additions text"
+        className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 items-end pointer-events-none"
+      >
         {toasts.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => dismiss(t.id)}
+            onMouseEnter={() => hold(t.id)}
+            onMouseLeave={() => schedule(t.id)}
+            onFocus={() => hold(t.id)}
+            onBlur={() => schedule(t.id)}
             title="Dismiss"
             className={clsx(
               'pointer-events-auto rounded-lg border px-4 py-3 shadow-xl max-w-md text-sm font-medium text-left transition-opacity',
@@ -72,6 +98,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             )}
           >
             <span aria-hidden="true" className="mr-1.5">{TONE_GLYPH[t.tone]}</span>
+            <span className="sr-only">{TONE_LABEL[t.tone]} </span>
             {t.text}
           </button>
         ))}

@@ -79,6 +79,7 @@ export default function AssetList({
               <tr>
                 <th className="w-8 px-2">
                   <input
+                    aria-label="Select all visible assets"
                     type="checkbox"
                     checked={visibleAssets.length > 0 && visibleAssets.every(a => selectedIds.has(a.id))}
                     onChange={e => {
@@ -115,6 +116,7 @@ export default function AssetList({
                     >
                       <td className="px-2 w-8">
                         <input
+                          aria-label={`Select ${a.name} ${a.version}`}
                           type="checkbox"
                           checked={selectedIds.has(a.id)}
                           onChange={e => {

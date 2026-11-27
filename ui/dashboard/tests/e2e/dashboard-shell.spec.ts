@@ -182,13 +182,13 @@ test.describe('command palette (journey 5)', () => {
     await expect(palette).toBeVisible();
 
     // Unfiltered: every nav target is offered.
-    await expect(palette.getByRole('button', { name: 'Lineage', exact: false }).first()).toBeVisible();
-    await expect(palette.getByRole('button', { name: /^Home/ })).toHaveCount(1);
+    await expect(palette.getByRole('option', { name: 'Lineage', exact: false }).first()).toBeVisible();
+    await expect(palette.getByRole('option', { name: /^Home/ })).toHaveCount(1);
 
-    const input = palette.getByRole('textbox', { name: 'Search commands' });
+    const input = palette.getByRole('combobox', { name: 'Search commands' });
     await input.fill('lineage');
-    await expect(palette.getByRole('button', { name: /Lineage/ }).first()).toBeVisible();
-    await expect(palette.getByRole('button', { name: /^Home/ })).toHaveCount(0);
+    await expect(palette.getByRole('option', { name: /Lineage/ }).first()).toBeVisible();
+    await expect(palette.getByRole('option', { name: /^Home/ })).toHaveCount(0);
 
     await page.keyboard.press('Escape');
     await expect(palette).toBeHidden();
@@ -200,8 +200,8 @@ test.describe('command palette (journey 5)', () => {
 
     await page.keyboard.press('Control+k');
     const palette = page.getByRole('dialog', { name: 'Command palette' });
-    await palette.getByRole('textbox', { name: 'Search commands' }).fill('lineage');
-    await palette.getByRole('button', { name: /Lineage/ }).first().click();
+    await palette.getByRole('combobox', { name: 'Search commands' }).fill('lineage');
+    await palette.getByRole('option', { name: /Lineage/ }).first().click();
 
     await expect(palette).toBeHidden();
     await expect(tabButton(page, 'Lineage')).toHaveAttribute('aria-current', 'page');

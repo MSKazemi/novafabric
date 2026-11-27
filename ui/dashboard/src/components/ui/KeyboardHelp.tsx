@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
+import { useFocusTrap } from './primitives/Modal';
 
 interface Shortcut { key: string; description: ReactNode; }
 
 const BASE_SHORTCUTS: Shortcut[] = [
   { key: '⌘K / Ctrl+K', description: 'Command palette — jump anywhere, search entities' },
-  { key: 'j / k',  description: 'Move selection down / up in the current list' },
+  { key: 'j / k',  description: 'Move selection down / up in the Runs list' },
   { key: 'Enter',  description: 'Open selected item' },
   { key: 'Escape', description: 'Close detail panel / dismiss overlay' },
   { key: '?',      description: 'Toggle this keyboard shortcuts reference' },
@@ -32,16 +33,21 @@ function Kbd({ children }: { children: ReactNode }) {
 }
 
 export default function KeyboardHelp({ onClose, tabShortcuts }: KeyboardHelpProps) {
+  // Move focus into the dialog, keep Tab inside it, restore focus on close.
+  const panelRef = useFocusTrap(true, onClose);
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Keyboard shortcuts"
+      // `?` must still close this dialog, so the global single-key shortcuts
+      // keep working while it is the only dialog open (see lib/shortcuts.ts).
+      data-shortcut-passthrough=""
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="absolute inset-0 bg-[var(--color-bg)] opacity-80" aria-hidden="true" />
-      <div className="relative w-full max-w-2xl rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-raised)] shadow-[var(--shadow-2)] max-h-[85vh] overflow-y-auto">
+      <div ref={panelRef} tabIndex={-1} className="relative w-full max-w-2xl rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-raised)] shadow-[var(--shadow-2)] max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
           <h2 className="text-sm font-medium text-[var(--color-text)]">Keyboard shortcuts</h2>
           <button onClick={onClose} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)] text-lg leading-none" aria-label="Close">×</button>
@@ -81,7 +87,8 @@ export default function KeyboardHelp({ onClose, tabShortcuts }: KeyboardHelpProp
 
         <div className="px-5 py-3 border-t border-[var(--color-border)]">
           <p className="text-2xs text-[var(--color-text-faint)]">
-            Press <Kbd>?</Kbd> or <Kbd>Esc</Kbd> to close
+            Press <Kbd>?</Kbd> or <Kbd>Esc</Kbd> to close. Single-key shortcuts can be
+            turned off under Appearance › Keyboard.
           </p>
         </div>
       </div>

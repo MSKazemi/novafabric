@@ -19,6 +19,7 @@ import { notifyUrlStateChanged } from '../../lib/useUrlState';
 import { Loading } from './helpers';
 import { usePolling } from '../../lib/usePolling';
 import { ToastProvider, useToast } from '../../lib/ToastContext';
+import { ignoreSingleKeyShortcut, isTypingTarget } from '../../lib/shortcuts';
 
 // Tabs are code-split: each becomes its own chunk, loaded on first navigation
 // instead of shipping all ~20 in the initial bundle.
@@ -218,8 +219,11 @@ function DashboardInner() {
         setShowPalette(p => !p);
         return;
       }
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) return;
+      if (e.key === 'Escape') { setShowHelp(false); return; }
+      // Single printable keys: not while a modifier is held, a modal dialog is
+      // open, or the user turned them off (WCAG 2.1.4 — see lib/shortcuts.ts).
+      if (ignoreSingleKeyShortcut(e)) { disarm(); return; }
       if (gArmed) {
         disarm();
         const target = SHORTCUT_TAB[e.key.toLowerCase()];
@@ -233,7 +237,6 @@ function DashboardInner() {
         return;
       }
       if (e.key === '?') { setShowHelp(h => !h); return; }
-      if (e.key === 'Escape') { setShowHelp(false); return; }
       if (e.key === 'r') { setRefreshTick(t => t + 1); return; }
     }
     window.addEventListener('keydown', onKey);
@@ -399,6 +402,18 @@ function DashboardInner() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--color-bg)]">
+      {/* Skip link (WCAG 2.4.1): the sidebar holds ~30 controls before the view. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:px-3 focus:py-2 focus:rounded focus:bg-[var(--color-bg-raised)] focus:text-[var(--color-text)] focus:border focus:border-[var(--color-accent)] text-xs"
+      >
+        Skip to main content
+      </a>
+      {/* Announces the current view after any navigation (sidebar, g-shortcut,
+          palette, deep link). Mounted with the initial text, so it is silent on load. */}
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {`${TAB_LABEL[tab] ?? tab} view`}
+      </p>
       <Sidebar
         tab={tab}
         onTabChange={handleTabChange}
@@ -416,13 +431,14 @@ function DashboardInner() {
         onHelpOpen={() => setShowHelp(true)}
       />
 
-      <main className="flex-1 overflow-y-auto flex flex-col">
+      <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto flex flex-col focus:outline-none">
         {/* Breadcrumb top bar */}
         <div className="flex items-center justify-between px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 gap-4">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-2xs font-mono text-[var(--color-text-faint)] shrink-0 select-none">NovaFabric</span>
             <span className="text-[var(--color-border-strong)] shrink-0" aria-hidden="true">/</span>
-            <span className="text-xs font-semibold text-[var(--color-text)] truncate">{TAB_LABEL[tab] ?? tab}</span>
+            {/* The page's one h1: the current view. Tabs title their panels with h2. */}
+            <h1 className="text-xs font-semibold text-[var(--color-text)] truncate">{TAB_LABEL[tab] ?? tab}</h1>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {serverInfo && (
@@ -439,6 +455,7 @@ function DashboardInner() {
               <Icon name="topology" size={12} />
               <span>Topology</span>
               <Icon name="external" size={11} />
+              <span className="sr-only">(opens in a new tab)</span>
             </button>
           </div>
         </div>

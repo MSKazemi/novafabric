@@ -218,8 +218,10 @@ export default function Sidebar({
           </span>
         )}
         <button
+          type="button"
           onClick={onToggleCollapse}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className="w-6 h-6 flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-raised)] transition-colors shrink-0"
         >
           <Icon name={collapsed ? 'expand' : 'collapse'} size={13} />
@@ -350,6 +352,7 @@ export default function Sidebar({
         {serverInfo && collapsed && (
           <div className="flex justify-center py-1">
             <span
+              role="img"
               className="w-2 h-2 rounded-full bg-[var(--color-status-success)] shrink-0"
               aria-label="Connected"
               title={`Connected · ${serverInfo.base}`}
@@ -393,6 +396,7 @@ export default function Sidebar({
           ref={gearRef}
           onClick={() => setShowAppearance(v => !v)}
           title="Appearance"
+          aria-expanded={showAppearance}
           className={clsx(
             'w-full flex items-center gap-2 px-1 py-1 rounded text-2xs transition-colors',
             showAppearance

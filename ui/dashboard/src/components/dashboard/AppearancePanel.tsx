@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
+import { setSingleKeyShortcutsEnabled, singleKeyShortcutsEnabled } from '../../lib/shortcuts';
 
 type Theme = 'light' | 'dark' | 'system';
 type Accent = 'green' | 'violet' | 'cyan' | 'amber' | 'rose';
@@ -29,7 +30,7 @@ export function applyAppearance(theme: Theme, accent: Accent, density: Density):
 const ACCENTS: ReadonlyArray<{ id: Accent; darkColor: string; lightColor: string; label: string }> = [
   { id: 'green',  darkColor: '#c4f0a8', lightColor: '#2f6a14', label: 'Green'  },
   { id: 'violet', darkColor: '#c4a8f0', lightColor: '#6b2fb3', label: 'Violet' },
-  { id: 'cyan',   darkColor: '#a8e4f0', lightColor: '#0e7a96', label: 'Cyan'   },
+  { id: 'cyan',   darkColor: '#a8e4f0', lightColor: '#0d7490', label: 'Cyan'   },
   { id: 'amber',  darkColor: '#f0d4a8', lightColor: '#8a5a00', label: 'Amber'  },
   { id: 'rose',   darkColor: '#f0a8c4', lightColor: '#b02060', label: 'Rose'   },
 ];
@@ -61,6 +62,7 @@ export default function AppearancePanel({ sidebarCollapsed, triggerRef, onClose 
   const [density, setDensity] = useState<Density>(() =>
     readLocal(DENSITY_KEY, ['comfortable', 'compact'] as const, 'comfortable')
   );
+  const [singleKeys, setSingleKeys] = useState<boolean>(() => singleKeyShortcutsEnabled());
   const [isDark, setIsDark] = useState(true);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -122,6 +124,8 @@ export default function AppearancePanel({ sidebarCollapsed, triggerRef, onClose 
           {THEME_OPTS.map(({ v, label, icon }) => (
             <button
               key={v}
+              type="button"
+              aria-pressed={theme === v}
               onClick={() => apply(v, accent, density)}
               className={clsx(
                 'flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded border text-[10px] transition-colors',
@@ -130,7 +134,7 @@ export default function AppearancePanel({ sidebarCollapsed, triggerRef, onClose 
                   : 'border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]',
               )}
             >
-              <span className="text-sm leading-none">{icon}</span>
+              <span aria-hidden="true" className="text-sm leading-none">{icon}</span>
               <span>{label}</span>
             </button>
           ))}
@@ -146,7 +150,10 @@ export default function AppearancePanel({ sidebarCollapsed, triggerRef, onClose 
           {ACCENTS.map(({ id, darkColor, lightColor, label }) => (
             <button
               key={id}
+              type="button"
               title={label}
+              aria-label={`${label} accent`}
+              aria-pressed={accent === id}
               onClick={() => apply(theme, id, density)}
               className={clsx(
                 'w-6 h-6 rounded-full border-2 transition-transform hover:scale-110',
@@ -167,6 +174,8 @@ export default function AppearancePanel({ sidebarCollapsed, triggerRef, onClose 
           {DENSITY_OPTS.map(({ v, label }) => (
             <button
               key={v}
+              type="button"
+              aria-pressed={density === v}
               onClick={() => apply(theme, accent, v)}
               className={clsx(
                 'flex-1 py-1 rounded border text-[10px] transition-colors',
@@ -179,6 +188,25 @@ export default function AppearancePanel({ sidebarCollapsed, triggerRef, onClose 
             </button>
           ))}
         </div>
+      </section>
+
+      {/* Keyboard — WCAG 2.1.4: single-character shortcuts can be turned off. */}
+      <section>
+        <p className="text-[9px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)] mb-1.5 select-none">
+          Keyboard
+        </p>
+        <label className="flex items-start gap-1.5 text-[10px] text-[var(--color-text-muted)] cursor-pointer">
+          <input
+            type="checkbox"
+            checked={singleKeys}
+            onChange={(e) => {
+              setSingleKeys(e.target.checked);
+              setSingleKeyShortcutsEnabled(e.target.checked);
+            }}
+            className="accent-[var(--color-accent)] w-3 h-3 mt-0.5"
+          />
+          <span>Single-key shortcuts (g, r, ?, j / k). Ctrl/⌘+K always works.</span>
+        </label>
       </section>
     </div>
   );

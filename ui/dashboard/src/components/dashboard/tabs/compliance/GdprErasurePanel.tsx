@@ -91,6 +91,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
         <div className="space-y-1">
           <label className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Subject ID (or Run ID)</label>
           <SuggestInput
+            aria-label="Subject ID (or Run ID)"
             value={subjectId}
             onChange={setSubjectId}
             suggestions={[...new Set([...runIds, ...erasureSuggestions])]}
@@ -102,6 +103,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
         <div className="space-y-1">
           <label className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Reason</label>
           <select
+            aria-label="Reason"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono w-full"
@@ -163,6 +165,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
         <p className="text-[10px] text-[var(--color-text-faint)]">GET /api/compliance/erasure/status — the persisted queue (ADR-0210). There is no CLI equivalent: nova erasure status is not implemented.</p>
         <div className="flex gap-2">
           <SuggestInput
+            aria-label="Subject ID to check (leave blank for all)"
             value={statusSubjectId}
             onChange={setStatusSubjectId}
             suggestions={erasureSuggestions}
