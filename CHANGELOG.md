@@ -131,6 +131,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   is given). `nova db upgrade` needs the `server` extra, although `nova doctor --check-storage` suggests
   it on a base install. `nova ledger verify` exits 10 on a capsule that was never anchored, which is
   expected and not a failed restore.
+- **Security docs checked against the code.** `SECURITY.md` now gives the real bind defaults and auth
+  paths of `nova serve` and `nova server`, says `--insecure` lifts only the bind refusal, lists every
+  outbound network path (the lifecycle webhook was called the only one), says SAML verifies an
+  assertion but cannot log anyone in, names the six fixes listed as "next release" as v0.107.0's,
+  says what `nova verify` proves (sealing is opt-in, an unanchored signer is self-asserted, a file
+  added after sealing is reported but not fatal), and lists four missing escape hatches. It also
+  corrects that the trivy gate runs after the image is pushed, that the audit jobs are not required
+  checks, and that MD5 and SHA-1 do appear. The trust surfaces, concepts, key management and SPKG
+  pages carry the matching limits.
 
 ### Fixed
 
