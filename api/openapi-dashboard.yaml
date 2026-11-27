@@ -767,6 +767,28 @@ components:
       - manifest
       title: MCPScanRequest
       type: object
+    ModeAccess:
+      description: Whether the calling credential may start one mode from the dashboard.
+      properties:
+        held_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Held Scope
+        permitted:
+          title: Permitted
+          type: boolean
+        required_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Required Scope
+      required:
+      - required_scope
+      - held_scope
+      - permitted
+      title: ModeAccess
+      type: object
     OTLPLogsIngestResponse:
       description: Declared (not bound) body of ``POST /api/otlp/v1/logs`` — see ``to_response``.
       properties:
@@ -820,6 +842,24 @@ components:
       - capsule_amended
       - storage
       title: OTLPLogsIngestResponse
+      type: object
+    OverLimit:
+      description: A member too large for the dashboard to classify; nothing was classified.
+      properties:
+        max_bytes:
+          title: Max Bytes
+          type: integer
+        member:
+          title: Member
+          type: string
+        size_bytes:
+          title: Size Bytes
+          type: integer
+      required:
+      - member
+      - size_bytes
+      - max_bytes
+      title: OverLimit
       type: object
     PlaceHoldRequest:
       properties:
@@ -910,6 +950,62 @@ components:
       - name
       - holds
       title: RegistryHolds
+      type: object
+    ReplayabilityResponse:
+      description: Body of ``GET /api/runs/{run_id}/replayability``.
+      properties:
+        current:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Current
+        current_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Current Error
+        current_over_limit:
+          anyOf:
+          - $ref: '#/components/schemas/OverLimit'
+          - type: 'null'
+        dashboard_modes:
+          additionalProperties:
+            type: boolean
+          title: Dashboard Modes
+          type: object
+        mode_access:
+          additionalProperties:
+            $ref: '#/components/schemas/ModeAccess'
+          default: {}
+          title: Mode Access
+          type: object
+        recorded:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Recorded
+        recorded_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Recorded Error
+        recorded_state:
+          enum:
+          - present
+          - absent
+          - invalid
+          title: Recorded State
+          type: string
+        run_id:
+          title: Run Id
+          type: string
+      required:
+      - run_id
+      - recorded_state
+      - dashboard_modes
+      title: ReplayabilityResponse
       type: object
     RollbackRequest:
       properties:
@@ -9979,6 +10075,48 @@ paths:
           description: Validation Error
       summary: Semantic Replay Endpoint
       x-nova-contract: pending
+  /api/runs/{run_id}/replayability:
+    get:
+      operationId: dashboardGetReplayability
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          title: Run Id
+          type: string
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplayabilityResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Replayability
+      tags:
+      - replay
   /api/runs/{run_id}/run-lineage:
     get:
       description: List spool lineage edges for a distributed run — nova run lineage.

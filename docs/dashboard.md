@@ -215,6 +215,50 @@ keyboard tablist (←/→, Home/End):
 - **Lineage** — the run's spool-lineage edges as neighbours in both directions; click one
   to open it (even if it is not in the loaded list) or **Compare** it with this run.
 - **Secrets / Forensics / Children** — unchanged.
+- **Replay modes** — the replay workspace, below.
+
+### Replay workspace *(experimental)*
+
+The inspector's **Replay modes** view explains, for the selected run, what each
+`nova replay` mode would do before anything is replayed. Opening it only reads: it calls
+`GET /api/runs/{id}/replayability` (`read` scope) and starts no replay. The view is in the
+URL (`view=replay-modes`), so a link opens on the same report.
+
+- **Replayability report** — what a strict `mocked` replay would do with this capsule,
+  classified now by the server with the same rules `nova replay` and `nova replay --dry-run`
+  apply: *full*, *partial* or *none*; whether it would start or refuse (and the refusal,
+  e.g. `ModelSurfaceNotServable`, `CapsuleNotReplayable` with its guard); model and tool
+  call counts (recorded, servable, not servable, covered, would run live, not intercepted);
+  and each reason with the provider and host where one applies. Below it, the capsule's
+  own `replayability.json` — the prediction the capturing version wrote — or *unknown at
+  capture* for a capsule written without one. When the report cannot be loaded or the
+  capsule cannot be classified, servability is shown as unknown, never guessed. The server
+  reads each capsule member up to 16 MiB; a call stream above that is not classified at all
+  (a prefix would give wrong counts), and the view says which file and points to
+  `nova replay <capsule> --dry-run`.
+- **One card per mode** — *Forensic*, *Semantic*, *Exact eligibility*, *Mocked — strict
+  (default)*, *Mocked — permissive* and *Intervention* (there is no `live` mode). Each card
+  says in words what the mode executes, whether tools run live, whether the network is
+  reachable, what it writes, what the report means for this capsule, and gives the exact
+  command (the capsule path shell-quoted) with a **Copy** button; the copy is announced to
+  screen readers.
+- **Side-effect gate** — the three modes that re-run the workload (both mocked cards and
+  intervention) are marked **side-effecting · runs the workload** and are **copy-only**:
+  `nova serve` has no endpoint that runs them, and the view says so. Their cards also give
+  `nova replay <capsule> --dry-run`, which executes nothing and prints what a strict
+  replay would refuse or run live. *Forensic*, *Semantic* and *Exact eligibility* execute
+  nothing; when the server lists them in `dashboard_modes`, **Run in dashboard…** opens the
+  same confirm dialog as the run's row buttons, and the result opens in the *Replay result*
+  view. Their routes need the `admin` scope (`operate` for the dry-run); for a credential
+  that lacks it the button is disabled and says which scope it needs and which it holds.
+- **Mocked — permissive** follows `nova replay --help`: a model call with no recorded
+  response gets an empty reply, unsupported model surfaces run live. The report's
+  *not servable* count covers both cases and does not split them, so the card names both.
+
+The dashboard's *Dry-run policy check* action is `nova replay --mode forensic --dry-run`
+(tool policy decisions only); the mocked-mode check is the CLI's `--dry-run` on the
+default mode. Semantics of every mode: [Replay modes](architecture/replay-modes.md). The
+bundled static dashboard picks this view up after the next dashboard rebuild.
 
 ### Per-check verification — Trust Center, first slice *(experimental)*
 
@@ -601,7 +645,7 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Export NIST AI RMF report | `nova export-nist-rmf <capsule> --output report.json` | ✅ Compliance tab → **NIST AI RMF Report** (v0.37.0) | `POST /api/compliance/export/nist-rmf` — GOVERN/MAP/MEASURE/MANAGE score bars, risk-level badge, missing-evidence list. |
 | Check AIBOM coverage (CRA) | `nova aibom status [--capsules-dir <dir>]` | ✅ Compliance tab → **AI-SBOM Coverage Status** (v0.37.0) | `GET /api/aibom/status` — auto-loads on mount; total/covered/missing capsule counts, coverage progress bar, CRA deadline 2026-09-11. |
 | Execute GDPR Art.17 erasure | `nova pii erase <subject_id>` | ✅ Compliance tab → **GDPR Erasure Request** (**experimental**, ADR-0210) | `POST /api/compliance/erasure/request` — **real DEK destruction** (experimental — makes PII unreadable only in capsules captured with `--pii-subject`, ADR-0314; replaced the v0.18.0 no-op stub): persists the request in `$NOVAFABRIC_HOME/erasure.db`, then destroys the subject's AES-256-GCM DEK through the same `DEKStore.erase_subject` code path as the CLI. Safe-mutations gated — body must carry `confirmed: true` (400 otherwise, nothing mutated). Terminal states `COMPLETED` (receipt + `receipt_sha256`), `DEFERRED` (Art.17(3)(b) retention window, `earliest_erasure_at`), `HELD` (an active legal hold kept the DEK, GDPR Art.17(3)(e) → 409 `legal_hold_active`), `FAILED` (error receipt; unknown subject → `subject_not_found`). Duplicate request while one is PENDING re-attaches to it (idempotency + crash recovery). Both audit surfaces record the action hash-only (`subject_sha256`, never the raw subject). Gated only on crypto-shredding's own prerequisite (the DEK store loads; 409 `crypto_shred_unavailable` otherwise) — `NOVA_CAP003_ENABLED`, which governs the separate dual-object split, does not gate it. `GET /api/compliance/erasure/status` lists the persisted queue. The `/v0` server-mode mirror is **planned** (ADR-0210 D7), not implemented. |
-| Mocked replay (re-execute agent code, cache hits) | `nova replay <capsule> --mode mocked` | ❌ — | Mocked replay spawns the agent subprocess. That straddles Layer B/C; in v0.7 it is **CLI-only** until the sandbox model lands per ADR-0027. |
+| Mocked replay (re-execute agent code, cache hits) | `nova replay <capsule> --mode mocked` | ❌ — | Mocked replay spawns the agent subprocess. That straddles Layer B/C; in v0.7 it is **CLI-only** until the sandbox model lands per ADR-0027. The Runs inspector's **Replay modes** view shows its contract, this capsule's replayability report and the exact command to copy — it does not start it (experimental). |
 | Scan secrets | `nova scan-secrets <capsule>` | ❌ — | Use `redact` from the dashboard, or `nova scan-secrets` from the terminal. |
 
 ### Capture and orchestration (Layer C — deferred)
