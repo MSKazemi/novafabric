@@ -109,6 +109,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   subsystems that were in `src/novafabric/` but not in the subsystem map now have an entry with a maturity
   label, and the cluster table adds 2 components (`collector_app`, `novafabric-verifier`). 5 Mermaid diagrams are
   corrected (serve request path, encryption read path, capsule tree, seal chain, capture sequence).
+- **Developer guide truth pass.** 23 corrections in `docs/developer-guide.md`, 4 in `AGENTS.md` and 3
+  Makefile comments/help strings, each checked against the code: test timings now match the measured
+  tier table (`make test-fast` ~31–37 min, not ~4 min; no invented `make test-par` figure); the
+  suite is over 25,000 tests; the bare serial `pytest` recipe is gone; the push-gate and selector
+  triggers name `tests/conftest.py`; and the extension recipes now list the steps their guard tests
+  enforce — a `commandParity.json` entry and docs coverage for a new CLI command, the dashboard
+  OpenAPI contract for a new serve route, `KNOWN_ADAPTERS`/`__all__`/docs/capsule-core rules for a
+  new adapter, the OpenAPI + SDK regeneration for a new asset type. Also: the recorder has no
+  `record_event`, four adapters (not eight) still carry their own manifest, the KG has six node
+  tables, and the pytest timeout is 900 s.
 
 ### Fixed
 
