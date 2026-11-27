@@ -186,3 +186,23 @@ def test_script_never_puts_a_secret_value_on_a_command_line_or_in_output() -> No
     # Every collected file is checked for the generated values.
     assert "grep -rlF -f" in text
     assert "assert_no_secret_in" in text
+
+
+def test_chart_defect_workaround_stays_visible_and_ordered() -> None:
+    """The registry track is migrated before install, and the override is labelled.
+
+    The stock chart migrates only the metadata track into the database the server's
+    schema-skew guard reads as the registry track, so the server refuses to start.
+    CI works around it; this keeps the workaround explicit until the chart is fixed.
+    """
+    text = _script()
+    assert "CHART DEFECT WORKAROUND" in text
+    assert '"--track", "registry"' in text
+    order = [text.index(f"\n  {step}\n") for step in ("migrate_registry_track", "install")]
+    assert order == sorted(order)
+    assert "- name: NOVAFABRIC_POSTGRES_DSN" in text
+
+
+def test_kind_cleanup_never_fails_the_job() -> None:
+    kind = next(s for s in _steps() if str(s.get("uses", "")).startswith("helm/kind-action@"))
+    assert kind["with"]["ignore_failed_clean"] is True

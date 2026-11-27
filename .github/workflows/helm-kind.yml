@@ -76,6 +76,10 @@ jobs:
           load: true
           tags: ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
           cache-from: type=gha
+        env:
+          # No build-record artifact: it is not a zip, so a plain
+          # `gh run download <run>` fails on it before reaching the diagnostics.
+          DOCKER_BUILD_RECORD_UPLOAD: false
 
       - name: Install Helm (checksum-verified)
         # Helm 3, the major publish-chart.yml packages the released chart with. The
@@ -96,6 +100,11 @@ jobs:
         with:
           cluster_name: ${{ env.KIND_CLUSTER }}
           wait: 120s
+          # The post step also tries to remove a `kind-registry` container, which
+          # this job never creates (registry: false), and prints "No such
+          # container: kind-registry". The runner is discarded anyway, so a
+          # cleanup error must never turn a green run red.
+          ignore_failed_clean: true
 
       - name: Load the image into the Kind node
         run: kind load docker-image "${IMAGE_REPO}:${IMAGE_TAG}" --name "${KIND_CLUSTER}"
