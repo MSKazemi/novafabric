@@ -174,7 +174,11 @@ def test_stock_values_keep_the_new_keys_off() -> None:
 def test_templates_wire_the_guard_and_the_tmp_volume() -> None:
     deployment = (CHART / "templates" / "deployment.yaml").read_text(encoding="utf-8")
     helpers = (CHART / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
+    secret = (CHART / "templates" / "secret-db.yaml").read_text(encoding="utf-8")
     assert '{{- include "novafabric.assertExistingSecret" . -}}' in deployment
+    # secret-db.yaml has its own `required` for the password; the guard must run
+    # there too or Helm may report that less specific error first.
+    assert '{{- include "novafabric.assertExistingSecret" . -}}' in secret
     assert '{{- define "novafabric.assertExistingSecret" -}}' in helpers
     assert helpers.count("Refusing to render: externalDatabase.requireExistingSecret=true") == 3
     # /tmp is mounted in BOTH the migration init container and the app container.
