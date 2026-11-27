@@ -165,7 +165,7 @@ export default function RunInspector({
             />
           </header>
           <CapsuleSummary run={selected} capsule={capsule} onAction={onAction} />
-          {detailView === 'integrity' && <IntegrityPanel runId={selected.run_id} />}
+          {detailView === 'integrity' && <IntegrityPanel runId={selected.run_id} capsulePath={capsule.capsule_path} />}
           {detailView === 'lineage' && (
             <LineageNeighbours
               runId={selected.run_id}

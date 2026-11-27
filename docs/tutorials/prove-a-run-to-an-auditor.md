@@ -188,6 +188,11 @@ your organisation, sign with a certificate issued by a CA the auditor trusts and
 them pass it: `nova verify … --ca-bundle your-ca.pem` (experimental; a self-signed
 signing certificate like the one in step 0 is rejected there by design).
 
+In the local dashboard (`nova serve`), Runs → **Integrity** → **Verify seal** shows the
+same checks one row at a time, each with its status in words (a self-asserted signer reads
+*not established*, not passed) and the offline `nova verify` command to hand the auditor
+(experimental; see [Dashboard — per-check verification](../dashboard.md)).
+
 ### "Demonstrate you would get the same result again"
 
 ```bash
