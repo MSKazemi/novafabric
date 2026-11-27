@@ -1,0 +1,152 @@
+name: airgap-bundle
+
+# Air-gap closure bundle smoke (ADR-0249, #234).
+#
+# Builds a small signed bundle for the CORE install (no extras) — the
+# NovaFabric wheel built from this commit plus a wheelhouse of every dependency
+# pinned in uv.lock — then, the way an isolated operator would:
+#
+#   1. verifies it with the standard-library verifier shipped inside it, using
+#      a Python that has neither NovaFabric nor `cryptography` installed (so the
+#      `openssl` signature path is the one exercised), extracting only verified
+#      bytes;
+#   2. proves the verifier fails closed on an unsigned extra member and on the
+#      wrong public key;
+#   3. installs from the extracted wheelhouse inside a network namespace with
+#      no route out (`unshare --net`), with `--no-index --require-hashes`, and
+#      runs `nova --version`, one `nova capture` and `nova validate` there.
+#
+# The signing key is ephemeral, generated in the runner's temp dir, and never
+# leaves it. This job builds nothing that is published: release workflows are
+# deliberately untouched (wiring the bundle into a release is an owner decision).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/build_airgap_bundle.py
+      - scripts/verify_airgap_bundle.py
+      - src/novafabric/export_blob/airgap.py
+      - .github/workflows/airgap-bundle.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: airgap-bundle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-bundle:
+    name: air-gap bundle (core, offline install)
+    runs-on: ubuntu-24.04
+    if: github.repository == 'MSKazemi/novafabric'
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        id: py
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel and the signed core bundle
+        env:
+          PIP_PY: ${{ steps.py.outputs.python-path }}
+        run: |
+          set -euo pipefail
+          uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+          KEYS="$RUNNER_TEMP/airgap-keys"
+          uv run --no-dev python -c 'import sys; from pathlib import Path; from novafabric.evidence.signing import generate_keypair; generate_keypair(Path(sys.argv[1]))' "$KEYS"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" \
+            uv run --no-dev python scripts/build_airgap_bundle.py \
+              --out "$RUNNER_TEMP/bundle/novafabric-airgap-core.tar" \
+              --signing-key "$KEYS/ed25519.pem" \
+              --closure-wheel "$(ls "$RUNNER_TEMP"/dist/novafabric-*.whl)" \
+              --pip-python "$PIP_PY"
+          ls -l "$RUNNER_TEMP/bundle"
+          tar -tvf "$RUNNER_TEMP/bundle/novafabric-airgap-core.tar"
+
+      - name: Verify offline with the shipped stdlib verifier and extract
+        env:
+          PY: ${{ steps.py.outputs.python-path }}
+        run: |
+          set -euo pipefail
+          B="$RUNNER_TEMP/bundle/novafabric-airgap-core.tar"
+          W="$RUNNER_TEMP/offline"
+          mkdir -p "$W" && cd "$W"
+          # The verifier must work on a host where nothing is installed yet.
+          if "$PY" -I -c 'import cryptography' 2>/dev/null; then
+            echo "::error::this Python has cryptography; the openssl path would go untested"; exit 1
+          fi
+          tar -xf "$B" verify_airgap_bundle.py
+          "$PY" -I verify_airgap_bundle.py --bundle "$B" \
+            --public-key "$RUNNER_TEMP/airgap-keys/ed25519.pub.pem" --extract-to "$W/nova-airgap"
+          (cd "$W/nova-airgap" && sha256sum --check --quiet SHA256SUMS)
+          if grep -rlI "PRIVATE KEY" "$W/nova-airgap"; then
+            echo "::error::a private key reached the bundle"; exit 1
+          fi
+          "$PY" -I -m json.tool "$W/nova-airgap/bundle-info.json"
+
+      - name: The verifier fails closed (extra member, wrong key)
+        env:
+          PY: ${{ steps.py.outputs.python-path }}
+        run: |
+          set -uo pipefail
+          B="$RUNNER_TEMP/bundle/novafabric-airgap-core.tar"
+          W="$RUNNER_TEMP/negative"
+          mkdir -p "$W" && cd "$W"
+          V="$RUNNER_TEMP/offline/verify_airgap_bundle.py"
+          cp "$B" extra.tar && echo stowaway > stowaway.txt && tar -rf extra.tar stowaway.txt
+          "$PY" -I "$V" --bundle extra.tar \
+            --public-key "$RUNNER_TEMP/airgap-keys/ed25519.pub.pem" --extract-to "$W/x"
+          rc=$?
+          [ "$rc" -eq 1 ] || { echo "::error::extra member: expected exit 1, got $rc"; exit 1; }
+          [ ! -e "$W/x" ] || { echo "::error::a failed verify left files behind"; exit 1; }
+          openssl genpkey -algorithm ed25519 -out other.pem
+          openssl pkey -in other.pem -pubout -out other.pub.pem
+          "$PY" -I "$V" --bundle "$B" --public-key other.pub.pem
+          rc=$?
+          [ "$rc" -eq 1 ] || { echo "::error::wrong key: expected exit 1, got $rc"; exit 1; }
+          echo "both negatives refused"
+
+      - name: Install, capture and validate with no network
+        env:
+          PY: ${{ steps.py.outputs.python-path }}
+        run: |
+          set -euo pipefail
+          T="$RUNNER_TEMP/netless"
+          mkdir -p "$T"
+          cat > "$T/offline.sh" <<'SH'
+          set -euo pipefail
+          ip link set lo up
+          if "$PY" -I -c 'import socket; socket.create_connection(("pypi.org", 443), timeout=5)' 2>/dev/null; then
+            echo "::error::the namespace still has network access"; exit 1
+          fi
+          echo "no route out: confirmed"
+          "$PY" -m venv "$T/venv"
+          "$T/venv/bin/python" -m pip install --no-index --disable-pip-version-check \
+            --find-links "$A/wheels" --require-hashes -r "$A/requirements.txt"
+          export PATH="$T/venv/bin:$PATH"
+          nova --version
+          cd "$T"
+          nova capture python -c "print('captured with no network')"
+          CAPSULE="$(ls -d "$NOVAFABRIC_CAPSULE_DIR"/*/ | head -n 1)"
+          nova validate "$CAPSULE"
+          SH
+          sudo unshare --net -- env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            PY="$PY" T="$T" A="$RUNNER_TEMP/offline/nova-airgap" \
+            HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_DATA_HOME="$T/home/.local/share" \
+            NOVAFABRIC_HOME="$T/home/.novafabric" NOVAFABRIC_CAPSULE_DIR="$T/capsules" \
+            NOVAFABRIC_AUDIT_LOG_PATH="$T/home/audit.jsonl" PIP_ROOT_USER_ACTION=ignore \
+            bash "$T/offline.sh"

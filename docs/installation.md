@@ -239,7 +239,7 @@ do not fork the capsule format for an enterprise or cloud variant.
 | Shared server and PostgreSQL setup | [Server Deployment](ops/server-deployment.md) |
 | Local browser interface | [Dashboard](dashboard.md) |
 | Container, SLURM or Kubernetes capture | [Operator Guide](operator-guide.md) |
-| Offline installation | [Air-gapped installation](ops/air-gapped-install.md) |
+| Offline installation | [Air-gapped installation](ops/air-gapped-install.md), including the signed bundle with a complete wheelhouse and an offline verifier (experimental, §8) |
 | Backups, recovery and sizing | [Backup/restore](ops/backup-restore.md) and [Sizing](ops/sizing-guide.md) |
 | Architectural maturity and gaps | [Deployment topologies](architecture/deployment-topologies.md) and [Roadmap](../ROADMAP.md) |
 | Exact supported Python extras | [`pyproject.toml`](../pyproject.toml) and `nova doctor --check-extras` |

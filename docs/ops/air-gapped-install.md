@@ -239,27 +239,134 @@ nova support-bundle                   # diagnostics, offline-safe
   nothing about the honesty labels.
 
 
-## Signed bundle format (ADR-0249, experimental — first slice)
+## 8. Signed air-gap bundle with a complete wheelhouse (ADR-0249)
 
-NovaFabric can now assemble and verify a **signed air-gap bundle**: one tar
-whose members are inventoried in a DSSE-signed `airgap-manifest.json`,
-verifiable with **zero network** — the public key, the manifest, and the
-bytes travel together.
+**Status: experimental.** The bundle format, the closure builder and the
+offline verifier work today and are exercised by the `airgap-bundle` CI job
+on every pull request that touches them; no release publishes a bundle yet
+(see *What is not built yet* below).
+
+§2 is the plain-`pip` route. The bundle adds what an enclave review usually
+asks for: one file that carries the NovaFabric wheel **and every pinned
+dependency**, a signed inventory of it, and a verifier that runs **before
+anything is installed** and refuses a bundle that is corrupted, incomplete or
+padded.
+
+### 8.1 Build it (connected machine)
+
+You need a checkout of this repository, `uv`, a Python with `pip` for the
+target Python version, and an ed25519 private key that stays on this machine:
 
 ```bash
-# Build (maintainer side): wheels from dist/ + anything else you name
-make airgap-bundle           # needs NOVA_AIRGAP_SIGNING_KEY (ed25519 private key)
+# A signing key (once). Keep the private half off the transfer media.
+(umask 077; openssl genpkey -algorithm ed25519 -out airgap-signing.pem)
+openssl pkey -in airgap-signing.pem -pubout -out airgap-signing.pub.pem
 
-# Verify (air-gapped side): names every problem — a tampered member, a
-# missing one, or an unsigned stowaway
-python scripts/verify_airgap_bundle.py \
-    --bundle dist/novafabric-airgap.tar --public-key evidence.pub
+uv build --wheel --out-dir dist
+uv run python scripts/build_airgap_bundle.py \
+    --out dist/novafabric-airgap.tar \
+    --signing-key airgap-signing.pem \
+    --closure-wheel dist/novafabric-*-py3-none-any.whl \
+    --extras server,query \
+    --pip-python /usr/bin/python3.12      # a Python with pip, matching the target
 ```
 
-A flipped byte in any member fails verification **naming that member**; a
-member present in the tar but absent from the signed manifest is reported as
-a finding, not ignored. What stays **planned** (tracked in ADR-0249): the CI
-job that assembles the full closure (dependency wheels per extras profile,
-container image, Helm chart, docs site, CVE advisory snapshot), the
-network-disabled install gate, and `nova doctor --check-cves` offline
-reporting.
+The dependency set comes from `uv.lock` (`uv export --locked`, so a lock that
+no longer matches `pyproject.toml` is refused), and `pip download
+--only-binary=:all: --require-hashes` checks every wheel against the hash in
+the lock. Omit `--extras` for the core install. Set `SOURCE_DATE_EPOCH` to pin
+the manifest timestamp.
+
+What the bundle (a tar) contains:
+
+| Member | Purpose |
+|---|---|
+| `wheels/` | The NovaFabric wheel and one wheel per pinned dependency |
+| `requirements.txt` | Hashed pins for every dependency **and** the NovaFabric wheel itself, for `pip install --require-hashes` |
+| `bundle-info.json` | NovaFabric version, extras, target Python version / platform tags, source commit, `uv.lock` SHA-256, `uv`/`pip` versions. No host name, user name or path |
+| `SHA256SUMS` | The same digests in `sha256sum -c` format |
+| `verify_airgap_bundle.py` | The offline verifier (standard library only) |
+| `INSTALL.txt` | The commands below, for an enclave without these docs |
+| `airgap-manifest.json` + `airgap-manifest.dsse.json` | The inventory (path, SHA-256, size of every member) and its DSSE ed25519 signature |
+
+The builder refuses to add the signing key (or a byte-identical copy of it)
+as a member.
+
+### 8.2 Verify and install (isolated host)
+
+Bring the **public** key across separately from the bundle (another medium,
+or compare its SHA-256 fingerprint over a second channel); a key that travels
+inside the bundle proves nothing.
+
+```bash
+tar -xf novafabric-airgap.tar verify_airgap_bundle.py
+python3 verify_airgap_bundle.py --bundle novafabric-airgap.tar \
+    --public-key airgap-signing.pub.pem --extract-to ./nova-airgap
+
+python3 -m venv ./nova-venv
+./nova-venv/bin/python -m pip install --no-index \
+    --find-links ./nova-airgap/wheels --require-hashes \
+    -r ./nova-airgap/requirements.txt
+./nova-venv/bin/nova --version
+```
+
+The verifier needs only Python 3.12 and either the `cryptography` package or
+the `openssl` command (OpenSSL 3.0 or later) for the ed25519 check; with
+neither, it refuses rather than skipping the signature. It exits `0` only
+when all of these hold, and otherwise names each problem and exits `1`:
+
+- the manifest signature verifies with the key you passed, and the signed
+  payload is byte-identical to the manifest in the tar;
+- every listed member is present with the listed size and SHA-256;
+- no member is present that the manifest does not list, no name appears twice,
+  and every entry is a regular file (links and devices are refused);
+- no path is absolute or contains `..`;
+- `SHA256SUMS`, when present, agrees with the signed manifest line for line.
+
+`--extract-to` writes the members into a fresh staging directory *while*
+hashing them and renames it into place only after every check passed, so the
+wheels you install are the bytes that were verified; on failure nothing is
+left behind. `--integrity-only` (instead of `--public-key`) checks hashes
+only: it catches corruption in transit, not a substituted bundle, and says so.
+
+### 8.3 Limits
+
+- **One target per bundle.** A wheelhouse is specific to one Python minor
+  version, one platform (OS, CPU architecture, glibc/musl) and one
+  implementation; `bundle-info.json` records which. By default it targets
+  the `--pip-python` interpreter's own platform. `--python-version` and
+  `--platform` are passed to `pip download` as-is, but pip uses them for
+  wheel-tag and `Requires-Python` checks only; environment markers in the
+  pinned requirements are still evaluated against the interpreter running
+  pip. **Build on a host that matches the target.** CI covers Linux x86_64,
+  CPython 3.12, core install only.
+- **Wheels only.** A dependency that publishes no wheel cannot be bundled:
+  today that is `python-louvain`, so the `serve` and `all` extras fail closed
+  at build time, naming it. Mirror those per §2 or build that wheel yourself.
+- **Python packages only.** The container image, the Helm chart, the docs site
+  and a CVE advisory snapshot are not in the bundle yet (below); mirror the
+  image and chart per §2.
+- **Optional features that need a network stay unavailable** inside the
+  enclave regardless of how NovaFabric was installed (§5).
+
+### 8.4 Signing, and what is not built yet
+
+The signature reuses the existing evidence signing stack (DSSE over ed25519,
+`novafabric.export_blob.airgap`), so the trust anchor is whichever ed25519
+key you sign with. NovaFabric's published release artifacts are signed
+differently: container images with keyless cosign, PyPI distributions with
+GitHub build-provenance attestations. Both are Sigstore-based and are checked
+against Sigstore's online infrastructure by default (§5).
+
+- **future design:** sign the bundle manifest in the release workflow with
+  the same keyless Sigstore identity, and ship the Sigstore bundle and trusted
+  root alongside it so `cosign` can check it offline. Which key or identity
+  signs official bundles is an owner decision; nothing in a release workflow
+  builds or signs a bundle today.
+- **planned** (tracked in ADR-0249): the container image (multi-arch OCI
+  archive), the OCI Helm chart, the docs site and a CVE advisory snapshot as
+  bundle members; a release job that publishes the bundle; and
+  `nova doctor --check-cves` offline reporting.
+
+The slice-1 form, `make airgap-bundle` (bundles `dist/` as named members, no
+dependency wheelhouse), still works, and the same verifier checks it.

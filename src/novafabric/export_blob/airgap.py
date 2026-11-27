@@ -6,10 +6,12 @@ NovaFabric attestation uses (``evidence/intoto.py``), not a second signing
 path. Verification needs **zero network**: the public key, the manifest, and
 the bytes travel together.
 
-Slice 1 is the *format/verifier* half (the repo's standing slice rule): the
-CI job that assembles the full closure (wheels + image + chart + docs +
-advisory snapshot) and the network-disabled install gate are the next
-slices, recorded in the ADR.
+Slice 1 is the *format/verifier* half (the repo's standing slice rule).
+``scripts/build_airgap_bundle.py --closure-wheel`` adds the Python wheelhouse
+closure on top of it, and ``scripts/verify_airgap_bundle.py`` is a
+standard-library re-implementation of :func:`verify_bundle` that runs before
+anything is installed (a test pins the two to the same format). The image,
+chart, docs and advisory snapshot members are still to come (ADR-0249).
 """
 
 from __future__ import annotations
@@ -68,11 +70,21 @@ def build_bundle(
 
     if not members:
         raise AirgapBundleError("refusing to build an empty bundle")
+    key_bytes = signing_key.read_bytes() if signing_key.is_file() else None
     for arcname, src in members.items():
         if not src.is_file():
             raise AirgapBundleError(f"member {arcname!r}: source {src} is not a file")
         if arcname in (MANIFEST_NAME, ENVELOPE_NAME):
             raise AirgapBundleError(f"member name {arcname!r} is reserved")
+        # The signing secret must never travel with the bundle it signs: not the
+        # key file itself, and not a copy of it under another name.
+        if key_bytes is not None and (
+            src.resolve() == signing_key.resolve()
+            or (src.stat().st_size == len(key_bytes) and src.read_bytes() == key_bytes)
+        ):
+            raise AirgapBundleError(
+                f"member {arcname!r} is the signing key; it must never enter the bundle"
+            )
 
     manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
