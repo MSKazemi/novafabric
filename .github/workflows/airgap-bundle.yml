@@ -136,13 +136,16 @@ jobs:
             echo "::error::the namespace still has network access"; exit 1
           fi
           echo "no route out: confirmed"
+          # Work from an empty directory outside the checkout, and let uv read no
+          # config file at all: the repo's pyproject.toml ([tool.uv] constraints)
+          # must not shape an install that is supposed to need only the bundle.
+          mkdir "$T/work" && cd "$T/work"
           "$PY" -m venv "$T/venv"
           # uv pip with the flags the docs give pip (repo rule: CI installs with uv).
-          uv pip install --python "$T/venv/bin/python" --offline --no-index \
+          uv pip install --no-config --python "$T/venv/bin/python" --offline --no-index \
             --find-links "$A/wheels" --require-hashes -r "$A/requirements.txt"
           export PATH="$T/venv/bin:$PATH"
           nova --version
-          cd "$T"
           nova capture python -c "print('captured with no network')"
           CAPSULE="$(ls -d "$NOVAFABRIC_CAPSULE_DIR"/*/ | head -n 1)"
           nova validate "$CAPSULE"
@@ -153,5 +156,5 @@ jobs:
             PY="$PY" T="$T" A="$RUNNER_TEMP/offline/nova-airgap" \
             HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_DATA_HOME="$T/home/.local/share" \
             NOVAFABRIC_HOME="$T/home/.novafabric" NOVAFABRIC_CAPSULE_DIR="$T/capsules" \
-            NOVAFABRIC_AUDIT_LOG_PATH="$T/home/audit.jsonl" UV_CACHE_DIR="$T/uv-cache" \
+            NOVAFABRIC_AUDIT_LOG_PATH="$T/home/audit.jsonl" UV_CACHE_DIR="$T/uv-cache" UV_NO_CONFIG=1 \
             bash "$T/offline.sh"

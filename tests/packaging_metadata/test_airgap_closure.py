@@ -217,6 +217,117 @@ def test_extract_to_existing_dir_is_refused(tmp_path: Path, keys: tuple[Path, Pa
 # ── the verifier in-process (finer-grained failure cases) ────────────────────
 
 
+def _no_staging_left(parent: Path) -> bool:
+    return not list(parent.glob(".airgap-extract-*"))
+
+
+def test_interrupt_mid_extraction_leaves_nothing(
+    tmp_path: Path, keys: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Ctrl-C after the first member must not rename a half-written staging
+    directory into place: the target appears only after every check passed."""
+    priv, pub = keys
+    bundle = _bundle(tmp_path, priv, FILES)
+    real = verifier._hash_member
+    calls = {"n": 0}
+
+    def interrupting(tar, info, dest):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+        return real(tar, info, dest)
+
+    monkeypatch.setattr(verifier, "_hash_member", interrupting)
+    out = tmp_path / "out"
+    with pytest.raises(KeyboardInterrupt):
+        verifier.verify_bundle(bundle, public_key_pem=pub.read_bytes(), extract_to=out)
+    assert calls["n"] == 2
+    assert not out.exists()
+    assert _no_staging_left(tmp_path)
+
+
+def test_failed_rename_cleans_up(
+    tmp_path: Path, keys: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    priv, pub = keys
+    bundle = _bundle(tmp_path, priv, FILES)
+
+    def refuse(src, dst):  # type: ignore[no-untyped-def]
+        raise OSError("simulated rename failure")
+
+    monkeypatch.setattr(verifier.os, "rename", refuse)
+    out = tmp_path / "out"
+    report = verifier.verify_bundle(bundle, public_key_pem=pub.read_bytes(), extract_to=out)
+    assert not report.ok
+    assert any("cannot move the verified members" in e for e in report.errors)
+    assert report.extracted_to is None
+    assert not out.exists()
+    assert _no_staging_left(tmp_path)
+
+
+def test_target_written_to_during_verification_is_not_replaced(
+    tmp_path: Path, keys: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Someone else writes into the claimed target mid-run: the verifier must
+    neither replace it nor delete what they put there."""
+    priv, pub = keys
+    bundle = _bundle(tmp_path, priv, FILES)
+    out = tmp_path / "out"
+    real = verifier._hash_member
+
+    def intruding(tar, info, dest):  # type: ignore[no-untyped-def]
+        (out / "theirs.txt").write_text("not yours")
+        return real(tar, info, dest)
+
+    monkeypatch.setattr(verifier, "_hash_member", intruding)
+    report = verifier.verify_bundle(bundle, public_key_pem=pub.read_bytes(), extract_to=out)
+    assert not report.ok
+    assert any("changed during verification" in e for e in report.errors)
+    assert (out / "theirs.txt").read_text() == "not yours"
+    assert sorted(p.name for p in out.iterdir()) == ["theirs.txt"]
+    assert _no_staging_left(tmp_path)
+
+
+def test_existing_target_is_refused_in_process(tmp_path: Path, keys: tuple[Path, Path]) -> None:
+    priv, pub = keys
+    bundle = _bundle(tmp_path, priv, FILES)
+    out = tmp_path / "out"
+    out.mkdir()
+    report = verifier.verify_bundle(bundle, public_key_pem=pub.read_bytes(), extract_to=out)
+    assert not report.ok
+    assert any("already exists" in e for e in report.errors)
+    assert out.is_dir() and not list(out.iterdir())
+    assert _no_staging_left(tmp_path)
+
+
+def test_failed_verify_releases_the_claimed_target(tmp_path: Path, keys: tuple[Path, Path]) -> None:
+    priv, _ = keys
+    _, other = generate_keypair(tmp_path / "other")
+    bundle = _bundle(tmp_path, priv, FILES)
+    out = tmp_path / "out"
+    report = verifier.verify_bundle(bundle, public_key_pem=other.read_bytes(), extract_to=out)
+    assert not report.ok
+    assert not out.exists()
+
+
+def test_unsupported_public_key_is_a_clean_failure(
+    tmp_path: Path, keys: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cryptography.exceptions import UnsupportedAlgorithm
+    from cryptography.hazmat.primitives import serialization
+
+    priv, pub = keys
+    bundle = _bundle(tmp_path, priv, FILES)
+
+    def unsupported(data):  # type: ignore[no-untyped-def]
+        raise UnsupportedAlgorithm("simulated unsupported key type")
+
+    monkeypatch.setattr(serialization, "load_pem_public_key", unsupported)
+    report = verifier.verify_bundle(bundle, public_key_pem=pub.read_bytes(), backend="cryptography")
+    assert not report.ok
+    assert any("unsupported public key" in e for e in report.errors)
+
+
 def test_duplicate_tar_entry_is_a_finding(tmp_path: Path, keys: tuple[Path, Path]) -> None:
     """tarfile resolves a duplicated name to the LAST entry; a shadow copy must
     not be able to hide behind the verified one."""
@@ -360,6 +471,58 @@ def test_signing_key_member_is_refused(tmp_path: Path, keys: tuple[Path, Path]) 
 def test_public_key_member_is_allowed(tmp_path: Path, keys: tuple[Path, Path]) -> None:
     priv, pub = keys
     out = build_bundle(tmp_path / "x.tar", {"k.pub.pem": pub}, signing_key=priv, nova_version="0")
+    assert out.is_file()
+
+
+def _reencoded(priv: Path, how: str) -> bytes:
+    from cryptography.hazmat.primitives import serialization
+
+    key = serialization.load_pem_private_key(priv.read_bytes(), password=None)
+    if how == "der":
+        return key.private_bytes(
+            serialization.Encoding.DER,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    if how == "openssh":
+        return key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.OpenSSH,
+            serialization.NoEncryption(),
+        )
+    if how == "raw":
+        return key.private_bytes(
+            serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,
+            serialization.NoEncryption(),
+        )
+    if how == "embedded":  # the DER key inside a larger file
+        return b"notes\n" + _reencoded(priv, "der") + b"\nmore notes\n"
+    raise AssertionError(how)
+
+
+@pytest.mark.parametrize("how", ["der", "openssh", "raw", "embedded"])
+def test_reencoded_signing_key_member_is_refused(
+    tmp_path: Path, keys: tuple[Path, Path], how: str
+) -> None:
+    priv, _ = keys
+    disguised = tmp_path / f"disguised-{how}.bin"
+    disguised.write_bytes(_reencoded(priv, how))
+    with pytest.raises(AirgapBundleError, match="signing key"):
+        build_bundle(
+            tmp_path / "x.tar", {"data.bin": disguised}, signing_key=priv, nova_version="0"
+        )
+    assert not (tmp_path / "x.tar").exists()
+
+
+def test_a_different_private_key_is_not_mistaken_for_the_signing_key(
+    tmp_path: Path, keys: tuple[Path, Path]
+) -> None:
+    priv, _ = keys
+    other_priv, _ = generate_keypair(tmp_path / "other")
+    out = build_bundle(
+        tmp_path / "x.tar", {"other.pem": other_priv}, signing_key=priv, nova_version="0"
+    )
     assert out.is_file()
 
 

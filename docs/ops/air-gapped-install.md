@@ -289,8 +289,10 @@ What the bundle (a tar) contains:
 | `INSTALL.txt` | The commands below, for an enclave without these docs |
 | `airgap-manifest.json` + `airgap-manifest.dsse.json` | The inventory (path, SHA-256, size of every member) and its DSSE ed25519 signature |
 
-The builder refuses to add the signing key (or a byte-identical copy of it)
-as a member.
+The builder refuses to add the signing key as a member, whether as the key
+file itself or as the same key under another name or in another encoding
+(PEM, DER, OpenSSH or raw). A passphrase-encrypted copy cannot be recognised,
+so keep encrypted key backups off the transfer media yourself.
 
 ### 8.2 Verify and install (isolated host)
 
@@ -326,10 +328,13 @@ when all of these hold, and otherwise names each problem and exits `1`:
 - no path is absolute or contains `..`;
 - `SHA256SUMS`, when present, agrees with the signed manifest line for line.
 
-`--extract-to` writes the members into a fresh staging directory *while*
-hashing them and renames it into place only after every check passed, so the
-wheels you install are the bytes that were verified; on failure nothing is
-left behind. `--integrity-only` (instead of `--public-key`) checks hashes
+`--extract-to` first creates the target directory exclusively (it refuses one
+that already exists), writes the members into a separate staging directory
+*while* hashing them, and moves the staging directory into place only after
+every check passed and only if the target is still the empty directory it
+created. The wheels you install are therefore the bytes that were verified.
+On a failure, an interrupt or a failed move, nothing is left behind, and a
+target that someone else wrote into meanwhile is left alone. `--integrity-only` (instead of `--public-key`) checks hashes
 only: it catches corruption in transit, not a substituted bundle, and says so.
 
 ### 8.3 Limits

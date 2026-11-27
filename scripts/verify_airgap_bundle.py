@@ -45,6 +45,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -95,11 +96,14 @@ def dsse_pae(payload_type: str, payload: bytes) -> bytes:
 
 
 def _verify_with_cryptography(public_pem: bytes, message: bytes, signature: bytes) -> bool:
-    from cryptography.exceptions import InvalidSignature
+    from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-    key = serialization.load_pem_public_key(public_pem)
+    try:
+        key = serialization.load_pem_public_key(public_pem)
+    except UnsupportedAlgorithm as exc:
+        raise ValueError(f"unsupported public key: {exc}") from None
     if not isinstance(key, Ed25519PublicKey):
         raise ValueError("public key is not ed25519")
     try:
@@ -261,7 +265,20 @@ def verify_bundle(
     the whole list). ``public_key_pem=None`` means integrity only."""
     report = Report()
     staging: Path | None = None
+    claim: tuple[int, int] | None = None
+    completed = False
     try:
+        if extract_to is not None:
+            # Claim the target name exclusively up front: mkdir fails if anything
+            # already sits there, so verified members can never land on (or merge
+            # into) a directory someone else created.
+            try:
+                os.mkdir(extract_to, 0o700)
+            except FileExistsError:
+                report.errors.append(f"{extract_to} already exists; choose a new directory")
+                return report
+            st = os.lstat(extract_to)
+            claim = (st.st_dev, st.st_ino)
         with tarfile.open(bundle, "r:*") as tar:
             infos = tar.getmembers()
             by_name: dict[str, tarfile.TarInfo] = {}
@@ -377,16 +394,57 @@ def verify_bundle(
                         report.errors.append(
                             f"{SUMS_NAME} disagrees with the signed manifest for {path!r}"
                         )
+        completed = True  # keep last: an exception or interrupt above leaves it False
     except (tarfile.TarError, OSError, ValueError) as exc:
         report.errors.append(f"cannot read the bundle: {exc}")
     finally:
-        if staging is not None:
-            if report.ok and extract_to is not None:
-                staging.rename(extract_to)
+        # Runs on every path, KeyboardInterrupt included: the target receives the
+        # staging directory only when every member was written AND verified.
+        if completed and report.ok and staging is not None and extract_to is not None:
+            try:
+                _replace_claim(staging, extract_to, claim)
                 report.extracted_to = extract_to
-            else:
+            except OSError as exc:
+                report.errors.append(f"cannot move the verified members into {extract_to}: {exc}")
+        if report.extracted_to is None:
+            if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
+            if extract_to is not None and claim is not None:
+                _release_claim(extract_to, claim)
     return report
+
+
+def _same_empty_dir(path: Path, claim: tuple[int, int] | None) -> bool:
+    try:
+        st = os.lstat(path)
+        return (
+            claim is not None
+            and (st.st_dev, st.st_ino) == claim
+            and stat.S_ISDIR(st.st_mode)
+            and not os.listdir(path)
+        )
+    except OSError:
+        return False
+
+
+def _replace_claim(staging: Path, target: Path, claim: tuple[int, int] | None) -> None:
+    """Rename *staging* over the empty directory this run claimed at *target*.
+
+    POSIX rename replaces only an EMPTY directory, so a non-empty target fails;
+    the identity check refuses a target that was swapped after the claim.
+    """
+    if not _same_empty_dir(target, claim):
+        raise OSError(f"{target} changed during verification; refusing to replace it")
+    os.rename(staging, target)
+
+
+def _release_claim(target: Path, claim: tuple[int, int]) -> None:
+    """Remove the claimed target only if it is still this run's empty directory."""
+    if _same_empty_dir(target, claim):
+        try:
+            os.rmdir(target)
+        except OSError:
+            pass
 
 
 def _hash_member(tar: tarfile.TarFile, info: tarfile.TarInfo, dest: Path | None) -> str:
