@@ -177,8 +177,8 @@ integrity (no workload tampering recorded) and no links or special files. Each r
   |---|---|
   | **Passed** | the server reported that the check ran and passed |
   | **Failed** | the check ran and failed; `nova verify` exits 1 |
-  | **Not established** | the check did not run, the server did not report it, or it rests on nothing the verifier trusts: a self-asserted signer (no CA bundle), an unanchored timestamp, no sealer log, a seal made before `evidence_digests`, an unsealed capsule |
-  | **Not applicable** | there is nothing to judge (no timestamp token, so no time to anchor) |
+  | **Not established** | the check did not run, the server did not report it, or it rests on nothing the verifier trusts: a self-asserted signer (no CA bundle), no timestamp token (the *timestamp token* row: the capsule claims no time), an unanchored timestamp, no sealer log, a seal made before `evidence_digests`, a binding or capture-record check whose signature did not verify (the payload it compares with is not shown to be the signed one), an unsealed capsule |
+  | **Not applicable** | the row has nothing to judge — used only for *trusted time* when there is no timestamp token (the token row itself reads not established), and for the sealer's log when inclusion failed before any log was consulted |
 
 - the **reason**, **what it looked at** (capsule files such as `.seal/manifest.dsse`,
   `.seal/manifest.dsse.tsr`, `.seal/log-entry.json`, the signed `evidence_digests`, the

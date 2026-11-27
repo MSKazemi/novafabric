@@ -209,6 +209,18 @@ describe('buildTrustChecks — one row per nova verify check', () => {
     expect(statusOf(checks, 'signature')).toBe('failed');
     expect(statusOf(checks, 'capture-integrity')).toBe('not_established');
     expect(statusOf(checks, 'capsule-id')).toBe('not_established');
+    // The binding compares files with a payload decoded without checking the signature:
+    // a rewritten evidence_digests plus matching files must not read "Passed".
+    expect(statusOf(checks, 'manifest-binding')).toBe('not_established');
+    expect(statusOf(checks, 'evidence-binding')).toBe('not_established');
+    const evidence = checks.find(c => c.id === 'evidence-binding')!;
+    expect(evidence.reason).toMatch(/signature did not verify/);
+  });
+
+  it('a failed signature does not hide a binding mismatch', () => {
+    const checks = checksFor({ signature_ok: false, valid: false, evidence_digests_ok: false, manifest_ok: false });
+    expect(statusOf(checks, 'evidence-binding')).toBe('failed');
+    expect(statusOf(checks, 'manifest-binding')).toBe('failed');
   });
 
   it('an edited signing-intent label fails the signature', () => {

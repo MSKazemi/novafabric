@@ -11,6 +11,9 @@
  * - **Not established** is also what a check that ran but rests on nothing the
  *   verifier trusts reads: a self-asserted signer, an unanchored timestamp, no
  *   sealer log, a seal made before `evidence_digests`.
+ * - A check that compares files with the signed payload (manifest and evidence
+ *   binding, capsule_id, capture record) never passes unless the signature
+ *   verified: the payload is decoded without checking the signature.
  * - **Not applicable** is used only where the check has nothing to judge (no
  *   timestamp token, so no time to anchor).
  * - Nothing here claims factual correctness, compliance or certification: a
@@ -44,6 +47,9 @@ export const CAPSULE_PLACEHOLDER = '<capsule_dir>';
 
 const NOT_REPORTED = 'The server did not report this check, so it is not established here.';
 const NOT_SEALED = 'The capsule has no .seal/ directory, so there is nothing to check.';
+/** The binding compares files with the envelope's payload, which only a verified signature makes "the signed" one. */
+const UNSIGNED_PAYLOAD =
+  'The files match the payload in the envelope, but the signature did not verify, so that payload is not shown to be the one that was signed.';
 
 /** POSIX shell quoting for a path an auditor will paste into a terminal. */
 export function shellQuote(value: string): string {
@@ -241,6 +247,7 @@ function manifestBinding(r: CapsuleVerifyResult): Check {
   if (!r.manifest_ok) {
     return { ...base, status: 'failed', reason: `${file} on disk disagrees with the signed payload.` };
   }
+  if (!r.signature_ok) return { ...base, status: 'not_established', reason: UNSIGNED_PAYLOAD };
   return { ...base, status: 'passed', reason: `${file} on disk matches the signed payload.` };
 }
 
@@ -262,6 +269,7 @@ function evidenceBinding(r: CapsuleVerifyResult): Check {
   if (!r.evidence_digests_ok) {
     return { ...base, status: 'failed', reason: 'An evidence file was modified or removed after sealing.' };
   }
+  if (!r.signature_ok) return { ...base, status: 'not_established', reason: UNSIGNED_PAYLOAD };
   return { ...base, status: 'passed', reason: 'Every evidence file the seal lists has the sha256 it signed.' };
 }
 
