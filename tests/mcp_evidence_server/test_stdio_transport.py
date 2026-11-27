@@ -205,3 +205,57 @@ def test_the_official_mcp_client_can_use_the_server(
     is_error, content = out["refused"]
     assert is_error is True
     assert content["error"]["code"] == "invalid_argument"
+
+
+@pytest.mark.timeout(180)
+def test_hostile_lines_do_not_end_the_process(tmp_path: Path, runs: Path) -> None:
+    """Each of these once killed the process (review of #346); now each is answered."""
+    write_capsule(runs, "good")
+    try:
+        os.mkdir(os.fsencode(runs) + b"/caf\xe9")
+        with open(os.fsencode(runs) + b"/caf\xe9/capsule.yaml", "wb") as fh:
+            fh.write(b"run_id: cafe\n")
+    except OSError:  # pragma: no cover - a filesystem that only takes UTF-8 names
+        pytest.skip("this filesystem refuses non-UTF-8 file names")
+    init = {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }
+    raw = (
+        b"\n".join(
+            [
+                json.dumps(init).encode(),
+                b'{"jsonrpc":"2.0","id":1,"method":"tools/\\udcff"}',
+                b"[" * 200_000 + b"]" * 200_000,
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "tools/call",
+                        "params": {"name": "list_capsules", "arguments": {}},
+                    }
+                ).encode(),
+                json.dumps({"jsonrpc": "2.0", "id": 4, "method": "ping"}).encode(),
+            ]
+        )
+        + b"\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", _MODULE, "--scope", str(runs)],
+        input=raw,
+        capture_output=True,
+        env=_isolated_env(tmp_path / "home"),
+        timeout=120,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr.decode(errors="replace")
+    responses = [json.loads(line) for line in proc.stdout.decode("ascii").splitlines()]
+    assert [r.get("id") for r in responses] == [0, 1, None, 3, 4]
+    assert responses[1]["error"]["code"] == -32601
+    assert responses[2]["error"]["code"] == -32700
+    listed = responses[3]["result"]["structuredContent"]
+    assert [c["capsule"] for c in listed["capsules"]] == ["good"]
+    assert listed["skipped_unaddressable"] == 1
+    assert responses[4]["result"] == {}

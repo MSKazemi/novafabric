@@ -204,8 +204,10 @@ class EvidenceServer:
         """Handle one inbound line; the response to write, or None for none."""
         try:
             message = json.loads(raw)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeError):
             return _error(None, PARSE_ERROR, "parse error: not a JSON value")
+        except RecursionError:
+            return _error(None, PARSE_ERROR, "parse error: JSON nested too deeply")
         return self.handle_message(message)
 
     def handle_message(self, message: object) -> dict[str, Any] | None:
@@ -306,7 +308,9 @@ class EvidenceServer:
         return self._tool_result({"error": {"code": code, "message": message}}, is_error=True)
 
     def _tool_result(self, payload: dict[str, Any], *, is_error: bool) -> dict[str, Any]:
-        text = json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        # ensure_ascii: a lone surrogate (a non-UTF-8 file name, a YAML escape)
+        # is written as a \u escape instead of failing to encode.
+        text = json.dumps(payload, sort_keys=True, ensure_ascii=True, allow_nan=False)
         if len(text.encode("utf-8")) > MAX_RESPONSE_BYTES:
             payload = {
                 "error": {
@@ -346,11 +350,33 @@ def serve(scope: EvidenceScope, stdin: BinaryIO, stdout: BinaryIO) -> int:
         elif not line.strip():
             continue
         else:
-            response = server.handle_line(line)
+            response = _handle_safely(server, line)
         if response is not None:
-            data = json.dumps(response, ensure_ascii=False, separators=(",", ":"))
-            stdout.write(data.encode("utf-8") + b"\n")
+            stdout.write(_encode(response))
             stdout.flush()
+
+
+def _handle_safely(server: EvidenceServer, line: bytes) -> dict[str, Any] | None:
+    """``server.handle_line``, but no input line can end the session."""
+    try:
+        return server.handle_line(line)
+    except Exception as exc:  # last resort; handle_message already catches per request
+        _log.error("mcp_evidence_line_failed", extra={"error": type(exc).__name__})
+        return _error(None, INTERNAL_ERROR, f"internal error ({type(exc).__name__})")
+
+
+def _encode(response: dict[str, Any]) -> bytes:
+    """One response line. ASCII-only JSON, so a lone surrogate echoed from the
+    request (a ``method`` name, say) cannot raise while encoding."""
+    try:
+        data = json.dumps(response, ensure_ascii=True, separators=(",", ":"))
+    except (ValueError, TypeError, RecursionError) as exc:
+        _log.error("mcp_evidence_encode_failed", extra={"error": type(exc).__name__})
+        data = json.dumps(
+            _error(None, INTERNAL_ERROR, "internal error (response not encodable)"),
+            separators=(",", ":"),
+        )
+    return data.encode("ascii") + b"\n"
 
 
 def _parser() -> argparse.ArgumentParser:

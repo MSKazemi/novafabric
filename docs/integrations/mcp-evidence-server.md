@@ -61,7 +61,7 @@ All three tools are declared `readOnlyHint: true`, `destructiveHint: false`,
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `list_capsules` | `root` (scope index, optional), `cursor` (optional), `limit` (1–200, default 50) | `capsules`: `{root, capsule, sealed}` per capsule, `count`, `next_cursor` (`null` on the last page). `sealed` means a seal is present, not that it verifies. |
+| `list_capsules` | `root` (scope index, optional), `cursor` (optional), `limit` (1–200, default 50) | `capsules`: `{root, capsule, sealed}` per capsule, `count`, `next_cursor` (`null` on the last page) and `skipped_unaddressable`, the number of capsule directories skipped because their name could not be passed back as a `capsule` argument (not valid UTF-8, or a control or invisible character). `sealed` means a seal is present, not that it verifies. |
 | `get_capsule_summary` | `capsule`, `root` (optional) | Allowlisted manifest fields (`fields`), the names of the fields it withheld (`withheld_fields`), the evidence file names the seal covers (`evidence_files`), `manifest_source` and `sealed`. `signature_checked` is always `false`. |
 | `verify_capsule` | `capsule`, `root` (optional) | `valid`, `sealed`, `signature_ok`, `capsule_binding_ok`, `capsule_id_ok`, `timestamp_ok`, `timestamp_trust`, `log_inclusion`, `identity_trust`, `unanchored_claims`, `errors`, and `verification_level`, which says what was checked. |
 
@@ -114,7 +114,7 @@ reasons in `errors`.
 
 ## Errors
 
-Protocol problems are JSON-RPC errors: `-32700` (not JSON), `-32600` (invalid request, a batch,
+Protocol problems are JSON-RPC errors: `-32700` (not JSON, or nested too deeply to parse), `-32600` (invalid request, a batch,
 or a message over 1 MiB), `-32601` (unknown method), `-32602` (unknown tool, or non-object
 `params` or `arguments`), `-32603` (internal error), and `-32002` (a request other than
 `initialize` or `ping` before `initialize`).
@@ -139,7 +139,9 @@ The server accepts MCP protocol revisions `2025-11-25`, `2025-06-18` and `2025-0
 asks for any other revision, the server answers with `2025-11-25`, and the client decides whether
 to continue. That is standard MCP version negotiation. It implements `initialize`, `ping`,
 `tools/list` and `tools/call` only, with no resources, prompts, sampling or subscriptions. JSON-RPC
-batches are refused.
+batches are refused. Responses are written as ASCII-only JSON, so a non-ASCII or lone-surrogate
+value in a request or a file name is escaped, never a reason for the process to stop. A request
+the server cannot handle is answered with an error, and the next line is still read.
 
 ## Not in this slice
 

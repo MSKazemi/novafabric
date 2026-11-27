@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -267,3 +268,71 @@ def test_main_requires_a_scope(capsys: pytest.CaptureFixture[str]) -> None:
         evidence_server.main([])
     assert info.value.code == 2
     assert "--scope" in capsys.readouterr().err
+
+
+# -- inputs that once ended the process (independent review of #346) --------
+
+
+def _non_utf8_capsule(runs: Path) -> None:
+    """A capsule whose directory name is not valid UTF-8 (``caf\\xe9``)."""
+    name = os.fsencode(runs) + b"/caf\xe9"
+    try:
+        os.mkdir(name)
+    except OSError:  # pragma: no cover - a filesystem that only takes UTF-8 names
+        pytest.skip("this filesystem refuses non-UTF-8 file names")
+    with open(name + b"/capsule.yaml", "wb") as fh:
+        fh.write(b"run_id: cafe\n")
+
+
+def test_a_lone_surrogate_in_the_method_is_answered_and_the_session_continues(
+    runs: Path,
+) -> None:
+    init = json.dumps(_rpc("initialize", {"protocolVersion": "2025-11-25"}, req_id=0))
+    bad = '{"jsonrpc":"2.0","id":1,"method":"tools/\\udcff"}'
+    data = (init + "\n" + bad + "\n" + json.dumps(_rpc("ping", req_id=2)) + "\n").encode()
+    out = io.BytesIO()
+    assert serve(EvidenceScope.from_paths([runs]), io.BytesIO(data), out) == 0
+    out.getvalue().decode("ascii")  # every response line is plain ASCII JSON
+    responses = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert responses[1]["id"] == 1
+    assert responses[1]["error"]["code"] == METHOD_NOT_FOUND
+    assert responses[2] == {"jsonrpc": "2.0", "id": 2, "result": {}}
+
+
+def test_deeply_nested_json_is_a_parse_error_and_the_session_continues(runs: Path) -> None:
+    deep = b"[" * 200_000 + b"]" * 200_000
+    data = deep + b"\n" + json.dumps(_rpc("ping", req_id=2)).encode() + b"\n"
+    responses = _run(runs, data)
+    assert responses[0]["error"]["code"] == PARSE_ERROR
+    assert responses[1] == {"jsonrpc": "2.0", "id": 2, "result": {}}
+
+
+def test_a_non_utf8_capsule_name_is_skipped_and_counted_not_a_failure(runs: Path) -> None:
+    write_capsule(runs, "good")
+    _non_utf8_capsule(runs)
+    server = _server(runs)
+    result = _call(server, "list_capsules")["result"]
+    assert result["isError"] is False
+    payload = result["structuredContent"]
+    assert [c["capsule"] for c in payload["capsules"]] == ["good"]
+    assert payload["skipped_unaddressable"] == 1
+    assert _call(server, "verify_capsule", {"capsule": "good"})["result"]["isError"] is False
+
+
+def test_an_unexpected_failure_while_handling_a_line_keeps_the_session(
+    monkeypatch: pytest.MonkeyPatch, runs: Path
+) -> None:
+    calls = {"n": 0}
+    original = EvidenceServer.handle_line
+
+    def flaky(self: EvidenceServer, raw: bytes) -> dict[str, Any] | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("simulated")
+        return original(self, raw)
+
+    monkeypatch.setattr(EvidenceServer, "handle_line", flaky)
+    data = json.dumps(_rpc("ping", req_id=1)) + "\n" + json.dumps(_rpc("ping", req_id=2)) + "\n"
+    responses = _run(runs, data.encode())
+    assert responses[0]["error"]["code"] == INTERNAL_ERROR
+    assert responses[1] == {"jsonrpc": "2.0", "id": 2, "result": {}}

@@ -46,7 +46,12 @@ from typing import Any, Final
 
 from novafabric._capsule_fs import is_capsule_regular_file, iter_capsule_dirs
 from novafabric._capsule_manifest import CapsuleManifestError, read_capsule_manifest
-from novafabric._safe_path import PathEscapeError, UnsafePathSegmentError, safe_child
+from novafabric._safe_path import (
+    PathEscapeError,
+    UnsafePathSegmentError,
+    is_safe_path_segment,
+    safe_child,
+)
 
 __all__ = [
     "ERROR_CODES",
@@ -295,19 +300,26 @@ class EvidenceScope:
         """One page of the capsules directly under the scope directories.
 
         Linked entries and directories without a capsule marker are never
-        listed. ``next_cursor`` is ``None`` on the last page.
+        listed. ``next_cursor`` is ``None`` on the last page. A capsule whose
+        name is not one safe, decodable path segment (a non-UTF-8 byte name,
+        a control or invisible formatting character) could never be named in
+        a later call, so it is skipped and counted in ``skipped_unaddressable``.
         """
         page = _int_arg("limit", limit, default=DEFAULT_PAGE_SIZE, low=1, high=MAX_PAGE_SIZE)
         indices = self._root_indices(root)
         start_index, after = self._parse_cursor(cursor, indices)
         items: list[dict[str, Any]] = []
         next_cursor: str | None = None
+        skipped = 0
         for index in indices:
             if index < start_index:
                 continue
             for directory in iter_capsule_dirs(self.roots[index], markers=CAPSULE_MARKERS):
                 name = directory.name
                 if index == start_index and after is not None and name <= after:
+                    continue
+                if not is_safe_path_segment(name):
+                    skipped += 1
                     continue
                 if len(items) == page:
                     last = items[-1]
@@ -323,7 +335,12 @@ class EvidenceScope:
             if next_cursor is not None:
                 break
         return self._clean(
-            {"capsules": _bounded(items), "count": len(items), "next_cursor": next_cursor}
+            {
+                "capsules": _bounded(items),
+                "count": len(items),
+                "next_cursor": next_cursor,
+                "skipped_unaddressable": skipped,
+            }
         )
 
     def _parse_cursor(self, cursor: object, indices: list[int]) -> tuple[int, str | None]:
