@@ -456,6 +456,21 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **Pinned and verified build inputs for the container image and CI (#220, works today).** The
+  image's `uv` installer is now a named stage pinned to `ghcr.io/astral-sh/uv:0.13.10` by tag and
+  digest, so Dependabot's existing `/deploy/docker` entry proposes each new uv release. The OPA
+  binary moves to 1.23.0, pinned by version and verified with `sha256sum -c` against the sha256 OPA
+  publishes for each of the two shipped architectures; an architecture with no pinned checksum now
+  fails the build instead of receiving the amd64 binary. `publish-pypi.yml` runs `twine==7.0.0`
+  instead of whatever `uvx twine` resolved. Dependabot's `github-actions` entry now also covers
+  `.github/actions/*`, and the capture action's `setup-uv` moves to v10.4.0, the SHA the workflows
+  already use. A new guard, `tests/docs/test_build_inputs_are_pinned.py`, fails on a third-party
+  action not pinned to a commit SHA with a `# vX.Y.Z` comment in any workflow or composite action,
+  a Dockerfile image without tag and digest, a non-loopback download that is piped into a shell or
+  not checksum- or signature-verified, an empty checksum build arg, an unversioned `uvx` or
+  `go install`, an `npm install`, and a composite action Dependabot does not reach. Exceptions
+  need an entry with a reason in its allowlist. How to bump each pin: `docs/ci.md`, "Pinned build
+  inputs".
 - **`nova serve` restricts scripts with a hash-based Content-Security-Policy, keeps tokens out of
   its logs, and the dashboard's share links carry no token** (issue #278). Every response except
   the Swagger UI page (`/api/docs`) now adds `script-src 'self' 'unsafe-eval' 'sha256-…'` and
