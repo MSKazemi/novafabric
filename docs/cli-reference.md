@@ -10046,6 +10046,8 @@ nova export-examiner iso42001 --data-dir .novafabric/runs/ \
 default: every supported clause).
 
 **Output:** ZIP containing `iso42001-evidence.json`, `control-narratives.json`, `capsule-index.json`, and `README.txt`.
+Each clause is keyed by its ISO/IEC 42001 clause number; its `title` is a short NovaFabric summary of the
+clause's topic, not the standard's heading. Keep the official wording in your licensed copy.
 
 **Seal check.** The package lists every capsule inside the audit period as evidence. If any of them has
 a `.seal` that fails verification (edited after sealing, or damaged, substituted or not a directory), the
