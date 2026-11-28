@@ -7,7 +7,7 @@
  * composition. Extracted verbatim from the former 2.1K-line monolith —
  * behavior frozen; same default export + props.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { api } from '../../../lib/api';
 import type { RunSummary, FullCapsule } from '../../../lib/api';
 import ConfirmDialog from '../ConfirmDialog';
@@ -25,6 +25,7 @@ import RunInspector, { type SecretsState, type ChildrenState, type ForensicsStat
 import { CapsuleTreePanel, RunSpoolLineagePanel, ScanSecretsPanel } from './runs/ParityPanels';
 import FilterBar from './runs/FilterBar';
 import AggregateStrip from './runs/AggregateStrip';
+import { FailedRunsStrip } from './runs/FailurePanels';
 import { useFilteredRuns } from './runs/useFilteredRuns';
 import { useUrlState, URL_STATE_CHANGED } from '../../../lib/useUrlState';
 import { ignoreSingleKeyShortcut, isTypingTarget, modalDialogOpen } from '../../../lib/shortcuts';
@@ -57,11 +58,17 @@ export default function RunsTab({
   // ADR-0232 D2 — view state lives in the URL: a pasted link reproduces the
   // view, and committed changes (filter, scope, status) are Back-undoable.
   const [runParam, setRunParam] = useUrlState('run', '');
+  // #268 — the Events view's selected event; '' = the first observed failure.
+  const [eventParam, setEventParam] = useUrlState('event', '');
   const [selected, setSelectedState] = useState<RunSummary | null>(() => (runParam ? stubRun(runParam) : null));
+  const selectedIdRef = useRef<string | null>(runParam || null);
   const setSelected = useCallback((r: RunSummary | null) => {
+    // An event key names a record of one capsule: a different run starts unselected.
+    if (selectedIdRef.current !== (r?.run_id ?? null)) setEventParam('');
+    selectedIdRef.current = r?.run_id ?? null;
     setSelectedState(r);
     setRunParam(r?.run_id ?? '');
-  }, [setRunParam]);
+  }, [setRunParam, setEventParam]);
   const [capsule, setCapsule] = useState<FullCapsule | null>(null);
   const [detailError, setDetailError] = useState<{ runId: string; message: string } | null>(null);
   const [actionTarget, setActionTarget] = useState<{ run: RunSummary; action: RunAction } | null>(null);
@@ -162,6 +169,7 @@ export default function RunsTab({
   // Back/forward (or a pasted link) moved `?run=`: follow it.
   useEffect(() => {
     if (runParam === (selected?.run_id ?? '')) return;
+    selectedIdRef.current = runParam || null;
     setSelectedState(runParam ? (runs?.find(r => r.run_id === runParam) ?? stubRun(runParam)) : null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runParam]);
@@ -382,6 +390,18 @@ export default function RunsTab({
           search={search}
           refreshTick={refreshTick}
         />
+        {/* #268 — failed runs first, asked of the server, whatever page is loaded.
+            Only for the plain list: a status chip or a filter already is the selection. */}
+        {!filterActive && statusFilter === 'all' && (
+          <FailedRunsStrip
+            search={search}
+            since={since}
+            until={until}
+            refreshTick={refreshTick}
+            selectedId={selected?.run_id ?? null}
+            onOpen={setSelected}
+          />
+        )}
         <RunList
           visibleRuns={visibleRuns}
           loadedCount={runs.length}
@@ -427,6 +447,8 @@ export default function RunsTab({
         )}
         onAction={(run, action) => setActionTarget({ run, action })}
         onCompareTo={onCompareTo}
+        selectedEventKey={eventParam}
+        onSelectEvent={setEventParam}
       />
 
       {/* v0.46.0 parity panels — span both grid columns, below the runs table area */}

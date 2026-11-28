@@ -6,6 +6,7 @@ interface Shortcut { key: string; description: ReactNode; }
 const BASE_SHORTCUTS: Shortcut[] = [
   { key: '⌘K / Ctrl+K', description: 'Command palette — jump anywhere, search entities' },
   { key: 'j / k',  description: 'Move selection down / up in the Runs list' },
+  { key: '↑ / ↓, j / k', description: 'In a run\u2019s Events list: move between events (Home / End: first / last)' },
   { key: 'Enter',  description: 'Open selected item' },
   { key: 'Escape', description: 'Close detail panel / dismiss overlay' },
   { key: '?',      description: 'Toggle this keyboard shortcuts reference' },

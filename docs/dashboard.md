@@ -204,6 +204,8 @@ the usual confirm dialog with its CLI equivalent) and **Copy link**. The view sw
 keyboard tablist (←/→, Home/End):
 
 - **Inspect / Trace** — manifest, model and tool calls, waterfall (unchanged).
+- **Events** — every model call, HTTP attempt and tool call in one list, with where each
+  record came from; see *Failure-first run explorer and event inspector* below.
 - **Integrity** — runs `nova verify` on demand. The outcomes are kept distinct: *not
   sealed* (nothing to verify — not a failure), *verified*, and *failed* with each failing
   check (signature, RFC 3161 timestamp, Merkle log inclusion) named. Without a
@@ -216,6 +218,62 @@ keyboard tablist (←/→, Home/End):
   to open it (even if it is not in the loaded list) or **Compare** it with this run.
 - **Secrets / Forensics / Children** — unchanged.
 - **Replay modes** — the replay workspace, below.
+
+### Failure-first run explorer and event inspector *(experimental — issue #268)*
+
+First slice of the failure-first Run Explorer. Everything here reads what the server
+already serves (`GET /api/runs/search`, `GET /api/runs/{id}`); nothing is replayed, verified
+or written.
+
+- **Failed runs first.** Above the run list, *Failed runs first* lists the newest runs whose
+  status is `failure` or `error`, asked of the server with the list's own search and date
+  window, so they show up whatever page of the list is loaded. The counts are the server's
+  `total_approx` and read "about N". Runs with status `aborted` or `partial` are not counted
+  there. The strip is hidden while a status chip or a filter is applied: the list then already
+  is the selection. Pick the **failure** or **error** chip to list them all.
+- **Failure reason first.** A run that did not succeed (status `failure`, `error`, `aborted`,
+  `partial` or `timeout`, or a non-zero exit code) opens with a *Failure reason* block: its
+  recorded status and exit code, the manifest's recorded `error` (or "no error detail
+  recorded"), and the **first observed failing event** with **Inspect event**. *First
+  observed* is the earliest call by recorded `started_at` whose recorded status is not
+  `success`; it is where the evidence first shows a failure, not a root cause. An HTTP
+  attempt retried inside an SDK call is not picked.
+- **Events view** (`view=events`). One list of the run's model calls, HTTP attempts (the
+  wire hook's transport records, ADR-0305) and tool calls, ordered by recorded `started_at`;
+  records without a start time are listed last and the view says how many. Each event carries
+  a provenance label read from the record:
+
+  | Label | Read from | Means |
+  |---|---|---|
+  | Recorded | a normal record | Written at capture time; shown as stored |
+  | Transport attempt | `extensions["io.novafabric.record_role"] = "transport"` | An HTTP attempt inside an SDK call; not counted as a model call |
+  | Recorded in replay | `manifest.replay_of_run_id` | Written while a replay ran, not by the original run |
+  | Replay placeholder | `extensions["io.novafabric.replay_placeholder"]` (`live`, `refused`, `unmatched`) | Written by a mocked replay for a call it did not serve; a `live` one has no observed outcome |
+
+  The detail pane marks every field **recorded** (verbatim from the record) or **derived**
+  (computed by the view: outcome, provenance, masked values, related calls, time offset).
+  Missing values read "not recorded". *Masked values* lists the rule of every
+  `[REDACTED:<rule>]` marker in the record; no marker does not mean the record holds no
+  secret. Related calls are joined on the ids the records carry (`agent_call_id`,
+  `tool_choice_call_ids`, the logical call id) and open with one click; a join is not a claim
+  that one call caused another. **Show record as stored** shows the raw record (its first
+  65,536 characters). The view also lists evidence gaps it can see: capsule files missing on disk, a
+  manifest `tool_call_count` that differs from `tool-calls.jsonl`, untimed records, replay
+  calls that ran live.
+- **Not verified here.** The Events view reads the capsule as stored and does not check the
+  seal; its header links to **Integrity**, which runs `nova verify`.
+- **Links and keys.** The selected event is in the URL (`event=<stream>:<record id>`), so a
+  link opens on the same event; selecting another run clears it. A link to an event the
+  capsule does not hold says so and selects nothing. The list is a listbox: `↑`/`↓` (and
+  `j`/`k`, unless single-key shortcuts are off) move between events, `Home`/`End` jump to the
+  ends, and these keys stay in the list instead of moving the run selection. **Failed events
+  only** narrows the list; **Jump to first failure** selects it and announces it to screen
+  readers. Long runs render 200 rows at a time (**Show 200 more**); a linked event further
+  down is rendered without paging by hand.
+- **Not in this slice:** the failure reason in the run list rows (the run index has no error
+  column yet), server-side failure-first ordering of the whole list, trace spans
+  (`trace.jsonl`) in the event list, lineage/graph links scoped to one event, a Playwright
+  journey, and measured memory/interaction numbers on a 100K-run fixture (#261).
 
 ### Replay workspace *(experimental)*
 
@@ -1035,6 +1093,7 @@ is checked, and what is still missing.
 | `g` then a key | outside fields | Go to a view (`g h` Home, `g r` Runs, `g c` Compliance, …; the full list is in the `?` overlay) |
 | `r` | outside fields | Refresh the current view |
 | `j` / `k` | Runs view | Move the run selection down / up |
+| `↑` / `↓`, `j` / `k`, `Home` / `End` | a run's Events list | Move between events; the keys stay in the list |
 | `Esc` | dialogs, Runs view | Close the innermost dialog; with no dialog open, clear the run selection |
 | `Enter` / `Space` | Audit rows, Evidence run IDs | Open the row's detail |
 
