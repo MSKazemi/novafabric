@@ -177,9 +177,10 @@ longer forwards the submitting shell's environment (ADR-0270).
   YAML or is not a YAML mapping used to start the server on built-in defaults (missing
   file) or end in a traceback (bad YAML). It now exits `2` with an error that names the
   path and, for YAML, only the line and column, never the file's content. `nova server
-  saml-metadata`, `nova server revoke-role` and `nova server usage` apply the same rule to
-  their `--config`, and `--workers` processes refuse a config file that disappeared after
-  the parent validated it. Without `--config` nothing changes: the default
+  saml-metadata`, `nova server revoke-role`, `nova server usage` and `nova server
+  scim-map-group --list` apply the same rule to their `--config` (also exit `2`), and
+  `--workers` processes refuse a config file that disappeared after the parent validated
+  it. `scim-map-group` without `--list` still creates the file it edits. Without `--config` nothing changes: the default
   `~/.config/novafabric/server.yaml` stays optional. `load_config()` gains a keyword-only
   `strict=False` parameter and a `ServerConfigFileError`; existing callers are unchanged.
 - **`nova doctor --check-storage` is read-only.** On an existing SQLite registry it used

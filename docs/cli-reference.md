@@ -8082,8 +8082,9 @@ when it is absent the server uses built-in defaults plus the environment. A file
 with `--config` is not optional: if it does not exist, is not a regular file, cannot be
 read, is not valid YAML, or is not a YAML mapping, the command exits `2` with an error that
 names the path (and, for YAML, only the line and column, never the file's content). The
-same rule applies to `--config` on `nova server saml-metadata`, `nova server revoke-role`
-and `nova server usage`. `NOVAFABRIC_SERVER_*` environment
+same rule, and exit code `2`, applies to `--config` on `nova server saml-metadata`,
+`nova server revoke-role`, `nova server usage` and `nova server scim-map-group --list`.
+`nova server scim-map-group` without `--list` edits the file and creates it when absent. `NOVAFABRIC_SERVER_*` environment
 variables override the file, and CLI flags override both. Secrets (`postgres_dsn`,
 `offline_key_path`, `scim_token`, `local_token`) are ignored in the YAML and come only from the
 environment (`NOVAFABRIC_POSTGRES_DSN`, `NOVAFABRIC_OFFLINE_KEY_PATH`, …). See [`docs/ops/server-deployment.md`](ops/server-deployment.md)

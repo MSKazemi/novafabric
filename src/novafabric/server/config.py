@@ -748,8 +748,11 @@ def load_config(config_path: Path | None = None, *, strict: bool = False) -> Ser
     With ``strict=True`` and an explicit *config_path*, a path that is missing,
     unreadable, malformed YAML, or not a mapping raises
     :class:`ServerConfigFileError` instead of silently falling back to the
-    built-in defaults. ``nova server *`` commands pass ``strict=True`` for a
-    ``--config`` the operator typed. Without an explicit path the default
+    built-in defaults. Every ``nova server`` command that reads ``--config``
+    (``start``, ``saml-metadata``, ``revoke-role``, ``usage``, ``scim-map-group
+    --list``) passes ``strict=True``, as do ``--workers`` processes; only
+    ``scim-map-group`` without ``--list`` edits the file and creates it when
+    absent. Without an explicit path the default
     location is optional either way: a missing default file means defaults plus
     environment, unchanged.
     """

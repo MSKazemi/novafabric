@@ -182,3 +182,48 @@ def test_usage_reconcile_refuses_a_missing_config(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2, result.output
     assert "does not exist" in result.output
+
+
+def test_scim_map_group_list_refuses_a_missing_config(tmp_path: Path) -> None:
+    from novafabric.cli.main import app
+
+    missing = tmp_path / "no-such.yaml"
+    result = runner.invoke(
+        app, ["server", "scim-map-group", "--list", "--config", str(missing)]
+    )
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.output
+    assert str(missing) in result.output
+    assert "No group→role mappings configured." not in result.output
+
+
+def test_scim_map_group_set_still_creates_the_file(tmp_path: Path) -> None:
+    from novafabric.cli.main import app
+
+    cfg = tmp_path / "server.yaml"
+    result = runner.invoke(
+        app, ["server", "scim-map-group", "Engineering", "writer", "--config", str(cfg)]
+    )
+    assert result.exit_code == 0, result.output
+    assert cfg.is_file()
+
+
+def test_revoke_role_refuses_a_missing_config_with_exit_2(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from novafabric.cli.main import app
+    from novafabric.server import rbac_store
+
+    db = tmp_path / "r.db"
+    rbac_store.assign_role("solo@example.com", "admin", "t", db_path=db)
+    missing = tmp_path / "no-such.yaml"
+    result = runner.invoke(
+        app,
+        ["server", "revoke-role", "solo@example.com", "admin", "--db-path", str(db),
+         "--config", str(missing)],
+    )
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.output
+    assert str(missing) in result.output
+    assert "Failed to revoke role" not in result.output
+    # Nothing was revoked.
+    assert "admin" in rbac_store.get_roles("solo@example.com", db_path=db)
