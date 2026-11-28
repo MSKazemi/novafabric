@@ -1,7 +1,7 @@
 /**
  * Run detail area: parent/child hierarchy block, view switcher
- * (Inspect / Trace / Secrets / Forensics / Replay modes / Children / Replay result) and the
- * per-view panes. Extracted verbatim from the former RunsTab monolith —
+ * (Inspect / Trace / Events / Secrets / Forensics / Replay modes / Children / Replay result) and the
+ * per-view panes. A run that did not succeed opens with its failure reason first (#268). Extracted verbatim from the former RunsTab monolith —
  * behavior frozen.
  */
 import { useState } from 'react';
@@ -17,6 +17,8 @@ import SegmentedControl from '../../../ui/primitives/SegmentedControl';
 import { CapsuleSummary, IntegrityPanel, LineageNeighbours } from './ExplorerPanels';
 import { ForensicResultPane, SemanticResultPane, ExactResultPane } from './ReplayResultPanes';
 import ReplayWorkspace from '../../../replay/ReplayWorkspace';
+import EventInspector from './EventInspector';
+import { RunFailureBanner } from './FailurePanels';
 import type { DetailView, ReplayResult, RunAction } from './types';
 
 export interface SecretsState {
@@ -57,6 +59,9 @@ export interface RunInspectorProps {
   onSelectId?: (runId: string) => void;
   onAction: (run: RunSummary, action: RunAction) => void;
   onCompareTo?: (ids: string[]) => void;
+  /** The Events view's selected event (`?event=`); '' = the first observed failure. */
+  selectedEventKey?: string;
+  onSelectEvent?: (key: string) => void;
 }
 
 export default function RunInspector({
@@ -75,6 +80,8 @@ export default function RunInspector({
   onSelectId,
   onAction,
   onCompareTo,
+  selectedEventKey,
+  onSelectEvent,
 }: RunInspectorProps) {
   return (
     <section className="min-h-[400px] overflow-y-auto">
@@ -156,6 +163,7 @@ export default function RunInspector({
               segments={[
                 { value: 'inspect', label: 'Inspect' },
                 { value: 'trace', label: 'Trace' },
+                { value: 'events', label: 'Events' },
                 { value: 'integrity', label: 'Integrity' },
                 { value: 'lineage', label: 'Lineage' },
                 { value: 'secrets', label: 'Secrets' },
@@ -166,6 +174,11 @@ export default function RunInspector({
               ]}
             />
           </header>
+          <RunFailureBanner
+            run={selected}
+            capsule={capsule}
+            onInspectEvent={key => { onSelectEvent?.(key); setDetailView('events'); }}
+          />
           <CapsuleSummary run={selected} capsule={capsule} onAction={onAction} />
           {detailView === 'integrity' && <IntegrityPanel runId={selected.run_id} capsulePath={capsule.capsule_path} />}
           {detailView === 'lineage' && (
@@ -194,6 +207,14 @@ export default function RunInspector({
               trace={capsule.trace}
               modelCalls={capsule.model_calls}
               toolCalls={capsule.tool_calls}
+            />
+          )}
+          {detailView === 'events' && (
+            <EventInspector
+              capsule={capsule}
+              selectedKey={selectedEventKey}
+              onSelectKey={onSelectEvent}
+              onOpenIntegrity={() => setDetailView('integrity')}
             />
           )}
           {detailView === 'secrets' && (() => {
