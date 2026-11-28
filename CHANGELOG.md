@@ -194,35 +194,6 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **CI: every job in four workflows has a timeout, and Scorecard's workflow token is read-only (developer tooling, #217).** The six `collector-ci.yml` jobs, the metadata-store security gate, the CLA job and the Scorecard job had no `timeout-minutes`, so a hung job held a runner for GitHub's 360-minute default. Each now has a cap sized from its slowest recent green run. `scorecard.yml` drops workflow-level `permissions: read-all` for `contents: read`; its job keeps the permissions it already declared. A pull request that edits `collector-ci.yml` now runs it. What each job checks is unchanged. `tests/docs/test_ci_workflow_hardening.py` fails if one of these four workflows loses a timeout, pins an action by tag, or widens its workflow-level permissions.
 - **The Docker Compose stack no longer ships demo passwords and refuses to start without real ones (action needed for Compose users).** `deploy/docker/docker-compose.yml` hardcoded `nova` (PostgreSQL, AGE) and `novapass` (ClickHouse) in passwords, DSNs and a healthcheck, so a first deployment kept them unless someone edited the file. Every credential is now a required variable (`NOVA_POSTGRES_PASSWORD`, `NOVA_CLICKHOUSE_PASSWORD`, `NOVA_AGE_PASSWORD`, written `${VAR:?message}`), and `docker compose` / `make *-up` stop with a message naming the fix until they are set. New `scripts/compose_bootstrap.py` (`make compose-bootstrap`, standard library only) writes random 256-bit values into the git-ignored `deploy/docker/.env` with mode `0600`, never prints them, never overwrites a value already set, refuses symlinks, and with `--check` fails on a missing secret, a loose file mode or a leftover demo value. `.dockerignore` now excludes `**/.env`. **Existing stacks:** the Postgres and AGE volumes keep the password they were initialised with, so put the old value into `deploy/docker/.env` before running the script and rotate it as described in `docs/installation.md` ("Upgrading a stack created before this change"); never `docker compose down -v`. A guard test (`tests/docs/test_compose_no_literal_secrets.py`) fails on any literal or defaulted credential in a compose file outside `tests/`. Refs #231.
 
-### Fixed
-
-- **`nova server start --config <path>` refuses a config file it cannot use (exit 2).** A
-  `--config` path that does not exist, is not a regular file, cannot be read, is not valid
-  YAML or is not a YAML mapping used to start the server on built-in defaults (missing
-  file) or end in a traceback (bad YAML). It now exits `2` with an error that names the
-  path and, for YAML, only the line and column, never the file's content. `nova server
-  saml-metadata`, `nova server revoke-role`, `nova server usage` and `nova server
-  scim-map-group --list` apply the same rule to their `--config` (also exit `2`), and
-  `--workers` processes refuse a config file that disappeared after the parent validated
-  it. `scim-map-group` without `--list` still creates the file it edits. Without `--config` nothing changes: the default
-  `~/.config/novafabric/server.yaml` stays optional. `load_config()` gains a keyword-only
-  `strict=False` parameter and a `ServerConfigFileError`; existing callers are unchanged.
-- **`nova doctor --check-storage` is read-only.** On an existing SQLite registry it used
-  to switch the file to WAL mode (rewriting its header) and leave `-wal`/`-shm` files
-  behind. It now opens the file through the read-only URI that `nova doctor
-  --check-server` uses, which moves to `novafabric.storage._sqlite_ro` so both checks share
-  it, and reads the migration stamp the same way. A missing database is reported as
-  "does not exist — would be created on first use" and is not created. `StorageInfo` gains
-  an optional `db_exists` field.
-- **`nova db upgrade` without the `server` extra says what to install (exit 2).** Both
-  migration tracks need alembic and SQLAlchemy, which ship only in
-  `novafabric[server]`. Without them the metadata track failed with a bare `alembic exited
-  with code 1` and the registry track with `alembic upgrade failed (ModuleNotFoundError)`.
-  The command, and the restore step's `run_alembic_upgrade()`, now check first, name the
-  missing modules and print `pip install 'novafabric[server]'`, before touching any
-  database. Local mode does not need the command: the local SQLite stores create their
-  own tables on first use.
-
 ### Documentation
 
 - **MCP client setup guides and a registry checklist for the evidence server (#248, experimental).** `docs/integrations/mcp-client-setup.md` gives stdio configuration for Claude Code, Claude Desktop, Cursor, VS Code and any other stdio client, with a per-client verification table: plain JSON-RPC and the MCP Python SDK 1.30.0 were exercised end to end, Claude Code 2.1.332 was checked to connect (`claude mcp list` reports it connected; tool calls inside a conversation were not exercised), and Claude Desktop, Cursor and VS Code are marked not verified. It says what the server exposes and never returns, what metadata still reaches a hosted model, how evidence verification differs from `nova mcp-proxy` recording, and has an offline walkthrough (run with networking disabled) in which `verify_capsule` returns `valid: true` for a freshly sealed capsule and `valid: false` for one edited after sealing, plus a troubleshooting table. `docs/integrations/mcp-registry-checklist.md` lists what must be true before a registry listing (a release containing the server, a launchable entry point, claim review, namespace and PyPI ownership marker, version parity) and marks which items are not met; nothing is submitted. The server reference now links the guide and lists `idempotentHint: true`. Docs only.
@@ -460,6 +431,32 @@ longer forwards the submitting shell's environment (ADR-0270).
   - **MetadataStore tables are created at first use, not at init.** Creating its roles needs `CREATE ROLE … BYPASSRLS` (as migration `v001` did). Without it, `/readyz` passes and the first MetadataStore call fails; pre-creating the two roles avoids that. The bootstrapped `runs` table is not partitioned (no `v002`) and there are no `v003` knowledge-graph tables (upgrade guide §4c).
   - **A database an earlier chart already stamped `v005` is not repaired:** the pod stays in `Init:CrashLoopBackOff` until the manual, backup-first recovery in upgrade guide §4b is applied. That procedure clears the foreign stamp only when no registry-track table exists; any other state needs a product decision.
 - **The Docker image crash-looped in server mode (`NOVA_MODE=server`): its entrypoint migrated the wrong Alembic track.** `deploy/docker/entrypoint.sh` ran `nova db upgrade --backend postgres` (the MetadataStore track, `nova db upgrade`'s default) for both modes. Both tracks keep their stamp in one `alembic_version` table, and in the bundled compose stack both DSNs name the same database, so it was stamped `v005` and `nova server start` refused with `SchemaSkewError` (`v005` is not known to the registry track). Server mode now runs only `nova db upgrade --track registry --backend postgres --revision ${NOVA_DB_REVISION}`; the server creates the MetadataStore tables it uses itself on first use (`PostgresMetadataStore.bootstrap`). Dashboard mode is unchanged. A database already stamped `v005` is not repaired. #343 applies the same fix to the Helm chart's init container. Tests: `tests/deploy/test_entrypoint_migrates_the_registry_track.py` (refs #231).
+- **`nova server start --config <path>` refuses a config file it cannot use (exit 2).** A
+  `--config` path that does not exist, is not a regular file, cannot be read, is not valid
+  YAML or is not a YAML mapping used to start the server on built-in defaults (missing
+  file) or end in a traceback (bad YAML). It now exits `2` with an error that names the
+  path and, for YAML, only the line and column, never the file's content. `nova server
+  saml-metadata`, `nova server revoke-role`, `nova server usage` and `nova server
+  scim-map-group --list` apply the same rule to their `--config` (also exit `2`), and
+  `--workers` processes refuse a config file that disappeared after the parent validated
+  it. `scim-map-group` without `--list` still creates the file it edits. Without `--config` nothing changes: the default
+  `~/.config/novafabric/server.yaml` stays optional. `load_config()` gains a keyword-only
+  `strict=False` parameter and a `ServerConfigFileError`; existing callers are unchanged.
+- **`nova doctor --check-storage` is read-only.** On an existing SQLite registry it used
+  to switch the file to WAL mode (rewriting its header) and leave `-wal`/`-shm` files
+  behind. It now opens the file through the read-only URI that `nova doctor
+  --check-server` uses, which moves to `novafabric.storage._sqlite_ro` so both checks share
+  it, and reads the migration stamp the same way. A missing database is reported as
+  "does not exist — would be created on first use" and is not created. `StorageInfo` gains
+  an optional `db_exists` field.
+- **`nova db upgrade` without the `server` extra says what to install (exit 2).** Both
+  migration tracks need alembic and SQLAlchemy, which ship only in
+  `novafabric[server]`. Without them the metadata track failed with a bare `alembic exited
+  with code 1` and the registry track with `alembic upgrade failed (ModuleNotFoundError)`.
+  The command, and the restore step's `run_alembic_upgrade()`, now check first, name the
+  missing modules and print `pip install 'novafabric[server]'`, before touching any
+  database. Local mode does not need the command: the local SQLite stores create their
+  own tables on first use.
 
 ### Security
 
