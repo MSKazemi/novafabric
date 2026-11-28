@@ -144,6 +144,22 @@ longer forwards the submitting shell's environment (ADR-0270).
   response content, writes a file, starts a subprocess or uses the network. MCP revisions 2025-11-25, 2025-06-18
   and 2025-03-26. It is separate from `nova mcp-proxy` and is not advertised by the `nova serve` Server Card.
   There is no `nova` sub-command for it, and no diff or lineage tools yet. Guide: `docs/integrations/mcp-evidence-server.md`.
+- **Conformance gate for the MCP evidence server (experimental, refs #245).** `tests/mcp_evidence_server/test_conformance_gate.py`
+  runs in the existing `unit` job with no network, LLM or API key. It pins the JSON-RPC response shape and
+  error-code table, checks that the server advertises exactly the capabilities, tools and arguments it implements
+  (and that the `nova serve` Server Card does not advertise it), and checks that no result, refusal or log line
+  carries prompt or response content, tool arguments, secrets, environment values or absolute paths, at every
+  supported protocol revision. It also covers traversal names, links and FIFOs planted in a capsule, malformed,
+  over-size and deeply nested manifests, YAML anchor bombs, and every seal failure mode (no seal, empty seal, bad
+  signature, truncated envelope, partial provenance, edited evidence), and runs a whole session with the network
+  and subprocesses disabled. The gate brought four hardening changes to the server, all before its first release.
+  Strings are now secret-redacted and scope-path-replaced *before* being cut at 512 characters, so the cut never
+  leaves part of a secret or a path. Each returned manifest value is capped at 2,000 values and 64 KiB of text,
+  and a larger one is replaced as a whole by `"[value omitted: too large to summarize]"`, so YAML anchors cannot
+  make a small manifest expand into a large amount of work. A manifest nested too deeply to parse is refused as
+  `capsule_unreadable` instead of failing as `internal_error`; this is a shared manifest-parser change, so other
+  manifest readers now refuse such a file the same way. An unexpected failure is now logged by exception type and
+  code location only, never by its message. Guide: `docs/integrations/mcp-evidence-server.md#conformance-gate`.
 - **`nova doctor --check-server`: a read-only preflight for a `nova server start` deployment
   (experimental, #232).** One PASS / FAIL / WARN / SKIP line per check, each with a one-line
   fix: the server extra, the config (parsed and validated by the server's own loader, env
