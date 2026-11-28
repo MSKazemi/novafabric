@@ -19,7 +19,10 @@ curl -s http://127.0.0.1:4321/api/health     # only if `nova serve` should be ru
 
 `nova doctor` with no flag prints only a hint. Pass at least one `--check-*` flag.
 `--check-extras` never changes the exit code. `--check-storage` exits `1` when the
-backend cannot be opened, and prints the error.
+backend cannot be opened, and prints the error. Every check is read-only, so it is safe to
+run against a live deployment: `--check-storage` creates no directory, database file or
+`-wal`/`-shm` sidecar. When the SQLite database does not exist yet it says
+`does not exist — would be created on first use` and leaves it uncreated.
 
 ---
 
@@ -78,6 +81,8 @@ Postgres backend is selected, with `--backend postgres` or `NOVAFABRIC_BACKEND=p
 | `Unknown backend: '<x>'. Choose 'sqlite' or 'postgres'.` | Typo in `NOVAFABRIC_BACKEND` or `--backend` | Set it to `sqlite` or `postgres` |
 | A driver error such as `connection to server at … failed` | Host, port, password or database name is wrong, or the database is down | Test with `nova doctor --check-storage --backend postgres`, which reads `NOVAFABRIC_POSTGRES_DSN` |
 | `postgres_dsn:` in `server.yaml` has no effect | The server config drops secret keys from the YAML on purpose. The DSN is read from the environment only | Set `NOVAFABRIC_POSTGRES_DSN` in the server's environment |
+| `Error: server config <path> does not exist or is not a regular file` (exit 2) from `nova server start --config <path>` | The path given to `--config` is wrong, or the file was not deployed. The server does not fall back to built-in defaults for a path you named | Fix the path, or create the file. To run on defaults plus `NOVAFABRIC_SERVER_*` env, leave `--config` out. `nova doctor --check-server --server-config <path>` checks the same file |
+| `Error: server config <path> is not valid YAML (… at line N, column M)` or `… is not readable` (exit 2) | The file has a YAML syntax error, or the service user cannot read it | Fix the named line, or the file's owner and mode. The message shows only the line and column, never the content |
 
 Prefer the environment variable to `--postgres-dsn`: a password on the command line
 ends up in shell history and process listings. The driver's error text can include
@@ -97,6 +102,7 @@ have not installed says so and names the install command, for example
 |---|---|---|
 | A command names an extra, or fails on import | `nova doctor --check-extras` lists each extra as `✓` (fully installed) or `✗` with the missing distributions | `pip install 'novafabric[<extra>]'`. Keep the quotes: zsh and some other shells treat `[` `]` as a glob |
 | `No extras declared in the installed metadata.` | You are running from a source checkout, not an installed distribution | `uv sync --all-extras` in the checkout |
+| `nova db upgrade needs alembic and sqlalchemy, which ship in the server extra …` (exit 2) | `nova db upgrade` runs Alembic migrations, which come with the `server` extra | `pip install 'novafabric[server]'`. A local-only install does not need the command: the local SQLite stores create their own tables on first use |
 
 A missing extra is not an error by itself. Most installs need only a few extras, so
 `--check-extras` reports without failing. A support bundle records the installed

@@ -691,13 +691,76 @@ class ServerConfig(BaseModel):
 _DEFAULT_CONFIG_PATH = Path.home() / ".config" / "novafabric" / "server.yaml"
 
 
-def load_config(config_path: Path | None = None) -> ServerConfig:
-    """Load ServerConfig from a YAML file (or the default path) plus env overrides."""
-    path = config_path or _DEFAULT_CONFIG_PATH
-    if path.exists():
+class ServerConfigFileError(ValueError):
+    """An explicitly named server config file cannot be used.
+
+    Raised by :func:`load_config` with ``strict=True`` when the path is missing,
+    not a regular file, unreadable, not YAML, or not a YAML mapping. The message
+    never quotes the file: a broken line may hold a secret.
+    """
+
+
+#: Keys that must come from the environment, never from YAML.
+_YAML_SECRET_KEYS = ("postgres_dsn", "offline_key_path", "scim_token", "local_token")
+
+
+def _yaml_error_location(exc: yaml.YAMLError) -> str:
+    """``line N, column M`` for a YAML error, without the snippet PyYAML quotes."""
+    mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
+    line = getattr(mark, "line", None)
+    column = getattr(mark, "column", None)
+    if isinstance(line, int) and isinstance(column, int):
+        return f" at line {line + 1}, column {column + 1}"
+    return ""
+
+
+def _load_explicit_file(path: Path) -> dict[str, Any]:
+    """Read *path* as a YAML mapping, or raise :class:`ServerConfigFileError`."""
+    if not path.is_file():
+        raise ServerConfigFileError(
+            f"server config {path} does not exist or is not a regular file"
+        )
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        reason = exc.strerror or type(exc).__name__
+        raise ServerConfigFileError(f"server config {path} is not readable ({reason})") from exc
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ServerConfigFileError(
+            f"server config {path} is not valid YAML "
+            f"({type(exc).__name__}{_yaml_error_location(exc)})"
+        ) from exc
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ServerConfigFileError(
+            f"server config {path} must be a YAML mapping of server keys, "
+            f"not {type(raw).__name__}"
+        )
+    return raw
+
+
+def load_config(config_path: Path | None = None, *, strict: bool = False) -> ServerConfig:
+    """Load ServerConfig from a YAML file (or the default path) plus env overrides.
+
+    With ``strict=True`` and an explicit *config_path*, a path that is missing,
+    unreadable, malformed YAML, or not a mapping raises
+    :class:`ServerConfigFileError` instead of silently falling back to the
+    built-in defaults. ``nova server *`` commands pass ``strict=True`` for a
+    ``--config`` the operator typed. Without an explicit path the default
+    location is optional either way: a missing default file means defaults plus
+    environment, unchanged.
+    """
+    if strict and config_path is not None:
+        raw: Any = _load_explicit_file(config_path)
+    else:
+        path = config_path or _DEFAULT_CONFIG_PATH
+        if not path.exists():
+            return ServerConfig()
         raw = yaml.safe_load(path.read_text()) or {}
-        # Strip secret keys that must not come from YAML
-        for secret_key in ("postgres_dsn", "offline_key_path", "scim_token", "local_token"):
-            raw.pop(secret_key, None)
-        return ServerConfig.model_validate(raw)
-    return ServerConfig()
+    # Strip secret keys that must not come from YAML
+    for secret_key in _YAML_SECRET_KEYS:
+        raw.pop(secret_key, None)
+    return ServerConfig.model_validate(raw)

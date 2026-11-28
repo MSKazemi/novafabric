@@ -38,8 +38,10 @@ def start_cmd(
             "--config",
             "-c",
             help=(
-                "Path to server YAML config file. "
-                "Defaults to ~/.config/novafabric/server.yaml."
+                "Path to server YAML config file. A path given here must be a "
+                "readable YAML mapping, or the command exits 2. Without it, "
+                "~/.config/novafabric/server.yaml is read when present, else "
+                "built-in defaults plus NOVAFABRIC_SERVER_* env."
             ),
             exists=False,
             file_okay=True,
@@ -158,7 +160,12 @@ def start_cmd(
         import pydantic
 
         from novafabric.server.app import create_app
-        from novafabric.server.config import InsecureBindError, check_insecure_bind, load_config
+        from novafabric.server.config import (
+            InsecureBindError,
+            ServerConfigFileError,
+            check_insecure_bind,
+            load_config,
+        )
     except ImportError as exc:
         typer.echo(
             f"Server module not available: {exc}. "
@@ -168,7 +175,16 @@ def start_cmd(
         raise typer.Exit(code=1)
 
     try:
-        cfg = load_config(config)
+        # strict: an explicit --config that is missing or unreadable is an
+        # error, never a silent start on built-in defaults.
+        cfg = load_config(config, strict=True)
+    except ServerConfigFileError as exc:
+        typer.echo(
+            f"Error: {exc}. Fix the --config path, or omit --config to use "
+            "~/.config/novafabric/server.yaml (optional) plus NOVAFABRIC_SERVER_* env.",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
     except pydantic.ValidationError as exc:
         typer.echo(f"Invalid server config: {exc}", err=True)
         raise typer.Exit(code=2)
@@ -801,7 +817,7 @@ def revoke_role_cmd(
 
         # L15: the guard's OIDC input is the server's own config (YAML oidc:),
         # never an env var the server does not read.
-        oidc_configured = load_config(config).oidc.enabled
+        oidc_configured = load_config(config, strict=True).oidc.enabled
         deleted = revoke_role(user, role, db_path=db_path, oidc_configured=oidc_configured)
     except LastAdminError as exc:
         typer.echo(f"Refused: {exc}", err=True)
@@ -915,7 +931,7 @@ def saml_metadata_cmd(
       nova server saml-metadata --config /etc/novafabric/server.yaml > sp-metadata.xml
     """
     try:
-        from novafabric.server.config import load_config
+        from novafabric.server.config import ServerConfigFileError, load_config
         from novafabric.server.saml import render_sp_metadata
     except ImportError as exc:
         typer.echo(
@@ -924,7 +940,11 @@ def saml_metadata_cmd(
         )
         raise typer.Exit(code=1)
 
-    cfg = load_config(config)
+    try:
+        cfg = load_config(config, strict=True)
+    except ServerConfigFileError as exc:
+        typer.echo(f"Error: {exc}.", err=True)
+        raise typer.Exit(code=2) from exc
     if cfg.saml is None or not cfg.saml.enabled:
         typer.echo(
             "SAML is not configured: add a `saml:` block with `enabled: true` "
