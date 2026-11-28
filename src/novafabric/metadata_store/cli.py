@@ -240,6 +240,36 @@ _ALEMBIC_MISSING_HINT = (
     "`pip install 'novafabric[server]'` (or `uv sync --all-extras` in a checkout)."
 )
 
+#: What every migration track imports (both env.py trees use alembic + SQLAlchemy).
+#: Both ship in the ``server`` extra, never in the base install.
+_MIGRATION_MODULES = ("alembic", "sqlalchemy")
+
+
+def _missing_migration_modules() -> list[str]:
+    """The migration modules this interpreter cannot import (no import is run)."""
+    import importlib.util  # noqa: PLC0415
+
+    missing: list[str] = []
+    for name in _MIGRATION_MODULES:
+        try:
+            found = importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            found = False
+        if not found:
+            missing.append(name)
+    return missing
+
+
+def _migration_deps_message(missing: list[str]) -> str:
+    """Plain-text refusal naming the missing modules and the one-line fix."""
+    return (
+        f"nova db upgrade needs {' and '.join(missing)}, which ship in the server "
+        "extra and are not installed in this interpreter. Install them with "
+        "`pip install 'novafabric[server]'` (or `uv sync --all-extras` in a checkout). "
+        "Local mode does not need this command: the local SQLite stores create "
+        "their own tables on first use."
+    )
+
 
 def run_alembic_upgrade(
     backend: str, *, dsn: str | None = None, revision: str = "head"
@@ -254,6 +284,9 @@ def run_alembic_upgrade(
     backend = backend.lower()
     if backend not in ("sqlite", "postgres"):
         return False, f"unknown backend {backend!r} — choose 'sqlite' or 'postgres'"
+    missing = _missing_migration_modules()
+    if missing:
+        return False, _migration_deps_message(missing)
     ini_path = _alembic_ini_path(backend)
     if ini_path is None:
         return False, f"alembic.ini not found for backend {backend!r}"
@@ -327,6 +360,11 @@ def db_upgrade_cmd(
     registry/server database — sqlite uses the registry DB path
     ($NOVAFABRIC_HOME/registry.db), postgres reads NOVAFABRIC_POSTGRES_DSN. The
     server's schema-skew guard names the registry track.
+
+    Requires the server extra (alembic + SQLAlchemy): pip install
+    'novafabric\\[server]'. Without it the command exits 2 with that hint before
+    touching any database. Local mode does not need it: the SQLite stores create
+    their own tables on first use.
     """
     import subprocess  # noqa: PLC0415
     from importlib.resources import files  # noqa: PLC0415
@@ -346,6 +384,21 @@ def db_upgrade_cmd(
             "Choose 'metadata' or 'registry'."
         )
         raise typer.Exit(code=2)
+
+    # Both tracks run alembic + SQLAlchemy (server extra). Without them the
+    # metadata track used to fail inside the child as a bare "alembic exited
+    # with code 1" and the registry track as "(ModuleNotFoundError)".
+    missing = _missing_migration_modules()
+    if missing:
+        from rich.markup import escape  # noqa: PLC0415
+
+        # escape(): Rich would otherwise swallow "[server]" as a markup tag.
+        console.print(
+            f"[red]Error:[/red] {escape(_migration_deps_message(missing))}",
+            highlight=False,
+        )
+        raise typer.Exit(code=2)
+
     if track == "registry":
         _upgrade_registry_track(backend, revision)
         return

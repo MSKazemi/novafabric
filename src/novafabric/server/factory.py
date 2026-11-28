@@ -40,7 +40,9 @@ def resolve_config(config_path: Path | None = None) -> "ServerConfig":
     """
     from novafabric.server.config import check_insecure_bind, load_config
 
-    cfg = load_config(config_path)
+    # strict: CONFIG_ENV names the file the parent already validated; if it has
+    # vanished, a worker must fail rather than serve built-in defaults.
+    cfg = load_config(config_path, strict=True)
     check_insecure_bind(cfg)
     return cfg
 

@@ -50,14 +50,16 @@ Most MCP clients take a command and its arguments. In the common `mcpServers` JS
 }
 ```
 
-Use the absolute path of the Python interpreter and of the scope directory if the client does not
-start from your shell's working directory or `PATH`. The test suite drives the server with the
-official MCP Python SDK client. Other clients have not been tested.
+Use the absolute path of the Python interpreter and of the scope directory: clients usually start
+the server without your shell's `PATH`, and a config file does not expand `~`. The test suite
+drives the server with the official MCP Python SDK client. Per-client setup (Claude Code, Claude
+Desktop, Cursor, VS Code), what was verified with each, and troubleshooting are in
+[MCP client setup](mcp-client-setup.md).
 
 ## Tools
 
 All three tools are declared `readOnlyHint: true`, `destructiveHint: false`,
-`openWorldHint: false`, and accept no arguments other than the ones listed.
+`idempotentHint: true`, `openWorldHint: false`, and accept no arguments other than the ones listed.
 
 | Tool | Arguments | Returns |
 |---|---|---|
@@ -105,9 +107,13 @@ reasons in `errors`.
   `outputs` or extension blocks, because they can hold command-line secrets, local paths, host
   names or free text. It names them in `withheld_fields` instead.
 - **Redacted and bounded.** Every returned string goes through the same secret-redaction rules as
-  capsule capture (`[REDACTED:<rule>]`) and is cut at 512 characters. Lists and mappings are
-  capped at 200 entries, and nesting at 3 levels. The scope directories' absolute paths are
-  replaced by `<scope N>`.
+  capsule capture (`[REDACTED:<rule>]`), has the scope directories' absolute paths replaced by
+  `<scope N>`, and only then is cut at 512 characters, so a cut never leaves the first part of a
+  secret or a path behind. Lists and mappings are capped at 200 entries, and nesting at 3 levels.
+  Each returned manifest value is also capped at 2,000 values and 64 KiB of text in total. A YAML
+  manifest can use anchors to repeat one mapping under every key, so a few kilobytes on disk could
+  otherwise expand to millions of values. A value over either cap is replaced as a whole by the
+  string `"[value omitted: too large to summarize]"`, never cut part-way.
 - **Read only.** The server does not open any file for writing, start a subprocess, open a
   database or Merkle log, or use the network. A test runs it as a process and checks that the
   scope directory and an isolated `HOME` are unchanged afterwards.
@@ -129,9 +135,13 @@ A tool call the server refuses returns a normal result with `isError: true` and
 | `outside_scope` | The capsule entry is a symbolic link or resolves outside its scope directory. |
 | `capsule_not_found` | No capsule directory of that name in scope. |
 | `ambiguous_capsule` | More than one scope directory holds that name. Pass `root`. |
-| `capsule_unreadable` | The manifest is present but unusable (a link, a special file, too large, or not a mapping). |
+| `capsule_unreadable` | The manifest is present but unusable: a link, a special file such as a FIFO, over 16 MiB, not valid UTF-8, JSON or YAML, nested too deeply to parse, or not a mapping. |
 | `response_too_large` | The result would exceed 512 KiB. Ask for a smaller page. |
-| `internal_error` | The tool failed. The detail is in the server's stderr, not in the result. |
+| `internal_error` | The tool failed. The exception type is in the result. Its type and code location are on the server's stderr. |
+
+MCP hosts often keep a server's stderr in their own logs, so the server never logs an exception's
+message, which could quote capsule content, a secret or a path. It logs the exception type, the
+tool, and the innermost frames as `file.py:line:function`, using base names only.
 
 ## Protocol versions
 
@@ -142,6 +152,39 @@ to continue. That is standard MCP version negotiation. It implements `initialize
 batches are refused. Responses are written as ASCII-only JSON, so a non-ASCII or lone-surrogate
 value in a request or a file name is escaped, never a reason for the process to stop. A request
 the server cannot handle is answered with an error, and the next line is still read.
+
+## Conformance gate
+
+`tests/mcp_evidence_server/test_conformance_gate.py` pins the contract above (issue
+[#245](https://github.com/MSKazemi/novafabric/issues/245)). It runs in the ordinary `unit` CI job
+on fixtures built at test time, with no network, LLM or API key. It checks:
+
+- **Protocol.** Every response is one ASCII JSON-RPC 2.0 line that echoes the request id and holds
+  exactly one of `result` or `error`. It pins the error-code table above. Only `initialize` and
+  `ping` are answered before `initialize`. Every unadvertised method family (resources, prompts,
+  logging, completion, sampling, elicitation, tasks, roots) is `-32601`. A request for a tool that
+  does not exist, such as a replay, diff, export or delete tool, is `-32602` and is never
+  approximated by another tool. The initialize capabilities and the `tools/list` schemas are exactly
+  what the server implements: every declared argument is accepted, and an undeclared or missing
+  required one is refused. The `nova serve` Server Card does not advertise this server.
+- **Privacy.** At every supported protocol revision, across every tool and every refusal, no
+  result contains prompt or response content, recorded tool arguments, a command-line secret, the
+  host name, a value from the server's environment, the content of a file outside the scope, or an
+  absolute path. An unexpected failure leaks none of these into the result or the log.
+- **Adversarial capsule data.** It covers traversal and invisible-character names, a capsule entry,
+  manifest or seal envelope that is a link out of scope, and FIFOs planted as a manifest, an evidence
+  file or the envelope, which are refused without blocking. It also covers malformed, non-UTF-8,
+  over-size and too-deeply-nested manifests, a YAML anchor bomb, and secrets and scope paths placed
+  across the 512-character cut. Each gets the documented refusal or a bounded answer.
+- **Seal failure modes.** No seal, an empty `.seal/`, a bad signature, a truncated envelope, a
+  missing evidence file (partial provenance) and an edited evidence file each return
+  `"valid": false` with reasons. A 4 MiB trace verifies without any of it entering the result.
+- **Offline.** A whole session, including verification of a sealed capsule, runs with socket
+  connects, name lookups and subprocess starts disabled, and tries none of them.
+
+`tests/mcp_evidence_server/test_stdio_transport.py` also drives the real process with the official
+MCP Python SDK client when it is installed. A smoke test with the MCP Inspector is not run in CI
+yet.
 
 ## Not in this slice
 

@@ -3,8 +3,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from novafabric.registry.store import get_connection, get_db_path
+from novafabric.registry.store import get_db_path
 from novafabric.storage._base import StorageInfo
+from novafabric.storage._sqlite_ro import compare_sqlite_read_only, sqlite_ro_uri
 
 _KNOWN_TABLES = (
     "assets",
@@ -19,6 +20,14 @@ class SQLiteBackend:
         self._db_path = db_path or get_db_path()
 
     def info(self) -> StorageInfo:
+        """Describe the database **without changing anything on disk**.
+
+        ``nova doctor --check-storage`` calls this. It used to open the file through
+        the registry store's ``get_connection``, which creates the parent directory,
+        switches the file to WAL (rewriting its header) and leaves ``-wal`` / ``-shm``
+        sidecars behind. A missing database is now reported as such (it would be
+        created on first use), and an existing one is read through a read-only URI.
+        """
         if not self._db_path.exists():
             return StorageInfo(
                 backend="sqlite",
@@ -26,9 +35,10 @@ class SQLiteBackend:
                 schema_version=None,
                 row_counts={},
                 migration_pending=None,
+                db_exists=False,
             )
 
-        conn = get_connection(self._db_path)
+        conn = sqlite3.connect(sqlite_ro_uri(self._db_path), uri=True, timeout=2)
         try:
             schema_version = _read_schema_version(conn)
             row_counts = _read_row_counts(conn)
@@ -42,6 +52,7 @@ class SQLiteBackend:
             schema_version=schema_version,
             row_counts=row_counts,
             migration_pending=migration_pending,
+            db_exists=True,
         )
 
 
@@ -76,7 +87,9 @@ def _check_migration_pending(db_path: Path) -> bool | None:
     """
     from novafabric.server import schema_skew  # noqa: PLC0415
 
-    status = schema_skew.compare_revisions("sqlite", db_path).status
+    # The read-only twin of ``schema_skew.compare_revisions("sqlite", ...)``: the
+    # server's own comparator opens ``mode=ro``, which still creates WAL sidecars.
+    status = compare_sqlite_read_only(db_path).status
     if status == schema_skew.STATUS_OK:
         return False
     if status in (schema_skew.STATUS_BEHIND, schema_skew.STATUS_UNSTAMPED):

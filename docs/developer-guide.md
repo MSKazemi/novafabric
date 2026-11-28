@@ -1012,7 +1012,13 @@ lightly edited. Users who need the full text load their own licensed catalog by 
 government works (NIST) are not restricted this way. The built-in SOC 2 and ISO/IEC 42001
 profiles are held to this rule by
 `tests/compliance/audit/test_profiles_no_copied_standard_text.py` (no publisher sentence
-openers, descriptions of at most 160 characters). Wherever the docs name a proprietary
+openers, descriptions of at most 160 characters), and those profiles plus the
+`nova export-examiner iso42001` clause table by
+`tests/compliance/test_no_licensed_standard_titles.py`: no built-in title may reuse a
+publisher's clause or criterion heading, and no file under `src/`, `schemas/`,
+`tests/fixtures/` or `docs/` may carry a longer heading or criterion phrase. That guard
+stores truncated SHA-256 digests of the publishers' wording, never the wording itself;
+to cover a new phrase, add its digest there, not the text. Wherever the docs name a proprietary
 framework, they carry this disclaimer: *"NovaFabric is not affiliated with, endorsed by, or
 certified by the publishers of these frameworks. A mapping shows which recorded evidence exists;
 it does not certify that a control is met."*

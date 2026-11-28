@@ -43,7 +43,6 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from novafabric.server import schema_skew
     from novafabric.server.config import ServerConfig
 
 Status = Literal["PASS", "FAIL", "WARN", "SKIP"]
@@ -129,8 +128,8 @@ def check_config(config_path: Path | None) -> tuple[PreflightResult, ServerConfi
     """Parse and validate the config with the server's real loader.
 
     An explicitly named file that does not exist is a FAIL: ``nova server start
-    --config <missing>`` silently starts on built-in defaults, which is exactly the
-    mistake a preflight should catch.
+    --config <missing>`` refuses to start (``load_config(strict=True)``), so the
+    preflight reports it before the operator finds out at start time.
     """
     try:
         import pydantic
@@ -154,7 +153,7 @@ def check_config(config_path: Path | None) -> tuple[PreflightResult, ServerConfi
                 "config",
                 "FAIL",
                 f"{config_path} does not exist or is not a file (nova server start "
-                "would silently use built-in defaults)",
+                "refuses a --config it cannot read)",
                 "fix the --config path, or create the file",
             ),
             None,
@@ -423,7 +422,9 @@ def check_database(cfg: ServerConfig) -> PreflightResult:
         )
 
     if backend == "sqlite":
-        report = _compare_sqlite_read_only(Path(target))
+        from novafabric.storage._sqlite_ro import compare_sqlite_read_only
+
+        report = compare_sqlite_read_only(Path(target))
     else:
         report = schema_skew.compare_revisions(backend, target)
     where = backend if backend == "postgres" else f"sqlite {target}"
@@ -496,69 +497,6 @@ def check_database(cfg: ServerConfig) -> PreflightResult:
         f"{where}: revision not determinable ({report.detail})",
         "nova doctor --check-storage",
     )
-
-
-def _sqlite_ro_uri(path: Path) -> str:
-    """A read-only SQLite URI for *path* that creates no ``-wal`` / ``-shm`` file.
-
-    The registry is always WAL. ``mode=ro`` alone still creates both sidecars when
-    they are absent (and under ``sudo`` they would be root-owned, locking the service
-    user out). When neither sidecar exists the last writer closed cleanly and
-    checkpointed, so ``immutable=1`` reads the complete database without them. When
-    they exist, nothing is created and plain ``mode=ro`` sees uncheckpointed pages.
-    """
-    sidecars = (Path(f"{path}-wal"), Path(f"{path}-shm"))
-    query = "mode=ro" if any(p.exists() for p in sidecars) else "mode=ro&immutable=1"
-    return f"{path.resolve().as_uri()}?{query}"
-
-
-def _compare_sqlite_read_only(path: Path) -> schema_skew.SkewReport:
-    """``schema_skew.compare_revisions("sqlite", path)`` without touching the directory.
-
-    Same five states and the same packaged script head; only the stamp read differs
-    (:func:`_sqlite_ro_uri`). The server's own start-up comparator is unchanged.
-    """
-    import sqlite3
-
-    from novafabric.migrations import registry_track
-    from novafabric.server import schema_skew
-
-    def report(
-        status: schema_skew.SkewStatus, stamp: str | None, head: str | None, detail: str
-    ) -> schema_skew.SkewReport:
-        return schema_skew.SkewReport(
-            status=status,
-            backend="sqlite",
-            track="registry",
-            db_revision=stamp,
-            head_revision=head,
-            detail=detail,
-        )
-
-    head = registry_track.script_head("sqlite")
-    try:
-        conn = sqlite3.connect(_sqlite_ro_uri(path), uri=True, timeout=2)
-        try:
-            row = conn.execute("SELECT version_num FROM alembic_version LIMIT 1").fetchone()
-        finally:
-            conn.close()
-    except sqlite3.OperationalError as exc:
-        if "no such table" in str(exc).lower():
-            return report(schema_skew.STATUS_UNSTAMPED, None, head, "no alembic_version stamp")
-        return report(schema_skew.STATUS_UNKNOWN, None, head, "database unreadable")
-    except sqlite3.Error:
-        return report(schema_skew.STATUS_UNKNOWN, None, head, "database unreadable")
-    if row is None or not row[0]:
-        return report(schema_skew.STATUS_UNSTAMPED, None, head, "no alembic_version stamp")
-    stamp = str(row[0])
-    if head is None:
-        return report(schema_skew.STATUS_UNKNOWN, stamp, None, "migration script head unresolvable")
-    if stamp == head:
-        return report(schema_skew.STATUS_OK, stamp, head, "database stamp matches the script head")
-    ancestry = registry_track.head_ancestry("sqlite")
-    if ancestry is not None and stamp in ancestry:
-        return report(schema_skew.STATUS_BEHIND, stamp, head, "stamp is an ancestor of head")
-    return report(schema_skew.STATUS_AHEAD, stamp, head, "stamp is not known to this build")
 
 
 # ---------------------------------------------------------------------------

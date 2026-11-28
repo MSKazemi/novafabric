@@ -6,7 +6,7 @@ version: "2017"
 # not AICPA text; load your licensed catalog with `--profile path.yaml` for the wording.
 controls:
   - id: CC6.1-LOGICAL-ACCESS
-    title: Logical access security (CC6.1)
+    title: Controlling software access (CC6.1)
     description: >
       Tool-permission and policy-decision records showing which tools agents were
       allowed or denied during a run.
@@ -19,7 +19,7 @@ controls:
         description: Policy decision events documenting access control decisions
 
   - id: CC6.6-THREAT-MITIGATION
-    title: Protection against threats from outside the system boundary (CC6.6)
+    title: Defending the boundary against external threats (CC6.6)
     description: >
       Policy-decision records showing requests that were blocked by policy during a run.
     evidence_requirements:
@@ -28,7 +28,7 @@ controls:
         description: Policy enforcement events documenting threat detection and mitigation
 
   - id: CC6.7-DATA-TRANSMISSION
-    title: Protecting information in transmission (CC6.7)
+    title: Protecting data in transit (CC6.7)
     description: >
       A personal-data redaction manifest for the run and, optionally, a seal that
       makes later changes to the recorded data detectable.
@@ -41,7 +41,7 @@ controls:
         description: Cryptographic seals verifying integrity of transmitted data
 
   - id: CC7.1-MONITORING
-    title: Detection and monitoring procedures (CC7.1)
+    title: Spotting configuration changes and weaknesses (CC7.1)
     description: >
       A per-run record of model calls and, optionally, lineage records that help
       trace what changed between runs.
@@ -54,7 +54,7 @@ controls:
         description: Lineage graph for change tracking and impact assessment
 
   - id: CC7.2-ANOMALY-MONITORING
-    title: Monitoring for anomalies (CC7.2)
+    title: Watching for unusual system behaviour (CC7.2)
     description: >
       A per-run record of model calls, and optionally policy decisions, that a
       reviewer can examine for unusual behaviour.
@@ -67,7 +67,7 @@ controls:
         description: Policy events capturing anomaly responses
 
   - id: CC9.1-RISK-ASSESSMENT
-    title: Risk mitigation (CC9.1)
+    title: Responding to business-disruption risk (CC9.1)
     description: >
       Policy-decision records that document how risky actions were handled during a run.
     evidence_requirements:
@@ -76,7 +76,7 @@ controls:
         description: Policy decision events documenting risk assessment outcomes
 
   - id: CC9.2-VENDOR-RISK
-    title: Vendor and business partner risk (CC9.2)
+    title: Third-party supplier risk (CC9.2)
     description: >
       Records of which third-party models a run called and, optionally, lineage
       showing where models and data came from.

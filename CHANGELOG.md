@@ -13,6 +13,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Dashboard: failure-first Run Explorer and a provenance-aware event inspector, first slice (#268, experimental).** Read-only; it uses only what `GET /api/runs/search` and `GET /api/runs/{id}` already return, with no backend, schema or CLI change.
+  - *Failed runs first* above the run list: the newest runs with status `failure` or `error`, asked of the server with the list's search and date window, and the server's approximate totals ("about N").
+  - A run that did not succeed opens with its *Failure reason*: recorded status, exit code and manifest `error`, plus the first observed failing call (earliest by recorded `started_at` whose recorded status is not `success`, stated as not a root cause) with **Inspect event**.
+  - A new **Events** view (`view=events`, selected event in `event=`) lists model calls, HTTP transport attempts and tool calls in recorded order. Each event is labelled *Recorded*, *Transport attempt*, *Recorded in replay* or *Replay placeholder* from the record's own fields (`io.novafabric.record_role`, `manifest.replay_of_run_id`, `io.novafabric.replay_placeholder`), and every detail field is marked *recorded* or *derived*.
+  - The detail pane shows `[REDACTED:<rule>]` masking per record, related calls joined on recorded ids, and gaps it can see (untimed records, a `tool_call_count` mismatch, missing capsule files, replay calls that ran live). A link to an event the capsule does not hold says so instead of showing another.
+  - The list is a keyboard listbox (`↑`/`↓`, `j`/`k`, `Home`/`End`, kept inside the list) and renders long runs 200 rows at a time.
+  - Docs: `docs/dashboard.md` (*Failure-first run explorer and event inspector*); the `?` overlay lists the new keys. Tests: `ui/dashboard/tests/unit/run-explorer-failure-first.test.tsx`.
 - **`seal_unbound`: a seal that verifies but does not bind the evidence streams is now a visible, non-gating finding (works today).** `nova audit map|coverage|report`, `GET /api/compliance/audit/coverage` and `nova evidence bind` / `POST /api/evidence/{run_id}/bind` only told a seal that fails verification (`seal_invalid`) from no seal; a seal that verifies but could not show an edit to the evidence streams passed with no finding, while knowledge-graph ingest already treated the same capsule as invalid. Two shapes, both reported per capsule: a seal made before ADR-0251 with no `evidence_digests` (it signs the manifest only), and a stream added to the capsule after sealing (the seal does not name it). The streams are the ones KG ingest reads (`capsule_event_files`), and each capsule's seal is verified once. The finding says the seal verifies, does not name some or all of the evidence streams, so an edit to them would not be detected by the seal, and does not say the capsule was edited (`nova verify <capsule>` shows what the seal covers).
   - **Non-gating, by design.** It never changes an exit code and never changes `gate_passed`: `AuditFinding.code` gains `seal_unbound`, and which codes block is one named set (`BLOCKING_FINDING_CODES`, `AuditFinding.blocking`, `AuditReport.blocking_findings`) that the CLI exit codes and the route's `gate_passed` use, so only `seal_invalid` blocks and a future code is non-blocking until added there. Making `seal_unbound` blocking would fail every capsule sealed before ADR-0251; that is a separate owner decision, not taken here.
   - **Additive.** `findings` stays empty/omitted when there is nothing to report, a client that only knows `seal_invalid` keeps working, and a binding's seal reference is still cited when the seal verifies. The CLI prints `seal_unbound` as a `Notice` (and `NOTICE` in `nova audit report --format text`), not as an error line, and no longer reads `Seals: verified` for it. The dashboard's Audit Coverage panel lists it as a notice that does not turn the verdict red. Tests: `tests/compliance/audit/test_audit_unbound_seal_is_a_notice.py`, `tests/evidence/test_binding_unbound_seal_is_a_notice.py`, `tests/serve/test_unbound_seal_routes.py`, `ui/dashboard/tests/unit/audit-coverage-gate.test.tsx`.
@@ -144,6 +151,22 @@ longer forwards the submitting shell's environment (ADR-0270).
   response content, writes a file, starts a subprocess or uses the network. MCP revisions 2025-11-25, 2025-06-18
   and 2025-03-26. It is separate from `nova mcp-proxy` and is not advertised by the `nova serve` Server Card.
   There is no `nova` sub-command for it, and no diff or lineage tools yet. Guide: `docs/integrations/mcp-evidence-server.md`.
+- **Conformance gate for the MCP evidence server (experimental, refs #245).** `tests/mcp_evidence_server/test_conformance_gate.py`
+  runs in the existing `unit` job with no network, LLM or API key. It pins the JSON-RPC response shape and
+  error-code table, checks that the server advertises exactly the capabilities, tools and arguments it implements
+  (and that the `nova serve` Server Card does not advertise it), and checks that no result, refusal or log line
+  carries prompt or response content, tool arguments, secrets, environment values or absolute paths, at every
+  supported protocol revision. It also covers traversal names, links and FIFOs planted in a capsule, malformed,
+  over-size and deeply nested manifests, YAML anchor bombs, and every seal failure mode (no seal, empty seal, bad
+  signature, truncated envelope, partial provenance, edited evidence), and runs a whole session with the network
+  and subprocesses disabled. The gate brought four hardening changes to the server, all before its first release.
+  Strings are now secret-redacted and scope-path-replaced *before* being cut at 512 characters, so the cut never
+  leaves part of a secret or a path. Each returned manifest value is capped at 2,000 values and 64 KiB of text,
+  and a larger one is replaced as a whole by `"[value omitted: too large to summarize]"`, so YAML anchors cannot
+  make a small manifest expand into a large amount of work. A manifest nested too deeply to parse is refused as
+  `capsule_unreadable` instead of failing as `internal_error`; this is a shared manifest-parser change, so other
+  manifest readers now refuse such a file the same way. An unexpected failure is now logged by exception type and
+  code location only, never by its message. Guide: `docs/integrations/mcp-evidence-server.md#conformance-gate`.
 - **`nova doctor --check-server`: a read-only preflight for a `nova server start` deployment
   (experimental, #232).** One PASS / FAIL / WARN / SKIP line per check, each with a one-line
   fix: the server extra, the config (parsed and validated by the server's own loader, env
@@ -162,6 +185,7 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed
 
+- **Built-in ISO/IEC 42001 and SOC 2 control titles are NovaFabric's own words.** The `nova export-examiner iso42001` package (`iso42001-evidence.json`, `control-narratives.json`, and `POST /api/compliance/examiner/iso42001`) and the built-in `iso42001` and `soc2-type2` profiles of `nova audit` titled several clauses and criteria with the publisher's own heading. Each `title` is now a short summary written for NovaFabric, keyed by the same clause number or criterion ID; the fields, keys, statuses and narratives are unchanged, so only the title strings differ. The package README says the titles are summaries and points to your licensed copy for the official wording; `nova audit map --profile path.yaml` still loads a licensed catalog with the full text. A new guard, `tests/compliance/test_no_licensed_standard_titles.py`, fails if a built-in title reuses a publisher heading or if a longer heading or criterion phrase appears under `src/`, `schemas/`, `tests/fixtures/` or `docs/`; it stores truncated SHA-256 digests, never the text.
 - **Coverage runs use `sys.monitoring` (tests only).** `[tool.coverage.run] core = "sysmon"`: coverage makes it the default only from Python 3.14, and CI runs 3.12, where it is supported for the line coverage this project measures.
 - **Tests: `CliRunner.invoke` reuses the built CLI command (tests only).** typer rebuilds the whole ~1,100-command tree on every `CliRunner.invoke`, about 0.3–0.46 s per call, across ~1,400 calls in the suite. `tests/_cli_command_cache.py` caches the built command per app, keyed on a fingerprint of its registrations, so any added command or replaced callback gets a fresh build. `tests/cli/test_every_command_help_renders.py` went from 54 s to 7.9 s (486 passed both ways, 5 workers). `NOVA_TEST_CLI_CACHE=off` turns it off.
 - **CI: every commit on main keeps a CI result, and two workflows stop running twice (developer tooling).** A push to main now gets its own concurrency group instead of cancelling the previous commit's run (a merge streak used to leave every commit but the last without a result); pull requests still cancel their own older runs. `collector-ci` and the metadata-store security gate run on push only for `main`, so a pull-request branch no longer runs them twice. The CI shard-balancing timings (`tests/.test-durations.json`) are refreshed: 308 test files had no timing and were guessed, now 5.
@@ -172,6 +196,7 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Documentation
 
+- **MCP client setup guides and a registry checklist for the evidence server (#248, experimental).** `docs/integrations/mcp-client-setup.md` gives stdio configuration for Claude Code, Claude Desktop, Cursor, VS Code and any other stdio client, with a per-client verification table: plain JSON-RPC and the MCP Python SDK 1.30.0 were exercised end to end, Claude Code 2.1.332 was checked to connect (`claude mcp list` reports it connected; tool calls inside a conversation were not exercised), and Claude Desktop, Cursor and VS Code are marked not verified. It says what the server exposes and never returns, what metadata still reaches a hosted model, how evidence verification differs from `nova mcp-proxy` recording, and has an offline walkthrough (run with networking disabled) in which `verify_capsule` returns `valid: true` for a freshly sealed capsule and `valid: false` for one edited after sealing, plus a troubleshooting table. `docs/integrations/mcp-registry-checklist.md` lists what must be true before a registry listing (a release containing the server, a launchable entry point, claim review, namespace and PyPI ownership marker, version parity) and marks which items are not met; nothing is submitted. The server reference now links the guide and lists `idempotentHint: true`. Docs only.
 - **SECURITY.md says what a capsule stores.** A new section states that capsules hold model prompts and
   responses by default, that v0.109.0 stores response bodies for every model host in the URL registry
   (plus Ollama and Bedrock), and how `NOVAFABRIC_CAPTURE_WIRE_RESPONSES=off` limits it.
@@ -266,7 +291,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   config provider, receiver or exporter, so every `--config` exits 1 with `at least one Provider must
   be supplied`; the OCB config is not built by CI and does not compile as written; the forwarder's
   `--max-bytes` has no effect; the forwarder publishes to stream `NOVA_EVIDENCE` while
-  `nova collector rebuild` defaults to `nova-evidence`; `--local-wal` generates a new dev key when none
+  `nova collector rebuild` defaults to `nova-evidence` (the provider error and the stream-name
+  mismatch are fixed, see Fixed below); `--local-wal` generates a new dev key when none
   exists; and the processor's `cache_ttl`, `key_rotation_interval` and `send_batch_size` are accepted
   but unused. The CLI reference, developer guide, warm-capture page and cluster-scale tutorial no
   longer say the tier signs forwarded events or exports to Kafka, or that metrics are served on
@@ -304,6 +330,9 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova capture --emit-otel-genai`: `otel-genai-spans.json` is secret-scanned and covered by the seal (works today).** The spans file is now written by the capture orchestrator after `capsule.yaml` is first written and before finalization, instead of by the CLI after the capsule was finalized. It is therefore rescanned by the ADR-0009 residual pass, recorded in `redaction-proof.json`, and listed in `evidence_digests`, so on a sealed capsule `nova verify` fails when the file is edited instead of listing it as not covered by the seal. The spans are unchanged (they read only fields already present at that point). A span-emission failure now prints a warning and leaves the capture's exit code alone. Additive: `CaptureOrchestrator` gains the optional `emit_otel_genai` and `otel_capture_content` arguments and `CaptureResult` the optional `otel_genai_span_count`; capsules written by earlier releases are read as before. Tests: `tests/capture/test_otel_genai_spans_sealed.py`.
+- **`novafabric-collector` loads a config (experimental).** The binary registered no configuration provider, so every `--config` and `validate` exited `1` with `at least one Provider must be supplied`. It now registers the upstream `file:`, `env:` and `yaml:` providers (`go.opentelemetry.io/collector/confmap/provider/*` v1.71.0, in lockstep with `otelcol` v0.165.0; no `http:`/`https:` provider, so loading a config needs no network), so `${NAME}` expands from the environment. It also registers a telemetry factory, which `otelcol` requires before any config loads: the collector's own logs go to stderr at `service::telemetry::logs::level` (default `info`, checked by `validate`); internal metrics and traces are discarded, so no metrics port is opened. The binary still registers no receiver or exporter, so it cannot run a pipeline; `validate` now reports that instead of the provider error. Go tests pin the providers and the telemetry factory. See `docs/collector-reference.md`.
+- **`nova collector rebuild` and `NATSJetStreamConsumer` default to the stream the spool forwarder creates.** The forwarder creates and publishes to JetStream stream `NOVA_EVIDENCE`; the two Python consumers defaulted to `nova-evidence`, so with defaults on both sides they bound to a stream that did not exist. Both now default to `NOVA_EVIDENCE` (the UPPER_SNAKE form of the other stream names in the design), held in one module (`novafabric.evidence_fabric._nats_names`), and a test pins the Go forwarder's default to it. `NOVA_NATS_STREAM` and `--stream` still override it. If you created a `nova-evidence` stream yourself and relied on the old consumer default, set `NOVA_NATS_STREAM=nova-evidence`. The durable consumer name `nova-evidence-consumer` is unchanged.
 - **The push gate's scoped tier tests a changed test helper through the tests that import it (developer tooling).** `scripts/testsel.py` used to hand a changed helper under `tests/` (`_harness.py`, `__init__.py`, a fixture module) to pytest as if it were a test file. pytest then collected nothing from it, or failed on import when the module read its environment (`KeyError: 'FIDELITY_PHASE'` from `tests/replay/fidelity/_workload.py`), and the tests that import the helper were not selected. A helper that imports cleanly therefore passed the gate with none of its tests run. The selector now picks the helper's directory subtree, as it already did for a `conftest.py`, plus everything that imports it, found from an import graph of `tests/` (parsed, not text-matched): test files directly, a conftest's whole subtree, and other helpers followed in turn. A changed `conftest.py` now also brings in the subtrees of conftests that import it (`tests/trend/conftest.py` imports `query.conftest`). A file that cannot be parsed counts as an importer.
 - **A load-sensitive seal-bypass test keeps its margin on a busy machine (tests only).** `tests/serve/test_seal_bypass_notify_off_loop.py` checks that a slow bypass webhook does not block `/livez`. Its fake webhook now blocks 4 s instead of 1.5 s, so the latency bound (half of that) sits far above an unblocked `/livez` under load (1.35 s seen once) and far below a blocked one (~3.7 s). The ordering check is unchanged, and moving the notification back onto the event loop still fails the test.
 - **A flaky NATS ack test waits until its messages settle (tests only).** `TestNatsAckAfterIngest` stopped the consumer after a fixed 0.15 s; under a loaded run the loop had sometimes not reached the second message, and the test failed on a missing nak (seen once in a full local run, 2026-11-25). It now waits until every message is acked or nacked, at most 10 s.
@@ -402,9 +431,50 @@ longer forwards the submitting shell's environment (ADR-0270).
   - **MetadataStore tables are created at first use, not at init.** Creating its roles needs `CREATE ROLE … BYPASSRLS` (as migration `v001` did). Without it, `/readyz` passes and the first MetadataStore call fails; pre-creating the two roles avoids that. The bootstrapped `runs` table is not partitioned (no `v002`) and there are no `v003` knowledge-graph tables (upgrade guide §4c).
   - **A database an earlier chart already stamped `v005` is not repaired:** the pod stays in `Init:CrashLoopBackOff` until the manual, backup-first recovery in upgrade guide §4b is applied. That procedure clears the foreign stamp only when no registry-track table exists; any other state needs a product decision.
 - **The Docker image crash-looped in server mode (`NOVA_MODE=server`): its entrypoint migrated the wrong Alembic track.** `deploy/docker/entrypoint.sh` ran `nova db upgrade --backend postgres` (the MetadataStore track, `nova db upgrade`'s default) for both modes. Both tracks keep their stamp in one `alembic_version` table, and in the bundled compose stack both DSNs name the same database, so it was stamped `v005` and `nova server start` refused with `SchemaSkewError` (`v005` is not known to the registry track). Server mode now runs only `nova db upgrade --track registry --backend postgres --revision ${NOVA_DB_REVISION}`; the server creates the MetadataStore tables it uses itself on first use (`PostgresMetadataStore.bootstrap`). Dashboard mode is unchanged. A database already stamped `v005` is not repaired. #343 applies the same fix to the Helm chart's init container. Tests: `tests/deploy/test_entrypoint_migrates_the_registry_track.py` (refs #231).
+- **`nova server start --config <path>` refuses a config file it cannot use (exit 2).** A
+  `--config` path that does not exist, is not a regular file, cannot be read, is not valid
+  YAML or is not a YAML mapping used to start the server on built-in defaults (missing
+  file) or end in a traceback (bad YAML). It now exits `2` with an error that names the
+  path and, for YAML, only the line and column, never the file's content. `nova server
+  saml-metadata`, `nova server revoke-role`, `nova server usage` and `nova server
+  scim-map-group --list` apply the same rule to their `--config` (also exit `2`), and
+  `--workers` processes refuse a config file that disappeared after the parent validated
+  it. `scim-map-group` without `--list` still creates the file it edits. Without `--config` nothing changes: the default
+  `~/.config/novafabric/server.yaml` stays optional. `load_config()` gains a keyword-only
+  `strict=False` parameter and a `ServerConfigFileError`; existing callers are unchanged.
+- **`nova doctor --check-storage` is read-only.** On an existing SQLite registry it used
+  to switch the file to WAL mode (rewriting its header) and leave `-wal`/`-shm` files
+  behind. It now opens the file through the read-only URI that `nova doctor
+  --check-server` uses, which moves to `novafabric.storage._sqlite_ro` so both checks share
+  it, and reads the migration stamp the same way. A missing database is reported as
+  "does not exist — would be created on first use" and is not created. `StorageInfo` gains
+  an optional `db_exists` field.
+- **`nova db upgrade` without the `server` extra says what to install (exit 2).** Both
+  migration tracks need alembic and SQLAlchemy, which ship only in
+  `novafabric[server]`. Without them the metadata track failed with a bare `alembic exited
+  with code 1` and the registry track with `alembic upgrade failed (ModuleNotFoundError)`.
+  The command, and the restore step's `run_alembic_upgrade()`, now check first, name the
+  missing modules and print `pip install 'novafabric[server]'`, before touching any
+  database. Local mode does not need the command: the local SQLite stores create their
+  own tables on first use.
 
 ### Security
 
+- **Pinned and verified build inputs for the container image and CI (#220, works today).** The
+  image's `uv` installer is now a named stage pinned to `ghcr.io/astral-sh/uv:0.13.10` by tag and
+  digest, so Dependabot's existing `/deploy/docker` entry proposes each new uv release. The OPA
+  binary moves to 1.23.0, pinned by version and verified with `sha256sum -c` against the sha256 OPA
+  publishes for each of the two shipped architectures; an architecture with no pinned checksum now
+  fails the build instead of receiving the amd64 binary. `publish-pypi.yml` runs `twine==7.0.0`
+  instead of whatever `uvx twine` resolved. Dependabot's `github-actions` entry now also covers
+  `.github/actions/*`, and the capture action's `setup-uv` moves to v10.4.0, the SHA the workflows
+  already use. A new guard, `tests/docs/test_build_inputs_are_pinned.py`, fails on a third-party
+  action not pinned to a commit SHA with a `# vX.Y.Z` comment in any workflow or composite action,
+  a Dockerfile image without tag and digest, a non-loopback download that is piped into a shell or
+  not checksum- or signature-verified, an empty checksum build arg, an unversioned `uvx` or
+  `go install`, an `npm install`, and a composite action Dependabot does not reach. Exceptions
+  need an entry with a reason in its allowlist. How to bump each pin: `docs/ci.md`, "Pinned build
+  inputs".
 - **`nova serve` restricts scripts with a hash-based Content-Security-Policy, keeps tokens out of
   its logs, and the dashboard's share links carry no token** (issue #278). Every response except
   the Swagger UI page (`/api/docs`) now adds `script-src 'self' 'unsafe-eval' 'sha256-…'` and

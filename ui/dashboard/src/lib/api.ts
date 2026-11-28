@@ -232,6 +232,9 @@ export interface FullCapsule {
   manifest: Record<string, unknown>;
   trace: Array<Record<string, unknown>>;
   model_calls: Array<Record<string, unknown>>;
+  /** ADR-0305: HTTP attempts the wire hook recorded inside an SDK call, kept as
+   *  evidence and excluded from `model_calls`. Absent from metadata-only answers. */
+  transport_model_calls?: Array<Record<string, unknown>>;
   tool_calls: Array<Record<string, unknown>>;
   lineage: Array<Record<string, unknown>>;
   assets: Array<Record<string, unknown>>;

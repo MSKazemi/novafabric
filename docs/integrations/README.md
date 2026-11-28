@@ -9,6 +9,8 @@ integration's own source of truth and says plainly what it does **not** cover.
 | [Hugging Face](huggingface.md) | **experimental** (new in v0.109.0) | Capture `smolagents` agent runs and Inference Providers calls; opt-in Hub revision receipts and evaluation receipts. Mocked replay serves recorded Inference Providers calls from their recorded bytes; `smolagents` tools always run live. |
 | [Writing a hook plugin](writing-a-hook-plugin.md) | **experimental** | The wire-level capture plugin contract, for instrumenting an SDK NovaFabric does not know about. |
 | [MCP evidence server (stdio)](mcp-evidence-server.md) | **experimental** (unreleased) | Let an MCP client list, summarize and verify local capsules offline, read-only, within directories you name. No prompt or response content is returned. |
+| [MCP client setup](mcp-client-setup.md) | **experimental** (unreleased) | Configure Claude Code (connection verified), Claude Desktop, Cursor, VS Code (not verified) or any stdio client for the evidence server; what it exposes; an offline sealed-versus-tampered check; troubleshooting. |
+| [MCP Registry submission checklist](mcp-registry-checklist.md) | **planned** (not submitted) | What must be true before the evidence server is listed in an MCP registry, and which items are not met today. |
 
 ## Not here yet
 

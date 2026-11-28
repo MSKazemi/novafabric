@@ -18,7 +18,7 @@ too, in [its own section](cli-reference.md#novafabric-hpc-hub).
 |---|---|---|
 | `novafabric-spool-forwarder` | **experimental** | Drains a local spool into a NATS JetStream stream. It publishes unsigned envelopes |
 | `novafabric-verifier` | **experimental** | Checks the NovaSeal Ed25519 signature on one OTLP `ResourceLogs` batch offline |
-| `novafabric-collector` | **experimental**, cannot run a pipeline | `--help`, `--version` and `components` work. Any `--config` fails at start, see [below](#novafabric-collector) |
+| `novafabric-collector` | **experimental**, cannot run a pipeline | Loads and checks a config (`file:`, `env:`, `yaml:`); `--help`, `--version`, `components` and `print-config` work. With no receiver or exporter built in, a pipeline cannot start, see [below](#novafabric-collector) |
 | `novaseal_batch_signer` processor (inside the collector) | **experimental** (OTel stability `Alpha`) | Signs batches with the local dev key; unit-tested, but no shipped binary can run it yet |
 | `libnovaspool.so` (C ABI, `collector/pkg/cffi`) | **experimental** | Writes spool segments from C or Python; built by hand, not shipped |
 | OCB build (`collector/ocb/builder-config.yaml`) | **future design** | A builder config file only. CI does not build it, and as written it does not compile ([details](#ocb-build-config)) |
@@ -60,14 +60,17 @@ release tag for the `collector/` module yet; you build them from a checkout.
    `novafabric.evidence_fabric` pulls from the stream into an accumulator. No `nova`
    command starts that consumer for you.
 4. **Signing and verification.** The `novaseal_batch_signer` processor signs OTLP batches,
-   but the only binary that registers it (`novafabric-collector`) cannot load a config
-   today. `novafabric-verifier` checks a signed batch offline.
+   but the only binary that registers it (`novafabric-collector`) has no receiver or
+   exporter to put it in a pipeline. `novafabric-verifier` checks a signed batch offline.
 
-> **The stream names do not match by default.** The forwarder publishes to stream
-> `NOVA_EVIDENCE`. `nova collector rebuild` and `NATSJetStreamConsumer` default to
-> `nova-evidence`. The subject filter `nova.evidence.>` is the same on both sides. Pass
-> `--stream NOVA_EVIDENCE` to `nova collector rebuild` (or set
-> `NOVA_NATS_STREAM=NOVA_EVIDENCE`), or start the forwarder with `--stream nova-evidence`.
+**Stream name.** The evidence stream is `NOVA_EVIDENCE` on both sides: the forwarder
+creates it, and `nova collector rebuild` and `NATSJetStreamConsumer` read it by default.
+The subject filter is `nova.evidence.>`. Change the forwarder's name with `--stream` or
+`NOVAFABRIC_SPOOL_STREAM`, and the consumers' with `--stream` or `NOVA_NATS_STREAM`; set
+both to the same value. Unreleased: up to v0.109.0 the Python consumers defaulted to
+`nova-evidence`, and the default changes to `NOVA_EVIDENCE` in the next release (see
+CHANGELOG `[Unreleased]`). If you created a stream by that name yourself and relied on the old
+default, set `NOVA_NATS_STREAM=nova-evidence`.
 
 ## Building
 
@@ -158,33 +161,58 @@ never calls that code, so the variable has no effect on it.
 distribution (`go.opentelemetry.io/collector/otelcol`) that registers the
 `novaseal_batch_signer` processor. Source: `collector/cmd/novafabric-collector`.
 
-The binary registers that one processor and nothing else: no receivers, no exporters, no
-extensions and no configuration providers. Every run with `--config`, and every
-`validate`, therefore stops at once with `at least one Provider must be supplied` and
-exits `1`. This includes the reference config in `deploy/k8s/configmap-collector.yaml`.
-Even with a provider it could not build a pipeline, because a pipeline needs a receiver
-and an exporter. What works:
+What the binary registers:
+
+- **Components:** the `novaseal_batch_signer` processor only. No receivers, exporters,
+  connectors or extensions.
+- **Config providers:** `file:`, `env:` and `yaml:`. A `--config` value without a scheme
+  is a file path. `${NAME}` in a config expands from the environment. There is no
+  `http:` or `https:` provider, so loading a config never touches the network.
+- **Service telemetry:** the collector's own logs go to stderr as JSON. Internal metrics
+  and traces are discarded: no metrics port is opened and nothing is sent anywhere.
+
+So `--config` and `validate` read the file and check every section they know. Because a
+pipeline needs a receiver and an exporter, a config that defines one is rejected with
+`unknown type`, and a config without one fails with `no receiver configuration specified
+in config`; both exit `1`. The reference config in `deploy/k8s/configmap-collector.yaml`
+fails the same way (`otlp`, `batch` and `kafka` are not built in, and
+`service::telemetry::metrics` is not accepted). For a smoke test of the config loader
+and the service lifecycle, the upstream feature gate `service.AllowNoPipelines` lets it
+start with no pipelines; a Go test (`TestCollectorStartsAndShutsDownWithNoPipelines`)
+starts and stops the collector this way:
 
 ```bash
 novafabric-collector --help
 novafabric-collector --version        # novafabric-collector version 0.1.0
-novafabric-collector components       # lists novaseal_batch_signer (logs: Alpha) only
+novafabric-collector components       # novaseal_batch_signer (logs: Alpha); providers env, file, yaml
+novafabric-collector validate --config collector.yaml
+novafabric-collector --feature-gates=service.AllowNoPipelines --config collector.yaml
 ```
 
 **Flags and subcommands** (provided by the upstream `otelcol` command):
 
 | Flag / subcommand | Default | Description |
 |---|---|---|
-| `--config URI` | — | Config location; repeat it to merge several. A bare path or `file:` URI. Fails today as described above |
+| `--config URI` | — | Config location; repeat it to merge several. A bare path, or a `file:`, `env:` or `yaml:` URI |
 | `--set KEY=VALUE` | — | Override one property of a component that the config defines |
 | `--feature-gates LIST` | upstream defaults | Comma-separated feature gates; prefix `-` to disable |
 | `-v`, `--version` | — | Print the version |
 | `-h`, `--help` | — | Print help |
 | `components` | — | List the components built in |
-| `validate --config URI` | — | Check a config without running it (fails today, as above) |
+| `validate --config URI` | — | Check a config without running it (exits `1` for any pipeline, as above) |
 | `print-config`, `featuregate`, `completion` | — | Upstream helpers |
 
-**Exit codes:** `0` on success (help, version, components); `1` on any error.
+**Exit codes:** `0` on success (help, version, components, a clean shutdown); `1` on any
+error, including a config that fails to load or validate.
+
+**`service::telemetry` options:**
+
+| Option | Default | Effect |
+|---|---|---|
+| `logs::level` | `info` | `debug`, `info`, `warn` or `error`. Any other value fails `validate` |
+
+Any other key under `service::telemetry` (for example `metrics`) is rejected when the
+config loads.
 
 **`novaseal_batch_signer` options** (`processors:` section of the config):
 
@@ -209,8 +237,8 @@ The processor drops log records whose JSON body carries an `envelope_version` ot
 but not incremented by any binary.
 
 **Environment.** `NOVAFABRIC_ENV=production` makes `local_wal: true` fail at start.
-`HOME` locates the dev key. Variable expansion such as `${NOVASEAL_KMS_ENDPOINT}` in a
-config would come from the upstream config loader, which cannot run today.
+`HOME` locates the dev key. `${NAME}` (or `${env:NAME}`) in a config expands from the
+environment when the config loads.
 
 ---
 

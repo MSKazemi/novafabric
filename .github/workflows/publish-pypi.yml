@@ -64,7 +64,8 @@ jobs:
         run: uv build
 
       - name: Check distribution metadata
-        run: uvx twine check dist/*
+        # An exact version, like every other tool run here (tests/docs/test_build_inputs_are_pinned.py).
+        run: uvx --from "twine==7.0.0" twine check dist/*
 
       - name: Generate SBOM (syft)
         # CycloneDX SBOM of the built distribution — the provenance product
