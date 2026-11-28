@@ -171,7 +171,9 @@ check possible (see [nova replay](#nova-replay)).
 semconv attributes are already stored, `--emit-otel-genai` maps the finished capsule
 *outward* to OTel GenAI `gen_ai.*` spans (a root `invoke_agent` span, a `chat` client
 span per model call, an `execute_tool` span per tool call) written to
-`<capsule>/otel-genai-spans.json`. Message content is **off by default** (ADR-0021); add
+`<capsule>/otel-genai-spans.json`. The file is written before the capsule is finalized,
+so it is secret-scanned and, when the capsule is sealed, covered by the seal
+(`nova verify` fails if it is edited). Message content is **off by default** (ADR-0021); add
 `--capture-content` to include request messages, routed through the same secret-redaction
 gate as capture and size-bounded. A model/tool call that recorded a `log_level`
 (ADR-0127) also carries its OTel `SeverityNumber` projection as

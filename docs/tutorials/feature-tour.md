@@ -937,7 +937,7 @@ per tool call:
 
 ```bash
 nova capture --emit-otel-genai python agent.py
-# → writes <capsule>/otel-genai-spans.json
+# → writes <capsule>/otel-genai-spans.json (before sealing, so the seal covers it)
 ```
 
 Message/choice **content is off by default** (ADR-0021). Add `--capture-content` to

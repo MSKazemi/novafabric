@@ -253,11 +253,13 @@ explicit opt-in, that is a vulnerability — please report it.
 
 **Capsule secret scanning is pattern-based.** Every file in a Run Capsule is
 scanned and matches are redacted before the capsule is digested and sealed, and
-`redaction-proof.json` records what was scanned and redacted. One exception:
-`nova capture --emit-otel-genai` writes `otel-genai-spans.json` after the
-capsule is finalised, so the capture scanner never sees that file and the seal
-does not cover it (its message content is exported only with
-`--capture-content`, through that path's own redaction). It does **not**
+`redaction-proof.json` records what was scanned and redacted. That includes
+`otel-genai-spans.json` from `nova capture --emit-otel-genai`, which is written
+before the residual pass and the digest step, so it is scanned and covered by
+the seal like every other capture file (its message content is exported only
+with `--capture-content`, through that path's own redaction first). Files that
+other commands add to a capsule after capture are not covered by its seal; see
+[docs/architecture/run-capsule.md](docs/architecture/run-capsule.md). It does **not**
 prove that a capsule holds no secret: formats with no rule (PEM private keys,
 JWTs, passwords, connection-string credentials, Slack/Stripe/Google/Azure keys,
 an AWS secret key with no key name next to it, personal data) pass through. The
