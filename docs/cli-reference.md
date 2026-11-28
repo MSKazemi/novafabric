@@ -844,14 +844,14 @@ per-run order preserved, RF1 broker-restart safe). Requires
 
 ```bash
 nova collector rebuild --target ./rebuilt
-nova collector rebuild --target ./rebuilt --stream nova-evidence \
+nova collector rebuild --target ./rebuilt --stream NOVA_EVIDENCE \
     --subject "nova.evidence.>" --report rebuild-report.json
 ```
 
 Options:
 - `--target DIR` — directory to materialize per-run JSONL partitions into (required)
 - `--nats-url URL` — broker (default: `$NOVA_NATS_URL` or `nats://localhost:4222`)
-- `--stream NAME` — JetStream stream (default: `$NOVA_NATS_STREAM` or `nova-evidence`)
+- `--stream NAME` — JetStream stream (default: `$NOVA_NATS_STREAM` or `NOVA_EVIDENCE`, the stream `novafabric-spool-forwarder` creates)
 - `--subject FILTER` — subject filter (default: `$NOVA_NATS_SUBJECT` or `nova.evidence.>`)
 - `--report PATH` — write the `RebuildReport` JSON (per-run sha256 digests, order flags)
 
@@ -8903,7 +8903,7 @@ failed).
 | `NOVAFABRIC_HPC_STORAGE` | — | Set to `spool` to use the JSONL spool as NATS leaf store (no local NVMe) |
 | `NOVAFABRIC_EPILOG_FLUSH_TIMEOUT` | `50` | Slurm Epilog flush timeout in seconds (must stay below Slurm's `PrologEpilogTimeout`) |
 | `NOVA_NATS_URL` | — | NATS server URL for `NATSJetStreamConsumer` (Evidence Fabric Tier 2); e.g. `nats://nats:4222`. Requires `pip install novafabric[nats]` (v0.29.0) |
-| `NOVA_NATS_STREAM` | `nova-evidence` | NATS JetStream stream name for Evidence Fabric consumer (v0.29.0) |
+| `NOVA_NATS_STREAM` | `NOVA_EVIDENCE` | NATS JetStream stream name for the Evidence Fabric consumer and `nova collector rebuild`; matches the spool forwarder's default stream (v0.29.0; default was `nova-evidence` before this release) |
 | `NOVA_NATS_SUBJECT` | `nova.evidence.>` | NATS subject filter for Evidence Fabric consumer (v0.29.0) |
 | `NOVA_NATS_CONSUMER` | `nova-evidence-consumer` | NATS durable consumer name for Evidence Fabric consumer (v0.29.0) |
 | `NOVA_CLICKHOUSE_URL` | — | ClickHouse HTTP URL for `ClickHouseAccumulator` (Evidence Fabric Tier 2); e.g. `http://clickhouse:8123`. Requires `pip install novafabric[clickhouse]`. Also enables `nova cost report` (v0.29.0) |
@@ -9601,9 +9601,10 @@ novafabric-collector --config /etc/novafabric/collector.yaml
 ```
 
 **experimental, and it cannot run a pipeline today.** `collector/cmd/novafabric-collector`
-registers **only** the `novaseal_batch_signer` processor: no receivers, exporters or
-configuration providers. Every `--config` therefore exits `1` with `at least one Provider must
-be supplied`; `--help`, `--version` and `components` work. The OCB config
+registers **only** the `novaseal_batch_signer` processor, plus the `file:`, `env:` and `yaml:`
+configuration providers and a stderr-only telemetry factory: no receivers or exporters. A
+`--config` loads and is checked, then exits `1` because a pipeline needs a receiver and an
+exporter; `--help`, `--version`, `components` and `validate` work. The OCB config
 (`collector/ocb/builder-config.yaml`, **future design**) lists the `otlp` receiver, `batch` and
 the `debug`/`otlp` exporters but no `kafka` exporter, CI does not build it, and as written it
 does not compile (details in the [collector reference](collector-reference.md#ocb-build-config)).

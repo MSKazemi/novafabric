@@ -43,7 +43,7 @@ def collector_rebuild_cmd(
         Optional[str],
         typer.Option(
             "--stream",
-            help="JetStream stream (default: $NOVA_NATS_STREAM or nova-evidence)",
+            help="JetStream stream (default: $NOVA_NATS_STREAM or NOVA_EVIDENCE)",
         ),
     ] = None,
     subject: Annotated[
@@ -69,7 +69,7 @@ def collector_rebuild_cmd(
     \b
     Examples:
       nova collector rebuild --target ./rebuilt
-      nova collector rebuild --target ./rebuilt --stream nova-evidence --report report.json
+      nova collector rebuild --target ./rebuilt --stream NOVA_EVIDENCE --report report.json
     """
     from novafabric.evidence_fabric.rebuild import OffsetReplayRebuilder, RebuildError
 

@@ -1929,7 +1929,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "stream",
         "label": "--stream",
         "type": "text",
-        "hint": "JetStream stream (default: $NOVA_NATS_STREAM or nova-evidence)",
+        "hint": "JetStream stream (default: $NOVA_NATS_STREAM or NOVA_EVIDENCE)",
         "flag": "--stream"
       },
       {

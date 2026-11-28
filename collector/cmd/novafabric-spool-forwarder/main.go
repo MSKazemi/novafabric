@@ -77,6 +77,15 @@ Exit codes:
 See docs/collector-reference.md.
 `
 
+// Default JetStream names. The Python consumers (nova collector rebuild,
+// NATSJetStreamConsumer) default to the same values, kept in
+// src/novafabric/evidence_fabric/_nats_names.py; a test there fails if the two
+// sides drift apart.
+const (
+	defaultEvidenceStream        = "NOVA_EVIDENCE"
+	defaultEvidenceSubjectPrefix = "nova.evidence"
+)
+
 func usage() {
 	out := flag.CommandLine.Output()
 	_, _ = fmt.Fprint(out, usageText)
@@ -89,9 +98,9 @@ func main() {
 		"Spool directory to drain (required; env NOVAFABRIC_SPOOL_DIR). Created if missing")
 	natsURL := flag.String("nats", envOr("NOVA_NATS_URL", "nats://127.0.0.1:4222"),
 		"NATS server URL (env NOVA_NATS_URL)")
-	stream := flag.String("stream", envOr("NOVAFABRIC_SPOOL_STREAM", "NOVA_EVIDENCE"),
+	stream := flag.String("stream", envOr("NOVAFABRIC_SPOOL_STREAM", defaultEvidenceStream),
 		"JetStream stream name, created or updated at start to cover <subject-prefix>.> (env NOVAFABRIC_SPOOL_STREAM)")
-	prefix := flag.String("subject-prefix", envOr("NOVAFABRIC_SPOOL_SUBJECT", "nova.evidence"),
+	prefix := flag.String("subject-prefix", envOr("NOVAFABRIC_SPOOL_SUBJECT", defaultEvidenceSubjectPrefix),
 		"JetStream subject prefix; each event goes to <prefix>.<run_id>, or <prefix>.unknown without a run_id (env NOVAFABRIC_SPOOL_SUBJECT)")
 	interval := flag.Duration("interval", 500*time.Millisecond, "Pause between drain passes (Go duration, e.g. 500ms, 2s)")
 	maxEvents := flag.Int("max-events", 1000, "Max events read and published per drain pass")
