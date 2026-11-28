@@ -26,7 +26,12 @@ requested revision is answered with 2025-11-25, which is how MCP version
 negotiation works (the client decides whether to continue). JSON-RPC batches are
 refused, as MCP 2025-06-18 removed them. Messages larger than
 :data:`MAX_MESSAGE_BYTES` and tool results larger than
-:data:`MAX_RESPONSE_BYTES` are refused, never truncated silently.
+:data:`MAX_RESPONSE_BYTES` are refused, never truncated silently. An unexpected
+failure is logged by exception type and code location only, never by its
+message, which could quote capsule content (:func:`_log_failure`).
+
+The protocol, privacy, adversarial and offline contract is pinned by
+``tests/mcp_evidence_server/test_conformance_gate.py`` (issue #245).
 """
 
 from __future__ import annotations
@@ -34,7 +39,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+import traceback
 from typing import Any, BinaryIO, Final
 
 from novafabric.mcp.evidence_tools import (
@@ -236,7 +243,7 @@ class EvidenceServer:
         except _RpcError as exc:
             return _error(req_id, exc.code, exc.message)
         except Exception as exc:  # never let one request end the session
-            _log.exception("mcp_evidence_request_failed", extra={"method": method[:64]})
+            _log_failure("mcp_evidence_request_failed", exc)
             return _error(req_id, INTERNAL_ERROR, f"internal error ({type(exc).__name__})")
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
@@ -298,7 +305,7 @@ class EvidenceServer:
         except EvidenceToolError as exc:
             return self._tool_error(exc.code, exc.message)
         except Exception as exc:  # fail closed: an error, never a partial "valid" result
-            _log.exception("mcp_evidence_tool_failed", extra={"tool": name})
+            _log_failure("mcp_evidence_tool_failed", exc, tool=name)
             return self._tool_error(
                 TOOL_INTERNAL_ERROR, f"the tool failed ({type(exc).__name__}); see server log"
             )
@@ -325,6 +332,32 @@ class EvidenceServer:
         if (self._protocol_version or "") >= _STRUCTURED_FROM:
             result["structuredContent"] = payload
         return result
+
+
+#: Innermost frames named when a failure is logged.
+_LOGGED_FRAMES: Final[int] = 8
+
+
+def _log_failure(event: str, exc: BaseException, *, tool: str | None = None) -> None:
+    """Log an unexpected failure by type and location, never by message.
+
+    An exception's text can quote what it failed on: a capsule's content, a
+    secret, an absolute path. An MCP host commonly keeps a server's stderr in
+    its own logs, so the server logs the exception type and the innermost
+    frames as ``file.py:line:function`` (base names, so no install path
+    either), which is enough to find the fault and carries no data.
+    """
+    frames = [
+        f"{os.path.basename(frame.filename)}:{frame.lineno}:{frame.name}"
+        for frame in traceback.extract_tb(exc.__traceback__)[-_LOGGED_FRAMES:]
+    ]
+    _log.error(
+        "%s: %s%s at %s",
+        event,
+        type(exc).__name__,
+        f" in tool {tool}" if tool else "",
+        " > ".join(frames) or "?",
+    )
 
 
 def _drain_line(stream: BinaryIO) -> None:

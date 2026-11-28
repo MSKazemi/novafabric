@@ -88,9 +88,20 @@ class CapsuleManifest:
 
 
 def parse_manifest_bytes(name: str, raw: bytes) -> object:
-    """Parse manifest file *name*'s bytes: JSON for ``*.json``, YAML otherwise."""
+    """Parse manifest file *name*'s bytes: JSON for ``*.json``, YAML otherwise.
+
+    Raises:
+        ValueError: the bytes are not UTF-8, not valid JSON, or nested too deeply
+            for the parser (a ``RecursionError`` is reported as a ``ValueError``
+            so every caller that refuses an unparseable manifest refuses this one
+            too, instead of crashing on it).
+        yaml.YAMLError: the bytes are not valid YAML.
+    """
     text = raw.decode("utf-8")
-    return json.loads(text) if name.endswith(".json") else yaml.safe_load(text)
+    try:
+        return json.loads(text) if name.endswith(".json") else yaml.safe_load(text)
+    except RecursionError:
+        raise ValueError(f"{name} is nested too deeply to parse") from None
 
 
 def signed_payload(dsse_bytes: bytes) -> dict[str, Any]:

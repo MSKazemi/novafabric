@@ -25,9 +25,14 @@ The rules every tool follows:
 * **No content.** No tool returns prompt, response, tool-argument or tool-result
   content. The summary returns an allowlist of manifest fields
   (:data:`SUMMARY_FIELDS`) and names the fields it withheld. Every returned
-  string passes the ADR-0009 secret-redaction rule pack and is length-capped,
-  and the scope directories' absolute paths are replaced by ``<scope N>``.
-* **Bounded.** Pages, lists, strings and nesting depth have fixed caps.
+  string passes the ADR-0009 secret-redaction rule pack and has the scope
+  directories' absolute paths replaced by ``<scope N>`` *before* it is
+  length-capped, so a cap never cuts a secret or a path in two.
+* **Bounded.** Pages, lists, strings and nesting depth have fixed caps, and so
+  has the total size of each returned manifest value (:data:`MAX_NODES`,
+  :data:`MAX_TEXT_CHARS`): YAML anchors let a few kilobytes on disk alias one
+  mapping under every key, which would otherwise expand to
+  ``MAX_ITEMS ** MAX_DEPTH`` values.
 
 Errors a client can act on raise :class:`EvidenceToolError` with one of the
 ``code`` values in :data:`ERROR_CODES`.
@@ -36,6 +41,7 @@ Errors a client can act on raise :class:`EvidenceToolError` with one of the
 from __future__ import annotations
 
 import datetime as _dt
+import itertools
 import math
 import os
 import stat
@@ -76,6 +82,10 @@ MAX_ITEMS: Final[int] = 200
 MAX_DEPTH: Final[int] = 3
 #: Most verification errors returned.
 MAX_ERRORS: Final[int] = 50
+#: Most values (at any depth, keys included) one returned manifest value may hold.
+MAX_NODES: Final[int] = 2000
+#: Most characters of text (strings and keys) one returned manifest value may hold.
+MAX_TEXT_CHARS: Final[int] = 64 * 1024
 
 #: A directory is a capsule when it holds one of these as a regular file.
 CAPSULE_MARKERS: Final[tuple[str, ...]] = ("capsule.yaml", "capsule.json", ".seal/manifest.dsse")
@@ -133,6 +143,9 @@ ERROR_CODES: Final[tuple[str, ...]] = (
 
 _OPERATION: Final[str] = "the MCP evidence server"
 _TRUNCATED: Final[str] = "…[truncated]"
+#: Returned in place of a whole manifest value over :data:`MAX_NODES` or
+#: :data:`MAX_TEXT_CHARS`; never a part-way cut of it.
+TOO_LARGE: Final[str] = "[value omitted: too large to summarize]"
 
 
 class ScopeError(ValueError):
@@ -154,24 +167,68 @@ def _clip(text: str) -> str:
     return text[: MAX_STRING_CHARS - len(_TRUNCATED)] + _TRUNCATED
 
 
-def _bounded(value: Any, depth: int = 0) -> Any:
-    """*value* as plain JSON, with strings, lists, mappings and depth capped."""
+class _OverBudget(Exception):
+    """A value grew past :data:`MAX_NODES` or :data:`MAX_TEXT_CHARS` while being walked."""
+
+
+@dataclass
+class _Budget:
+    nodes: int = MAX_NODES
+    chars: int = MAX_TEXT_CHARS
+
+    def spend(self, chars: int = 0) -> None:
+        self.nodes -= 1
+        self.chars -= chars
+        if self.nodes < 0 or self.chars < 0:
+            raise _OverBudget
+
+
+def _bounded(value: Any) -> Any:
+    """*value* as plain JSON, with lists, mappings, depth and total size capped.
+
+    Strings are kept whole here. They are cut to :data:`MAX_STRING_CHARS` only
+    in :meth:`EvidenceScope._scrub`, after secret redaction and scope-path
+    replacement, so a cut can never leave the first part of a secret or a path
+    that no longer matches. A value past the node or text budget is replaced as
+    a whole by :data:`TOO_LARGE`; the walk stops there, so a YAML alias bomb
+    costs at most the budget.
+    """
+    try:
+        return _walk(value, 0, _Budget())
+    except _OverBudget:
+        return TOO_LARGE
+
+
+def _walk(value: Any, depth: int, budget: _Budget) -> Any:
     if value is None or isinstance(value, bool | int):
+        budget.spend()
         return value
     if isinstance(value, float):
+        budget.spend()
         return value if math.isfinite(value) else str(value)
     if isinstance(value, str):
-        return _clip(value)
+        budget.spend(len(value))
+        return value
     if isinstance(value, _dt.datetime | _dt.date):
+        budget.spend()
         return value.isoformat()
     if depth >= MAX_DEPTH:
+        budget.spend()
         return "[nested value omitted]"
     if isinstance(value, dict):
-        items = list(value.items())[:MAX_ITEMS]
-        return {_clip(str(k)): _bounded(v, depth + 1) for k, v in items}
+        budget.spend()
+        out: dict[str, Any] = {}
+        for key, item in itertools.islice(value.items(), MAX_ITEMS):
+            text = str(key)
+            budget.spend(len(text))
+            out[text] = _walk(item, depth + 1, budget)
+        return out
     if isinstance(value, list | tuple):
-        return [_bounded(v, depth + 1) for v in list(value)[:MAX_ITEMS]]
-    return _clip(str(value))
+        budget.spend()
+        return [_walk(item, depth + 1, budget) for item in itertools.islice(value, MAX_ITEMS)]
+    text = str(value)
+    budget.spend(len(text))
+    return text
 
 
 def _int_arg(name: str, value: object, *, default: int, low: int, high: int) -> int:
@@ -275,13 +332,17 @@ class EvidenceScope:
     # -- output hygiene -----------------------------------------------------
 
     def _scrub(self, value: Any) -> Any:
-        """Replace scope paths with ``<scope N>`` and mask secrets in every string."""
+        """Replace scope paths with ``<scope N>``, mask secrets, then cut every string.
+
+        The order matters: cutting first could leave the head of a secret or of
+        a scope path too short for its pattern to match, and return it.
+        """
         from novafabric.capture.secrets import redact_secrets_in_text  # noqa: PLC0415
 
         if isinstance(value, str):
             for index, root in enumerate(self.roots):
                 value = value.replace(str(root), f"<scope {index}>")
-            return redact_secrets_in_text(value)
+            return _clip(redact_secrets_in_text(value))
         if isinstance(value, dict):
             return {self._scrub(k): self._scrub(v) for k, v in value.items()}
         if isinstance(value, list):
@@ -336,7 +397,9 @@ class EvidenceScope:
                 break
         return self._clean(
             {
-                "capsules": _bounded(items),
+                # Built here and already bounded: at most MAX_PAGE_SIZE entries of
+                # one safe path segment (<= 255 bytes) each.
+                "capsules": items,
                 "count": len(items),
                 "next_cursor": next_cursor,
                 "skipped_unaddressable": skipped,
@@ -446,7 +509,7 @@ class EvidenceScope:
                 "log_inclusion": _bounded(result.log_inclusion),
                 "identity_trust": _bounded(result.identity_trust),
                 "unanchored_claims": _bounded(list(unanchored_claims(result))),
-                "errors": [_clip(str(e)) for e in errors[:MAX_ERRORS]],
+                "errors": [str(e) for e in errors[:MAX_ERRORS]],
                 "errors_truncated": len(errors) > MAX_ERRORS,
             }
         )
