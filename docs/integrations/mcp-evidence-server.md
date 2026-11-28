@@ -50,14 +50,16 @@ Most MCP clients take a command and its arguments. In the common `mcpServers` JS
 }
 ```
 
-Use the absolute path of the Python interpreter and of the scope directory if the client does not
-start from your shell's working directory or `PATH`. The test suite drives the server with the
-official MCP Python SDK client. Other clients have not been tested.
+Use the absolute path of the Python interpreter and of the scope directory: clients usually start
+the server without your shell's `PATH`, and a config file does not expand `~`. The test suite
+drives the server with the official MCP Python SDK client. Per-client setup (Claude Code, Claude
+Desktop, Cursor, VS Code), what was verified with each, and troubleshooting are in
+[MCP client setup](mcp-client-setup.md).
 
 ## Tools
 
 All three tools are declared `readOnlyHint: true`, `destructiveHint: false`,
-`openWorldHint: false`, and accept no arguments other than the ones listed.
+`idempotentHint: true`, `openWorldHint: false`, and accept no arguments other than the ones listed.
 
 | Tool | Arguments | Returns |
 |---|---|---|

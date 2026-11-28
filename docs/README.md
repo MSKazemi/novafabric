@@ -171,6 +171,9 @@ implemented versus design intent.
 | [Integrations index](integrations/README.md) | The front door for "how do I run this alongside X" — and an honest list of what has no guide yet |
 | [GitHub Actions](integrations/github-actions.md) | Capturing a CI step as a capsule and uploading it as a build artifact (inputs, outputs, and what happens when the step fails) |
 | [Hugging Face](integrations/huggingface.md) | **Experimental, new in v0.109.0.** `smolagents` capture, Inference Providers capture, Hub revision receipts and evaluation receipts, with exactly what each does not record |
+| [MCP evidence server](integrations/mcp-evidence-server.md) | **Experimental, unreleased.** A read-only stdio MCP server that lists, summarizes and verifies local capsules offline |
+| [MCP client setup](integrations/mcp-client-setup.md) | **Experimental, unreleased.** Connecting Claude Code and other stdio clients to the evidence server, with what was verified per client, an offline sealed-versus-tampered check and troubleshooting |
+| [MCP Registry submission checklist](integrations/mcp-registry-checklist.md) | **Planned.** What must be true before the evidence server is listed in a registry; not submitted |
 
 ## Extend
 
