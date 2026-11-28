@@ -6,11 +6,22 @@
 #   docker build -f deploy/docker/Dockerfile -t novafabric:dev .
 #
 # Two-stage build: wheel compiled in builder, runtime image stays slim.
+#
+# Every external input is pinned (#220): each image by version tag AND digest
+# (Dependabot's `docker` entry for /deploy/docker bumps both together), and the
+# OPA binary by version AND per-architecture sha256 (bumped by hand; see
+# docs/ci.md "Pinned build inputs"). tests/docs/test_build_inputs_are_pinned.py
+# fails on an image without a digest or a download without a checksum check.
+
+# ── uv, the installer used by both stages ───────────────────────────────────
+# A named stage rather than `COPY --from=<image>` so Dependabot sees it: it
+# updates `FROM` lines, and this keeps the uv binary on an audited release.
+FROM ghcr.io/astral-sh/uv:0.13.10@sha256:a3ea1357342c1a4bf9a0c53a3deb1b55379aefa037338d8113d5771efa01774f AS uv
 
 # ── stage 1: build wheel ─────────────────────────────────────────────────────
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /build
 # README.md is REQUIRED, not cosmetic: pyproject.toml declares
@@ -46,7 +57,7 @@ RUN uv build --wheel --no-sources
 # ── stage 2: runtime ─────────────────────────────────────────────────────────
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=uv /uv /usr/local/bin/uv
 
 # pg_isready — entrypoint uses it to wait for Postgres before migrating
 # curl — used to download OPA binary below
@@ -54,17 +65,28 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client curl \
     && rm -rf /var/lib/apt/lists/*
 
-# OPA (Open Policy Agent) binary — policy evaluation for nova policy test/explain
-ARG OPA_VERSION=1.16.2
-RUN ARCH=$(uname -m) && \
-    case "$ARCH" in \
-      x86_64)  OPA_ARCH="linux_amd64_static" ;; \
-      aarch64) OPA_ARCH="linux_arm64_static"  ;; \
-      *)        OPA_ARCH="linux_amd64_static" ;; \
-    esac && \
-    curl -fsSL "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_${OPA_ARCH}" \
-         -o /usr/local/bin/opa && \
-    chmod +x /usr/local/bin/opa
+# OPA (Open Policy Agent) binary — policy evaluation for nova policy test/explain.
+# Pinned by version and verified against the sha256 OPA publishes beside each
+# release asset (opa_<arch>.sha256), so a substituted download fails the build
+# instead of landing in the image. To bump: set OPA_VERSION and copy the two
+# values from that release's opa_linux_amd64_static.sha256 and
+# opa_linux_arm64_static.sha256. An architecture with no pinned checksum is
+# refused rather than given another architecture's binary.
+ARG OPA_VERSION=1.23.0
+ARG OPA_SHA256_AMD64=5a3fe2aee94c370a5cdf59acca2101e2a48ae17d2cf911d45f0af6cdd3fe4e6a
+ARG OPA_SHA256_ARM64=488a597d39a09eb2909663f75d6ab918bcf38cd31a67c4475eb73313938fbd6b
+RUN set -eu; \
+    case "$(uname -m)" in \
+      x86_64)  OPA_ARCH="linux_amd64_static"; OPA_SHA256="${OPA_SHA256_AMD64}" ;; \
+      aarch64) OPA_ARCH="linux_arm64_static"; OPA_SHA256="${OPA_SHA256_ARM64}" ;; \
+      *) echo "no pinned OPA checksum for architecture $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 -o /tmp/opa \
+         "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_${OPA_ARCH}"; \
+    echo "${OPA_SHA256}  /tmp/opa" | sha256sum -c -; \
+    install -m 0755 /tmp/opa /usr/local/bin/opa; \
+    rm -f /tmp/opa; \
+    opa version
 
 WORKDIR /app
 

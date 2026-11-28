@@ -9,9 +9,10 @@ pgbouncer/AGE, scattered across compose files, the Helm chart, and tests).
 Scope is intentionally limited to those three tracked image families. This is
 not a blanket "no `:latest` anywhere in the repo" scanner — that would also
 need to touch files well outside this pass's purpose (e.g. the
-`ghcr.io/astral-sh/uv:latest` installer stage in `deploy/docker/Dockerfile`,
-or the not-yet-published `ghcr.io/novafabric/novafabric-collector:latest`
-image in `deploy/k8s/`), which would be unrelated version-pin churn. See
+not-yet-published `ghcr.io/novafabric/novafabric-collector:latest` image in
+`deploy/k8s/`), which would be unrelated version-pin churn. Dockerfile images,
+the uv installer stage included, are pinned by tag and digest and guarded by
+`tests/docs/test_build_inputs_are_pinned.py` (#220). See
 `deploy/IMAGE_PINS.md`'s "Notes" section for the same scoping statement.
 """
 

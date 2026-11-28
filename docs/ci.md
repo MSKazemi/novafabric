@@ -72,6 +72,32 @@ on purpose, to pick up security releases. `uv` is not pinned: `setup-uv` install
 (0.13.10 on 2026-11-27). Python dependencies come from `uv.lock`. Most jobs install with
 `uv sync --frozen`, and `lint` checks with `uv lock --check` that the lock matches `pyproject.toml`.
 
+## Pinned build inputs (works today)
+
+Issue #220. `tests/docs/test_build_inputs_are_pinned.py` checks every file the public git tracks
+and fails when one of these comes back:
+
+| Input | Where | How it is pinned | How it is bumped |
+|---|---|---|---|
+| Third-party actions | every `.github/workflows/*.yml` and `.github/actions/*/action.yml` | Full 40-hex commit SHA plus a `# vX.Y.Z` comment; a `docker://` action needs an image digest | Dependabot `github-actions` entry (directories `/` and `/.github/actions/*`), weekly, grouped. It rewrites the SHA and the comment together |
+| Base images | `deploy/docker/Dockerfile` (`python:3.12-slim`) | Tag and `@sha256:` digest | Dependabot `docker` entry for `/deploy/docker`; patch updates only for `python` |
+| `uv` in the image | `deploy/docker/Dockerfile`, stage `uv` | `ghcr.io/astral-sh/uv:0.13.10@sha256:a3ea1357…` (the multi-arch index) | Same Dependabot `docker` entry: it reads the `FROM … AS uv` line. A `COPY --from=<image>` would not be seen, so the guard requires a tag and digest there too |
+| OPA binary in the image | `deploy/docker/Dockerfile`, `ARG OPA_VERSION`, `OPA_SHA256_AMD64`, `OPA_SHA256_ARM64` | Version plus the sha256 of each architecture's `opa_linux_<arch>_static`, checked with `sha256sum -c` before the binary is installed; `opa version` then runs in the build | By hand: set `OPA_VERSION`, then copy the two hashes from that release's `opa_linux_amd64_static.sha256` and `opa_linux_arm64_static.sha256` assets and compare them with the asset `digest` the GitHub API reports. Dependabot does not read `ARG` values |
+| Helm in `helm-kind.yml` | `HELM_VERSION`, `HELM_SHA256` | Version plus sha256 of the tarball, `sha256sum -c` | By hand, from the `.sha256sum` file Helm publishes beside each tarball |
+| Go tools | `collector-ci.yml` | `go install …@vX.Y.Z`; the Go checksum database verifies the module | By hand (Dependabot does not read `go install` lines) |
+| `uvx` tools | `pip-audit.yml` (`pip-audit==2.10.1`), `publish-pypi.yml` (`twine==7.0.0`) | `--from "<tool>==X.Y.Z"` | By hand |
+| npm packages | `ci.yml`, `dashboard.yml`, `sdk-ts.yml` | `npm ci` against the committed `package-lock.json` | Dependabot `npm` entries |
+| Python packages | every `uv sync` | `uv.lock` | Dependabot `uv` entries |
+
+Rules the guard applies to downloads: a `curl` or `wget` of a non-loopback URL, in a workflow or
+composite `run:` step, a Dockerfile `RUN`, a tracked shell script or the `Makefile`, must not be
+piped into a shell, and the same step must verify it (`sha256sum -c`, `sha512sum -c`, `shasum -c`,
+`cosign verify-blob` or `gh attestation verify`). A Dockerfile `ARG` named `*SHA256*` must default
+to 64 hex characters, so the check cannot be emptied by accident.
+
+A justified exception goes in the test's `ALLOWED` map as `"<path>::<violation>"` with the reason.
+An entry that no longer matches anything fails the test, so an exception cannot outlive its reason.
+
 ## Code scanning and secret scanning (works today)
 
 Read from the GitHub API on 2026-11-27:
@@ -103,7 +129,8 @@ Read from the GitHub API on 2026-11-27:
    that every job has a bounded timeout, that every third-party action is pinned to a SHA with a
    version comment, and that the workflow-level permissions are read-only. Its scope is
    deliberately these four files. The other workflows passed the same checks when audited, and can
-   be added to its `HARDENED` list.
+   be added to its `HARDENED` list. The SHA-pin rule alone now covers every workflow and composite
+   action through `tests/docs/test_build_inputs_are_pinned.py` (#220).
 
 ### The OpenSSF Scorecard job is not failing chronically
 
@@ -157,12 +184,9 @@ so they are listed for review instead of fixed.
    `npm-audit.yml` and `release-toolchain.yml`. A workflow that is skipped by its path filter never
    reports, so a required check on it would leave unrelated pull requests pending. This bears on
    any future merge rules.
-7. **Dependabot does not watch the composite action.** The `github-actions` entry in
-   `.github/dependabot.yml` has `directory: "/"`. That covers `.github/workflows/` and a root
-   `action.yml`, but not `.github/actions/capture/action.yml`. The two have already drifted: the
-   composite action pins `astral-sh/setup-uv` v10.3.2 and the workflows pin v10.4.0. The fix is to
-   add `/.github/actions/*` to that entry. Two open pull requests edit `.github/dependabot.yml`, so it
-   is not changed here.
+7. **Fixed by #220: Dependabot now watches the composite actions.** The `github-actions` entry
+   lists `/` and `/.github/actions/*`, and the capture action's `setup-uv` pin was moved to the
+   v10.4.0 SHA the workflows use. See [Pinned build inputs](#pinned-build-inputs-works-today).
 8. **No SAST and no workflow linting** (see the section above). Enabling CodeQL default setup is a
    repository setting, not a file change, and costs no Actions minutes on a public repository.
    Whether to turn it on is an owner decision.
@@ -191,3 +215,4 @@ Release and publish workflows were audited separately; findings are tracked priv
 | `tests/docs/test_release_toolchain_matches_publish.py` | The rehearsal drifting from the publish workflows |
 | `tests/test_require_green_ci.py` | The release gate passing anything other than a successful `ci.yml` run |
 | `tests/docs/test_ci_workflow_hardening.py` | A missing or unbounded timeout, an unpinned action, or broad workflow permissions in the four workflows hardened by #217 |
+| `tests/docs/test_build_inputs_are_pinned.py` | A tag-pinned action in any workflow or composite action, a Dockerfile image without tag and digest, an unverified or piped-to-shell download, an empty checksum `ARG`, an unversioned `uvx` or `go install`, an `npm install`, a composite action outside Dependabot's reach (#220) |
