@@ -12,10 +12,11 @@ import typer
 from rich.console import Console
 from rich.markup import escape
 
-from novafabric._capsule_fs import CapsuleRootChangedError, replace_capsule_file
+from novafabric._capsule_fs import CapsuleRootChangedError
 from novafabric._paths import default_capsule_dir
 from novafabric.capture.deployment_env import InvalidDeploymentEnvironmentError
 from novafabric.capture.orchestrator import (
+    OTEL_GENAI_SPANS_REF,
     AssetStatusCheckError,
     CapsuleDirectoryError,
     CaptureOrchestrator,
@@ -519,6 +520,8 @@ def capture_cmd(
             emit_spool=emit_spool,
             masking_pipeline=pipeline,
             capture_media=capture_media,
+            emit_otel_genai=emit_otel_genai,
+            otel_capture_content=capture_content,
         )
     except CapsuleDirectoryError as exc:
         # B11: a full disk or unwritable output dir is an operational
@@ -589,26 +592,22 @@ def capture_cmd(
     replay_line, fully_replayable = _replayability_line(result.replayability)
     console.print(replay_line, soft_wrap=True)
 
-    # NF-032/033: opt-in OTel GenAI span emission alongside the capsule.
+    # NF-032/033: the orchestrator wrote the OTel GenAI spans inside the capsule
+    # before sealing it, so the seal covers them.
     if emit_otel_genai:
-        import json as _json
-
-        from novafabric.otel.genai_emitter import emit_spans
-
-        spans = emit_spans(result.capsule_dir, capture_content=capture_content)
-        spans_path = result.capsule_dir / "otel-genai-spans.json"
-        # Never through a link planted at the name (the capsule is untrusted).
-        replace_capsule_file(
-            result.capsule_dir,
-            spans_path.name,
-            _json.dumps(spans, indent=2).encode("utf-8"),
-            operation="nova capture --emit-otel-genai",
-        )
-        content_note = "with redacted content" if capture_content else "no content"
-        console.print(
-            f"[green]✓[/green] OTel GenAI spans: {spans_path} "
-            f"({len(spans)} spans, {content_note})"
-        )
+        spans_path = result.capsule_dir / OTEL_GENAI_SPANS_REF
+        if result.otel_genai_span_count is None:
+            console.print(
+                "[yellow]![/yellow] OTel GenAI spans were not written (see the warning "
+                "above); the capsule is unaffected",
+                soft_wrap=True,
+            )
+        else:
+            content_note = "with redacted content" if capture_content else "no content"
+            console.print(
+                f"[green]✓[/green] OTel GenAI spans: {spans_path} "
+                f"({result.otel_genai_span_count} spans, {content_note})"
+            )
 
     if result.exit_code == 0 and os.environ.get("NOVAFABRIC_SUGGEST", "1") != "0":
         _print_suggestion_hint(result.capsule_dir, registry_db_path)
