@@ -254,8 +254,11 @@ class TestStartCli:
     def _invoke(self, tmp_path: Path, *args: str) -> Result:
         from novafabric.cli.main import app
 
-        missing_cfg = tmp_path / "no-such-server.yaml"
-        return runner.invoke(app, ["server", "start", "--config", str(missing_cfg), *args])
+        # An explicit --config must exist (a missing one is refused), so the
+        # hermetic config is an empty file: built-in defaults plus env.
+        empty_cfg = tmp_path / "server.yaml"
+        empty_cfg.write_text("")
+        return runner.invoke(app, ["server", "start", "--config", str(empty_cfg), *args])
 
     def test_public_insecure_unconfirmed_refused(
         self, tmp_path: Path, fake_run: _FakeUvicornRun
@@ -366,11 +369,13 @@ except SystemExit:
         env["NOVAFABRIC_HOME"] = str(tmp_path)
         env.pop("NOVAFABRIC_SERVER_TOKEN", None)
         env["COLUMNS"] = "200"
+        empty_cfg = tmp_path / "server.yaml"
+        empty_cfg.write_text("")
 
         primary, secondary = os.openpty()
         try:
             proc = subprocess.Popen(
-                [sys.executable, "-c", self.CHILD, str(tmp_path / "no-such.yaml")],
+                [sys.executable, "-c", self.CHILD, str(empty_cfg)],
                 stdout=secondary,
                 stderr=secondary,
                 stdin=subprocess.DEVNULL,

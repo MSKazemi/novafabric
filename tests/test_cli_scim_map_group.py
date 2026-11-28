@@ -56,6 +56,7 @@ def test_map_group_remove_deletes_the_mapping(tmp_path: Path) -> None:
 
 def test_list_empty_map(tmp_path: Path) -> None:
     cfg = tmp_path / "server.yaml"
+    cfg.write_text("")  # --list on a missing --config is refused (exit 2)
     result = runner.invoke(app, ["server", "scim-map-group", "--list", "--config", str(cfg)])
     assert result.exit_code == 0, result.output
     assert "No group→role mappings configured." in result.output

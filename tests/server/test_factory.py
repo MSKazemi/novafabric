@@ -27,8 +27,9 @@ def test_resolve_config_reads_path_and_checks_bind(monkeypatch, tmp_path):
 
     cfg_path = tmp_path / "server.yaml"
 
-    def _load(path):
+    def _load(path, *, strict=False):
         seen["path"] = path
+        seen["strict"] = strict
         return _Cfg()
 
     def _check(cfg):
@@ -39,6 +40,7 @@ def test_resolve_config_reads_path_and_checks_bind(monkeypatch, tmp_path):
 
     cfg = factory.resolve_config(cfg_path)
     assert seen["path"] == cfg_path
+    assert seen["strict"] is True  # a vanished CONFIG_ENV file fails, not defaults
     assert seen["checked"] is cfg  # the ADR-0184 bind guard ran
 
 
