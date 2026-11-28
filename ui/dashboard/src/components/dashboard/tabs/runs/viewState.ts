@@ -5,7 +5,7 @@
  * What lives here is *view state* (it decides what the user is looking at, and
  * a colleague opening the link must see the same thing): free-text search,
  * status chip, sort, date window, filter-bar text, ADR-0233 scope, the selected
- * run and the inspector view. What does NOT live here is *transient interaction
+ * run, the inspector view and the selected event in the Events view (#268). What does NOT live here is *transient interaction
  * state* (ADR-0232 D2 carve-out, ADR-0036): the half-finished Compare gesture,
  * checkbox selection, unsubmitted filter text, an open suggestion list.
  *
@@ -16,7 +16,7 @@ import type { DetailView, RunSort, StatusFilter } from './types';
 
 /** URL keys owned by the Runs view; cleared when the user leaves the tab. */
 export const RUNS_VIEW_PARAMS = [
-  'q', 'status', 'sort', 'since', 'until', 'f', 'scope', 'run', 'view',
+  'q', 'status', 'sort', 'since', 'until', 'f', 'scope', 'run', 'view', 'event',
 ] as const;
 
 export type FilterScope = 'node' | 'root' | 'tree';
@@ -32,7 +32,7 @@ export const FILTER_SCOPES: readonly FilterScope[] = ['node', 'root', 'tree'];
  * only reads the capsule, so a link opens on the same report.
  */
 export const LINKABLE_VIEWS: readonly DetailView[] = [
-  'inspect', 'trace', 'integrity', 'lineage', 'secrets', 'forensics', 'children', 'replay-modes',
+  'inspect', 'trace', 'events', 'integrity', 'lineage', 'secrets', 'forensics', 'children', 'replay-modes',
 ];
 
 function oneOf<T extends string>(allowed: readonly T[], raw: string, fallback: T): T {
